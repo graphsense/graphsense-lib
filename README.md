@@ -1,4 +1,7 @@
 # graphsense-lib
+
+[![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions)
+
 A central repository for python utility functions and everything that deals with the graphsense backend. Its CLI interface can be used to control important graphsense maintainance tasks.
 
 ## Use
@@ -227,4 +230,4 @@ To create the documentation please run:
     > make docs
 ```
 
-Creating the docs need python dev dependencies to build see ([Stackoverflow_](https://stackoverflow.com/questions/21530577/fatal-error-python-h-no-such-file-or-directory}))
+Creating the docs need python dev dependencies to build see ([Stackoverflow](https://stackoverflow.com/questions/21530577/fatal-error-python-h-no-such-file-or-directory}))
