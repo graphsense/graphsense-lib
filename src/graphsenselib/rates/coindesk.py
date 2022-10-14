@@ -32,19 +32,29 @@ def fetch_exchange_rates(
     DataFrame
         Exchange rates in pandas DataFrame with columns 'date', 'fiat_values'
     """
-
-    base_url = "https://api.coindesk.com/v1/bpi/historical/close.json"
-    param = "?currency={}&start={}&end={}"
-
     df_merged = pd.DataFrame()
 
     for fiat in symbol_list:
-        url = base_url + param.format(fiat, start_date, end_date)
+
+        url = (
+            f"https://api.coindesk.com/v1/bpi/historical/close.json"
+            f"?currency={fiat.lower()}&start={start_date}&end={end_date}"
+        )
         logger.info(f"Fetching url: {url}")
         request = requests.get(url)
         try:
             json = request.json()
             logger.info(json["disclaimer"])
+
+            if "bpi" not in json:
+                # API of coindesk does not deliver recent rates anymore
+                # current last rates avail where till 07-07-2022 (on 14-10-2020)
+                logger.warning(
+                    "No exchange rates found for "
+                    f"{fiat} in range {start_date} - {end_date}"
+                )
+                continue
+
             rates = pd.DataFrame.from_records([json["bpi"]]).transpose()
             rates.rename(columns={0: fiat}, inplace=True)
             df_merged = rates.join(df_merged)
@@ -145,9 +155,17 @@ def ingest(
         # insert exchange rates into Cassandra table
         if not dry_run:
             logger.info(f"Writing to keyspace {db.raw.get_keyspace()}")
-            db.raw.ingest(table, exchange_rates)
-            print(f"Inserted rates for {len(exchange_rates)} days: ", end="")
-            print(f"{exchange_rates.iloc[0].date} - {exchange_rates.iloc[-1].date}")
+            if len(exchange_rates) > 0:
+                db.raw.ingest(table, exchange_rates)
+                logger.info(f"Inserted rates for {len(exchange_rates)} days: ", end="")
+                logger.info(
+                    f"{exchange_rates.iloc[0].date} - {exchange_rates.iloc[-1].date}"
+                )
+            else:
+                logger.info("Nothing to insert.")
         else:
-            print("Dry run: No data inserted. Would have inserted:")
-            print(exchange_rates)
+            logger.info(
+                "Dry run: No data inserted. "
+                f"Would have inserted {len(exchange_rates)} days."
+            )
+            logger.info(exchange_rates)
