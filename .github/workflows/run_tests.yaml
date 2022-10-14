@@ -24,9 +24,11 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install tox and any other packages
         run: pip install tox
-      - name: Run tox
+      - name: Run Unit Test via tox
         # Run tox using the version of Python in `PATH`
-        run:
-          - tox -e py
-          - tox -e lint
-          - tox -e build
+        run: tox -e py
+      - name: Run Lint via tox
+        run: tox -e lint
+      - name: Build wheel
+        # Run tox using the version of Python in `PATH`
+        run: tox -e build
