@@ -198,11 +198,17 @@ def ingest(
         # insert exchange rates into Cassandra table
         if not dry_run:
             logger.info(f"Writing to keyspace {db.raw.get_keyspace()}")
-            db.raw.ingest(table, exchange_rates)
-            logger.info(f"Inserted rates for {len(exchange_rates)} days: ", end="")
-            logger.info(
-                f"{exchange_rates.iloc[0].date} - {exchange_rates.iloc[-1].date}"
-            )
+            if len(exchange_rates) > 0:
+                db.raw.ingest(table, exchange_rates)
+                logger.info(f"Inserted rates for {len(exchange_rates)} days: ", end="")
+                logger.info(
+                    f"{exchange_rates.iloc[0].date} - {exchange_rates.iloc[-1].date}"
+                )
+            else:
+                logger.info("Nothing to insert.")
         else:
-            logger.info("Dry run: No data inserted. Would have inserted:")
+            logger.info(
+                "Dry run: No data inserted. "
+                f"Would have inserted {len(exchange_rates)} days."
+            )
             logger.info(exchange_rates)
