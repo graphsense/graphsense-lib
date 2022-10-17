@@ -248,7 +248,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             if len(er) > 0 and has_er_value(er):
                 r = hb
 
-        return r - 1
+        return r
 
     @lru_cache(maxsize=1)
     def get_configuration(self) -> Optional[object]:
@@ -304,7 +304,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         parameters = [(b, [b // bucket_size, b]) for b in blocks]
         results = self._db.execute_batch(stmt, parameters)
         return {
-            a: (datetime.fromtimestamp(row.current_rows[0].timestamp))
+            a: (datetime.utcfromtimestamp(row.current_rows[0].timestamp))
             for (a, row) in results
         }
 
