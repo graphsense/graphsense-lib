@@ -1,7 +1,7 @@
-CREATE KEYSPACE IF NOT EXISTS btc_transformed
+CREATE KEYSPACE IF NOT EXISTS 0xDEADBEEF
     WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 
-USE btc_transformed;
+USE 0xDEADBEEF;
 
 CREATE TYPE currency (
     value bigint,

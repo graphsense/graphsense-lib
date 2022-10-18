@@ -1,6 +1,6 @@
-CREATE KEYSPACE IF NOT EXISTS eth_raw
+CREATE KEYSPACE IF NOT EXISTS 0x8BADF00D
     WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-USE eth_raw;
+USE 0x8BADF00D;
 
 CREATE TABLE block (
     block_id_group int,
@@ -25,6 +25,20 @@ CREATE TABLE block (
     transaction_count smallint,
     PRIMARY KEY (block_id_group, block_id)
 );
+
+CREATE TABLE log (
+    block_id_group int,
+    block_id int,
+    block_hash blob,
+    address blob,
+    data blob,
+    topics list<blob>,
+    topic0 blob,
+    tx_hash blob,
+    log_index int,
+    transaction_index smallint,
+    PRIMARY KEY (block_id_group, block_id, topic0)
+) WITH CLUSTERING ORDER BY (block_id ASC);
 
 CREATE TABLE transaction (
     tx_hash_prefix text,

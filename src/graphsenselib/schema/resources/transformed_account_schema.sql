@@ -1,7 +1,7 @@
-CREATE KEYSPACE IF NOT EXISTS eth_transformed
+CREATE KEYSPACE IF NOT EXISTS 0xDEADBEEF
     WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 
-USE eth_transformed;
+USE 0xDEADBEEF;
 
 // custom data types
 

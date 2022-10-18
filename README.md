@@ -31,7 +31,7 @@ with DbFactory().from_name(
 
 ### From the commandline.
 
-Graphsenslib exposes an commandline interface graphsence-cli.
+Graphsenslib exposes a commandline interface - graphsence-cli.
 
 Help can be viewed by:
 ```bash
