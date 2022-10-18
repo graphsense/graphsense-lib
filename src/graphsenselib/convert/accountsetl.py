@@ -25,10 +25,11 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
 
     if os.path.exists(outfile):
         logger.warning(f"Output file {outfile} already exists. I am done here.")
-        sys.exit(888)
+        sys.exit(199)
 
     if not filename.endswith("csv.gz"):
-        sys.exit(999)
+        logger.warning(f"Output file {outfile} name does not end with csv.gz.")
+        sys.exit(201)
     try:
         with gzip.open(filename, "rt") as f:
             with gzip.open(outfile, "wt") as wf:
