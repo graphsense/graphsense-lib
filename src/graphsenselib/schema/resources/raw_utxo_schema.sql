@@ -1,7 +1,7 @@
-CREATE KEYSPACE IF NOT EXISTS graphsense
+CREATE KEYSPACE IF NOT EXISTS 0x8BADF00D
     WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 
-USE graphsense;
+USE 0x8BADF00D;
 
 CREATE TABLE block (
     block_id_group int,
