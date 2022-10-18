@@ -46,7 +46,7 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
 
                     if "topic0" not in row:
                         row["topic0"] = tpcs[0] if len(tpcs) > 0 else None
-                        row["topics"] = f"{','.join(tpcs)}"
+                        row["topics"] = ",".join([f'"{t}"' for t in tpcs])
 
                     logger.debug(",".join(row.values()))
 
