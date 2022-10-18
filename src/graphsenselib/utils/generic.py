@@ -43,6 +43,11 @@ def binary_search(L, x, lo, hi):
 
 
 def configure_logging(loglevel):
+    log_format = (
+        "%(asctime)s %(name)40s %(levelname)-8s | %(message)s"
+        if loglevel > 1
+        else "%(asctime)s %(levelname)-8s | %(message)s"
+    )
 
     if loglevel == 0:
         loglevel = logging.WARNING
@@ -52,7 +57,7 @@ def configure_logging(loglevel):
         loglevel = logging.DEBUG
 
     logging.basicConfig(
-        format="%(asctime)s %(name)40s %(levelname)-8s | %(message)s",
+        format=log_format,
         level=loglevel,
         datefmt="%Y-%m-%d %H:%M:%S",
     )

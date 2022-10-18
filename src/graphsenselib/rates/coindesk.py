@@ -138,6 +138,8 @@ def ingest(
     dry_run,
     abort_on_gaps,
 ):
+    if dry_run:
+        logger.warning("This is a Dry-Run. Nothing will be written to the database!")
     with DbFactory().from_config(env, currency) as db:
         exchange_rates = fetch_impl(
             db,
