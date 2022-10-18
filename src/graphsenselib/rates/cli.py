@@ -57,7 +57,8 @@ def shared_ingest_flags():
         )(function)
 
         function = click.option(
-            "-t" "--table",
+            "-t",
+            "--table",
             default="exchange_rates",
             show_default=True,
             type=str,
