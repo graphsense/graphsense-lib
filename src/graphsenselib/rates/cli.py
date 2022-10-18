@@ -180,7 +180,15 @@ def ingest_cmk(
         abort_on_gaps (bool): -
     """
     ingestCMK(
-        env, currency, list(fiat_currencies), table, start_date, end_date, table, force
+        env,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        table,
+        force,
+        dry_run,
+        abort_on_gaps,
     )
 
 
@@ -214,5 +222,13 @@ def ingest_cd(
         abort_on_gaps (bool): -
     """
     ingestCD(
-        env, currency, list(fiat_currencies), table, start_date, end_date, table, force
+        env,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        table,
+        force,
+        dry_run,
+        abort_on_gaps,
     )
