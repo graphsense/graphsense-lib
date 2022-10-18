@@ -35,7 +35,11 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
             with gzip.open(outfile, "wt") as wf:
                 r = csv.DictReader(f, delimiter=",", quotechar='"')
                 w = csv.DictWriter(
-                    wf, fieldnames=ingestable_logs_fields, delimiter="|", quotechar='"'
+                    wf,
+                    fieldnames=ingestable_logs_fields,
+                    delimiter="|",
+                    quoting=csv.QUOTE_NONE,
+                    quotechar="",
                 )
                 w.writeheader()
                 for row in r:
