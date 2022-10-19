@@ -21,6 +21,24 @@ ingestable_logs_fields = [
 
 
 def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
+    """ Converts a log file as exported by the ingest component into a
+    dsbulk imporable format.
+
+    Ingest can be invoked as follows:
+    dsbulk load -c csv -h ip -k eth_raw -t log -url PATH_TO_FILES \
+     --connector.csv.fileNamePattern '**/logs_*.csv.gz.ingestable' \
+     --connector.csv.compression gzip --connector.csv.recursive true \
+     --log.verbosity 2 --connector.csv.delimiter "|" \
+     --connector.csv.maxCharsPerColumn 100000 \
+     --dsbulk.connector.csv.nullValue "" \
+     --dsbulk.connector.csv.ignoreLeadingWhitespaces true \
+     --dsbulk.connector.csv.ignoreTrailingWhitespaces true
+
+
+    Args:
+        filename (str): Description
+        outfile_suffix (str): Description
+    """
     outfile = f"{filename}.{outfile_suffix}"
 
     if os.path.exists(outfile):
@@ -32,8 +50,9 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
         sys.exit(201)
     try:
         with gzip.open(filename, "rt") as f:
+            r = csv.DictReader(f, delimiter=",", quotechar='"')
             with gzip.open(outfile, "wt") as wf:
-                r = csv.DictReader(f, delimiter=",", quotechar='"')
+
                 w = csv.DictWriter(
                     wf,
                     fieldnames=ingestable_logs_fields,
@@ -50,8 +69,9 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
 
                     if "topic0" not in row:
                         row["topic0"] = tpcs[0] if len(tpcs) > 0 else None
-                        qt = ",".join([f'"{t}"' for t in tpcs])
-                        row["topics"] = f"[{qt}]"
+
+                    qt = ",".join([f'"{t}"' for t in tpcs])
+                    row["topics"] = f"[{qt}]"
 
                     logger.debug(",".join(row.values()))
 
