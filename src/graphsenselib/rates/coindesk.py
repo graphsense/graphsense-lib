@@ -158,7 +158,7 @@ def ingest(
         if not dry_run:
             logger.info(f"Writing to keyspace {db.raw.get_keyspace()}")
             if len(exchange_rates) > 0:
-                db.raw.ingest(table, exchange_rates)
+                db.raw.ingest(table, exchange_rates.to_dict("records"))
                 logger.info(f"Inserted rates for {len(exchange_rates)} days: ", end="")
                 logger.info(
                     f"{exchange_rates.iloc[0].date} - {exchange_rates.iloc[-1].date}"
