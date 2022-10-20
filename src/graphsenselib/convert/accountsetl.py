@@ -69,7 +69,9 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
                     if "transaction_hash" in row:
                         row.pop("transaction_hash")
 
-                    tpcs = row["topics"].split("|")
+                    tpcs_str = row["topics"].strip()
+
+                    tpcs = tpcs_str.split("|") if len(tpcs_str) > 0 else []
 
                     if "topic0" not in row:
                         row["topic0"] = tpcs[0] if len(tpcs) > 0 else None
