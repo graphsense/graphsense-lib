@@ -39,6 +39,10 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
         filename (str): Description
         outfile_suffix (str): Description
     """
+
+    # set max fieldsize to 1MB, some logs have big data fields.
+    # Default 16kb fail on certain logs.
+    csv.field_size_limit(8388608)
     outfile = f"{filename}.{outfile_suffix}"
 
     if os.path.exists(outfile):
@@ -80,4 +84,5 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
     except Exception as e:
         if os.path.exists(outfile):
             os.remove(outfile)
+        logger.error(f"Caught exception removed outfile {outfile}.")
         raise e
