@@ -79,8 +79,6 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
                     qt = ",".join([f'"{t}"' for t in tpcs])
                     row["topics"] = f"[{qt}]"
 
-                    logger.debug(",".join(row.values()))
-
                     w.writerow(row)
 
     except Exception as e:
