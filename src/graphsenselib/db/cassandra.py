@@ -1,17 +1,22 @@
-# flake8: noqa: W503
 import hashlib
 import logging
 import time
 from functools import wraps
-from typing import Iterable, Optional, Sequence, Union
+from typing import Iterable, List, Optional, Sequence, Union
 
 from cassandra.cluster import Cluster
 
 # Session,
-from cassandra.concurrent import execute_concurrent_with_args
-from cassandra.query import UNSET_VALUE, PreparedStatement, SimpleStatement
+from cassandra.concurrent import execute_concurrent, execute_concurrent_with_args
+from cassandra.query import (
+    UNSET_VALUE,
+    BatchStatement,
+    BoundStatement,
+    PreparedStatement,
+    SimpleStatement,
+)
 
-from ..utils import remove_mulit_whitespace
+from ..utils import remove_multi_whitespace
 
 DEFAULT_TIMEOUT = 60
 
@@ -20,12 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_cql_statement(stmt: str) -> str:
-    return remove_mulit_whitespace(stmt.lower().strip()).rstrip(";")
+    return remove_multi_whitespace(stmt.lower().strip()).rstrip(";")
 
 
 def none_to_unset(items: Union[dict, tuple, list]):
-    """Sets all None value to UNSET to avoid tombestone creation
-    See https://stackoverflow.com/questions/34637680/how-insert-in-cassandra-without-null-value-in-column
+    """Sets all None value to UNSET to avoid tombstone creation see
+
+    https://stackoverflow.com/questions/34637680/
+    how-insert-in-cassandra-without-null-value-in-column
 
     Args:
         items (Union[dict, tuple, list]): items to insert
@@ -95,7 +102,7 @@ def build_select_stmt(
         if per_partition_limit is None
         else f" PER PARTITION LIMIT {per_partition_limit}"
     )
-    if pplmt is not None:
+    if per_partition_limit is not None:
         lmt = pplmt
     return f"SELECT {cols} FROM {get_table_name(table, keyspace)}{whr}{lmt};"
 
@@ -117,6 +124,26 @@ def build_insert_stmt(
         f"INSERT INTO {get_table_name(table, keyspace)} ({', '.join(columns)}) "
         f"VALUES ({('?,' * len(columns))[:-1]}) "
         f"{'' if upsert else 'IF NOT EXISTS'}"
+        ";"
+    )
+
+
+def build_delete_stmt(
+    key_columns: Sequence[str], table: str, keyspace: Optional[str] = None
+) -> str:
+    """Create CQL insert statement for specified columns and table name.
+
+    Args:
+        columns (Sequence[str]): column names without type (eg. address)
+        table (str): name of the table.
+
+    Returns:
+        str: the insert statement
+    """
+
+    return (
+        f"DELETE FROM {get_table_name(table, keyspace)} "
+        f"WHERE {' AND '.join([ f'{x}=?' for x in key_columns ])}"
         ";"
     )
 
@@ -224,7 +251,7 @@ class CassandraDb:
         self.db_nodes = db_nodes
         self.cluster = None
         self.session = None
-        self.prep_stmts = dict()
+        self.prep_stmts = {}
         self._session_timeout = default_timeout
 
     def connect(self):
@@ -273,13 +300,34 @@ class CassandraDb:
 
     @needs_session
     def execute(self, cql_query_str: str, fetch_size=None) -> Iterable:
-        flat_stmt = cql_query_str.replace("\n", " ")
-        logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
+        # flat_stmt = cql_query_str.replace("\n", " ")
+        # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
 
         stmt = SimpleStatement(cql_query_str, fetch_size=None)
         if fetch_size is not None:
             stmt.fetch_size = fetch_size
+
         return self.session.execute(stmt)
+
+    @needs_session
+    def execute_async(self, cql_query_str: str, fetch_size=None):
+        # flat_stmt = cql_query_str.replace("\n", " ")
+        # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
+
+        stmt = SimpleStatement(cql_query_str, fetch_size=None)
+        if fetch_size is not None:
+            stmt.fetch_size = fetch_size
+        return self.session.execute_async(stmt)
+
+    def execute_statements_atomic(self, statements: List[BoundStatement]):
+        batch = BatchStatement()
+        for stmt in statements:
+            batch.add(stmt)
+
+        self.session.execute(batch)
+
+    def execute_statements(self, statements: List[BoundStatement]):
+        execute_concurrent(self.session, [(stmt, None) for stmt in statements])
 
     @needs_session
     def execute_statement_async(self, stmt, params):

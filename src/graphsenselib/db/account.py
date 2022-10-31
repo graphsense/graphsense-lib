@@ -3,12 +3,15 @@ from typing import Iterable
 from .analytics import RawDb, TransformedDb
 
 
-class TransformedDbETH(TransformedDb):
+class TransformedDbAccount(TransformedDb):
     pass
 
 
-class RawDbETH(RawDb):
+class RawDbAccount(RawDb):
     def get_transaction_ids_in_block(self, block: int) -> Iterable:
+        raise Exception("Not yet implemented.")
+
+    def get_transactions_in_block(self, block: int) -> Iterable:
         raise Exception("Not yet implemented.")
 
     def get_addresses_in_block(self, block: int) -> Iterable:

@@ -9,7 +9,7 @@ from filelock import Timeout as LockFileTimeout
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.signals import gracefull_ctlc_shutdown
-from .update import UpdaterFactory, UpdateStrategy
+from .update import AbstractUpdateStrategy, UpdaterFactory
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,9 @@ def find_import_range(db, start_block_overwrite):
         else start_block_overwrite
     ) + 1
     latest_address_id = db.transformed.get_highest_address_id()
+    latest_cluster_id = db.transformed.get_highest_cluster_id()
     logger.info(f"Last addr id:       {latest_address_id:12}")
+    logger.info(f"Last cltr id:       {latest_cluster_id:12}")
     logger.info(f"Raw     Config:      {db.raw.get_configuration()}")
     logger.info(f"Transf. Config:      {db.transformed.get_configuration()}")
     end_block = db.raw.find_highest_block_with_exchange_rates()
@@ -81,7 +83,7 @@ def validate(env, currency):
 def update_transformed(
     start_block: int,
     end_block: int,
-    updater: UpdateStrategy,
+    updater: AbstractUpdateStrategy,
     batch_size=10,
 ):
     updater.prepare_database()
@@ -96,7 +98,7 @@ def update_transformed(
             updater.process_batch(b)
             updater.persist_updater_progress()
 
-            blocks_processed = updater.last_block_written - start_block
+            blocks_processed = (updater.last_block_processed - start_block) + 1
             to_go = end_block - max(b)
             bps = blocks_processed / updater.elapsed_seconds_global
             logger.info(
@@ -120,6 +122,8 @@ def update(
     write_new: bool,
     write_dirty: bool,
     write_batch_size: int,
+    updater_version: int,
+    pedantic: bool,
 ):
     try:
         with DbFactory().from_config(env, currency) as db:
@@ -139,10 +143,13 @@ def update(
                     update_transformed(
                         start_block,
                         end_block,
-                        UpdaterFactory().get_updater(currency)(
-                            db=db,
-                            write_new=write_new,
-                            write_dirty=write_dirty,
+                        UpdaterFactory().get_updater(
+                            currency,
+                            db,
+                            updater_version,
+                            write_new,
+                            write_dirty,
+                            pedantic,
                         ),
                         batch_size=write_batch_size,
                     )

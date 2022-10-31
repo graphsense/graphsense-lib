@@ -1,4 +1,3 @@
-# flake8: noqa: E731
 from parsy import regex, seq, string
 
 space = regex(r"\s+")  # non-optional whitespace
@@ -9,5 +8,10 @@ tableidentifier = seq(keyspace=identifier << string("."), table=identifier) | se
     table=identifier
 )
 
-lexeme = lambda p: p << padding
-ci_str_token = lambda str: lexeme(string(str, transform=lambda s: s.upper()))
+
+def lexeme(p):
+    return p << padding
+
+
+def ci_str_token(str):
+    return lexeme(string(str, transform=lambda s: s.upper()))

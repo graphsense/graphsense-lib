@@ -34,9 +34,26 @@ def delta():
     help="Block at which to start the update. "
     "(default: start from latest transformed block)",
 )
+@click.option(
+    "--updater-version",
+    type=int,
+    default=1,
+    help="Which version of the delta-updater to use, 1: legacy (addresses only), 2:full"
+    "(default: 1)",
+)
 @click.option("--write-new/--no-write-new", default=True)
 @click.option("--write-dirty/--no-write-dirty", default=True)
-def deltaupdate(env, currency, start_block, write_new, write_dirty, write_batch_size):
+@click.option("--pedantic/--no-pedantic", default=False)
+def deltaupdate(
+    env,
+    currency,
+    start_block,
+    write_new,
+    write_dirty,
+    write_batch_size,
+    updater_version,
+    pedantic,
+):
     """Updates the transformend keyspace for new data in raw, if possible.
     \f
     Args:
@@ -47,7 +64,16 @@ def deltaupdate(env, currency, start_block, write_new, write_dirty, write_batch_
         write_dirty (bool): should I write dirty_address table?
         write_batch_size (int): how many blocks at a time are written.
     """
-    update(env, currency, start_block, write_new, write_dirty, write_batch_size)
+    update(
+        env,
+        currency,
+        start_block,
+        write_new,
+        write_dirty,
+        write_batch_size,
+        updater_version,
+        pedantic,
+    )
 
 
 @delta.command("status", help="Shows the status of the delta updater.")

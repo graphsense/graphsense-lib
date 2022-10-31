@@ -38,13 +38,15 @@ class KeyspaceConfig(BaseModel):
     @validator("schema_type")
     def keyspace_prefix_matches_schema(cls, v, values, **kwargs):
         raw = values["raw_keyspace_name"]
-        schema = currency_to_schema_type[raw[:3].lower()]
+        key = raw[:3].lower()
+        if key in currency_to_schema_type:
+            schema = currency_to_schema_type[key]
 
-        if v != schema:
-            raise ValueError(
-                "Configured schema type does not match schema "
-                f"type of currency {schema} != {v}"
-            )
+            if v != schema:
+                raise ValueError(
+                    "Configured schema type does not match schema "
+                    f"type of currency {schema} != {v}"
+                )
 
         return v
 
@@ -91,4 +93,4 @@ class AppConfig(GoodConf):
         return self.Config._config_file
 
 
-config = AppConfig()
+config = AppConfig(load=True)

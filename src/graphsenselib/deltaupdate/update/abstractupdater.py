@@ -2,8 +2,10 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Iterable, List
 
 from ...db.analytics import AnalyticsDb
+from ...utils.logging import LoggerScope
 
 logger = logging.getLogger(__name__)
 
@@ -43,18 +45,11 @@ def write_dirty_addresses(
     )
 
 
-class UpdateStrategy(ABC):
-    def __init__(self, db, write_new, write_dirty):
-        self._db = db
-        self._write_new = write_new
-        self._write_dirty = write_dirty
-        self._new_addresses = {}
-        self._nr_queried_addresses = 0
-        self._nr_new_addresses = 0
-        self._highest_address_id = db.transformed.get_highest_address_id()
-        self._global_start_time = time.time()
+class AbstractUpdateStrategy(ABC):
+    def __init__(self):
         self._time_last_batch = 0
-        self._last_block_written = None
+        self._last_block_processed = None
+        self._global_start_time = time.time()
 
     @property
     def start_time(self):
@@ -62,19 +57,110 @@ class UpdateStrategy(ABC):
 
     @property
     def elapsed_seconds_global(self) -> float:
-        return time.time() - self.start_time
+        return time.time() - self._global_start_time
 
     @property
     def elapsed_seconds_last_batch(self) -> float:
         return self._time_last_batch
 
     @property
-    def last_block_written(self) -> int:
-        return self._last_block_written
+    def last_block_processed(self) -> int:
+        return self._last_block_processed
 
     @abstractmethod
-    def prepare_database_impl(self):
+    def prepare_database(self):
         pass
+
+    @abstractmethod
+    def consume_address_id(self):
+        pass
+
+    @abstractmethod
+    def process_batch(self, batch: Iterable[int]):
+        pass
+
+    @abstractmethod
+    def persist_updater_progress(self):
+        pass
+
+
+class UpdateStrategy(AbstractUpdateStrategy):
+    def __init__(self, db, currency):
+        super().__init__()
+        self._db = db
+        self._currency = currency
+        self._batch_start_time = None
+        self._nr_new_addresses = 0
+        self._nr_new_clusters = 0
+        self._highest_address_id = db.transformed.get_highest_address_id()
+        self._highest_cluster_id = db.transformed.get_highest_cluster_id()
+
+    @property
+    def currency(self):
+        return self._currency
+
+    @property
+    def nr_new_addresses(self):
+        return self._nr_new_addresses
+
+    @property
+    def highest_address_id(self):
+        return self._highest_address_id
+
+    @property
+    def highest_cluster_id(self):
+        return self._highest_cluster_id
+
+    @property
+    def batch_start_time(self):
+        return self._batch_start_time
+
+    @property
+    def nr_new_clusters(self):
+        return self._nr_new_clusters
+
+    def consume_address_id(self):
+        self._highest_address_id += 1
+        self._nr_new_addresses += 1
+        return self._highest_address_id
+
+    def consume_cluster_id(self):
+        self._highest_cluster_id += 1
+        self._nr_new_clusters += 1
+        return self._highest_cluster_id
+
+    @abstractmethod
+    def process_batch_impl_hook(self, batch):
+        pass
+
+    def import_exchange_rates(self, batch: List[int]):
+        rates = self._db.raw.get_exchange_rates_for_block_batch(batch)
+        self._db.transformed.ingest("exchange_rates", rates)
+
+    def process_batch(self, batch: Iterable[int]):
+        self._batch_start_time = time.time()
+
+        batch_int = list(batch)
+        with LoggerScope(logger, "Importing exchange rates"):
+            self.import_exchange_rates(batch_int)
+
+        with LoggerScope(logger, "Transform data"):
+            self.process_batch_impl_hook(batch_int)
+
+        self._time_last_batch = time.time() - self._batch_start_time
+        self._last_block_processed = batch[-1]
+
+
+class LegacyUpdateStrategy(AbstractUpdateStrategy):
+    def __init__(self, db, currency, write_new, write_dirty):
+        super().__init__()
+        self._db = db
+        self._write_new = write_new
+        self._write_dirty = write_dirty
+        self._new_addresses = {}
+        self._nr_queried_addresses = 0
+        self._nr_new_addresses = 0
+        self._highest_address_id = db.transformed.get_highest_address_id()
 
     def prepare_database(self):
         HISTORY_TABLE_COLUMNS = [
@@ -104,10 +190,9 @@ class UpdateStrategy(ABC):
             STATUS_TABLE_PK,
             truncate=False,
         )
-        self.prepare_database_impl()
 
     @abstractmethod
-    def process_batch_impl(self, batch):
+    def process_batch_impl_hook(self, batch):
         pass
 
     def consume_address_id(self):
@@ -124,17 +209,17 @@ class UpdateStrategy(ABC):
         logger.debug("End   - Importing Exchange Rates")
 
         logger.debug("Start - Chain Specific Import")
-        self.process_batch_impl(batch)
+        self.process_batch_impl_hook(batch)
         logger.debug("End   - Chain Specific Import")
 
         self._time_last_batch = time.time() - start_time
-        self._last_block_written = batch[-1]
+        self._last_block_processed = batch[-1]
 
     def persist_updater_progress(self):
         data = {
-            "last_synced_block": self.last_block_written,
+            "last_synced_block": self.last_block_processed,
             "last_synced_block_timestamp": self._db.raw.get_block_timestamp(
-                self.last_block_written
+                self.last_block_processed
             ),
             "highest_address_id": self._highest_address_id,
             "timestamp": datetime.now(),

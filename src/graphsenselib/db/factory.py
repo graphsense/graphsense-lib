@@ -2,11 +2,11 @@ from collections import namedtuple
 
 from ..config import config, schema_types
 from ..datatypes import AddressAccount, AddressUtxo
+from .account import RawDbAccount, TransformedDbAccount
 from .analytics import AnalyticsDb
 from .analytics import KeyspaceConfig as KeyspaceConfigDB
-from .btc import RawDbBTC, TransformedDbBTC
 from .cassandra import CassandraDb
-from .eth import RawDbETH, TransformedDbETH
+from .utxo import RawDbUtxo, TransformedDbUtxo
 
 DbTypeStrategy = namedtuple(
     "DatabaseStrategy", ["raw_db_type", "transformed_db_type", "address_type"]
@@ -18,9 +18,9 @@ def get_db_types_by_schema_type(schema_type) -> DbTypeStrategy:
         raise ValueError(f"{schema_type} not yet defined.")
 
     if schema_type == "utxo":
-        return DbTypeStrategy(RawDbBTC, TransformedDbBTC, AddressUtxo)
+        return DbTypeStrategy(RawDbUtxo, TransformedDbUtxo, AddressUtxo)
     elif schema_type == "account":
-        return DbTypeStrategy(RawDbETH, TransformedDbETH, AddressAccount)
+        return DbTypeStrategy(RawDbAccount, TransformedDbAccount, AddressAccount)
     else:
         raise ValueError(f"{schema_type} not yet supported.")
 
