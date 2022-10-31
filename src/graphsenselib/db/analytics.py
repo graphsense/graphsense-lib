@@ -6,19 +6,62 @@ Attributes:
     DATE_FORMAT (str): Format string of date format used by the database (str)
 """
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
-from typing import Iterable, Optional, Sequence, Union
+from typing import Iterable, List, Optional, Sequence, Union
 
+from ..datatypes import DbChangeType
 from ..utils import GenericArrayFacade, binary_search
 from .cassandra import (
     CassandraDb,
     build_create_stmt,
+    build_delete_stmt,
+    build_insert_stmt,
     build_select_stmt,
     build_truncate_stmt,
 )
 
 DATE_FORMAT = "%Y-%m-%d"
+
+
+@dataclass
+class DbChange:
+    action: DbChangeType
+    table: str
+    data: dict
+
+    @classmethod
+    def new(Cls, table: str, data: dict):
+        return Cls(action=DbChangeType.NEW, table=table, data=data)
+
+    @classmethod
+    def update(Cls, table: str, data: dict):
+        return Cls(action=DbChangeType.UPDATE, table=table, data=data)
+
+    @classmethod
+    def truncate(Cls, table: str):
+        return Cls(action=DbChangeType.TRUNCATE, table=table, data=None)
+
+    @classmethod
+    def delete(Cls, table: str, data: dict):
+        return Cls(action=DbChangeType.DELETE, table=table, data=data)
+
+    def get_cql_statement(self, keyspace):
+        if self.action == DbChangeType.UPDATE or self.action == DbChangeType.NEW:
+            return build_insert_stmt(
+                columns=self.data.keys(), table=self.table, keyspace=keyspace
+            )
+        elif self.action == DbChangeType.TRUNCATE:
+            return build_truncate_stmt(table=self.table, keyspace=keyspace)
+        elif self.action == DbChangeType.DELETE:
+            return build_delete_stmt(
+                table=self.table, key_columns=self.data.keys(), keyspace=keyspace
+            )
+        else:
+            raise Exception(
+                f"Don't know how to build statement for action {self.action}."
+            )
 
 
 class KeyspaceConfig:
@@ -81,6 +124,13 @@ class DbReaderMixin:
                 per_partition_limit=per_partition_limit,
             ),
             fetch_size=fetch_size,
+        )
+
+    def select_one(
+        self, table: str, columns: Sequence[str] = ["*"], where: Optional[dict] = None
+    ):
+        return self._at_most_one_result(
+            self.select(table=table, columns=columns, where=where, limit=2)
         )
 
     def get_columns_for_table(self, table: str):
@@ -167,8 +217,31 @@ class DbWriterMixin:
 
     """
     This mixin requires the object to provide a CassandraDB instance at
-    self._db and requires the object to provide the KeyspaceScope layout
+    self._db and requires the object to provide the WithinKeyspace mixin
     """
+
+    def apply_changes(self, changes: List[DbChange], atomic=True):
+        statements = [
+            (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
+            for chng in changes
+        ]
+        unique_statements = {stmt for stmt, _ in statements}
+
+        prepared_statements = {
+            stmt: self._db.get_prepared_statement(stmt) for stmt in unique_statements
+        }
+
+        change_stmts = [
+            prepared_statements[
+                chng.get_cql_statement(keyspace=self.get_keyspace())
+            ].bind(chng.data)
+            for chng in changes
+        ]
+
+        if atomic:
+            self._db.execute_statements_atomic(change_stmts)
+        else:
+            self._db.execute_statements(change_stmts)
 
     def ensure_table_exists(
         self,
@@ -192,7 +265,13 @@ class DbWriterMixin:
             )
 
     def ingest(
-        self, table: str, items: Iterable, upsert=True, cl=None, concurrency: int = 100
+        self,
+        table: str,
+        items: Iterable,
+        upsert=True,
+        cl=None,
+        concurrency: int = 100,
+        auto_none_to_unset=False,
     ):
         self._db.ingest(
             table,
@@ -201,6 +280,7 @@ class DbWriterMixin:
             upsert=upsert,
             cl=cl,
             concurrency=concurrency,
+            auto_none_to_unset=auto_none_to_unset,
         )
 
 
@@ -293,6 +373,10 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def get_addresses_in_block(self, block: int) -> Iterable:
         raise Exception("Must be implemented in chain specific child class")
 
+    @abstractmethod
+    def get_transactions_in_block(self, block: int) -> Iterable:
+        raise Exception("Must be implemented in chain specific child class")
+
     def get_block_timestamps_batch(self, blocks: list[int]):
         bucket_size = self.get_block_bucket_size()
         stmt = self.select_stmt(
@@ -349,33 +433,42 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self._db = db
 
     def _get_bucket_divisors_by_table_name(self) -> dict:
-        return {"address": self.get_address_id_bucket_size()}
+        return {
+            "address": self.get_address_id_bucket_size(),
+            "cluster": self.get_cluster_id_bucket_size(),
+        }
 
-    @lru_cache(maxsize=1)
     def get_summary_statistics(self) -> Optional[object]:
         return self._get_only_row_from_table("summary_statistics")
 
     def get_exchange_rates_by_block(self, block) -> Iterable:
-        r = self.select("exchange_rates", where={"block_id": block}, limit=2)
-        return self._at_most_one_result(r)
+        return self.select_one("exchange_rates", where={"block_id": block})
 
     def get_address_id_bucket_size(self) -> Optional[int]:
         config = self.get_configuration()
         return int(config.bucket_size) if config is not None else None
+
+    def get_cluster_id_bucket_size(self) -> Optional[int]:
+        return self.get_address_id_bucket_size()
 
     @lru_cache(maxsize=1)
     def get_configuration(self) -> Optional[object]:
         return self._get_only_row_from_table("configuration")
 
     def get_highest_address_id(self, sanity_check=True) -> Optional[int]:
-        """Return last ingested address ID from block table."""
+        """Return last ingested address ID from address table."""
         du = self.get_last_delta_updater_state()
         ha = self._get_hightest_id(table="address", sanity_check=sanity_check)
         return max(ha, du.highest_address_id) if du is not None else ha
 
+    def get_highest_cluster_id(self, sanity_check=True) -> Optional[int]:
+        """Return last ingested cluster ID from cluster table."""
+        ha = self._get_hightest_id(table="cluster", sanity_check=sanity_check)
+        return ha
+
     def get_highest_block(self) -> Optional[int]:
         stats = self.get_summary_statistics()
-        return int(stats.no_blocks) - 1 if stats is not None else None
+        return int(stats.no_blocks) + 1 if stats is not None else None
 
     def get_highest_exchange_rate_block(self, sanity_check=True) -> Optional[int]:
         res = self.select("exchange_rates", columns=["block_id"], per_partition_limit=1)
@@ -412,7 +505,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def to_db_address(self, address):
         Address = self._keyspace_config.address_type
-        return Address(address, self.get_address_prefix_length())
+        return Address(address, self.get_configuration())
 
     @lru_cache(maxsize=1_000_000)
     def knows_address(self, address: Union[str, bytearray]) -> bool:
@@ -472,10 +565,111 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
                 for (a, row) in self._db.await_batch(results)
             }
 
+    def get_address_id_async(self, address: str):
+        adr = self.to_db_address(address)
+        w = {"address_prefix": f"'{adr.prefix}'", "address": adr.db_encoding_query}
+        return self.select_async(
+            "address_ids_by_address_prefix",
+            columns=["*"],
+            where=w,
+            limit=1,
+        )
+
+    def get_address_async(self, address_id: int):
+        bucket = address_id // self.get_address_id_bucket_size()
+        w = {"address_id_group": bucket, "address_id": f"{address_id}"}
+        return self.select_async(
+            "address",
+            columns=["*"],
+            where=w,
+            limit=1,
+        )
+
+    def get_address_incoming_relations_async(
+        self, address_id: int, src_address_id: Optional[int]
+    ):
+        w = {
+            "dst_address_id_group": address_id // self.get_address_id_bucket_size(),
+            "dst_address_id": address_id,
+        }
+        if src_address_id is not None:
+            w["src_address_id"] = src_address_id
+        return self.select_async(
+            "address_incoming_relations",
+            columns=["*"],
+            where=w,
+            limit=1,
+        )
+
+    def get_address_outgoing_relations_async(
+        self, address_id: int, dst_address_id: Optional[int]
+    ):
+        w = {
+            "src_address_id_group": address_id // self.get_address_id_bucket_size(),
+            "src_address_id": address_id,
+        }
+        if dst_address_id is not None:
+            w["dst_address_id"] = dst_address_id
+        return self.select_async(
+            "address_outgoing_relations",
+            columns=["*"],
+            where=w,
+            limit=1,
+        )
+
+    def get_cluster_async(self, cluster_id: int):
+        bucket = cluster_id // self.get_cluster_id_bucket_size()
+        w = {"cluster_id_group": bucket, "cluster_id": f"{cluster_id}"}
+        return self.select_async(
+            "cluster",
+            columns=["*"],
+            where=w,
+            limit=1,
+        )
+
+    def get_cluster_incoming_relations_async(
+        self, cluster_id: int, src_cluster_id: Optional[int]
+    ):
+        w = {
+            "dst_cluster_id_group": cluster_id // self.get_cluster_id_bucket_size(),
+            "dst_cluster_id": cluster_id,
+        }
+        if src_cluster_id is not None:
+            w["src_cluster_id"] = src_cluster_id
+        return self.select_async(
+            "cluster_incoming_relations",
+            columns=["*"],
+            where=w,
+            limit=1,
+        )
+
+    def get_cluster_outgoing_relations_async(
+        self, cluster_id: int, dst_cluster_id: Optional[int]
+    ):
+        w = {
+            "src_cluster_id_group": cluster_id // self.get_cluster_id_bucket_size(),
+            "src_cluster_id": cluster_id,
+        }
+        if dst_cluster_id is not None:
+            w["dst_cluster_id"] = dst_cluster_id
+        return self.select_async(
+            "cluster_outgoing_relations",
+            columns=["*"],
+            where=w,
+            limit=1,
+        )
+
+    def has_delta_updater_v1_tables(self) -> bool:
+        return (
+            self._db.has_table(self._keyspace, "delta_updater_state")
+            or self._db.has_table(self._keyspace, "dirty_addresses")
+            or self._db.has_table(self._keyspace, "new_addresses")
+        )
+
 
 class AnalyticsDb:
 
-    """Unified analytics DB interface for etl jobs"""
+    """Unified analytics DB interface"""
 
     def __init__(
         self, raw: KeyspaceConfig, transformed: KeyspaceConfig, db: CassandraDb

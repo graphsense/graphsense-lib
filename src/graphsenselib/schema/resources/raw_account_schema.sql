@@ -37,8 +37,8 @@ CREATE TABLE log (
     tx_hash blob,
     log_index int,
     transaction_index smallint,
-    PRIMARY KEY (block_id_group, block_id, topic0)
-) WITH CLUSTERING ORDER BY (block_id ASC);
+    PRIMARY KEY (block_id_group, block_id, topic0, log_index)
+) WITH CLUSTERING ORDER BY (block_id ASC, topic0 ASC, log_index ASC);
 
 CREATE TABLE transaction (
     tx_hash_prefix text,

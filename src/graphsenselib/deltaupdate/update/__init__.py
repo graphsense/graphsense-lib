@@ -1,3 +1,3 @@
 # flake8: noqa: F401
-from .abstractupdater import UpdateStrategy
+from .abstractupdater import AbstractUpdateStrategy
 from .factory import UpdaterFactory

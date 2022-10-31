@@ -4,16 +4,39 @@ from ..utils import hex_to_bytearray
 
 
 class AddressUtxo:
-    def __init__(self, adr: Union[str], prefix_length: int):
-        self.prefix_length = prefix_length
+    def __init__(self, adr: Union[str], config):
+        """Init an address instance.
+
+        Args:
+            adr (Union[str, bytearray]): address
+            config (ConfigRow): entry from the config table in the transformed keyspace
+
+        Raises:
+            Exception: Description
+            ValueError: Description
+        """
+        self.prefix_length = int(config.address_prefix_length)
+        self.bech32_prefix = config.bech_32_prefix
         if type(adr) == str:
             self.address = adr
         else:
             raise Exception("Unknown address format")
 
     @property
+    def is_bech32(self):
+        return (
+            self.bech32_prefix is not None
+            and len(self.bech32_prefix) > 0
+            and self.address.startswith(self.bech32_prefix)
+        )
+
+    @property
     def prefix(self) -> str:
-        return self.db_encoding[: self.prefix_length]
+        if self.is_bech32:
+            s = len(self.bech32_prefix)
+            return self.db_encoding[s : s + self.prefix_length]
+        else:
+            return self.db_encoding[: self.prefix_length]
 
     @property
     def db_encoding(self) -> str:
@@ -25,8 +48,18 @@ class AddressUtxo:
 
 
 class AddressAccount:
-    def __init__(self, adr: Union[str, bytearray], prefix_length: int):
-        self.prefix_length = prefix_length
+    def __init__(self, adr: Union[str, bytearray], config):
+        """Init an address instance.
+
+        Args:
+            adr (Union[str, bytearray]): address
+            config (ConfigRow): entry from the config table in the transformed keyspace
+
+        Raises:
+            Exception: Description
+            ValueError: Description
+        """
+        self.prefix_length = int(config.address_prefix_length)
         if type(adr) == str:
             self.address_bytes = hex_to_bytearray(adr)
         elif type(adr) == bytearray:
