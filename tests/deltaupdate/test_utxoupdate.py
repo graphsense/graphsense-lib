@@ -3,7 +3,7 @@ from graphsenselib.deltaupdate.update.utxo import dbdelta_from_utxo_transaction
 from graphsenselib.utils import group_by, groupby_property
 from graphsenselib.utils.utxo import get_unique_addresses_from_transaction
 
-from .data import get_arel, get_atxs, get_exchange_rates_per_block, get_txs
+from .test_data import get_arel, get_atxs, get_exchange_rates_per_block, get_txs
 
 
 def test_transaction_changeset_address_txs():
