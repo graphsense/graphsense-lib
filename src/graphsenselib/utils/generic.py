@@ -10,6 +10,9 @@ class DataObject:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
+    def as_dict(self):
+        return self.__dict__
+
     def __repr__(self):
         keys = sorted(self.__dict__)
         items = ("{}={!r}".format(k, self.__dict__[k]) for k in keys)
@@ -79,8 +82,8 @@ def fallback(*args):
             return arg
 
 
-def split_list_on_condition(list, condition):
-    return [x for x in list if condition(x)], [x for x in list if not condition(x)]
+def split_list_on_condition(lst, condition):
+    return [x for x in lst if condition(x)], [x for x in lst if not condition(x)]
 
 
 def remove_multi_whitespace(string):

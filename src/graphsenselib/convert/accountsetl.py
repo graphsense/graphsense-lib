@@ -21,23 +21,26 @@ ingestable_logs_fields = [
 
 
 def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
-    """ Converts a log file as exported by the ingest component into a
+    """Converts a log file as exported by the ingest component into a
     dsbulk imporable format.
 
     Ingest can be invoked as follows:
-    dsbulk load -c csv -h ip -k eth_raw -t log -url PATH_TO_FILES \
-     --connector.csv.fileNamePattern '**/logs_*.csv.gz.ingestable' \
-     --connector.csv.compression gzip --connector.csv.recursive true \
-     --log.verbosity 2 --connector.csv.delimiter "|" \
-     --connector.csv.maxCharsPerColumn 100000 \
-     --dsbulk.connector.csv.nullValue "" \
-     --dsbulk.connector.csv.ignoreLeadingWhitespaces true \
-     --dsbulk.connector.csv.ignoreTrailingWhitespaces true
+        dsbulk load -c csv -h ip -k eth_raw -t log -url PATH_TO_FILES \
+         --connector.csv.fileNamePattern '/logs_abc.csv.gz' \
+         --connector.csv.compression gzip --connector.csv.recursive true \
+         --log.verbosity 2 --connector.csv.delimiter "|" \
+         --connector.csv.maxCharsPerColumn 100000 \
+         --dsbulk.connector.csv.nullValue "" \
+         --dsbulk.connector.csv.ignoreLeadingWhitespaces true \
+         --dsbulk.connector.csv.ignoreTrailingWhitespaces true
 
 
     Args:
         filename (str): Description
         outfile_suffix (str): Description
+
+    Raises:
+        e: Description
     """
 
     # set max fieldsize to 1MB, some logs have big data fields.

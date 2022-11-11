@@ -1,11 +1,12 @@
 import logging
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple
 
 from ...datatypes import DbChangeType, EntityType
 from ...db import AnalyticsDb, DbChange
 from ...rates import convert_to_fiat
+from ...utils import DataObject as MutableNamedTuple
 from ...utils import group_by
 from ...utils.errorhandling import CrashRecoverer
 from ...utils.logging import LoggerScope
@@ -160,7 +161,7 @@ def get_transaction_changes(
     """
             Start loading the address_ids for the addresses async
     """
-    lgr.info("Checking existence for " f"{len_addr} addresses")
+    lgr.debug("Checking existence for " f"{len_addr} addresses")
 
     addr_ids_futures = {
         adr: db.transformed.get_address_id_async(adr) for adr in addresses
@@ -172,7 +173,7 @@ def get_transaction_changes(
         Database should already return them sorted.
         This is just for caution
     """
-    with LoggerScope(logger, "Prepare transaction data") as lg:
+    with LoggerScope.debug(logger, "Prepare transaction data") as lg:
         txs = sorted(txs, key=lambda row: (row.block_id, row.tx_id))
         ordered_output_addresses = (
             get_unique_ordered_output_addresses_from_transactions(txs)
@@ -185,7 +186,7 @@ def get_transaction_changes(
         Compute the changeset for each tx of the batch and convert
         all currency values with the corresponding rates.
     """
-    with LoggerScope(logger, "Creating address changeset") as lg:
+    with LoggerScope.debug(logger, "Creating address changeset") as lg:
         per_tx_changes = []
 
         for tx in txs:
@@ -203,7 +204,7 @@ def get_transaction_changes(
     """
         Read address data to merge for address updates
     """
-    lgr.info("Start reading addresses to be updated")
+    lgr.debug("Start reading addresses to be updated")
 
     def get_address(addr_id_future):
         aidr = addr_id_future.result().one()
@@ -217,7 +218,7 @@ def get_transaction_changes(
 
     addresses = {adr: get_address(future) for adr, future in addr_ids_futures.items()}
 
-    with LoggerScope(
+    with LoggerScope.debug(
         logger, "Assigning new address ids and cluster ids for new addresses"
     ) as lg:
         new_cluster_ids = {}
@@ -256,7 +257,7 @@ def get_transaction_changes(
     """
         Reading relations to be updated.
     """
-    lgr.info("Start reading address relations to be updated")
+    lgr.debug("Start reading address relations to be updated")
     addr_outrelations = {
         (
             update.src_identifier,
@@ -277,7 +278,7 @@ def get_transaction_changes(
         for update in address_delta.relation_updates
     }
 
-    lgr.info("Start reading clusters for addresses")
+    lgr.debug("Start reading clusters for addresses")
 
     def get_clusters(address_tuple):
         aidr, address_future = address_tuple
@@ -300,7 +301,7 @@ def get_transaction_changes(
         adr: get_clusters(address_tuple) for adr, address_tuple in addresses.items()
     }
 
-    with LoggerScope(logger, "Creating local lookup tables") as lg:
+    with LoggerScope.debug(logger, "Creating local lookup tables") as lg:
 
         cluster_to_addr_id = group_by(
             [
@@ -356,10 +357,10 @@ def get_transaction_changes(
 
         del addresses
 
-    with LoggerScope(logger, "Creating cluster changeset") as lg:
+    with LoggerScope.debug(logger, "Creating cluster changeset") as lg:
         cluster_delta = address_delta.to_cluster_delta(address_to_cluster_id)
 
-    lgr.info("Start reading cluster relations to be updated")
+    lgr.debug("Start reading cluster relations to be updated")
     clstr_outrelations = {
         (
             update.src_identifier,
@@ -386,7 +387,7 @@ def get_transaction_changes(
         Merge Db Entries with deltas
     """
 
-    with LoggerScope(logger, "Preparing data to be written.") as lg:
+    with LoggerScope.debug(logger, "Preparing data to be written.") as lg:
         changes = []
 
         ingest_configs = {
@@ -412,7 +413,7 @@ def get_transaction_changes(
         new_relations_out = {}
         nr_new_relations = {}
         for mode, config in ingest_configs.items():
-            lg.info(f"Prepare {mode} data.")
+            lg.debug(f"Prepare {mode} data.")
             """
             Creating new address/cluster transaction
             """
@@ -472,8 +473,8 @@ def get_transaction_changes(
 
 
 def get_bookkeeping_changes(
-    base_statistics,
-    current_statistics,
+    base_statistics: MutableNamedTuple,
+    current_statistics: NamedTuple,
     last_block_processed: int,
     nr_new_address_relations: int,
     nr_new_addresses: int,
@@ -488,8 +489,9 @@ def get_bookkeeping_changes(
     other data has been updated.
 
     Args:
-        base_statistics (Row): statistics db row, all the other parameters are
-        delta values
+        base_statistics (MutableNamedTuple): statistics db row, all the other
+        parameters are note data is updated in this process
+        current_statistics (NamedTuple): Current value of db statistics for comparison
         last_block_processed (int): Last block processed
         nr_new_address_relations (int): Delta new addresses relations in changeset
         nr_new_addresses (int): Delta new addresses in changeset
@@ -499,13 +501,15 @@ def get_bookkeeping_changes(
         highest_address_id (int): current highest address_id
         runtime_seconds (int): runtime to create the last changes in seconds
         bts (Dict[int, datetime]): mapping from block to its timestamp
+        delta values
     """
     changes = []
-    with LoggerScope(logger, "Creating summary_statistics updates") as lg:
+    with LoggerScope.debug(logger, "Creating summary_statistics updates") as lg:
         lb_date = bts[last_block_processed]
         stats = base_statistics
         no_blocks = last_block_processed - 1
-        statistics = {
+
+        statistics_old = {
             "no_blocks": no_blocks,
             "timestamp": int(lb_date.timestamp()),
             "no_address_relations": stats.no_address_relations
@@ -516,6 +520,17 @@ def get_bookkeeping_changes(
             "no_clusters": stats.no_clusters + nr_new_clusters,
             "no_transactions": stats.no_transactions + nr_new_tx,
         }
+
+        stats.no_blocks = no_blocks
+        stats.timestamp = int(lb_date.timestamp())
+        stats.no_address_relations += nr_new_address_relations
+        stats.no_addresses += nr_new_addresses
+        stats.no_cluster_relations += nr_new_cluster_relations
+        stats.no_clusters += nr_new_clusters
+        stats.no_transactions += nr_new_tx
+
+        statistics = stats.as_dict()
+        assert statistics == statistics_old
         if current_statistics is not None and current_statistics.no_blocks != no_blocks:
             assert current_statistics.no_blocks < no_blocks
             changes.append(
@@ -525,6 +540,7 @@ def get_bookkeeping_changes(
                 )
             )
         changes.append(DbChange.new(table="summary_statistics", data=statistics))
+
         lg.debug(f"Statistics: {statistics}")
 
         data_history = {
@@ -552,7 +568,7 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
     Raises:
         AssertionExecption: In case the data is in-correct.
     """
-    with LoggerScope(logger, "Validating changes (pedantic mode)") as _:
+    with LoggerScope.debug(logger, "Validating changes (pedantic mode)") as _:
         tdb = db.transformed
         addresses_seen = {}
         cluster_seen = {}
@@ -564,54 +580,74 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
 
             if change.action == DbChangeType.NEW and change.table == "cluster":
                 # only one update per batch
-                assert change.data["cluster_id"] not in cluster_seen
+                if change.data["cluster_id"] in cluster_seen:
+                    raise ValueError(f"Only one update per cluster allowed: {change}")
                 cluster_seen[change.data["cluster_id"]] = True
                 cluster_new[change.data["cluster_id"]] = True
 
-                assert (
+                if not (
                     len(list(tdb.get_cluster_async(change.data["cluster_id"]).result()))
                     == 0
-                )
+                ):
+                    raise ValueError(f"New cluster id is already in db: {change}")
 
             elif change.action == DbChangeType.NEW and change.table == "address":
                 # only one update per batch
-                assert change.data["address_id"] not in addresses_seen
+                if change.data["address_id"] in addresses_seen:
+                    raise ValueError(f"Only one update per address allowed: {change}")
                 addresses_seen[change.data["address_id"]] = True
                 addresses_new[change.data["address_id"]] = True
 
-                assert "cluster_id" in change.data and change.data["cluster_id"] > 0
-                assert (
+                if not ("cluster_id" in change.data and change.data["cluster_id"] > 0):
+                    raise ValueError(f"No cluster id in new address: {change}")
+                if not (
                     len(list(tdb.get_address_async(change.data["address_id"]).result()))
                     == 0
-                )
+                ):
+                    raise ValueError(f"New address_id already in database: {change}")
 
             elif change.action == DbChangeType.UPDATE and change.table == "cluster":
                 # only one update per batch
-                assert change.data["cluster_id"] not in cluster_seen
+                if change.data["cluster_id"] in cluster_seen:
+                    raise ValueError(f"Only one update per cluster allowed: {change}")
                 cluster_seen[change.data["cluster_id"]] = True
 
-                assert "address_id" not in change.data
-                assert (
+                if "address_id" in change.data:
+                    raise ValueError(
+                        "Found address id in cluster update. "
+                        f"Confused address with cluster? {change}"
+                    )
+                if not (
                     len(list(tdb.get_cluster_async(change.data["cluster_id"]).result()))
                     == 1
-                )
+                ):
+                    raise ValueError(
+                        f"Could not find cluster to update in db! {change}"
+                    )
 
             elif change.action == DbChangeType.UPDATE and change.table == "address":
                 # only one update per batch
-                assert change.data["address_id"] not in addresses_seen
+                if change.data["address_id"] in addresses_seen:
+                    raise ValueError(f"Only one update per address allowed. {change}")
                 addresses_seen[change.data["address_id"]] = True
 
-                assert "cluster_id" not in change.data
+                if "cluster_id" in change.data:
+                    raise ValueError(
+                        "Found cluster id in address update. "
+                        f"Confused address with cluster? {change}"
+                    )
 
                 ad = tdb.get_address_async(change.data["address_id"]).result().one()
-                assert ad is not None
-                assert tdb.get_address_id_async(ad.address).result().one() is not None
+                if ad is None:
+                    raise ValueError(f"Did not find address_id to update! {change}")
+                if tdb.get_address_id_async(ad.address).result().one() is None:
+                    raise ValueError(f"Did not find address to update! {change}")
 
             elif (
                 change.action == DbChangeType.UPDATE
                 and change.table == "address_incoming_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_address_incoming_relations_async(
@@ -621,12 +657,15 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 1
-                )
+                ):
+                    raise ValueError(
+                        f"Updated incoming address relation does not exist: {change}"
+                    )
             elif (
                 change.action == DbChangeType.UPDATE
                 and change.table == "address_outgoing_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_address_outgoing_relations_async(
@@ -636,12 +675,15 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 1
-                )
+                ):
+                    raise ValueError(
+                        f"Updated outgoing address relation does not exist: {change}"
+                    )
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "address_incoming_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_address_incoming_relations_async(
@@ -651,12 +693,15 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 0
-                )
+                ):
+                    raise ValueError(
+                        f"New incoming address relation already exists: {change}"
+                    )
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "address_outgoing_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_address_outgoing_relations_async(
@@ -666,12 +711,15 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 0
-                )
+                ):
+                    raise ValueError(
+                        f"New outgoing address relation already exists: {change}"
+                    )
             elif (
                 change.action == DbChangeType.UPDATE
                 and change.table == "cluster_incoming_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_cluster_incoming_relations_async(
@@ -681,12 +729,15 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 1
-                )
+                ):
+                    raise ValueError(
+                        f"Updated incoming cluster relation does not exist: {change}"
+                    )
             elif (
                 change.action == DbChangeType.UPDATE
                 and change.table == "cluster_outgoing_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_cluster_outgoing_relations_async(
@@ -696,12 +747,15 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 1
-                )
+                ):
+                    raise ValueError(
+                        f"Updated outgoing cluster relation does not exist: {change}"
+                    )
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "cluster_incoming_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_cluster_incoming_relations_async(
@@ -711,12 +765,15 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 0
-                )
+                ):
+                    raise ValueError(
+                        f"New incoming cluster relation already exists: {change}"
+                    )
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "cluster_outgoing_relations"
             ):
-                assert (
+                if not (
                     len(
                         list(
                             tdb.get_cluster_outgoing_relations_async(
@@ -726,31 +783,108 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         )
                     )
                     == 0
-                )
+                ):
+                    raise ValueError(
+                        f"New outgoing cluster relation already exists: {change}"
+                    )
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "cluster_addresses"
             ):
-                assert (
+                if not (
                     change.data["cluster_id"] in cluster_seen
                     and change.data["cluster_id"] in cluster_new
-                )
-                assert (
+                ):
+                    raise ValueError(
+                        f"Have not seen change creating cluster id: {change}"
+                    )
+                if not (
                     change.data["address_id"] in addresses_seen
                     and change.data["address_id"] in addresses_new
-                )
+                ):
+                    raise ValueError(f"Have not seen change of address id: {change}")
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "address_ids_by_address_prefix"
             ):
-                assert (
+                if not (
                     tdb.get_address_id_async(change.data["address"]).result().one()
                     is None
-                )
-                assert (
+                ):
+                    raise ValueError(f"New address already in db: {change}")
+                if not (
                     tdb.get_address_async(change.data["address_id"]).result().one()
                     is None
-                )
+                ):
+                    raise ValueError(f"New address_id already in db: {change}")
+            elif (
+                change.action == DbChangeType.NEW
+                and change.table == "summary_statistics"
+            ):
+                if current_summary_stats.no_blocks < change.data["no_blocks"]:
+                    assert seen_summary_delete
+
+                if not (current_summary_stats.no_blocks <= change.data["no_blocks"]):
+                    raise ValueError(
+                        "Violation: no_blocks db "
+                        f"{current_summary_stats.no_blocks} <= "
+                        f"{change.data['no_blocks']}"
+                    )
+                if not (
+                    current_summary_stats.no_address_relations
+                    <= change.data["no_address_relations"]
+                ):
+                    raise ValueError(
+                        "Violation: no_address_relations db "
+                        f"{current_summary_stats.no_address_relations} <= "
+                        f"{change.data['no_address_relations']}"
+                    )
+                if not (
+                    current_summary_stats.no_addresses <= change.data["no_addresses"]
+                ):
+                    raise ValueError(
+                        "Violation: no_addresses db "
+                        f"{current_summary_stats.no_addresses} <= "
+                        f"{change.data['no_addresses']}"
+                    )
+                if not (
+                    current_summary_stats.no_cluster_relations
+                    <= change.data["no_cluster_relations"]
+                ):
+                    raise ValueError(
+                        "Violation: no_cluster_relations db "
+                        f"{current_summary_stats.no_cluster_relations} <= "
+                        f"{change.data['no_cluster_relations']}"
+                    )
+                if not (
+                    current_summary_stats.no_clusters <= change.data["no_clusters"]
+                ):
+                    raise ValueError(
+                        "Violation: no_clusters db "
+                        f"{current_summary_stats.no_clusters} <= "
+                        f"{change.data['no_clusters']}"
+                    )
+                if not (
+                    current_summary_stats.no_transactions
+                    < change.data["no_transactions"]
+                ):
+                    raise ValueError(
+                        "Violation: no_transactions db "
+                        f"{current_summary_stats.no_transactions} <= "
+                        f"{change.data['no_transactions']}"
+                    )
+                if not (current_summary_stats.timestamp <= change.data["timestamp"]):
+                    raise ValueError(
+                        "Violation: timestamp db "
+                        f"{current_summary_stats.timestamp} <= "
+                        f"{change.data['timestamp']}"
+                    )
+            elif change.action == DbChangeType.DELETE:
+                seen_summary_delete = True
+                if not (change.table == "summary_statistics"):
+                    raise ValueError(
+                        f"Deletes are only allowed for summary_stats: {change}"
+                    )
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "address_transactions"
@@ -763,35 +897,9 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 pass
             elif (
                 change.action == DbChangeType.NEW
-                and change.table == "summary_statistics"
-            ):
-                if current_summary_stats.no_blocks < change.data["no_blocks"]:
-                    assert seen_summary_delete
-
-                assert current_summary_stats.no_blocks <= change.data["no_blocks"]
-                assert (
-                    current_summary_stats.no_address_relations
-                    <= change.data["no_address_relations"]
-                )
-                assert current_summary_stats.no_addresses <= change.data["no_addresses"]
-                assert (
-                    current_summary_stats.no_cluster_relations
-                    <= change.data["no_cluster_relations"]
-                )
-                assert current_summary_stats.no_clusters <= change.data["no_clusters"]
-                assert (
-                    current_summary_stats.no_transactions
-                    < change.data["no_transactions"]
-                )
-                assert current_summary_stats.timestamp <= change.data["timestamp"]
-            elif (
-                change.action == DbChangeType.NEW
                 and change.table == "delta_updater_history"
             ):
                 pass
-            elif change.action == DbChangeType.DELETE:
-                seen_summary_delete = True
-                assert change.table == "summary_statistics"
             else:
                 raise Exception(f"Have not found validation rule for {change}.")
 
@@ -815,9 +923,9 @@ def apply_changes(db: AnalyticsDb, changes: List[DbChange], pedantic: bool):
     if pedantic:
         validate_changes(db, changes)
 
-    with LoggerScope(logger, "Summarize updates") as lg:
+    with LoggerScope.info(logger, "Summarize updates") as lg:
         if len(changes) == 0:
-            lg.debug("Nothing to apply")
+            lg.info("Nothing to apply")
             return
         lg.info(f"{len(changes)} updates to apply. Change Summary:")
         summary = group_by(changes, lambda x: (str(x.action), x.table))
@@ -825,7 +933,7 @@ def apply_changes(db: AnalyticsDb, changes: List[DbChange], pedantic: bool):
         for (a, t), x in summary.items():
             logger.info(f"{len(x):6} {a:7} on {t:20}")
 
-    with LoggerScope(logger, "Applying changes") as _:
+    with LoggerScope.debug(logger, "Applying changes") as _:
         try:
             # Apply the changes atomic and in-order
             db.transformed.apply_changes(changes, atomic=True)
@@ -850,7 +958,13 @@ class UpdateStrategyUtxo(UpdateStrategy):
             f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
             "_crashreport.err"
         )
-        self._statistics = self._db.transformed.get_summary_statistics()
+        stats_value = self._db.transformed.get_summary_statistics()
+        """ Make statistics row mutable"""
+        self._statistics = (
+            MutableNamedTuple(**stats_value._asdict())
+            if stats_value is not None
+            else None
+        )
         self._pedantic = pedantic
         self.changes = None
         self.application_strategy = application_strategy
@@ -863,7 +977,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         self._time_last_batch = time.time() - self._batch_start_time
 
     def prepare_database(self):
-        with LoggerScope(logger, "Preparing database"):
+        with LoggerScope.debug(logger, "Preparing database"):
             if self._db.transformed.has_delta_updater_v1_tables():
                 raise Exception(
                     "Tables of the delta-updater v1 detected. "
@@ -897,15 +1011,24 @@ class UpdateStrategyUtxo(UpdateStrategy):
         """
             Read transaction and exchange rates data
         """
-        with LoggerScope(logger, "Checking recovery state.") as _:
+        with LoggerScope.debug(logger, "Checking recovery state.") as lg:
             if self.crash_recoverer.is_in_recovery_mode():
-                logger.warning(
+                """
+                If we are in recovery mode we start with a block earlier to catch up
+                the delta otherwise would start with whats in the db +1
+                In case of an error in between blocks this would mean skipping to
+                the next block
+                """
+                mb = max(0, min(batch) - 1)
+                lg.warning(
                     "Delta update is in crash recovery mode. Crash hint is "
                     f"{self.crash_recoverer.get_recovery_hint()} in "
-                    f"{self.crash_recoverer.get_recovery_hint_filename()}"
+                    f"{self.crash_recoverer.get_recovery_hint_filename()} "
+                    f" restarting at block {mb}."
                 )
+                batch = [mb] + batch
 
-        with LoggerScope(logger, "Reading transaction and rates data") as _:
+        with LoggerScope.debug(logger, "Reading transaction and rates data") as _:
             for block in batch:
                 txs.extend(self._db.raw.get_transactions_in_block(block))
                 rates[block] = self._db.transformed.get_exchange_rates_by_block(
@@ -967,6 +1090,11 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 self.crash_recoverer.leave_recovery_mode()
             for tx in txs:
                 try:
+                    if last_recovery_hint is not None:
+                        logger.info(
+                            f"Resuming processing at tx_id {tx.tx_id} at "
+                            f"block {tx.block_id}"
+                        )
                     crash_last_succ_tx_id = None
                     crash_last_succ_tx_block_id = None
                     if last_tx is not None:
@@ -983,6 +1111,8 @@ class UpdateStrategyUtxo(UpdateStrategy):
                         crash_last_succ_tx_block_id = last_recovery_hint[
                             "last_successful_tx_block_id"
                         ]
+                        block_last_error = last_recovery_hint["current_block_id"]
+                        assert tx.block_id == block_last_error
 
                     crash_hint = {
                         "current_block_id": tx.block_id,
@@ -991,7 +1121,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                         "last_successful_tx_block_id": crash_last_succ_tx_block_id,
                     }
                     last_recovery_hint = None
-                    with LoggerScope(
+                    with LoggerScope.info(
                         logger, f"Working on tx_id {tx.tx_id} at block {tx.block_id}"
                     ):
                         with self.crash_recoverer.enter_critical_section(crash_hint):
@@ -1031,21 +1161,12 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 self._pedantic,
                             )
                 except Exception as e:
-                    if last_tx is None:
-                        block = tx.block_id - 1
-                        last_applied_msg = f"the last tx of block {block}"
-                    else:
-                        last_applied_msg = (
-                            f" {last_tx.tx_id} ({last_tx.tx_hash}) "
-                            "in block {last_tx.block_id}"
-                        )
                     assert self.crash_recoverer.is_in_recovery_mode()
                     logger.error(
                         "Entering recovery mode. Recovery hint written "
                         f"at {self.crash_recoverer.get_recovery_hint_filename()}"
                     )
                     logger.error(f"Failed to apply tx {tx.tx_id} ({tx.tx_hash.hex()}).")
-                    logger.error(f"Last applied tx is {last_applied_msg}.")
                     raise e
                 finally:
                     last_tx = tx

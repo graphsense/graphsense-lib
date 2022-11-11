@@ -26,7 +26,9 @@ def filter_inoutputs(inoutputs_list: list) -> List:
 
 
 def regularize_inoutputs(inoutputs_list: list) -> dict:
-    """Sums the in/outputs for the same address in a inputput list of a tx
+    """
+    Sums the in/outputs for the same address in a inputput list of a tx
+
     Args:
         inoutputs_list (list): Inout-list like stored in raw keyspace
 
@@ -113,6 +115,7 @@ def get_unique_ordered_output_addresses_from_transactions(
 ) -> Iterable[str]:
     """Returns all unique output addresses in the order they appear in the txs.
     This is useful to assign address ids where order should matter.
+
     Args:
         transactions (TYPE): Iterable of dbtransactions
 
@@ -139,6 +142,7 @@ def get_unique_ordered_input_addresses_from_transactions(
 ) -> Iterable[str]:
     """Returns all unique input addresses in the order they appear in the txs.
     This is useful to assign address ids where order should matter.
+
     Args:
         transactions (TYPE): Iterable of dbtransactions
 

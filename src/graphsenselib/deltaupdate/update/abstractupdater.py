@@ -141,10 +141,10 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self._batch_start_time = time.time()
 
         batch_int = list(batch)
-        with LoggerScope(logger, "Importing exchange rates"):
+        with LoggerScope.debug(logger, "Importing exchange rates"):
             self.import_exchange_rates(batch_int)
 
-        with LoggerScope(logger, "Transform data"):
+        with LoggerScope.debug(logger, "Transform data"):
             self.process_batch_impl_hook(batch_int)
 
         self._time_last_batch = time.time() - self._batch_start_time

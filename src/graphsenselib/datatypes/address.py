@@ -75,7 +75,7 @@ class AddressAccount:
             )
 
     @property
-    def hex(self) -> str:
+    def hex(self) -> str:  # noqa
         return self.address_bytes.hex()
 
     @property
@@ -92,5 +92,5 @@ class AddressAccount:
         return self.hex.upper()[: self.prefix_length]
 
     @property
-    def bytearray(self) -> bytearray:
+    def bytearray(self) -> bytearray:  # noqa
         return self.address_bytes

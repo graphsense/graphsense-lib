@@ -182,25 +182,27 @@ class DbReaderMixin:
     def _get_bucket_divisors_by_table_name(self) -> dict:
         raise Exception("Must be implemented in chain specific child class")
 
-    def _ensure_is_highest_id(self, table: str, id_col: str, id: Optional[int]) -> bool:
-        if id is None:
+    def _ensure_is_highest_id(
+        self, table: str, id_col: str, query_id: Optional[int]
+    ) -> bool:
+        if query_id is None:
             return None
         groups = self._get_bucket_divisors_by_table_name()
         if table in groups:
             # this case handles tables with group ids.
             group_id_col = f"{table}_id_group"
             bucket_divisor = groups[table]
-            w = {group_id_col: (id + 1) // bucket_divisor, id_col: id + 1}
+            w = {group_id_col: (query_id + 1) // bucket_divisor, id_col: query_id + 1}
         else:
             # this case handles tables with no group column and increasing integer ids.
-            w = {id_col: id + 1}
+            w = {id_col: query_id + 1}
         result = self.select(table, columns=[id_col], where=w)
         if len(result.current_rows) > 0:
             raise Exception(
                 (
                     f"Something went wrong {id} "
                     " is not the highest_id"
-                    f" {id+1} exist in {table}.{id_col}"
+                    f" {query_id+1} exist in {table}.{id_col}"
                 )
             )
 
@@ -300,6 +302,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         """Summary
             Searches for the highest block with available exchange_rates in
             the raw keyspace this is the maximum block the importer works on.
+
         Args:
             lookback_in_blocks (int, optional): how many blocks to look in the past.
                                                 Default 86400 so approx.
@@ -683,7 +686,7 @@ class AnalyticsDb:
     def db(self) -> CassandraDb:
         return self._db
 
-    def open(self):
+    def open(self):  # noqa:
         self._db.connect()
 
     def close(self):

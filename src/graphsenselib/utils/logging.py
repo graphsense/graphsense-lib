@@ -17,6 +17,18 @@ class IndentLogger(logging.LoggerAdapter):
 class LoggerScope:
     _active_group = threading.local()
 
+    @classmethod
+    def debug(Cls, logger, msg=None):
+        return Cls(logger, msg=msg, level=logging.DEBUG)
+
+    @classmethod
+    def info(Cls, logger, msg=None):
+        return Cls(logger, msg=msg, level=logging.INFO)
+
+    @classmethod
+    def error(Cls, logger, msg=None):
+        return Cls(logger, msg=msg, level=logging.CRITICAL)
+
     @staticmethod
     def get_stack():
         if not hasattr(LoggerScope._active_group, "current"):
@@ -32,16 +44,17 @@ class LoggerScope:
     def get_indent_logger(logger):
         return IndentLogger(logger).set_ident(len(LoggerScope.get_stack()))
 
-    def __init__(self, logger, msg=None):
+    def __init__(self, logger, msg=None, level=logging.INFO):
         self._logger = logger
+        self._level = level
         self._msg = msg
 
     def __enter__(self):
         currentstack = self.get_stack()
         self._start_time = time.time()
         if self._msg is not None:
-            IndentLogger(self._logger).set_ident(len(currentstack)).info(
-                f"B - {self._msg}"
+            IndentLogger(self._logger).set_ident(len(currentstack)).log(
+                self._level, f"B - {self._msg}"
             )
         currentstack.append(self)
         logger = IndentLogger(self._logger)
@@ -54,6 +67,6 @@ class LoggerScope:
         assert last == self, "Logger context exited out of order"
         self.elapsed_seconds = time.time() - self._start_time
         if self._msg is not None:
-            IndentLogger(self._logger).set_ident(currentstacklen).info(
-                f"E - {self._msg} - took {self.elapsed_seconds:.3f}s"
+            IndentLogger(self._logger).set_ident(currentstacklen).log(
+                self._level, f"E - {self._msg} - took {self.elapsed_seconds:.3f}s"
             )

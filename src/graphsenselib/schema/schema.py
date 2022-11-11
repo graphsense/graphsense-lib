@@ -31,7 +31,7 @@ lpb = ci_str_token("<")
 ma = ci_str_token("map")
 fs = ci_str_token("frozen")
 lst = ci_str_token("list")
-id = lexeme(identifier)
+ident_lm = lexeme(identifier)
 tid = lexeme(tableidentifier)
 
 types = forward_declaration()
@@ -39,12 +39,12 @@ types.become(
     (ma + lpb + types + string(",") + space + types + rpb)
     | (lst + lpb + types + rpb)
     | (fs + lpb + types + rpb)
-    | id
+    | ident_lm
 )
 
-nested_i_tuple = id | lb >> id.sep_by(comma_sep, min=1) << rb
+nested_i_tuple = ident_lm | lb >> ident_lm.sep_by(comma_sep, min=1) << rb
 column = seq(
-    name=id,
+    name=ident_lm,
     type=types,
     pk=(pk.result(True)).optional(),
 )
