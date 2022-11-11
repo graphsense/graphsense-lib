@@ -13,5 +13,5 @@ def lexeme(p):
     return p << padding
 
 
-def ci_str_token(str):
-    return lexeme(string(str, transform=lambda s: s.upper()))
+def ci_str_token(input_str):
+    return lexeme(string(input_str, transform=lambda s: s.upper()))
