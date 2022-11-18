@@ -56,6 +56,9 @@ class Environment(BaseModel):
     cassandra_nodes: List[str]
     keyspaces: Dict[str, KeyspaceConfig]
 
+    def get_keyspace(self, currency: str) -> KeyspaceConfig:
+        return self.keyspaces[currency]
+
 
 class AppConfig(GoodConf):
 
@@ -84,6 +87,9 @@ class AppConfig(GoodConf):
         file_env_var = "GRAPHSENSE_CONFIG_YAML"
         default_files = [".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")]
 
+    def is_loaded(self) -> bool:
+        return hasattr(self, "environments")
+
     def text(self):
         if self.Config._config_file:
             with open(self.Config._config_file, "r") as f:
@@ -94,8 +100,13 @@ class AppConfig(GoodConf):
     def path(self):
         return self.Config._config_file
 
+    def get_environment(self, env: str) -> Environment:
+        if not self.is_loaded():
+            self.load()
+        return self.get_environment[env]
+
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
-        return self.environments[env].keyspaces[currency]
+        return self.get_environment(env).get_keyspace(currency)
 
 
 config = AppConfig(load=False)
