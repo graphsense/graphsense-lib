@@ -3,11 +3,13 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple
 
+from cassandra import InvalidRequest
+
 from ...datatypes import DbChangeType, EntityType
 from ...db import AnalyticsDb, DbChange
 from ...rates import convert_to_fiat
 from ...utils import DataObject as MutableNamedTuple
-from ...utils import group_by
+from ...utils import group_by, no_nones
 from ...utils.errorhandling import CrashRecoverer
 from ...utils.logging import LoggerScope
 from ...utils.utxo import (
@@ -147,26 +149,26 @@ def get_transaction_changes(
         get_next_address_id (Callable[[], int]): Function to fetch next new address_id
         get_next_cluster_id (Callable[[], int]): Function to fetch next new cluster_id
     """
-    lgr = LoggerScope.get_indent_logger(logger)
     tdb = db.transformed
     """
         Build dict of unique addresses in the batch.
     """
-    addresses = {}
     addresses = get_unique_addresses_from_transactions(txs)
 
     len_addr = len(addresses)
-    # self.set_nr_queried_addresses_batch(len_addr)
 
     """
             Start loading the address_ids for the addresses async
     """
-    lgr.debug("Checking existence for " f"{len_addr} addresses")
+    with LoggerScope.debug(logger, f"Checking existence for {len_addr} addresses") as _:
+        addr_ids = {
+            adr: address_id
+            for adr, address_id in db.transformed.get_address_id_async_batch(
+                list(addresses)
+            )
+        }
 
-    addr_ids_futures = {
-        adr: db.transformed.get_address_id_async(adr) for adr in addresses
-    }
-    del addresses
+        del addresses
 
     """
         Sort transactions by block and tx id.
@@ -175,6 +177,7 @@ def get_transaction_changes(
     """
     with LoggerScope.debug(logger, "Prepare transaction data") as lg:
         txs = sorted(txs, key=lambda row: (row.block_id, row.tx_id))
+        lg.debug(f"Working on batch of {len(txs)} transactions.")
         ordered_output_addresses = (
             get_unique_ordered_output_addresses_from_transactions(txs)
         )
@@ -204,19 +207,36 @@ def get_transaction_changes(
     """
         Read address data to merge for address updates
     """
-    lgr.debug("Start reading addresses to be updated")
+    with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
 
-    def get_address(addr_id_future):
-        aidr = addr_id_future.result().one()
-        if aidr is not None:
-            return (
-                aidr.address_id,
-                tdb.get_address_async(aidr.address_id),
+        existing_addr_ids = no_nones(
+            [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
+        )
+        addresses_resolved = {
+            addr_id: address
+            for addr_id, address in tdb.get_address_async_batch(
+                [adr.address_id for adr in existing_addr_ids]
             )
-        else:
-            return (None, None)
+        }
+        del existing_addr_ids
 
-    addresses = {adr: get_address(future) for adr, future in addr_ids_futures.items()}
+        def get_resolved_address(addr_id_exc):
+            addr_id = addr_id_exc.result_or_exc.one()
+            return (
+                (None, None)
+                if addr_id is None
+                else (
+                    addr_id.address_id,
+                    addresses_resolved[addr_id.address_id].result_or_exc.one(),  # noqa
+                )
+            )
+
+        addresses = {
+            adr: get_resolved_address(address_id)
+            for adr, address_id in addr_ids.items()
+        }
+
+        del addresses_resolved
 
     with LoggerScope.debug(
         logger, "Assigning new address ids and cluster ids for new addresses"
@@ -239,9 +259,9 @@ def get_transaction_changes(
             for out_addr in ordered_input_addresses:
                 if out_addr in not_yet_seen_input_addresses:
                     new_addr_id = get_next_address_id()
-                    lg.warning(
-                        "Encountered an input address that is not yet known: "
-                        f"{out_addr}. Creating it with id {new_addr_id}."
+                    lg.debug(
+                        "Encountered new input address - "
+                        f"{out_addr:64}. Creating it with id {new_addr_id}."
                     )
                     addresses[out_addr] = (new_addr_id, None)
                     new_cluster_ids[new_addr_id] = get_next_cluster_id()
@@ -257,49 +277,68 @@ def get_transaction_changes(
     """
         Reading relations to be updated.
     """
-    lgr.debug("Start reading address relations to be updated")
-    addr_outrelations = {
-        (
-            update.src_identifier,
-            update.dst_identifier,
-        ): tdb.get_address_outgoing_relations_async(
-            addresses[update.src_identifier][0], addresses[update.dst_identifier][0]
+    with LoggerScope.debug(logger, "Reading address relations to be updated") as _:
+
+        rel_to_query = [
+            (addresses[update.src_identifier][0], addresses[update.dst_identifier][0])
+            for update in address_delta.relation_updates
+        ]
+        addr_outrelations_q = tdb.get_address_outgoing_relations_async_batch(
+            rel_to_query
         )
-        for update in address_delta.relation_updates
-    }
+        addr_outrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(address_delta.relation_updates, addr_outrelations_q)
+        }
 
-    addr_inrelations = {
-        (
-            update.src_identifier,
-            update.dst_identifier,
-        ): tdb.get_address_incoming_relations_async(
-            addresses[update.dst_identifier][0], addresses[update.src_identifier][0]
+        rel_to_query = [
+            (addresses[update.dst_identifier][0], addresses[update.src_identifier][0])
+            for update in address_delta.relation_updates
+        ]
+        addr_inrelations_q = tdb.get_address_incoming_relations_async_batch(
+            rel_to_query
         )
-        for update in address_delta.relation_updates
-    }
+        addr_inrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(address_delta.relation_updates, addr_inrelations_q)
+        }
 
-    lgr.debug("Start reading clusters for addresses")
+        del rel_to_query, addr_inrelations_q, addr_outrelations_q
 
-    def get_clusters(address_tuple):
-        aidr, address_future = address_tuple
-        if address_future is not None:
-            address = address_future.result().one()
-            assert address.cluster_id not in new_cluster_ids
-            assert aidr == address.address_id
-            return (
-                aidr,
-                address,
-                address.cluster_id,
-                tdb.get_cluster_async(address.cluster_id),
+    with LoggerScope.debug(logger, "Reading clusters for addresses") as _:
+
+        clusters_resolved = {
+            cluster_id: cluster
+            for cluster_id, cluster in tdb.get_cluster_async_batch(
+                [
+                    address.cluster_id
+                    for adr, (addr_id, address) in addresses.items()
+                    if address is not None
+                ]
             )
-        else:
-            return (aidr, None, new_cluster_ids[aidr], None)
+        }
 
-    """Assigning new address ids and cluster ids for new addresses"""
+        def get_resolved_cluster(address_tuple):
+            aidr, address = address_tuple
+            if address is not None:
+                assert address.cluster_id not in new_cluster_ids
+                assert aidr == address.address_id
+                return (
+                    aidr,
+                    address,
+                    address.cluster_id,
+                    clusters_resolved[address.cluster_id].result_or_exc.one(),  # noqa
+                )
+            else:
+                return (aidr, None, new_cluster_ids[aidr], None)
 
-    addresses_with_cluster = {
-        adr: get_clusters(address_tuple) for adr, address_tuple in addresses.items()
-    }
+        """Assigning new address ids and cluster ids for new addresses"""
+
+        addresses_with_cluster = {
+            adr: get_resolved_cluster(address_tuple)
+            for adr, address_tuple in addresses.items()
+        }
+        del clusters_resolved, addresses
 
     with LoggerScope.debug(logger, "Creating local lookup tables") as lg:
 
@@ -334,7 +373,7 @@ def get_transaction_changes(
             return addresses_with_cluster[addr][1]
 
         def address_to_cluster(addr: str) -> int:
-            return addresses_with_cluster[addr][3].result().one()
+            return addresses_with_cluster[addr][3]
 
         def cluster_id_to_address_id(cluster_id: int) -> Set[int]:
             s = {addr_id for _, addr_id in cluster_to_addr_id[cluster_id]}
@@ -344,9 +383,7 @@ def get_transaction_changes(
 
         def cluster_id_to_cluster(cluster_id: int) -> Any:
             clusters = [
-                x.result().one()
-                for (_, x) in cluster_from_cluster_id[cluster_id]
-                if x is not None
+                x for (_, x) in cluster_from_cluster_id[cluster_id] if x is not None
             ]
             assert len({x.cluster_id for x in clusters}) <= 1
             return clusters[0] if len(clusters) > 0 else None
@@ -355,33 +392,35 @@ def get_transaction_changes(
             address = tdb.to_db_address(address_str)
             return (address.db_encoding, address.prefix)
 
-        del addresses
-
     with LoggerScope.debug(logger, "Creating cluster changeset") as lg:
         cluster_delta = address_delta.to_cluster_delta(address_to_cluster_id)
 
-    lgr.debug("Start reading cluster relations to be updated")
-    clstr_outrelations = {
-        (
-            update.src_identifier,
-            update.dst_identifier,
-        ): tdb.get_cluster_outgoing_relations_async(
-            update.src_identifier,
-            update.dst_identifier,
+    with LoggerScope.debug(logger, "Reading cluster relations to be updated") as lg:
+        rel_to_query = [
+            (update.src_identifier, update.dst_identifier)
+            for update in cluster_delta.relation_updates
+        ]
+        clstr_outrelations_q = tdb.get_cluster_outgoing_relations_async_batch(
+            rel_to_query
         )
-        for update in cluster_delta.relation_updates
-    }
+        clstr_outrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(cluster_delta.relation_updates, clstr_outrelations_q)
+        }
 
-    clstr_inrelations = {
-        (
-            update.src_identifier,
-            update.dst_identifier,
-        ): tdb.get_cluster_incoming_relations_async(
-            update.dst_identifier,
-            update.src_identifier,
+        rel_to_query = [
+            (update.dst_identifier, update.src_identifier)
+            for update in cluster_delta.relation_updates
+        ]
+        clstr_inrelations_q = tdb.get_cluster_incoming_relations_async_batch(
+            rel_to_query
         )
-        for update in cluster_delta.relation_updates
-    }
+        clstr_inrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(cluster_delta.relation_updates, clstr_inrelations_q)
+        }
+
+        del rel_to_query, clstr_inrelations_q, clstr_outrelations_q
 
     """
         Merge Db Entries with deltas
@@ -509,18 +548,7 @@ def get_bookkeeping_changes(
         stats = base_statistics
         no_blocks = last_block_processed - 1
 
-        statistics_old = {
-            "no_blocks": no_blocks,
-            "timestamp": int(lb_date.timestamp()),
-            "no_address_relations": stats.no_address_relations
-            + nr_new_address_relations,
-            "no_addresses": stats.no_addresses + nr_new_addresses,
-            "no_cluster_relations": stats.no_cluster_relations
-            + nr_new_cluster_relations,
-            "no_clusters": stats.no_clusters + nr_new_clusters,
-            "no_transactions": stats.no_transactions + nr_new_tx,
-        }
-
+        """ Update local stats """
         stats.no_blocks = no_blocks
         stats.timestamp = int(lb_date.timestamp())
         stats.no_address_relations += nr_new_address_relations
@@ -530,7 +558,6 @@ def get_bookkeeping_changes(
         stats.no_transactions += nr_new_tx
 
         statistics = stats.as_dict()
-        assert statistics == statistics_old
         if current_statistics is not None and current_statistics.no_blocks != no_blocks:
             assert current_statistics.no_blocks < no_blocks
             changes.append(
@@ -617,13 +644,61 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         "Found address id in cluster update. "
                         f"Confused address with cluster? {change}"
                     )
-                if not (
-                    len(list(tdb.get_cluster_async(change.data["cluster_id"]).result()))
-                    == 1
-                ):
+
+                clusters = list(
+                    tdb.get_cluster_async(change.data["cluster_id"]).result()
+                )
+                if not (len(clusters) == 1):
                     raise ValueError(
                         f"Could not find cluster to update in db! {change}"
                     )
+
+                cluster = clusters[0]
+
+                if cluster.cluster_id != change.data["cluster_id"]:
+                    raise ValueError(f"Cluster_id do not match {cluster} {change}")
+
+                if cluster.no_incoming_txs > change.data["no_incoming_txs"]:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                if cluster.no_outgoing_txs > change.data["no_outgoing_txs"]:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                if cluster.first_tx_id != change.data["first_tx_id"]:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                if cluster.last_tx_id >= change.data["last_tx_id"]:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                if cluster.total_received.value > change.data["total_received"].value:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                if cluster.total_spent.value > change.data["total_spent"].value:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                if cluster.in_degree > change.data["in_degree"]:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                if cluster.out_degree > change.data["out_degree"]:
+                    raise ValueError(
+                        f"Cluster changes are inconsistent {cluster} {change}"
+                    )
+
+                del cluster
 
             elif change.action == DbChangeType.UPDATE and change.table == "address":
                 # only one update per batch
@@ -640,9 +715,36 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 ad = tdb.get_address_async(change.data["address_id"]).result().one()
                 if ad is None:
                     raise ValueError(f"Did not find address_id to update! {change}")
-                if tdb.get_address_id_async(ad.address).result().one() is None:
+
+                if ad.no_incoming_txs > change.data["no_incoming_txs"]:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                if ad.no_outgoing_txs > change.data["no_outgoing_txs"]:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                if ad.first_tx_id != change.data["first_tx_id"]:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                if ad.last_tx_id >= change.data["last_tx_id"]:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                if ad.total_received.value > change.data["total_received"].value:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                if ad.total_spent.value > change.data["total_spent"].value:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                if ad.in_degree > change.data["in_degree"]:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                if ad.out_degree > change.data["out_degree"]:
+                    raise ValueError(f"Address changes are inconsistent {ad} {change}")
+
+                adid = tdb.get_address_id_async(ad.address).result().one()
+                if adid is None:
                     raise ValueError(f"Did not find address to update! {change}")
 
+                del ad, adid
             elif (
                 change.action == DbChangeType.UPDATE
                 and change.table == "address_incoming_relations"
@@ -904,7 +1006,9 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 raise Exception(f"Have not found validation rule for {change}.")
 
 
-def apply_changes(db: AnalyticsDb, changes: List[DbChange], pedantic: bool):
+def apply_changes(
+    db: AnalyticsDb, changes: List[DbChange], pedantic: bool, try_atomic_writes: bool
+):
     """Apply a list of db-changes to the database. Changes are applied
     atomically and in order.
 
@@ -920,27 +1024,46 @@ def apply_changes(db: AnalyticsDb, changes: List[DbChange], pedantic: bool):
         are too large. Cassandra has a hard limit for batch sizes
     """
     # Validate changes
+    atomic = True
     if pedantic:
         validate_changes(db, changes)
 
-    with LoggerScope.info(logger, "Summarize updates") as lg:
+    with LoggerScope.debug(logger, "Summarize updates") as lg:
         if len(changes) == 0:
-            lg.info("Nothing to apply")
+            lg.debug("Nothing to apply")
             return
-        lg.info(f"{len(changes)} updates to apply. Change Summary:")
+        lg.debug(f"{len(changes)} updates to apply. Change Summary:")
         summary = group_by(changes, lambda x: (str(x.action), x.table))
 
         for (a, t), x in summary.items():
-            logger.info(f"{len(x):6} {a:7} on {t:20}")
+            logger.debug(f"{len(x):6} {a:7} on {t:20}")
 
     with LoggerScope.debug(logger, "Applying changes") as _:
         try:
-            # Apply the changes atomic and in-order
-            db.transformed.apply_changes(changes, atomic=True)
+            if try_atomic_writes:
+                # try to apply the changes atomic and in-order
+                try:
+                    db.transformed.apply_changes(changes, atomic=True)
+                except InvalidRequest as e:
+                    atomic = False
+                    msg = getattr(e, "message", repr(e)).lower()
+                    if "batch too large" in msg:
+                        logger.warning(
+                            "Batch to large: Retrying to apply changes "
+                            "without atomic write."
+                        )
+                        db.transformed.apply_changes(changes, atomic=False)
+            else:
+                atomic = False
+                db.transformed.apply_changes(changes, atomic=False)
+
         except Exception as e:
-            logger.error(
-                f"Failed to apply {len(changes)} changes. Nothing was written."
+            atomicity_msg = (
+                " Nothing was written (atomic writes)."
+                if atomic
+                else " Atomicity not guarantied."
             )
+            logger.error(f"Failed to apply {len(changes)} changes.{atomicity_msg}")
             raise e
 
 
@@ -968,11 +1091,15 @@ class UpdateStrategyUtxo(UpdateStrategy):
         self._pedantic = pedantic
         self.changes = None
         self.application_strategy = application_strategy
+        logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
 
     def persist_updater_progress(self):
         if self.changes is not None:
-            apply_changes(self._db, self.changes, self._pedantic)
+            atomic = ApplicationStrategy.TX == self.application_strategy
+            apply_changes(
+                self._db, self.changes, self._pedantic, try_atomic_writes=atomic
+            )
             self.changes = None
         self._time_last_batch = time.time() - self._batch_start_time
 
@@ -1121,7 +1248,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                         "last_successful_tx_block_id": crash_last_succ_tx_block_id,
                     }
                     last_recovery_hint = None
-                    with LoggerScope.info(
+                    with LoggerScope.debug(
                         logger, f"Working on tx_id {tx.tx_id} at block {tx.block_id}"
                     ):
                         with self.crash_recoverer.enter_critical_section(crash_hint):
@@ -1159,6 +1286,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 self._db,
                                 delta_changes_tx + bookkeepin_changes,
                                 self._pedantic,
+                                try_atomic_writes=True,
                             )
                 except Exception as e:
                     assert self.crash_recoverer.is_in_recovery_mode()

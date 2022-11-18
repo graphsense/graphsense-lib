@@ -2,6 +2,33 @@ import logging
 import threading
 import time
 
+import click
+from rich.logging import RichHandler
+
+
+def configure_logging(loglevel):
+    log_format = " | %(message)s"
+
+    if loglevel == 0:
+        loglevel = logging.WARNING
+    elif loglevel == 1:
+        loglevel = logging.INFO
+    elif loglevel >= 2:
+        loglevel = logging.DEBUG
+
+    """ RichHandler colorizes the logs """
+    logging.basicConfig(
+        format=log_format,
+        level=loglevel,
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[RichHandler(rich_tracebacks=True, tracebacks_suppress=[click])],
+    )
+
+    logging.getLogger("cassandra").setLevel(logging.ERROR)
+    logging.getLogger("Cluster").setLevel(logging.ERROR)
+    logging.getLogger("requests").setLevel(logging.ERROR)
+    logging.getLogger("urllib3").setLevel(logging.ERROR)
+
 
 class IndentLogger(logging.LoggerAdapter):
     _ident = 0
@@ -42,7 +69,7 @@ class LoggerScope:
 
     @staticmethod
     def get_indent_logger(logger):
-        return IndentLogger(logger).set_ident(len(LoggerScope.get_stack()))
+        return IndentLogger(logger).set_ident(len(LoggerScope.get_stack()) + 1)
 
     def __init__(self, logger, msg=None, level=logging.INFO):
         self._logger = logger

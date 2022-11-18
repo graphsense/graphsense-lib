@@ -31,7 +31,7 @@ def state(env, currency):
     for cur in currencies:
         click.echo(f"\n===== {cur}")
         with DbFactory().from_config(env, cur) as db:
-            hb_ft = db.transformed.get_highest_block()
+            hb_ft = db.transformed.get_highest_block_fulltransform()
             hb_raw = db.raw.get_highest_block()
             start_block = db.transformed.get_highest_block_delta_updater() + 1
             latest_address_id = db.transformed.get_highest_address_id()

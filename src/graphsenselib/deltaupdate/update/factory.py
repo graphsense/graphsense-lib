@@ -2,6 +2,7 @@ from ...config import currency_to_schema_type
 from ...db import AnalyticsDb
 from .abstractupdater import AbstractUpdateStrategy
 from .account import UpdateStrategyAccount
+from .generic import ApplicationStrategy
 from .utxo import UpdateStrategyUtxo
 from .utxolegacy import UpdateStrategyUtxoLegacy
 
@@ -15,12 +16,16 @@ class UpdaterFactory:
         write_new: bool,
         write_dirty: bool,
         pedantic: bool,
+        write_batch: int,
     ) -> AbstractUpdateStrategy:
         schema_type = currency_to_schema_type[currency]
         if schema_type == "utxo" and version == 1:
             return UpdateStrategyUtxoLegacy(db, currency, write_new, write_dirty)
         if schema_type == "utxo" and version == 2:
-            return UpdateStrategyUtxo(db, currency, pedantic)
+            app_strat = (
+                ApplicationStrategy.BATCH if write_batch > 1 else ApplicationStrategy.TX
+            )
+            return UpdateStrategyUtxo(db, currency, pedantic, app_strat)
         if schema_type == "account" and version == 1:
             return UpdateStrategyAccount(db, currency, write_new, write_dirty)
         else:

@@ -1,4 +1,5 @@
 import click
+from rich.traceback import install
 
 from .. import __version__
 from ..config.cli import config_cli
@@ -7,7 +8,7 @@ from ..db.cli import db_cli
 from ..deltaupdate.cli import deltaupdate_cli
 from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
-from ..utils import configure_logging
+from ..utils.logging import configure_logging
 from .common import try_load_config
 
 __author__ = "iknaio"
@@ -56,6 +57,8 @@ def cli(verbose: int):
 
 
 def main():
+    """install rich as traceback handler for all cli commands"""
+    install(show_locals=True)
     # This also validates the configuration
     try_load_config()
     cli()

@@ -18,6 +18,7 @@ class KeyspaceConfig(BaseModel):
     raw_keyspace_name: str
     transformed_keyspace_name: str
     schema_type: str
+    disable_delta_updates: bool = False
 
     @validator("schema_type")
     def schema_type_in_range(cls, v):
@@ -69,6 +70,7 @@ class AppConfig(GoodConf):
                         "raw_keyspace_name": f"{cur}_raw_{env}",
                         "transformed_keyspace_name": f"{cur}_transformed_{env}",
                         "schema_type": currency_to_schema_type[cur],
+                        "#disable_delta_updates": "false",
                     }
                     for cur in supported_base_currencies
                 },
@@ -91,6 +93,9 @@ class AppConfig(GoodConf):
 
     def path(self):
         return self.Config._config_file
+
+    def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
+        return self.environments[env].keyspaces[currency]
 
 
 config = AppConfig(load=True)
