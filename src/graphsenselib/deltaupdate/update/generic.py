@@ -66,7 +66,7 @@ class EntityDelta(DeltaUpdate):
         return Cls(
             identifier=idetifier,
             total_received=DeltaValue.from_db(db_row.total_received),
-            total_spent=DeltaValue.from_db(db_row.total_received),
+            total_spent=DeltaValue.from_db(db_row.total_spent),
             first_tx_id=db_row.first_tx_id,
             last_tx_id=db_row.last_tx_id,
             no_incoming_txs=db_row.no_incoming_txs,
@@ -335,20 +335,12 @@ def prepare_relations_for_ingest(
     changes = []
     """ Merging relations deltas """
     for relations_update in delta:
-        outr = (
-            outrelations[
-                (relations_update.src_identifier, relations_update.dst_identifier)
-            ]
-            .result()
-            .one()
-        )
-        inr = (
-            inrelations[
-                (relations_update.src_identifier, relations_update.dst_identifier)
-            ]
-            .result()
-            .one()
-        )
+        outr = outrelations[
+            (relations_update.src_identifier, relations_update.dst_identifier)
+        ].result_or_exc.one()
+        inr = inrelations[
+            (relations_update.src_identifier, relations_update.dst_identifier)
+        ].result_or_exc.one()
 
         assert (outr is None) == (inr is None)
 

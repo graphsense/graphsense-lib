@@ -6,6 +6,7 @@ import click
 from filelock import FileLock
 from filelock import Timeout as LockFileTimeout
 
+from ..config import config
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.signals import gracefull_ctlc_shutdown
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def find_import_range(db, start_block_overwrite):
-    hb_ft = db.transformed.get_highest_block()
+    hb_ft = db.transformed.get_highest_block_fulltransform()
     hb_raw = db.raw.get_highest_block()
     start_block = (
         db.transformed.get_highest_block_delta_updater()
@@ -127,6 +128,13 @@ def update(
 ):
     try:
         with DbFactory().from_config(env, currency) as db:
+            if config.get_keyspace_config(env, currency).disable_delta_updates:
+                logger.error(
+                    f"Delta updates are disabled for {env} - {currency} in the "
+                    f"configuration at {config.path()}"
+                )
+                sys.exit(125)
+
             lockfile_name = (
                 f"/tmp/{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}.lock"
             )
@@ -150,6 +158,7 @@ def update(
                             write_new,
                             write_dirty,
                             pedantic,
+                            write_batch_size,
                         ),
                         batch_size=write_batch_size,
                     )

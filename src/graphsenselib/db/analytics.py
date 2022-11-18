@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
-from typing import Iterable, List, Optional, Sequence, Union
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 from ..datatypes import DbChangeType
 from ..utils import GenericArrayFacade, binary_search
@@ -473,6 +473,15 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stats = self.get_summary_statistics()
         return int(stats.no_blocks) + 1 if stats is not None else None
 
+    def get_highest_block_fulltransform(self) -> Optional[int]:
+        stats = self.get_summary_statistics()
+        if stats is not None and hasattr(stats, "no_blocks_transform"):
+            return int(stats.no_blocks_transform) + 1
+        if stats is not None:
+            return int(stats.no_blocks) + 1
+        else:
+            return None
+
     def get_highest_exchange_rate_block(self, sanity_check=True) -> Optional[int]:
         res = self.select("exchange_rates", columns=["block_id"], per_partition_limit=1)
         m = max([x.block_id for x in res])
@@ -568,6 +577,24 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
                 for (a, row) in self._db.await_batch(results)
             }
 
+    def get_address_id_async_batch(self, addresses: List[str]):
+        stmt = self.select_stmt(
+            "address_ids_by_address_prefix",
+            columns=["*"],
+            where={k: "?" for k in ["address_prefix", "address"]},
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind({"address_prefix": f"{adr.prefix}", "address": adr.db_encoding})
+            for adr in [self.to_db_address(address) for address in addresses]
+        ]
+
+        return zip(
+            addresses, self._db.execute_statements_async(bstmts, concurrency=2000)
+        )
+
     def get_address_id_async(self, address: str):
         adr = self.to_db_address(address)
         w = {"address_prefix": f"'{adr.prefix}'", "address": adr.db_encoding_query}
@@ -576,6 +603,30 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             columns=["*"],
             where=w,
             limit=1,
+        )
+
+    def get_address_async_batch(self, address_ids: List[int]):
+        bs = self.get_address_id_bucket_size()
+        stmt = self.select_stmt(
+            "address",
+            columns=["*"],
+            where={k: "?" for k in ["address_id_group", "address_id"]},
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "address_id_group": addr_id // bs,
+                    "address_id": addr_id,
+                }
+            )
+            for addr_id in address_ids
+        ]
+
+        return zip(
+            address_ids, self._db.execute_statements_async(bstmts, concurrency=2000)
         )
 
     def get_address_async(self, address_id: int):
@@ -587,6 +638,34 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             where=w,
             limit=1,
         )
+
+    def get_address_incoming_relations_async_batch(
+        self, rel_ids: List[Tuple[int, int]]
+    ):
+        stmt = self.select_stmt(
+            "address_incoming_relations",
+            columns=["*"],
+            where={
+                k: "?"
+                for k in ["dst_address_id_group", "dst_address_id", "src_address_id"]
+            },
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "dst_address_id_group": dst_address
+                    // self.get_address_id_bucket_size(),
+                    "dst_address_id": dst_address,
+                    "src_address_id": src_address,
+                }
+            )
+            for dst_address, src_address in rel_ids
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=2000)
 
     def get_address_incoming_relations_async(
         self, address_id: int, src_address_id: Optional[int]
@@ -604,6 +683,34 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             limit=1,
         )
 
+    def get_address_outgoing_relations_async_batch(
+        self, rel_ids: List[Tuple[int, int]]
+    ):
+        stmt = self.select_stmt(
+            "address_outgoing_relations",
+            columns=["*"],
+            where={
+                k: "?"
+                for k in ["src_address_id_group", "src_address_id", "dst_address_id"]
+            },
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "src_address_id_group": src_address
+                    // self.get_address_id_bucket_size(),
+                    "src_address_id": src_address,
+                    "dst_address_id": dst_address,
+                }
+            )
+            for src_address, dst_address in rel_ids
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=2000)
+
     def get_address_outgoing_relations_async(
         self, address_id: int, dst_address_id: Optional[int]
     ):
@@ -620,6 +727,30 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             limit=1,
         )
 
+    def get_cluster_async_batch(self, cluster_ids: List[int]):
+        bs = self.get_cluster_id_bucket_size()
+        stmt = self.select_stmt(
+            "cluster",
+            columns=["*"],
+            where={k: "?" for k in ["cluster_id_group", "cluster_id"]},
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "cluster_id_group": clstr_id // bs,
+                    "cluster_id": clstr_id,
+                }
+            )
+            for clstr_id in cluster_ids
+        ]
+
+        return zip(
+            cluster_ids, self._db.execute_statements_async(bstmts, concurrency=2000)
+        )
+
     def get_cluster_async(self, cluster_id: int):
         bucket = cluster_id // self.get_cluster_id_bucket_size()
         w = {"cluster_id_group": bucket, "cluster_id": f"{cluster_id}"}
@@ -629,6 +760,34 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             where=w,
             limit=1,
         )
+
+    def get_cluster_incoming_relations_async_batch(
+        self, rel_ids: List[Tuple[int, int]]
+    ):
+        stmt = self.select_stmt(
+            "cluster_incoming_relations",
+            columns=["*"],
+            where={
+                k: "?"
+                for k in ["dst_cluster_id_group", "dst_cluster_id", "src_cluster_id"]
+            },
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "dst_cluster_id_group": dst_address
+                    // self.get_address_id_bucket_size(),
+                    "dst_cluster_id": dst_address,
+                    "src_cluster_id": src_address,
+                }
+            )
+            for dst_address, src_address in rel_ids
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=2000)
 
     def get_cluster_incoming_relations_async(
         self, cluster_id: int, src_cluster_id: Optional[int]
@@ -645,6 +804,34 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             where=w,
             limit=1,
         )
+
+    def get_cluster_outgoing_relations_async_batch(
+        self, rel_ids: List[Tuple[int, int]]
+    ):
+        stmt = self.select_stmt(
+            "cluster_outgoing_relations",
+            columns=["*"],
+            where={
+                k: "?"
+                for k in ["src_cluster_id_group", "src_cluster_id", "dst_cluster_id"]
+            },
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "src_cluster_id_group": src_address
+                    // self.get_address_id_bucket_size(),
+                    "src_cluster_id": src_address,
+                    "dst_cluster_id": dst_address,
+                }
+            )
+            for src_address, dst_address in rel_ids
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=2000)
 
     def get_cluster_outgoing_relations_async(
         self, cluster_id: int, dst_cluster_id: Optional[int]

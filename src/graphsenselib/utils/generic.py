@@ -1,6 +1,5 @@
 import bisect
 import itertools
-import logging
 from typing import Iterable, Optional
 
 import pandas as pd
@@ -90,6 +89,10 @@ def remove_multi_whitespace(string):
     return " ".join(string.split())
 
 
+def no_nones(lst):
+    return [item for item in lst if item is not None]
+
+
 def flatten(list_of_lists):
     return [item for sublist in list_of_lists for item in sublist]
 
@@ -105,32 +108,6 @@ def binary_search(L, x, lo, hi):
     if i == hi or L[i] != x:
         return -1
     return i
-
-
-def configure_logging(loglevel):
-    log_format = (
-        "%(asctime)s %(name)40s %(levelname)-8s | %(message)s"
-        if loglevel > 1
-        else "%(asctime)s %(levelname)-8s | %(message)s"
-    )
-
-    if loglevel == 0:
-        loglevel = logging.WARNING
-    elif loglevel == 1:
-        loglevel = logging.INFO
-    elif loglevel >= 2:
-        loglevel = logging.DEBUG
-
-    logging.basicConfig(
-        format=log_format,
-        level=loglevel,
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    logging.getLogger("cassandra").setLevel(logging.ERROR)
-    logging.getLogger("Cluster").setLevel(logging.ERROR)
-    logging.getLogger("requests").setLevel(logging.ERROR)
-    logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 
 def pandas_row_factory(colnames, rows):

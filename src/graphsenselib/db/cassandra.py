@@ -327,7 +327,22 @@ class CassandraDb:
         self.session.execute(batch)
 
     def execute_statements(self, statements: List[BoundStatement]):
-        execute_concurrent(self.session, [(stmt, None) for stmt in statements])
+        return execute_concurrent(
+            self.session,
+            [(stmt, None) for stmt in statements],
+            raise_on_first_error=True,
+        )
+
+    def execute_statements_async(
+        self, statements: List[BoundStatement], concurrency=100
+    ):
+        return execute_concurrent(
+            self.session,
+            [(stmt, None) for stmt in statements],
+            raise_on_first_error=True,
+            concurrency=concurrency,
+            results_generator=True,
+        )
 
     @needs_session
     def execute_statement_async(self, stmt, params):

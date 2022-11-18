@@ -5,12 +5,21 @@ from contextlib import contextmanager
 logger = logging.getLogger(__name__)
 
 SHUTDOWN = False
+SHUTDOWN_SIGNAL_CNT = 0
 
 
 def shutdown_handler(signum, frame):
-    global SHUTDOWN
-    logger.warning("Received STRG-C, will shutdown after batch is written.")
+    global SHUTDOWN, SHUTDOWN_SIGNAL_CNT
+    logger.warning("Received STRG-C, will shutdown after at a save place.")
     SHUTDOWN = True
+    SHUTDOWN_SIGNAL_CNT += 1
+    if SHUTDOWN_SIGNAL_CNT > 10:
+        logger.warning(
+            "Received STRG-C more than 10 times. "
+            "Disabling shutdown handler. "
+            "The next STRG-C will terminate the process. "
+            "Be careful, you are on you own now."
+        )
 
 
 def shutdown_initialized():
