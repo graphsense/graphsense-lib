@@ -20,7 +20,7 @@ class KeyspaceConfig(BaseModel):
     schema_type: str
     disable_delta_updates: bool = Field(default_factory=lambda: False)
 
-    @validator("schema_type")
+    @validator("schema_type", allow_reuse=True)
     def schema_type_in_range(cls, v):
         assert (
             v.lower() in schema_types
