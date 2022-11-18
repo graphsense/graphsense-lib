@@ -27,6 +27,7 @@ def get_db_types_by_schema_type(schema_type) -> DbTypeStrategy:
 
 class DbFactory:
     def from_config(self, env, currency):
+        config.load()
         e = config.environments[env]
         ks = e.keyspaces[currency]
         return self.from_name(

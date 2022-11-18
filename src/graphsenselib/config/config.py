@@ -98,4 +98,4 @@ class AppConfig(GoodConf):
         return self.environments[env].keyspaces[currency]
 
 
-config = AppConfig(load=True)
+config = AppConfig(load=False)
