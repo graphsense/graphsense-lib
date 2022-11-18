@@ -18,7 +18,7 @@ class KeyspaceConfig(BaseModel):
     raw_keyspace_name: str
     transformed_keyspace_name: str
     schema_type: str
-    disable_delta_updates: bool = False
+    disable_delta_updates: bool = Field(default_factory=lambda: False)
 
     @validator("schema_type")
     def schema_type_in_range(cls, v):
