@@ -27,7 +27,7 @@ class KeyspaceConfig(BaseModel):
         ), f'Schema must be either {", ".join(schema_types)}'
         return v.lower()
 
-    @validator("transformed_keyspace_name")
+    @validator("transformed_keyspace_name", allow_reuse=True)
     def keyspace_prefix_match(cls, v, values, **kwargs):
         raw = values["raw_keyspace_name"]
 
@@ -36,7 +36,7 @@ class KeyspaceConfig(BaseModel):
 
         return v
 
-    @validator("schema_type")
+    @validator("schema_type", allow_reuse=True)
     def keyspace_prefix_matches_schema(cls, v, values, **kwargs):
         raw = values["raw_keyspace_name"]
         key = raw[:3].lower()
