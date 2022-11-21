@@ -3,6 +3,7 @@ import threading
 import time
 
 import click
+from rich.console import Console
 from rich.logging import RichHandler
 
 
@@ -17,11 +18,17 @@ def configure_logging(loglevel):
         loglevel = logging.DEBUG
 
     """ RichHandler colorizes the logs """
+    c = Console(width=20)
+    if c.is_terminal:
+        rh = RichHandler(rich_tracebacks=True, tracebacks_suppress=[click])
+    else:
+        # if file redirect set terminal width to 255
+        rh = RichHandler(rich_tracebacks=True, tracebacks_suppress=[click], console=c)
     logging.basicConfig(
         format=log_format,
         level=loglevel,
         datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[RichHandler(rich_tracebacks=True, tracebacks_suppress=[click])],
+        handlers=[rh],
     )
 
     logging.getLogger("cassandra").setLevel(logging.ERROR)
