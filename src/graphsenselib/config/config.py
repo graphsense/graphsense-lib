@@ -103,7 +103,7 @@ class AppConfig(GoodConf):
     def get_environment(self, env: str) -> Environment:
         if not self.is_loaded():
             self.load()
-        return self.get_environment[env]
+        return self.environments[env]
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)
