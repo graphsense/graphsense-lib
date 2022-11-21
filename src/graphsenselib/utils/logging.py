@@ -18,7 +18,7 @@ def configure_logging(loglevel):
         loglevel = logging.DEBUG
 
     """ RichHandler colorizes the logs """
-    c = Console(width=20)
+    c = Console(width=255)
     if c.is_terminal:
         rh = RichHandler(rich_tracebacks=True, tracebacks_suppress=[click])
     else:
