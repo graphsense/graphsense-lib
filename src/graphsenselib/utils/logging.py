@@ -18,12 +18,17 @@ def configure_logging(loglevel):
         loglevel = logging.DEBUG
 
     """ RichHandler colorizes the logs """
-    c = Console(width=255)
+    c = Console(width=220)
     if c.is_terminal:
         rh = RichHandler(rich_tracebacks=True, tracebacks_suppress=[click])
     else:
-        # if file redirect set terminal width to 255
-        rh = RichHandler(rich_tracebacks=True, tracebacks_suppress=[click], console=c)
+        # if file redirect set terminal width to 220
+        rh = RichHandler(
+            rich_tracebacks=True,
+            tracebacks_suppress=[click],
+            console=c,
+            show_path=False,
+        )
     logging.basicConfig(
         format=log_format,
         level=loglevel,

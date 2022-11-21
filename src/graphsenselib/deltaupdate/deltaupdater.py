@@ -26,7 +26,8 @@ def find_import_range(db, start_block_overwrite):
     latest_address_id = db.transformed.get_highest_address_id()
     latest_cluster_id = db.transformed.get_highest_cluster_id()
     logger.info(f"Last addr id:       {latest_address_id:12}")
-    logger.info(f"Last cltr id:       {latest_cluster_id:12}")
+    if latest_cluster_id is not None:
+        logger.info(f"Last cltr id:       {latest_cluster_id:12}")
     logger.info(f"Raw     Config:      {db.raw.get_configuration()}")
     logger.info(f"Transf. Config:      {db.transformed.get_configuration()}")
     end_block = db.raw.find_highest_block_with_exchange_rates()
