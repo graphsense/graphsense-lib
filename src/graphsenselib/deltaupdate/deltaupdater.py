@@ -2,13 +2,13 @@ import logging
 import sys
 from typing import Optional
 
-import click
 from filelock import FileLock
 from filelock import Timeout as LockFileTimeout
 
 from ..config import config
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
+from ..utils.console import console
 from ..utils.signals import gracefull_ctlc_shutdown
 from .update import AbstractUpdateStrategy, UpdaterFactory
 
@@ -48,12 +48,12 @@ def state(env, currency):
             f"keyspace from {start_block}-{end_block}."
         )
 
-        click.echo("==== Update history:")
+        console.rule("Update history")
         res = sorted(
             db.transformed.get_delta_updater_history(),
             key=lambda r: r.last_synced_block,
         )
-        click.echo(get_cassandra_result_as_dateframe(res))
+        console.print(get_cassandra_result_as_dateframe(res))
 
 
 def validate(env, currency):
@@ -62,7 +62,7 @@ def validate(env, currency):
         highest_block_before_delta = db.transformed.get_highest_block()
         highest_block_delta = db.transformed.get_highest_block_delta_updater()
 
-        click.echo(
+        console.print(
             f"==== Checking imported exchange rates for gaps,"
             f"from {offset} blocks before delta from {highest_block_before_delta} "
             f"- {offset} to {highest_block_delta}"
@@ -72,13 +72,13 @@ def validate(env, currency):
             er = db.transformed.get_exchange_rates_by_block(b)
             if er is None:
                 errc += 1
-                click.echo(f"Missing exchange rates for block {b}!!!")
+                console.print(f"Missing exchange rates for block {b}!!!")
 
         if errc > 0:
-            click.echo(f"{errc} Gaps found in exchange rates.")
+            console.print(f"{errc} Gaps found in exchange rates.")
             sys.exit(92)
         else:
-            click.echo("No gaps found in exchange rates")
+            console.print("No gaps found in exchange rates")
 
 
 def update_transformed(

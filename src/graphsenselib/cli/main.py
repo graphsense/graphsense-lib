@@ -8,6 +8,7 @@ from ..db.cli import db_cli
 from ..deltaupdate.cli import deltaupdate_cli
 from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
+from ..utils.console import console
 from ..utils.logging import configure_logging
 from .common import try_load_config
 
@@ -25,7 +26,7 @@ def version():
 @version.command("version")
 def version_cmd():
     """Display the current version."""
-    click.echo(__version__)
+    console.print(__version__)
 
 
 @click.command(

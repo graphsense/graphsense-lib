@@ -8,6 +8,7 @@ from ..config import (
     schema_types,
     supported_base_currencies,
 )
+from ..utils.console import console
 
 
 def require_environment(required=True):
@@ -56,17 +57,16 @@ def try_load_config():
     try:
         config.load()
     except Exception as e:
-        click.echo("There are errors in you graphsenselib config:")
-        click.echo("====== ERRORS:")
-        click.echo(e)
-        click.echo("====== HANDLING:")
+        console.print("There are errors in you graphsenselib config:")
+        console.rule("Errors")
+        console.print(e)
+        console.rule("Suggestions")
         file_loc = " or ".join(config.Config.default_files)
-        click.echo(
-            "Maybe there is no config file specified."
+        console.print(
+            "Maybe there is no config file specified. "
             f"Please create one in {file_loc} or specify a custom config path"
             f" in the environment variable {config.Config.file_env_var}."
         )
-        click.echo("A template file can be generated via looks like:")
-        click.echo("================================================")
-        click.echo(config.generate_yaml(DEBUG=False))
+        console.rule("Template")
+        console.print(config.generate_yaml(DEBUG=False))
         sys.exit(10)

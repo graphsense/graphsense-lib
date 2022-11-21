@@ -4,6 +4,7 @@ import click
 
 from ..cli.common import require_currency, require_environment
 from ..config import supported_fiat_currencies
+from ..utils.console import console
 from .coindesk import MIN_START as MS_CD
 from .coindesk import fetch as fetchCD
 from .coindesk import ingest as ingestCD
@@ -125,8 +126,8 @@ def fetch_cmk(
         end_date (str): -
     """
     df = fetchCMK(env, currency, list(fiat_currencies), start_date, end_date)
-    click.echo("==== Rates Coinmarketcap")
-    click.echo(df)
+    console.rule("Rates Coinmarketcap")
+    console.print(df)
 
 
 @coindesk.command("fetch")
@@ -146,8 +147,8 @@ def fetch_cd(
         end_date (str): -
     """
     df = fetchCD(env, currency, list(fiat_currencies), start_date, end_date)
-    click.echo("==== Rates Coindesk")
-    click.echo(df)
+    console.rule("Rates Coindesk")
+    console.print(df)
 
 
 @coinmarketcap.command("ingest")

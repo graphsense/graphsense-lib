@@ -1,5 +1,6 @@
 import click
 
+from ..utils.console import console
 from .config import config as cfg
 
 
@@ -17,16 +18,16 @@ def config():
 @config.command("show")
 def show():
     """Prints the configuration used in the environment."""
-    click.echo(cfg.text())
+    console.print(cfg.text())
 
 
 @config.command("path")
 def path():
     """Prints the path where the config is loaded from."""
-    click.echo(cfg.path())
+    console.print(cfg.path())
 
 
 @config.command("template")
 def default():
     """Generates a configuration template."""
-    click.echo(cfg.generate_yaml(DEBUG=False))
+    console.print(cfg.generate_yaml(DEBUG=False))

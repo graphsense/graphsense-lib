@@ -73,7 +73,7 @@ class AppConfig(GoodConf):
                         "raw_keyspace_name": f"{cur}_raw_{env}",
                         "transformed_keyspace_name": f"{cur}_transformed_{env}",
                         "schema_type": currency_to_schema_type[cur],
-                        "#disable_delta_updates": "false",
+                        "disable_delta_updates": False,
                     }
                     for cur in supported_base_currencies
                 },
