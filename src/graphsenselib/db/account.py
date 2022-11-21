@@ -1,10 +1,11 @@
-from typing import Iterable
+from typing import Iterable, Optional
 
 from .analytics import RawDb, TransformedDb
 
 
 class TransformedDbAccount(TransformedDb):
-    pass
+    def get_highest_cluster_id(self, sanity_check=True) -> Optional[int]:
+        return None
 
 
 class RawDbAccount(RawDb):

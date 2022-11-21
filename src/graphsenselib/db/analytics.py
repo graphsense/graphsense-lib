@@ -464,10 +464,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         ha = self._get_hightest_id(table="address", sanity_check=sanity_check)
         return max(ha, du.highest_address_id) if du is not None else ha
 
+    @abstractmethod
     def get_highest_cluster_id(self, sanity_check=True) -> Optional[int]:
-        """Return last ingested cluster ID from cluster table."""
-        ha = self._get_hightest_id(table="cluster", sanity_check=sanity_check)
-        return ha
+        raise Exception("Must be implemented in chain specific child class")
 
     def get_highest_block(self) -> Optional[int]:
         stats = self.get_summary_statistics()
