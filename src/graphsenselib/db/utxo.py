@@ -1,4 +1,4 @@
-from typing import Iterable
+from typing import Iterable, Optional
 
 from ..utils import flatten
 from ..utils.utxo import SlimTx, get_slim_tx_from_transaction
@@ -6,7 +6,10 @@ from .analytics import RawDb, TransformedDb
 
 
 class TransformedDbUtxo(TransformedDb):
-    pass
+    def get_highest_cluster_id(self, sanity_check=True) -> Optional[int]:
+        """Return last ingested cluster ID from cluster table."""
+        ha = self._get_hightest_id(table="cluster", sanity_check=sanity_check)
+        return ha
 
 
 class RawDbUtxo(RawDb):
