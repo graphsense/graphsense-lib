@@ -45,6 +45,9 @@ def configure_logging(loglevel):
 class IndentLogger(logging.LoggerAdapter):
     _ident = 0
 
+    def __init__(self, logger):
+        super().__init__(logger, extra={})
+
     def set_ident(self, level):
         self._ident = level
         return self
