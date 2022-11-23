@@ -13,6 +13,8 @@ currency_to_schema_type = {
 }
 supported_fiat_currencies = ["USD", "EUR"]
 
+GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 
 class KeyspaceConfig(BaseModel):
     raw_keyspace_name: str
@@ -55,6 +57,9 @@ class KeyspaceConfig(BaseModel):
 class Environment(BaseModel):
     cassandra_nodes: List[str]
     keyspaces: Dict[str, KeyspaceConfig]
+
+    def get_configured_currencies(self) -> List[str]:
+        return self.keyspaces.keys()
 
     def get_keyspace(self, currency: str) -> KeyspaceConfig:
         return self.keyspaces[currency]

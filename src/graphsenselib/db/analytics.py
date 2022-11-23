@@ -298,6 +298,12 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             "transaction": self.get_tx_bucket_size(),
         }
 
+    def get_summary_statistics(self) -> Optional[object]:
+        if self._db.has_table(self._keyspace, "summary_statistics"):
+            return self._get_only_row_from_table("summary_statistics")
+        else:
+            return None
+
     def find_highest_block_with_exchange_rates(self, lookback_in_blocks=86400) -> int:
         """Summary
             Searches for the highest block with available exchange_rates in

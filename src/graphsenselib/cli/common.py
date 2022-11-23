@@ -53,6 +53,26 @@ def require_currency(required=True):
     return inner
 
 
+def out_file(required=True, append=False):
+    def inner(function):
+        function = click.option(
+            "--out-file",
+            "-o",
+            type=click.File(
+                mode="a" if append else "w",
+                encoding=None,
+                errors="strict",
+                lazy=None,
+                atomic=False,
+            ),
+            help="Output text file.",
+            required=required,
+        )(function)
+        return function
+
+    return inner
+
+
 def try_load_config():
     try:
         config.load()

@@ -6,6 +6,8 @@ import click
 from rich.console import Console
 from rich.logging import RichHandler
 
+from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
+
 
 def configure_logging(loglevel):
     log_format = " | %(message)s"
@@ -32,7 +34,7 @@ def configure_logging(loglevel):
     logging.basicConfig(
         format=log_format,
         level=loglevel,
-        datefmt="%Y-%m-%d %H:%M:%S",
+        datefmt=GRAPHSENSE_DEFAULT_DATETIME_FORMAT,
         handlers=[rh],
     )
 
