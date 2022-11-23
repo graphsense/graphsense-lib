@@ -2,6 +2,7 @@ import click
 
 from ..cli.common import require_currency, require_environment
 from ..config import supported_base_currencies
+from ..utils.console import console
 from .factory import DbFactory
 
 
@@ -29,23 +30,28 @@ def state(env, currency):
     """
     currencies = supported_base_currencies if currency is None else [currency]
     for cur in currencies:
-        click.echo(f"\n===== {cur}")
+        console.rule(f"{cur}")
         with DbFactory().from_config(env, cur) as db:
             hb_ft = db.transformed.get_highest_block_fulltransform()
             hb_raw = db.raw.get_highest_block()
             start_block = db.transformed.get_highest_block_delta_updater() + 1
             latest_address_id = db.transformed.get_highest_address_id()
-            click.echo(f"Last addr id:       {latest_address_id:12}")
-            click.echo(f"Raw     Config:      {db.raw.get_configuration()}")
-            click.echo(f"Transf. Config:      {db.transformed.get_configuration()}")
+            latest_clstr_id = db.transformed.get_highest_cluster_id()
+            latest_clstr_id = 0 if latest_clstr_id is None else latest_clstr_id
+            console.print(f"Last addr id:       {latest_address_id:12}")
+            console.print(f"Last clstr id:      {latest_clstr_id:12}")
+            console.print(f"Raw     Config:      {db.raw.get_configuration()}")
+            console.print(f"Transf. Config:      {db.transformed.get_configuration()}")
             end_block = db.raw.find_highest_block_with_exchange_rates()
-            click.echo(f"Last delta-transform: {(start_block -1):10}")
-            click.echo(f"Last raw block:       {hb_raw:10}")
-            click.echo(f"Last raw block:       {end_block:10} (with exchanges rates).")
-            click.echo(
+            console.print(f"Last delta-transform: {(start_block -1):10}")
+            console.print(f"Last raw block:       {hb_raw:10}")
+            console.print(
+                f"Last raw block:       {end_block:10} (with exchanges rates)."
+            )
+            console.print(
                 f"Transf. behind raw:   {(end_block - (start_block -1)):10} "
                 "(delta-transform)"
             )
-            click.echo(
+            console.print(
                 f"Transf. behind raw:   {(end_block - hb_ft):10} (full-transform)"
             )
