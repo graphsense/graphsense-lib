@@ -10,7 +10,7 @@ SHUTDOWN_SIGNAL_CNT = 0
 
 def shutdown_handler(signum, frame):
     global SHUTDOWN, SHUTDOWN_SIGNAL_CNT
-    logger.warning("Received STRG-C, will shutdown after at a save place.")
+    logger.warning("Received STRG-C, will shutdown when reaching a safe spot.")
     SHUTDOWN = True
     SHUTDOWN_SIGNAL_CNT += 1
     if SHUTDOWN_SIGNAL_CNT > 10:

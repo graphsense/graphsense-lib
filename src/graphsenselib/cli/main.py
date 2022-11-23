@@ -6,6 +6,7 @@ from ..config.cli import config_cli
 from ..convert.cli import convert_cli
 from ..db.cli import db_cli
 from ..deltaupdate.cli import deltaupdate_cli
+from ..monitoring.cli import monitoring_cli
 from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
 from ..utils.console import console
@@ -38,6 +39,7 @@ def version_cmd():
         deltaupdate_cli,
         config_cli,
         convert_cli,
+        monitoring_cli,
         version,
     ],
     epilog="GraphSense - https://graphsense.github.io/",

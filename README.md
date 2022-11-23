@@ -159,6 +159,25 @@ Commands:
   template  Generates a configuration template.
 ```
 
+### Monitoring
+
+Helpful functions to keep an eye on the state and health of your graphsense database state.
+
+```bash
+graphsense-cli monitoring --help
+Usage: graphsense-cli monitoring [OPTIONS] COMMAND [ARGS]...
+
+  Tools to monitor the graphsense infrastructure.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  get-summary  Receives a summary record of the current database state.
+
+```
+
+
 ### Ingest
 
 To be implemented. Should deal with ingesting data into the raw keyspaces.
