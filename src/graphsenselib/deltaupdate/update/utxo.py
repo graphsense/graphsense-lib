@@ -249,6 +249,17 @@ def get_transaction_changes(
                 new_addr_id = get_next_address_id()
                 addresses[out_addr] = (new_addr_id, None)
                 new_cluster_ids[new_addr_id] = get_next_cluster_id()
+            elif address is None:
+                """
+                I have found cases where address_prefix table is written
+                But not the address table, for those cases we set a new
+                cluster id and create the address in turn
+                """
+                lg.warning(
+                    f"Address {out_addr} has address "
+                    f"id {addr_id} but no address entry"
+                )
+                new_cluster_ids[addr_id] = get_next_cluster_id()
 
         del ordered_output_addresses
 
