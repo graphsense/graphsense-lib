@@ -10,10 +10,12 @@ from ..db import DbFactory
 class DbSummaryRecord:
     query_timestamp: str
     currency: str
+    raw_keyspace: str
     raw_highest_block: int
     raw_no_blocks: Optional[int]
     raw_no_txs: Optional[int]
     raw_timestamp: Optional[int]
+    transformed_keyspace: str
     transformed_highest_block: int
     transformed_no_blocks: int
     transformed_no_address_relations: int
@@ -41,10 +43,12 @@ def get_db_summary_record(env: str, currency: str) -> DbSummaryRecord:
         return DbSummaryRecord(
             query_timestamp=dt.now().strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT),
             currency=currency,
+            raw_keyspace=db.raw.get_keyspace(),
             raw_highest_block=db.raw.get_highest_block(),
             raw_no_blocks=raw_stats.no_blocks if raw_stats is not None else None,
             raw_no_txs=raw_stats.no_txs if raw_stats is not None else None,
             raw_timestamp=raw_stats.timestamp if raw_stats is not None else None,
+            transformed_keyspace=db.transformed.get_keyspace(),
             transformed_highest_block=db.transformed.get_highest_block(),
             transformed_no_blocks=t_stats.no_blocks,
             transformed_no_address_relations=t_stats.no_address_relations,
