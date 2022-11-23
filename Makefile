@@ -1,8 +1,13 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := .venv
+RELEASE := 'v22.11'
+RELEASESEM := 'v1.2.0'
 
 all: format lint test build
+
+tag-version:
+	git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' && git tag -a $(RELEASESEM) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
 
 dev:
 	 pip install -e .[dev]
@@ -49,4 +54,4 @@ publish: build version
 version:
 	python -m setuptools_scm
 
-.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish
+.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version
