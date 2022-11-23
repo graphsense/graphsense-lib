@@ -332,7 +332,7 @@ def get_transaction_changes(
         def get_resolved_cluster(address_tuple):
             aidr, address = address_tuple
             if address is not None:
-                assert address.cluster_id not in new_cluster_ids
+                assert address.cluster_id not in new_cluster_ids.values()
                 assert aidr == address.address_id
                 return (
                     aidr,
