@@ -111,7 +111,7 @@ def update_transformed(
             )
 
             if shutdown_initialized():
-                logger.info(f"Got shutdown signal stoping at block {b[-1]}")
+                logger.info(f"Got shutdown signal stopping at block {b[-1]}")
                 return b[-1]
 
     return end_block
