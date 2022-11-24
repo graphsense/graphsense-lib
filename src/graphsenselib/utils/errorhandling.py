@@ -14,6 +14,10 @@ def cr_critical_section(recovery_hint: dict, crash_recoverer):
         raise e
 
 
+def get_exception_digest(ex):
+    return f"{type(ex).__name__}: {str(ex)}"
+
+
 class CrashRecoverer:
 
     """

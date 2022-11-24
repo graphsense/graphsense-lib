@@ -11,6 +11,7 @@ from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
 from ..utils.console import console
 from ..utils.logging import configure_logging
+from ..utils.slack import on_exception_notiy_slack
 from .common import try_load_config
 
 __author__ = "iknaio"
@@ -63,8 +64,10 @@ def main():
     """install rich as traceback handler for all cli commands"""
     install(show_locals=True, suppress=[click])
     # This also validates the configuration
-    try_load_config()
-    cli()
+    config = try_load_config()
+
+    with on_exception_notiy_slack(config.get_slack_exception_notification_hook_urls()):
+        cli()
 
 
 if __name__ == "__main__":
