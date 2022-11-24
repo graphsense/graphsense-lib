@@ -1,6 +1,6 @@
 import os
 
-from graphsenselib.utils import bytes_to_hex, strip_0x, to_int
+from graphsenselib.utils import batch, bytes_to_hex, strip_0x, to_int
 from graphsenselib.utils.errorhandling import CrashRecoverer
 
 
@@ -64,3 +64,17 @@ def test_crash_recoverer():
     cr.leave_recovery_mode()
     assert not cr.is_in_recovery_mode()
     assert not os.path.exists(file)
+
+
+def test_batch_works():
+    assert [list(b) for b in batch(range(763638, 763639 + 1), n=1)] == [
+        [763638],
+        [763639],
+    ]
+    assert [list(b) for b in batch(range(763638, 763639 + 1), n=2)] == [
+        [763638, 763639]
+    ]
+    assert [list(b) for b in batch(range(763638, 763640 + 1), n=2)] == [
+        [763638, 763639],
+        [763640],
+    ]

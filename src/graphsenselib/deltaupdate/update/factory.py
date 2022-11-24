@@ -17,6 +17,7 @@ class UpdaterFactory:
         write_dirty: bool,
         pedantic: bool,
         write_batch: int,
+        patch_mode: bool,
     ) -> AbstractUpdateStrategy:
         schema_type = currency_to_schema_type[currency]
         if schema_type == "utxo" and version == 1:
@@ -25,7 +26,7 @@ class UpdaterFactory:
             app_strat = (
                 ApplicationStrategy.BATCH if write_batch > 1 else ApplicationStrategy.TX
             )
-            return UpdateStrategyUtxo(db, currency, pedantic, app_strat)
+            return UpdateStrategyUtxo(db, currency, pedantic, app_strat, patch_mode)
         if schema_type == "account" and version == 1:
             return UpdateStrategyAccount(db, currency, write_new, write_dirty)
         else:

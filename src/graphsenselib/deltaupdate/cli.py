@@ -27,12 +27,18 @@ def delta():
     "usually yields better performance but needs more memory.",
 )
 @click.option(
-    "-s",
     "--start-block",
     type=int,
     default=None,
-    help="Block at which to start the update. "
+    help="Block at which to start the update (inclusive). "
     "(default: start from latest transformed block)",
+)
+@click.option(
+    "--end-block",
+    type=int,
+    default=None,
+    help="Block at which to end the update (inclusive). "
+    "(default: until raw data ends)",
 )
 @click.option(
     "--updater-version",
@@ -48,6 +54,7 @@ def deltaupdate(
     env,
     currency,
     start_block,
+    end_block,
     write_new,
     write_dirty,
     write_batch_size,
@@ -68,6 +75,7 @@ def deltaupdate(
         env,
         currency,
         start_block,
+        end_block,
         write_new,
         write_dirty,
         write_batch_size,
