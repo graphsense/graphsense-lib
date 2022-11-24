@@ -15,14 +15,11 @@ from .update import AbstractUpdateStrategy, UpdaterFactory
 logger = logging.getLogger(__name__)
 
 
-def find_import_range(db, start_block_overwrite):
+def find_import_range(db, start_block_overwrite, end_block_overwrite):
     hb_ft = db.transformed.get_highest_block_fulltransform()
     hb_raw = db.raw.get_highest_block()
-    start_block = (
-        db.transformed.get_highest_block_delta_updater()
-        if start_block_overwrite is None
-        else start_block_overwrite
-    ) + 1
+    hb_du = db.transformed.get_highest_block_delta_updater()
+    start_block = hb_du + 1 if start_block_overwrite is None else start_block_overwrite
     latest_address_id = db.transformed.get_highest_address_id()
     latest_cluster_id = db.transformed.get_highest_cluster_id()
     logger.info(f"Last addr id:       {latest_address_id:12}")
@@ -30,7 +27,11 @@ def find_import_range(db, start_block_overwrite):
         logger.info(f"Last cltr id:       {latest_cluster_id:12}")
     logger.info(f"Raw     Config:      {db.raw.get_configuration()}")
     logger.info(f"Transf. Config:      {db.transformed.get_configuration()}")
-    end_block = db.raw.find_highest_block_with_exchange_rates()
+    end_block = (
+        db.raw.find_highest_block_with_exchange_rates()
+        if end_block_overwrite is None
+        else end_block_overwrite
+    )
     logger.info(f"Last delta-transform: {(start_block -1):10}")
     logger.info(f"Last raw block:       {hb_raw:10}")
     logger.info(f"Last raw block:       {end_block:10} (with exchanges rates).")
@@ -38,12 +39,16 @@ def find_import_range(db, start_block_overwrite):
         f"Transf. behind raw:   {(end_block - (start_block -1)):10} (delta-transform)"
     )
     logger.info(f"Transf. behind raw:   {(end_block - hb_ft):10} (full-transform)")
-    return start_block, end_block
+    return (
+        start_block,
+        end_block,
+        (end_block_overwrite is not None and end_block <= hb_du),
+    )
 
 
 def state(env, currency):
     with DbFactory().from_config(env, currency) as db:
-        start_block, end_block = find_import_range(db, None)
+        start_block, end_block, _ = find_import_range(db, None)
         logger.info(
             "Parameters would update the transformed "
             f"keyspace from {start_block}-{end_block}."
@@ -90,13 +95,14 @@ def update_transformed(
 ):
     updater.prepare_database()
     with gracefull_ctlc_shutdown() as shutdown_initialized:
-        for b in batch(range(start_block, end_block), n=batch_size):
+        for b in batch(range(start_block, end_block + 1), n=batch_size):
 
             logger.info(
-                f"Working on batch ({batch_size}) "
+                f"Working on batch ({len(b)}) "
                 f"from block {min(b)} to {max(b)}. "
                 f"Done with {min(b) - start_block}, {end_block - min(b)} to go."
             )
+
             updater.process_batch(b)
             updater.persist_updater_progress()
 
@@ -104,7 +110,7 @@ def update_transformed(
             to_go = end_block - max(b)
             bps = blocks_processed / updater.elapsed_seconds_global
             logger.info(
-                f"Batch of {batch_size} blocks took "
+                f"Batch of {len(b)} blocks took "
                 f"{updater.elapsed_seconds_last_batch:.3f} s that's "
                 f"{bps:.3f} blocks per second. Approx. {((to_go / bps) / 60):.3f} "
                 "minutes remaining."
@@ -121,6 +127,7 @@ def update(
     env: str,
     currency: str,
     start_block: Optional[int],
+    end_block: Optional[int],
     write_new: bool,
     write_dirty: bool,
     write_batch_size: int,
@@ -142,13 +149,29 @@ def update(
             logger.info(f"Try acquiring lockfile {lockfile_name}")
             with FileLock(lockfile_name, timeout=1):
 
-                start_block, end_block = find_import_range(db, start_block)
+                start_block, end_block, patch_mode = find_import_range(
+                    db, start_block, end_block
+                )
 
                 if end_block > start_block:
                     logger.info(
                         "Start updating transformed "
                         f"Keyspace {start_block}-{end_block}."
                     )
+                    if patch_mode:
+                        logger.warning(
+                            "Running in patch mode, no_block will not be updated."
+                        )
+
+                    last_block_er = db.transformed.get_exchange_rates_by_block(
+                        start_block - 1
+                    )
+                    if last_block_er is None:
+                        raise Exception(
+                            "Could not find exchange rate for start block "
+                            f"{start_block} - 1, is this an error?"
+                        )
+
                     update_transformed(
                         start_block,
                         end_block,
@@ -160,6 +183,7 @@ def update(
                             write_dirty,
                             pedantic,
                             write_batch_size,
+                            patch_mode=patch_mode,
                         ),
                         batch_size=write_batch_size,
                     )

@@ -541,6 +541,7 @@ def get_bookkeeping_changes(
     highest_address_id: int,
     runtime_seconds: int,
     bts: Dict[int, datetime],
+    patch_mode: bool,
 ) -> List[DbChange]:
     """Creates changes for the bookkeeping tables like summary statistics after
     other data has been updated.
@@ -567,7 +568,9 @@ def get_bookkeeping_changes(
         no_blocks = last_block_processed - 1
 
         """ Update local stats """
-        stats.no_blocks = no_blocks
+        if not patch_mode:
+            """when in patch mode (end block set by user)"""
+            stats.no_blocks = no_blocks
         stats.timestamp = int(lb_date.timestamp())
         stats.no_address_relations += nr_new_address_relations
         stats.no_addresses += nr_new_addresses
@@ -577,7 +580,8 @@ def get_bookkeeping_changes(
 
         statistics = stats.as_dict()
         if current_statistics is not None and current_statistics.no_blocks != no_blocks:
-            assert current_statistics.no_blocks < no_blocks
+            if not patch_mode:
+                assert current_statistics.no_blocks < no_blocks
             changes.append(
                 DbChange.delete(
                     table="summary_statistics",
@@ -1111,6 +1115,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         currency: str,
         pedantic: bool,
         application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
+        patch_mode: bool = False,
     ):
         super().__init__(db, currency)
         crash_file = (
@@ -1126,6 +1131,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
             else None
         )
         self._pedantic = pedantic
+        self._patch_mode = patch_mode
         self.changes = None
         self.application_strategy = application_strategy
         logger.info(f"Updater running in {application_strategy} mode.")
@@ -1236,6 +1242,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                     self.highest_address_id,
                     runtime_seconds,
                     bts,
+                    patch_mode=self._patch_mode,
                 )
             )
 
@@ -1320,6 +1327,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 self.highest_address_id,
                                 runtime_seconds,
                                 bts,
+                                patch_mode=self._patch_mode,
                             )
                             apply_changes(
                                 self._db,

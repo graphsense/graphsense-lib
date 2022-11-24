@@ -61,7 +61,7 @@ def cli(verbose: int):
 
 def main():
     """install rich as traceback handler for all cli commands"""
-    install(show_locals=True)
+    install(show_locals=True, suppress=[click])
     # This also validates the configuration
     try_load_config()
     cli()
