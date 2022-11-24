@@ -224,9 +224,9 @@ def prepare_entities_for_ingest(
     id_bucket_size: int,
     get_address_prefix: Callable[[str], Tuple[str, str]],
     mode: EntityType,
-) -> List[DbChange]:
+) -> Tuple[List[DbChange], int]:
     changes = []
-
+    nr_new_entities = 0
     for update in delta:
         int_ident, entity = (
             resolve_identifier(update.identifier),
@@ -266,6 +266,7 @@ def prepare_entities_for_ingest(
         else:
             """new address/cluster"""
             assert update.first_tx_id <= update.last_tx_id
+            nr_new_entities += 1
 
             data = {
                 "no_incoming_txs": update.no_incoming_txs,
@@ -317,7 +318,7 @@ def prepare_entities_for_ingest(
                     )
                 )
 
-    return changes
+    return changes, nr_new_entities
 
 
 def prepare_relations_for_ingest(

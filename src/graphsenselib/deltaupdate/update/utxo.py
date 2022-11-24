@@ -37,6 +37,10 @@ from .generic import (
 logger = logging.getLogger(__name__)
 
 
+def get_table_abbrev(table_name: str) -> str:
+    return "".join([f"{x[:1]}" for x in table_name.split("_")])
+
+
 def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
     """Create a DbDelta instance form a transaction
 
@@ -137,7 +141,7 @@ def get_transaction_changes(
     rates: Dict[int, List],
     get_next_address_id: Callable[[], int],
     get_next_cluster_id: Callable[[], int],
-) -> Tuple[List[DbChange], int, int, int]:
+) -> Tuple[List[DbChange], int, int, int, int]:
     """Main function to transform a list of transactions from the raw
     keyspace to changes to the transformed db.
 
@@ -462,6 +466,7 @@ def get_transaction_changes(
         new_relations_in = {}
         new_relations_out = {}
         nr_new_relations = {}
+        nr_new_entities_created = {}
         for mode, config in ingest_configs.items():
             lg.debug(f"Prepare {mode} data.")
             """
@@ -498,25 +503,27 @@ def get_transaction_changes(
             new_relations_out[mode] = new_rels_out
             changes.extend(changes_relations)
 
-            """ Merging address deltas """
-            changes.extend(
-                prepare_entities_for_ingest(
-                    config["delta"].entity_updates,
-                    config["id_transformation"],
-                    config["get_entity"],
-                    address_to_cluster_id,
-                    cluster_id_to_address_id,
-                    new_relations_in[mode],
-                    new_relations_out[mode],
-                    config["bucket_size"],
-                    get_address_prefix,
-                    mode=mode,
-                )
+            """ Merging entity deltas """
+            entity_changes, nr_new_entities = prepare_entities_for_ingest(
+                config["delta"].entity_updates,
+                config["id_transformation"],
+                config["get_entity"],
+                address_to_cluster_id,
+                cluster_id_to_address_id,
+                new_relations_in[mode],
+                new_relations_out[mode],
+                config["bucket_size"],
+                get_address_prefix,
+                mode=mode,
             )
+            changes.extend(entity_changes)
+            nr_new_entities_created[mode] = nr_new_entities
+            del nr_new_entities
 
     return (
         changes,
-        len_addr,
+        nr_new_entities_created[EntityType.ADDRESS],
+        nr_new_entities_created[EntityType.CLUSTER],
         nr_new_relations[EntityType.ADDRESS],
         nr_new_relations[EntityType.CLUSTER],
     )
@@ -1034,6 +1041,7 @@ def apply_changes(
         e: reraises exceptions, a common instance for exceptions is when batches
         are too large. Cassandra has a hard limit for batch sizes
     """
+
     # Validate changes
     atomic = True
     if pedantic:
@@ -1044,10 +1052,28 @@ def apply_changes(
             lg.debug("Nothing to apply")
             return
         lg.debug(f"{len(changes)} updates to apply. Change Summary:")
-        summary = group_by(changes, lambda x: (str(x.action), x.table))
 
-        for (a, t), x in summary.items():
-            logger.debug(f"{len(x):6} {a:7} on {t:20}")
+        chng_summary = {
+            t: group_by(c, lambda y: str(y.action))
+            for t, c in group_by(changes, lambda x: x.table).items()
+        }
+        t_actions = [
+            (
+                t,
+                "; ".join(
+                    [
+                        f"{a[0].replace('n', '+').replace('d','-')}{len(chngs)}"
+                        for a, chngs in actions.items()
+                    ]
+                ),
+            )
+            for t, actions in chng_summary.items()
+        ]
+
+        short_summary = "; ".join(
+            [f"{get_table_abbrev(t)}: {action_str}" for t, action_str in t_actions]
+        )
+        logger.info(short_summary)
 
     with LoggerScope.debug(logger, "Applying changes") as _:
         try:
@@ -1180,7 +1206,8 @@ class UpdateStrategyUtxo(UpdateStrategy):
             changes = []
             (
                 delta_changes,
-                _,
+                nr_new_addresses,
+                nr_new_clusters,
                 nr_new_address_relations,
                 nr_new_cluster_relations,
             ) = get_transaction_changes(
@@ -1202,9 +1229,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
                     self._db.transformed.get_summary_statistics(),
                     last_block_processed,
                     nr_new_address_relations,
-                    self._nr_new_addresses,
+                    nr_new_addresses,
                     nr_new_cluster_relations,
-                    self._nr_new_clusters,
+                    nr_new_clusters,
                     nr_new_tx,
                     self.highest_address_id,
                     runtime_seconds,
@@ -1265,7 +1292,8 @@ class UpdateStrategyUtxo(UpdateStrategy):
                         with self.crash_recoverer.enter_critical_section(crash_hint):
                             (
                                 delta_changes_tx,
-                                _,
+                                nr_new_addresses,
+                                nr_new_clusters,
                                 nr_new_address_relations_tx,
                                 nr_new_cluster_relations_tx,
                             ) = get_transaction_changes(
@@ -1285,9 +1313,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 self._db.transformed.get_summary_statistics(),
                                 last_block_processed,
                                 nr_new_address_relations,
-                                self._nr_new_addresses,
+                                nr_new_addresses,
                                 nr_new_cluster_relations,
-                                self._nr_new_clusters,
+                                nr_new_clusters,
                                 nr_new_tx,
                                 self.highest_address_id,
                                 runtime_seconds,
