@@ -65,6 +65,10 @@ class Environment(BaseModel):
         return self.keyspaces[currency]
 
 
+class SlackTopic(BaseModel):
+    hooks: List[str] = Field(default_factory=lambda: [])
+
+
 class AppConfig(GoodConf):
 
     """Graphsenselib config file"""
@@ -88,6 +92,10 @@ class AppConfig(GoodConf):
         description="Separate configs per environment",
     )
 
+    slack_topics: Dict[str, SlackTopic] = Field(
+        initial=lambda: {}, default_factory=lambda: {}
+    )
+
     class Config:
         file_env_var = "GRAPHSENSE_CONFIG_YAML"
         default_files = [".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")]
@@ -109,6 +117,12 @@ class AppConfig(GoodConf):
         if not self.is_loaded():
             self.load()
         return self.environments[env]
+
+    def get_slack_exception_notification_hook_urls(self) -> List[str]:
+        if "exceptions" in self.slack_topics:
+            return self.slack_topics["exceptions"].hooks
+        else:
+            return []
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)

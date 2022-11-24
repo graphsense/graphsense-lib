@@ -1,11 +1,47 @@
 import json
-from typing import Dict
+import logging
+import os
+import sys
+from contextlib import contextmanager
+from typing import Dict, List
 
 import requests
 
+from .errorhandling import get_exception_digest
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def on_exception_notiy_slack(webhooks: List[str]):
+    try:
+        yield
+    except Exception as e:
+        for hook in webhooks:
+            try:
+                ret = send_exception_digest_to_slack(e, hook)
+                if ret.status_code != 200:
+                    logger.error(
+                        f"Failed to send exception detail to slack - {e}. "
+                        f"Got status code {ret}, url wrong?"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to send exception detail to slack - {e}")
+        raise e
+
+
+def send_exception_digest_to_slack(ex, webhook: str):
+    return send_message_to_slack(
+        f"{get_exception_digest(ex)} \n"
+        f"in {' '.join(sys.argv)}.\n"
+        f"on {os.uname()}\n"
+        "Check the logs for more detail.",
+        webhook,
+    )
+
 
 def send_message_to_slack(msg: str, webhook: str):
-    return send_payload_to_slack({"message": msg}, webhook)
+    return send_payload_to_slack({"text": msg}, webhook)
 
 
 def send_payload_to_slack(payload: Dict, webhook: str):
@@ -18,5 +54,5 @@ def send_payload_to_slack(payload: Dict, webhook: str):
     Returns:
         HTTP response code, i.e. <Response [503]>
     """
-
-    return requests.post(webhook, json.dumps(payload))
+    headers = {"Content-type": "application/json"}
+    return requests.post(webhook, json.dumps(payload), headers=headers)
