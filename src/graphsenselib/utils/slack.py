@@ -31,10 +31,12 @@ def on_exception_notiy_slack(webhooks: List[str]):
 
 
 def send_exception_digest_to_slack(ex, webhook: str):
+    machine = os.uname()
+    machine_str = f"{machine.nodename} ({machine.sysname})"
     return send_message_to_slack(
         f"{get_exception_digest(ex)} \n"
         f"in {' '.join(sys.argv)}.\n"
-        f"on {os.uname()}\n"
+        f"on {machine_str}\n"
         "Check the logs for more detail.",
         webhook,
     )
