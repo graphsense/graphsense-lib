@@ -54,4 +54,7 @@ publish: build version
 version:
 	python -m setuptools_scm
 
-.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version
+click-bash-completion:
+	_GRAPHSENSE_CLI_COMPLETE=bash_source graphsense-cli
+
+.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion
