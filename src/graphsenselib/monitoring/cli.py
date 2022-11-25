@@ -7,6 +7,7 @@ from ..cli.common import out_file, require_currency, require_environment
 from ..config import config
 from ..utils.console import console
 from .monitoring import DbSummaryRecord, get_db_summary_record
+from .notifications import send_msg_to_topic
 
 
 @click.group()
@@ -61,3 +62,26 @@ def summary(env, currency, out_file, no_header):
     if out_file is None:
         # print records to stdout if no file is specified
         console.print(output_stream.getvalue())
+
+
+@monitoring.command(
+    "notify",
+    short_help="Sends a message to the "
+    "configured handlers (e.g. a slack channel) by topic.",
+)
+@click.option(
+    "--topic",
+    "-t",
+    type=str,
+    help="Topic to send to.",
+    required=True,
+)
+@click.option(
+    "--msg",
+    "-m",
+    type=str,
+    help="Message to send.",
+    required=True,
+)
+def notify(topic, msg):
+    send_msg_to_topic(topic, msg)

@@ -1,8 +1,10 @@
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from goodconf import Field, GoodConf
 from pydantic import BaseModel, validator
+
+from ..utils import flatten
 
 supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec"]
 default_environments = ["prod", "test"]
@@ -113,6 +115,27 @@ class AppConfig(GoodConf):
     def path(self):
         return self.Config._config_file
 
+    def get_configured_environments(self):
+        if self.is_loaded():
+            return self.environments.keys()
+        else:
+            return []
+
+    def get_configured_currencies(self):
+        if self.is_loaded():
+            return list(
+                set(
+                    flatten(
+                        [ec.keyspaces.keys() for e, ec in self.environments.items()]
+                    )
+                )
+            )
+        else:
+            return []
+
+    def get_configured_slack_topics(self) -> List[str]:
+        return self.slack_topics.keys()
+
     def get_environment(self, env: str) -> Environment:
         if not self.is_loaded():
             self.load()
@@ -123,6 +146,12 @@ class AppConfig(GoodConf):
             return self.slack_topics["exceptions"].hooks
         else:
             return []
+
+    def get_slack_hooks_by_topic(self, topic: str) -> Optional[SlackTopic]:
+        if topic in self.slack_topics:
+            return self.slack_topics[topic]
+        else:
+            return None
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)
