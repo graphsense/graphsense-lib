@@ -37,9 +37,9 @@ def state(env, currency):
             start_block = db.transformed.get_highest_block_delta_updater() + 1
             latest_address_id = db.transformed.get_highest_address_id()
             latest_clstr_id = db.transformed.get_highest_cluster_id()
-            latest_clstr_id = 0 if latest_clstr_id is None else latest_clstr_id
             console.print(f"Last addr id:       {latest_address_id:12}")
-            console.print(f"Last clstr id:      {latest_clstr_id:12}")
+            if latest_clstr_id is not None:
+                console.print(f"Last cltr id:       {latest_clstr_id:12}")
             console.print(f"Raw     Config:      {db.raw.get_configuration()}")
             console.print(f"Transf. Config:      {db.transformed.get_configuration()}")
             end_block = db.raw.find_highest_block_with_exchange_rates()
@@ -49,7 +49,7 @@ def state(env, currency):
                 f"Last raw block:       {end_block:10} (with exchanges rates)."
             )
             console.print(
-                f"Transf. behind raw:   {(end_block - (start_block -1)):10} "
+                f"Transf. behind raw:   {(end_block - (start_block - 1)):10} "
                 "(delta-transform)"
             )
             console.print(
