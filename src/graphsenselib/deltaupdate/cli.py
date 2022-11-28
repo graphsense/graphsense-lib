@@ -94,11 +94,19 @@ def status(env, currency):
 @delta.command("validate")
 @require_environment()
 @require_currency()
-def validatedelta(env: str, currency: str):
+@click.option(
+    "--look-back-blocks",
+    type=int,
+    default=20,
+    help="How may historic blocks to look at. ",
+)
+def validatedelta(env: str, currency: str, look_back_blocks: int):
     """Validates the current delta update status and its history.
     \f
+
     Args:
         env (str): Env to work on
         currency (str): Currency to work on
+        look_back_blocks (int): How many blocks to check
     """
-    validate(env, currency)
+    validate(env, currency, look_back_blocks)

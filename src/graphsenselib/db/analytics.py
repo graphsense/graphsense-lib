@@ -304,7 +304,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         else:
             return None
 
-    def find_highest_block_with_exchange_rates(self, lookback_in_blocks=86400) -> int:
+    def find_highest_block_with_exchange_rates(
+        self, lookback_in_blocks=86400, validate=True
+    ) -> int:
         """Summary
             Searches for the highest block with available exchange_rates in
             the raw keyspace this is the maximum block the importer works on.
@@ -319,8 +321,8 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         hb = self.get_highest_block()
         start = hb - lookback_in_blocks
 
-        def has_er_value(result):
-            return result[0]["fiat_values"] is not None
+        def has_er_value(result, i=0):
+            return result[i]["fiat_values"] is not None
 
         def get_item(index):
             batch = self.get_exchange_rates_for_block_batch([index])
@@ -336,6 +338,16 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             er = self.get_exchange_rates_for_block_batch([hb])
             if len(er) > 0 and has_er_value(er):
                 r = hb
+        else:
+            r = r - 1
+
+        if validate:
+            ers = self.get_exchange_rates_for_block_batch([r - 1, r, r + 1])
+            assert (
+                has_er_value(ers, i=0)
+                and has_er_value(ers, i=1)
+                and not has_er_value(ers, i=2)
+            )
 
         return r
 
