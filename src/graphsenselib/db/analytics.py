@@ -5,6 +5,7 @@ in the eth.py and btc.py files. Generic database functions belong in cassandra.p
 Attributes:
     DATE_FORMAT (str): Format string of date format used by the database (str)
 """
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +24,8 @@ from .cassandra import (
 )
 
 DATE_FORMAT = "%Y-%m-%d"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -343,11 +346,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         if validate:
             ers = self.get_exchange_rates_for_block_batch([r - 1, r, r + 1])
-            assert (
-                has_er_value(ers, i=0)
-                and has_er_value(ers, i=1)
-                and not has_er_value(ers, i=2)
-            )
+            assert has_er_value(ers, i=0) and has_er_value(ers, i=1)
+            if has_er_value(ers, i=2):
+                logger.warning(f"Found exchange-rate for not yet imported block {r+1}")
 
         return r
 

@@ -74,9 +74,9 @@ def validate(env, currency, look_back_blocks):
             f"- {offset} to {highest_block_delta}"
         )
         errc = 0
-        for b in range(highest_block_before_delta - offset, highest_block_delta):
+        for b in range(highest_block_before_delta - offset, highest_block_delta + 1):
             er = db.transformed.get_exchange_rates_by_block(b)
-            if er is None:
+            if er is None or er.fiat_values is None:
                 errc += 1
                 console.print(f"Missing exchange rates for block {b}!!!")
 
@@ -201,3 +201,13 @@ def update(
             "Is another ingest running? If not delete the lockfile."
         )
         sys.exit(911)
+
+
+def patch_exchange_rates(env: str, currency: str, block: int):
+    with DbFactory().from_config(env, currency) as db:
+        ers = db.raw.get_exchange_rates_for_block_batch([block])
+        logger.info(
+            f"Overwriting transformed exchange_rate for block {block} " f"with {ers}"
+        )
+
+        db.transformed.ingest("exchange_rates", ers)
