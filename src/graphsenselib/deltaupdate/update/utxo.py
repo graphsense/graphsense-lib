@@ -56,7 +56,7 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
     reg_out = regularize_inoutputs(tx.outputs)
     reginput_sum = sum([v for _, v in reg_in.items()])
     flows = {adr: get_regflow(reg_in, reg_out, adr) for adr in tx_adrs}
-    input_flows_sum = sum([f for adr, f in flows.items() if adr in reg_in])
+    input_flows_sum = sum([f for adr, f in flows.items() if adr in reg_in and f <= 0])
     """
         reginput_sum == -input_flows_sum,
         unless input address is used as output in same tx
@@ -117,6 +117,7 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
             iflow = flows[iadr]
             oflow = flows[oadr]
             v = abs(round((iflow / reduced_input_sum) * oflow))
+            assert v <= max(iflow, oflow)
             relations_updates.append(
                 RelationDelta(
                     src_identifier=iadr,
