@@ -117,7 +117,7 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
             iflow = flows[iadr]
             oflow = flows[oadr]
             v = abs(round((iflow / reduced_input_sum) * oflow))
-            assert v <= max(iflow, oflow)
+            assert v <= max(abs(iflow), abs(oflow))
             relations_updates.append(
                 RelationDelta(
                     src_identifier=iadr,
