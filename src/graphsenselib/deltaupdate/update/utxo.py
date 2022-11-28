@@ -1201,9 +1201,14 @@ class UpdateStrategyUtxo(UpdateStrategy):
         with LoggerScope.debug(logger, "Reading transaction and rates data") as _:
             for block in batch:
                 txs.extend(self._db.raw.get_transactions_in_block(block))
-                rates[block] = self._db.transformed.get_exchange_rates_by_block(
+                fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
                 ).fiat_values
+                if fiat_values is None:
+                    raise Exception(
+                        "No exchange rate for block {block}. Abort processing."
+                    )
+                rates[block] = fiat_values
                 bts[block] = self._db.raw.get_block_timestamp(block)
 
         if self.application_strategy == ApplicationStrategy.BATCH:

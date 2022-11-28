@@ -62,14 +62,14 @@ def state(env, currency):
         console.print(get_cassandra_result_as_dateframe(res))
 
 
-def validate(env, currency):
+def validate(env, currency, look_back_blocks):
     with DbFactory().from_config(env, currency) as db:
-        offset = 20
+        offset = look_back_blocks
         highest_block_before_delta = db.transformed.get_highest_block()
         highest_block_delta = db.transformed.get_highest_block_delta_updater()
 
         console.print(
-            f"==== Checking imported exchange rates for gaps,"
+            f"==== Checking imported exchange rates for gaps, "
             f"from {offset} blocks before delta from {highest_block_before_delta} "
             f"- {offset} to {highest_block_delta}"
         )
