@@ -1,7 +1,7 @@
 import click
 
 from ..cli.common import require_currency, require_environment
-from .deltaupdater import state, update, validate
+from .deltaupdater import patch_exchange_rates, state, update, validate
 
 
 @click.group()
@@ -110,3 +110,24 @@ def validatedelta(env: str, currency: str, look_back_blocks: int):
         look_back_blocks (int): How many blocks to check
     """
     validate(env, currency, look_back_blocks)
+
+
+@delta.command("patch-exchange-rates")
+@require_environment()
+@require_currency()
+@click.option(
+    "--block",
+    type=int,
+    required=True,
+    help="Block to write the exchange rates for.",
+)
+def pexchangerates(env: str, currency: str, block: int):
+    """Rewrites the transformed exchange rate at a specific block
+    \f
+
+    Args:
+        env (str): Env to work on
+        currency (str): Currency to work on
+        block (int): block to patch
+    """
+    patch_exchange_rates(env, currency, block)
