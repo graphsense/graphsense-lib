@@ -36,7 +36,7 @@ def find_import_range(db, start_block_overwrite, end_block_overwrite):
     logger.info(f"Last raw block:       {hb_raw:10}")
     logger.info(f"Last raw block:       {end_block:10} (with exchanges rates).")
     logger.info(
-        f"Transf. behind raw:   {(end_block - (start_block -1)):10} (delta-transform)"
+        f"Transf. behind raw:   {(end_block - (start_block - 1)):10} (delta-transform)"
     )
     logger.info(f"Transf. behind raw:   {(end_block - hb_ft):10} (full-transform)")
     return (
@@ -100,7 +100,7 @@ def update_transformed(
             logger.info(
                 f"Working on batch ({len(b)}) "
                 f"from block {min(b)} to {max(b)}. "
-                f"Done with {min(b) - start_block}, {end_block - min(b)} to go."
+                f"Done with {min(b) - start_block + 1}, {end_block - min(b) + 1} to go."
             )
 
             updater.process_batch(b)
@@ -152,8 +152,7 @@ def update(
                 start_block, end_block, patch_mode = find_import_range(
                     db, start_block, end_block
                 )
-
-                if end_block > start_block:
+                if end_block >= start_block:
                     logger.info(
                         "Start updating transformed "
                         f"Keyspace {start_block}-{end_block}."
@@ -171,7 +170,6 @@ def update(
                             "Could not find exchange rate for start block "
                             f"{start_block} - 1, is this an error?"
                         )
-
                     update_transformed(
                         start_block,
                         end_block,

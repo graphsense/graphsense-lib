@@ -203,7 +203,7 @@ class DbReaderMixin:
         if len(result.current_rows) > 0:
             raise Exception(
                 (
-                    f"Something went wrong {id} "
+                    f"Something went wrong {query_id} "
                     " is not the highest_id"
                     f" {query_id+1} exist in {table}.{id_col}"
                 )
