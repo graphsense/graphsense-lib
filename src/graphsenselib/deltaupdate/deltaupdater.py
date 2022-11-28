@@ -100,7 +100,7 @@ def update_transformed(
             logger.info(
                 f"Working on batch ({len(b)}) "
                 f"from block {min(b)} to {max(b)}. "
-                f"Done with {min(b) - start_block + 1}, {end_block - min(b) + 1} to go."
+                f"Done with {min(b) - start_block}, {end_block - min(b) + 1} to go."
             )
 
             updater.process_batch(b)

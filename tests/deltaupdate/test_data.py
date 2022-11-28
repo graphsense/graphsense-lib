@@ -29,6 +29,7 @@ txs = preprocess_inputs(
 {"txIdGroup": 0, "txId": 8, "txHash": "ab40158fdb719f333927a92f72727b996f1ebf565fce2cc83aea04b0f6902c6f", "coinbase": false, "coinjoin": false, "blockId": 4, "inputs": [{"address": ["1E5UPs8bXBq7v7D2b7BYNU19ZviX2LMgEe", "1KLWBUTPXtRB7wvTYq9TYdeo93fAKvWPKs"], "value": 1500000, "txType": 6}, {"address": ["3Kawbc5pkpQPfmaoGCBiaw5t2uK6WBoVVe"], "value": 495000, "txType": 5}, {"address": ["12751KvnaTTPMJbHbbercdTV48kL81BjX8"], "value": 2500000, "txType": 3}], "outputs": [{"address": ["1AGMAXWELLayCyS1vkLXEszESHEcB3LWqa"], "value": 4300000, "txType": 3}, {"address": ["3JX79i9xSSmLEDZ8WrUFsy3WqrpvPoQmPv"], "value": 149000, "txType": 5}], "timestamp": 1231639200, "totalInput": 4495000, "totalOutput": 4449000}
 {"txIdGroup": 0, "txId": 9, "txHash": "ab40231bd240c232eb8a8ed1b2267fe9f76d46c892415ab74427195cce5c6cff", "coinbase": false, "coinjoin": false, "blockId": 4, "inputs": [{"address": ["1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB"], "value": 345000, "txType": 3}], "outputs": [{"address": ["3Fkx2TFdcHoab4xGgSjhAVh5YBPvbBWjNL"], "value": 340000, "txType": 5}], "timestamp": 1231639200, "totalInput": 345000, "totalOutput": 340000}
 {"txIdGroup": 0, "txId": 10, "txHash": "ab403d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d", "coinbase": false, "coinjoin": false, "blockId": 4, "inputs": [{"address": ["1Fufjpf9RM2aQsGedhSpbSCGRHrmLMJ7yY"], "value": 100000, "txType": 3}, {"address": ["1231PgW8KbpwKkvACPhp13fcL6fM5sKGvy"], "value": 1325000, "txType": 3}], "outputs": [{"address": ["1Fm1rJe1CtGuTKxWjQ4MyU7GEwrgkHYn5k"], "value": 1400000, "txType": 3}], "timestamp": 1231639200, "totalInput": 1425000, "totalOutput": 1400000}
+{"txIdGroup": 0, "txId": 11, "txHash": "ab403d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d", "coinbase": false, "coinjoin": false, "blockId": 4, "inputs": [{"address": ["ltc1qd42h5rlss8d54hpzvjpy408z2d8gpnj668wnt0"], "value": 100000, "txType": 8}, {"address": ["ltc1qq8gtfz5dvd838na8v86ehd3l98qjatpz47mayk"], "value": 1325000, "txType": 8}], "outputs": [{"address": ["ltc1qq8gtfz5dvd838na8v86ehd3l98qjatpz47mayk"], "value": 1400000, "txType": 3}], "timestamp": 1231639200, "totalInput": 1425000, "totalOutput": 1400000}
 """,
     drop=[
         r".*Group",
@@ -72,6 +73,8 @@ address_txs = preprocess_inputs(
 {"value": 4300000, "blockId": 4, "txId": 8, "addressIdGroup": 5, "addressId": 11, "isOutgoing": false}
 {"value": 149000, "blockId": 4, "txId": 8, "addressIdGroup": 6, "addressId": 12, "isOutgoing": false}
 {"value": 1400000, "blockId": 4, "txId": 10, "addressIdGroup": 6, "addressId": 13, "isOutgoing": false}
+{"value": -100000, "blockId": 4, "txId": 11, "addressIdGroup": 6, "addressId": 14, "isOutgoing": true}
+{"value": 75000, "blockId": 4, "txId": 11, "addressIdGroup": 6, "addressId": 15, "isOutgoing": false}
 """,
     drop=[r".*Group", "blockId"],
 )
@@ -93,6 +96,8 @@ address_ids = preprocess_inputs(
 {"addressId": 11, "address": "1AGMAXWELLayCyS1vkLXEszESHEcB3LWqa"}
 {"addressId": 12, "address": "3JX79i9xSSmLEDZ8WrUFsy3WqrpvPoQmPv"}
 {"addressId": 13, "address": "1Fm1rJe1CtGuTKxWjQ4MyU7GEwrgkHYn5k"}
+{"addressId": 14, "address": "ltc1qd42h5rlss8d54hpzvjpy408z2d8gpnj668wnt0"}
+{"addressId": 15, "address": "ltc1qq8gtfz5dvd838na8v86ehd3l98qjatpz47mayk"}
 """
 )
 
@@ -115,6 +120,7 @@ address_relations = preprocess_inputs(
 {"srcAddressIdGroup": 2, "srcAddressId": 5, "dstAddressIdGroup": 6, "dstAddressId": 12, "noTransactions": 1, "estimatedValue": {"value": 82870, "fiatValues": [0.41, 0.41]}, "txList": [8]}
 {"srcAddressIdGroup": 3, "srcAddressId": 6, "dstAddressIdGroup": 6, "dstAddressId": 13, "noTransactions": 1, "estimatedValue": {"value": 1301754, "fiatValues": [6.51, 6.49]}, "txList": [10]}
 {"srcAddressIdGroup": 3, "srcAddressId": 7, "dstAddressIdGroup": 6, "dstAddressId": 13, "noTransactions": 1, "estimatedValue": {"value": 98246, "fiatValues": [0.49, 0.49]}, "txList": [10]}
+{"srcAddressIdGroup": 3, "srcAddressId": 14, "dstAddressIdGroup": 6, "dstAddressId": 15, "noTransactions": 1, "estimatedValue": {"value": 75000, "fiatValues": [0.38, 0.37]}, "txList": [11]}
 """,
     drop=[r".*Group"],
 )
