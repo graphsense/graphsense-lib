@@ -9,7 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 from ..datatypes import DbChangeType
@@ -307,6 +307,31 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         else:
             return None
 
+    def find_block_nr_for_date(self, date: datetime) -> int:
+        hb = self.get_highest_block()
+        start = 0
+
+        def get_item(date, index):
+            daq = self.get_block_timestamp(index)
+            return 0 if daq <= date else 1
+
+        get_item_date = partial(get_item, date)
+
+        r = binary_search(GenericArrayFacade(get_item_date), 1, lo=start, hi=hb)
+
+        if r == -1:
+            # minus one could mean two things, either
+            # no missing exchangesrates are found within the lookback range
+            # or that all have exchange rates, so we recheck if the
+            # second case applies
+            er = self.get_block_timestamp(hb)
+            if er is not None:
+                r = hb
+        else:
+            r = r - 1
+
+        return r
+
     def find_highest_block_with_exchange_rates(
         self, lookback_in_blocks=86400, validate=True
     ) -> int:
@@ -418,7 +443,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for (a, row) in results
         }
 
-    def get_block_timestamp(self, block: int):
+    def get_block_timestamp(self, block: int) -> datetime:
         btc = self.get_block_timestamps_batch([block])
         return btc[block]
 
@@ -446,7 +471,12 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             )
 
         ers = [
-            (b, exchange_rate_to_date[block_to_ts[b].strftime(DATE_FORMAT)])
+            (
+                b,
+                exchange_rate_to_date[block_to_ts[b].strftime(DATE_FORMAT)]
+                if block_to_ts[b] is not None
+                else None,
+            )
             for b in batch
         ]
         return [{"block_id": b, "fiat_values": get_values_list(er)} for b, er in ers]
