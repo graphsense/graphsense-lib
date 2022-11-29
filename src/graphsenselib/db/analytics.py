@@ -345,10 +345,12 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             r = r - 1
 
         if validate:
-            ers = self.get_exchange_rates_for_block_batch([r - 1, r, r + 1])
+            # ers = self.get_exchange_rates_for_block_batch([r - 1, r, r + 1])
+            ers = self.get_exchange_rates_for_block_batch([r - 1, r])
             assert has_er_value(ers, i=0) and has_er_value(ers, i=1)
-            if has_er_value(ers, i=2):
-                logger.warning(f"Found exchange-rate for not yet imported block {r+1}")
+            # if has_er_value(ers, i=2):
+            #     logger.warning(f"Found exchange-rate for "
+            # "not yet imported block {r+1}")
 
         return r
 
@@ -411,6 +413,8 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         results = self._db.execute_batch(stmt, parameters)
         return {
             a: (datetime.utcfromtimestamp(row.current_rows[0].timestamp))
+            if len(row.current_rows) > 0
+            else None
             for (a, row) in results
         }
 
