@@ -73,9 +73,9 @@ def out_file(required=True, append=False):
     return inner
 
 
-def try_load_config():
+def try_load_config(filename: str):
     try:
-        config.load()
+        config.load(filename=filename)
         return config
     except Exception as e:
         console.print("There are errors in you graphsenselib config:")
