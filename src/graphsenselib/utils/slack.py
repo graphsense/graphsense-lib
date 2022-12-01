@@ -5,6 +5,7 @@ import sys
 from contextlib import contextmanager
 from typing import Dict, List
 
+import click
 import requests
 
 from .errorhandling import get_exception_digest
@@ -12,8 +13,34 @@ from .errorhandling import get_exception_digest
 logger = logging.getLogger(__name__)
 
 
+class ClickSlackErrorNotificationContext:
+    def __init__(self, webhooks: List[str]):
+        self.hooks = webhooks
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        e = sys.exc_info()[1]
+        if isinstance(e, click.exceptions.Exit) and e.exit_code == 0:
+            # this is how click communicated all is well
+            return
+        if e is not None:
+            for hook in self.hooks:
+                try:
+                    ret = send_exception_digest_to_slack(e, hook)
+                    if ret.status_code != 200:
+                        logger.error(
+                            f"Failed to send exception detail to slack - {e}. "
+                            f"Got status code {ret}, url wrong?"
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to send exception detail to slack - {e}")
+        return False
+
+
 @contextmanager
-def on_exception_notiy_slack(webhooks: List[str]):
+def on_exception_notify_slack(webhooks: List[str]):
     try:
         yield
     except Exception as e:

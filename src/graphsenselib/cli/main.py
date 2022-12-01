@@ -11,7 +11,7 @@ from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
 from ..utils.console import console
 from ..utils.logging import configure_logging
-from ..utils.slack import on_exception_notiy_slack
+from ..utils.slack import ClickSlackErrorNotificationContext
 from .common import try_load_config
 
 __author__ = "iknaio"
@@ -48,7 +48,14 @@ def version_cmd():
 @click.option(
     "-v", "--verbose", count=True, help="One v for warning, two for info etc."
 )
-def cli(verbose: int):
+@click.option(
+    "--config-file",
+    type=str,
+    help="Change the config file to use. If blank default config location is loaded.",
+    required=False,
+)
+@click.pass_context
+def cli(ctx, verbose: int, config_file: str):
     """Commandline interface of graphsense-lib
 
     graphsense-cli exposes many tools and features to manager your
@@ -57,17 +64,20 @@ def cli(verbose: int):
     Args:
         verbose (int): One v stands for loglevel warning, two for info and so on...
     """
+    config = try_load_config(config_file)
+    ctx.with_resource(
+        ClickSlackErrorNotificationContext(
+            config.get_slack_exception_notification_hook_urls()
+        )
+    )
     configure_logging(verbose)
 
 
 def main():
     """install rich as traceback handler for all cli commands"""
     install(show_locals=True, suppress=[click])
-    # This also validates the configuration
-    config = try_load_config()
 
-    with on_exception_notiy_slack(config.get_slack_exception_notification_hook_urls()):
-        cli()
+    cli()
 
 
 if __name__ == "__main__":
