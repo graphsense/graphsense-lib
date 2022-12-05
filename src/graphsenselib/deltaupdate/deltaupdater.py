@@ -15,6 +15,15 @@ from .update import AbstractUpdateStrategy, UpdaterFactory
 logger = logging.getLogger(__name__)
 
 
+def adjust_start_block(db, start_block) -> int:
+    last_er = None
+    for i in [start_block - i for i in range(1, 4)]:
+        last_er = db.transformed.get_exchange_rates_by_block(i)
+        if last_er is not None:
+            return i + 1
+    raise Exception("Could not find proper start block after full-transform")
+
+
 def find_import_range(db, start_block_overwrite, end_block_overwrite):
     hb_ft = db.transformed.get_highest_block_fulltransform()
     hb_raw = db.raw.get_highest_block()
@@ -153,6 +162,20 @@ def update(
                     db, start_block, end_block
                 )
                 if end_block >= start_block:
+                    is_first_delta_run = db.transformed.is_first_dalta_update_run()
+                    if is_first_delta_run:
+                        # Full transform set nr_blocks a bit different (currency dep).
+                        # To be sure about the block we look at exchange rates table
+                        start_block = adjust_start_block(db, start_block)
+                    else:
+                        last_block_er = db.transformed.get_exchange_rates_by_block(
+                            start_block - 1
+                        )
+                        if last_block_er is None:
+                            raise Exception(
+                                "Could not find exchange rate for start block "
+                                f"{start_block} - 1, is this an error?"
+                            )
                     logger.info(
                         "Start updating transformed "
                         f"Keyspace {start_block}-{end_block}."
@@ -160,15 +183,6 @@ def update(
                     if patch_mode:
                         logger.warning(
                             "Running in patch mode, no_block will not be updated."
-                        )
-
-                    last_block_er = db.transformed.get_exchange_rates_by_block(
-                        start_block - 1
-                    )
-                    if last_block_er is None:
-                        raise Exception(
-                            "Could not find exchange rate for start block "
-                            f"{start_block} - 1, is this an error?"
                         )
                     update_transformed(
                         start_block,
