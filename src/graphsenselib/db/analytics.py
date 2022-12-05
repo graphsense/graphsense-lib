@@ -525,6 +525,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stats = self.get_summary_statistics()
         return int(stats.no_blocks) + 1 if stats is not None else None
 
+    def is_first_dalta_update_run(self) -> bool:
+        stats = self.get_summary_statistics()
+        return stats is not None and int(stats.no_blocks) == int(
+            stats.no_blocks_transform
+        )
+
     def get_highest_block_fulltransform(self) -> Optional[int]:
         stats = self.get_summary_statistics()
         if stats is not None and hasattr(stats, "no_blocks_transform"):
