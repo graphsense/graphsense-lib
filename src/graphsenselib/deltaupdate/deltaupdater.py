@@ -157,7 +157,6 @@ def update(
             )
             logger.info(f"Try acquiring lockfile {lockfile_name}")
             with FileLock(lockfile_name, timeout=1):
-
                 start_block, end_block, patch_mode = find_import_range(
                     db, start_block, end_block
                 )
