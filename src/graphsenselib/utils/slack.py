@@ -22,8 +22,12 @@ class ClickSlackErrorNotificationContext:
 
     def __exit__(self, *exc):
         e = sys.exc_info()[1]
-        if isinstance(e, click.exceptions.Exit) and e.exit_code == 0:
+        if isinstance(e, click.exceptions.Exit) and (
+            e.exit_code == 0 or e.exit_code == 911
+        ):
             # this is how click communicated all is well
+            # Exit code 911 is used when lockfile is already used in
+            # delta updates we don't what notifications for that
             return
         if e is not None:
             for hook in self.hooks:
