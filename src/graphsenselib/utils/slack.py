@@ -26,8 +26,11 @@ class ClickSlackErrorNotificationContext:
             e.exit_code == 0 or e.exit_code == 911
         ):
             # this is how click communicated all is well
+            return
+        if isinstance(e, SystemExit) and (e.code > 10):
             # Exit code 911 is used when lockfile is already used in
             # delta updates we don't what notifications for that
+            # exit codes are chosen such that only below 10 are critical
             return
         if e is not None:
             for hook in self.hooks:
