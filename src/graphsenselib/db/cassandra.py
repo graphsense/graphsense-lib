@@ -299,6 +299,15 @@ class CassandraDb:
             raise StorageError(f"Error when executing query: \n{query}") from e
 
     @needs_session
+    def execute_safe(
+        self, cql_query_str: str, params: dict, fetch_size=None
+    ) -> Iterable:
+        # flat_stmt = cql_query_str.replace("\n", " ")
+        # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
+        stmt = SimpleStatement(cql_query_str, fetch_size=fetch_size)
+        return self.session.execute(stmt, params)
+
+    @needs_session
     def execute(self, cql_query_str: str, fetch_size=None) -> Iterable:
         # flat_stmt = cql_query_str.replace("\n", " ")
         # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
@@ -313,11 +322,17 @@ class CassandraDb:
     def execute_async(self, cql_query_str: str, fetch_size=None):
         # flat_stmt = cql_query_str.replace("\n", " ")
         # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
-
         stmt = SimpleStatement(cql_query_str, fetch_size=None)
         if fetch_size is not None:
             stmt.fetch_size = fetch_size
         return self.session.execute_async(stmt)
+
+    @needs_session
+    def execute_async_safe(self, cql_query_str: str, params: dict, fetch_size=None):
+        # flat_stmt = cql_query_str.replace("\n", " ")
+        # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
+        stmt = SimpleStatement(cql_query_str, fetch_size=fetch_size)
+        return self.session.execute_async(stmt, params)
 
     def execute_statements_atomic(self, statements: List[BoundStatement]):
         batch = BatchStatement()

@@ -9,6 +9,12 @@ class TransformedDbAccount(TransformedDb):
 
 
 class RawDbAccount(RawDb):
+    def get_logs_in_block(self, block: int) -> Iterable:
+        group = block // self.get_block_bucket_size()
+        return self.select_safe(
+            "log", where={"block_id": block, "block_id_group": group}
+        )
+
     def get_transaction_ids_in_block(self, block: int) -> Iterable:
         raise Exception("Not yet implemented.")
 

@@ -4,7 +4,8 @@ from datetime import datetime
 import click
 
 from ..cli.common import require_currency, require_environment
-from ..config import supported_base_currencies
+from ..config import currency_to_schema_type, supported_base_currencies
+from ..datatypes.abi import decode_db_logs, decoded_log_to_str
 from ..utils.console import console
 from .factory import DbFactory
 
@@ -75,7 +76,7 @@ def block():
     "-b",
     "--block",
     type=int,
-    default=None,
+    required=True,
     help="block to get the ts for",
 )
 def get_ts(env: str, currency: str, block: int):
@@ -105,7 +106,7 @@ def get_ts(env: str, currency: str, block: int):
 @click.option(
     "--date",
     type=click.DateTime(formats=["%Y-%m-%d %H:%M:%S"]),
-    default=None,
+    required=True,
     help="Date to get the block nr for.",
 )
 def get_nr(env: str, currency: str, date: datetime):
@@ -132,3 +133,38 @@ def get_nr(env: str, currency: str, date: datetime):
                 console.print(f"{cur}={nr}")
             else:
                 console.print(f"{nr}")
+
+
+@db.group()
+def logs():
+    """Special db query functions regarding logs."""
+    pass
+
+
+@logs.command("get-decodeable-logs")
+@require_environment()
+@require_currency()
+@click.option(
+    "-b",
+    "--block",
+    type=int,
+    required=True,
+    help="Block to fetch the decodable logs.",
+)
+def get_logs(env: str, currency: str, block: int):
+    """Print all decodable logs for a given block
+    Args:
+        env (str): evironment
+        currency (str): currency
+        block (int): block
+    """
+    stype = currency_to_schema_type.get(currency, None)
+    if stype == "account":
+        with DbFactory().from_config(env, currency) as db:
+            for log in decode_db_logs(db.raw.get_logs_in_block(block)):
+                console.print(decoded_log_to_str(log))
+    else:
+        console.print(
+            f"Unsupported schema type {stype} for "
+            "currency {currency}. Only account is supported."
+        )
