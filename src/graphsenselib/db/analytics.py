@@ -109,6 +109,27 @@ class WithinKeyspace:
 
 
 class DbReaderMixin:
+    def select_safe(
+        self,
+        table: str,
+        columns: Sequence[str] = ["*"],
+        where: Optional[dict] = None,
+        limit: Optional[int] = None,
+        per_partition_limit: Optional[int] = None,
+        fetch_size=None,
+    ):
+        return self._db.execute_safe(
+            self.select_stmt(
+                table=table,
+                columns=columns,
+                where={k: f"%({k})s" for k, v in where.items()},
+                limit=limit,
+                per_partition_limit=per_partition_limit,
+            ),
+            where,
+            fetch_size=fetch_size,
+        )
+
     def select(
         self,
         table: str,
@@ -136,6 +157,13 @@ class DbReaderMixin:
             self.select(table=table, columns=columns, where=where, limit=2)
         )
 
+    def select_one_safe(
+        self, table: str, columns: Sequence[str] = ["*"], where: Optional[dict] = None
+    ):
+        return self._at_most_one_result(
+            self.select_safe(table=table, columns=columns, where=where, limit=2)
+        )
+
     def get_columns_for_table(self, table: str):
         return self._db.get_columns_for_table(self.get_keyspace(), table)
 
@@ -156,6 +184,27 @@ class DbReaderMixin:
                 limit=limit,
                 per_partition_limit=per_partition_limit,
             ),
+            fetch_size=fetch_size,
+        )
+
+    def select_async_safe(
+        self,
+        table: str,
+        columns: Sequence[str] = ["*"],
+        where: Optional[dict] = None,
+        limit: Optional[int] = None,
+        per_partition_limit: Optional[int] = None,
+        fetch_size=None,
+    ):
+        return self._db.execute_async_safe(
+            self.select_stmt(
+                table=table,
+                columns=columns,
+                where={k: f"%({k})s" for k, v in where.items()},
+                limit=limit,
+                per_partition_limit=per_partition_limit,
+            ),
+            where,
             fetch_size=fetch_size,
         )
 
