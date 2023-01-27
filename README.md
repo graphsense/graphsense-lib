@@ -75,7 +75,9 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  state  Prints the current state of the graphsense database.
+  block  Special db query functions regarding blocks.
+  logs   Special db query functions regarding logs.
+  state  Summary Prints the current state of the graphsense database.
 
 ```
 
@@ -110,15 +112,16 @@ Updates the data in the transformed keyspace based on the raw keyspace
 > graphsense-cli delta-update --help
 Usage: graphsense-cli delta-update [OPTIONS] COMMAND [ARGS]...
 
-  Updating the transformed keyspace for the raw keyspace.
+  Updating the transformed keyspace from the raw keyspace.
 
 Options:
   --help  Show this message and exit.
 
 Commands:
-  status    Shows the status of the delta updater.
-  update    Updates transformed from raw, if possible.
-  validate  Validates the current delta update status and its history.
+  patch-exchange-rates  Rewrites the transformed exchange rate at a...
+  status                Shows the status of the delta updater.
+  update                Updates transformed from raw, if possible.
+  validate              Validates the current delta update status and its...
 ```
 
 ### Exchange Rates
@@ -164,7 +167,7 @@ Commands:
 Helpful functions to keep an eye on the state and health of your graphsense database state.
 
 ```bash
-graphsense-cli monitoring --help
+> graphsense-cli monitoring --help
 Usage: graphsense-cli monitoring [OPTIONS] COMMAND [ARGS]...
 
   Tools to monitor the graphsense infrastructure.
@@ -174,6 +177,8 @@ Options:
 
 Commands:
   get-summary  Receives a summary record of the current database state.
+  notify       Sends a message to the configured handlers (e.g. a slack
+               channel) by topic.
 
 ```
 
@@ -250,3 +255,12 @@ To create the documentation please run:
 ```
 
 Creating the docs need python dev dependencies to build see ([Stackoverflow](https://stackoverflow.com/questions/21530577/fatal-error-python-h-no-such-file-or-directory}))
+
+### Tagging a release
+
+To tag a new release please update the changelog first. Afterwards, update the Version numbers RELEASESEM and RELEASE in the main Makefile.```
+
+To apply the tags run
+```bash
+    > make tag-version
+```
