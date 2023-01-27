@@ -55,9 +55,11 @@ CREATE TABLE address_transactions (
     address_id_secondary_group int,
     address_id int,
     transaction_id int,
+    log_index int,
+    currency text,
     is_outgoing boolean,
-    PRIMARY KEY ((address_id_group, address_id_secondary_group), address_id, is_outgoing, transaction_id)
-) WITH CLUSTERING ORDER BY (address_id DESC, is_outgoing DESC, transaction_id DESC);
+    PRIMARY KEY ((address_id_group, address_id_secondary_group), address_id, is_outgoing, currency, transaction_id)
+) WITH CLUSTERING ORDER BY (address_id DESC, is_outgoing DESC, currency DESC, transaction_id DESC);
 
 CREATE TABLE address_transactions_secondary_ids (
     address_id_group int PRIMARY KEY,
@@ -74,8 +76,11 @@ CREATE TABLE address (
     last_tx_id int,
     total_received FROZEN <currency>,
     total_spent FROZEN <currency>,
+    total_tokens_received map<text, frozen <currency>>,
+    total_tokens_spent map<text, frozen <currency>>,
     in_degree int,
     out_degree int,
+    is_contract boolean,
     PRIMARY KEY (address_id_group, address_id)
 );
 
@@ -86,6 +91,7 @@ CREATE TABLE address_incoming_relations (
     src_address_id int,
     no_transactions int,
     value FROZEN <currency>,
+    token_values map<text, FROZEN <currency>>,
     PRIMARY KEY ((dst_address_id_group, dst_address_id_secondary_group), dst_address_id, src_address_id)
 );
 
@@ -101,6 +107,7 @@ CREATE TABLE address_outgoing_relations (
     dst_address_id int,
     no_transactions int,
     value frozen <currency>,
+    token_values map<text, FROZEN <currency>>,
     PRIMARY KEY ((src_address_id_group, src_address_id_secondary_group), src_address_id, dst_address_id)
 );
 
@@ -111,7 +118,9 @@ CREATE TABLE address_outgoing_relations_secondary_ids (
 
 CREATE TABLE summary_statistics (
     timestamp int,
+    timestamp_transform int,
     no_blocks bigint PRIMARY KEY,
+    no_blocks_transform bigint,
     no_transactions bigint,
     no_addresses bigint,
     no_address_relations bigint
@@ -121,7 +130,8 @@ CREATE TABLE balance (
     address_id_group int,
     address_id int,
     balance varint,
-    PRIMARY KEY (address_id_group, address_id)
+    currency text,
+    PRIMARY KEY (address_id_group, address_id, currency)
 );
 
 CREATE TABLE configuration (
@@ -130,4 +140,14 @@ CREATE TABLE configuration (
     address_prefix_length int,
     tx_prefix_length int,
     fiat_currencies list<text>
+);
+
+
+CREATE TABLE token_configuration (
+    currency_ticker text PRIMARY KEY,
+    token_address blob,
+    standard text,
+    decimals int,
+    decimal_divisor bigint,
+    peg_currency text
 );
