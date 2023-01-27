@@ -49,17 +49,28 @@ def state(env, currency):
             console.print(f"Raw     Config:      {db.raw.get_configuration()}")
             console.print(f"Transf. Config:      {db.transformed.get_configuration()}")
             end_block = db.raw.find_highest_block_with_exchange_rates()
-            console.print(f"Last delta-transform: {(start_block -1):10}")
-            console.print(f"Last raw block:       {hb_raw:10}")
             console.print(
-                f"Last raw block:       {end_block:10} (with exchanges rates)."
+                f"Last delta-transform: {(start_block -1):10}"
+                f" ({db.raw.get_block_timestamp(start_block - 1)})"
             )
             console.print(
-                f"Transf. behind raw:   {(end_block - (start_block - 1)):10} "
-                "(delta-transform)"
+                f"Last raw block:       {hb_raw:10}"
+                f" ({db.raw.get_block_timestamp(hb_raw)})"
             )
             console.print(
-                f"Transf. behind raw:   {(end_block - hb_ft):10} (full-transform)"
+                f"Last raw block:       {end_block:10}"
+                f" ({db.raw.get_block_timestamp(end_block)}) "
+                "(with exchanges rates)."
+            )
+            console.print(
+                f"Transf. behind raw:   {(end_block - (start_block - 1)):10}"
+                f" ({db.raw.get_block_timestamp(end_block - (start_block - 1))})"
+                " (delta-transform)"
+            )
+            console.print(
+                f"Transf. behind raw:   {(end_block - hb_ft):10}"
+                f" ({db.raw.get_block_timestamp((end_block - hb_ft))})"
+                " (full-transform)"
             )
 
 
