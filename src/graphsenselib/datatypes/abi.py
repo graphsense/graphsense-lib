@@ -84,7 +84,7 @@ def decoded_log_to_str(decoded_log) -> str:
 
 
 def decode_db_logs(db_logs):
-    return no_nones([decode_log(convert_db_log(log)) for log in db_logs])
+    return no_nones([(decode_log(convert_db_log(log)), log) for log in db_logs])
 
 
 def decode_log(log):
