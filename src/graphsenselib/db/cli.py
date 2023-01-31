@@ -211,11 +211,9 @@ def get_logs(
                     db.raw.get_logs_in_block(b, topic0=topic0, contract=contract)
                 ):
                     dlog_str = decoded_log_to_str(dlog)
-                    console.print(
-                        f"{b}|{log.log_index}|0x{log.tx_hash.hex()}|{dlog_str}"
-                    )
+                    print(f"{b}|{log.log_index}|0x{log.tx_hash.hex()}|{dlog_str}")
     else:
-        console.print(
+        print(
             f"Unsupported schema type {stype} for "
             "currency {currency}. Only account is supported."
         )

@@ -80,7 +80,7 @@ def decoded_log_to_str(decoded_log) -> str:
     name = decoded_log["name"]
     addr = decoded_log["address"].lower()
     params = ",".join([f"{x['name']}={x['value']}" for x in decoded_log["data"]])
-    return f"{addr}|{name}({params})"
+    return f"{addr}|{name}({params})".replace("\n", "")
 
 
 def decode_db_logs(db_logs):
