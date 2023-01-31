@@ -34,6 +34,8 @@ class ClickSlackErrorNotificationContext:
             # delta updates we don't what notifications for that
             # exit codes are chosen such that only below 10 are critical
             return
+        if isinstance(e, KeyboardInterrupt):
+            return
         if e is not None:
             for hook in self.hooks:
                 try:

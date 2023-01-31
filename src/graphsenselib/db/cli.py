@@ -1,11 +1,14 @@
 import logging
 from datetime import datetime
+from typing import Optional
 
 import click
+from eth_hash.auto import keccak
 
 from ..cli.common import require_currency, require_environment
 from ..config import currency_to_schema_type, supported_base_currencies
 from ..datatypes.abi import decode_db_logs, decoded_log_to_str
+from ..utils.accountmodel import hex_str_to_bytes, is_hex_string, strip_0x
 from ..utils.console import console
 from .factory import DbFactory
 
@@ -156,13 +159,37 @@ def logs():
 @require_environment()
 @require_currency()
 @click.option(
-    "-b",
-    "--block",
+    "--start-block",
     type=int,
     required=True,
-    help="Block to fetch the decodable logs.",
+    help="Block to start fetching the decodable logs.",
 )
-def get_logs(env: str, currency: str, block: int):
+@click.option(
+    "--end-block",
+    type=int,
+    required=True,
+    help="Block to stop fetching the decodable logs.",
+)
+@click.option(
+    "--topic0",
+    type=str,
+    required=None,
+    help="Log topic to fetch.",
+)
+@click.option(
+    "--contract",
+    type=str,
+    required=None,
+    help="Filter for Contract that produced the log.",
+)
+def get_logs(
+    env: str,
+    currency: str,
+    start_block: int,
+    end_block: int,
+    topic0: Optional[str],
+    contract: Optional[str],
+):
     """Print all decodable logs for a given block
     Args:
         env (str): evironment
@@ -172,8 +199,21 @@ def get_logs(env: str, currency: str, block: int):
     stype = currency_to_schema_type.get(currency, None)
     if stype == "account":
         with DbFactory().from_config(env, currency) as db:
-            for log in decode_db_logs(db.raw.get_logs_in_block(block)):
-                console.print(decoded_log_to_str(log))
+            if topic0 is not None and is_hex_string(topic0):
+                topic0 = hex_str_to_bytes(topic0)
+            elif topic0 is not None:
+                topic0 = keccak(topic0.encode("utf-8"))
+
+            if contract is not None:
+                contract = hex_str_to_bytes(strip_0x(contract))
+            for b in range(start_block, end_block):
+                for dlog, log in decode_db_logs(
+                    db.raw.get_logs_in_block(b, topic0=topic0, contract=contract)
+                ):
+                    dlog_str = decoded_log_to_str(dlog)
+                    console.print(
+                        f"{b}|{log.log_index}|0x{log.tx_hash.hex()}|{dlog_str}"
+                    )
     else:
         console.print(
             f"Unsupported schema type {stype} for "
