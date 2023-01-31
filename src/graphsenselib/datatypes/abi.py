@@ -2,8 +2,6 @@ import logging
 
 import eth_event
 
-from ..utils import no_nones
-
 logger = logging.getLogger(__name__)
 
 
@@ -84,7 +82,11 @@ def decoded_log_to_str(decoded_log) -> str:
 
 
 def decode_db_logs(db_logs):
-    return no_nones([(decode_log(convert_db_log(log)), log) for log in db_logs])
+    return [
+        x
+        for x in [(decode_log(convert_db_log(log)), log) for log in db_logs]
+        if x[0] is not None
+    ]
 
 
 def decode_log(log):
