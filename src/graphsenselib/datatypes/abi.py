@@ -58,6 +58,74 @@ log_signatures = {
             ],
         },
     ],
+    "0x42e160154868087d6bfdc0ca23d96a1c1cfa32f1b72ba9ba27b69b98a0d819dc": [
+        {
+            "name": "AddedBlackList",
+            "inputs": [{"name": "user", "type": "address", "indexed": False}],
+        },
+        {
+            "name": "AddedBlackList",
+            "inputs": [{"name": "user", "type": "address", "indexed": True}],
+        },
+    ],
+    "0xd7e9ec6e6ecd65492dce6bf513cd6867560d49544421d0783ddf06e76c24470c": [
+        {
+            "name": "RemovedBlackList",
+            "inputs": [{"name": "user", "type": "address", "indexed": False}],
+        },
+        {
+            "name": "RemovedBlackList",
+            "inputs": [{"name": "user", "type": "address", "indexed": True}],
+        },
+    ],
+    "0xcb8241adb0c3fdb35b70c24ce35c5eb0c17af7431c99f827d44a445ca624176a": [
+        {
+            "name": "Issue",
+            "inputs": [{"name": "amount", "type": "uint256", "indexed": False}],
+        },
+        {
+            "name": "Issue",
+            "inputs": [{"name": "amount", "type": "uint256", "indexed": True}],
+        },
+    ],
+    "0x0702d5967f45f6513a38ffc42d6ba9bf230bd40e8f53b16363c7eb4fd2deb9a44": [
+        {
+            "name": "Redeem",
+            "inputs": [{"name": "amount", "type": "uint256", "indexed": False}],
+        },
+        {
+            "name": "Redeem",
+            "inputs": [{"name": "amount", "type": "uint256", "indexed": True}],
+        },
+    ],
+    "0xcc358699805e9a8b7f77b522628c7cb9abd07d9efb86b6fb616af1609036a99e": [
+        {
+            "name": "Deprecate",
+            "inputs": [{"name": "newAddress", "type": "address", "indexed": False}],
+        },
+        {
+            "name": "Deprecate",
+            "inputs": [{"name": "newAddress", "type": "address", "indexed": True}],
+        },
+    ],
+    "0xb044a1e409eac5c48e5af22d4af52670dd1a99059537a78b31b48c6500a6354e": [
+        {
+            "name": "Params",
+            "inputs": [
+                {"name": "feeBasisPoints", "type": "uint256", "indexed": False},
+                {"name": "maxFee", "type": "uint256", "indexed": False},
+            ],
+        }
+    ],
+    "0x61e6e66b0d6339b2980aecc6ccc0039736791f0ccde9ed512e789a7fbdd698c6": [
+        {
+            "name": "DestroyedBlackFunds",
+            "inputs": [
+                {"name": "blackListedUser", "type": "address", "indexed": False},
+                {"name": "balance", "type": "uint256", "indexed": False},
+            ],
+        }
+    ],
 }
 
 
