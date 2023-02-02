@@ -88,7 +88,7 @@ log_signatures = {
             "inputs": [{"name": "amount", "type": "uint256", "indexed": True}],
         },
     ],
-    "0x0702d5967f45f6513a38ffc42d6ba9bf230bd40e8f53b16363c7eb4fd2deb9a44": [
+    "0x702d5967f45f6513a38ffc42d6ba9bf230bd40e8f53b16363c7eb4fd2deb9a44": [
         {
             "name": "Redeem",
             "inputs": [{"name": "amount", "type": "uint256", "indexed": False}],
