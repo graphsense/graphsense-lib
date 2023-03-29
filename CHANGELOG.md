@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [23.03/1.4.0] 2023-01-30
+### Added
+- added cli command graphsense-cli db logs get-decodeable-logs to decoded logs in a given block range.
+- added all event definitions to decode all USDT event logs
+
 ## [23.01/1.3.0] 2023-01-30
 ### Added
 - added keyspace name to monitoring output
