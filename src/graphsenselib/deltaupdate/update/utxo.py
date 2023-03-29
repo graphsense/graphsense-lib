@@ -166,7 +166,7 @@ def get_transaction_changes(
             Start loading the address_ids for the addresses async
     """
     with LoggerScope.debug(logger, f"Checking existence for {len_addr} addresses") as _:
-        addr_ids = {
+        addr_ids = {  # noqa: C416
             adr: address_id
             for adr, address_id in db.transformed.get_address_id_async_batch(
                 list(addresses)
@@ -217,7 +217,7 @@ def get_transaction_changes(
         existing_addr_ids = no_nones(
             [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
         )
-        addresses_resolved = {
+        addresses_resolved = {  # noqa: C416
             addr_id: address
             for addr_id, address in tdb.get_address_async_batch(
                 [adr.address_id for adr in existing_addr_ids]
@@ -323,7 +323,7 @@ def get_transaction_changes(
 
     with LoggerScope.debug(logger, "Reading clusters for addresses") as _:
 
-        clusters_resolved = {
+        clusters_resolved = {  # noqa: C416
             cluster_id: cluster
             for cluster_id, cluster in tdb.get_cluster_async_batch(
                 [
