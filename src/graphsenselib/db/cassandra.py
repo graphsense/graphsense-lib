@@ -462,7 +462,7 @@ class CassandraDb:
                     concurrency=concurrency,
                 )
 
-                for (i, (success, _)) in enumerate(results):
+                for i, (success, _) in enumerate(results):
                     if not success:
                         while True:
                             try:

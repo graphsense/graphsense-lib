@@ -12,6 +12,7 @@ from datetime import datetime
 from functools import lru_cache, partial
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
+from ..config import keyspace_types
 from ..datatypes import DbChangeType
 from ..utils import GenericArrayFacade, binary_search
 from .cassandra import (
@@ -350,6 +351,12 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             "transaction": self.get_tx_bucket_size(),
         }
 
+    def exists(self) -> bool:
+        return self._db.has_keyspace(self._keyspace)
+
+    def keyspace_name(self) -> str:
+        return self._keyspace
+
     def get_summary_statistics(self) -> Optional[object]:
         if self._db.has_table(self._keyspace, "summary_statistics"):
             return self._get_only_row_from_table("summary_statistics")
@@ -542,6 +549,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             "address": self.get_address_id_bucket_size(),
             "cluster": self.get_cluster_id_bucket_size(),
         }
+
+    def exists(self) -> bool:
+        return self._db.has_keyspace(self._keyspace)
+
+    def keyspace_name(self) -> str:
+        return self._keyspace
 
     def get_summary_statistics(self) -> Optional[object]:
         return self._get_only_row_from_table("summary_statistics")
@@ -992,6 +1005,14 @@ class AnalyticsDb:
 
     def __exit__(self, exc_type, exc_value, tb):
         self.close()
+
+    def by_ks_type(self, keyspace_type):
+        if keyspace_type == "transformed":
+            return self.transformed
+        elif keyspace_type == "raw":
+            return self.raw
+        else:
+            raise Exception(f"Unknown keyspace type choose from {keyspace_types}")
 
     @property
     def raw(self) -> RawDb:

@@ -4,7 +4,7 @@ from typing import Iterable, List
 
 from parsy import forward_declaration, seq, string
 
-from ..config import currency_to_schema_type
+from ..config import config, currency_to_schema_type, keyspace_types
 from ..db import DbFactory
 from ..db.cassandra import build_create_stmt, normalize_cql_statement
 from ..utils import flatten, split_list_on_condition
@@ -16,6 +16,8 @@ from ..utils.parsing import (
     space,
     tableidentifier,
 )
+
+MAGIC_SCHEMA_CONSTANT = "0x8BADF00D"
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +147,33 @@ class Schema:
             if x.startswith("create table")
         ]
 
+    def get_schema_string(self, keyspace_name, replication_config):
+        replication_factor_magic_constant = (
+            MAGIC_SCHEMA_CONSTANT + "_REPLICATION_CONFIG"
+        )
+        if (
+            self.original_schema.count(MAGIC_SCHEMA_CONSTANT) != 3
+            or self.original_schema.count(replication_factor_magic_constant) != 1
+        ):
+            raise Exception(
+                f"Expect three occurrences of {MAGIC_SCHEMA_CONSTANT} in schema file,"
+                " two for the keyspace_name and one for the replication factor"
+                f" config ({replication_factor_magic_constant})."
+            )
+
+        return self.original_schema.replace(
+            replication_factor_magic_constant, replication_config
+        ).replace(MAGIC_SCHEMA_CONSTANT, keyspace_name)
+
 
 class GraphsenseSchemas:
-
     RESOUCE_PATH = f"{__package__}.resources"
+
+    def is_extension(filename, schema_type):
+        return not any(
+            filename.endswith(f"{kst}_{schema_type}_schema.sql")
+            for kst in keyspace_types
+        )
 
     def get_schema_files(self):
         return list(files(self.RESOUCE_PATH).iterdir())
@@ -156,10 +181,57 @@ class GraphsenseSchemas:
     def load_schema_text(self, filename):
         return read_text(self.RESOUCE_PATH, filename)
 
-    def get_by_currency(self, currency, keyspace_type=None) -> List[tuple[str, str]]:
-        return self.get_by_schema_type(
-            currency_to_schema_type[currency], keyspace_type=keyspace_type
-        )
+    def get_by_currency(
+        self, currency, keyspace_type=None, no_extensions=False
+    ) -> List[tuple[str, str]]:
+        schema_type = currency_to_schema_type[currency]
+        return [
+            x
+            for x in self.get_by_schema_type(
+                schema_type,
+                keyspace_type=keyspace_type,
+            )
+            if (
+                not no_extensions
+                or not GraphsenseSchemas.is_extension(x[0], schema_type)
+            )
+        ]
+
+    def create_keyspaces_if_not_exist(self, env, currency):
+        for kstype in keyspace_types:
+            self.create_keyspace_if_not_exist(env, currency, kstype)
+
+    def create_keyspace_if_not_exist(self, env, currency, keyspace_type):
+        with DbFactory().from_config(env, currency) as db:
+            schema = self.get_by_currency(
+                currency, keyspace_type=keyspace_type, no_extensions=True
+            )
+            if len(schema) > 0:
+                schema = schema[0][1]
+            else:
+                raise Exception(
+                    "No schema definition found for "
+                    f"{env}, {currency}, type: {keyspace_type}"
+                )
+            keyspacedb = db.by_ks_type(keyspace_type)
+            target_ks_name = keyspacedb.keyspace_name()
+            if keyspacedb.exists():
+                logger.info(
+                    f"Keyspace {keyspace_type} for env "
+                    f"{env}:{currency} exists: {target_ks_name}, nothing to do"
+                )
+            else:
+                replication_factor_config = config.get_keyspace_config(
+                    env, currency
+                ).keyspace_replication_config
+                schema_to_create = schema.get_schema_string(
+                    target_ks_name, replication_factor_config
+                )
+                db.db().setup_keyspace_using_schema(schema_to_create)
+                logger.info(
+                    f"Keyspace {keyspace_type} for env "
+                    f"{env}:{currency} created on {target_ks_name}."
+                )
 
     def get_by_schema_type(
         self, schema_type, keyspace_type=None
@@ -172,11 +244,7 @@ class GraphsenseSchemas:
                     f.endswith(f"{schema_type}_schema.sql")
                     or f.endswith("generic_schema.sql")
                 )
-                and (
-                    True
-                    if keyspace_type is None
-                    else (f.startswith(f"{keyspace_type}_"))
-                )
+                and (keyspace_type is None or (f.startswith(f"{keyspace_type}_")))
             )
         ]
 
@@ -189,10 +257,14 @@ class GraphsenseSchemas:
 
     def get_db_validation_report(self, env, currency):
         with DbFactory().from_config(env, currency) as db:
-            raw_schemas = self.get_by_currency(currency, keyspace_type="raw")
+            raw_schemas = self.get_by_currency(
+                currency, keyspace_type="raw", no_extensions=True
+            )
             report_raw = self._validate_against_db_intermal(db.raw, raw_schemas)
 
-            trans_schemas = self.get_by_currency(currency, keyspace_type="transformed")
+            trans_schemas = self.get_by_currency(
+                currency, keyspace_type="transformed", no_extensions=True
+            )
             report_trans = self._validate_against_db_intermal(
                 db.transformed, trans_schemas
             )

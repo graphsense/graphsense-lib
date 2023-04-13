@@ -213,7 +213,6 @@ def get_transaction_changes(
         Read address data to merge for address updates
     """
     with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
-
         existing_addr_ids = no_nones(
             [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
         )
@@ -294,7 +293,6 @@ def get_transaction_changes(
         Reading relations to be updated.
     """
     with LoggerScope.debug(logger, "Reading address relations to be updated") as _:
-
         rel_to_query = [
             (addresses[update.src_identifier][0], addresses[update.dst_identifier][0])
             for update in address_delta.relation_updates
@@ -322,7 +320,6 @@ def get_transaction_changes(
         del rel_to_query, addr_inrelations_q, addr_outrelations_q
 
     with LoggerScope.debug(logger, "Reading clusters for addresses") as _:
-
         clusters_resolved = {  # noqa: C416
             cluster_id: cluster
             for cluster_id, cluster in tdb.get_cluster_async_batch(
@@ -357,7 +354,6 @@ def get_transaction_changes(
         del clusters_resolved, addresses
 
     with LoggerScope.debug(logger, "Creating local lookup tables") as lg:
-
         cluster_to_addr_id = group_by(
             [
                 (cluster_id, address_id)
@@ -627,7 +623,6 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
         seen_summary_delete = False
         current_summary_stats = db.transformed.get_summary_statistics()
         for change in changes:
-
             if change.action == DbChangeType.NEW and change.table == "cluster":
                 # only one update per batch
                 if change.data["cluster_id"] in cluster_seen:
