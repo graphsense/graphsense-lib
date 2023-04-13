@@ -1,7 +1,7 @@
-CREATE KEYSPACE IF NOT EXISTS 0xDEADBEEF
-    WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+CREATE KEYSPACE IF NOT EXISTS 0x8BADF00D
+    WITH replication = 0x8BADF00D_REPLICATION_CONFIG;
 
-USE 0xDEADBEEF;
+USE 0x8BADF00D;
 
 CREATE TYPE currency (
     value bigint,

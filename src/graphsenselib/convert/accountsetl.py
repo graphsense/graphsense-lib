@@ -59,7 +59,6 @@ def convert_etl_to_ingestable_logs(filename: str, outfile_suffix: str):
         with gzip.open(filename, "rt") as f:
             r = csv.DictReader(f, delimiter=",", quotechar='"')
             with gzip.open(outfile, "wt") as wf:
-
                 w = csv.DictWriter(
                     wf,
                     fieldnames=ingestable_logs_fields,

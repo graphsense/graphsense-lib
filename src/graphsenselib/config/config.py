@@ -7,7 +7,7 @@ from pydantic import BaseModel, validator
 from ..utils import flatten
 
 supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec"]
-default_environments = ["prod", "test"]
+default_environments = ["prod", "test", "dev", "exp1", "exp2", "exp3"]
 schema_types = ["utxo", "account"]
 keyspace_types = ["raw", "transformed"]
 currency_to_schema_type = {
@@ -17,12 +17,18 @@ supported_fiat_currencies = ["USD", "EUR"]
 
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+CASSANDRA_REPLICATION_FACTOR = "{'class': 'SimpleStrategy', 'replication_factor': 1}"
+
 
 class KeyspaceConfig(BaseModel):
     raw_keyspace_name: str
     transformed_keyspace_name: str
     schema_type: str
     disable_delta_updates: bool = Field(default_factory=lambda: False)
+    node_reference: str = Field(default_factory=lambda: "")
+    keyspace_replication_config: str = Field(
+        default_factory=lambda: CASSANDRA_REPLICATION_FACTOR
+    )
 
     @validator("schema_type", allow_reuse=True)
     def schema_type_in_range(cls, v):
@@ -85,6 +91,7 @@ class AppConfig(GoodConf):
                         "transformed_keyspace_name": f"{cur}_transformed_{env}",
                         "schema_type": currency_to_schema_type[cur],
                         "disable_delta_updates": False,
+                        "keyspace_replication_config": CASSANDRA_REPLICATION_FACTOR,
                     }
                     for cur in supported_base_currencies
                 },

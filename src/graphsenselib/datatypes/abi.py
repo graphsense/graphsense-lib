@@ -163,7 +163,7 @@ def decode_log(log):
         for i in range(0, len(logdef)):
             try:
                 return eth_event.decode_log(log, VersionedDict(log_signatures, i))
-            except (eth_event.EventError) as e:
+            except eth_event.EventError as e:
                 if i == len(logdef) - 1:
                     logger.info(f"Failed to decode supported log type. {e}. {log}")
     else:

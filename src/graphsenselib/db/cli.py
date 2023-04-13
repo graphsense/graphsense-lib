@@ -22,7 +22,7 @@ def db_cli():
 
 @db_cli.group()
 def db():
-    """DB-management related functions."""
+    """Query related functions."""
     pass
 
 
@@ -30,8 +30,7 @@ def db():
 @require_environment()
 @require_currency(required=False)
 def state(env, currency):
-    """Summary
-    Prints the current state of the graphsense database.
+    """Prints the current state of the graphsense database.
     \f
     Args:
         env (str): Environment to work on

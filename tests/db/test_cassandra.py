@@ -2,7 +2,6 @@ from graphsenselib.db.cassandra import build_delete_stmt, build_select_stmt
 
 
 def test_build_select_stmt_limit():
-
     assert (
         build_select_stmt(
             "test", columns=["a", "b"], keyspace="foo", where={"a": 1}, limit=2

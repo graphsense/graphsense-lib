@@ -35,7 +35,6 @@ def fetch_exchange_rates(
     df_merged = pd.DataFrame()
 
     for fiat in symbol_list:
-
         url = (
             f"https://api.coindesk.com/v1/bpi/historical/close.json"
             f"?currency={fiat.lower()}&start={start_date}&end={end_date}"
@@ -102,7 +101,6 @@ def fetch_impl(
     dry_run,
     abort_on_gaps,
 ):
-
     if datetime.fromisoformat(start_date) < datetime.fromisoformat(MIN_START):
         logger.warning(f"Warning: Exchange rates not available before {MIN_START}")
         start_date = MIN_START

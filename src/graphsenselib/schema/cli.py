@@ -9,6 +9,18 @@ from ..config import keyspace_types
 from .schema import GraphsenseSchemas
 
 
+def print_schema_validation_report(env, currency):
+    report = GraphsenseSchemas().get_db_validation_report(env, currency)
+    if any(report):
+        for row in report:
+            click.secho(f"Error: {row}", fg="red")
+        sys.exit(101)
+    else:
+        click.echo(
+            f"Db schema matches the expectation on {env} for currency {currency}."
+        )
+
+
 def keyspace_types_option(function):
     function = click.option(
         "--keyspace-type",
@@ -76,15 +88,24 @@ def shows(schema, keyspace_type):
 )
 @require_environment()
 @require_currency()
-def create(env, currency):
+@keyspace_types_option
+def create(env, currency, keyspace_type):
     """Summary
-        Creates the necessary graphsense tables in Cassandra.
+        Creates the necessary graphsense tables in Cassandra if they don't exist.
         \f
     Args:
         env (str): Environment to work on
         currency (str): currency to work on
     """
-    click.secho("Error: This is not yet implemented.", fg="red")
+    if keyspace_type is None:
+        GraphsenseSchemas().create_keyspaces_if_not_exist(env, currency)
+    else:
+        GraphsenseSchemas().create_keyspace_if_not_exist(
+            env, currency, keyspace_type=keyspace_type
+        )
+
+    click.echo("// ######### Validating deployed schema")
+    print_schema_validation_report(env, currency)
 
 
 @schema.command(
@@ -100,12 +121,4 @@ def validate(env, currency):
         env (str): Environment to work on
         currency (str): currency to work on
     """
-    report = GraphsenseSchemas().get_db_validation_report(env, currency)
-    if any(report):
-        for row in report:
-            click.secho(f"Error: {row}", fg="red")
-        sys.exit(101)
-    else:
-        click.echo(
-            f"Db schema matches the expectation on {env} for currency {currency}."
-        )
+    print_schema_validation_report(env, currency)

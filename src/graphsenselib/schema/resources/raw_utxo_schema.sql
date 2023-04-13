@@ -1,5 +1,5 @@
 CREATE KEYSPACE IF NOT EXISTS 0x8BADF00D
-    WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+    WITH replication = 0x8BADF00D_REPLICATION_CONFIG;
 
 USE 0x8BADF00D;
 

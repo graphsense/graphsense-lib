@@ -6,6 +6,7 @@ from ..config.cli import config_cli
 from ..convert.cli import convert_cli
 from ..db.cli import db_cli
 from ..deltaupdate.cli import deltaupdate_cli
+from ..ingest.cli import ingest_cli
 from ..monitoring.cli import monitoring_cli
 from ..rates.cli import rates_cli
 from ..schema.cli import schema_cli
@@ -36,6 +37,7 @@ def version_cmd():
     sources=[
         rates_cli,
         schema_cli,
+        ingest_cli,
         db_cli,
         deltaupdate_cli,
         config_cli,

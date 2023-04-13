@@ -105,7 +105,6 @@ def update_transformed(
     updater.prepare_database()
     with gracefull_ctlc_shutdown() as shutdown_initialized:
         for b in batch(range(start_block, end_block + 1), n=batch_size):
-
             logger.info(
                 f"Working on batch ({len(b)}) "
                 f"from block {min(b)} to {max(b)}. "

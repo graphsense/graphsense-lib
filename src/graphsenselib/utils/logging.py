@@ -39,6 +39,7 @@ def configure_logging(loglevel):
     )
 
     logging.getLogger("cassandra").setLevel(logging.ERROR)
+    logging.getLogger("ethereumetl").setLevel(logging.ERROR)
     logging.getLogger("Cluster").setLevel(logging.ERROR)
     logging.getLogger("requests").setLevel(logging.ERROR)
     logging.getLogger("urllib3").setLevel(logging.ERROR)
