@@ -26,9 +26,10 @@ class KeyspaceConfig(BaseModel):
     schema_type: str
     disable_delta_updates: bool = Field(default_factory=lambda: False)
     node_reference: str = Field(default_factory=lambda: "")
-    keyspace_replication_config: str = Field(
+    raw_keyspace_replication_config: str = Field(
         default_factory=lambda: CASSANDRA_REPLICATION_FACTOR
     )
+    raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
 
     @validator("schema_type", allow_reuse=True)
     def schema_type_in_range(cls, v):
@@ -91,7 +92,7 @@ class AppConfig(GoodConf):
                         "transformed_keyspace_name": f"{cur}_transformed_{env}",
                         "schema_type": currency_to_schema_type[cur],
                         "disable_delta_updates": False,
-                        "keyspace_replication_config": CASSANDRA_REPLICATION_FACTOR,
+                        "raw_keyspace_replication_config": CASSANDRA_REPLICATION_FACTOR,
                     }
                     for cur in supported_base_currencies
                 },

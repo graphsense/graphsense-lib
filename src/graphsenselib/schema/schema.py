@@ -223,7 +223,7 @@ class GraphsenseSchemas:
             else:
                 replication_factor_config = config.get_keyspace_config(
                     env, currency
-                ).keyspace_replication_config
+                ).raw_keyspace_replication_config
                 schema_to_create = schema.get_schema_string(
                     target_ks_name, replication_factor_config
                 )
