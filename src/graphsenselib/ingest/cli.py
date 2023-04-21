@@ -6,7 +6,8 @@ from ..cli.common import require_currency, require_environment
 from ..config import config, currency_to_schema_type
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
-from .account_streaming import ingest as ingest_eth
+from .common import INGEST_SINKS
+from .factory import IngestFactory
 
 
 @click.group()
@@ -24,6 +25,14 @@ def ingesting():
 @require_environment()
 @require_currency(required=True)
 @click.option(
+    "--sinks",
+    type=click.Choice(INGEST_SINKS, case_sensitive=False),
+    multiple=True,
+    default=["cassandra"],
+    help="Where the raw data is written to currently"
+    " either cassandra, parquet or both (default: cassandra)",
+)
+@click.option(
     "--start-block",
     type=int,
     required=False,
@@ -39,7 +48,8 @@ def ingesting():
     "--batch-size",
     type=int,
     default=10,
-    help="number of blocks to export at a time (default: 10)",
+    help="number of blocks to export (write) at a time (default: 10)"
+    "esp. export to parquet benefits from larger values.",
 )
 @click.option(
     "--timeout",
@@ -69,6 +79,7 @@ def ingesting():
 def ingest(
     env,
     currency,
+    sinks,
     start_block,
     end_block,
     batch_size,
@@ -90,21 +101,27 @@ def ingest(
         )
         sys.exit(101)
     else:
-        provider = config.get_keyspace_config(env, currency).node_reference
+        ks_config = config.get_keyspace_config(env, currency)
+        provider = ks_config.node_reference
+        parquet_file_sink = ks_config.raw_keyspace_file_sink_directory
 
         if create_schema:
             GraphsenseSchemas().create_keyspace_if_not_exist(
                 env, currency, keyspace_type="raw"
             )
 
+        def create_sink_config(sink):
+            return {"output_directory": parquet_file_sink} if sink == "parquet" else {}
+
         with DbFactory().from_config(env, currency) as db:
-            ingest_eth(
+            IngestFactory().from_config(env, currency).ingest(
                 db=db,
-                provider_uri=provider,
+                source=provider,
+                sink_config={k: create_sink_config(k) for k in sinks},
                 user_start_block=start_block,
                 user_end_block=end_block,
                 batch_size=batch_size,
                 info=info,
                 previous_day=previous_day,
-                w3_timeout=timeout,
+                provider_timeout=timeout,
             )

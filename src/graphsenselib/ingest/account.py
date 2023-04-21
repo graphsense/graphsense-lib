@@ -1,7 +1,12 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlparse
 
+# import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
 from ethereumetl.jobs.export_traces_job import ExportTracesJob
@@ -13,6 +18,7 @@ from ethereumetl.streaming.eth_item_timestamp_calculator import (
     EthItemTimestampCalculator,
 )
 from ethereumetl.thread_local_proxy import ThreadLocalProxy
+from pyarrow.fs import HadoopFileSystem
 from web3 import Web3
 
 from ..db import AnalyticsDb
@@ -22,6 +28,104 @@ logger = logging.getLogger(__name__)
 
 BLOCK_BUCKET_SIZE = 1_000
 TX_HASH_PREFIX_LEN = 5
+
+PARQUET_PARTITION_SIZE = 100_000
+
+PARQUET_SCHEMAS = {
+    "log": pa.schema(
+        [
+            ("partition", pa.int16()),
+            ("block_id_group", pa.int32()),
+            ("block_id", pa.int32()),
+            ("block_hash", pa.binary(32)),
+            ("address", pa.binary(20)),
+            ("data", pa.large_binary()),
+            ("topics", pa.list_(pa.binary(32))),
+            ("topic0", pa.binary(32)),
+            ("tx_hash", pa.binary(32)),
+            ("log_index", pa.int32()),
+            ("transaction_index", pa.int32()),
+        ]
+    ),
+    "trace": pa.schema(
+        [
+            ("partition", pa.int16()),
+            ("block_id_group", pa.int32()),
+            ("block_id", pa.int32()),
+            ("tx_hash", pa.binary(32)),
+            ("transaction_index", pa.int32()),
+            ("from_address", pa.binary(20)),
+            ("to_address", pa.binary(20)),
+            ("value", pa.decimal128(38, 0)),
+            ("input", pa.large_binary()),
+            ("output", pa.large_binary()),
+            ("trace_type", pa.string()),
+            ("call_type", pa.string()),
+            ("reward_type", pa.string()),
+            ("gas", pa.int32()),
+            ("gas_used", pa.decimal128(38, 0)),
+            ("subtraces", pa.int32()),
+            ("trace_address", pa.string()),
+            ("error", pa.string()),
+            ("status", pa.int16()),
+            ("trace_id", pa.string()),
+            ("trace_index", pa.int32()),
+        ]
+    ),
+    "block": pa.schema(
+        [
+            ("partition", pa.int16()),
+            ("block_id_group", pa.int32()),
+            ("block_id", pa.int32()),
+            ("block_hash", pa.binary(32)),
+            ("parent_hash", pa.binary(32)),
+            ("nonce", pa.binary(8)),
+            ("sha3_uncles", pa.binary(32)),
+            ("logs_bloom", pa.binary(256)),
+            ("transactions_root", pa.binary(32)),
+            ("state_root", pa.binary(32)),
+            ("receipts_root", pa.binary(32)),
+            ("miner", pa.binary(20)),
+            ("difficulty", pa.decimal128(38, 0)),
+            ("total_difficulty", pa.decimal128(38, 0)),
+            ("size", pa.int64()),
+            ("extra_data", pa.large_binary()),
+            ("gas_limit", pa.int32()),
+            ("gas_used", pa.int32()),
+            ("base_fee_per_gas", pa.decimal128(38, 0)),
+            ("timestamp", pa.int32()),
+            ("transaction_count", pa.int32()),
+        ]
+    ),
+    "transaction": pa.schema(
+        [
+            ("partition", pa.int16()),
+            ("tx_hash_prefix", pa.string()),
+            ("tx_hash", pa.binary(32)),
+            ("nonce", pa.int32()),
+            ("block_hash", pa.binary(32)),
+            ("block_id_group", pa.int32()),
+            ("block_id", pa.int32()),
+            ("transaction_index", pa.int32()),
+            ("from_address", pa.binary(20)),
+            ("to_address", pa.binary(20)),
+            ("value", pa.decimal128(38, 0)),
+            ("gas", pa.int32()),
+            ("gas_price", pa.decimal128(38, 0)),
+            ("input", pa.large_binary()),
+            ("block_timestamp", pa.int32()),
+            ("max_fee_per_gas", pa.decimal128(38, 0)),
+            ("max_priority_fee_per_gas", pa.decimal128(38, 0)),
+            ("transaction_type", pa.decimal128(38, 0)),
+            ("receipt_cumulative_gas_used", pa.decimal128(38, 0)),
+            ("receipt_gas_used", pa.decimal128(38, 0)),
+            ("receipt_contract_address", pa.binary(20)),
+            ("receipt_root", pa.binary(32)),
+            ("receipt_status", pa.decimal128(38, 0)),
+            ("receipt_effective_gas_price", pa.decimal128(38, 0)),
+        ]
+    ),
+}
 
 
 class InMemoryItemExporter:
@@ -143,16 +247,6 @@ class EthStreamerAdapter:
         return traces
 
 
-def build_cql_insert_stmt(columns: Sequence[str], table: str) -> str:
-    """Create CQL insert statement for specified columns and table name."""
-
-    return "INSERT INTO %s (%s) VALUES (%s);" % (
-        table,
-        ", ".join(columns),
-        ("?," * len(columns))[:-1],
-    )
-
-
 def get_last_block_yesterday(batch_web3_provider: ThreadLocalProxy) -> int:
     """Return last block number of previous day from Ethereum client."""
 
@@ -179,17 +273,68 @@ def get_last_synced_block(batch_web3_provider: ThreadLocalProxy) -> int:
     return int(Web3(batch_web3_provider).eth.getBlock("latest").number)
 
 
+def write_to_sinks(
+    db: AnalyticsDb,
+    sink_config: dict,
+    table_name: str,
+    parameters,
+    concurrency: int = 100,
+):
+    for sink, config in sink_config.items():
+        if sink == "cassandra":
+            cassandra_ingest(db, table_name, parameters, concurrency=concurrency)
+        elif sink == "parquet":
+            path = config.get("output_directory", None)
+            if path is None:
+                raise Exception(
+                    "No output_dir is set. "
+                    "Please set raw_keyspace_file_sink_directory "
+                    "in the keyspace config."
+                )
+            write_parquet(path, table_name, parameters)
+        else:
+            logger.warning(f"Encountered unknown sink type {sink}, ignoring.")
+
+
 def cassandra_ingest(
     db: AnalyticsDb, table_name: str, parameters, concurrency: int = 100
 ) -> None:
     """Concurrent ingest into Apache Cassandra."""
-
     db.raw.ingest(
         table_name, parameters, concurrency=concurrency, auto_none_to_unset=True
     )
 
 
-def ingest_configuration(
+def write_parquet(path, table_name, parameters):
+    if not parameters:
+        return
+    table = pa.Table.from_pylist(parameters, schema=PARQUET_SCHEMAS[table_name])
+
+    if path.startswith("hdfs://"):
+        o = urlparse(path)
+        fs = HadoopFileSystem(o.hostname, o.port)
+
+        pq.write_to_dataset(
+            table,
+            root_path=o.path / table_name,
+            partition_cols=["partition"],
+            existing_data_behavior="overwrite_or_ignore",
+            filesystem=fs,
+        )
+    else:
+        path = Path(path)
+        if path.exists():
+            pq.write_to_dataset(
+                table,
+                root_path=path / table_name,
+                partition_cols=["partition"],
+                existing_data_behavior="overwrite_or_ignore",
+            )
+        else:
+            raise Exception(f"Parquet file path not found: {path}")
+
+
+def ingest_configuration_cassandra(
     db: AnalyticsDb,
     block_bucket_size: int,
     tx_hash_prefix_len: int,
@@ -211,6 +356,7 @@ def ingest_configuration(
 def ingest_logs(
     items: Iterable,
     db: AnalyticsDb,
+    sink_config: dict,
     block_bucket_size: int = 1_000,
 ) -> None:
     """Ingest blocks into Apache Cassandra."""
@@ -229,6 +375,10 @@ def ingest_logs(
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
         item["block_id_group"] = item["block_id"] // block_bucket_size
+
+        # Used for partitioning in parquet files
+        # ignored otherwise
+        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
 
         tpcs = item["topics"]
 
@@ -249,12 +399,13 @@ def ingest_logs(
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    cassandra_ingest(db, "log", items)
+    write_to_sinks(db, sink_config, "log", items)
 
 
 def ingest_blocks(
     items: Iterable,
     db: AnalyticsDb,
+    sink_config: dict,
     block_bucket_size: int = 1_000,
 ) -> None:
     """Ingest blocks into Apache Cassandra."""
@@ -278,17 +429,24 @@ def ingest_blocks(
         item["block_id"] = item.pop("number")
         item["block_id_group"] = item["block_id"] // block_bucket_size
         item["block_hash"] = item.pop("hash")
+
+        # Used for partitioning in parquet files
+        # ignored otherwise
+        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    cassandra_ingest(db, "block", items)
+    write_to_sinks(db, sink_config, "block", items)
 
 
 def ingest_transactions(
     items: Iterable,
     db: AnalyticsDb,
+    sink_config: dict,
     tx_hash_prefix_len: int = 4,
+    block_bucket_size: int = 1_000,
 ) -> None:
     """Ingest transactions into Apache Cassandra."""
 
@@ -309,16 +467,23 @@ def ingest_transactions(
         hash_slice = slice(2, 2 + tx_hash_prefix_len)
         item["tx_hash_prefix"] = item["tx_hash"][hash_slice]
         item["block_id"] = item.pop("block_number")
+        item["block_id_group"] = item["block_id"] // block_bucket_size
+
+        # Used for partitioning in parquet files
+        # ignored otherwise
+        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    cassandra_ingest(db, "transaction", items)
+    write_to_sinks(db, sink_config, "transaction", items)
 
 
 def ingest_traces(
     items: Iterable,
     db: AnalyticsDb,
+    sink_config: dict,
     block_bucket_size: int = 1_000,
 ) -> None:
     """Ingest traces into Apache Cassandra."""
@@ -331,6 +496,11 @@ def ingest_traces(
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
         item["block_id_group"] = item["block_id"] // block_bucket_size
+
+        # Used for partitioning in parquet files
+        # ignored otherwise
+        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+
         item["trace_address"] = (
             ",".join(map(str, item["trace_address"]))
             if item["trace_address"] is not None
@@ -340,7 +510,7 @@ def ingest_traces(
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    cassandra_ingest(db, "trace", items)
+    write_to_sinks(db, sink_config, "trace", items)
 
 
 def print_block_info(
@@ -358,15 +528,27 @@ def print_block_info(
 def ingest(
     db: AnalyticsDb,
     provider_uri: str,
+    sink_config: dict,
     user_start_block: Optional[int],
     user_end_block: Optional[int],
     batch_size: int,
     info: bool,
     previous_day: bool,
-    w3_timeout: int,
+    provider_timeout: int,
 ):
+    # make sure that only supported sinks are selected.
+    if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
+        raise Exception(
+            "Unsupported sink selected, supported: cassandra,"
+            f" parquet; got {list(sink_config.keys())}"
+        )
+
+    logger.info(f"Writing data to {list(sink_config.keys())}")
+
     thread_proxy = ThreadLocalProxy(
-        lambda: get_provider_from_uri(provider_uri, timeout=w3_timeout, batch=True)
+        lambda: get_provider_from_uri(
+            provider_uri, timeout=provider_timeout, batch=True
+        )
     )
 
     last_synced_block = get_last_synced_block(thread_proxy)
@@ -403,7 +585,7 @@ def ingest(
     logger.info(
         f"[{time1}] Ingesting block range "
         f"{start_block:,}:{end_block:,} "
-        f"into Cassandra node"
+        f"into {list(sink_config.keys())} "
     )
 
     for block_id in range(start_block, end_block + 1, batch_size):
@@ -420,10 +602,12 @@ def ingest(
         logging.disable(logging.NOTSET)
 
         # ingest into Cassandra
-        ingest_logs(logs, db, BLOCK_BUCKET_SIZE)
-        ingest_traces(traces, db, BLOCK_BUCKET_SIZE)
-        ingest_transactions(enriched_txs, db, TX_HASH_PREFIX_LEN)
-        ingest_blocks(blocks, db, BLOCK_BUCKET_SIZE)
+        ingest_logs(logs, db, sink_config, BLOCK_BUCKET_SIZE)
+        ingest_traces(traces, db, sink_config, BLOCK_BUCKET_SIZE)
+        ingest_transactions(
+            enriched_txs, db, sink_config, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
+        )
+        ingest_blocks(blocks, db, sink_config, BLOCK_BUCKET_SIZE)
 
         count += batch_size
 
@@ -443,4 +627,7 @@ def ingest(
     )
 
     # store configuration details
-    ingest_configuration(db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN))
+    if "cassandra" in sink_config.keys():
+        ingest_configuration_cassandra(
+            db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN)
+        )
