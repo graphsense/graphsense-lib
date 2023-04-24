@@ -102,8 +102,8 @@ def ingest(
         sys.exit(101)
     else:
         ks_config = config.get_keyspace_config(env, currency)
-        provider = ks_config.node_reference
-        parquet_file_sink = ks_config.raw_keyspace_file_sink_directory
+        provider = ks_config.ingest_config.node_reference
+        parquet_file_sink = ks_config.ingest_config.raw_keyspace_file_sink_directory
 
         if create_schema:
             GraphsenseSchemas().create_keyspace_if_not_exist(

@@ -20,16 +20,20 @@ GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 CASSANDRA_REPLICATION_FACTOR = "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 
 
-class KeyspaceConfig(BaseModel):
-    raw_keyspace_name: str
-    transformed_keyspace_name: str
-    schema_type: str
-    disable_delta_updates: bool = Field(default_factory=lambda: False)
+class IngestConfig(BaseModel):
     node_reference: str = Field(default_factory=lambda: "")
     raw_keyspace_replication_config: str = Field(
         default_factory=lambda: CASSANDRA_REPLICATION_FACTOR
     )
     raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
+
+
+class KeyspaceConfig(BaseModel):
+    raw_keyspace_name: str
+    transformed_keyspace_name: str
+    schema_type: str
+    disable_delta_updates: bool = Field(default_factory=lambda: False)
+    ingest_config: Optional[IngestConfig]
 
     @validator("schema_type", allow_reuse=True)
     def schema_type_in_range(cls, v):
@@ -92,7 +96,9 @@ class AppConfig(GoodConf):
                         "transformed_keyspace_name": f"{cur}_transformed_{env}",
                         "schema_type": currency_to_schema_type[cur],
                         "disable_delta_updates": False,
-                        "raw_keyspace_replication_config": CASSANDRA_REPLICATION_FACTOR,
+                        "ingest_config": {
+                            "raw_keyspace_replication_config": CASSANDRA_REPLICATION_FACTOR,  # noqa
+                        },
                     }
                     for cur in supported_base_currencies
                 },
