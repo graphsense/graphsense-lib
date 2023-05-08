@@ -116,7 +116,13 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
 
             iflow = flows[iadr]
             oflow = flows[oadr]
-            v = abs(round((iflow / reduced_input_sum) * oflow))
+            if reduced_input_sum == 0:
+                # This can happen for txs with zero value and
+                # zero fees. eg. in btc
+                # c1e0db6368a43f5589352ed44aa1ff9af33410e4a9fd9be0f6ac42d9e4117151
+                v = 0
+            else:
+                v = abs(round((iflow / reduced_input_sum) * oflow))
             assert v <= max(abs(iflow), abs(oflow))
             relations_updates.append(
                 RelationDelta(
