@@ -525,6 +525,14 @@ def print_block_info(
         logger.warning(f"Last ingested block: {last_ingested_block:,}")
 
 
+def get_w3_connection_from_url(provider_uri: str, provider_timeout=600):
+    return ThreadLocalProxy(
+        lambda: get_provider_from_uri(
+            provider_uri, timeout=provider_timeout, batch=True
+        )
+    )
+
+
 def ingest(
     db: AnalyticsDb,
     provider_uri: str,

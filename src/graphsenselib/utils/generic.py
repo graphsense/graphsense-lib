@@ -112,3 +112,15 @@ def binary_search(L, x, lo, hi):
 
 def pandas_row_factory(colnames, rows):
     return pd.DataFrame(rows, columns=colnames)
+
+
+def subkey_exists(item, key_list) -> bool:
+    if item is None and len(key_list) > 0:
+        return False
+    if not key_list:
+        return True
+    h, *rest = key_list
+    if h in item:
+        return subkey_exists(item[h], rest)
+    else:
+        return False

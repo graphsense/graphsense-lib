@@ -1,9 +1,7 @@
-import sys
-
 import click
 
 from ..cli.common import require_currency, require_environment
-from ..config import config, currency_to_schema_type
+from ..config import config
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from .common import INGEST_SINKS
@@ -94,34 +92,27 @@ def ingest(
         env (str): Environment to work on
         currency (str): currency to work on
     """
-    schema_type = currency_to_schema_type.get(currency, "")
-    if schema_type != "account":
-        click.secho(
-            "Ingest is not implemented for non account model currencies.", fg="red"
+    ks_config = config.get_keyspace_config(env, currency)
+    provider = ks_config.ingest_config.node_reference
+    parquet_file_sink = ks_config.ingest_config.raw_keyspace_file_sink_directory
+
+    if create_schema:
+        GraphsenseSchemas().create_keyspace_if_not_exist(
+            env, currency, keyspace_type="raw"
         )
-        sys.exit(101)
-    else:
-        ks_config = config.get_keyspace_config(env, currency)
-        provider = ks_config.ingest_config.node_reference
-        parquet_file_sink = ks_config.ingest_config.raw_keyspace_file_sink_directory
 
-        if create_schema:
-            GraphsenseSchemas().create_keyspace_if_not_exist(
-                env, currency, keyspace_type="raw"
-            )
+    def create_sink_config(sink):
+        return {"output_directory": parquet_file_sink} if sink == "parquet" else {}
 
-        def create_sink_config(sink):
-            return {"output_directory": parquet_file_sink} if sink == "parquet" else {}
-
-        with DbFactory().from_config(env, currency) as db:
-            IngestFactory().from_config(env, currency).ingest(
-                db=db,
-                source=provider,
-                sink_config={k: create_sink_config(k) for k in sinks},
-                user_start_block=start_block,
-                user_end_block=end_block,
-                batch_size=batch_size,
-                info=info,
-                previous_day=previous_day,
-                provider_timeout=timeout,
-            )
+    with DbFactory().from_config(env, currency) as db:
+        IngestFactory().from_config(env, currency).ingest(
+            db=db,
+            source=provider,
+            sink_config={k: create_sink_config(k) for k in sinks},
+            user_start_block=start_block,
+            user_end_block=end_block,
+            batch_size=batch_size,
+            info=info,
+            previous_day=previous_day,
+            provider_timeout=timeout,
+        )

@@ -1,6 +1,6 @@
 import os
 
-from graphsenselib.utils import batch, bytes_to_hex, strip_0x, to_int
+from graphsenselib.utils import batch, bytes_to_hex, strip_0x, subkey_exists, to_int
 from graphsenselib.utils.errorhandling import CrashRecoverer
 
 
@@ -78,3 +78,11 @@ def test_batch_works():
         [763638, 763639],
         [763640],
     ]
+
+
+def test_subkey_exists():
+    assert subkey_exists({}, ["abc"]) is False
+    assert subkey_exists({"abc": None}, ["abc"]) is True
+    assert subkey_exists({"abc": []}, ["abc", "cbd"]) is False
+    assert subkey_exists({"abc": {"cbd": 1}}, ["abc", "cbd"]) is True
+    assert subkey_exists({"abc": {"cbd": None}}, ["abc", "cbd"]) is True
