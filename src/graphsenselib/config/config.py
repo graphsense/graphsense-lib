@@ -14,6 +14,13 @@ currency_to_schema_type = {
     cur: "account" if cur == "eth" else "utxo" for cur in supported_base_currencies
 }
 supported_fiat_currencies = ["USD", "EUR"]
+avg_blocktimes_by_currencies = {
+    "eth": 15,
+    "btc": 600,
+    "bch": 600,
+    "zec": 75,
+    "ltc": 150,
+}
 
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 

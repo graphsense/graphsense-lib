@@ -79,7 +79,7 @@ def shared_ingest_flags():
         function = click.option(
             "--dry-run",
             is_flag=True,
-            help="Don't write new records to cassandra.",
+            help="Don't write new records to Cassandra.",
         )(function)
         return function
 
