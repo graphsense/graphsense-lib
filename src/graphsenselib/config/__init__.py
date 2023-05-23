@@ -13,3 +13,4 @@ from .config import (
     supported_base_currencies,
     supported_fiat_currencies,
 )
+from .errors import ConfigError

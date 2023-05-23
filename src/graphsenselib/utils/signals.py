@@ -27,17 +27,17 @@ def shutdown_initialized():
 
 
 def register_ctrlc_shutdown_handler():
-    logger.info("Registered gracefull ctrlc handler.")
+    logger.info("Registered graceful ctrlc handler.")
     signal.signal(signal.SIGINT, shutdown_handler)
 
 
 def unregister_ctrlc_shutdown_handler():
-    logger.info("Unregistered gracefull ctrlc handler.")
+    logger.info("Unregistered graceful ctrlc handler.")
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
 @contextmanager
-def gracefull_ctlc_shutdown(*args, **kwds):
+def graceful_ctlc_shutdown(*args, **kwds):
     register_ctrlc_shutdown_handler()
     try:
         yield shutdown_initialized

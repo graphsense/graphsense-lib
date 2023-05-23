@@ -1,84 +1,94 @@
-import itertools
-import json
 import logging
 from typing import List, Optional, Tuple
-from urllib.parse import urlparse
 
-import requests
-
-# from ..datatypes.common import FlowDirection
-# from ..utils import fallback
-# from ..utils.accountmodel import to_int
+from ..datatypes.common import FlowDirection
+from ..ingest.utxo import (
+    BtcStreamerAdapter,
+    OutputResolverBase,
+    enrich_txs,
+    get_stream_adapter,
+)
+from ..utils import parse_timestamp
+from ..utils.logging import suppress_log_level
 from .abstract import FlowEvent, FlowProvider
-
-# from requests.auth import HTTPBasicAuth
-
 
 logger = logging.getLogger(__name__)
 
-id_counter = itertools.count()
 
+def parse_btcetl_txs(tx) -> List[FlowEvent]:
+    output = []
+    tx_h = tx["hash"]
+    time = parse_timestamp(tx["block_timestamp"])
+    b = tx["block_number"]
 
-class BtcLikeRPC(object):
-    def __init__(self, url, user, passwd, log, method=None, timeout=30):
-        self.url = url
-        self._user = user
-        self._passwd = passwd
-        self._method_name = method
-        self._timeout = timeout
-        self._log = log
-
-    def __getattr__(self, method_name):
-        return BtcLikeRPC(
-            self.url,
-            self._user,
-            self._passwd,
-            self._log,
-            method_name,
-            timeout=self._timeout,
+    for o in tx["outputs"]:
+        v = (
+            (o["value"] / len(o["addresses"]))
+            if len(o["addresses"]) > 0
+            else o["value"]
         )
+        for a in o.get("addresses", []):
+            output.append(
+                FlowEvent(
+                    direction=FlowDirection.OUT,
+                    address=a,
+                    value=v,
+                    block=b,
+                    tx_ref=tx_h,
+                    timestamp=time,
+                )
+            )
 
-    def __call__(self, *args):
-        playload = json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": next(id_counter),
-                "method": self._method_name,
-                "params": args,
-            }
-        )
-        headers = {"Content-type": "application/json", "cache-control": "no-cache"}
-        resp = requests.post(
-            self.url,
-            headers=headers,
-            data=playload,
-            timeout=self._timeout,
-            auth=(self._user, self._passwd),
-        )
-        return resp
+    for o in tx["inputs"]:
+        if "addresses" in o and len(o["addresses"]) != 0:
+            v = (
+                (o["value"] / len(o["addresses"]))
+                if len(o["addresses"]) > 0
+                else o["value"]
+            )
+        for a in o.get("addresses", []):
+            output.append(
+                FlowEvent(
+                    direction=FlowDirection.OUT,
+                    address=a,
+                    value=v,
+                    block=b,
+                    tx_ref=tx_h,
+                    timestamp=time,
+                )
+            )
+    return output
 
 
-class UtxoNodeFlowProvider(FlowProvider):
-    def __init__(self, node_url):
-        purl = urlparse(node_url)
-        self.node_url = node_url.replace(f"{purl.username}:{purl.password}@", "")
-        self.rpc = BtcLikeRPC(self.node_url, purl.username, purl.password, logger)
+class BitcoinEtlFlowProvider(FlowProvider):
+    node_url: str
+    stream: BtcStreamerAdapter
+    output_resolver: OutputResolverBase
 
-    def get_block_hash(self, block: int) -> Optional[str]:
-        resp = self.rpc.getblockhash(block)
+    def __init__(
+        self, currency: str, node_url: str, output_resolver: OutputResolverBase
+    ):
+        self.node_url = node_url
+        self.stream = get_stream_adapter(currency, node_url, batch_size=1)
+        self.output_resolver = output_resolver
 
-        # resp2 = self.rpc["getblock"](block)
+    def __enter__(self):
+        self.output_resolver.__enter__()
+        return self
 
-        if resp.status_code == 200:
-            data = resp.json()
-            tx_hash = data["result"]
-            resp = self.rpc.getblock(tx_hash, 3)
-        else:
-            return None
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.output_resolver.__exit__(exc_type, exc_val, exc_tb)
 
     def get_flows_for_block(
         self, block: int
     ) -> Optional[List[Tuple[FlowEvent, object]]]:
-        self.get_block_hash(block)
+        with suppress_log_level(logging.INFO):
+            txs = self.stream.export_transactions(block, block)
+            enrich_txs(txs, self.output_resolver, ignore_missing_outputs=True)
 
-        return []
+        events = []
+        for tx in txs:
+            for e in parse_btcetl_txs(tx):
+                events.append((e, tx))
+
+        return events if events else None

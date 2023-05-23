@@ -26,7 +26,7 @@ def get_db_types_by_schema_type(schema_type) -> DbTypeStrategy:
 
 
 class DbFactory:
-    def from_config(self, env, currency):
+    def from_config(self, env, currency) -> AnalyticsDb:
         e = config.get_environment(env)
         ks = e.get_keyspace(currency)
         return self.from_name(
@@ -38,7 +38,7 @@ class DbFactory:
 
     def from_name(
         self, raw_keyspace_name, transformed_keyspace_name, schema_type, cassandra_nodes
-    ):
+    ) -> AnalyticsDb:
         db_types = get_db_types_by_schema_type(schema_type)
         return AnalyticsDb(
             raw=KeyspaceConfigDB(

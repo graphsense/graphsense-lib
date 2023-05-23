@@ -1,6 +1,6 @@
 from typing import Iterable, Optional
 
-from ..utils import flatten
+from ..utils import flatten, hex_to_bytearray
 from ..utils.utxo import SlimTx, get_slim_tx_from_transaction
 from .analytics import RawDb, TransformedDb
 
@@ -52,3 +52,54 @@ class RawDbUtxo(RawDb):
 
             addresses += get_slim_tx_from_transaction(result)
         return addresses
+
+    def get_tx_outputs(
+        self,
+        tx_hash: str,
+        tx_prefix_length: Optional[int],
+        tx_bucket_size: Optional[int],
+    ) -> Optional[Iterable]:
+        tx_prefix_length = tx_prefix_length or self.get_tx_prefix_length()
+        tx_bucket_size = tx_bucket_size or self.get_tx_bucket_size()
+
+        tx_id_record = self.select_one_safe(
+            "transaction_by_tx_prefix",
+            columns=["tx_id"],
+            where={
+                "tx_prefix": f"{tx_hash[:tx_prefix_length]}",
+                "tx_hash": hex_to_bytearray(tx_hash),
+            },
+        )
+        if tx_id_record:
+            tx_id = tx_id_record.tx_id
+            result = self.select_one_safe(
+                "transaction",
+                columns=["outputs"],
+                where={"tx_id_group": tx_id // tx_bucket_size, "tx_id": tx_id},
+            )
+
+            res = {}
+            for i, item in enumerate(result.outputs):
+                res[i] = {
+                    "addresses": item.address,
+                    "value": item.value,
+                    "type": item.address_type,
+                }
+            return res
+        else:
+            return None
+
+    def get_latest_tx_id_before_block(self, block_id: int) -> Optional[int]:
+        last_block = block_id - 1
+        bucket_size = self.get_block_bucket_size()
+
+        block = self.select_one_safe(
+            "block_transactions",
+            where={"block_id_group": last_block // bucket_size, "block_id": last_block},
+        )
+        latest_tx_id = -1
+
+        if not block:
+            return latest_tx_id
+
+        return max(tx.tx_id for tx in block.txs)

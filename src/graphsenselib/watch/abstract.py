@@ -33,6 +33,12 @@ class WatchpointProvider(ABC):
     def get_configuration(self, address: str) -> WatchConfig:
         pass
 
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 
 class EventNotifier(ABC):
     @abstractmethod
@@ -43,12 +49,24 @@ class EventNotifier(ABC):
     def send_notifications(self):
         pass
 
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 
 class FlowProvider(ABC):
     @abstractmethod
     def get_flows_for_block(
         self, block: int
     ) -> Optional[List[Tuple[FlowEvent, object]]]:
+        pass
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 
 
@@ -67,4 +85,10 @@ class WatcherState(ABC):
 
     @abstractmethod
     def persist(self):
+        pass
+
+    def __enter__(self):
+        self.load()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         pass

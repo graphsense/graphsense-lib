@@ -14,7 +14,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 from ..config import keyspace_types
 from ..datatypes import DbChangeType
-from ..utils import GenericArrayFacade, binary_search
+from ..utils import GenericArrayFacade, binary_search, parse_timestamp
 from .cassandra import (
     CassandraDb,
     build_create_stmt,
@@ -217,7 +217,7 @@ class DbReaderMixin:
         result = self.select(table=table, columns=[group_id_col], per_partition_limit=1)
         groups = [getattr(row, group_id_col) for row in result.current_rows]
 
-        if any(groups):
+        if len(groups) > 0:
             result = self.select(
                 table,
                 columns=[f"MAX({id_col}) AS max"],
@@ -466,6 +466,14 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             else None
         )
 
+    def get_tx_prefix_length(self) -> Optional[int]:
+        config = self.get_configuration()
+        return (
+            int(config.tx_prefix_length)
+            if config is not None and "tx_prefix_length" in dir(config)
+            else None
+        )
+
     def get_highest_block(self, sanity_check=True) -> Optional[int]:
         """Return last ingested block ID from block table."""
         return self._get_hightest_id(table="block", sanity_check=sanity_check)
@@ -493,7 +501,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         parameters = [(b, [b // bucket_size, b]) for b in blocks]
         results = self._db.execute_batch(stmt, parameters)
         return {
-            a: (datetime.utcfromtimestamp(row.current_rows[0].timestamp))
+            a: (parse_timestamp(row.current_rows[0].timestamp))
             if len(row.current_rows) > 0
             else None
             for (a, row) in results
