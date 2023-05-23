@@ -6,15 +6,17 @@ from pydantic import BaseModel, validator
 
 from ..utils import flatten
 
-supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec"]
+supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec", "trx"]
 default_environments = ["prod", "test", "dev", "exp1", "exp2", "exp3"]
 schema_types = ["utxo", "account"]
 keyspace_types = ["raw", "transformed"]
 currency_to_schema_type = {
-    cur: "account" if cur == "eth" else "utxo" for cur in supported_base_currencies
+    cur: "account" if cur == "eth" or cur == "trx" else "utxo"
+    for cur in supported_base_currencies
 }
 supported_fiat_currencies = ["USD", "EUR"]
 avg_blocktimes_by_currencies = {
+    "trx": 7,
     "eth": 15,
     "btc": 600,
     "bch": 600,

@@ -1,11 +1,12 @@
 import click
 
 from ..cli.common import require_currency, require_environment
-from ..config import config
+from ..config import config, currency_to_schema_type
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from .common import INGEST_SINKS
 from .factory import IngestFactory
+from .parquet import SCHEMA_MAPPING
 
 
 @click.group()
@@ -101,14 +102,23 @@ def ingest(
             env, currency, keyspace_type="raw"
         )
 
-    def create_sink_config(sink):
-        return {"output_directory": parquet_file_sink} if sink == "parquet" else {}
+    def create_sink_config(sink, currency):
+        schema_type = currency_to_schema_type[currency]
+        return (
+            {
+                "output_directory": parquet_file_sink,
+                "schema": SCHEMA_MAPPING[schema_type],
+            }
+            if sink == "parquet" and schema_type == "account"
+            else {}
+        )
 
     with DbFactory().from_config(env, currency) as db:
         IngestFactory().from_config(env, currency).ingest(
             db=db,
+            currency=currency,
             source=provider,
-            sink_config={k: create_sink_config(k) for k in sinks},
+            sink_config={k: create_sink_config(k, currency) for k in sinks},
             user_start_block=start_block,
             user_end_block=end_block,
             batch_size=batch_size,

@@ -1,12 +1,22 @@
 import logging
 import threading
 import time
+from contextlib import contextmanager
 
 import click
 from rich.console import Console
 from rich.logging import RichHandler
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
+
+
+@contextmanager
+def suppress_log_level(loglevel: int):
+    logging.disable(loglevel)
+    try:
+        yield
+    finally:
+        logging.disable(logging.NOTSET)
 
 
 def configure_logging(loglevel):

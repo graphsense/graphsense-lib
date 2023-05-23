@@ -1,12 +1,7 @@
 import logging
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
-from urllib.parse import urlparse
 
-# import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
 from ethereumetl.jobs.export_traces_job import ExportTracesJob
@@ -18,11 +13,14 @@ from ethereumetl.streaming.eth_item_timestamp_calculator import (
     EthItemTimestampCalculator,
 )
 from ethereumetl.thread_local_proxy import ThreadLocalProxy
-from pyarrow.fs import HadoopFileSystem
 from web3 import Web3
 
+from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 from ..db import AnalyticsDb
-from ..utils.accountmodel import hex_to_bytearray
+from ..utils import hex_to_bytearray, parse_timestamp
+from ..utils.logging import suppress_log_level
+from ..utils.signals import graceful_ctlc_shutdown
+from .common import cassandra_ingest, write_to_sinks
 
 logger = logging.getLogger(__name__)
 
@@ -30,102 +28,6 @@ BLOCK_BUCKET_SIZE = 1_000
 TX_HASH_PREFIX_LEN = 5
 
 PARQUET_PARTITION_SIZE = 100_000
-
-PARQUET_SCHEMAS = {
-    "log": pa.schema(
-        [
-            ("partition", pa.int16()),
-            ("block_id_group", pa.int32()),
-            ("block_id", pa.int32()),
-            ("block_hash", pa.binary(32)),
-            ("address", pa.binary(20)),
-            ("data", pa.large_binary()),
-            ("topics", pa.list_(pa.binary(32))),
-            ("topic0", pa.binary(32)),
-            ("tx_hash", pa.binary(32)),
-            ("log_index", pa.int32()),
-            ("transaction_index", pa.int32()),
-        ]
-    ),
-    "trace": pa.schema(
-        [
-            ("partition", pa.int16()),
-            ("block_id_group", pa.int32()),
-            ("block_id", pa.int32()),
-            ("tx_hash", pa.binary(32)),
-            ("transaction_index", pa.int32()),
-            ("from_address", pa.binary(20)),
-            ("to_address", pa.binary(20)),
-            ("value", pa.decimal128(38, 0)),
-            ("input", pa.large_binary()),
-            ("output", pa.large_binary()),
-            ("trace_type", pa.string()),
-            ("call_type", pa.string()),
-            ("reward_type", pa.string()),
-            ("gas", pa.int32()),
-            ("gas_used", pa.decimal128(38, 0)),
-            ("subtraces", pa.int32()),
-            ("trace_address", pa.string()),
-            ("error", pa.string()),
-            ("status", pa.int16()),
-            ("trace_id", pa.string()),
-            ("trace_index", pa.int32()),
-        ]
-    ),
-    "block": pa.schema(
-        [
-            ("partition", pa.int16()),
-            ("block_id_group", pa.int32()),
-            ("block_id", pa.int32()),
-            ("block_hash", pa.binary(32)),
-            ("parent_hash", pa.binary(32)),
-            ("nonce", pa.binary(8)),
-            ("sha3_uncles", pa.binary(32)),
-            ("logs_bloom", pa.binary(256)),
-            ("transactions_root", pa.binary(32)),
-            ("state_root", pa.binary(32)),
-            ("receipts_root", pa.binary(32)),
-            ("miner", pa.binary(20)),
-            ("difficulty", pa.decimal128(38, 0)),
-            ("total_difficulty", pa.decimal128(38, 0)),
-            ("size", pa.int64()),
-            ("extra_data", pa.large_binary()),
-            ("gas_limit", pa.int32()),
-            ("gas_used", pa.int32()),
-            ("base_fee_per_gas", pa.decimal128(38, 0)),
-            ("timestamp", pa.int32()),
-            ("transaction_count", pa.int32()),
-        ]
-    ),
-    "transaction": pa.schema(
-        [
-            ("partition", pa.int16()),
-            ("tx_hash_prefix", pa.string()),
-            ("tx_hash", pa.binary(32)),
-            ("nonce", pa.int32()),
-            ("block_hash", pa.binary(32)),
-            ("block_id_group", pa.int32()),
-            ("block_id", pa.int32()),
-            ("transaction_index", pa.int32()),
-            ("from_address", pa.binary(20)),
-            ("to_address", pa.binary(20)),
-            ("value", pa.decimal128(38, 0)),
-            ("gas", pa.int32()),
-            ("gas_price", pa.decimal128(38, 0)),
-            ("input", pa.large_binary()),
-            ("block_timestamp", pa.int32()),
-            ("max_fee_per_gas", pa.decimal128(38, 0)),
-            ("max_priority_fee_per_gas", pa.decimal128(38, 0)),
-            ("transaction_type", pa.decimal128(38, 0)),
-            ("receipt_cumulative_gas_used", pa.decimal128(38, 0)),
-            ("receipt_gas_used", pa.decimal128(38, 0)),
-            ("receipt_contract_address", pa.binary(20)),
-            ("receipt_root", pa.binary(32)),
-            ("receipt_status", pa.decimal128(38, 0)),
-            ("receipt_effective_gas_price", pa.decimal128(38, 0)),
-        ]
-    ),
-}
 
 
 class InMemoryItemExporter:
@@ -157,7 +59,7 @@ class InMemoryItemExporter:
 
 class EthStreamerAdapter:
     """Ethereum streaming adapter to export blocks, transactions,
-    receipts, logs amd traces."""
+    receipts, logs and traces."""
 
     def __init__(
         self,
@@ -253,17 +155,11 @@ def get_last_block_yesterday(batch_web3_provider: ThreadLocalProxy) -> int:
     web3 = Web3(batch_web3_provider)
     eth_service = EthService(web3)
 
-    date = datetime.utcnow().replace(
-        hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc
-    )
-    print(
-        f"Determining latest block before {date.isoformat()}: ",
-        end="",
-        flush=True,
-    )
     prev_date = datetime.date(datetime.today()) - timedelta(days=1)
     _, end_block = eth_service.get_block_range_for_date(prev_date)
-    print(f"{end_block:,}")
+    logger.info(
+        f"Determining latest block before {prev_date.isoformat()} its {end_block:,}",
+    )
     return end_block
 
 
@@ -271,67 +167,6 @@ def get_last_synced_block(batch_web3_provider: ThreadLocalProxy) -> int:
     """Return last synchronized block number from Ethereum client."""
 
     return int(Web3(batch_web3_provider).eth.getBlock("latest").number)
-
-
-def write_to_sinks(
-    db: AnalyticsDb,
-    sink_config: dict,
-    table_name: str,
-    parameters,
-    concurrency: int = 100,
-):
-    for sink, config in sink_config.items():
-        if sink == "cassandra":
-            cassandra_ingest(db, table_name, parameters, concurrency=concurrency)
-        elif sink == "parquet":
-            path = config.get("output_directory", None)
-            if path is None:
-                raise Exception(
-                    "No output_dir is set. "
-                    "Please set raw_keyspace_file_sink_directory "
-                    "in the keyspace config."
-                )
-            write_parquet(path, table_name, parameters)
-        else:
-            logger.warning(f"Encountered unknown sink type {sink}, ignoring.")
-
-
-def cassandra_ingest(
-    db: AnalyticsDb, table_name: str, parameters, concurrency: int = 100
-) -> None:
-    """Concurrent ingest into Apache Cassandra."""
-    db.raw.ingest(
-        table_name, parameters, concurrency=concurrency, auto_none_to_unset=True
-    )
-
-
-def write_parquet(path, table_name, parameters):
-    if not parameters:
-        return
-    table = pa.Table.from_pylist(parameters, schema=PARQUET_SCHEMAS[table_name])
-
-    if path.startswith("hdfs://"):
-        o = urlparse(path)
-        fs = HadoopFileSystem(o.hostname, o.port)
-
-        pq.write_to_dataset(
-            table,
-            root_path=o.path / table_name,
-            partition_cols=["partition"],
-            existing_data_behavior="overwrite_or_ignore",
-            filesystem=fs,
-        )
-    else:
-        path = Path(path)
-        if path.exists():
-            pq.write_to_dataset(
-                table,
-                root_path=path / table_name,
-                partition_cols=["partition"],
-                existing_data_behavior="overwrite_or_ignore",
-            )
-        else:
-            raise Exception(f"Parquet file path not found: {path}")
 
 
 def ingest_configuration_cassandra(
@@ -353,14 +188,7 @@ def ingest_configuration_cassandra(
     )
 
 
-def ingest_logs(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-    block_bucket_size: int = 1_000,
-) -> None:
-    """Ingest blocks into Apache Cassandra."""
-
+def prepare_logs_inplace(items: Iterable, block_bucket_size: int = 1_000):
     blob_colums = [
         "block_hash",
         "address",
@@ -399,10 +227,8 @@ def ingest_logs(
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    write_to_sinks(db, sink_config, "log", items)
 
-
-def ingest_blocks(
+def ingest_logs(
     items: Iterable,
     db: AnalyticsDb,
     sink_config: dict,
@@ -410,6 +236,13 @@ def ingest_blocks(
 ) -> None:
     """Ingest blocks into Apache Cassandra."""
 
+    write_to_sinks(db, sink_config, "log", items)
+
+
+def prepare_blocks_inplace(
+    items: Iterable,
+    block_bucket_size: int = 1_000,
+):
     blob_colums = [
         "block_hash",
         "parent_hash",
@@ -438,18 +271,15 @@ def ingest_blocks(
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    write_to_sinks(db, sink_config, "block", items)
+
+def prepare_blocks_inplace_trx(items: Iterable):
+    for b in items:
+        b["timestamp"] = b["timestamp"] // 1000
 
 
-def ingest_transactions(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-    tx_hash_prefix_len: int = 4,
-    block_bucket_size: int = 1_000,
-) -> None:
-    """Ingest transactions into Apache Cassandra."""
-
+def prepare_transactions_inplace(
+    items: Iterable, tx_hash_prefix_len: int = 4, block_bucket_size: int = 1_000
+):
     blob_colums = [
         "tx_hash",
         "from_address",
@@ -477,17 +307,13 @@ def ingest_transactions(
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    write_to_sinks(db, sink_config, "transaction", items)
+
+def prepare_transactions_inplace_trx(items: Iterable):
+    for tx in items:
+        tx["block_timestamp"] = tx["block_timestamp"] // 1000
 
 
-def ingest_traces(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-    block_bucket_size: int = 1_000,
-) -> None:
-    """Ingest traces into Apache Cassandra."""
-
+def prepare_traces_inplace(items: Iterable, block_bucket_size: int = 1_000):
     blob_colums = ["tx_hash", "from_address", "to_address", "input", "output"]
     for item in items:
         # remove column
@@ -510,8 +336,6 @@ def ingest_traces(
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-    write_to_sinks(db, sink_config, "trace", items)
-
 
 def print_block_info(
     last_synced_block: int, last_ingested_block: Optional[int]
@@ -525,7 +349,7 @@ def print_block_info(
         logger.warning(f"Last ingested block: {last_ingested_block:,}")
 
 
-def get_w3_connection_from_url(provider_uri: str, provider_timeout=600):
+def get_connection_from_url(provider_uri: str, provider_timeout=600):
     return ThreadLocalProxy(
         lambda: get_provider_from_uri(
             provider_uri, timeout=provider_timeout, batch=True
@@ -535,6 +359,7 @@ def get_w3_connection_from_url(provider_uri: str, provider_timeout=600):
 
 def ingest(
     db: AnalyticsDb,
+    currency: str,
     provider_uri: str,
     sink_config: dict,
     user_start_block: Optional[int],
@@ -553,11 +378,7 @@ def ingest(
 
     logger.info(f"Writing data to {list(sink_config.keys())}")
 
-    thread_proxy = ThreadLocalProxy(
-        lambda: get_provider_from_uri(
-            provider_uri, timeout=provider_timeout, batch=True
-        )
-    )
+    thread_proxy = get_connection_from_url(provider_uri, provider_timeout)
 
     last_synced_block = get_last_synced_block(thread_proxy)
     last_ingested_block = db.raw.get_highest_block()
@@ -596,39 +417,60 @@ def ingest(
         f"into {list(sink_config.keys())} "
     )
 
-    for block_id in range(start_block, end_block + 1, batch_size):
-        current_end_block = min(end_block, block_id + batch_size - 1)
+    with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        for block_id in range(start_block, end_block + 1, batch_size):
+            current_end_block = min(end_block, block_id + batch_size - 1)
 
-        logging.disable(logging.INFO)
-        blocks, txs = adapter.export_blocks_and_transactions(
-            block_id, current_end_block
-        )
-        receipts, logs = adapter.export_receipts_and_logs(txs)
-        traces = adapter.export_traces(block_id, current_end_block, True, True)
+            with suppress_log_level(logging.INFO):
+                blocks, txs = adapter.export_blocks_and_transactions(
+                    block_id, current_end_block
+                )
+                receipts, logs = adapter.export_receipts_and_logs(txs)
+                traces = (
+                    []
+                    if currency == "trx"
+                    else adapter.export_traces(block_id, current_end_block, True, True)
+                )
 
-        enriched_txs = enrich_transactions(txs, receipts)
-        logging.disable(logging.NOTSET)
+                enriched_txs = enrich_transactions(txs, receipts)
 
-        # ingest into Cassandra
-        ingest_logs(logs, db, sink_config, BLOCK_BUCKET_SIZE)
-        ingest_traces(traces, db, sink_config, BLOCK_BUCKET_SIZE)
-        ingest_transactions(
-            enriched_txs, db, sink_config, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
-        )
-        ingest_blocks(blocks, db, sink_config, BLOCK_BUCKET_SIZE)
-
-        count += batch_size
-
-        if count % 1000 == 0:
-            time2 = datetime.now()
-            time_delta = (time2 - time1).total_seconds()
-            logger.info(
-                f"[{time2}] "
-                f"Last processed block: {current_end_block:,} "
-                f"({count/time_delta:.1f} blocks/s)"
+            # reformat and edit data
+            prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
+            prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
+            prepare_transactions_inplace(
+                enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
             )
-            time1 = time2
-            count = 0
+            prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
+
+            if currency == "trx":
+                prepare_transactions_inplace_trx(enriched_txs)
+                prepare_blocks_inplace_trx(blocks)
+
+            # ingest into Cassandra
+            write_to_sinks(db, sink_config, "log", logs)
+            write_to_sinks(db, sink_config, "trace", traces)
+            write_to_sinks(db, sink_config, "transaction", enriched_txs)
+            write_to_sinks(db, sink_config, "block", blocks)
+
+            count += batch_size
+
+            last_block = blocks[-1]
+            last_block_ts = last_block["timestamp"]
+
+            if count % 1000 == 0:
+                last_block_date = parse_timestamp(last_block_ts)
+                time2 = datetime.now()
+                time_delta = (time2 - time1).total_seconds()
+                logger.info(
+                    f"Last processed block: {current_end_block:,}, "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                    f"({count/time_delta:.1f} blocks/s)"
+                )
+                time1 = time2
+                count = 0
+
+            if check_shutdown_initialized():
+                break
 
     logger.info(
         f"[{datetime.now()}] Processed block range " f"{start_block:,}:{end_block:,}"

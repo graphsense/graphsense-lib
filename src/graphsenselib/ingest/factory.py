@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Optional
 
 from ..config import currency_to_schema_type
@@ -8,9 +8,11 @@ from .utxo import ingest as ingest_utxo
 
 
 class IngestModule(ABC):
+    @abstractmethod
     def ingest(
         self,
         db: AnalyticsDb,
+        currency: str,
         source: str,
         sink_config: dict,
         user_start_block: Optional[int],
@@ -27,6 +29,7 @@ class IngestModuleAccount(IngestModule):
     def ingest(
         self,
         db: AnalyticsDb,
+        currency: str,
         source: str,
         sink_config: dict,
         user_start_block: Optional[int],
@@ -38,6 +41,7 @@ class IngestModuleAccount(IngestModule):
     ):
         ingest_eth(
             db=db,
+            currency=currency,
             provider_uri=source,
             sink_config=sink_config,
             user_start_block=user_start_block,
@@ -53,6 +57,7 @@ class IngestModuleUtxo(IngestModule):
     def ingest(
         self,
         db: AnalyticsDb,
+        currency: str,
         source: str,
         sink_config: dict,
         user_start_block: Optional[int],
@@ -64,6 +69,7 @@ class IngestModuleUtxo(IngestModule):
     ):
         ingest_utxo(
             db=db,
+            currency=currency,
             provider_uri=source,
             sink_config=sink_config,
             user_start_block=user_start_block,

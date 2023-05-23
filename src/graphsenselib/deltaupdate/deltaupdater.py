@@ -9,7 +9,7 @@ from ..config import config
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.console import console
-from ..utils.signals import gracefull_ctlc_shutdown
+from ..utils.signals import graceful_ctlc_shutdown
 from .update import AbstractUpdateStrategy, UpdaterFactory
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def update_transformed(
     batch_size=10,
 ):
     updater.prepare_database()
-    with gracefull_ctlc_shutdown() as shutdown_initialized:
+    with graceful_ctlc_shutdown() as shutdown_initialized:
         for b in batch(range(start_block, end_block + 1), n=batch_size):
             logger.info(
                 f"Working on batch ({len(b)}) "

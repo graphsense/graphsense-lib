@@ -3,7 +3,7 @@ import time
 from typing import List
 
 from ..datatypes import FlowDirection
-from ..utils.signals import gracefull_ctlc_shutdown
+from ..utils.signals import graceful_ctlc_shutdown
 from .abstract import EventNotifier, FlowProvider, WatcherState, WatchpointProvider
 
 logger = logging.getLogger(__name__)
@@ -24,18 +24,31 @@ class FlowWatcher:
         self.watchpoints = watchpoints
         self.new_block_backoff_sec = new_block_backoff_sec
 
-        self.state.load()
+    def __enter__(self):
+        self.state.__enter__()
+        self.provider.__enter__()
+        for no in self.notifiers:
+            no.__enter__()
+        self.watchpoints.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.state.__exit__(exc_type, exc_value, traceback)
+        self.provider.__exit__(exc_type, exc_value, traceback)
+        for no in self.notifiers:
+            no.__exit__(exc_type, exc_value, traceback)
+        self.watchpoints.__exit__(exc_type, exc_value, traceback)
 
     def watch(self):
         try:
-            with gracefull_ctlc_shutdown() as shutdown_initialized:
+            with graceful_ctlc_shutdown() as shutdown_initialized:
                 while True:
                     next_block = self.state.get_next_watch_block()
 
                     flows = self.provider.get_flows_for_block(next_block)
 
                     if next_block % 1000 == 0:
-                        logger.info(f"Generate notifications for block {next_block}")
+                        logger.info(f"Done with block {next_block}")
 
                     if shutdown_initialized():
                         self.state.persist()

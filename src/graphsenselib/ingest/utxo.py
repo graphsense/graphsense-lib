@@ -1,11 +1,10 @@
 import logging
-import time
+from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from functools import lru_cache
 from operator import itemgetter
-from typing import Optional, Sequence
+from typing import Dict, List, Optional, Tuple
 
 from bitcoinetl.enumeration.chain import Chain
 from bitcoinetl.jobs.export_blocks_job import ExportBlocksJob
@@ -16,23 +15,58 @@ from blockchainetl.thread_local_proxy import ThreadLocalProxy
 from btcpy.structs.address import P2pkhAddress
 from btcpy.structs.script import ScriptBuilder
 from cashaddress.convert import to_legacy_address
-from cassandra.cluster import Cluster, Session
-from cassandra.concurrent import execute_concurrent_with_args
-from cassandra.query import PreparedStatement, SimpleStatement
+from methodtools import lru_cache as mlru_cache
 
+from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 from ..db import AnalyticsDb
-from ..utils.accountmodel import hex_to_bytearray
+from ..utils import hex_to_bytearray, parse_timestamp
+from ..utils.logging import suppress_log_level
+from ..utils.signals import graceful_ctlc_shutdown
+from .common import cassandra_ingest, write_to_sinks
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
 BLOCK_BUCKET_SIZE = 100
 
+OUTPUTS_CACHE_ITEMS = 2**24  # approx 16 mio.
+
 
 logger = logging.getLogger(__name__)
+
+CHAIN_MAPPING = {
+    "btc": Chain.BITCOIN,
+    "ltc": Chain.LITECOIN,
+    "bch": Chain.BITCOIN_CASH,
+    "zec": Chain.ZCASH,
+}
+
+
+class UnknownScriptType(Exception):
+    pass
+
+
+class UnknownAddressType(Exception):
+    pass
+
+
+class P2pkParserException(Exception):
+    pass
+
+
+class InputNotFoundException(Exception):
+    pass
 
 
 class BtcStreamerAdapter:
     def __init__(self, bitcoin_rpc, chain=Chain.BITCOIN, batch_size=2, max_workers=5):
+        """Summary
+
+        Args:
+            bitcoin_rpc (TYPE): Description
+            chain (TYPE, optional): Description
+            batch_size (int, optional): Description
+            max_workers (int, optional): Description
+        """
         self.bitcoin_rpc = bitcoin_rpc
         self.chain = chain
         self.btc_service = BtcService(bitcoin_rpc, chain)
@@ -44,6 +78,26 @@ class BtcStreamerAdapter:
 
     def get_current_block_number(self):
         return int(self.btc_service.get_latest_block().number)
+
+    def export_transactions(self, start_block, end_block):
+        transactions_item_exporter = InMemoryItemExporter(item_types=["transaction"])
+
+        transactions_job = ExportBlocksJob(
+            start_block=start_block,
+            end_block=end_block,
+            batch_size=self.batch_size,
+            bitcoin_rpc=self.bitcoin_rpc,
+            max_workers=self.max_workers,
+            item_exporter=transactions_item_exporter,
+            chain=self.chain,
+            export_blocks=False,
+            export_transactions=True,
+        )
+        transactions_job.run()
+
+        transactions = transactions_item_exporter.get_items("transaction")
+
+        return transactions
 
     def export_blocks_and_transactions(self, start_block, end_block):
         blocks_and_transactions_item_exporter = InMemoryItemExporter(
@@ -72,6 +126,22 @@ class BtcStreamerAdapter:
         self.item_exporter.close()
 
 
+class OutputResolverBase(ABC):
+    @abstractmethod
+    def get_output(self, tx_hash) -> Dict:
+        pass
+
+    @abstractmethod
+    def add_output(self, tx_hash, output) -> None:
+        pass
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+
 class LRUCache(OrderedDict):
     def __init__(self, *args, **kwds):
         self.size_limit = kwds.pop("size_limit", None)
@@ -88,46 +158,63 @@ class LRUCache(OrderedDict):
                 self.popitem(last=False)
 
 
-class OutputResolver(object):
-    def __init__(self, session, keyspace, tx_bucket_size):
-        self.session = session
-        self.keyspace = keyspace
-        self.tx_bucket_size = tx_bucket_size
-        self.cache = LRUCache(size_limit=10_000_000)
+class CassandraOutputResolver(OutputResolverBase):
 
-    @lru_cache(maxsize=10_000_000)
-    def get_output(self, tx_hash) -> {}:
+    """Output resolver that uses the gs-cassandra database to resolve
+    spent inputs.
+
+    Attributes:
+        cache (TYPE): Description
+        db (TYPE): Database connection
+        tx_bucket_size (TYPE): Description
+        tx_prefix_length (TYPE): Description
+    """
+
+    def __init__(
+        self,
+        db: AnalyticsDb,
+        tx_bucket_size: int = None,
+        tx_prefix_length: int = None,
+    ):
+        self.db = db
+        self.tx_bucket_size = tx_bucket_size
+        self.tx_prefix_length = tx_prefix_length
+        self.cache = LRUCache(size_limit=OUTPUTS_CACHE_ITEMS)
+
+    def __enter__(self):
+        self.db.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.db.__exit__(exc_type, exc_val, exc_tb)
+
+    @mlru_cache(maxsize=OUTPUTS_CACHE_ITEMS)
+    def get_output(self, tx_hash) -> Dict:
         if tx_hash in self.cache.keys():
             return self.cache.get(tx_hash)
         return self._get_from_db(tx_hash)
 
     def _get_from_db(self, tx_hash):
-        q = f"""SELECT tx_id from {self.keyspace}.transaction_by_tx_prefix
-                WHERE tx_prefix = '{tx_hash[:5]}'
-                AND tx_hash = 0x{tx_hash}"""
-        tx_id = self.session.execute(q).one()[0]
-
-        q = f"""SELECT outputs FROM {self.keyspace}.transaction
-                WHERE tx_id_group = {tx_id // self.tx_bucket_size}
-                AND tx_id = {tx_id}"""
-        result = self.session.execute(q).one()[0]
-        res = {}
-        for i, item in enumerate(result):
-            res[i] = {
-                "addresses": item.address,
-                "value": item.value,
-                "type": item.address_type,
-            }
-        return res
+        outputs = self.db.raw.get_tx_outputs(
+            tx_hash,
+            tx_bucket_size=self.tx_bucket_size,
+            tx_prefix_length=self.tx_prefix_length,
+        )
+        return outputs
 
     def add_output(self, tx_hash, output) -> None:
         r = {k: output[k] for k in ["type", "addresses", "value"]}
         self.cache.setdefault(tx_hash, {}).setdefault(output["index"], r)
 
-    def get_cache_stats(self):
+    def get_cache_stats(self) -> str:
+        """Gets a string summary of the state of the cache
+
+        Returns:
+            str: String summary of cache
+        """
         return (
-            f"functools.lru_cache: {self.get_output.cache_info()}, "
-            f"LRUCache: {len(self.cache)} items"
+            f"Frontend and DB cache: {self.get_output.cache_info()}, "
+            f"Run Local Cache: {len(self.cache)} items"
         )
 
 
@@ -139,12 +226,6 @@ def get_last_block_yesterday(
     )
     until_timestamp = until_date.timestamp()
 
-    print(
-        f"Determining latest block before {until_date.isoformat()}: ",
-        end="",
-        flush=True,
-    )
-
     block_id = last_synced_block
     block = btc_adapter.btc_service.get_block(block_id)
     while block.timestamp >= until_timestamp:
@@ -152,123 +233,22 @@ def get_last_block_yesterday(
         block = btc_adapter.btc_service.get_block(block_id)
 
     block_number = block.number
-    print(f"{block_number:,}")
+    timestamp = parse_timestamp(block.timestamp)
+    logger.info(
+        f"Determining latest block before {until_date.isoformat()} "
+        f"its {block_number:,} at {timestamp.isoformat()}",
+    )
     return block_number
 
 
-def get_last_ingested_block(session: Session) -> Optional[int]:
-    """Return last ingested block ID from block_transactions table."""
-
-    cql_str = "SELECT block_id_group FROM block_transactions PER PARTITION LIMIT 1"
-    simple_stmt = SimpleStatement(cql_str, fetch_size=1000)
-    groups = [res[0] for res in session.execute(simple_stmt)]
-
-    if len(groups) == 0:
-        return None
-
-    max_group = max(groups)
-
-    result = session.execute(
-        f"""SELECT block_id
-            FROM block_transactions
-            WHERE block_id_group={max_group} PER PARTITION LIMIT 1"""
-    )
-    max_block = result.current_rows[0].block_id
-
-    return max_block
-
-
-def get_latest_tx_id_before_block(session: Session, block_id: int) -> int:
-    last_block = block_id - 1
-    result = session.execute(
-        f"""SELECT block_bucket_size FROM configuration
-            WHERE id='{session.keyspace}'"""
-    )
-    bucket_size = result.current_rows[0].block_bucket_size
-
-    block_group = last_block // bucket_size
-
-    result = session.execute(
-        f"""SELECT txs FROM block_transactions
-            WHERE block_id_group={block_group}
-            AND block_id={last_block}"""
-    )
-    latest_tx_id = -1
-
-    if not result.current_rows:
-        return latest_tx_id
-
-    for tx in result.current_rows[0].txs:
-        if tx.tx_id > latest_tx_id:
-            latest_tx_id = tx.tx_id
-
-    return latest_tx_id
-
-
-def cassandra_ingest(
-    session: Session,
-    prepared_stmt: PreparedStatement,
-    parameters,
-    concurrency: int = 100,
-) -> None:
-    """Concurrent ingest into Apache Cassandra."""
-
-    while True:
-        try:
-            results = execute_concurrent_with_args(
-                session=session,
-                statement=prepared_stmt,
-                parameters=parameters,
-                concurrency=concurrency,
-            )
-
-            for i, (success, _) in enumerate(results):
-                if not success:
-                    while True:
-                        try:
-                            session.execute(prepared_stmt, parameters[i])
-                        except Exception as exception:
-                            print("Exception: ", exception)
-                            continue
-                        break
-            break
-
-        except Exception as exception:
-            print(exception)
-            time.sleep(1)
-            continue
-
-
-def build_cql_insert_stmt(columns: Sequence[str], table: str) -> str:
-    """Create CQL insert statement for specified columns and table name."""
-
-    return "INSERT INTO %s (%s) VALUES (%s);" % (
-        table,
-        ", ".join(columns),
-        ("?," * len(columns))[:-1],
-    )
-
-
-def get_prepared_statement(
-    session: Session, keyspace: str, table: str
-) -> PreparedStatement:
-    """Build prepared CQL INSERT statement for specified table."""
-
-    cql_str = f"""SELECT column_name FROM system_schema.columns
-                  WHERE keyspace_name = '{keyspace}'
-                  AND table_name = '{table}';"""
-    result_set = session.execute(cql_str)
-    columns = [elem.column_name for elem in result_set.current_rows]
-    cql_str = build_cql_insert_stmt(columns, table)
-    prepared_stmt = session.prepare(cql_str)
-    return prepared_stmt
-
-
 def ingest_block_transactions(
-    txs, session, prepared_stmt: PreparedStatement, block_bucket_size
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+    block_bucket_size: int,
 ) -> None:
     mapping = {}
-    for tx in txs:
+    for tx in items:
         mapping.setdefault(tx["block_id"], []).append(tx)
 
     items = []
@@ -281,16 +261,24 @@ def ingest_block_transactions(
             }
         )
 
-    cassandra_ingest(session, prepared_stmt, items)
+    write_to_sinks(db, sink_config, "block_transactions", items)
 
 
 def ingest_blocks(
-    items: Iterable, session: Session, prepared_stmt: PreparedStatement
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
 ) -> None:
-    cassandra_ingest(session, prepared_stmt, items)
+    write_to_sinks(db, sink_config, "block", items)
 
 
-def prepare_blocks_inplace(blocks: Iterable, block_bucket_size) -> None:
+def prepare_blocks_inplace(blocks: Iterable, block_bucket_size: int) -> None:
+    """Preprocesses a block and for ingestation into Cassandra.
+
+    Args:
+        blocks (Iterable): iterable of block structures
+        block_bucket_size (int): size of a block bucket for cassandra partitioning
+    """
     blob_columns = ["hash"]
     pop_columns = [
         "type",
@@ -340,15 +328,25 @@ _address_types = {  # based on BlockSci values (type 0 .. 10)
 }
 
 
-def addresstype_to_int(addr_type):
+def addresstype_to_int(addr_type: str) -> int:
+    """Convert btcpy address types to integers
+
+    Args:
+        addr_type (str): Description
+
+    Returns:
+        str: address type as integer
+
+    Raises:
+        UnknownAddressType: Description
+    """
     if isinstance(addr_type, int):  # address_type has already been resolved
         return addr_type
 
     if addr_type in _address_types:
         return _address_types.get(addr_type)
 
-    print(f"unknown address type {addr_type}")
-    raise SystemExit(0)
+    raise UnknownAddressType(f"unknown address type {addr_type}")
 
 
 def address_as_string(x):
@@ -358,11 +356,15 @@ def address_as_string(x):
 
 
 def tx_io_summary(x):
+    """Creates a short summary of in and outputs
+
+    Args:
+        x (TYPE): Description
+
+    Returns:
+        TYPE: list of form address, value, type
+    """
     return [address_as_string(x), x["value"], addresstype_to_int(x["type"])]
-
-
-def tx_short_summary(tx_hash, t_id, prefix_length):
-    return str(tx_hash)[:prefix_length], bytearray.fromhex(str(tx_hash)), t_id
 
 
 def tx_stats(tx):
@@ -375,14 +377,26 @@ def tx_stats(tx):
     )
 
 
-def parse_script(s: str):
+def parse_script(s: str) -> Tuple[List[str], str]:
+    """Parses the output addresses from a bitcoin-like locking script
+
+    Args:
+        s (str): script in binary hex format
+
+    Returns:
+        Tuple[List[str], str]: address list and script type
+
+    Raises:
+        P2pkParserException: if P2PK script can't be parsed
+        UnknownScriptType: On unknown script type
+    """
     script = ScriptBuilder.identify(s)
 
     if script.type == "p2pk":
         try:
             return [str(P2pkhAddress(script.pubkey.hash(), mainnet=True))], script.type
         except Exception as e:
-            raise ValueError(
+            raise P2pkParserException(
                 f"ScriptParseError: cannot parse pubkey from {s}"
                 f" (of type {script.type}) --- {e}"
             )
@@ -392,7 +406,9 @@ def parse_script(s: str):
 
     if script.type == "multisig":
         return [
-            str(P2pkhAddress(k.hash(), mainnet=True)) for k in script.pubkeys
+            str(P2pkhAddress(k.hash(), mainnet=True))
+            for k in script.pubkeys
+            if hasattr(k, "hash")
         ], script.type
 
     if script.type in ["p2sh", "p2wpkhv0", "p2wshv0"]:
@@ -401,12 +417,26 @@ def parse_script(s: str):
     if script.type == "nulldata":
         return None, script.type
 
-    raise ValueError(
+    raise UnknownScriptType(
         f"ScriptParseError: not handling script type {script.type} at the moment."
     )
 
 
-def enrich_txs(txs: Iterable, resolver: OutputResolver) -> None:
+def enrich_txs(
+    txs: Iterable, resolver: OutputResolverBase, ignore_missing_outputs: bool
+) -> None:
+    """Resolves transaction input links to the spent transactions.
+
+    Args:
+        txs (Iterable): transactions as produced by btc etl
+        resolver (OutputResolverBase): instance of a
+                                        resolver that finds the spent outputs
+        ignore_missing_outputs (bool): if True skips outputs that can not be resolved
+
+    Raises:
+        InputNotFoundException: If inputs can not be
+                                resolved and ignore_missing_outputs is false
+    """
     for tx in txs:
         if not tx["is_coinbase"]:
             # process inputs
@@ -417,13 +447,32 @@ def enrich_txs(txs: Iterable, resolver: OutputResolver) -> None:
                         i["spent_output_index"],
                     )
                     try:
-                        resolved = resolver.get_output(ref).get(ind)
+                        resolved_outputs = resolver.get_output(ref)
+                        resolved = (
+                            resolved_outputs.get(ind) if resolved_outputs else None
+                        )
+
+                        if resolved is None and ignore_missing_outputs:
+                            logger.warning("Could not resolve spent_txs outputs")
+                            continue
+                        elif resolved is None:
+                            raise InputNotFoundException(
+                                f"Spent Tx ({ref}) outputs " " not found"
+                            )
+
                         i["addresses"] = resolved["addresses"]
                         i["type"] = resolved["type"]
                         i["value"] = resolved["value"]
-                    except ValueError as exception:
-                        print(f"tx input cannot be resolved for {i['addresses']}")
-                        print(exception)
+                    except (
+                        UnknownScriptType,
+                        UnknownAddressType,
+                        P2pkParserException,
+                    ) as exception:
+                        logger.warning(
+                            f"tx input cannot be resolved for {i['addresses']}"
+                        )
+                        logger.warning(exception)
+
         tx["input_value"] = sum(
             [i["value"] for i in tx["inputs"] if i["value"] is not None]
         )
@@ -441,8 +490,12 @@ def enrich_txs(txs: Iterable, resolver: OutputResolver) -> None:
                             address_list if address_list else o["addresses"]
                         )
                         o["type"] = scripttype
-                    except ValueError as exception:
-                        print(
+                    except (
+                        UnknownScriptType,
+                        UnknownAddressType,
+                        P2pkParserException,
+                    ) as exception:
+                        logger.warning(
                             f"{exception}: cannot parse output script {o}"
                             f" from tx {tx.get('hash')}"
                         )
@@ -499,16 +552,20 @@ def prepare_transactions_inplace(
 
 
 def ingest_transactions(
-    txs: Iterable, session: Session, prepared_stmt: PreparedStatement
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
 ) -> None:
-    cassandra_ingest(session, prepared_stmt, txs)
+    write_to_sinks(db, sink_config, "transaction", items)
 
 
 def ingest_transaction_lookups(
-    txs: Iterable, session: Session, prepared_stmt: PreparedStatement
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
 ) -> None:
-    res = [{k: tx[k] for k in ("tx_prefix", "tx_hash", "tx_id")} for tx in txs]
-    cassandra_ingest(session, prepared_stmt, res)
+    res = [{k: tx[k] for k in ("tx_prefix", "tx_hash", "tx_id")} for tx in items]
+    write_to_sinks(db, sink_config, "transaction_by_tx_prefix", res)
 
 
 def is_coinjoin(tx) -> bool:
@@ -552,7 +609,12 @@ def is_coinjoin(tx) -> bool:
 def print_block_info(
     last_synced_block: int, last_ingested_block: Optional[int]
 ) -> None:
-    """Display information about number of synced/ingested blocks."""
+    """Display information about number of synced/ingested blocks.
+
+    Args:
+        last_synced_block (int): Description
+        last_ingested_block (Optional[int]): Description
+    """
 
     logger.warning(f"Last synced block: {last_synced_block:,}")
     if last_ingested_block is None:
@@ -561,8 +623,78 @@ def print_block_info(
         logger.warning(f"Last ingested block: {last_ingested_block:,}")
 
 
+def ingest_summary_statistics_cassandra(
+    db: AnalyticsDb,
+    timestamp: int,
+    total_blocks: int,
+    total_txs: int,
+) -> None:
+    """Summary
+
+    Args:
+        db (AnalyticsDb): Description
+        timestamp (int): Description
+        total_blocks (int): Description
+        total_txs (int): Description
+    """
+    cassandra_ingest(
+        db,
+        "summary_statistics",
+        [
+            {
+                "id": db.raw.keyspace_name(),
+                "timestamp": timestamp,
+                "no_blocks": total_blocks,
+                "no_txs": total_txs,
+            }
+        ],
+    )
+
+
+def ingest_configuration_cassandra(
+    db: AnalyticsDb,
+    block_bucket_size: int,
+    tx_hash_prefix_len: int,
+    tx_bucket_size: int,
+) -> None:
+    """Store configuration details in Cassandra table.
+
+    Args:
+        db (AnalyticsDb): Description
+        block_bucket_size (int): Description
+        tx_hash_prefix_len (int): Description
+        tx_bucket_size (int): Description
+    """
+    cassandra_ingest(
+        db,
+        "configuration",
+        [
+            {
+                "id": db.raw.keyspace_name(),
+                "block_bucket_size": int(block_bucket_size),
+                "tx_prefix_length": tx_hash_prefix_len,
+                "tx_bucket_size": tx_bucket_size,
+            }
+        ],
+    )
+
+
+def get_connection_from_url(provider_uri: str) -> ThreadLocalProxy:
+    return ThreadLocalProxy(lambda: BitcoinRpc(provider_uri))
+
+
+def get_stream_adapter(
+    currency: str, provider_uri: str, batch_size: int
+) -> BtcStreamerAdapter:
+    proxy = get_connection_from_url(provider_uri)
+    return BtcStreamerAdapter(
+        proxy, chain=CHAIN_MAPPING.get(currency, None), batch_size=batch_size
+    )
+
+
 def ingest(
     db: AnalyticsDb,
+    currency: str,
     provider_uri: str,
     sink_config: dict,
     user_start_block: Optional[int],
@@ -572,18 +704,22 @@ def ingest(
     previous_day: bool,
     provider_timeout: int,
 ):
-    keyspace = db._raw_keyspace
+    if currency not in CHAIN_MAPPING:
+        raise ValueError(
+            f"{currency} not supported by ingest module,"
+            f" supported {list(CHAIN_MAPPING.keys())}"
+        )
 
-    cluster = Cluster(db.db().db_nodes)
-    session = cluster.connect(keyspace)
-    thread_proxy = ThreadLocalProxy(lambda: BitcoinRpc(provider_uri))
-    btc_adapter = BtcStreamerAdapter(thread_proxy, batch_size=batch_size)
+    btc_adapter = get_stream_adapter(currency, provider_uri, batch_size=batch_size)
 
-    resolver = OutputResolver(session, keyspace, TX_BUCKET_SIZE)
+    resolver = CassandraOutputResolver(
+        db,
+        tx_bucket_size=TX_BUCKET_SIZE,
+        tx_prefix_length=TX_HASH_PREFIX_LENGTH,
+    )
 
     last_synced_block = btc_adapter.get_current_block_number()
     last_ingested_block = db.raw.get_highest_block()
-    assert last_ingested_block == get_last_ingested_block(session)
     print_block_info(last_synced_block, last_ingested_block)
 
     start_block = 0
@@ -598,7 +734,7 @@ def ingest(
         end_block = user_end_block
 
     if previous_day:
-        end_block = get_last_block_yesterday(thread_proxy)
+        end_block = get_last_block_yesterday(btc_adapter, last_synced_block)
 
     if start_block > end_block:
         print("No blocks to ingest")
@@ -606,7 +742,6 @@ def ingest(
 
     # if info then only print block info and exit
     if info:
-        cluster.shutdown()
         return
 
     time1 = datetime.now()
@@ -618,76 +753,74 @@ def ingest(
         f"into {list(sink_config.keys())} "
     )
 
-    prep_stmt = {
-        elem: get_prepared_statement(session, keyspace, elem)
-        for elem in [
-            "block",
-            "transaction",
-            "transaction_by_tx_prefix",
-            "block_transactions",
-        ]
-    }
-
-    cql_str = """INSERT INTO configuration
-                  (id, block_bucket_size, tx_prefix_length, tx_bucket_size)
-                  VALUES (%s, %s, %s, %s)"""
-    session.execute(
-        cql_str,
-        (
-            keyspace,
-            int(BLOCK_BUCKET_SIZE),
-            int(TX_HASH_PREFIX_LENGTH),
-            TX_BUCKET_SIZE,
-        ),
+    ingest_configuration_cassandra(
+        db,
+        block_bucket_size=BLOCK_BUCKET_SIZE,
+        tx_hash_prefix_len=TX_HASH_PREFIX_LENGTH,
+        tx_bucket_size=TX_BUCKET_SIZE,
     )
 
-    for block_id in range(start_block, end_block + 1, batch_size):
-        current_end_block = min(end_block, block_id + batch_size - 1)
+    with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        for block_id in range(start_block, end_block + 1, batch_size):
+            current_end_block = min(end_block, block_id + batch_size - 1)
 
-        blocks, txs = btc_adapter.export_blocks_and_transactions(
-            block_id, current_end_block
-        )
+            with suppress_log_level(logging.INFO):
+                blocks, txs = btc_adapter.export_blocks_and_transactions(
+                    block_id, current_end_block
+                )
 
-        # until bitcoin-etl progresses
-        # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
-        enrich_txs(txs, resolver)
+            # until bitcoin-etl progresses
+            # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
+            enrich_txs(txs, resolver, ignore_missing_outputs=False)
 
-        latest_tx_id = get_latest_tx_id_before_block(session, block_id)
-        prepare_transactions_inplace(
-            txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE
-        )
-        prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
+            latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
 
-        ingest_blocks(blocks, session, prep_stmt["block"])
-        ingest_transaction_lookups(txs, session, prep_stmt["transaction_by_tx_prefix"])
-        ingest_transactions(txs, session, prep_stmt["transaction"])
-        ingest_block_transactions(
-            txs, session, prep_stmt["block_transactions"], BLOCK_BUCKET_SIZE
-        )
-
-        count += batch_size
-
-        if count % 100 == 0:
-            time2 = datetime.now()
-            time_delta = (time2 - time1).total_seconds() / 60
-            print(
-                f"[{time2}] "
-                f"Last processed block: {current_end_block:,} "
-                f"({count/time_delta:.1f} blocks/m)"
+            prepare_transactions_inplace(
+                txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE
             )
-            time1 = time2
-            count = 0
+            prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
 
-    print(f"[{datetime.now()}] Processed block range {start_block:,}:{end_block:,}")
+            ingest_blocks(blocks, db, sink_config)
+            ingest_transaction_lookups(
+                txs,
+                db,
+                sink_config,
+            )
+            ingest_transactions(txs, db, sink_config)
+            ingest_block_transactions(txs, db, sink_config, BLOCK_BUCKET_SIZE)
 
-    last_block = blocks[-1]
-    last_tx = txs[-1]
-    total_blocks = last_block["block_id"] + 1
-    total_txs = last_tx["tx_id"] + 1
-    timestamp = last_block["timestamp"]
-    cql_str = """INSERT INTO summary_statistics
-                 (id, timestamp, no_blocks, no_txs)
-                 VALUES (%s, %s, %s, %s)"""
-    session.execute(cql_str, (keyspace, timestamp, total_blocks, total_txs))
+            last_block = blocks[-1]
+            last_block_ts = last_block["timestamp"]
+            last_block_id = last_block["block_id"]
+            count += batch_size
 
-    cluster.shutdown()
+            if count % 100 == 0:
+                last_block_date = parse_timestamp(last_block_ts)
+                time2 = datetime.now()
+                time_delta = (time2 - time1).total_seconds()
+                logger.info(
+                    f"Last processed block: {current_end_block:,}, "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                    f"({count/time_delta:.1f} blocks/s)"
+                )
+                logger.debug(resolver.get_cache_stats())
+                time1 = time2
+                count = 0
+
+            if check_shutdown_initialized():
+                break
+
+    logger.info(
+        f"[{datetime.now()}] Processed block range {start_block:,}:{last_block_id:,}"
+    )
+
+    # store configuration details
+    if "cassandra" in sink_config.keys():
+        last_block = blocks[-1]
+        last_tx = txs[-1]
+        ingest_summary_statistics_cassandra(
+            db,
+            timestamp=last_block_ts,
+            total_blocks=last_block_id + 1,
+            total_txs=last_tx["tx_id"] + 1,
+        )

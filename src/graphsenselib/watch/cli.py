@@ -49,10 +49,10 @@ def watchflows(env, currency, state_file, watchpoints_file):
     logger.info(f"Try acquiring lockfile {lockfile_name}")
     try:
         with FileLock(lockfile_name, timeout=1):
-            watcher = FlowWatcherFactory().file_based_from_config(
+            with FlowWatcherFactory().file_based_from_config(
                 env, currency, state_file, watchpoints_file
-            )
-            watcher.watch()
+            ) as watcher:
+                watcher.watch()
     except LockFileTimeout:
         logger.error(
             f"Lockfile {lockfile_name} could not be acquired. "
