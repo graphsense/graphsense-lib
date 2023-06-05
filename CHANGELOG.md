@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [23.05/1.5.0] 2023-06-??
+### Added
+- added cli ingest commands for ethereum-like currencies (https://github.com/graphsense/graphsense-ethereum-etl/issues/6)
+- added cli ingest commands for btc-like currencies (https://github.com/graphsense/graphsense-bitcoin-etl/issues/4)
+- add ingest to parquet files as ingest output option, additional to cassandra (https://github.com/graphsense/graphsense-lib/issues/2)
+- alpha support for transaction-monitoring (https://github.com/graphsense/graphsense-lib/issues/4)
+- compatibility with tron data in raw keyspaces (https://github.com/graphsense/graphsense-lib/issues/3)
+
+### Fixed
+- delta updater bug with zero value and zero fee txs in btc
+
 ## [23.03/1.4.0] 2023-03-29
 ### Added
 - added cli command graphsense-cli db logs get-decodeable-logs to decoded logs in a given block range.
