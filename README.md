@@ -49,11 +49,15 @@ Options:
 
 Commands:
   config          Inspect the current configuration of graphsenselib.
-  db              DB-management related functions.
+  convert         Useful file convertions tools for the graphsense...
+  db              Query related functions.
   delta-update    Updating the transformed keyspace from the raw keyspace.
   exchange-rates  Fetching and ingesting exchange rates.
+  ingest          Ingesting raw cryptocurrency data from nodes into the...
+  monitoring      Tools to monitor the graphsense infrastructure.
   schema          Creating and validating the db schema.
   version         Display the current version.
+  watch           Commands for permanently watching cryptocurrency events.
 
   GraphSense - https://graphsense.github.io/
 ```
@@ -103,6 +107,24 @@ Commands:
   validate             Validates if the expected schema matches the database.
 
 ```
+
+### Ingest
+
+Loading raw data from cryptocurrency nodes into the graphsense raw keyspace.
+
+```bash
+> graphsense-cli ingest --help
+Usage: graphsense-cli ingest [OPTIONS] COMMAND [ARGS]...
+
+  Ingesting raw cryptocurrency data from nodes into the graphsense database
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  from-node  Ingests cryptocurrency data form the client/node to the...
+```
+
 
 ### Delta Update
 
@@ -182,11 +204,23 @@ Commands:
 
 ```
 
+### Watch (Alpha)
 
-### Ingest
+Provides functions to generate notifications on cryptocurrency events like value flows on certain addresses.
 
-To be implemented. Should deal with ingesting data into the raw keyspaces.
+```bash
+> graphsense-cli watch --help
+Usage: graphsense-cli watch [OPTIONS] COMMAND [ARGS]...
 
+  Commands for permanently watching cryptocurrency events.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  money-flows  Watches for movements money flows and generates...
+
+```
 
 ## Install
 
