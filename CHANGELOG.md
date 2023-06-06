@@ -5,8 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [23.05/1.5.0] 2023-06-??
 ### Added
-- added cli ingest commands for ethereum-like currencies (https://github.com/graphsense/graphsense-ethereum-etl/issues/6)
-- added cli ingest commands for btc-like currencies (https://github.com/graphsense/graphsense-bitcoin-etl/issues/4)
+- added cli ingest command (ingest from-node) for ethereum-like currencies (https://github.com/graphsense/graphsense-ethereum-etl/issues/6)
+- added cli ingest command to export node data to csv
+- added cli ingest commands (ingest from-node) for btc-like currencies (https://github.com/graphsense/graphsense-bitcoin-etl/issues/4)
 - add ingest to parquet files as ingest output option, additional to cassandra (https://github.com/graphsense/graphsense-lib/issues/2)
 - alpha support for transaction-monitoring (https://github.com/graphsense/graphsense-lib/issues/4)
 - compatibility with tron data in raw keyspaces (https://github.com/graphsense/graphsense-lib/issues/3)
