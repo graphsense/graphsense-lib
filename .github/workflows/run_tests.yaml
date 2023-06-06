@@ -24,8 +24,6 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: fix openssl legacy mode
         run: sudo sed -i '/^default = default_sect/a legacy = legacy_sect' /etc/ssl/openssl.cnf &&  sudo sed -i 's/#openssl_conf/openssl_conf/g' /etc/ssl/openssl.cnf && sudo sed -i '/^\[default_sect\]/a activate = 1\n\[legacy_sect\]\nactivate = 1' /etc/ssl/openssl.cnf
-      - name: fix openssl legacy mode
-        run: sudo cat /etc/ssl/openssl.cnf
       - name: Install tox and any other packages
         run: pip install tox
       - name: Run Unit Test via tox
