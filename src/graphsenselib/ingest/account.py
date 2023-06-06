@@ -1,4 +1,8 @@
 import logging
+import pathlib
+import re
+import sys
+from csv import QUOTE_NONE
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -21,6 +25,17 @@ from ..utils import hex_to_bytearray, parse_timestamp
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
+from .csv import (
+    BLOCK_HEADER,
+    LOGS_HEADER,
+    TRACE_HEADER,
+    TX_HEADER,
+    format_blocks_csv,
+    format_logs_csv,
+    format_traces_csv,
+    format_transactions_csv,
+    write_csv,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -481,3 +496,175 @@ def ingest(
         ingest_configuration_cassandra(
             db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN)
         )
+
+
+def export_csv(
+    db: AnalyticsDb,
+    currency: str,
+    provider_uri: str,
+    directory: str,
+    user_start_block: Optional[int],
+    user_end_block: Optional[int],
+    continue_export: bool,
+    batch_size: int,
+    file_batch_size: int,
+    partition_batch_size: int,
+    info: bool,
+    previous_day: bool,
+    provider_timeout: int,
+):
+    logger.info(f"Writing data as csv to {directory}")
+
+    thread_proxy = get_connection_from_url(provider_uri, provider_timeout)
+
+    last_synced_block = get_last_synced_block(thread_proxy)
+    last_ingested_block = db.raw.get_highest_block()
+    print_block_info(last_synced_block, last_ingested_block)
+
+    # if info then only print block info and exit
+    if info:
+        return
+
+    adapter = EthStreamerAdapter(thread_proxy, batch_size=50)
+
+    start_block = 0
+    if user_start_block is None:
+        if continue_export:
+            block_files = sorted(pathlib.Path(directory).rglob("block*"))
+            if block_files:
+                last_file = block_files[-1].name
+                logger.info(f"Last exported file: {block_files[-1]}")
+                start_block = int(re.match(r".*-(\d+)", last_file).group(1)) + 1
+    else:
+        start_block = user_start_block
+
+    end_block = get_last_synced_block(thread_proxy)
+    logger.info(f"Last synced block: {end_block:,}")
+    if user_end_block is not None:
+        end_block = user_end_block
+    if previous_day:
+        end_block = get_last_block_yesterday(thread_proxy)
+
+    time1 = datetime.now()
+    count = 0
+
+    block_bucket_size = file_batch_size
+    if file_batch_size % batch_size != 0:
+        logger.error("Error: file_batch_size is not a multiple of batch_size")
+        sys.exit(1)
+
+    if partition_batch_size % file_batch_size != 0:
+        logger.error("Error: partition_batch_size is not a multiple of file_batch_size")
+        sys.exit(1)
+
+    rounded_start_block = start_block // block_bucket_size * block_bucket_size
+    rounded_end_block = (end_block + 1) // block_bucket_size * block_bucket_size - 1
+
+    if rounded_start_block > rounded_end_block:
+        print("No blocks to export")
+        sys.exit(0)
+
+    block_range = (
+        rounded_start_block,
+        rounded_start_block + block_bucket_size - 1,
+    )
+
+    if info:
+        sys.exit(0)
+
+    path = pathlib.Path(directory)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, NotADirectoryError) as exception:
+        logger.error(exception)
+        sys.exit(1)
+
+    block_file = "block_%08d-%08d.csv.gz" % block_range
+    tx_file = "tx_%08d-%08d.csv.gz" % block_range
+    trace_file = "trace_%08d-%08d.csv.gz" % block_range
+    logs_file = "logs_%08d-%08d.csv.gz" % block_range
+
+    logger.info(
+        f"[{time1}] Processing block range "
+        f"{rounded_start_block:,}:{rounded_end_block:,}"
+    )
+
+    block_list = []
+    tx_list = []
+    trace_list = []
+    logs_list = []
+
+    with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        for block_id in range(rounded_start_block, rounded_end_block + 1, batch_size):
+            current_end_block = min(end_block, block_id + batch_size - 1)
+
+            with suppress_log_level(logging.INFO):
+                blocks, txs = adapter.export_blocks_and_transactions(
+                    block_id, current_end_block
+                )
+                receipts, logs = adapter.export_receipts_and_logs(txs)
+                traces = adapter.export_traces(block_id, current_end_block, True, True)
+                enriched_txs = enrich_transactions(txs, receipts)
+
+            block_list.extend(format_blocks_csv(blocks))
+            tx_list.extend(format_transactions_csv(enriched_txs, TX_HASH_PREFIX_LEN))
+            trace_list.extend(format_traces_csv(traces))
+            logs_list.extend(format_logs_csv(logs))
+
+            count += batch_size
+
+            if count >= 1000:
+                time2 = datetime.now()
+                time_delta = (time2 - time1).total_seconds()
+                logger.info(
+                    f"[{time2}] Last processed block {current_end_block} "
+                    f"({count/time_delta:.1f} blocks/s)"
+                )
+                time1 = time2
+                count = 0
+
+            if (block_id + batch_size) % block_bucket_size == 0:
+                time3 = datetime.now()
+                partition_start = block_id - (block_id % partition_batch_size)
+                partition_end = partition_start + partition_batch_size - 1
+                sub_dir = f"{partition_start:08d}-{partition_end:08d}"
+                full_path = path / sub_dir
+                full_path.mkdir(parents=True, exist_ok=True)
+
+                write_csv(full_path / trace_file, trace_list, TRACE_HEADER)
+                write_csv(full_path / tx_file, tx_list, TX_HEADER)
+                write_csv(full_path / block_file, block_list, BLOCK_HEADER)
+                write_csv(
+                    full_path / logs_file,
+                    logs_list,
+                    LOGS_HEADER,
+                    delimiter="|",
+                    quoting=QUOTE_NONE,
+                )
+
+                logger.info(
+                    f"[{time3}] "
+                    f"Exported blocks: {block_range[0]:,}:{block_range[1]:,} "
+                )
+
+                block_range = (
+                    block_id + batch_size,
+                    block_id + batch_size + block_bucket_size - 1,
+                )
+                block_file = "block_%08d-%08d.csv.gz" % block_range
+                tx_file = "tx_%08d-%08d.csv.gz" % block_range
+                trace_file = "trace_%08d-%08d.csv.gz" % block_range
+                logs_file = "logs_%08d-%08d.csv.gz" % block_range
+
+                block_list.clear()
+                tx_list.clear()
+                trace_list.clear()
+                logs_list.clear()
+
+                if check_shutdown_initialized():
+                    break
+
+    logger.info(
+        f"[{datetime.now()}] Processed block range "
+        f"{rounded_start_block:,}:{rounded_end_block:,}"
+    )

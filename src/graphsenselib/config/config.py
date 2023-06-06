@@ -29,12 +29,17 @@ GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 CASSANDRA_REPLICATION_FACTOR = "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 
 
+class FileSink(BaseModel):
+    directory: str
+
+
 class IngestConfig(BaseModel):
     node_reference: str = Field(default_factory=lambda: "")
     raw_keyspace_replication_config: str = Field(
         default_factory=lambda: CASSANDRA_REPLICATION_FACTOR
     )
-    raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
+    raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
+    # raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
 
 
 class KeyspaceConfig(BaseModel):

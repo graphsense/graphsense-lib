@@ -24,7 +24,7 @@ def write_to_sinks(
             if path is None:
                 raise Exception(
                     "No output_dir is set. "
-                    "Please set raw_keyspace_file_sink_directory "
+                    "Please set raw_keyspace_file_sinks['parquet'].directory "
                     "in the keyspace config."
                 )
             if schema_table is None:
