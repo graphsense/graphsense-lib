@@ -426,7 +426,7 @@ def ingest(
     if info:
         logger.info(
             f"Would ingest block range "
-            f"{start_block:,}:{end_block:,} "
+            f"{start_block:,}:{end_block:,} ({end_block-start_block:,} blks) "
             f"into {list(sink_config.keys())} "
         )
 
@@ -434,7 +434,7 @@ def ingest(
 
     logger.info(
         f"Ingesting block range "
-        f"{start_block:,}:{end_block:,} "
+        f"{start_block:,}:{end_block:,} ({end_block-start_block:,} blks) "
         f"into {list(sink_config.keys())} "
     )
 
