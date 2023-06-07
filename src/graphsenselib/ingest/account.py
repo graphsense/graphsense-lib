@@ -521,10 +521,6 @@ def export_csv(
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
-    # if info then only print block info and exit
-    if info:
-        return
-
     adapter = EthStreamerAdapter(thread_proxy, batch_size=50)
 
     start_block = 0
