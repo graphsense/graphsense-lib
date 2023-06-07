@@ -399,10 +399,6 @@ def ingest(
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
-    # if info then only print block info and exit
-    if info:
-        return
-
     adapter = EthStreamerAdapter(thread_proxy, batch_size=50)
 
     start_block = 0
@@ -426,8 +422,18 @@ def ingest(
     time1 = datetime.now()
     count = 0
 
+    # if info then only print block info and exit
+    if info:
+        logger.info(
+            f"Would ingesting block range "
+            f"{start_block:,}:{end_block:,} "
+            f"into {list(sink_config.keys())} "
+        )
+
+        return
+
     logger.info(
-        f"[{time1}] Ingesting block range "
+        f"Ingesting block range "
         f"{start_block:,}:{end_block:,} "
         f"into {list(sink_config.keys())} "
     )
