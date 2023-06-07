@@ -558,7 +558,7 @@ def export_csv(
 
     if rounded_start_block > rounded_end_block:
         print("No blocks to export")
-        sys.exit(0)
+        return
 
     block_range = (
         rounded_start_block,
@@ -566,7 +566,7 @@ def export_csv(
     )
 
     if info:
-        sys.exit(0)
+        return
 
     path = pathlib.Path(directory)
     try:
