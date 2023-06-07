@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from importlib.resources import files, read_text
 from typing import Iterable, List
 
@@ -231,6 +232,44 @@ class GraphsenseSchemas:
                 logger.info(
                     f"Keyspace {keyspace_type} for env "
                     f"{env}:{currency} created on {target_ks_name}."
+                )
+
+    def create_new_transformed_ks_if_not_exist(self, env, currency, suffix=None):
+        keyspace_type = "transformed"
+        with DbFactory().from_config(env, currency) as db:
+            schema = self.get_by_currency(
+                currency, keyspace_type=keyspace_type, no_extensions=True
+            )
+            if len(schema) > 0:
+                schema = schema[0][1]
+            else:
+                raise Exception(
+                    "No schema definition found for "
+                    f"{env}, {currency}, type: {keyspace_type}"
+                )
+
+            date_str = datetime.now().strftime("%Y%m%d")
+            keyspace_name = f"{currency}_transformed_{date_str}"
+            if suffix is not None:
+                keyspace_name = f"{keyspace_name}_{suffix}"
+            c_db = db.db()
+            if c_db.has_keyspace(keyspace_name):
+                logger.error(
+                    f"Keyspace {keyspace_name} for env "
+                    f"{env}:{currency} exists; please remove "
+                    "or specify an fresh suffix."
+                )
+            else:
+                replication_factor_config = config.get_keyspace_config(
+                    env, currency
+                ).ingest_config.raw_keyspace_replication_config
+                schema_to_create = schema.get_schema_string(
+                    keyspace_name, replication_factor_config
+                )
+                c_db.setup_keyspace_using_schema(schema_to_create)
+                logger.info(
+                    f"New transformed keyspace {keyspace_name} for env "
+                    f"{env}:{currency} created."
                 )
 
     def get_by_schema_type(
