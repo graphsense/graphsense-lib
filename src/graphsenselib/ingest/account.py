@@ -566,6 +566,10 @@ def export_csv(
     )
 
     if info:
+        logger.info(
+            f"Would process block range "
+            f"{rounded_start_block:,}:{rounded_end_block:,}"
+        )
         return
 
     path = pathlib.Path(directory)
@@ -581,8 +585,7 @@ def export_csv(
     logs_file = "logs_%08d-%08d.csv.gz" % block_range
 
     logger.info(
-        f"[{time1}] Processing block range "
-        f"{rounded_start_block:,}:{rounded_end_block:,}"
+        f"Processing block range " f"{rounded_start_block:,}:{rounded_end_block:,}"
     )
 
     block_list = []
