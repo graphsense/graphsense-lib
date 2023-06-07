@@ -10,6 +10,11 @@ CREATE TYPE currency (
     fiat_values list<float>
 );
 
+CREATE TYPE tx_reference (
+    trace_index int,
+    log_index int
+);
+
 CREATE TYPE address_summary (
     total_received FROZEN <currency>,
     total_spent FROZEN <currency>
@@ -55,11 +60,11 @@ CREATE TABLE address_transactions (
     address_id_secondary_group int,
     address_id int,
     transaction_id int,
-    log_index int,
+    tx_reference FROZEN <tx_reference>,
     currency text,
     is_outgoing boolean,
-    PRIMARY KEY ((address_id_group, address_id_secondary_group), address_id, is_outgoing, currency, transaction_id)
-) WITH CLUSTERING ORDER BY (address_id DESC, is_outgoing DESC, currency DESC, transaction_id DESC);
+    PRIMARY KEY ((address_id_group, address_id_secondary_group), address_id, is_outgoing, currency, transaction_id, tx_reference)
+) WITH CLUSTERING ORDER BY (address_id DESC, is_outgoing DESC, currency DESC, transaction_id DESC, tx_reference DESC);
 
 CREATE TABLE address_transactions_secondary_ids (
     address_id_group int PRIMARY KEY,
