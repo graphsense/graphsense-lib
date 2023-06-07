@@ -100,9 +100,15 @@ def ingest(
     """
     ks_config = config.get_keyspace_config(env, currency)
     provider = ks_config.ingest_config.node_reference
-    parquet_file_sink = ks_config.ingest_config.raw_keyspace_file_sinks.get(
+    parquet_file_sink_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
-    ).directory
+    )
+
+    parquet_file_sink = (
+        parquet_file_sink_config.directory
+        if parquet_file_sink_config is not None
+        else None
+    )
 
     if create_schema:
         GraphsenseSchemas().create_keyspace_if_not_exist(
