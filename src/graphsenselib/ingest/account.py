@@ -425,7 +425,7 @@ def ingest(
     # if info then only print block info and exit
     if info:
         logger.info(
-            f"Would ingesting block range "
+            f"Would ingest block range "
             f"{start_block:,}:{end_block:,} "
             f"into {list(sink_config.keys())} "
         )
