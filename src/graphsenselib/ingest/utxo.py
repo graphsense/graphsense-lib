@@ -742,13 +742,18 @@ def ingest(
 
     # if info then only print block info and exit
     if info:
+        logger.info(
+            f"Would ngest block range "
+            f"{start_block:,}:{end_block:,} "
+            f"into {list(sink_config.keys())} "
+        )
         return
 
     time1 = datetime.now()
     count = 0
 
     logger.info(
-        f"[{time1}] Ingesting block range "
+        f"Ingesting block range "
         f"{start_block:,}:{end_block:,} "
         f"into {list(sink_config.keys())} "
     )
