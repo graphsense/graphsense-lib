@@ -468,7 +468,10 @@ class CassandraDb:
                             try:
                                 self.session.execute(prepared_stmt, parameters[i])
                             except Exception as exception:
-                                logger.error(exception)
+                                logger.error(
+                                    f"Retry after exception: {str(exception)} "
+                                    f"retrying another {retries} times"
+                                )
                                 retries -= 1
                                 if retries < 0:
                                     logger.error("Giving up retries for ingest.")
