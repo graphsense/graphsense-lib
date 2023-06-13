@@ -468,9 +468,9 @@ class CassandraDb:
                             try:
                                 self.session.execute(prepared_stmt, parameters[i])
                             except Exception as exception:
-                                logger.error(
+                                logger.warning(
                                     f"Retry after exception: {str(exception)} "
-                                    f"retrying another {retries} times"
+                                    f"retrying another {retries} times/statements"
                                 )
                                 retries -= 1
                                 if retries < 0:
@@ -482,7 +482,10 @@ class CassandraDb:
                 break
 
             except Exception as exception:
-                logger.error(exception)
+                logger.warning(
+                    f"Retry after exception: {str(exception)} "
+                    f"retrying another {retries} times/statements"
+                )
                 # TODO: Refactor, sleeps are probably only masking another problem
                 time.sleep(1)
                 retries -= nr_statements
