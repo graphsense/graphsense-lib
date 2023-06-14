@@ -20,6 +20,7 @@ def shutdown_handler(signum, frame):
             "The next STRG-C will terminate the process. "
             "Be careful, you are on you own now."
         )
+        unregister_ctrlc_shutdown_handler()
 
 
 def shutdown_initialized():
