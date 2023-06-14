@@ -289,7 +289,7 @@ def prepare_blocks_inplace(
 
 def prepare_blocks_inplace_trx(items: Iterable):
     for b in items:
-        b["timestamp"] = b["timestamp"] // 1000
+        b["timestamp"] = b["timestamp"]
 
 
 def prepare_transactions_inplace(
@@ -426,7 +426,7 @@ def ingest(
     if info:
         logger.info(
             f"Would ingest block range "
-            f"{start_block:,}:{end_block:,} ({end_block-start_block:,} blks) "
+            f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
             f"into {list(sink_config.keys())} "
         )
 
@@ -434,7 +434,7 @@ def ingest(
 
     logger.info(
         f"Ingesting block range "
-        f"{start_block:,}:{end_block:,} ({end_block-start_block:,} blks) "
+        f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
         f"into {list(sink_config.keys())} "
     )
 
@@ -483,9 +483,9 @@ def ingest(
                 time2 = datetime.now()
                 time_delta = (time2 - time1).total_seconds()
                 logger.info(
-                    f"Last processed block: {current_end_block:,}, "
+                    f"Last processed block: {current_end_block:,} "
                     f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                    f"({count/time_delta:.1f} blocks/s)"
+                    f"({count/time_delta:.1f} blks/s)"
                 )
                 time1 = time2
                 count = 0
@@ -493,8 +493,11 @@ def ingest(
             if check_shutdown_initialized():
                 break
 
+    last_block_date = parse_timestamp(last_block_ts)
     logger.info(
-        f"[{datetime.now()}] Processed block range " f"{start_block:,}:{end_block:,}"
+        f"[{datetime.now()}] Processed block range "
+        f"{start_block:,} - {end_block:,} "
+        f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
     )
 
     # store configuration details
@@ -574,7 +577,7 @@ def export_csv(
     if info:
         logger.info(
             f"Would process block range "
-            f"{rounded_start_block:,}:{rounded_end_block:,}"
+            f"{rounded_start_block:,} - {rounded_end_block:,}"
         )
         return
 
@@ -582,7 +585,7 @@ def export_csv(
     try:
         path.mkdir(parents=True, exist_ok=True)
     except (PermissionError, NotADirectoryError) as exception:
-        logger.error(exception)
+        logger.error(f"Could not output directory {directory}: {str(exception)}")
         sys.exit(1)
 
     block_file = "block_%08d-%08d.csv.gz" % block_range
@@ -591,7 +594,7 @@ def export_csv(
     logs_file = "logs_%08d-%08d.csv.gz" % block_range
 
     logger.info(
-        f"Processing block range " f"{rounded_start_block:,}:{rounded_end_block:,}"
+        f"Processing block range " f"{rounded_start_block:,} - {rounded_end_block:,}"
     )
 
     block_list = []
@@ -618,18 +621,22 @@ def export_csv(
 
             count += batch_size
 
+            last_block = block_list[-1]
+            last_block_ts = last_block["timestamp"]
+            last_block_date = parse_timestamp(last_block_ts)
+
             if count >= 1000:
                 time2 = datetime.now()
                 time_delta = (time2 - time1).total_seconds()
                 logger.info(
-                    f"[{time2}] Last processed block {current_end_block} "
-                    f"({count/time_delta:.1f} blocks/s)"
+                    f"Last processed block {current_end_block:,} "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                    f"({count/time_delta:.1f} blks/s)"
                 )
                 time1 = time2
                 count = 0
 
             if (block_id + batch_size) % block_bucket_size == 0:
-                time3 = datetime.now()
                 partition_start = block_id - (block_id % partition_batch_size)
                 partition_end = partition_start + partition_batch_size - 1
                 sub_dir = f"{partition_start:08d}-{partition_end:08d}"
@@ -647,9 +654,13 @@ def export_csv(
                     quoting=QUOTE_NONE,
                 )
 
+                last_block = block_list[-1]
+                last_block_ts = last_block["timestamp"]
+                last_block_date = parse_timestamp(last_block_ts)
+
                 logger.info(
-                    f"[{time3}] "
-                    f"Exported blocks: {block_range[0]:,}:{block_range[1]:,} "
+                    f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
                 )
 
                 block_range = (
@@ -672,4 +683,5 @@ def export_csv(
     logger.info(
         f"[{datetime.now()}] Processed block range "
         f"{rounded_start_block:,}:{rounded_end_block:,}"
+        f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
     )

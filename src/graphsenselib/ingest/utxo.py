@@ -744,7 +744,7 @@ def ingest(
     if info:
         logger.info(
             f"Would ingest block range "
-            f"{start_block:,}:{end_block:,} ({end_block-start_block:,} blks) "
+            f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
             f"into {list(sink_config.keys())} "
         )
         return
@@ -754,7 +754,7 @@ def ingest(
 
     logger.info(
         f"Ingesting block range "
-        f"{start_block:,}:{end_block:,} ({end_block-start_block:,} blks) "
+        f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
         f"into {list(sink_config.keys())} "
     )
 
@@ -804,7 +804,7 @@ def ingest(
                 time2 = datetime.now()
                 time_delta = (time2 - time1).total_seconds()
                 logger.info(
-                    f"Last processed block: {current_end_block:,}, "
+                    f"Last processed block: {current_end_block:,} "
                     f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
                     f"({count/time_delta:.1f} blocks/s)"
                 )
@@ -815,8 +815,10 @@ def ingest(
             if check_shutdown_initialized():
                 break
 
+    last_block_date = parse_timestamp(last_block_ts)
     logger.info(
-        f"[{datetime.now()}] Processed block range {start_block:,}:{last_block_id:,}"
+        f"Processed block range {start_block:,} - {last_block_id:,} "
+        f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
     )
 
     # store configuration details
