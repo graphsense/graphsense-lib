@@ -26,7 +26,9 @@ avg_blocktimes_by_currencies = {
 
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-CASSANDRA_REPLICATION_FACTOR = "{'class': 'SimpleStrategy', 'replication_factor': 1}"
+CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
+    "{'class': 'SimpleStrategy', 'replication_factor': 1}"
+)
 
 
 class FileSink(BaseModel):
@@ -35,9 +37,6 @@ class FileSink(BaseModel):
 
 class IngestConfig(BaseModel):
     node_reference: str = Field(default_factory=lambda: "")
-    raw_keyspace_replication_config: str = Field(
-        default_factory=lambda: CASSANDRA_REPLICATION_FACTOR
-    )
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
     # raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
 
@@ -48,6 +47,11 @@ class KeyspaceConfig(BaseModel):
     schema_type: str
     disable_delta_updates: bool = Field(default_factory=lambda: False)
     ingest_config: Optional[IngestConfig]
+    initial_keyspace_replication_config: Dict[str, str] = Field(
+        default_factory=lambda: {
+            kst: CASSANDRA_DEFAULT_REPLICATION_CONFIG for kst in keyspace_types
+        }
+    )
 
     @validator("schema_type", allow_reuse=True)
     def schema_type_in_range(cls, v):
@@ -110,9 +114,11 @@ class AppConfig(GoodConf):
                         "transformed_keyspace_name": f"{cur}_transformed_{env}",
                         "schema_type": currency_to_schema_type[cur],
                         "disable_delta_updates": False,
-                        "ingest_config": {
-                            "raw_keyspace_replication_config": CASSANDRA_REPLICATION_FACTOR,  # noqa
+                        "initial_keyspace_replication_config": {
+                            kst: CASSANDRA_DEFAULT_REPLICATION_CONFIG
+                            for kst in keyspace_types
                         },
+                        "ingest_config": {"node_reference": "localhost:8545"},
                     }
                     for cur in supported_base_currencies
                 },

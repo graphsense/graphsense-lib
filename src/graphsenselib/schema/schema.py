@@ -222,16 +222,17 @@ class GraphsenseSchemas:
                     f"{env}:{currency} exists: {target_ks_name}, nothing to do"
                 )
             else:
-                replication_factor_config = config.get_keyspace_config(
+                replication_config = config.get_keyspace_config(
                     env, currency
-                ).ingest_config.raw_keyspace_replication_config
+                ).initial_keyspace_replication_config[keyspace_type]
                 schema_to_create = schema.get_schema_string(
-                    target_ks_name, replication_factor_config
+                    target_ks_name, replication_config
                 )
                 db.db().setup_keyspace_using_schema(schema_to_create)
                 logger.info(
                     f"Keyspace {keyspace_type} for env "
-                    f"{env}:{currency} created on {target_ks_name}."
+                    f"{env}:{currency} created on {target_ks_name} "
+                    f"with replication config {replication_config}."
                 )
 
     def create_new_transformed_ks_if_not_exist(self, env, currency, suffix=None):
@@ -260,16 +261,17 @@ class GraphsenseSchemas:
                     "or specify an fresh suffix."
                 )
             else:
-                replication_factor_config = config.get_keyspace_config(
+                replication_config = config.get_keyspace_config(
                     env, currency
-                ).ingest_config.raw_keyspace_replication_config
+                ).initial_keyspace_replication_config[keyspace_type]
                 schema_to_create = schema.get_schema_string(
-                    keyspace_name, replication_factor_config
+                    keyspace_name, replication_config
                 )
                 c_db.setup_keyspace_using_schema(schema_to_create)
                 logger.info(
                     f"New transformed keyspace {keyspace_name} for env "
-                    f"{env}:{currency} created."
+                    f"{env}:{currency} created "
+                    f"with replication config {replication_config}."
                 )
 
     def get_by_schema_type(
