@@ -358,6 +358,8 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         return self._keyspace
 
     def get_summary_statistics(self) -> Optional[object]:
+        if not self.exists():
+            return None
         if self._db.has_table(self._keyspace, "summary_statistics"):
             return self._get_only_row_from_table("summary_statistics")
         else:
@@ -476,7 +478,10 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def get_highest_block(self, sanity_check=True) -> Optional[int]:
         """Return last ingested block ID from block table."""
-        return self._get_hightest_id(table="block", sanity_check=sanity_check)
+        if self.exists():
+            return self._get_hightest_id(table="block", sanity_check=sanity_check)
+        else:
+            return None
 
     @abstractmethod
     def get_transaction_ids_in_block(self, block: int) -> Iterable:
@@ -565,6 +570,8 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         return self._keyspace
 
     def get_summary_statistics(self) -> Optional[object]:
+        if not self.exists():
+            return None
         return self._get_only_row_from_table("summary_statistics")
 
     def get_exchange_rates_by_block(self, block) -> Iterable:
