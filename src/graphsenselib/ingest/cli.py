@@ -220,8 +220,8 @@ def export_csv(
         currency (str): currency to work on
     """
 
-    if currency != "eth":
-        logger.error("Csv export is only supported for eth at the moment.")
+    if currency != "eth" and currency != "trx":
+        logger.error("Csv export is only supported for eth/trx at the moment.")
         sys.exit(1)
 
     ks_config = config.get_keyspace_config(env, currency)

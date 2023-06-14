@@ -610,8 +610,16 @@ def export_csv(
                 blocks, txs = adapter.export_blocks_and_transactions(
                     block_id, current_end_block
                 )
+                if block_id == 0 and currency == "trx":
+                    # genesis tx of block 0 have no receipts
+                    # to avoid errors we drop them
+                    txs = [tx for tx in txs if tx["block_number"] > 0]
                 receipts, logs = adapter.export_receipts_and_logs(txs)
-                traces = adapter.export_traces(block_id, current_end_block, True, True)
+                traces = (
+                    []
+                    if currency == "trx"
+                    else adapter.export_traces(block_id, current_end_block, True, True)
+                )
                 enriched_txs = enrich_transactions(txs, receipts)
 
             block_list.extend(format_blocks_csv(blocks))
@@ -643,7 +651,14 @@ def export_csv(
                 full_path = path / sub_dir
                 full_path.mkdir(parents=True, exist_ok=True)
 
-                write_csv(full_path / trace_file, trace_list, TRACE_HEADER)
+                if currency == "trx":
+                    prepare_transactions_inplace_trx(tx_list)
+                    prepare_blocks_inplace_trx(block_list)
+
+                if currency != "trx":
+                    # trx has no tracing api
+                    write_csv(full_path / trace_file, trace_list, TRACE_HEADER)
+
                 write_csv(full_path / tx_file, tx_list, TX_HEADER)
                 write_csv(full_path / block_file, block_list, BLOCK_HEADER)
                 write_csv(
