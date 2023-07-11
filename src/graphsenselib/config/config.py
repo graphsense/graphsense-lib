@@ -133,6 +133,7 @@ class AppConfig(GoodConf):
     )
 
     class Config:
+        env_prefix = "GRAPHSENSE_"
         file_env_var = "GRAPHSENSE_CONFIG_YAML"
         default_files = [".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")]
 
