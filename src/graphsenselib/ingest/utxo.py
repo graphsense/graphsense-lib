@@ -36,7 +36,10 @@ logger = logging.getLogger(__name__)
 CHAIN_MAPPING = {
     "btc": Chain.BITCOIN,
     "ltc": Chain.LITECOIN,
-    "bch": Chain.BITCOIN_CASH,
+    # Use the new api for btc (in btc etl jargon), this is
+    # required for bitcoin cash, otherwise the index field in the transactions
+    # is not filled correctly.
+    "bch": Chain.BITCOIN,
     "zec": Chain.ZCASH,
 }
 
@@ -519,6 +522,8 @@ def prepare_transactions_inplace(
         "fee",
     ]
     blob_columns = ["hash"]
+
+    assert all(tx["index"] is not None for tx in txs)
 
     txs = sorted(
         txs, key=itemgetter("block_number", "index")
