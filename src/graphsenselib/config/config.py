@@ -140,15 +140,22 @@ class AppConfig(GoodConf):
     def is_loaded(self) -> bool:
         return hasattr(self, "environments")
 
-    def text(self):
-        if self.Config._config_file:
-            with open(self.Config._config_file, "r") as f:
+    @property
+    def underlying_file(self) -> Optional[str]:
+        if hasattr(self.__config__, "_config_file"):
+            return self.__config__._config_file
+        else:
+            return None
+
+    def text(self) -> str:
+        if self.underlying_file:
+            with open(self.underlying_file, "r") as f:
                 return f.read()
         else:
             return ""
 
     def path(self):
-        return self.Config._config_file
+        return self.underlying_file
 
     def get_configured_environments(self):
         if self.is_loaded():
