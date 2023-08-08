@@ -440,6 +440,40 @@ def enrich_txs(
         InputNotFoundException: If inputs can not be
                                 resolved and ignore_missing_outputs is false
     """
+
+    # add outputs to cache before processing the inputs
+    # help to avoid ordering related errors while resolving inputs
+    # one instance where this happens is bitcoin cash;
+    # btc-etl does not respect the new CTOR ordering for bch transactions.
+    # given the returned tx order, tx inputs do not always resolve correctly.
+    # an example is block (801379, tx at index 2 spends tx at index 12)
+    # we circumvent this issue by pre-populating the cache.
+    for tx in txs:
+        # process outputs
+        for o in tx["outputs"]:
+            if o["addresses"]:
+                if o["addresses"][0] and o["addresses"][0].startswith("bitcoincash:"):
+                    o["addresses"] = [to_legacy_address(a) for a in o["addresses"]]
+
+                if o["addresses"][0] and o["addresses"][0].startswith("nonstandard"):
+                    try:
+                        address_list, scripttype = parse_script(o["script_hex"])
+                        o["addresses"] = (
+                            address_list if address_list else o["addresses"]
+                        )
+                        o["type"] = scripttype
+                    except (
+                        UnknownScriptType,
+                        UnknownAddressType,
+                        P2pkParserException,
+                    ) as exception:
+                        logger.warning(
+                            f"{exception}: cannot parse output script {o}"
+                            f" from tx {tx.get('hash')}"
+                        )
+
+                resolver.add_output(tx["hash"], o)
+
     for tx in txs:
         if not tx["is_coinbase"]:
             # process inputs
@@ -479,31 +513,6 @@ def enrich_txs(
         tx["input_value"] = sum(
             [i["value"] for i in tx["inputs"] if i["value"] is not None]
         )
-
-        # process outputs
-        for o in tx["outputs"]:
-            if o["addresses"]:
-                if o["addresses"][0] and o["addresses"][0].startswith("bitcoincash:"):
-                    o["addresses"] = [to_legacy_address(a) for a in o["addresses"]]
-
-                if o["addresses"][0] and o["addresses"][0].startswith("nonstandard"):
-                    try:
-                        address_list, scripttype = parse_script(o["script_hex"])
-                        o["addresses"] = (
-                            address_list if address_list else o["addresses"]
-                        )
-                        o["type"] = scripttype
-                    except (
-                        UnknownScriptType,
-                        UnknownAddressType,
-                        P2pkParserException,
-                    ) as exception:
-                        logger.warning(
-                            f"{exception}: cannot parse output script {o}"
-                            f" from tx {tx.get('hash')}"
-                        )
-
-                resolver.add_output(tx["hash"], o)
 
 
 def prepare_transactions_inplace(
