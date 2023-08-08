@@ -14,7 +14,7 @@ from blockchainetl.jobs.exporters.in_memory_item_exporter import InMemoryItemExp
 from blockchainetl.thread_local_proxy import ThreadLocalProxy
 from btcpy.structs.address import P2pkhAddress
 from btcpy.structs.script import ScriptBuilder
-from cashaddress.convert import to_legacy_address
+from cashaddress.convert import InvalidAddress, to_legacy_address
 from methodtools import lru_cache as mlru_cache
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
@@ -42,6 +42,17 @@ CHAIN_MAPPING = {
     "bch": Chain.BITCOIN,
     "zec": Chain.ZCASH,
 }
+
+
+def bch_address_to_legacy(address):
+    try:
+        return to_legacy_address(address)
+    except InvalidAddress as e:
+        logger.warning(
+            f"BCH: could not convert to legacy address ({str(e)});"
+            f" takeing as is {address}"
+        )
+        return address
 
 
 class UnknownScriptType(Exception):
@@ -448,12 +459,13 @@ def enrich_txs(
     # given the returned tx order, tx inputs do not always resolve correctly.
     # an example is block (801379, tx at index 2 spends tx at index 12)
     # we circumvent this issue by pre-populating the cache.
+
     for tx in txs:
         # process outputs
         for o in tx["outputs"]:
             if o["addresses"]:
                 if o["addresses"][0] and o["addresses"][0].startswith("bitcoincash:"):
-                    o["addresses"] = [to_legacy_address(a) for a in o["addresses"]]
+                    o["addresses"] = [bch_address_to_legacy(a) for a in o["addresses"]]
 
                 if o["addresses"][0] and o["addresses"][0].startswith("nonstandard"):
                     try:
