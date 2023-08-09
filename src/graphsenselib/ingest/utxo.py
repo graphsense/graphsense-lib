@@ -14,12 +14,12 @@ from blockchainetl.jobs.exporters.in_memory_item_exporter import InMemoryItemExp
 from blockchainetl.thread_local_proxy import ThreadLocalProxy
 from btcpy.structs.address import P2pkhAddress
 from btcpy.structs.script import ScriptBuilder
-from cashaddress.convert import InvalidAddress, to_legacy_address
 from methodtools import lru_cache as mlru_cache
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 from ..db import AnalyticsDb
 from ..utils import hex_to_bytearray, parse_timestamp
+from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
@@ -42,17 +42,6 @@ CHAIN_MAPPING = {
     "bch": Chain.BITCOIN,
     "zec": Chain.ZCASH,
 }
-
-
-def bch_address_to_legacy(address):
-    try:
-        return to_legacy_address(address)
-    except InvalidAddress as e:
-        logger.warning(
-            f"BCH: could not convert to legacy address ({str(e)});"
-            f" takeing as is {address}"
-        )
-        return address
 
 
 class UnknownScriptType(Exception):
