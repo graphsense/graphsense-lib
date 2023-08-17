@@ -18,7 +18,7 @@ from methodtools import lru_cache as mlru_cache
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 from ..db import AnalyticsDb
-from ..utils import hex_to_bytearray, parse_timestamp
+from ..utils import bytes_to_hex, flatten, hex_to_bytearray, parse_timestamp, strip_0x
 from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
@@ -273,6 +273,15 @@ def ingest_blocks(
     sink_config: dict,
 ) -> None:
     write_to_sinks(db, sink_config, "block", items)
+
+
+def ingest_tx_refs(
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+) -> None:
+    write_to_sinks(db, sink_config, "transaction_spent_in", items)
+    write_to_sinks(db, sink_config, "transaction_spending", items)
 
 
 def prepare_blocks_inplace(blocks: Iterable, block_bucket_size: int) -> None:
@@ -554,6 +563,9 @@ def prepare_transactions_inplace(
         tx["coinbase"] = tx.pop("is_coinbase")
         tx["coinjoin"] = is_coinjoin(tx)
 
+        tx["inputs_raw"] = tx["inputs"]
+        tx["outputs_raw"] = tx["outputs"]
+
         tx["inputs"] = [tx_io_summary(x) for x in tx["inputs"]]
         tx["outputs"] = [tx_io_summary(x) for x in tx["outputs"]]
         tx["timestamp"] = tx.pop("block_timestamp")
@@ -564,6 +576,31 @@ def prepare_transactions_inplace(
         tx["tx_id_group"] = next_tx_id // tx_bucket_size
         tx["tx_id"] = next_tx_id
         next_tx_id += 1
+
+
+def get_tx_refs(spending_tx_hash: str, raw_inputs: Iterable, tx_hash_prefix_len: int):
+    tx_refs = []
+    spending_tx_hash = hex_to_bytearray(spending_tx_hash)
+    for inp in raw_inputs:
+        spending_input_index = inp["index"]
+        spent_tx_hash = hex_to_bytearray(inp["spent_transaction_hash"])
+        spent_output_index = inp["spent_output_index"]
+        tx_refs.append(
+            {
+                "spending_tx_hash": spending_tx_hash,
+                "spending_input_index": spending_input_index,
+                "spent_tx_hash": spent_tx_hash,
+                "spent_output_index": spent_output_index,
+                "spending_tx_prefix": strip_0x(bytes_to_hex(spending_tx_hash))[
+                    :tx_hash_prefix_len
+                ],
+                "spent_tx_prefix": strip_0x(bytes_to_hex(spent_tx_hash))[
+                    :tx_hash_prefix_len
+                ],
+            }
+        )
+
+    return tx_refs
 
 
 def ingest_transactions(
@@ -718,12 +755,22 @@ def ingest(
     info: bool,
     previous_day: bool,
     provider_timeout: int,
+    mode: str,
 ):
     if currency not in CHAIN_MAPPING:
         raise ValueError(
             f"{currency} not supported by ingest module,"
             f" supported {list(CHAIN_MAPPING.keys())}"
         )
+
+    import_refs = mode == "utxo_only_tx_graph" or mode == "utxo_with_tx_graph"
+    import_base_data = mode != "utxo_only_tx_graph"
+
+    del mode
+
+    logger.info(
+        f"Importing base data: {import_base_data}, import tx refs {import_refs}"
+    )
 
     btc_adapter = get_stream_adapter(currency, provider_uri, batch_size=batch_size)
 
@@ -773,12 +820,13 @@ def ingest(
         f"into {list(sink_config.keys())} "
     )
 
-    ingest_configuration_cassandra(
-        db,
-        block_bucket_size=BLOCK_BUCKET_SIZE,
-        tx_hash_prefix_len=TX_HASH_PREFIX_LENGTH,
-        tx_bucket_size=TX_BUCKET_SIZE,
-    )
+    if import_base_data:
+        ingest_configuration_cassandra(
+            db,
+            block_bucket_size=BLOCK_BUCKET_SIZE,
+            tx_hash_prefix_len=TX_HASH_PREFIX_LENGTH,
+            tx_bucket_size=TX_BUCKET_SIZE,
+        )
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(start_block, end_block + 1, batch_size):
@@ -789,25 +837,37 @@ def ingest(
                     block_id, current_end_block
                 )
 
-            # until bitcoin-etl progresses
-            # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
-            enrich_txs(txs, resolver, ignore_missing_outputs=False)
-
-            latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
-
-            prepare_transactions_inplace(
-                txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE
+            tx_refs = flatten(
+                [
+                    get_tx_refs(tx["hash"], tx["inputs"], TX_HASH_PREFIX_LENGTH)
+                    for tx in txs
+                ]
             )
+
             prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
 
-            ingest_blocks(blocks, db, sink_config)
-            ingest_transaction_lookups(
-                txs,
-                db,
-                sink_config,
-            )
-            ingest_transactions(txs, db, sink_config)
-            ingest_block_transactions(txs, db, sink_config, BLOCK_BUCKET_SIZE)
+            if import_base_data:
+                # until bitcoin-etl progresses
+                # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
+                enrich_txs(txs, resolver, ignore_missing_outputs=False)
+
+                latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
+
+                prepare_transactions_inplace(
+                    txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE
+                )
+
+                ingest_blocks(blocks, db, sink_config)
+                ingest_transaction_lookups(
+                    txs,
+                    db,
+                    sink_config,
+                )
+                ingest_transactions(txs, db, sink_config)
+                ingest_block_transactions(txs, db, sink_config, BLOCK_BUCKET_SIZE)
+
+            if import_refs:
+                ingest_tx_refs(tx_refs, db, sink_config)
 
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
@@ -837,7 +897,7 @@ def ingest(
     )
 
     # store configuration details
-    if "cassandra" in sink_config.keys():
+    if "cassandra" in sink_config.keys() and import_base_data:
         last_block = blocks[-1]
         last_tx = txs[-1]
         ingest_summary_statistics_cassandra(
