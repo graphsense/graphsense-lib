@@ -21,6 +21,7 @@ class IngestModule(ABC):
         info: bool,
         previous_day: bool,
         provider_timeout: int,
+        mode: str,
     ):
         pass
 
@@ -38,6 +39,7 @@ class IngestModuleAccount(IngestModule):
         info: bool,
         previous_day: bool,
         provider_timeout: int,
+        mode: str,
     ):
         ingest_eth(
             db=db,
@@ -66,6 +68,7 @@ class IngestModuleUtxo(IngestModule):
         info: bool,
         previous_day: bool,
         provider_timeout: int,
+        mode: str,
     ):
         ingest_utxo(
             db=db,
@@ -78,6 +81,7 @@ class IngestModuleUtxo(IngestModule):
             info=info,
             previous_day=previous_day,
             provider_timeout=provider_timeout,
+            mode=mode,
         )
 
 
