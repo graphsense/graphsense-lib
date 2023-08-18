@@ -80,6 +80,15 @@ def ingesting():
     is_flag=True,
     help="Create database schema if it does not exist",
 )
+@click.option(
+    "--mode",
+    type=click.Choice(
+        ["legacy", "utxo_with_tx_graph", "utxo_only_tx_graph"], case_sensitive=False
+    ),
+    help="Importer mode",
+    default="legacy",
+    multiple=False,
+)
 def ingest(
     env,
     currency,
@@ -91,6 +100,7 @@ def ingest(
     info,
     previous_day,
     create_schema,
+    mode,
 ):
     """Ingests cryptocurrency data form the client/node to the graphsense db
     \f
@@ -103,6 +113,12 @@ def ingest(
     parquet_file_sink_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
+
+    if ks_config.schema_type == "account" and mode != "legacy":
+        logger.error(
+            "Only legacy mode is available for account type currencies. Exiting."
+        )
+        sys.exit(11)
 
     parquet_file_sink = (
         parquet_file_sink_config.directory
@@ -138,6 +154,7 @@ def ingest(
             info=info,
             previous_day=previous_day,
             provider_timeout=timeout,
+            mode=mode,
         )
 
 
@@ -222,7 +239,7 @@ def export_csv(
 
     if currency != "eth" and currency != "trx":
         logger.error("Csv export is only supported for eth/trx at the moment.")
-        sys.exit(1)
+        sys.exit(11)
 
     ks_config = config.get_keyspace_config(env, currency)
     provider = ks_config.ingest_config.node_reference
@@ -235,7 +252,7 @@ def export_csv(
             "Please provide an output directory in your "
             "config (raw_keyspace_file_sinks.csv.directory)"
         )
-        sys.exit(1)
+        sys.exit(11)
 
     csv_directory = csv_directory_config.directory
 
