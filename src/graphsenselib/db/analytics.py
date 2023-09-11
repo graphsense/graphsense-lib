@@ -12,6 +12,9 @@ from datetime import datetime
 from functools import lru_cache, partial
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
+from cassandra import WriteTimeout
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
+
 from ..config import keyspace_types
 from ..datatypes import DbChangeType
 from ..utils import GenericArrayFacade, binary_search, parse_timestamp
@@ -275,7 +278,7 @@ class DbWriterMixin:
     self._db and requires the object to provide the WithinKeyspace mixin
     """
 
-    def apply_changes(self, changes: List[DbChange], atomic=True):
+    def apply_changes(self, changes: List[DbChange], atomic=True, nr_retries=5):
         statements = [
             (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
             for chng in changes
@@ -293,10 +296,24 @@ class DbWriterMixin:
             for chng in changes
         ]
 
-        if atomic:
-            self._db.execute_statements_atomic(change_stmts)
-        else:
-            self._db.execute_statements(change_stmts)
+        attempts_made = 0
+        for attempt in Retrying(
+            retry=retry_if_exception_type(WriteTimeout),
+            reraise=True,
+            stop=stop_after_attempt(nr_retries),
+        ):
+            # see https://tenacity.readthedocs.io/en/latest/#retrying-code-block
+            with attempt:
+                attempts_made += 1
+                if attempts_made > 1:
+                    logger.warning(
+                        "Applying changes ran into a write timeout. "
+                        f"Retrying {(nr_retries  - attempts_made) +1} more times."
+                    )
+                if atomic:
+                    self._db.execute_statements_atomic(change_stmts)
+                else:
+                    self._db.execute_statements(change_stmts)
 
     def ensure_table_exists(
         self,
