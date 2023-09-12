@@ -41,16 +41,21 @@ class IngestConfig(BaseModel):
     # raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
 
 
+class KeyspaceSetupConfig(BaseModel):
+    replication_config: str = Field(
+        default_factory=lambda: CASSANDRA_DEFAULT_REPLICATION_CONFIG
+    )
+    data_configuration: Dict[str, object] = Field(default_factory=lambda: {})
+
+
 class KeyspaceConfig(BaseModel):
     raw_keyspace_name: str
     transformed_keyspace_name: str
     schema_type: str
     disable_delta_updates: bool = Field(default_factory=lambda: False)
     ingest_config: Optional[IngestConfig]
-    initial_keyspace_replication_config: Dict[str, str] = Field(
-        default_factory=lambda: {
-            kst: CASSANDRA_DEFAULT_REPLICATION_CONFIG for kst in keyspace_types
-        }
+    keyspace_setup_config: Dict[str, KeyspaceSetupConfig] = Field(
+        default_factory=lambda: {kst: KeyspaceSetupConfig() for kst in keyspace_types}
     )
 
     @validator("schema_type", allow_reuse=True)
@@ -114,8 +119,10 @@ class AppConfig(GoodConf):
                         "transformed_keyspace_name": f"{cur}_transformed_{env}",
                         "schema_type": currency_to_schema_type[cur],
                         "disable_delta_updates": False,
-                        "initial_keyspace_replication_config": {
-                            kst: CASSANDRA_DEFAULT_REPLICATION_CONFIG
+                        "keyspace_setup_config": {
+                            kst: {
+                                "replication_config": CASSANDRA_DEFAULT_REPLICATION_CONFIG  # noqa
+                            }
                             for kst in keyspace_types
                         },
                         "ingest_config": {"node_reference": "localhost:8545"},
@@ -125,7 +132,7 @@ class AppConfig(GoodConf):
             }
             for env in default_environments
         },
-        description="Separate configs per environment",
+        description="Config per environment",
     )
 
     slack_topics: Dict[str, SlackTopic] = Field(

@@ -422,7 +422,8 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             int: Last block that exchangerates are available
         """
         hb = self.get_highest_block()
-        start = hb - lookback_in_blocks
+
+        start = max(hb - lookback_in_blocks, 0)
 
         def has_er_value(result, i=0):
             return result[i]["fiat_values"] is not None
@@ -444,7 +445,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         else:
             r = r - 1
 
-        if validate:
+        if validate and r != -1:
             # ers = self.get_exchange_rates_for_block_batch([r - 1, r, r + 1])
             ers = self.get_exchange_rates_for_block_batch([r - 1, r])
             assert has_er_value(ers, i=0) and has_er_value(ers, i=1)
@@ -457,6 +458,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     @lru_cache(maxsize=1)
     def get_configuration(self) -> Optional[object]:
         return self._get_only_row_from_table("configuration")
+
+    def is_configuration_populated(self) -> bool:
+        return self._get_only_row_from_table("configuration") is not None
 
     def get_exchange_rates(self, table=None) -> Iterable:
         r = self.select("exchange_rates" if table is None else table)
@@ -535,7 +539,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def get_exchange_rates_batch(self, dates: list[datetime]):
         stmt = self.select_stmt("exchange_rates", where={"date": "?"}, limit=1)
-        ds = list({date.strftime(DATE_FORMAT) for date in dates})
+        ds = list({date.strftime(DATE_FORMAT) for date in dates if date is not None})
         results = self._db.execute_batch(stmt, [(d, [d]) for d in ds])
 
         # TODO maybe refactor with _at_most_one?
@@ -601,9 +605,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def get_cluster_id_bucket_size(self) -> Optional[int]:
         return self.get_address_id_bucket_size()
 
-    @lru_cache(maxsize=1)
+    # @lru_cache(maxsize=1)
     def get_configuration(self) -> Optional[object]:
         return self._get_only_row_from_table("configuration")
+
+    def is_configuration_populated(self) -> bool:
+        return self._get_only_row_from_table("configuration") is not None
 
     def get_highest_address_id(self, sanity_check=True) -> Optional[int]:
         """Return last ingested address ID from address table."""
@@ -1021,6 +1028,13 @@ class AnalyticsDb:
         self._db = db
         self._raw = raw.db_type(raw, db)
         self._transformed = transformed.db_type(transformed, db)
+
+    def __repr__(self):
+        return (
+            f"Raw: {self._raw_keyspace}, "
+            f"Transformed: {self._transformed_keyspace}, "
+            f"DB: {self._db}"
+        )
 
     def db(self) -> CassandraDb:
         return self._db
