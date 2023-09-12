@@ -254,6 +254,9 @@ class CassandraDb:
         self.prep_stmts = {}
         self._session_timeout = default_timeout
 
+    def __repr__(self):
+        return f"{', '.join(self.db_nodes)}"
+
     def connect(self):
         """Connect to given Cassandra cluster nodes."""
         self.cluster = Cluster(self.db_nodes)
