@@ -92,8 +92,8 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self._batch_start_time = None
         self._nr_new_addresses = 0
         self._nr_new_clusters = 0
-        self._highest_address_id = db.transformed.get_highest_address_id()
-        self._highest_cluster_id = db.transformed.get_highest_cluster_id()
+        self._highest_address_id = db.transformed.get_highest_address_id() or 0
+        self._highest_cluster_id = db.transformed.get_highest_cluster_id() or 1
 
     @property
     def currency(self):

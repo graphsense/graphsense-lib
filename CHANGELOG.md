@@ -3,6 +3,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [23.06/1.7.0] 2023-09-12
+### Fixed
+- delta updater support for pseudo coinbase address
+
+## [23.06/1.6.1] 2023-09-11
+### Fixed
+- inconsistent db state after write timeout -> added retry logic for delta updater on write timeouts
+
+## [23.06/1.6.0] 2023-08-18
+### Added
+- ingest for utxo now creates new tables for transaction references
+
 ## [23.06/1.5.0] 2023-06-12
 ### Added
 - added cli ingest command (ingest from-node) for ethereum-like currencies [#6](https://github.com/graphsense/graphsense-ethereum-etl/issues/6)

@@ -16,9 +16,13 @@ def config():
 
 
 @config.command("show")
-def show():
+@click.option("--json/--text", default=False)
+def show(json):
     """Prints the configuration used in the environment."""
-    console.print(cfg.text())
+    if json:
+        console.print_json(cfg.json())
+    else:
+        console.print(cfg.text())
 
 
 @config.command("path")

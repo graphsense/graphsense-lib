@@ -80,11 +80,12 @@ def get_unique_addresses_from_transaction(transaction) -> Iterable[str]:
 def get_slim_tx_from_transaction(transaction) -> Iterable[SlimTx]:
     # Only take first address from address array
     # this is equivalent to the spark job, but is ignoring multisig
-    input_addresses = [
+
+    output_addresses = [
         (address, FlowDirection.OUT)
         for (address, value) in filter_inoutputs(transaction.outputs)
     ]
-    output_addresses = [
+    input_addresses = [
         (address, FlowDirection.IN)
         for (address, value) in filter_inoutputs(transaction.inputs)
     ]

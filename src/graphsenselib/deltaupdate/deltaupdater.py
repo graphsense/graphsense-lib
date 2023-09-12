@@ -28,9 +28,19 @@ def find_import_range(db, start_block_overwrite, end_block_overwrite):
     hb_ft = db.transformed.get_highest_block_fulltransform()
     hb_raw = db.raw.get_highest_block()
     hb_du = db.transformed.get_highest_block_delta_updater()
+    # initialize to zero if du is run before full transform
+    hb_du = 0 if hb_du is None else hb_du
+    hb_ft = 0 if hb_ft is None else hb_ft
+
     start_block = hb_du + 1 if start_block_overwrite is None else start_block_overwrite
     latest_address_id = db.transformed.get_highest_address_id()
     latest_cluster_id = db.transformed.get_highest_cluster_id()
+
+    # initialize to zero/one if du is run before full transform
+    # cluster id is initialized to 1 since 0 is reserved for coinbase
+    latest_address_id = 0 if latest_address_id is None else latest_address_id
+    latest_cluster_id = 1 if latest_cluster_id is None else latest_cluster_id
+
     logger.info(f"Last addr id:       {latest_address_id:12}")
     if latest_cluster_id is not None:
         logger.info(f"Last cltr id:       {latest_cluster_id:12}")
@@ -165,15 +175,15 @@ def update(
                         # Full transform set nr_blocks a bit different (currency dep).
                         # To be sure about the block we look at exchange rates table
                         start_block = adjust_start_block(db, start_block)
-                    else:
-                        last_block_er = db.transformed.get_exchange_rates_by_block(
-                            start_block - 1
-                        )
-                        if last_block_er is None:
-                            raise Exception(
-                                "Could not find exchange rate for start block "
-                                f"{start_block} - 1, is this an error?"
-                            )
+                    # else:
+                    #     last_block_er = db.transformed.get_exchange_rates_by_block(
+                    #         start_block - 1
+                    #     )
+                    #     if last_block_er is None:
+                    #         raise Exception(
+                    #             "Could not find exchange rate for start block "
+                    #             f"{start_block} - 1, is this an error?"
+                    #             )
                     logger.info(
                         "Start updating transformed "
                         f"Keyspace {start_block}-{end_block}."
@@ -182,6 +192,19 @@ def update(
                         logger.warning(
                             "Running in patch mode, no_block will not be updated."
                         )
+
+                    if not db.transformed.is_configuration_populated():
+                        config_defaults = (
+                            config.get_keyspace_config(env, currency)
+                            .keyspace_setup_config["transformed"]
+                            .data_configuration
+                        )
+                        logger.warning(
+                            "Config table in transformed not populated."
+                            f" Setting default values {config_defaults}."
+                        )
+                        db.transformed.ingest("configuration", [config_defaults])
+
                     update_transformed(
                         start_block,
                         end_block,
