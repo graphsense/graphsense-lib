@@ -188,7 +188,9 @@ def get_transaction_changes(
     for tx in txs:
         if tx.coinbase:
             assert tx.inputs is None
-            outputsum = sum([o.value for o in tx.outputs])
+            outputsum = (
+                sum([o.value for o in tx.outputs]) if tx.outputs is not None else 0
+            )
             new_txs.append(
                 tx._replace(
                     inputs=[
