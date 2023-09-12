@@ -222,9 +222,11 @@ class GraphsenseSchemas:
                     f"{env}:{currency} exists: {target_ks_name}, nothing to do"
                 )
             else:
-                replication_config = config.get_keyspace_config(
-                    env, currency
-                ).initial_keyspace_replication_config[keyspace_type]
+                replication_config = (
+                    config.get_keyspace_config(env, currency)
+                    .keyspace_setup_config[keyspace_type]
+                    .replication_config
+                )
                 schema_to_create = schema.get_schema_string(
                     target_ks_name, replication_config
                 )
@@ -261,9 +263,11 @@ class GraphsenseSchemas:
                     "or specify an fresh suffix."
                 )
             else:
-                replication_config = config.get_keyspace_config(
-                    env, currency
-                ).initial_keyspace_replication_config[keyspace_type]
+                replication_config = (
+                    config.get_keyspace_config(env, currency)
+                    .keyspace_setup_config[keyspace_type]
+                    .replication_config
+                )
                 schema_to_create = schema.get_schema_string(
                     keyspace_name, replication_config
                 )

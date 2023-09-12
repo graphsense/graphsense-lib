@@ -37,6 +37,21 @@ from .generic import (
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
+    **{
+        "timestamp": 0,
+        "timestamp_transform": 0,
+        "no_blocks": 0,
+        "no_blocks_transform": 0,
+        "no_transactions": 0,
+        "no_addresses": 0,
+        "no_address_relations": 0,
+        "no_clusters": 0,
+        "no_cluster_relations": 0,
+    }
+)
+
+
 def get_table_abbrev(table_name: str) -> str:
     return "".join([f"{x[:1]}" for x in table_name.split("_")])
 
@@ -54,6 +69,7 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
     tx_adrs = get_unique_addresses_from_transaction(tx)
     reg_in = regularize_inoutputs(tx.inputs)
     reg_out = regularize_inoutputs(tx.outputs)
+
     reginput_sum = sum([v for _, v in reg_in.items()])
     flows = {adr: get_regflow(reg_in, reg_out, adr) for adr in tx_adrs}
     input_flows_sum = sum([f for adr, f in flows.items() if adr in reg_in and f <= 0])
@@ -161,6 +177,7 @@ def get_transaction_changes(
         get_next_cluster_id (Callable[[], int]): Function to fetch next new cluster_id
     """
     tdb = db.transformed
+
     """
         Build dict of unique addresses in the batch.
     """
@@ -276,6 +293,7 @@ def get_transaction_changes(
         not_yet_seen_input_addresses = {
             k for k, (addr_id2, _) in addresses.items() if addr_id2 is None
         }
+
         if len(not_yet_seen_input_addresses) > 0:
             for out_addr in ordered_input_addresses:
                 if out_addr in not_yet_seen_input_addresses:
@@ -627,7 +645,9 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
         cluster_new = {}
         addresses_new = {}
         seen_summary_delete = False
-        current_summary_stats = db.transformed.get_summary_statistics()
+        current_summary_stats = (
+            db.transformed.get_summary_statistics() or DEFAULT_SUMMARY_STATISTICS
+        )
         for change in changes:
             if change.action == DbChangeType.NEW and change.table == "cluster":
                 # only one update per batch
@@ -992,7 +1012,7 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                     )
                 if not (
                     current_summary_stats.no_transactions
-                    < change.data["no_transactions"]
+                    <= change.data["no_transactions"]
                 ):
                     raise ValueError(
                         "Violation: no_transactions db "
@@ -1130,7 +1150,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         self._statistics = (
             MutableNamedTuple(**stats_value._asdict())
             if stats_value is not None
-            else None
+            else DEFAULT_SUMMARY_STATISTICS
         )
         self._pedantic = pedantic
         self._patch_mode = patch_mode
@@ -1200,18 +1220,24 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 )
                 batch = [mb] + batch
 
-        with LoggerScope.debug(logger, "Reading transaction and rates data") as _:
+        with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
+            missing_rates_in_block = False
             for block in batch:
                 txs.extend(self._db.raw.get_transactions_in_block(block))
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
                 ).fiat_values
                 if fiat_values is None:
-                    raise Exception(
-                        "No exchange rate for block {block}. Abort processing."
-                    )
+                    # raise Exception(
+                    #     "No exchange rate for block {block}. Abort processing."
+                    # )
+                    missing_rates_in_block = True
+                    fiat_values = [0, 0]
                 rates[block] = fiat_values
                 bts[block] = self._db.raw.get_block_timestamp(block)
+
+            if missing_rates_in_block:
+                log.warning("Block Range has missing exchange rates. Using Zero.")
 
         if self.application_strategy == ApplicationStrategy.BATCH:
             if self.crash_recoverer.is_in_recovery_mode():

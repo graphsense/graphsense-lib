@@ -1,6 +1,7 @@
 import click
 
 from ..cli.common import require_currency, require_environment
+from ..schema import GraphsenseSchemas
 from .deltaupdater import patch_exchange_rates, state, update, validate
 
 
@@ -50,6 +51,11 @@ def delta():
 @click.option("--write-new/--no-write-new", default=True)
 @click.option("--write-dirty/--no-write-dirty", default=True)
 @click.option("--pedantic/--no-pedantic", default=False)
+@click.option(
+    "--create-schema",
+    is_flag=True,
+    help="Create database schema if it does not exist",
+)
 def deltaupdate(
     env,
     currency,
@@ -60,6 +66,7 @@ def deltaupdate(
     write_batch_size,
     updater_version,
     pedantic,
+    create_schema,
 ):
     """Updates the transformend keyspace for new data in raw, if possible.
     \f
@@ -71,6 +78,11 @@ def deltaupdate(
         write_dirty (bool): should I write dirty_address table?
         write_batch_size (int): how many blocks at a time are written.
     """
+    if create_schema:
+        GraphsenseSchemas().create_keyspace_if_not_exist(
+            env, currency, keyspace_type="transformed"
+        )
+
     update(
         env,
         currency,
@@ -98,7 +110,7 @@ def status(env, currency):
     "--look-back-blocks",
     type=int,
     default=20,
-    help="How may historic blocks to look at. ",
+    help="How may historic blocks to look at.",
 )
 def validatedelta(env: str, currency: str, look_back_blocks: int):
     """Validates the current delta update status and its history.
