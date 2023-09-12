@@ -37,6 +37,9 @@ from .generic import (
 logger = logging.getLogger(__name__)
 
 
+COINBASE_PSEUDO_ADDRESS = "coinbase"
+PSEUDO_ADDRESS_AND_IDS = {COINBASE_PSEUDO_ADDRESS: 0}
+
 DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
     **{
         "timestamp": 0,
@@ -179,6 +182,31 @@ def get_transaction_changes(
     tdb = db.transformed
 
     """
+        Add pseudo inputs for coinbase txs
+    """
+    new_txs = []
+    for tx in txs:
+        if tx.coinbase:
+            assert tx.inputs is None
+            outputsum = sum([o.value for o in tx.outputs])
+            new_txs.append(
+                tx._replace(
+                    inputs=[
+                        MutableNamedTuple(
+                            **{
+                                "address": [COINBASE_PSEUDO_ADDRESS],
+                                "value": outputsum,
+                                "address_type": None,
+                            }
+                        )
+                    ]
+                )
+            )
+
+    txs = new_txs
+    del new_txs
+
+    """
         Build dict of unique addresses in the batch.
     """
     addresses = get_unique_addresses_from_transactions(txs)
@@ -265,6 +293,13 @@ def get_transaction_changes(
 
         del addresses_resolved
 
+    def get_next_address_ids_with_aliases(address: str):
+        return (
+            get_next_address_id()
+            if address not in PSEUDO_ADDRESS_AND_IDS
+            else PSEUDO_ADDRESS_AND_IDS[address]
+        )
+
     with LoggerScope.debug(
         logger, "Assigning new address ids and cluster ids for new addresses"
     ) as lg:
@@ -273,7 +308,7 @@ def get_transaction_changes(
         for out_addr in ordered_output_addresses:
             addr_id, address = addresses[out_addr]
             if addr_id is None:
-                new_addr_id = get_next_address_id()
+                new_addr_id = get_next_address_ids_with_aliases(address)
                 addresses[out_addr] = (new_addr_id, None)
                 new_cluster_ids[new_addr_id] = get_next_cluster_id()
             elif address is None:
@@ -297,7 +332,7 @@ def get_transaction_changes(
         if len(not_yet_seen_input_addresses) > 0:
             for out_addr in ordered_input_addresses:
                 if out_addr in not_yet_seen_input_addresses:
-                    new_addr_id = get_next_address_id()
+                    new_addr_id = get_next_address_ids_with_aliases(out_addr)
                     lg.debug(
                         "Encountered new input address - "
                         f"{out_addr:64}. Creating it with id {new_addr_id}."
