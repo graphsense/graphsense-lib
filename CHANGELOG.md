@@ -3,8 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [23.06/1.7.0] 2023-09-12
+## [23.09/1.7.1] 2023-09-20
+### Added
+- ingest/delta update test script to setup a fully functional Cassandra instance for development (script/dev-ingest.sh)
 ### Fixed
+- fixed bug on empty output list on coinbase txs.
+
+## [23.06/1.7.0] 2023-09-12
+### Added
 - delta updater support for pseudo coinbase address
 
 ## [23.06/1.6.1] 2023-09-11
