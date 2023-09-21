@@ -8,7 +8,7 @@ A central repository for python utility functions and everything that deals with
 
 ### As a library
 
-Access the graphsense cassandra db. This requires a graphsense config (see Modules -> Config)
+Access the graphsense cassandra db. This requires a graphsense config (see Modules/Config)
 ```python3
 from graphsenselib.db import DbFactory
 
