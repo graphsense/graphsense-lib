@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [23.09/1.7.2] 2023-09-21
+### fixed
+- setup automatic pypi publish with github actions
+
 ## [23.09/1.7.1] 2023-09-20
 ### Added
 - ingest/delta update test script to setup a fully functional Cassandra instance for development (script/dev-ingest.sh)
