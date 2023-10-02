@@ -204,6 +204,9 @@ def get_transaction_changes(
                     ]
                 )
             )
+        else:
+            # non-coinbase tx, nothing to do
+            new_txs.append(tx)
 
     txs = new_txs
     del new_txs
@@ -216,7 +219,7 @@ def get_transaction_changes(
     len_addr = len(addresses)
 
     """
-            Start loading the address_ids for the addresses async
+        Start loading the address_ids for the addresses async
     """
     with LoggerScope.debug(logger, f"Checking existence for {len_addr} addresses") as _:
         addr_ids = {  # noqa: C416
