@@ -1,3 +1,4 @@
+import math
 import os
 from typing import Dict, List, Optional
 
@@ -29,6 +30,20 @@ GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 )
+
+
+def get_approx_reorg_backoff_blocks(network: str, lag_in_hours: int = 2) -> int:
+    """For imports we do not want to always catch up with the latest block
+    since we want to avoid reorgs lead to spurious data in the database.
+
+    Default conservative estimate is 2h worth of blocks lag.
+
+    Args:
+        network (str): currency/network label
+    """
+    return math.ceil(
+        (lag_in_hours * 3600) / avg_blocktimes_by_currencies[network.lower()]
+    )
 
 
 class FileSink(BaseModel):
