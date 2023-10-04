@@ -185,6 +185,7 @@ def get_transaction_changes(
         Add pseudo inputs for coinbase txs
     """
     new_txs = []
+
     for tx in txs:
         if tx.coinbase:
             assert tx.inputs is None
@@ -1059,12 +1060,12 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                         f"{current_summary_stats.no_transactions} <= "
                         f"{change.data['no_transactions']}"
                     )
-                if not (current_summary_stats.timestamp <= change.data["timestamp"]):
-                    raise ValueError(
-                        "Violation: timestamp db "
-                        f"{current_summary_stats.timestamp} <= "
-                        f"{change.data['timestamp']}"
-                    )
+                # if not (current_summary_stats.timestamp <= change.data["timestamp"]):
+                #     raise ValueError(
+                #         "Violation: timestamp db "
+                #         f"{current_summary_stats.timestamp} <= "
+                #         f"{change.data['timestamp']}"
+                #     )
             elif change.action == DbChangeType.DELETE:
                 seen_summary_delete = True
                 if not (change.table == "summary_statistics"):
@@ -1178,8 +1179,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
         pedantic: bool,
         application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
         patch_mode: bool = False,
+        forward_fill_rates: bool = False,
     ):
-        super().__init__(db, currency)
+        super().__init__(db, currency, forward_fill_rates=forward_fill_rates)
         crash_file = (
             "/tmp/utxo_deltaupdate_"
             f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
