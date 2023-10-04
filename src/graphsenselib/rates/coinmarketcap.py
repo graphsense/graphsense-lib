@@ -67,10 +67,16 @@ def fetch_cmc_rates(start: str, end: str, crypto_currency: str) -> pd.DataFrame:
     url = cmc_historical_url(crypto_currency, start_date, end_date)
 
     logger.info(f"Fetching {crypto_currency} exchange rates from {url}")
-    response = requests.get(url, headers=headers)
+    rsession = requests.Session()
+    rsession.mount("https://", requests.adapters.HTTPAdapter(max_retries=5))
+    response = rsession.get(url, headers=headers)
     cmc_rates = parse_cmc_historical_response(response)
 
-    logger.info(f"Last record: {cmc_rates.date.tolist()[-1]}")
+    if len(cmc_rates) > 0:
+        last_record = cmc_rates.date.tolist()[-1]
+    else:
+        last_record = None
+    logger.info(f"Last record: {last_record}")
     return cmc_rates
 
 

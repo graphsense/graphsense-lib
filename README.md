@@ -292,7 +292,7 @@ Creating the docs need python dev dependencies to build see ([Stackoverflow](htt
 
 ### Tagging a release
 
-To tag a new release please update the changelog first. Afterwards, update the Version numbers RELEASESEM and RELEASE in the main Makefile.```
+To tag a new release please update the changelog first. Afterwards, update the Version numbers RELEASESEM and RELEASE in the main Makefile.
 
 To apply the tags run
 ```bash

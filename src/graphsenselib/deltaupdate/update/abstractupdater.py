@@ -2,7 +2,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Iterable, List
+from typing import Dict, Iterable, List, Tuple
 
 from ...db.analytics import AnalyticsDb
 from ...utils.logging import LoggerScope
@@ -42,6 +42,22 @@ def write_dirty_addresses(
     logger.info("Writing dirty addresses to cassandra.")
     db.transformed.ingest(
         table_name_dirty, [address_to_db_dict(db, x) for x in dirty_addresses]
+    )
+
+
+def forward_fill_rates(rates, fill_from_block, fill_values) -> Tuple[List[Dict], bool]:
+    return (
+        [
+            (
+                {**x, **{"fiat_values": fill_values}}
+                if x["fiat_values"] is None and x["block_id"] > fill_from_block
+                else x
+            )
+            for x in rates
+        ],
+        any(
+            x["fiat_values"] is None and x["block_id"] > fill_from_block for x in rates
+        ),
     )
 
 
@@ -85,7 +101,7 @@ class AbstractUpdateStrategy(ABC):
 
 
 class UpdateStrategy(AbstractUpdateStrategy):
-    def __init__(self, db, currency):
+    def __init__(self, db, currency, forward_fill_rates=False):
         super().__init__()
         self._db = db
         self._currency = currency
@@ -94,6 +110,18 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self._nr_new_clusters = 0
         self._highest_address_id = db.transformed.get_highest_address_id() or 0
         self._highest_cluster_id = db.transformed.get_highest_cluster_id() or 1
+        self.forward_fill_rates = forward_fill_rates
+
+    def get_forward_fill_rate(self):
+        if self.forward_fill_rates:
+            db = self._db
+            hbe = db.raw.find_highest_block_with_exchange_rates()
+            return (
+                hbe,
+                db.raw.get_exchange_rates_for_block_batch([hbe])[0]["fiat_values"],
+            )
+        else:
+            return (None, None)
 
     @property
     def currency(self):
@@ -135,6 +163,14 @@ class UpdateStrategy(AbstractUpdateStrategy):
 
     def import_exchange_rates(self, batch: List[int]):
         rates = self._db.raw.get_exchange_rates_for_block_batch(batch)
+        if self.forward_fill_rates:
+            hbe, fill_values = self.get_forward_fill_rate()
+            rates, had_to_fill = forward_fill_rates(rates, hbe, fill_values)
+            if had_to_fill:
+                logger.warning(
+                    "Missing exchange rates forward filled with "
+                    f"last good data form block {hbe} {fill_values}"
+                )
         self._db.transformed.ingest("exchange_rates", rates)
 
     def process_batch(self, batch: Iterable[int]):

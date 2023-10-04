@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [23.09/1.8.0] 2023-10-02
+### Added
+- added flag forward-fill-rates to allow transform even if no current rates are available (last rate avail is used)
+
 ## [23.09/1.7.5] 2023-10-02
 ### fixed
 - (critical) delta update only inserts coinbase txs

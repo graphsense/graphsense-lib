@@ -56,6 +56,17 @@ def delta():
     is_flag=True,
     help="Create database schema if it does not exist",
 )
+@click.option(
+    "--forward-fill-rates",
+    is_flag=True,
+    help=(
+        "When set the importer imports until the most recent block "
+        "regardless if current exchange rates are available. "
+        "If no rate for the current day is available it uses the last one available"
+        "This allows the delta update provide close to real time updates "
+        "since it does not have to wait for current exchange rates."
+    ),
+)
 def deltaupdate(
     env,
     currency,
@@ -67,6 +78,7 @@ def deltaupdate(
     updater_version,
     pedantic,
     create_schema,
+    forward_fill_rates,
 ):
     """Updates the transformend keyspace for new data in raw, if possible.
     \f
@@ -93,6 +105,7 @@ def deltaupdate(
         write_batch_size,
         updater_version,
         pedantic,
+        forward_fill_rates,
     )
 
 

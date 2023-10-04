@@ -24,7 +24,9 @@ def adjust_start_block(db, start_block) -> int:
     raise Exception("Could not find proper start block after full-transform")
 
 
-def find_import_range(db, start_block_overwrite, end_block_overwrite):
+def find_import_range(
+    db, start_block_overwrite, end_block_overwrite, forward_fill_rates=False
+):
     hb_ft = db.transformed.get_highest_block_fulltransform()
     hb_raw = db.raw.get_highest_block()
     hb_du = db.transformed.get_highest_block_delta_updater()
@@ -46,8 +48,13 @@ def find_import_range(db, start_block_overwrite, end_block_overwrite):
         logger.info(f"Last cltr id:       {latest_cluster_id:12}")
     logger.info(f"Raw     Config:      {db.raw.get_configuration()}")
     logger.info(f"Transf. Config:      {db.transformed.get_configuration()}")
+
+    # if ff_rates is enabled we always sync till the highest block
+    # we fill the non available rates with the last available rate.
     end_block = (
         db.raw.find_highest_block_with_exchange_rates()
+        if not forward_fill_rates
+        else hb_raw
         if end_block_overwrite is None
         else end_block_overwrite
     )
@@ -151,6 +158,7 @@ def update(
     write_batch_size: int,
     updater_version: int,
     pedantic: bool,
+    forward_fill_rates: bool,
 ):
     try:
         with DbFactory().from_config(env, currency) as db:
@@ -167,7 +175,7 @@ def update(
             logger.info(f"Try acquiring lockfile {lockfile_name}")
             with FileLock(lockfile_name, timeout=1):
                 start_block, end_block, patch_mode = find_import_range(
-                    db, start_block, end_block
+                    db, start_block, end_block, forward_fill_rates=forward_fill_rates
                 )
                 if end_block >= start_block:
                     is_first_delta_run = db.transformed.is_first_dalta_update_run()
@@ -217,6 +225,7 @@ def update(
                             pedantic,
                             write_batch_size,
                             patch_mode=patch_mode,
+                            forward_fill_rates=forward_fill_rates,
                         ),
                         batch_size=write_batch_size,
                     )
