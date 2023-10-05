@@ -169,7 +169,7 @@ class UpdateStrategy(AbstractUpdateStrategy):
             if had_to_fill:
                 logger.warning(
                     "Missing exchange rates forward filled with "
-                    f"last good data form block {hbe} {fill_values}"
+                    f"last good data from block {hbe} {fill_values}"
                 )
         self._db.transformed.ingest("exchange_rates", rates)
 
