@@ -36,6 +36,12 @@ class UpdaterFactory:
                 forward_fill_rates=forward_fill_rates,
             )
         if schema_type == "account" and version == 1:
-            return UpdateStrategyAccount(db, currency, write_new, write_dirty)
+            return UpdateStrategyAccount(
+                db,
+                currency,
+                write_new,
+                write_dirty,
+                forward_fill_rates=forward_fill_rates,
+            )
         else:
             raise Exception(f"Unsupported schema type {schema_type} or {version}")

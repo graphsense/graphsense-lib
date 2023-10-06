@@ -45,7 +45,9 @@ def write_dirty_addresses(
     )
 
 
-def forward_fill_rates(rates, fill_from_block, fill_values) -> Tuple[List[Dict], bool]:
+def forward_fill_rates_with_fill_value(
+    rates, fill_from_block, fill_values
+) -> Tuple[List[Dict], bool]:
     return (
         [
             (
@@ -59,6 +61,30 @@ def forward_fill_rates(rates, fill_from_block, fill_values) -> Tuple[List[Dict],
             x["fiat_values"] is None and x["block_id"] > fill_from_block for x in rates
         ),
     )
+
+
+def fill_and_store_rates(db, batch, forward_fill_rates: bool):
+    rates = db.raw.get_exchange_rates_for_block_batch(batch)
+    if forward_fill_rates:
+        hbe, fill_values = get_forward_fill_rate(db, forward_fill_rates)
+        rates, had_to_fill = forward_fill_rates_with_fill_value(rates, hbe, fill_values)
+        if had_to_fill:
+            logger.warning(
+                "Missing exchange rates forward filled with "
+                f"last good data from block {hbe} {fill_values}"
+            )
+    db.transformed.ingest("exchange_rates", rates)
+
+
+def get_forward_fill_rate(db, forward_fill_rates: bool):
+    if forward_fill_rates:
+        hbe = db.raw.find_highest_block_with_exchange_rates()
+        return (
+            hbe,
+            db.raw.get_exchange_rates_for_block_batch([hbe])[0]["fiat_values"],
+        )
+    else:
+        return (None, None)
 
 
 class AbstractUpdateStrategy(ABC):
@@ -113,15 +139,7 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self.forward_fill_rates = forward_fill_rates
 
     def get_forward_fill_rate(self):
-        if self.forward_fill_rates:
-            db = self._db
-            hbe = db.raw.find_highest_block_with_exchange_rates()
-            return (
-                hbe,
-                db.raw.get_exchange_rates_for_block_batch([hbe])[0]["fiat_values"],
-            )
-        else:
-            return (None, None)
+        return
 
     @property
     def currency(self):
@@ -162,16 +180,7 @@ class UpdateStrategy(AbstractUpdateStrategy):
         pass
 
     def import_exchange_rates(self, batch: List[int]):
-        rates = self._db.raw.get_exchange_rates_for_block_batch(batch)
-        if self.forward_fill_rates:
-            hbe, fill_values = self.get_forward_fill_rate()
-            rates, had_to_fill = forward_fill_rates(rates, hbe, fill_values)
-            if had_to_fill:
-                logger.warning(
-                    "Missing exchange rates forward filled with "
-                    f"last good data from block {hbe} {fill_values}"
-                )
-        self._db.transformed.ingest("exchange_rates", rates)
+        fill_and_store_rates(self._db, batch, self.forward_fill_rates)
 
     def process_batch(self, batch: Iterable[int]):
         self._batch_start_time = time.time()
@@ -188,7 +197,7 @@ class UpdateStrategy(AbstractUpdateStrategy):
 
 
 class LegacyUpdateStrategy(AbstractUpdateStrategy):
-    def __init__(self, db, currency, write_new, write_dirty):
+    def __init__(self, db, currency, write_new, write_dirty, forward_fill_rates=False):
         super().__init__()
         self._db = db
         self._write_new = write_new
@@ -196,7 +205,8 @@ class LegacyUpdateStrategy(AbstractUpdateStrategy):
         self._new_addresses = {}
         self._nr_queried_addresses = 0
         self._nr_new_addresses = 0
-        self._highest_address_id = db.transformed.get_highest_address_id()
+        self._highest_address_id = db.transformed.get_highest_address_id() or 0
+        self.forward_fill_rates = forward_fill_rates
 
     def prepare_database(self):
         HISTORY_TABLE_COLUMNS = [
@@ -240,8 +250,9 @@ class LegacyUpdateStrategy(AbstractUpdateStrategy):
         start_time = time.time()
 
         logger.debug("Start - Importing Exchange Rates")
-        rates = self._db.raw.get_exchange_rates_for_block_batch(list(batch))
-        self._db.transformed.ingest("exchange_rates", rates)
+        fill_and_store_rates(self._db, list(batch), self.forward_fill_rates)
+        # rates = self._db.raw.get_exchange_rates_for_block_batch(list(batch))
+        # self._db.transformed.ingest("exchange_rates", rates)
         logger.debug("End   - Importing Exchange Rates")
 
         logger.debug("Start - Chain Specific Import")
