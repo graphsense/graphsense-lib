@@ -577,6 +577,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self._keyspace_config = keyspace_config
         self._keyspace = keyspace_config.keyspace_name
         self._db = db
+        self._db_config = None
 
     def _get_bucket_divisors_by_table_name(self) -> dict:
         return {
@@ -605,9 +606,10 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def get_cluster_id_bucket_size(self) -> Optional[int]:
         return self.get_address_id_bucket_size()
 
-    # @lru_cache(maxsize=1)
     def get_configuration(self) -> Optional[object]:
-        return self._get_only_row_from_table("configuration")
+        if self._db_config is None:
+            self._db_config = self._get_only_row_from_table("configuration")
+        return self._db_config
 
     def is_configuration_populated(self) -> bool:
         return self._get_only_row_from_table("configuration") is not None
