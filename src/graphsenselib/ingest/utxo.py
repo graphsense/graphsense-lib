@@ -337,6 +337,7 @@ _address_types = {  # based on BlockSci values (type 0 .. 10)
     "p2wshv0": 9,
     "witness_unknown": 10,
     "witness_v1_taproot": 11,
+    "shielded": 12,
 }
 
 
@@ -362,7 +363,7 @@ def addresstype_to_int(addr_type: str) -> int:
 
 
 def address_as_string(x):
-    if x["type"] in ["null", "nulldata", "nonstandard", "witness_unknown"]:
+    if x["type"] in ["null", "nulldata", "nonstandard", "witness_unknown", "shielded"]:
         return None
     return x["addresses"]
 
@@ -585,20 +586,22 @@ def get_tx_refs(spending_tx_hash: str, raw_inputs: Iterable, tx_hash_prefix_len:
         spending_input_index = inp["index"]
         spent_tx_hash = hex_to_bytearray(inp["spent_transaction_hash"])
         spent_output_index = inp["spent_output_index"]
-        tx_refs.append(
-            {
-                "spending_tx_hash": spending_tx_hash,
-                "spending_input_index": spending_input_index,
-                "spent_tx_hash": spent_tx_hash,
-                "spent_output_index": spent_output_index,
-                "spending_tx_prefix": strip_0x(bytes_to_hex(spending_tx_hash))[
-                    :tx_hash_prefix_len
-                ],
-                "spent_tx_prefix": strip_0x(bytes_to_hex(spent_tx_hash))[
-                    :tx_hash_prefix_len
-                ],
-            }
-        )
+        if spending_tx_hash is not None and spent_tx_hash is not None:
+            # in zcash refs can be None in case of shielded txs.
+            tx_refs.append(
+                {
+                    "spending_tx_hash": spending_tx_hash,
+                    "spending_input_index": spending_input_index,
+                    "spent_tx_hash": spent_tx_hash,
+                    "spent_output_index": spent_output_index,
+                    "spending_tx_prefix": strip_0x(bytes_to_hex(spending_tx_hash))[
+                        :tx_hash_prefix_len
+                    ],
+                    "spent_tx_prefix": strip_0x(bytes_to_hex(spent_tx_hash))[
+                        :tx_hash_prefix_len
+                    ],
+                }
+            )
 
     return tx_refs
 
