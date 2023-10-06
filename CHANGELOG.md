@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [23.09/1.7.6] 2023-10-06
+### fixed
+- fix performance degradation on because of inefficient config lookups
+
 ## [23.09/1.7.5] 2023-10-02
 ### fixed
 - (critical) delta update only inserts coinbase txs
