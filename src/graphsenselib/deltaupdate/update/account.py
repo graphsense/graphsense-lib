@@ -12,8 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 class UpdateStrategyAccount(LegacyUpdateStrategy):
-    def __init__(self, db, currency, write_new, write_dirty):
-        super().__init__(db, currency, write_new, write_dirty)
+    def __init__(self, db, currency, write_new, write_dirty, forward_fill_rates=False):
+        super().__init__(
+            db, currency, write_new, write_dirty, forward_fill_rates=forward_fill_rates
+        )
 
     def prepare_database(self):
         super().prepare_database()

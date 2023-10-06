@@ -112,7 +112,7 @@ def fetch_impl(
         if most_recent_date is not None:
             start_date = most_recent_date.strftime(DATE_FORMAT)
 
-    logger.info("*** Starting exchange rate ingest for BTC ***")
+    logger.info(f"*** Starting exchange rate ingest for {currency} ***")
     logger.info(f"Start date: {start_date}")
     logger.info(f"End date: {end_date}")
 
