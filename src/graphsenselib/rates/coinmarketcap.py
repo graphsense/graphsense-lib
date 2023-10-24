@@ -44,10 +44,14 @@ def parse_cmc_historical_response(
     """Parse historical exchange rates (JSON) from CoinMarketCap."""
 
     json_data = json.loads(response.content)
-    json_data = [
-        [elem["time_close"][:10], elem["quote"]["USD"]["close"]]
-        for elem in json_data["data"]["quotes"]
-    ]
+    if "data" in json_data and "quotes" in json_data["data"]:
+        json_data = [
+            [elem["time_close"][:10], elem["quote"]["USD"]["close"]]
+            for elem in json_data["data"]["quotes"]
+        ]
+    else:
+        logger.error("Error: Coinmarketcap did not return any quotes.")
+        raise SystemExit(100)
 
     return pd.DataFrame(json_data, columns=["date", "USD"])
 
