@@ -2,6 +2,8 @@
 
 [![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions)
 
+[![PyPI version](https://badge.fury.io/py/graphsense-lib.svg)](https://badge.fury.io/py/graphsense-lib)
+
 A central repository for python utility functions and everything that deals with the graphsense backend. Its CLI interface can be used to control important graphsense maintainance tasks.
 
 ## Use
@@ -224,14 +226,18 @@ Commands:
 
 ## Install
 
-To install run
-
+To install the package from the python package index run.
 ```bash
-make install
+  > pip install graphsense-lib
+```
+
+If you want to install it from source run
+```bash
+  > make install
 ```
 or
 ```bash
-pip install .
+  > pip install .
 ```
 
 ## Development
