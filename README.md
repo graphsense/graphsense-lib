@@ -14,6 +14,8 @@ Access the graphsense cassandra db. This requires a graphsense config (see Modul
 ```python3
 from graphsenselib.db import DbFactory
 
+env, currency = "test", "btc"
+
 with DbFactory().from_config(env, currency) as db:
     print(db.transformed.get_highest_block())
 ```
@@ -24,8 +26,8 @@ from graphsenselib.db import DbFactory
 
 with DbFactory().from_name(
         raw_keyspace_name="eth_raw",
-        transformed_keyspace_name="eth_tranformed",
-        schema_type="utxo",
+        transformed_keyspace_name="eth_transformed",
+        schema_type="account",
         cassandra_nodes = ["test.cassandra1", "test.cassandra2"]
     ) as db:
     print(db.transformed.get_highest_block())
