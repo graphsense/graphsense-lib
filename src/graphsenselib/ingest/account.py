@@ -8,7 +8,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
-from ethereumetl.jobs.export_traces_job import ExportTracesJob
+from ethereumetl.jobs.export_traces_job import ExportTracesJob as EthereumExportTracesJob
 from ethereumetl.providers.auto import get_provider_from_uri
 from ethereumetl.service.eth_service import EthService
 from ethereumetl.streaming.enrich import enrich_transactions
@@ -18,10 +18,12 @@ from ethereumetl.streaming.eth_item_timestamp_calculator import (
 )
 from ethereumetl.thread_local_proxy import ThreadLocalProxy
 from web3 import Web3
+from .export_traces_job import TronExportTracesJob
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
 from ..db import AnalyticsDb
 from ..utils import hex_to_bytearray, parse_timestamp
+from ..utils.tron import evm_to_bytes
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
@@ -72,8 +74,10 @@ class InMemoryItemExporter:
         return self.items[item_type]
 
 
-class EthStreamerAdapter:
-    """Ethereum streaming adapter to export blocks, transactions,
+
+
+class AccountStreamerAdapter:
+    """Standard Ethereum API style streaming adapter to export blocks, transactions,
     receipts, logs and traces."""
 
     def __init__(
@@ -139,6 +143,13 @@ class EthStreamerAdapter:
         logs = exporter.get_items("log")
         return receipts, logs
 
+
+class EthStreamerAdapter(AccountStreamerAdapter):
+    """Ethereum API style streaming adapter to export blocks, transactions,
+    receipts, logs and traces."""
+
+
+
     def export_traces(
         self,
         start_block: int,
@@ -149,7 +160,7 @@ class EthStreamerAdapter:
         """Export traces for specified block range."""
 
         exporter = InMemoryItemExporter(item_types=["trace"])
-        job = ExportTracesJob(
+        job = EthereumExportTracesJob(
             start_block=start_block,
             end_block=end_block,
             batch_size=self.batch_size,
@@ -162,6 +173,34 @@ class EthStreamerAdapter:
         job.run()
         traces = exporter.get_items("trace")
         return traces
+
+
+
+class TronStreamerAdapter(AccountStreamerAdapter):
+    """Tron API style streaming adapter to export blocks, transactions,
+    receipts, logs and traces.
+    """
+
+
+    def export_traces(
+        self,
+        start_block: int,
+        end_block: int,
+        include_genesis_traces: bool = True,
+        include_daofork_traces: bool = False,
+    ) -> Iterable[Dict]:
+        """Export traces for specified block range."""
+
+        exporter = InMemoryItemExporter(item_types=["trace"])
+        job = TronExportTracesJob(start_block=start_block,
+            end_block=end_block,
+            batch_size=self.batch_size,
+            web3=ThreadLocalProxy(lambda: Web3(self.batch_web3_provider)),
+            max_workers=self.max_workers
+        )
+        return job.run()
+        #traces = exporter.get_items("trace")
+        #return traces
 
 
 def get_last_block_yesterday(batch_web3_provider: ThreadLocalProxy) -> int:
@@ -254,7 +293,7 @@ def ingest_logs(
     write_to_sinks(db, sink_config, "log", items)
 
 
-def prepare_blocks_inplace(
+def prepare_blocks_inplace_eth(
     items: Iterable,
     block_bucket_size: int = 1_000,
 ):
@@ -287,12 +326,17 @@ def prepare_blocks_inplace(
             item[elem] = hex_to_bytearray(item[elem])
 
 
-def prepare_blocks_inplace_trx(items: Iterable):
+def prepare_blocks_inplace_trx(*args, **kwargs):
+    items = prepare_blocks_inplace_eth(*args, **kwargs)
+
+    if items is None: # cant iterate over None
+        return items
+
     for b in items:
         b["timestamp"] = b["timestamp"]
 
 
-def prepare_transactions_inplace(
+def prepare_transactions_inplace_eth(
     items: Iterable, tx_hash_prefix_len: int = 4, block_bucket_size: int = 1_000
 ):
     blob_colums = [
@@ -323,12 +367,17 @@ def prepare_transactions_inplace(
             item[elem] = hex_to_bytearray(item[elem])
 
 
-def prepare_transactions_inplace_trx(items: Iterable):
+def prepare_transactions_inplace_trx(*args, **kwargs):
+    items = prepare_transactions_inplace_eth(*args, **kwargs)
+
+    if items is None: # cant iterate over None
+        return items
+
     for tx in items:
         tx["block_timestamp"] = tx["block_timestamp"] // 1000
 
 
-def prepare_traces_inplace(items: Iterable, block_bucket_size: int = 1_000):
+def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int = 1_000):
     blob_colums = ["tx_hash", "from_address", "to_address", "input", "output"]
     for item in items:
         # remove column
@@ -350,6 +399,29 @@ def prepare_traces_inplace(items: Iterable, block_bucket_size: int = 1_000):
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
+
+def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int = 1_000):
+    blob_colums = ["tx_hash", "caller_address", "transferto_address"]
+    for item in items:
+        # rename/add columns
+        item["tx_hash"] = item.pop("transaction_hash")
+        item["block_id"] = item.pop("block_number")
+        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["transferto_address"] = item.pop("transferTo_address")
+
+        # Used for partitioning in parquet files
+        # ignored otherwise
+        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+
+        #item["trace_address"] = (
+        #    ",".join(map(str, item["trace_address"]))
+        #    if item["trace_address"] is not None
+        #    else None
+        #)
+        # convert hex strings to byte arrays (blob in Cassandra)
+        for elem in blob_colums:
+            item[elem] = evm_to_bytes(item[elem])
+
 
 
 def print_block_info(
@@ -399,7 +471,23 @@ def ingest(
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
-    adapter = EthStreamerAdapter(thread_proxy, batch_size=50)
+    if currency == "trx":
+        user_start_block = 1 if user_start_block == 0 else user_start_block
+        logger.warning(f"Start block set to {user_start_block}")
+        adapter = TronStreamerAdapter(thread_proxy, batch_size=50)
+        # compose prepare_transactions_inplace_trx = prepare_transactions_inplace > prepare_transactions_inplace_trx
+        # todo: wrap these prepare functions in a class and make one for each currency
+        prepare_transactions_inplace = prepare_transactions_inplace_trx
+        prepare_blocks_inplace = prepare_blocks_inplace_trx
+        prepare_traces_inplace = prepare_traces_inplace_trx
+
+    elif currency == "eth":
+        adapter = EthStreamerAdapter(thread_proxy, batch_size=50)
+        prepare_transactions_inplace = prepare_transactions_inplace_eth
+        prepare_blocks_inplace = prepare_blocks_inplace_eth
+        prepare_traces_inplace = prepare_traces_inplace_eth
+    else:
+        raise NotImplementedError(f"Currency {currency} not implemented")
 
     start_block = 0
     if user_start_block is None:
@@ -447,25 +535,15 @@ def ingest(
                     block_id, current_end_block
                 )
                 receipts, logs = adapter.export_receipts_and_logs(txs)
-                traces = (
-                    []
-                    if currency == "trx"
-                    else adapter.export_traces(block_id, current_end_block, True, True)
-                )
-
+                traces = adapter.export_traces(block_id, current_end_block, True, True)
                 enriched_txs = enrich_transactions(txs, receipts)
 
             # reformat and edit data
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
             prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
-            prepare_transactions_inplace(
-                enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
-            )
+            prepare_transactions_inplace(enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE)
             prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
 
-            if currency == "trx":
-                prepare_transactions_inplace_trx(enriched_txs)
-                prepare_blocks_inplace_trx(blocks)
 
             # ingest into Cassandra
             write_to_sinks(db, sink_config, "log", logs)
@@ -610,16 +688,12 @@ def export_csv(
                 blocks, txs = adapter.export_blocks_and_transactions(
                     block_id, current_end_block
                 )
-                if block_id == 0 and currency == "trx":
+                if block_id == 0 and currency == "trx": # todo not necessary anymore, this case impossible
                     # genesis tx of block 0 have no receipts
                     # to avoid errors we drop them
                     txs = [tx for tx in txs if tx["block_number"] > 0]
                 receipts, logs = adapter.export_receipts_and_logs(txs)
-                traces = (
-                    []
-                    if currency == "trx"
-                    else adapter.export_traces(block_id, current_end_block, True, True)
-                )
+                traces = adapter.export_traces(block_id, current_end_block, True, True)
                 enriched_txs = enrich_transactions(txs, receipts)
 
             block_list.extend(format_blocks_csv(blocks))
@@ -655,9 +729,7 @@ def export_csv(
                     prepare_transactions_inplace_trx(tx_list)
                     prepare_blocks_inplace_trx(block_list)
 
-                if currency != "trx":
-                    # trx has no tracing api
-                    write_csv(full_path / trace_file, trace_list, TRACE_HEADER)
+                write_csv(full_path / trace_file, trace_list, TRACE_HEADER)
 
                 write_csv(full_path / tx_file, tx_list, TX_HEADER)
                 write_csv(full_path / block_file, block_list, BLOCK_HEADER)

@@ -46,3 +46,6 @@ class RawDbAccount(RawDb):
             fetch_size=10000,
         )
         return result
+
+class RawDbAccountTrx(RawDbAccount):
+    pass
