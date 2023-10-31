@@ -9,6 +9,7 @@ from graphsenselib.utils.tron import (
     tron_address_to_bytes,
     tron_address_to_evm_string,
     tron_address_to_legacy,
+    tron_address_to_legacy_string,
 )
 
 # first is evm address and second is tron address
@@ -59,9 +60,15 @@ def test_checksum_error():
         tron_address_to_legacy("THKJYuUmMKKARNf7s2VT51g5uPY6KEqnaf")
 
     assert (
-        tron_address_to_legacy("THKJYuUmMKKARNf7s2VT51g5uPY6KEqnaf", validate=False)
+        tron_address_to_legacy_string(
+            "THKJYuUmMKKARNf7s2VT51g5uPY6KEqnaf", validate=False
+        )
         == "0x5095d4f4d26ebc672ca12fc0e3a48d6ce3b169d2"
     )
+
+    assert tron_address_to_legacy(
+        "THKJYuUmMKKARNf7s2VT51g5uPY6KEqnaf", validate=False
+    ) == evm_to_bytes("0x5095d4f4d26ebc672ca12fc0e3a48d6ce3b169d2")
 
 
 def test_tron_bijection():
