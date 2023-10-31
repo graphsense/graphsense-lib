@@ -1,27 +1,27 @@
 from typing import Optional
 
 
-def hex_str_to_bytes(hex_str):
+def hex_str_to_bytes(hex_str: str) -> bytes:
     return bytes.fromhex(hex_str)
 
 
-def bytes_to_hex(b):
+def bytes_to_hex(b: bytes) -> str:
     r = bytes(b).hex()
     return r if len(r) > 0 else None
 
 
-def is_hex_string(string):
+def is_hex_string(string: str):
     return string is not None and string.startswith("0x") and len(string) >= 2
 
 
-def strip_0x(string):
+def strip_0x(string: str):
     if is_hex_string(string):
         return string[2:]
     else:
         return string
 
 
-def to_int(string):
+def to_int(string: str):
     if type(string) == int:
         return string
 
