@@ -82,6 +82,16 @@ def tron_address_to_legacy(taddress_str: str, validate: bool = True) -> bytes:
         taddress_str (str): string of tron base58 encoded address
         validate (bool, optional): if checksum should be checked
     """
+    return tron_address_to_evm(taddress_str, validate)
+
+
+def tron_address_to_legacy_string(taddress_str: str, validate: bool = True) -> str:
+    """Converts a tron address to its legacy evm/eth format
+
+    Args:
+        taddress_str (str): string of tron base58 encoded address
+        validate (bool, optional): if checksum should be checked
+    """
     return tron_address_to_evm_string(taddress_str, validate)
 
 
