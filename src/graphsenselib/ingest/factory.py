@@ -88,9 +88,9 @@ class IngestModuleUtxo(IngestModule):
 class IngestFactory:
     def from_config(self, env, currency) -> IngestModule:
         schema_type = currency_to_schema_type.get(currency, "")
-        if schema_type == "account":
+        if schema_type in ["account", "account_trx"]:
             return IngestModuleAccount()
-        if schema_type == "utxo":
+        elif schema_type == "utxo":
             return IngestModuleUtxo()
         else:
             raise Exception(

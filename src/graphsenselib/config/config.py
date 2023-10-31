@@ -9,10 +9,10 @@ from ..utils import flatten
 
 supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec", "trx"]
 default_environments = ["prod", "test", "dev", "exp1", "exp2", "exp3"]
-schema_types = ["utxo", "account"]
+schema_types = ["utxo", "account","account_trx"]
 keyspace_types = ["raw", "transformed"]
 currency_to_schema_type = {
-    cur: "account" if cur == "eth" or cur == "trx" else "utxo"
+    cur: "account_trx" if cur == "trx" else "account" if cur == "eth" else "utxo"
     for cur in supported_base_currencies
 }
 supported_fiat_currencies = ["USD", "EUR"]
