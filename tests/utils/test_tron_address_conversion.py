@@ -3,6 +3,7 @@ import pytest
 from graphsenselib.utils.accountmodel import hex_str_to_bytes
 from graphsenselib.utils.tron import (
     add_tron_prefix,
+    decode_note,
     evm_to_bytes,
     evm_to_tron_address_string,
     tron_address_equal,
@@ -80,3 +81,7 @@ def test_tron_bijection():
 
     assert g(f(original_evm)) == original_evm
     assert f(g(original_tron)) == original_tron
+
+
+def test_decode_note():
+    assert decode_note("63616c6c") == "call"
