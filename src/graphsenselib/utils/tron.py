@@ -7,6 +7,10 @@ from .accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
 TRON_ADDRESS_PREFIX = b"\x41"
 
 
+def decode_note(note_hex_str: str) -> str:
+    return bytes.fromhex(note_hex_str).decode("utf-8")
+
+
 def sha256(bts):
     m = hashlib.sha256()
     m.update(bts)
