@@ -1,11 +1,11 @@
 import logging
 import sys
+
 from src.graphsenselib.config import config, currency_to_schema_type
 from src.graphsenselib.db import DbFactory
-from src.graphsenselib.schema import GraphsenseSchemas
 from src.graphsenselib.ingest.factory import IngestFactory
 from src.graphsenselib.ingest.parquet import SCHEMA_MAPPING
-
+from src.graphsenselib.schema import GraphsenseSchemas
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def ingest(
         currency (str): currency to work on
     """
     ks_config = config.get_keyspace_config(env, currency)
-    provider = ks_config.ingest_config.node_reference
+    provider = ks_config.ingest_config.get_first_node_reference()
     parquet_file_sink_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
@@ -83,8 +83,8 @@ if __name__ == "__main__":
     env = "dev"
     currency = "trx"
     sinks = ["cassandra"]
-    start_block = 50_000_500 # 20_000
-    end_block = 50_000_600 # 20_100
+    start_block = 50_000_500  # 20_000
+    end_block = 50_000_600  # 20_100
     batch_size = 50
     timeout = 3600
     info = False

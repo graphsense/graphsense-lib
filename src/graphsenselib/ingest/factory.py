@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import List, Optional
 
 from ..config import currency_to_schema_type
 from ..db import AnalyticsDb
-from .account import ingest as ingest_eth
+from .account import ingest as ingest_account
 from .utxo import ingest as ingest_utxo
 
 
@@ -13,7 +13,7 @@ class IngestModule(ABC):
         self,
         db: AnalyticsDb,
         currency: str,
-        source: str,
+        sources: List[str],
         sink_config: dict,
         user_start_block: Optional[int],
         user_end_block: Optional[int],
@@ -31,7 +31,7 @@ class IngestModuleAccount(IngestModule):
         self,
         db: AnalyticsDb,
         currency: str,
-        source: str,
+        sources: List[str],
         sink_config: dict,
         user_start_block: Optional[int],
         user_end_block: Optional[int],
@@ -41,10 +41,10 @@ class IngestModuleAccount(IngestModule):
         provider_timeout: int,
         mode: str,
     ):
-        ingest_eth(
+        ingest_account(
             db=db,
             currency=currency,
-            provider_uri=source,
+            sources=sources,
             sink_config=sink_config,
             user_start_block=user_start_block,
             user_end_block=user_end_block,
@@ -60,7 +60,7 @@ class IngestModuleUtxo(IngestModule):
         self,
         db: AnalyticsDb,
         currency: str,
-        source: str,
+        sources: List[str],
         sink_config: dict,
         user_start_block: Optional[int],
         user_end_block: Optional[int],
@@ -73,7 +73,7 @@ class IngestModuleUtxo(IngestModule):
         ingest_utxo(
             db=db,
             currency=currency,
-            provider_uri=source,
+            provider_uri=sources[0],
             sink_config=sink_config,
             user_start_block=user_start_block,
             user_end_block=user_end_block,

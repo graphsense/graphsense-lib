@@ -8,7 +8,9 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
-from ethereumetl.jobs.export_traces_job import ExportTracesJob as EthereumExportTracesJob
+from ethereumetl.jobs.export_traces_job import (
+    ExportTracesJob as EthereumExportTracesJob,
+)
 from ethereumetl.providers.auto import get_provider_from_uri
 from ethereumetl.service.eth_service import EthService
 from ethereumetl.streaming.enrich import enrich_transactions
@@ -18,14 +20,14 @@ from ethereumetl.streaming.eth_item_timestamp_calculator import (
 )
 from ethereumetl.thread_local_proxy import ThreadLocalProxy
 from web3 import Web3
-from .export_traces_job import TronExportTracesJob
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
+from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
-from ..utils import hex_to_bytearray, parse_timestamp
-from ..utils.tron import evm_to_bytes
+from ..utils import first_or_default, hex_to_bytearray, parse_timestamp
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
+from ..utils.tron import evm_to_bytes
 from .common import cassandra_ingest, write_to_sinks
 from .csv import (
     BLOCK_HEADER,
@@ -38,6 +40,7 @@ from .csv import (
     format_transactions_csv,
     write_csv,
 )
+from .tron.export_traces_job import TronExportTracesJob
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,9 @@ BLOCK_BUCKET_SIZE = 1_000
 TX_HASH_PREFIX_LEN = 5
 
 PARQUET_PARTITION_SIZE = 100_000
+
+WEB3_QUERY_BATCH_SIZE = 50
+WEB3_QUERY_WORKERS = 40
 
 
 class InMemoryItemExporter:
@@ -74,8 +80,6 @@ class InMemoryItemExporter:
         return self.items[item_type]
 
 
-
-
 class AccountStreamerAdapter:
     """Standard Ethereum API style streaming adapter to export blocks, transactions,
     receipts, logs and traces."""
@@ -83,8 +87,8 @@ class AccountStreamerAdapter:
     def __init__(
         self,
         batch_web3_provider: ThreadLocalProxy,
-        batch_size: int = 100,
-        max_workers: int = 5,
+        batch_size: int = None,
+        max_workers: int = None,
     ) -> None:
         self.batch_web3_provider = batch_web3_provider
         self.batch_size = batch_size
@@ -148,8 +152,6 @@ class EthStreamerAdapter(AccountStreamerAdapter):
     """Ethereum API style streaming adapter to export blocks, transactions,
     receipts, logs and traces."""
 
-
-
     def export_traces(
         self,
         start_block: int,
@@ -175,12 +177,20 @@ class EthStreamerAdapter(AccountStreamerAdapter):
         return traces
 
 
-
 class TronStreamerAdapter(AccountStreamerAdapter):
     """Tron API style streaming adapter to export blocks, transactions,
     receipts, logs and traces.
     """
 
+    def __init__(
+        self,
+        batch_web3_provider: ThreadLocalProxy,
+        grpc_endpoint: str,
+        batch_size: int = None,
+        max_workers: int = None,
+    ) -> None:
+        super().__init__(batch_web3_provider, batch_size, max_workers)
+        self.grpc_endpoint = grpc_endpoint
 
     def export_traces(
         self,
@@ -191,16 +201,17 @@ class TronStreamerAdapter(AccountStreamerAdapter):
     ) -> Iterable[Dict]:
         """Export traces for specified block range."""
 
-        exporter = InMemoryItemExporter(item_types=["trace"])
-        job = TronExportTracesJob(start_block=start_block,
+        # exporter = InMemoryItemExporter(item_types=["trace"])
+        job = TronExportTracesJob(
+            start_block=start_block,
             end_block=end_block,
             batch_size=self.batch_size,
-            web3=ThreadLocalProxy(lambda: Web3(self.batch_web3_provider)),
-            max_workers=self.max_workers
+            grpc_endpoint=self.grpc_endpoint,
+            max_workers=self.max_workers,
         )
         return job.run()
-        #traces = exporter.get_items("trace")
-        #return traces
+        # traces = exporter.get_items("trace")
+        # return traces
 
 
 def get_last_block_yesterday(batch_web3_provider: ThreadLocalProxy) -> int:
@@ -242,7 +253,7 @@ def ingest_configuration_cassandra(
     )
 
 
-def prepare_logs_inplace(items: Iterable, block_bucket_size: int = 1_000):
+def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
     blob_colums = [
         "block_hash",
         "address",
@@ -286,7 +297,7 @@ def ingest_logs(
     items: Iterable,
     db: AnalyticsDb,
     sink_config: dict,
-    block_bucket_size: int = 1_000,
+    block_bucket_size: int,
 ) -> None:
     """Ingest blocks into Apache Cassandra."""
 
@@ -295,7 +306,7 @@ def ingest_logs(
 
 def prepare_blocks_inplace_eth(
     items: Iterable,
-    block_bucket_size: int = 1_000,
+    block_bucket_size: int,
 ):
     blob_colums = [
         "block_hash",
@@ -329,7 +340,7 @@ def prepare_blocks_inplace_eth(
 def prepare_blocks_inplace_trx(*args, **kwargs):
     items = prepare_blocks_inplace_eth(*args, **kwargs)
 
-    if items is None: # cant iterate over None
+    if items is None:  # cant iterate over None
         return items
 
     for b in items:
@@ -337,7 +348,7 @@ def prepare_blocks_inplace_trx(*args, **kwargs):
 
 
 def prepare_transactions_inplace_eth(
-    items: Iterable, tx_hash_prefix_len: int = 4, block_bucket_size: int = 1_000
+    items: Iterable, tx_hash_prefix_len: int, block_bucket_size: int
 ):
     blob_colums = [
         "tx_hash",
@@ -370,14 +381,14 @@ def prepare_transactions_inplace_eth(
 def prepare_transactions_inplace_trx(*args, **kwargs):
     items = prepare_transactions_inplace_eth(*args, **kwargs)
 
-    if items is None: # cant iterate over None
+    if items is None:  # cant iterate over None
         return items
 
     for tx in items:
         tx["block_timestamp"] = tx["block_timestamp"] // 1000
 
 
-def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int = 1_000):
+def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
     blob_colums = ["tx_hash", "from_address", "to_address", "input", "output"]
     for item in items:
         # remove column
@@ -400,7 +411,8 @@ def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int = 1_000):
         for elem in blob_colums:
             item[elem] = hex_to_bytearray(item[elem])
 
-def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int = 1_000):
+
+def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
     blob_colums = ["tx_hash", "caller_address", "transferto_address"]
     for item in items:
         # rename/add columns
@@ -413,15 +425,14 @@ def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int = 1_000):
         # ignored otherwise
         item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
 
-        #item["trace_address"] = (
+        # item["trace_address"] = (
         #    ",".join(map(str, item["trace_address"]))
         #    if item["trace_address"] is not None
         #    else None
-        #)
+        # )
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
             item[elem] = evm_to_bytes(item[elem])
-
 
 
 def print_block_info(
@@ -447,7 +458,7 @@ def get_connection_from_url(provider_uri: str, provider_timeout=600):
 def ingest(
     db: AnalyticsDb,
     currency: str,
-    provider_uri: str,
+    sources: List[str],
     sink_config: dict,
     user_start_block: Optional[int],
     user_end_block: Optional[int],
@@ -458,31 +469,51 @@ def ingest(
 ):
     # make sure that only supported sinks are selected.
     if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
-        raise Exception(
+        raise BadUserInputError(
             "Unsupported sink selected, supported: cassandra,"
             f" parquet; got {list(sink_config.keys())}"
         )
 
     logger.info(f"Writing data to {list(sink_config.keys())}")
 
-    thread_proxy = get_connection_from_url(provider_uri, provider_timeout)
+    http_provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
 
+    if http_provider_uri is None:
+        raise BadUserInputError("No http provider (node url) is configured.")
+
+    thread_proxy = get_connection_from_url(http_provider_uri, provider_timeout)
     last_synced_block = get_last_synced_block(thread_proxy)
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
     if currency == "trx":
-        user_start_block = 1 if user_start_block == 0 else user_start_block
-        logger.warning(f"Start block set to {user_start_block}")
-        adapter = TronStreamerAdapter(thread_proxy, batch_size=50)
-        # compose prepare_transactions_inplace_trx = prepare_transactions_inplace > prepare_transactions_inplace_trx
+        if user_start_block == 0:
+            user_start_block = 1
+            logger.warning("Start was set to 1 since trx does not know a block 0.")
+
+        grpc_provider_uri = first_or_default(sources, lambda x: x.startswith("grpc"))
+        if grpc_provider_uri is None:
+            raise BadUserInputError("No grpc provider (node url) is configured.")
+
+        adapter = TronStreamerAdapter(
+            thread_proxy,
+            grpc_endpoint=grpc_provider_uri,
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
+        # compose prepare_transactions_inplace_trx
+        # = prepare_transactions_inplace > prepare_transactions_inplace_trx
         # todo: wrap these prepare functions in a class and make one for each currency
         prepare_transactions_inplace = prepare_transactions_inplace_trx
         prepare_blocks_inplace = prepare_blocks_inplace_trx
         prepare_traces_inplace = prepare_traces_inplace_trx
 
     elif currency == "eth":
-        adapter = EthStreamerAdapter(thread_proxy, batch_size=50)
+        adapter = EthStreamerAdapter(
+            thread_proxy,
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
         prepare_transactions_inplace = prepare_transactions_inplace_eth
         prepare_blocks_inplace = prepare_blocks_inplace_eth
         prepare_traces_inplace = prepare_traces_inplace_eth
@@ -541,9 +572,10 @@ def ingest(
             # reformat and edit data
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
             prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
-            prepare_transactions_inplace(enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE)
+            prepare_transactions_inplace(
+                enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
+            )
             prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
-
 
             # ingest into Cassandra
             write_to_sinks(db, sink_config, "log", logs)
@@ -573,7 +605,7 @@ def ingest(
 
     last_block_date = parse_timestamp(last_block_ts)
     logger.info(
-        f"[{datetime.now()}] Processed block range "
+        f"Processed block range "
         f"{start_block:,} - {end_block:,} "
         f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
     )
@@ -608,7 +640,9 @@ def export_csv(
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
-    adapter = EthStreamerAdapter(thread_proxy, batch_size=50)
+    adapter = EthStreamerAdapter(
+        thread_proxy, batch_size=WEB3_QUERY_BATCH_SIZE, max_workers=WEB3_QUERY_WORKERS
+    )
 
     start_block = 0
     if user_start_block is None:
@@ -688,7 +722,9 @@ def export_csv(
                 blocks, txs = adapter.export_blocks_and_transactions(
                     block_id, current_end_block
                 )
-                if block_id == 0 and currency == "trx": # todo not necessary anymore, this case impossible
+                if (
+                    block_id == 0 and currency == "trx"
+                ):  # todo not necessary anymore, this case impossible
                     # genesis tx of block 0 have no receipts
                     # to avoid errors we drop them
                     txs = [tx for tx in txs if tx["block_number"] > 0]

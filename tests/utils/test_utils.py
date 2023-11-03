@@ -1,6 +1,14 @@
 import os
 
-from graphsenselib.utils import batch, bytes_to_hex, strip_0x, subkey_exists, to_int
+from graphsenselib.utils import (
+    batch,
+    bytes_to_hex,
+    first_or_default,
+    remove_prefix,
+    strip_0x,
+    subkey_exists,
+    to_int,
+)
 from graphsenselib.utils.errorhandling import CrashRecoverer
 
 
@@ -15,6 +23,7 @@ def test_strip_0x_works1():
 
 def test_strip_0x_works2():
     assert strip_0x("a9059cbb") == "a9059cbb"
+    assert strip_0x(None) is None
 
 
 def test_to_int1():
@@ -86,3 +95,14 @@ def test_subkey_exists():
     assert subkey_exists({"abc": []}, ["abc", "cbd"]) is False
     assert subkey_exists({"abc": {"cbd": 1}}, ["abc", "cbd"]) is True
     assert subkey_exists({"abc": {"cbd": None}}, ["abc", "cbd"]) is True
+
+
+def test_first_or_default():
+    assert first_or_default([1, 2, 3], lambda x: x > 2, default=10) == 3
+    assert first_or_default([1, 2, 3], lambda x: x > 5, default=10) == 10
+    assert first_or_default([1, 2, 3], lambda x: x > 5, default=None) is None
+
+
+def test_remove_prefix():
+    assert remove_prefix("0xa9059cbb", "0x") == "a9059cbb"
+    assert remove_prefix("0xa9059cbb", "a0x") == "0xa9059cbb"

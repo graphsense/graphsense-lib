@@ -47,5 +47,6 @@ class RawDbAccount(RawDb):
         )
         return result
 
+
 class RawDbAccountTrx(RawDbAccount):
     pass

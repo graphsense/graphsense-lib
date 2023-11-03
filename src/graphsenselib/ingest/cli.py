@@ -109,7 +109,7 @@ def ingest(
         currency (str): currency to work on
     """
     ks_config = config.get_keyspace_config(env, currency)
-    provider = ks_config.ingest_config.node_reference
+    sources = ks_config.ingest_config.all_node_references
     parquet_file_sink_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
@@ -146,7 +146,7 @@ def ingest(
         IngestFactory().from_config(env, currency).ingest(
             db=db,
             currency=currency,
-            source=provider,
+            sources=sources,
             sink_config={k: create_sink_config(k, currency) for k in sinks},
             user_start_block=start_block,
             user_end_block=end_block,
@@ -242,7 +242,7 @@ def export_csv(
         sys.exit(11)
 
     ks_config = config.get_keyspace_config(env, currency)
-    provider = ks_config.ingest_config.node_reference
+    source_node_uri = ks_config.ingest_config.get_first_node_reference()
     csv_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "csv", None
     )
@@ -262,7 +262,7 @@ def export_csv(
         export_csv(
             db=db,
             currency=currency,
-            provider_uri=provider,
+            provider_uri=source_node_uri,
             directory=csv_directory,
             user_start_block=start_block,
             user_end_block=end_block,
