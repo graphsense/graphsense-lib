@@ -1,11 +1,12 @@
 import logging
 from datetime import datetime
 from importlib.resources import files, read_text
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from parsy import forward_declaration, seq, string
 
 from ..config import config, currency_to_schema_type, keyspace_types
+from ..datatypes import BadUserInputError
 from ..db import DbFactory
 from ..db.cassandra import build_create_stmt, normalize_cql_statement
 from ..utils import flatten, split_list_on_condition
@@ -237,7 +238,9 @@ class GraphsenseSchemas:
                     f"with replication config {replication_config}."
                 )
 
-    def create_new_transformed_ks_if_not_exist(self, env, currency, suffix=None):
+    def create_new_transformed_ks_if_not_exist(
+        self, env, currency, suffix=None
+    ) -> Optional[str]:
         keyspace_type = "transformed"
         with DbFactory().from_config(env, currency) as db:
             schema = self.get_by_currency(
@@ -246,7 +249,7 @@ class GraphsenseSchemas:
             if len(schema) > 0:
                 schema = schema[0][1]
             else:
-                raise Exception(
+                raise BadUserInputError(
                     "No schema definition found for "
                     f"{env}, {currency}, type: {keyspace_type}"
                 )
@@ -262,6 +265,7 @@ class GraphsenseSchemas:
                     f"{env}:{currency} exists; please remove "
                     "or specify an fresh suffix."
                 )
+                return None
             else:
                 replication_config = (
                     config.get_keyspace_config(env, currency)
@@ -277,6 +281,7 @@ class GraphsenseSchemas:
                     f"{env}:{currency} created "
                     f"with replication config {replication_config}."
                 )
+                return keyspace_name
 
     def get_by_schema_type(
         self, schema_type, keyspace_type=None

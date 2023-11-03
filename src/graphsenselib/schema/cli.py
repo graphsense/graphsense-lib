@@ -129,7 +129,11 @@ def create_new_tf(env, currency, suffix):
         currency (str): currency to work on
         suffix (str): suffix for the new keyspace
     """
-    GraphsenseSchemas().create_new_transformed_ks_if_not_exist(env, currency, suffix)
+    print(
+        GraphsenseSchemas().create_new_transformed_ks_if_not_exist(
+            env, currency, suffix
+        )
+    )
 
 
 @schema.command(

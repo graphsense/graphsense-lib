@@ -5,6 +5,8 @@ from .parquet import write_parquet
 
 INGEST_SINKS = ["parquet", "cassandra"]
 
+CASSANDRA_INGEST_DEFAULT_CONCURRENCY = 1000
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,10 @@ def write_to_sinks(
 
 
 def cassandra_ingest(
-    db: AnalyticsDb, table_name: str, parameters, concurrency: int = 100
+    db: AnalyticsDb,
+    table_name: str,
+    parameters,
+    concurrency: int = CASSANDRA_INGEST_DEFAULT_CONCURRENCY,
 ) -> None:
     """Concurrent ingest into Apache Cassandra."""
     db.raw.ingest(

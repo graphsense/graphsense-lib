@@ -74,7 +74,7 @@ CREATE TABLE trace (
     caller_address blob,
     transferto_address blob,
     call_info_index smallint,
-    call_token_id text, -- todo: would like to make it a type of int but for now TRX is encoded as null, maybe encode as -1?
+    call_token_id int,
     call_value varint,
     note text,
     rejected boolean,
