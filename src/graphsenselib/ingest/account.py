@@ -1,7 +1,9 @@
+import concurrent.futures
 import logging
 import pathlib
 import re
 import sys
+import threading
 from csv import QUOTE_NONE
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -602,6 +604,216 @@ def ingest(
 
             if check_shutdown_initialized():
                 break
+
+    last_block_date = parse_timestamp(last_block_ts)
+    logger.info(
+        f"Processed block range "
+        f"{start_block:,} - {end_block:,} "
+        f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
+    )
+
+    # store configuration details
+    if "cassandra" in sink_config.keys():
+        ingest_configuration_cassandra(
+            db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN)
+        )
+
+
+def ingest_async(
+    db: AnalyticsDb,
+    currency: str,
+    sources: List[str],
+    sink_config: dict,
+    user_start_block: Optional[int],
+    user_end_block: Optional[int],
+    batch_size: int,
+    info: bool,
+    previous_day: bool,
+    provider_timeout: int,
+):
+    # make sure that only supported sinks are selected.
+    if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
+        raise BadUserInputError(
+            "Unsupported sink selected, supported: cassandra,"
+            f" parquet; got {list(sink_config.keys())}"
+        )
+
+    logger.info(f"Writing data to {list(sink_config.keys())}")
+
+    http_provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
+
+    if http_provider_uri is None:
+        raise BadUserInputError("No http provider (node url) is configured.")
+
+    thread_proxy = get_connection_from_url(http_provider_uri, provider_timeout)
+    last_synced_block = get_last_synced_block(thread_proxy)
+    last_ingested_block = db.raw.get_highest_block()
+    print_block_info(last_synced_block, last_ingested_block)
+
+    if currency == "trx":
+        if user_start_block == 0:
+            user_start_block = 1
+            logger.warning("Start was set to 1 since trx does not know a block 0.")
+
+        grpc_provider_uri = first_or_default(sources, lambda x: x.startswith("grpc"))
+        if grpc_provider_uri is None:
+            raise BadUserInputError("No grpc provider (node url) is configured.")
+
+        # compose prepare_transactions_inplace_trx
+        # = prepare_transactions_inplace > prepare_transactions_inplace_trx
+        # todo: wrap these prepare functions in a class and make one for each currency
+        prepare_transactions_inplace = prepare_transactions_inplace_trx
+        prepare_blocks_inplace = prepare_blocks_inplace_trx
+        prepare_traces_inplace = prepare_traces_inplace_trx
+
+    elif currency == "eth":
+        prepare_transactions_inplace = prepare_transactions_inplace_eth
+        prepare_blocks_inplace = prepare_blocks_inplace_eth
+        prepare_traces_inplace = prepare_traces_inplace_eth
+    else:
+        raise NotImplementedError(f"Currency {currency} not implemented")
+
+    start_block = 0
+    if user_start_block is None:
+        if last_ingested_block is not None:
+            start_block = last_ingested_block + 1
+    else:
+        start_block = user_start_block
+
+    end_block = last_synced_block - get_approx_reorg_backoff_blocks(currency)
+    if user_end_block is not None:
+        end_block = user_end_block
+
+    if previous_day:
+        end_block = get_last_block_yesterday(thread_proxy)
+
+    if start_block > end_block:
+        print("No blocks to ingest")
+        return
+
+    time1 = datetime.now()
+    count = 0
+
+    # if info then only print block info and exit
+    if info:
+        logger.info(
+            f"Would ingest block range "
+            f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+            f"into {list(sink_config.keys())} "
+        )
+
+        return
+
+    logger.info(
+        f"Ingesting block range "
+        f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+        f"into {list(sink_config.keys())} "
+    )
+
+    thread_context = threading.local()
+
+    def initializer_worker(thrd_ctx, db, curr):
+        logging.disable(logging.INFO)
+        new_db_conn = db.clone()
+        new_db_conn.open()
+        thrd_ctx.db = new_db_conn
+
+        if curr == "trx":
+            thrd_ctx.adapter = TronStreamerAdapter(
+                get_connection_from_url(http_provider_uri, provider_timeout),
+                grpc_endpoint=grpc_provider_uri,
+                batch_size=WEB3_QUERY_BATCH_SIZE,
+                max_workers=WEB3_QUERY_WORKERS,
+            )
+        else:
+            thrd_ctx.adapter = EthStreamerAdapter(
+                get_connection_from_url(http_provider_uri, provider_timeout),
+                batch_size=WEB3_QUERY_BATCH_SIZE,
+                max_workers=WEB3_QUERY_WORKERS,
+            )
+
+    def get_block_and_txs(thrd_ctx, s, e):
+        with suppress_log_level(logging.INFO):
+            return thrd_ctx.adapter.export_blocks_and_transactions(s, e)
+
+    def get_traces(thrd_ctx, s, e):
+        with suppress_log_level(logging.INFO):
+            return thrd_ctx.adapter.export_traces(s, e, True, True)
+
+    def get_logs_and_receipts(thrd_ctx, txs):
+        with suppress_log_level(logging.INFO):
+            return thrd_ctx.adapter.export_receipts_and_logs(txs)
+
+    def write_data(thrd_ctx, sink_config, table, data):
+        write_to_sinks(thrd_ctx.db, sink_config, table, data)
+
+    with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        with concurrent.futures.ThreadPoolExecutor(
+            initializer=initializer_worker,
+            initargs=(
+                thread_context,
+                db,
+                currency,
+            ),
+            max_workers=15,  # we write at most 4 tables in parallel
+        ) as ex:
+            for block_id in range(start_block, end_block + 1, batch_size):
+                current_end_block = min(end_block, block_id + batch_size - 1)
+
+                with suppress_log_level(logging.INFO):
+                    btf = ex.submit(
+                        get_block_and_txs, thread_context, block_id, current_end_block
+                    )
+                    tf = ex.submit(
+                        get_traces, thread_context, block_id, current_end_block
+                    )
+                    blocks, txs = btf.result()
+                    lrf = ex.submit(get_logs_and_receipts, thread_context, txs)
+                    receipts, logs = lrf.result()
+                    enriched_txs = enrich_transactions(txs, receipts)
+                    traces = tf.result()
+
+                # reformat and edit data
+                prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
+                prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
+                prepare_transactions_inplace(
+                    enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
+                )
+                prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
+
+                # ingest into Cassandra
+                lr = ex.submit(write_data, thread_context, sink_config, "log", logs)
+                tr = ex.submit(write_data, thread_context, sink_config, "trace", traces)
+                txr = ex.submit(
+                    write_data, thread_context, sink_config, "transaction", enriched_txs
+                )
+                br = ex.submit(write_data, thread_context, sink_config, "block", blocks)
+                done, not_done = concurrent.futures.wait([lr, tr, txr, br])
+
+                # reraising exceptions, TODO: there is probably a nicer solution
+                for t in done:
+                    if t.exception():
+                        raise RuntimeError(t.result())
+
+                count += batch_size
+
+                last_block = blocks[-1]
+                last_block_ts = last_block["timestamp"]
+
+                if count % 1000 == 0:
+                    last_blk_date = parse_timestamp(last_block_ts)
+                    time2 = datetime.now()
+                    time_delta = (time2 - time1).total_seconds()
+                    logger.info(
+                        f"Last processed block: {current_end_block:,} "
+                        f"[{last_blk_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "  # noqa
+                        f"({count/time_delta:.1f} blks/s)"
+                    )
+                    time1 = time2
+                    count = 0
+
+                if check_shutdown_initialized():
+                    break
 
     last_block_date = parse_timestamp(last_block_ts)
     logger.info(

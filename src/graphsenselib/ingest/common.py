@@ -15,7 +15,7 @@ def write_to_sinks(
     sink_config: dict,
     table_name: str,
     parameters,
-    concurrency: int = 100,
+    concurrency: int = CASSANDRA_INGEST_DEFAULT_CONCURRENCY,
 ):
     for sink, config in sink_config.items():
         if sink == "cassandra":

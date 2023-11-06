@@ -254,6 +254,9 @@ class CassandraDb:
         self.prep_stmts = {}
         self._session_timeout = default_timeout
 
+    def clone(self) -> "CassandraDb":
+        return CassandraDb(self.db_nodes, self._session_timeout)
+
     def __repr__(self):
         return f"{', '.join(self.db_nodes)}"
 
@@ -427,6 +430,7 @@ class CassandraDb:
             self.prep_stmts[hex_dig] = self.session.prepare(stmt)
         return self.prep_stmts[hex_dig]
 
+    @needs_session
     def ingest(
         self,
         table: str,

@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from ..config import currency_to_schema_type
 from ..db import AnalyticsDb
-from .account import ingest as ingest_account
+from .account import ingest_async as ingest_account
 from .utxo import ingest as ingest_utxo
 
 
