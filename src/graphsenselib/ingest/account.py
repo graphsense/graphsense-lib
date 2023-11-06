@@ -789,7 +789,7 @@ def ingest_async(
                     if t.exception():
                         raise RuntimeError(t.result())
 
-                count += batch_size
+                count += current_end_block - block_id + 1
 
                 last_block = blocks[-1]
                 last_block_ts = last_block["timestamp"]
@@ -798,17 +798,20 @@ def ingest_async(
                     last_blk_date = parse_timestamp(last_block_ts)
                     time2 = datetime.now()
                     time_delta = (time2 - time1).total_seconds()
+                    logging.disable(logging.NOTSET)
                     logger.info(
                         f"Last processed block: {current_end_block:,} "
                         f"[{last_blk_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "  # noqa
                         f"({count/time_delta:.1f} blks/s)"
                     )
+                    logging.disable(logging.INFO)
                     time1 = time2
                     count = 0
 
                 if check_shutdown_initialized():
                     break
 
+    logging.disable(logging.NOTSET)
     last_block_date = parse_timestamp(last_block_ts)
     logger.info(
         f"Processed block range "
