@@ -97,7 +97,7 @@ def decode_block_to_traces(block_number: int, block: TransactionInfoList) -> Lis
                 call_token_id = (
                     callValueInfo_j.tokenId
                 )  # this returns an empty string if it is TRX #
-                call_token_id = None if call_token_id == "" else call_token_id
+                call_token_id = None if call_token_id == "" else int(call_token_id)
                 call_value = callValueInfo_j.callValue
 
                 internal_transactions = list(internal_transactions)
@@ -141,8 +141,7 @@ class TronExportTracesJob:
 
         traces = []
         for i in range(self.start_block, self.end_block + 1):
-            msg = NumberMessage(num=i)
-            block = wallet_stub.GetTransactionInfoByBlockNum(msg)
+            block = wallet_stub.GetTransactionInfoByBlockNum(NumberMessage(num=i))
 
             traces_per_block = decode_block_to_traces(i, block)
 
