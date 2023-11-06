@@ -733,16 +733,13 @@ def ingest_async(
             )
 
     def get_block_and_txs(thrd_ctx, s, e):
-        with suppress_log_level(logging.INFO):
-            return thrd_ctx.adapter.export_blocks_and_transactions(s, e)
+        return thrd_ctx.adapter.export_blocks_and_transactions(s, e)
 
     def get_traces(thrd_ctx, s, e):
-        with suppress_log_level(logging.INFO):
-            return thrd_ctx.adapter.export_traces(s, e, True, True)
+        return thrd_ctx.adapter.export_traces(s, e, True, True)
 
     def get_logs_and_receipts(thrd_ctx, txs):
-        with suppress_log_level(logging.INFO):
-            return thrd_ctx.adapter.export_receipts_and_logs(txs)
+        return thrd_ctx.adapter.export_receipts_and_logs(txs)
 
     def write_data(thrd_ctx, sink_config, table, data):
         write_to_sinks(thrd_ctx.db, sink_config, table, data)
@@ -760,18 +757,15 @@ def ingest_async(
             for block_id in range(start_block, end_block + 1, batch_size):
                 current_end_block = min(end_block, block_id + batch_size - 1)
 
-                with suppress_log_level(logging.INFO):
-                    btf = ex.submit(
-                        get_block_and_txs, thread_context, block_id, current_end_block
-                    )
-                    tf = ex.submit(
-                        get_traces, thread_context, block_id, current_end_block
-                    )
-                    blocks, txs = btf.result()
-                    lrf = ex.submit(get_logs_and_receipts, thread_context, txs)
-                    receipts, logs = lrf.result()
-                    enriched_txs = enrich_transactions(txs, receipts)
-                    traces = tf.result()
+                btf = ex.submit(
+                    get_block_and_txs, thread_context, block_id, current_end_block
+                )
+                tf = ex.submit(get_traces, thread_context, block_id, current_end_block)
+                blocks, txs = btf.result()
+                lrf = ex.submit(get_logs_and_receipts, thread_context, txs)
+                receipts, logs = lrf.result()
+                enriched_txs = enrich_transactions(txs, receipts)
+                traces = tf.result()
 
                 # reformat and edit data
                 prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
