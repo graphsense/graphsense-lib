@@ -3,6 +3,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+
+## [23.09/1.8.3] 2023-11-07
+### fixed
+- ingest default config to raw keyspace on create to avoid problems.
+
+## [23.09/1.8.2] 2023-10-24
+### fixed
+- catch error on coinmarketcap problems
+
 ## [23.09/1.8.1] 2023-10-06
 ### fixed
 - handle zcash shielded inputs in import
