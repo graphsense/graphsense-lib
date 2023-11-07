@@ -8,7 +8,7 @@ from src.graphsenselib.ingest.parquet import SCHEMA_MAPPING
 from src.graphsenselib.schema import GraphsenseSchemas
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.DEBUG)
 
 def ingest(
     env,
@@ -30,7 +30,7 @@ def ingest(
         currency (str): currency to work on
     """
     ks_config = config.get_keyspace_config(env, currency)
-    provider = ks_config.ingest_config.get_first_node_reference()
+    provider = ks_config.ingest_config.all_node_references
     parquet_file_sink_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
@@ -67,7 +67,7 @@ def ingest(
         IngestFactory().from_config(env, currency).ingest(
             db=db,
             currency=currency,
-            source=provider,
+            sources=provider,
             sink_config={k: create_sink_config(k, currency) for k in sinks},
             user_start_block=start_block,
             user_end_block=end_block,
@@ -80,17 +80,38 @@ def ingest(
 
 
 if __name__ == "__main__":
+
+    n_blocks=10_000
+    ethsetup = {
+        "currency": "eth",
+        "start_block": 17_000_000,
+        "end_block": 17_000_000 + n_blocks,
+    }
+    tronsetup = {
+        "currency": "trx",
+        "start_block": 50_000_000,
+        "end_block": 50_000_000 + n_blocks,
+    }
+    setup = tronsetup
+    currency, start_block, end_block = setup.values()
+
+
     env = "dev"
-    currency = "trx"
+    currency = currency
     sinks = ["cassandra"]
-    start_block = 50_000_500  # 20_000
-    end_block = 50_000_600  # 20_100
-    batch_size = 50
+    start_block = start_block  # 20_000
+    end_block = end_block # 20_100
+    batch_size = 1001
     timeout = 3600
     info = False
     previous_day = False
     create_schema = True
-    mode = "legacy"
+    mode = "legacy" # "traces_only"
+
+    import time
+
+    start = time.time()
+
     ingest(
         env,
         currency,
@@ -104,3 +125,5 @@ if __name__ == "__main__":
         create_schema,
         mode,
     )
+    print(f"Time taken: {time.time() - start}")
+
