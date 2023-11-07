@@ -56,7 +56,7 @@ TX_HASH_PREFIX_LEN = 5
 
 PARQUET_PARTITION_SIZE = 100_000
 
-WEB3_QUERY_BATCH_SIZE = 500
+WEB3_QUERY_BATCH_SIZE = 50
 WEB3_QUERY_WORKERS = 40
 
 
@@ -795,7 +795,7 @@ def ingest_async(
 
     thread_context = threading.local()
 
-    def initializer_worker(thrd_ctx, db, curr):
+    def initializer_worker(thrd_ctx, db):
         logging.disable(logging.INFO)
         new_db_conn = db.clone()
         new_db_conn.open()
@@ -820,7 +820,6 @@ def ingest_async(
             initargs=(
                 thread_context,
                 db,
-                currency,
             ),
             max_workers=15,  # we write at most 4 tables in parallel
         ) as ex:
