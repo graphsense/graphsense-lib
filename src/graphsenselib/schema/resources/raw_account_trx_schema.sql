@@ -19,7 +19,7 @@ CREATE TABLE block (
     size int,
     extra_data blob,
     gas_limit varint,
-    gas_used int,
+    gas_used bigint,
     base_fee_per_gas bigint,
     timestamp int,
     transaction_count smallint,
