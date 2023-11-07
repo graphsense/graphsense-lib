@@ -81,7 +81,7 @@ def ingest(
 
 if __name__ == "__main__":
 
-    n_blocks=10_000
+    n_blocks=10
     ethsetup = {
         "currency": "eth",
         "start_block": 17_000_000,
@@ -92,7 +92,7 @@ if __name__ == "__main__":
         "start_block": 50_000_000,
         "end_block": 50_000_000 + n_blocks,
     }
-    setup = tronsetup
+    setup = ethsetup
     currency, start_block, end_block = setup.values()
 
 
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     sinks = ["cassandra"]
     start_block = start_block  # 20_000
     end_block = end_block # 20_100
-    batch_size = 1001
+    batch_size = 50
     timeout = 3600
     info = False
     previous_day = False
