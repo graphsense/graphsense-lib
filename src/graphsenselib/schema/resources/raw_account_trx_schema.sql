@@ -50,7 +50,7 @@ CREATE TABLE transaction (
     from_address blob,
     to_address blob,
     value varint,
-    gas int,
+    gas bigint,
     gas_price varint,
     input blob,
     block_timestamp int,
@@ -91,4 +91,31 @@ CREATE TABLE configuration (
     id text PRIMARY KEY,
     block_bucket_size int,
     tx_prefix_length int
+);
+
+CREATE TYPE IF NOT EXISTS trc10_frozen_supply (
+    frozen_amount bigint,
+    frozen_days bigint
+);
+
+
+CREATE TABLE trc10 (
+    owner_address blob,
+    name text,
+    abbr text,
+    total_supply varint, -- bigint probably barely enough, varint just to be safe
+    trx_num varint, -- int probably barely enough, varint just to be safe
+    num varint, -- int probably barely enough, varint just to be safe
+    start_time varint, -- removed 3 last digits to conform with eth, not always zeros, but can be large 3 outliers
+    end_time varint, -- removed 3 last digits to conform with eth, not always zeros, multiple outliers
+    description text,
+    url text,
+    id int,
+    frozen_supply list<FROZEN<trc10_frozen_supply>>,
+    public_latest_free_net_time varint,
+    vote_score smallint,
+    free_asset_net_limit bigint,
+    public_free_asset_net_limit bigint,
+    precision smallint,
+    PRIMARY KEY (id)
 );

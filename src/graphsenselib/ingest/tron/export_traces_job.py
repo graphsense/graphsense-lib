@@ -1,8 +1,3 @@
-# import json
-# from pprint import pprint
-# import pandas as pd
-# from google.protobuf.json_format import MessageToDict, MessageToJson
-
 from typing import List
 
 import grpc
@@ -14,20 +9,6 @@ from .grpc.core.response_pb2 import TransactionInfoList
 
 # todo check if traces are saved in correct order
 # / take note at the correct place that this is unchecked for now
-
-
-# Data we need from the profobuf
-
-# block_number	uint64
-# transaction_hash	hex_string
-# internal_index	uint
-# caller_address	address
-# transferTo_address	address
-# call_info_index	uint, index of the call info
-# call_token_id	uint, token id (empty means TRX)
-# call_value	int64, the amount of the transfered token
-# note	hex_string
-# rejected	bool
 
 
 def decode_block_to_traces(block_number: int, block: TransactionInfoList) -> List:
