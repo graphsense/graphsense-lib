@@ -83,7 +83,8 @@ def ingesting():
 @click.option(
     "--mode",
     type=click.Choice(
-        ["legacy", "utxo_with_tx_graph", "utxo_only_tx_graph"], case_sensitive=False
+        ["legacy", "utxo_with_tx_graph", "utxo_only_tx_graph", "account_traces_only"],
+        case_sensitive=False,
     ),
     help="Importer mode",
     default="legacy",
@@ -114,9 +115,17 @@ def ingest(
         "parquet", None
     )
 
-    if ks_config.schema_type == "account" and mode != "legacy":
+    if (
+        (
+            ks_config.schema_type in ["account", "account_trx"]
+            and mode.startswith("utxo_")
+        )
+        or ks_config.schema_type == "utxo"
+        and not mode.startswith("utxo_")
+    ):
         logger.error(
-            "Only legacy mode is available for account type currencies. Exiting."
+            f"Mode {mode} is not available for "
+            f"{ks_config.schema_type} type currencies. Exiting."
         )
         sys.exit(11)
 

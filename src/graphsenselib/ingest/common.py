@@ -1,4 +1,5 @@
 import logging
+from typing import List, Tuple
 
 from ..db import AnalyticsDb
 from .parquet import write_parquet
@@ -50,3 +51,26 @@ def cassandra_ingest(
     db.raw.ingest(
         table_name, parameters, concurrency=concurrency, auto_none_to_unset=True
     )
+
+
+class AbstractTask:
+    def run(self, ctx, data) -> List[Tuple["AbstractTask", object]]:
+        pass
+
+
+class AbstractETLStrategy:
+    def pre_processing_tasks(self):
+        return []
+
+    def per_blockrange_tasks(self):
+        return []
+
+    def get_source_adapter(self, ctx=None):
+        return None
+
+
+class StoreTask(AbstractTask):
+    def run(self, ctx, data):
+        table, rows = data
+        write_to_sinks(ctx.db, ctx.sink_config, table, rows)
+        return []

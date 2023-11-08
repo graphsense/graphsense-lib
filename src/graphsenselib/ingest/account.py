@@ -27,11 +27,23 @@ from web3 import Web3
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
-from ..utils import first_or_default, hex_to_bytearray, parse_timestamp, remove_prefix
+from ..utils import (
+    batch,
+    first_or_default,
+    hex_to_bytearray,
+    parse_timestamp,
+    remove_prefix,
+)
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from ..utils.tron import evm_to_bytes, strip_tron_prefix
-from .common import cassandra_ingest, write_to_sinks
+from .common import (
+    AbstractETLStrategy,
+    AbstractTask,
+    StoreTask,
+    cassandra_ingest,
+    write_to_sinks,
+)
 from .csv import (
     BLOCK_HEADER,
     LOGS_HEADER,
@@ -218,26 +230,25 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         # traces = exporter.get_items("trace")
         # return traces
 
+    def get_trc10_token_infos(self) -> Iterable[Dict]:
+        """Get all trc10 tokens from a grpc endpoint"""
 
-def get_trc10_tokens(grpc_endpoint) -> Iterable[Dict]:
-    """Get all trc10 tokens from a grpc endpoint"""
+        grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
 
-    grpc_endpoint = remove_prefix(grpc_endpoint, "grpc://")
+        channel = grpc.insecure_channel(grpc_endpoint)
+        wallet_stub = WalletStub(channel)
+        trc10_tokens = wallet_stub.GetAssetIssueList(EmptyMessage())
 
-    channel = grpc.insecure_channel(grpc_endpoint)
-    wallet_stub = WalletStub(channel)
-    trc10_tokens = wallet_stub.GetAssetIssueList(EmptyMessage())
+        list_of_dicts = []
+        for token in trc10_tokens.assets:
+            token_dict = {}
+            for field in token.DESCRIPTOR.fields:
+                value = getattr(token, field.name)
+                token_dict[field.name] = value
 
-    list_of_dicts = []
-    for token in trc10_tokens.assets:
-        token_dict = {}
-        for field in token.DESCRIPTOR.fields:
-            value = getattr(token, field.name)
-            token_dict[field.name] = value
+            list_of_dicts.append(token_dict)
 
-        list_of_dicts.append(token_dict)
-
-    return list_of_dicts
+        return list_of_dicts
 
 
 def get_last_block_yesterday(batch_web3_provider: ThreadLocalProxy) -> int:
@@ -363,11 +374,8 @@ def prepare_blocks_inplace_eth(
             item[elem] = hex_to_bytearray(item[elem])
 
 
-def prepare_blocks_inplace_trx(*args, **kwargs):
-    items = prepare_blocks_inplace_eth(*args, **kwargs)
-
-    if items is None:  # cant iterate over None
-        return items
+def prepare_blocks_inplace_trx(items, block_bucket_size):
+    prepare_blocks_inplace_eth(items, block_bucket_size)
 
     for b in items:
         b["timestamp"] = b["timestamp"]
@@ -404,11 +412,10 @@ def prepare_transactions_inplace_eth(
             item[elem] = hex_to_bytearray(item[elem])
 
 
-def prepare_transactions_inplace_trx(*args, **kwargs):
-    items = prepare_transactions_inplace_eth(*args, **kwargs)
-
-    if items is None:  # cant iterate over None
-        return items
+def prepare_transactions_inplace_trx(
+    items: Iterable, tx_hash_prefix_len: int, block_bucket_size: int
+):
+    prepare_transactions_inplace_eth(items, tx_hash_prefix_len, block_bucket_size)
 
     for tx in items:
         tx["block_timestamp"] = tx["block_timestamp"] // 1000
@@ -682,6 +689,133 @@ def ingest(
         )
 
 
+class LoadLogsTask(AbstractTask):
+    def run(self, ctx, data):
+        txs = data
+        receipts, logs = ctx.adapter.export_receipts_and_logs(txs)
+        enriched_txs = ctx.strategy.enrich_transactions(txs, receipts)
+        logst = ctx.strategy.transform_logs(logs, ctx.BLOCK_BUCKET_SIZE)
+        txst = ctx.strategy.transform_transactions(
+            enriched_txs, ctx.TX_HASH_PREFIX_LEN, ctx.BLOCK_BUCKET_SIZE
+        )
+        return [(StoreTask(), ("transaction", txst)), (StoreTask(), ("log", logst))]
+
+
+class LoadBlockTask(AbstractTask):
+    def run(self, ctx, data):
+        start, end = data
+        blocks, txs = ctx.adapter.export_blocks_and_transactions(start, end)
+        blockst = ctx.strategy.transform_blocks(blocks, ctx.BLOCK_BUCKET_SIZE)
+        return [
+            (StoreTask(), ("block", blockst)),
+            (LoadLogsTask(), txs),
+        ]
+
+
+class LoadTracesTask(AbstractTask):
+    def run(self, ctx, data):
+        start, end = data
+        traces = ctx.adapter.export_traces(start, end, True, True)
+        tracest = ctx.strategy.transform_traces(traces, ctx.BLOCK_BUCKET_SIZE)
+        return [(StoreTask(), ("trace", tracest))]
+
+
+class LoadTrc10TokenInfoTask(AbstractTask):
+    def run(self, ctx, data):
+        token_infos = ctx.adapter.get_trc10_token_infos()
+        token_infost = ctx.strategy.transform_trc10_token_infos(token_infos)
+        return [(StoreTask(), ("trc10", token_infost))]
+
+
+class EthETLStrategy(AbstractETLStrategy):
+    def __init__(
+        self, http_provider_uri: str, provider_timeout: int, is_trace_only_mode: bool
+    ):
+        self.http_provider_uri = http_provider_uri
+        self.provider_timeout = provider_timeout
+        self.is_trace_only_mode = is_trace_only_mode
+
+    def per_blockrange_tasks(self):
+        return (
+            [LoadTracesTask()]
+            if self.is_trace_only_mode
+            else [LoadBlockTask(), LoadTracesTask()]
+        )
+
+    def transform_logs(self, logs, block_bucket_size: int):
+        prepare_logs_inplace(logs, block_bucket_size)
+        return logs
+
+    def transform_transactions(
+        self, enriched_txs, tx_hash_prefix_len: int, block_bucket_size: int
+    ):
+        prepare_transactions_inplace_eth(
+            enriched_txs, tx_hash_prefix_len, block_bucket_size
+        )
+        return enriched_txs
+
+    def enrich_transactions(self, txs, receipts):
+        return enrich_transactions(txs, receipts)
+
+    def transform_traces(self, traces, block_bucket_size: int):
+        prepare_traces_inplace_eth(traces, block_bucket_size)
+        return traces
+
+    def transform_blocks(self, blocks, block_bucket_size: int):
+        prepare_blocks_inplace_eth(blocks, block_bucket_size)
+        return blocks
+
+    def get_source_adapter(self):
+        return EthStreamerAdapter(
+            get_connection_from_url(self.http_provider_uri, self.provider_timeout),
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
+
+
+class TrxETLStrategy(EthETLStrategy):
+    def __init__(
+        self,
+        http_provider_uri: str,
+        provider_timeout: int,
+        grpc_provider_uri: str,
+        is_trace_only_mode: bool,
+    ):
+        super().__init__(http_provider_uri, provider_timeout, is_trace_only_mode)
+        self.grpc_provider_uri = grpc_provider_uri
+
+    def pre_processing_tasks(self):
+        return [LoadTrc10TokenInfoTask()]
+
+    def transform_transactions(
+        self, enriched_txs, tx_hash_prefix_len: int, block_bucket_size: int
+    ):
+        prepare_transactions_inplace_trx(
+            enriched_txs, tx_hash_prefix_len, block_bucket_size
+        )
+        return enriched_txs
+
+    def transform_blocks(self, blocks, block_bucket_size: int):
+        prepare_blocks_inplace_trx(blocks, block_bucket_size)
+        return blocks
+
+    def transform_traces(self, traces, block_bucket_size: int):
+        prepare_traces_inplace_trx(traces, block_bucket_size)
+        return traces
+
+    def transform_trc10_token_infos(self, token_infos):
+        prepare_trc10_tokens_inplace(token_infos)
+        return token_infos
+
+    def get_source_adapter(self):
+        return TronStreamerAdapter(
+            get_connection_from_url(self.http_provider_uri, self.provider_timeout),
+            grpc_endpoint=self.grpc_provider_uri,
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
+
+
 def ingest_async(
     db: AnalyticsDb,
     currency: str,
@@ -702,10 +836,9 @@ def ingest_async(
             f" parquet; got {list(sink_config.keys())}"
         )
 
-    logger.info(f"Writing data to {list(sink_config.keys())}")
+    is_trace_only_mode = mode == "account_traces_only"
 
     http_provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
-
     if http_provider_uri is None:
         raise BadUserInputError("No http provider (node url) is configured.")
 
@@ -726,40 +859,19 @@ def ingest_async(
         if grpc_provider_uri is None:
             raise BadUserInputError("No grpc provider (node url) is configured.")
 
-        # todo: wrap these prepare functions in a class and make one for each currency
-        prepare_transactions_inplace = prepare_transactions_inplace_trx
-        prepare_blocks_inplace = prepare_blocks_inplace_trx
-        prepare_traces_inplace = prepare_traces_inplace_trx
-
-        def get_adapter():
-            return TronStreamerAdapter(
-                get_connection_from_url(http_provider_uri, provider_timeout),
-                grpc_endpoint=grpc_provider_uri,
-                batch_size=WEB3_QUERY_BATCH_SIZE,
-                max_workers=WEB3_QUERY_WORKERS,
-            )
-
-        if grpc_provider_uri is None:
-            raise BadUserInputError("No grpc provider (node url) is configured.")
-
-        trc_token_data = get_trc10_tokens(grpc_provider_uri)
-        prepare_trc10_tokens_inplace(trc_token_data)
-        write_to_sinks(db, sink_config, "trc10", trc_token_data)
+        transform_strategy = TrxETLStrategy(
+            http_provider_uri, provider_timeout, grpc_provider_uri, is_trace_only_mode
+        )
 
     elif currency == "eth":
-        prepare_transactions_inplace = prepare_transactions_inplace_eth
-        prepare_blocks_inplace = prepare_blocks_inplace_eth
-        prepare_traces_inplace = prepare_traces_inplace_eth
-
-        def get_adapter():
-            return EthStreamerAdapter(
-                get_connection_from_url(http_provider_uri, provider_timeout),
-                batch_size=WEB3_QUERY_BATCH_SIZE,
-                max_workers=WEB3_QUERY_WORKERS,
-            )
+        transform_strategy = EthETLStrategy(
+            http_provider_uri, provider_timeout, is_trace_only_mode
+        )
 
     else:
         raise NotImplementedError(f"Currency {currency} not implemented")
+
+    logger.info(f"Writing data to {list(sink_config.keys())}")
 
     start_block = 0
     if user_start_block is None:
@@ -779,14 +891,11 @@ def ingest_async(
         print("No blocks to ingest")
         return
 
-    time1 = datetime.now()
-    count = 0
-
     # if info then only print block info and exit
     if info:
         logger.info(
             f"Would ingest block range "
-            f"{start_block:,} - {end_block:,} ({end_block - start_block:,} blks) "
+            f"{start_block:,} - {end_block:,} ({end_block - start_block +1:,} blks) "
             f"into {list(sink_config.keys())} "
         )
 
@@ -794,110 +903,106 @@ def ingest_async(
 
     logger.info(
         f"Ingesting block range "
-        f"{start_block:,} - {end_block:,} ({end_block - start_block:,} blks) "
+        f"{start_block:,} - {end_block:,} ({end_block - start_block +1:,} blks) "
         f"into {list(sink_config.keys())} "
     )
 
     thread_context = threading.local()
 
-    def initializer_worker(thrd_ctx, db):
+    def initializer_worker(thrd_ctx, db, sink_config, strategy):
         logging.disable(logging.INFO)
         new_db_conn = db.clone()
         new_db_conn.open()
         thrd_ctx.db = new_db_conn
-        thrd_ctx.adapter = get_adapter()
+        thrd_ctx.adapter = strategy.get_source_adapter()
+        thrd_ctx.strategy = strategy
+        thrd_ctx.sink_config = sink_config
+        thrd_ctx.TX_HASH_PREFIX_LEN = TX_HASH_PREFIX_LEN
+        thrd_ctx.BLOCK_BUCKET_SIZE = BLOCK_BUCKET_SIZE
 
-    def get_block_and_txs(thrd_ctx, s, e):
-        return thrd_ctx.adapter.export_blocks_and_transactions(s, e)
+    def process_task(thrd_ctx, task, data):
+        print(task, data)
+        return task.run(thrd_ctx, data)
 
-    def get_traces(thrd_ctx, s, e):
-        return thrd_ctx.adapter.export_traces(s, e, True, True)
-
-    def get_logs_and_receipts(thrd_ctx, txs):
-        return thrd_ctx.adapter.export_receipts_and_logs(txs)
-
-    def write_data(thrd_ctx, sink_config, table, data):
-        write_to_sinks(thrd_ctx.db, sink_config, table, data)
+    def submit_tasks(ex, thrd_ctx, tasks, data=None):
+        return [
+            ex.submit(
+                process_task,
+                thrd_ctx,
+                cmd,
+                data,
+            )
+            for cmd in tasks
+        ]
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         with concurrent.futures.ThreadPoolExecutor(
             initializer=initializer_worker,
-            initargs=(
-                thread_context,
-                db,
-            ),
+            initargs=(thread_context, db, sink_config, transform_strategy),
             max_workers=15,  # we write at most 4 tables in parallel
         ) as ex:
-            for block_id in range(start_block, end_block + 1, batch_size):
-                current_end_block = min(end_block, block_id + batch_size - 1)
+            time1 = datetime.now()
+            count = 0
+            interleave_batches = 1
 
-                submissions = []
-                if not mode == "traces_only":
-                    btf = ex.submit(
-                        get_block_and_txs, thread_context, block_id, current_end_block
-                    )
-                    blocks, txs = btf.result()
-                    lrf = ex.submit(get_logs_and_receipts, thread_context, txs)
-                    receipts, logs = lrf.result()
-                    enriched_txs = enrich_transactions(txs, receipts)
+            # Add preprocessing tasks
+            tasks = submit_tasks(
+                ex, thread_context, transform_strategy.pre_processing_tasks()
+            )
 
-                    # reformat and edit data
-                    prepare_transactions_inplace(
-                        enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
-                    )
-                    prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
-                    prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
-                    # ingest into Cassandra
-                    txr = ex.submit(
-                        write_data,
-                        thread_context,
-                        sink_config,
-                        "transaction",
-                        enriched_txs,
+            for block_ids in batch(
+                range(start_block, end_block + 1, batch_size), n=interleave_batches
+            ):
+                # Execute tasks
+                ranges = [(s, min(end_block, s + batch_size - 1)) for s in block_ids]
+                current_end_block = ranges[-1][1]
+                block_id = ranges[-1][0]
+
+                blockrange_tasks = transform_strategy.per_blockrange_tasks()
+
+                # Submit tasks per block range
+                for s, e in ranges:
+                    tasks += submit_tasks(
+                        ex, thread_context, blockrange_tasks, data=(s, e)
                     )
 
-                    lr = ex.submit(write_data, thread_context, sink_config, "log", logs)
-                    br = ex.submit(
-                        write_data, thread_context, sink_config, "block", blocks
-                    )
-                    submissions = [lr, txr, br]
+                blocks = None
+                while len(tasks) > 0:
+                    completed = next(concurrent.futures.as_completed(tasks))
+                    tasks.remove(completed)
+                    for cont_task, data in completed.result():
+                        # Get the data for the progess indicator
+                        if isinstance(cont_task, StoreTask) and data[0] == "block":
+                            blocks = data[1]
 
+                        tasks += submit_tasks(
+                            ex, thread_context, [cont_task], data=data
+                        )
+
+                # Update UI
+                last_block_date_str = "Unknown"
+                if not is_trace_only_mode:
                     last_block = blocks[-1]
                     last_block_ts = last_block["timestamp"]
-                    last_block_date = parse_timestamp(last_block_ts)
-                    last_block_date_formatted = last_block_date.strftime(
+                    last_blk_date = parse_timestamp(last_block_ts)
+                    last_block_date_str = last_blk_date.strftime(
                         GRAPHSENSE_DEFAULT_DATETIME_FORMAT
                     )
-                else:
-                    last_block_date_formatted = "only_traces doesnt supply a timestamp"
 
-                tf = ex.submit(get_traces, thread_context, block_id, current_end_block)
-                traces = tf.result()
-                prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
-                tr = ex.submit(write_data, thread_context, sink_config, "trace", traces)
-                submissions += [tr]
+                count += (current_end_block - block_id + 1) * interleave_batches
 
-                done, not_done = concurrent.futures.wait(submissions)
-
-                # reraising exceptions, TODO: there is probably a nicer solution
-                for t in done:
-                    if t.exception():
-                        raise RuntimeError(t.result())
-
-                count += current_end_block - block_id + 1
-
-                if count % 1000 == 0:
-                    time2 = datetime.now()
-                    time_delta = (time2 - time1).total_seconds()
-                    logging.disable(logging.NOTSET)
-                    logger.info(
-                        f"Last processed block: {current_end_block:,} "
-                        f"[{last_block_date_formatted}] "  # noqa
-                        f"({count/time_delta:.1f} blks/s)"
-                    )
-                    logging.disable(logging.INFO)
-                    time1 = time2
-                    count = 0
+                # if count % 1000 == 0:
+                time2 = datetime.now()
+                time_delta = (time2 - time1).total_seconds()
+                logging.disable(logging.NOTSET)
+                logger.info(
+                    f"Last processed block: {current_end_block:,} "
+                    f"[{last_block_date_str}] "  # noqa
+                    f"({count/time_delta:.1f} blks/s)"
+                )
+                logging.disable(logging.INFO)
+                time1 = time2
+                count = 0
 
                 if check_shutdown_initialized():
                     break
@@ -906,7 +1011,7 @@ def ingest_async(
     logger.info(
         f"Processed block range "
         f"{start_block:,} - {end_block:,} "
-        f" ({last_block_date_formatted})"
+        f" ({last_block_date_str})"
     )
 
     # store configuration details
