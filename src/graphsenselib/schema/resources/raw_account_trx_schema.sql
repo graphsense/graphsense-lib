@@ -98,7 +98,6 @@ CREATE TYPE IF NOT EXISTS trc10_frozen_supply (
     frozen_days bigint
 );
 
-
 CREATE TABLE trc10 (
     owner_address blob,
     name text,

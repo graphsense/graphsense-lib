@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from importlib.resources import files, read_text
 from typing import Iterable, List, Optional
@@ -69,10 +70,16 @@ create_parser = seq(
 )
 
 
+def remove_eol_comments(statement: str) -> str:
+    return re.sub(r"\s*?--.*?$", "", statement, 0, re.MULTILINE)
+
+
 class CreateTableStatement:
     @classmethod
     def from_schema(Cls, schema_str):
-        res = create_parser.parse(normalize_cql_statement(schema_str))
+        res = create_parser.parse(
+            normalize_cql_statement(remove_eol_comments(schema_str))
+        )
         keyspace = res["table"]["keyspace"] if "keyspace" in res["table"] else None
         cols = res["columns"]
         w_compound, wo_compound = split_list_on_condition(
@@ -139,7 +146,8 @@ class Schema:
     def __init__(self, schema_str):
         self.original_schema = schema_str
         self.statements_str = [
-            normalize_cql_statement(s) for s in schema_str.split(";")
+            normalize_cql_statement(remove_eol_comments(s))
+            for s in schema_str.split(";")
         ]
 
     def parse_create_table_statements(self) -> Iterable[CreateTableStatement]:

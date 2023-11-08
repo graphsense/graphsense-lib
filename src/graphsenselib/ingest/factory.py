@@ -52,7 +52,7 @@ class IngestModuleAccount(IngestModule):
             info=info,
             previous_day=previous_day,
             provider_timeout=provider_timeout,
-            mode=mode
+            mode=mode,
         )
 
 

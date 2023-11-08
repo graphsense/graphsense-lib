@@ -1,7 +1,10 @@
+# flake8: noqa: W291
+
 from graphsenselib.schema.schema import (
     CreateTableStatement,
     GraphsenseSchemas,
     create_parser,
+    remove_eol_comments,
     types,
 )
 
@@ -165,6 +168,7 @@ def test_load_and_parse_embedded_schemaFiles():
 
     for f, s in schemas:
         stmts = s.parse_create_table_statements()
+
         for rs in stmts:
             rstmt = CreateTableStatement.from_schema(repr(rs))
             assert rs == rstmt
@@ -178,3 +182,53 @@ def test_types_parsing_map():
 def test_types_parsing_listfrozenoutput():
     res = types.parse("list<FROZEN<tx_input_output>>")
     assert res == "list<frozen<tx_input_output>>"
+
+
+def test_remove_inline_comments():
+    schema = """
+        CREATE TABLE trc10 (
+            owner_address blob,
+            name text,
+            abbr text,
+            total_supply varint, -- bigint probably barely enough, varint just to be safe
+            trx_num varint, -- int probably barely enough, varint just to be safe
+            num varint, -- int probably barely enough, varint just to be safe
+            start_time varint, -- removed 3 last digits to conform with eth, not always zeros, but can be large 3 outliers
+            end_time varint, -- removed 3 last digits to conform with eth, not always zeros, multiple outliers
+            description text,
+            url text,
+            id int,
+            frozen_supply list<FROZEN<trc10_frozen_supply>>,
+            public_latest_free_net_time varint,
+            vote_score smallint,
+            free_asset_net_limit bigint,
+            public_free_asset_net_limit bigint,
+            precision smallint,
+            PRIMARY KEY (id)
+        );
+    """
+
+    schema_target = """
+        CREATE TABLE trc10 (
+            owner_address blob,
+            name text,
+            abbr text,
+            total_supply varint,
+            trx_num varint,
+            num varint,
+            start_time varint,
+            end_time varint,
+            description text,
+            url text,
+            id int,
+            frozen_supply list<FROZEN<trc10_frozen_supply>>,
+            public_latest_free_net_time varint,
+            vote_score smallint,
+            free_asset_net_limit bigint,
+            public_free_asset_net_limit bigint,
+            precision smallint,
+            PRIMARY KEY (id)
+        );
+    """
+
+    assert remove_eol_comments(schema) == schema_target
