@@ -4,10 +4,11 @@ import time
 from functools import wraps
 from typing import Iterable, List, Optional, Sequence, Union
 
-from cassandra.cluster import Cluster
+from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 
 # Session,
 from cassandra.concurrent import execute_concurrent, execute_concurrent_with_args
+from cassandra.policies import RetryPolicy
 from cassandra.query import (
     UNSET_VALUE,
     BatchStatement,
@@ -22,6 +23,44 @@ DEFAULT_TIMEOUT = 60
 
 # create logger
 logger = logging.getLogger(__name__)
+
+
+# taken from https://github.com/apache/cassandra-dtest/blob/0085d21bc687995478e338302e619e82ad4a4644/dtest.py#L88C5-L88C5 # noqa
+class ReadRetryPolicy(RetryPolicy):
+    """
+    A retry policy that retries 5 times by default, but can be configured to
+    retry more times.
+    """
+
+    def __init__(self, max_retries=5):
+        self.max_retries = max_retries
+
+    def on_read_timeout(self, *args, **kwargs):
+        if kwargs["retry_num"] < self.max_retries:
+            logger.debug(
+                "Retrying read after timeout. Attempt #" + str(kwargs["retry_num"])
+            )
+            return (self.RETRY, None)
+        else:
+            return (self.RETHROW, None)
+
+    # def on_write_timeout(self, *args, **kwargs):
+    #     if kwargs["retry_num"] < self.max_retries:
+    #         logger.debug(
+    #             "Retrying write after timeout. Attempt #" + str(kwargs["retry_num"])
+    #         )
+    #         return (self.RETRY, None)
+    #     else:
+    #         return (self.RETHROW, None)
+
+    # def on_unavailable(self, *args, **kwargs):
+    #     if kwargs["retry_num"] < self.max_retries:
+    #         logger.debug(
+    #             "Retrying request after UE. Attempt #" + str(kwargs["retry_num"])
+    #         )
+    #         return (self.RETRY, None)
+    #     else:
+    #         return (self.RETHROW, None)
 
 
 def normalize_cql_statement(stmt: str) -> str:
@@ -262,10 +301,14 @@ class CassandraDb:
 
     def connect(self):
         """Connect to given Cassandra cluster nodes."""
-        self.cluster = Cluster(self.db_nodes)
+        exec_prof = ExecutionProfile(retry_policy=ReadRetryPolicy(), request_timeout=30)
+        self.cluster = Cluster(
+            self.db_nodes,
+            execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
+            connect_timeout=self._session_timeout,
+        )
         try:
             self.session = self.cluster.connect()
-            self.session.default_timeout = self._session_timeout
         except Exception as e:
             raise StorageError(f"Cannot connect to {self.db_nodes}") from e
 
