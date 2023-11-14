@@ -1,12 +1,6 @@
 # graphsense-lib
 
-[![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions)
-
-[![PyPI version](https://badge.fury.io/py/graphsense-lib.svg)](https://badge.fury.io/py/graphsense-lib)
-
-[![Python](https://img.shields.io/pypi/pyversions/graphsense-lib)](https://pypi.org/project/graphsense-lib/)
-
-[![Downloads](https://static.pepy.tech/badge/graphsense-lib)](https://pepy.tech/project/graphsense-lib)
+[![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions) [![PyPI version](https://badge.fury.io/py/graphsense-lib.svg)](https://badge.fury.io/py/graphsense-lib) [![Python](https://img.shields.io/pypi/pyversions/graphsense-lib)](https://pypi.org/project/graphsense-lib/) [![Downloads](https://static.pepy.tech/badge/graphsense-lib)](https://pepy.tech/project/graphsense-lib)
 
 A central repository for python utility functions and everything that deals with the graphsense backend. Its CLI interface can be used to control important graphsense maintainance tasks.
 
