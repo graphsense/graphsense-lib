@@ -539,6 +539,7 @@ def ingest(
     provider_timeout: int,
     mode: str,
 ):
+    logger.info("Writing data sequentially")
     # make sure that only supported sinks are selected.
     if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
         raise BadUserInputError(
@@ -561,7 +562,10 @@ def ingest(
     if currency == "trx":
         if user_start_block == 0:
             user_start_block = 1
-            logger.warning("Start was set to 1 since trx does not know a block 0.")
+            logger.warning(
+                "Start was set to 1 since genesis blocks "
+                "don't have logs and cause issues."
+            )
 
         grpc_provider_uri = first_or_default(sources, lambda x: x.startswith("grpc"))
         if grpc_provider_uri is None:
@@ -823,12 +827,14 @@ def ingest_async(
     sink_config: dict,
     user_start_block: Optional[int],
     user_end_block: Optional[int],
-    batch_size: int,
+    batch_size_user: int,
     info: bool,
     previous_day: bool,
     provider_timeout: int,
     mode: str,
 ):
+    logger.info("Writing data in parallel")
+
     # make sure that only supported sinks are selected.
     if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
         raise BadUserInputError(
@@ -921,7 +927,7 @@ def ingest_async(
         thrd_ctx.BLOCK_BUCKET_SIZE = BLOCK_BUCKET_SIZE
 
     def process_task(thrd_ctx, task, data):
-        print(task, data)
+        # print(task, data)
         return task.run(thrd_ctx, data)
 
     def submit_tasks(ex, thrd_ctx, tasks, data=None):
@@ -935,6 +941,9 @@ def ingest_async(
             for cmd in tasks
         ]
 
+    interleave_batches = 3
+    batch_size = batch_size_user // interleave_batches
+
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         with concurrent.futures.ThreadPoolExecutor(
             initializer=initializer_worker,
@@ -943,7 +952,6 @@ def ingest_async(
         ) as ex:
             time1 = datetime.now()
             count = 0
-            interleave_batches = 1
 
             # Add preprocessing tasks
             tasks = submit_tasks(
@@ -1019,217 +1027,6 @@ def ingest_async(
         ingest_configuration_cassandra(
             db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN)
         )
-
-
-# def ingest_async_wip(
-#     db: AnalyticsDb,
-#     currency: str,
-#     sources: List[str],
-#     sink_config: dict,
-#     user_start_block: Optional[int],
-#     user_end_block: Optional[int],
-#     batch_size: int,
-#     info: bool,
-#     previous_day: bool,
-#     provider_timeout: int,
-#     mode: str,
-# ):
-#     # make sure that only supported sinks are selected.
-#     if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
-#         raise BadUserInputError(
-#             "Unsupported sink selected, supported: cassandra,"
-#             f" parquet; got {list(sink_config.keys())}"
-#         )
-
-#     logger.info(f"Writing data to {list(sink_config.keys())}")
-
-#     http_provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
-
-#     if http_provider_uri is None:
-#         raise BadUserInputError("No http provider (node url) is configured.")
-
-#     thread_proxy = get_connection_from_url(http_provider_uri, provider_timeout)
-#     last_synced_block = get_last_synced_block(thread_proxy)
-#     last_ingested_block = db.raw.get_highest_block()
-#     print_block_info(last_synced_block, last_ingested_block)
-
-#     if currency == "trx":
-#         if user_start_block == 0:
-#             user_start_block = 1
-#             logger.warning(
-#                 "Start was set to 1 since genesis blocks "
-#                 "don't have logs and cause issues."
-#             )
-
-#         grpc_provider_uri = first_or_default(sources, lambda x: x.startswith("grpc"))
-#         if grpc_provider_uri is None:
-#             raise BadUserInputError("No grpc provider (node url) is configured.")
-
-#         # todo: wrap these prepare functions in a class and make one for each currency
-#         prepare_transactions_inplace = prepare_transactions_inplace_trx
-#         prepare_blocks_inplace = prepare_blocks_inplace_trx
-#         prepare_traces_inplace = prepare_traces_inplace_trx
-#         get_adapter = lambda: TronStreamerAdapter(
-#             get_connection_from_url(http_provider_uri, provider_timeout),
-#             grpc_endpoint=grpc_provider_uri,
-#             batch_size=WEB3_QUERY_BATCH_SIZE,
-#             max_workers=WEB3_QUERY_WORKERS,
-#         )
-
-#         if grpc_provider_uri is None:
-#             raise BadUserInputError("No grpc provider (node url) is configured.")
-
-#         trc_token_data = get_trc10_tokens(grpc_provider_uri)
-#         prepare_trc10_tokens_inplace(trc_token_data)
-#         write_to_sinks(db, sink_config, "trc10", trc_token_data)
-#         logger.info("trc10 tokens written")
-
-#     elif currency == "eth":
-#         prepare_transactions_inplace = prepare_transactions_inplace_eth
-#         prepare_blocks_inplace = prepare_blocks_inplace_eth
-#         prepare_traces_inplace = prepare_traces_inplace_eth
-#         get_adapter = lambda: EthStreamerAdapter(
-#             get_connection_from_url(http_provider_uri, provider_timeout),
-#             batch_size=WEB3_QUERY_BATCH_SIZE,
-#             max_workers=WEB3_QUERY_WORKERS,
-#         )
-#     else:
-#         raise NotImplementedError(f"Currency {currency} not implemented")
-
-#     start_block = 0
-#     if user_start_block is None:
-#         if last_ingested_block is not None:
-#             start_block = last_ingested_block + 1
-#     else:
-#         start_block = user_start_block
-
-#     end_block = last_synced_block - get_approx_reorg_backoff_blocks(currency)
-#     if user_end_block is not None:
-#         end_block = user_end_block
-
-#     if previous_day:
-#         end_block = get_last_block_yesterday(thread_proxy)
-
-#     if start_block > end_block:
-#         print("No blocks to ingest")
-#         return
-
-#     time1 = datetime.now()
-#     count = 0
-
-#     # if info then only print block info and exit
-#     if info:
-#         logger.info(
-#             f"Would ingest block range "
-#             f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
-#             f"into {list(sink_config.keys())} "
-#         )
-
-#         return
-
-#     logger.info(
-#         f"Ingesting block range "
-#         f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
-#         f"into {list(sink_config.keys())} "
-#     )
-
-#     thread_context = threading.local()
-
-#     def initializer_worker(thrd_ctx, db, curr):
-#         logging.disable(logging.INFO)
-#         new_db_conn = db.clone()
-#         new_db_conn.open()
-#         thrd_ctx.db = new_db_conn
-#         thrd_ctx.adapter = get_adapter()
-
-#     def get_block_and_txs(thrd_ctx, s, e):
-#         return thrd_ctx.adapter.export_blocks_and_transactions(s, e)
-
-#     def get_traces(thrd_ctx, s, e):
-#         return thrd_ctx.adapter.export_traces(s, e, True, True)
-
-#     def get_logs_and_receipts(thrd_ctx, txs):
-#         return thrd_ctx.adapter.export_receipts_and_logs(txs)
-
-#     def write_data(thrd_ctx, sink_config, table, data):
-#         write_to_sinks(thrd_ctx.db, sink_config, table, data)
-
-#     def etl(s, e):
-#         print("starting etl")
-#         # traces = get_traces(thread_context, s, e)
-#         print("got traces")
-#         blocks, txs = get_block_and_txs(thread_context, s, e)
-#         print("got blocks and txs")
-#         receipts, logs = get_logs_and_receipts(thread_context, txs)
-
-#         print("downloaded data")
-#         enriched_txs = enrich_transactions(txs, receipts)
-#         # reformat and edit data
-#         prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
-#         # prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
-#         prepare_transactions_inplace(
-#             enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
-#         )
-#         prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
-#         print("preparing done")
-#         # ingest into Cassandra
-#         # write_data(thread_context, sink_config, "log", logs)
-#         # write_data(thread_context, sink_config, "trace", traces)
-#         # write_data(thread_context, sink_config, "transaction", enriched_txs)
-#         # write_data(thread_context, sink_config, "block", blocks)
-#         # print("ingestion done")
-
-#     with graceful_ctlc_shutdown() as check_shutdown_initialized:
-#         with concurrent.futures.ThreadPoolExecutor(
-#             initializer=initializer_worker,
-#             initargs=(
-#                 thread_context,
-#                 db,
-#                 currency,
-#             ),
-#             max_workers=10,  # we write at most 4 tables in parallel
-#         ) as ex:
-#             stands_ends = [
-#                 (x, x + batch_size - 1)
-#                 for x in range(start_block, end_block + 1, batch_size)
-#             ]
-#             # fix last batch
-#             stands_ends[-1] = (stands_ends[-1][0], end_block)
-#             tasks = [ex.submit(etl, s, e) for s, e in stands_ends]
-#             results = [t.result() for t in tasks]
-#             """
-#             import time
-#             # Check on tasks every 20 seconds
-#             check_interval = 20  # seconds
-#             while any(not task.done() for task in tasks):
-#                 completed_tasks = [task for task in concurrent.futures.as_completed(tasks) if task.done()] # noqa
-#                 for t in completed_tasks:
-#                     if t.exception():
-#                         raise RuntimeError(t.result())
-#                     # Process the completed task's result as needed
-
-#                 time.sleep(check_interval)
-
-#                 for t in tasks:
-#                     if t.exception():
-#                         raise RuntimeError(t.result())
-
-#                 if check_shutdown_initialized():
-#                     break
-
-#             """
-#     # last_block_date = parse_timestamp(last_block_ts)
-#     logger.info(
-#         f"Processed block range "
-#         f"{start_block:,} - {end_block:,} "
-#         # f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
-#     )
-
-#     # store configuration details
-#     if "cassandra" in sink_config.keys():
-#         ingest_configuration_cassandra(
-#             db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN)
-#         )
 
 
 def export_csv(

@@ -90,6 +90,13 @@ def ingesting():
     default="legacy",
     multiple=False,
 )
+@click.option(
+    "--version",
+    type=int,
+    default=1,
+    help="Which version of the ingest to use, 1: legacy (sequential), 2:parallel"
+    "(default: 1)",
+)
 def ingest(
     env,
     currency,
@@ -102,6 +109,7 @@ def ingest(
     previous_day,
     create_schema,
     mode,
+    version,
 ):
     """Ingests cryptocurrency data form the client/node to the graphsense db
     \f
@@ -152,7 +160,7 @@ def ingest(
         )
 
     with DbFactory().from_config(env, currency) as db:
-        IngestFactory().from_config(env, currency).ingest(
+        IngestFactory().from_config(env, currency, version).ingest(
             db=db,
             currency=currency,
             sources=sources,
