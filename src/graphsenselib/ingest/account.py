@@ -664,17 +664,16 @@ def ingest(
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
 
-            if count % 1000 == 0:
-                last_block_date = parse_timestamp(last_block_ts)
-                time2 = datetime.now()
-                time_delta = (time2 - time1).total_seconds()
-                logger.info(
-                    f"Last processed block: {current_end_block:,} "
-                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                    f"({count/time_delta:.1f} blks/s)"
-                )
-                time1 = time2
-                count = 0
+            last_block_date = parse_timestamp(last_block_ts)
+            time2 = datetime.now()
+            time_delta = (time2 - time1).total_seconds()
+            logger.info(
+                f"Last processed block: {current_end_block:,} "
+                f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                f"({count/time_delta:.1f} blks/s)"
+            )
+            time1 = time2
+            count = 0
 
             if check_shutdown_initialized():
                 break
