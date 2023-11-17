@@ -247,7 +247,7 @@ class GraphsenseSchemas:
                 )
 
     def create_new_transformed_ks_if_not_exist(
-        self, env, currency, suffix=None
+        self, env, currency, suffix=None, no_date=False
     ) -> Optional[str]:
         keyspace_type = "transformed"
         with DbFactory().from_config(env, currency) as db:
@@ -263,7 +263,9 @@ class GraphsenseSchemas:
                 )
 
             date_str = datetime.now().strftime("%Y%m%d")
-            keyspace_name = f"{currency}_transformed_{date_str}"
+            keyspace_name = f"{currency}_transformed"
+            if not no_date:
+                keyspace_name = f"{keyspace_name}_{date_str}"
             if suffix is not None:
                 keyspace_name = f"{keyspace_name}_{suffix}"
             c_db = db.db()
