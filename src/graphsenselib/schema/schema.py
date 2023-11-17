@@ -20,6 +20,8 @@ from ..utils.parsing import (
     tableidentifier,
 )
 
+SCHEMA_TYPE_MAPPING_OVERWRITES = {("account_trx", "transformed"): "account"}
+
 MAGIC_SCHEMA_CONSTANT = "0x8BADF00D"
 
 logger = logging.getLogger(__name__)
@@ -195,6 +197,8 @@ class GraphsenseSchemas:
         self, currency, keyspace_type=None, no_extensions=False
     ) -> List[tuple[str, str]]:
         schema_type = currency_to_schema_type[currency]
+        if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
+            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
         return [
             x
             for x in self.get_by_schema_type(
@@ -296,6 +300,8 @@ class GraphsenseSchemas:
     def get_by_schema_type(
         self, schema_type, keyspace_type=None
     ) -> List[tuple[str, str]]:
+        if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
+            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
         return [
             (f, s)
             for (f, s) in self.get_all_schemas()

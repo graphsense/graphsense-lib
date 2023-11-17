@@ -174,6 +174,24 @@ def test_load_and_parse_embedded_schemaFiles():
             assert rs == rstmt
 
 
+def test_get_schema_by_type():
+    schemas = GraphsenseSchemas().get_by_schema_type("account_trx", "transformed")
+    assert len(schemas) > 1
+
+    schemas = GraphsenseSchemas().get_by_schema_type("account", "transformed")
+    assert len(schemas) > 1
+
+    schemas = GraphsenseSchemas().get_by_currency(
+        "eth", "transformed", no_extensions=True
+    )
+    assert len(schemas) == 1
+
+    schemas = GraphsenseSchemas().get_by_currency(
+        "trx", "transformed", no_extensions=True
+    )
+    assert len(schemas) == 1
+
+
 def test_types_parsing_map():
     res = types.parse("map<integer, float>")
     assert res == "map<integer, float>"
