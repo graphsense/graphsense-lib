@@ -122,9 +122,10 @@ CREATE TABLE address_outgoing_relations_secondary_ids (
 );
 
 CREATE TABLE summary_statistics (
+    id int PRIMARY KEY,
     timestamp int,
     timestamp_transform int,
-    no_blocks bigint PRIMARY KEY,
+    no_blocks bigint,
     no_blocks_transform bigint,
     no_transactions bigint,
     no_addresses bigint,

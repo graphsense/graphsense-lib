@@ -3,6 +3,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+
+## [23.09/1.9.0] 2023-11-21
+### fixed
+- new pk for summary stats to avoid duplicate entries.
+
+## [23.09/1.8.2] 2023-10-06
+### fixed
+- handle error missing quotes field on coinmarketcap exchange rates ingest
+
 ## [23.09/1.8.1] 2023-10-06
 ### fixed
 - handle zcash shielded inputs in import
