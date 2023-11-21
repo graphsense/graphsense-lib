@@ -115,9 +115,10 @@ CREATE TABLE cluster_outgoing_relations (
 );
 
 CREATE TABLE summary_statistics (
+    id int PRIMARY KEY,
     timestamp int,
     timestamp_transform int,
-    no_blocks bigint PRIMARY KEY,
+    no_blocks bigint,
     no_blocks_transform bigint,
     no_transactions bigint,
     no_addresses bigint,

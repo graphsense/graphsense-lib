@@ -42,6 +42,7 @@ PSEUDO_ADDRESS_AND_IDS = {COINBASE_PSEUDO_ADDRESS: 0}
 
 DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
     **{
+        "id": 0,
         "timestamp": 0,
         "timestamp_transform": 0,
         "no_blocks": 0,
@@ -644,12 +645,12 @@ def get_bookkeeping_changes(
         if current_statistics is not None and current_statistics.no_blocks != no_blocks:
             if not patch_mode:
                 assert current_statistics.no_blocks < no_blocks
-            changes.append(
-                DbChange.delete(
-                    table="summary_statistics",
-                    data={"no_blocks": current_statistics.no_blocks},
-                )
-            )
+            # changes.append(
+            #     DbChange.delete(
+            #         table="summary_statistics",
+            #         data={"no_blocks": current_statistics.no_blocks},
+            #     )
+            # )
         changes.append(DbChange.new(table="summary_statistics", data=statistics))
 
         lg.debug(f"Statistics: {statistics}")
@@ -685,7 +686,6 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
         cluster_seen = {}
         cluster_new = {}
         addresses_new = {}
-        seen_summary_delete = False
         current_summary_stats = (
             db.transformed.get_summary_statistics() or DEFAULT_SUMMARY_STATISTICS
         )
@@ -1008,9 +1008,6 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 change.action == DbChangeType.NEW
                 and change.table == "summary_statistics"
             ):
-                if current_summary_stats.no_blocks < change.data["no_blocks"]:
-                    assert seen_summary_delete
-
                 if not (current_summary_stats.no_blocks <= change.data["no_blocks"]):
                     raise ValueError(
                         "Violation: no_blocks db "
@@ -1067,11 +1064,7 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 #         f"{change.data['timestamp']}"
                 #     )
             elif change.action == DbChangeType.DELETE:
-                seen_summary_delete = True
-                if not (change.table == "summary_statistics"):
-                    raise ValueError(
-                        f"Deletes are only allowed for summary_stats: {change}"
-                    )
+                raise ValueError(f"Deletes are not allowed: {change}")
             elif (
                 change.action == DbChangeType.NEW
                 and change.table == "address_transactions"
