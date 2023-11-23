@@ -83,7 +83,13 @@ def ingesting():
 @click.option(
     "--mode",
     type=click.Choice(
-        ["legacy", "utxo_with_tx_graph", "utxo_only_tx_graph", "account_traces_only"],
+        [
+            "legacy",
+            "utxo_with_tx_graph",
+            "utxo_only_tx_graph",
+            "account_traces_only",
+            "account_fees_only",
+        ],
         case_sensitive=False,
     ),
     help="Importer mode",

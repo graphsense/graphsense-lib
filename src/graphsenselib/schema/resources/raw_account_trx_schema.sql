@@ -118,3 +118,19 @@ CREATE TABLE trc10 (
     precision smallint,
     PRIMARY KEY (id)
 );
+
+
+CREATE TABLE fee (
+    tx_hash_prefix text,
+    tx_hash blob,
+    fee bigint,
+    energy_usage bigint,
+    energy_fee bigint,
+    origin_energy_usage bigint,
+    energy_usage_total bigint,
+    net_usage bigint,
+    net_fee bigint,
+    result int,
+    energy_penalty_total bigint,
+    PRIMARY KEY (tx_hash_prefix, tx_hash)
+);

@@ -101,6 +101,26 @@ def decode_block_to_traces(block_number: int, block: TransactionInfoList) -> Lis
     return traces_per_block
 
 
+def decode_fees(block_number: int, block: TransactionInfoList) -> List:
+    transactionInfo = block.transactionInfo
+
+    return [
+        {
+            "fee": tx.fee,
+            "tx_hash": tx.id.hex(),
+            "energy_usage": tx.receipt.energy_usage,
+            "energy_fee": tx.receipt.energy_fee,
+            "origin_energy_usage": tx.receipt.origin_energy_usage,
+            "energy_usage_total": tx.receipt.energy_usage_total,
+            "net_usage": tx.receipt.net_usage,
+            "net_fee": tx.receipt.net_fee,
+            "result": tx.receipt.result,
+            "energy_penalty_total": tx.receipt.net_fee,
+        }
+        for tx in transactionInfo
+    ]
+
+
 class TronExportTracesJob:
     def __init__(
         self,
@@ -121,11 +141,14 @@ class TronExportTracesJob:
         wallet_stub = WalletStub(channel)
 
         traces = []
+        fees = []
         for i in range(self.start_block, self.end_block + 1):
             block = wallet_stub.GetTransactionInfoByBlockNum(NumberMessage(num=i))
 
             traces_per_block = decode_block_to_traces(i, block)
+            fees_per_block = decode_fees(i, block)
 
             traces.extend(traces_per_block)
+            fees.extend(fees_per_block)
 
-        return traces
+        return traces, fees
