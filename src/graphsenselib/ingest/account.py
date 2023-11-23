@@ -186,7 +186,7 @@ class AccountStreamerAdapter:
         )
         job.run()
         traces = exporter.get_items("trace")
-        return traces
+        return traces, None
 
 
 class EthStreamerAdapter(AccountStreamerAdapter):
@@ -468,6 +468,16 @@ def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
             item[elem] = evm_to_bytes(item[elem])
 
 
+def prepare_fees_inplace(fees: Iterable, tx_hash_prefix_len: int) -> None:
+    blob_colums = ["tx_hash"]
+    for item in fees:
+        hash_slice = slice(2, 2 + tx_hash_prefix_len)
+        item["tx_hash_prefix"] = item["tx_hash"][hash_slice]
+
+        for elem in blob_colums:
+            item[elem] = evm_to_bytes(item[elem])
+
+
 def prepare_trc10_tokens_inplace(items: Iterable):
     def decode_bytes(bytes_):
         if bytes_ is None:
@@ -642,7 +652,9 @@ def ingest(
                     block_id, current_end_block
                 )
                 receipts, logs = adapter.export_receipts_and_logs(txs)
-                traces = adapter.export_traces(block_id, current_end_block, True, True)
+                traces, fees = adapter.export_traces(
+                    block_id, current_end_block, True, True
+                )
                 enriched_txs = enrich_transactions(txs, receipts)
 
             # reformat and edit data
@@ -652,6 +664,9 @@ def ingest(
                 enriched_txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE
             )
             prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
+            if fees is not None:
+                prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN)
+                write_to_sinks(db, sink_config, "fee", fees)
 
             # ingest into Cassandra
             write_to_sinks(db, sink_config, "log", logs)
@@ -716,11 +731,24 @@ class LoadBlockTask(AbstractTask):
 
 
 class LoadTracesTask(AbstractTask):
+    def __init__(self, fees_only_mode: bool = False):
+        self.fees_only_mode = fees_only_mode
+
     def run(self, ctx, data):
         start, end = data
-        traces = ctx.adapter.export_traces(start, end, True, True)
+        traces, fees = ctx.adapter.export_traces(start, end, True, True)
         tracest = ctx.strategy.transform_traces(traces, ctx.BLOCK_BUCKET_SIZE)
-        return [(StoreTask(), ("trace", tracest))]
+        fees = ctx.strategy.transform_fees(fees, ctx.TX_HASH_PREFIX_LEN)
+
+        tasks = []
+
+        if not self.fees_only_mode:
+            tasks.append((StoreTask(), ("trace", tracest)))
+
+        if fees is not None:
+            tasks.append((StoreTask(), ("fee", fees)))
+
+        return tasks
 
 
 class LoadTrc10TokenInfoTask(AbstractTask):
@@ -732,15 +760,20 @@ class LoadTrc10TokenInfoTask(AbstractTask):
 
 class EthETLStrategy(AbstractETLStrategy):
     def __init__(
-        self, http_provider_uri: str, provider_timeout: int, is_trace_only_mode: bool
+        self,
+        http_provider_uri: str,
+        provider_timeout: int,
+        is_trace_only_mode: bool,
+        fees_only_mode: bool = False,
     ):
         self.http_provider_uri = http_provider_uri
         self.provider_timeout = provider_timeout
         self.is_trace_only_mode = is_trace_only_mode
+        self.fees_only_mode = fees_only_mode
 
     def per_blockrange_tasks(self):
         return (
-            [LoadTracesTask()]
+            [LoadTracesTask(self.fees_only_mode)]
             if self.is_trace_only_mode
             else [LoadBlockTask(), LoadTracesTask()]
         )
@@ -748,6 +781,11 @@ class EthETLStrategy(AbstractETLStrategy):
     def transform_logs(self, logs, block_bucket_size: int):
         prepare_logs_inplace(logs, block_bucket_size)
         return logs
+
+    def transform_fees(self, fees, tx_hash_prefix_len: int):
+        if fees is not None:
+            prepare_fees_inplace(fees, tx_hash_prefix_len)
+        return fees
 
     def transform_transactions(
         self, enriched_txs, tx_hash_prefix_len: int, block_bucket_size: int
@@ -783,8 +821,11 @@ class TrxETLStrategy(EthETLStrategy):
         provider_timeout: int,
         grpc_provider_uri: str,
         is_trace_only_mode: bool,
+        fees_only_mode: bool = False,
     ):
-        super().__init__(http_provider_uri, provider_timeout, is_trace_only_mode)
+        super().__init__(
+            http_provider_uri, provider_timeout, is_trace_only_mode, fees_only_mode
+        )
         self.grpc_provider_uri = grpc_provider_uri
 
     def pre_processing_tasks(self):
@@ -841,7 +882,8 @@ def ingest_async(
             f" parquet; got {list(sink_config.keys())}"
         )
 
-    is_trace_only_mode = mode == "account_traces_only"
+    fees_only_mode = mode == "account_fees_only"
+    is_trace_only_mode = mode == "account_traces_only" or fees_only_mode
 
     http_provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
     if http_provider_uri is None:
@@ -865,7 +907,11 @@ def ingest_async(
             raise BadUserInputError("No grpc provider (node url) is configured.")
 
         transform_strategy = TrxETLStrategy(
-            http_provider_uri, provider_timeout, grpc_provider_uri, is_trace_only_mode
+            http_provider_uri,
+            provider_timeout,
+            grpc_provider_uri,
+            is_trace_only_mode,
+            fees_only_mode=fees_only_mode,
         )
 
     elif currency == "eth":
@@ -1140,7 +1186,9 @@ def export_csv(
                     # to avoid errors we drop them
                     txs = [tx for tx in txs if tx["block_number"] > 0]
                 receipts, logs = adapter.export_receipts_and_logs(txs)
-                traces = adapter.export_traces(block_id, current_end_block, True, True)
+                traces, fees = adapter.export_traces(
+                    block_id, current_end_block, True, True
+                )
                 enriched_txs = enrich_transactions(txs, receipts)
 
             block_list.extend(format_blocks_csv(blocks))
