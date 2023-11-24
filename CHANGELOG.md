@@ -3,12 +3,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-
-## [23.09/1.9.0] 2023-11-21
+## [23.09/2.0.0] 2023-11-21
 ### fixed
 - new pk for summary stats to avoid duplicate entries.
 
-## [23.09/1.8.2] 2023-10-06
+## [23.09/1.8.3] 2023-11-07
+### fixed
+- ingest default config to raw keyspace on create to avoid problems.
+
+## [23.09/1.8.2] 2023-10-24
 ### fixed
 - handle error missing quotes field on coinmarketcap exchange rates ingest
 
