@@ -250,6 +250,18 @@ class GraphsenseSchemas:
                     f"with replication config {replication_config}."
                 )
 
+                if not keyspacedb.is_configuration_populated():
+                    config_defaults = (
+                        config.get_keyspace_config(env, currency)
+                        .keyspace_setup_config[keyspace_type]
+                        .data_configuration
+                    )
+                    logger.warning(
+                        "Config table in transformed not populated."
+                        f" Setting default values {config_defaults}."
+                    )
+                    keyspacedb.ingest("configuration", [config_defaults])
+
     def create_new_transformed_ks_if_not_exist(
         self, env, currency, suffix=None, no_date=False
     ) -> Optional[str]:
