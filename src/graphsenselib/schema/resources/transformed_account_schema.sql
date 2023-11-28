@@ -77,6 +77,8 @@ CREATE TABLE address (
     address blob,
     no_incoming_txs int,
     no_outgoing_txs int,
+    no_incoming_txs_code int,
+    no_outgoing_txs_code int,
     first_tx_id int,
     last_tx_id int,
     total_received FROZEN <currency>,
@@ -85,6 +87,8 @@ CREATE TABLE address (
     total_tokens_spent map<text, frozen <currency>>,
     in_degree int,
     out_degree int,
+    in_degree_code int,
+    out_degree_code int,
     is_contract boolean,
     PRIMARY KEY (address_id_group, address_id)
 );
