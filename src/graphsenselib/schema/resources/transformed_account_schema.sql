@@ -29,7 +29,7 @@ CREATE TABLE exchange_rates (
 
 CREATE TABLE transaction_ids_by_transaction_id_group (
     transaction_id_group int,
-    transaction_id int,
+    transaction_id bigint,
     transaction blob,
     PRIMARY KEY (transaction_id_group, transaction_id)
 );
@@ -37,7 +37,7 @@ CREATE TABLE transaction_ids_by_transaction_id_group (
 CREATE TABLE transaction_ids_by_transaction_prefix (
     transaction_prefix text,
     transaction blob,
-    transaction_id int,
+    transaction_id bigint,
     PRIMARY KEY (transaction_prefix, transaction)
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE address_ids_by_address_prefix (
 CREATE TABLE block_transactions(
     block_id_group int,
     block_id int,
-    txs list<int>,
+    txs list<bigint>,
     PRIMARY KEY (block_id_group, block_id)
 );
 
@@ -59,7 +59,7 @@ CREATE TABLE address_transactions (
     address_id_group int,
     address_id_secondary_group int,
     address_id int,
-    transaction_id int,
+    transaction_id bigint,
     tx_reference FROZEN <tx_reference>,
     currency text,
     is_outgoing boolean,
@@ -79,8 +79,8 @@ CREATE TABLE address (
     no_outgoing_txs int,
     no_incoming_txs_code int,
     no_outgoing_txs_code int,
-    first_tx_id int,
-    last_tx_id int,
+    first_tx_id bigint,
+    last_tx_id bigint,
     total_received FROZEN <currency>,
     total_spent FROZEN <currency>,
     total_tokens_received map<text, frozen <currency>>,
