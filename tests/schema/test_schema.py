@@ -250,3 +250,23 @@ def test_remove_inline_comments():
     """
 
     assert remove_eol_comments(schema) == schema_target
+
+
+def test_schema_trx_loads():
+    schema = [
+        s
+        for (n, s) in GraphsenseSchemas().get_by_schema_type(
+            "account_trx", "transformed"
+        )
+        if n == "transformed_account_trx_schema.sql"
+    ]
+    assert len(schema) == 1
+    schema = schema[0]
+
+    create_t_bt = [
+        x
+        for x in schema.parse_create_table_statements()
+        if x.table == "block_transactions"
+    ]
+    assert len(create_t_bt) == 1
+    assert create_t_bt[0].columns["tx_id"] == "bigint"
