@@ -51,9 +51,9 @@ CREATE TABLE address_ids_by_address_prefix (
 CREATE TABLE block_transactions(
     block_id_group int,
     block_id int,
-    tx_id int,
-    PRIMARY KEY (block_id_group, block_id, tx_id)
-) WITH CLUSTERING ORDER BY (block_id DESC, tx_id DESC);
+    txs list<int>,
+    PRIMARY KEY (block_id_group, block_id)
+);
 
 CREATE TABLE address_transactions (
     address_id_group int,
