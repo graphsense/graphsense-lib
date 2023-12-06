@@ -29,6 +29,7 @@ from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
 from ..utils import (
     batch,
+    check_timestamp,
     first_or_default,
     hex_to_bytearray,
     parse_timestamp,
@@ -418,7 +419,8 @@ def prepare_transactions_inplace_trx(
     prepare_transactions_inplace_eth(items, tx_hash_prefix_len, block_bucket_size)
 
     for tx in items:
-        tx["block_timestamp"] = tx["block_timestamp"] // 1000
+        # tx["block_timestamp"] = tx["block_timestamp"] // 1000
+        check_timestamp(tx["block_timestamp"])
 
 
 def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
