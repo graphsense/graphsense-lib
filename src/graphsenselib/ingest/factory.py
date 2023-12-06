@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
+from warnings import warn
 
 from ..config import currency_to_schema_type
 from ..db import AnalyticsDb
@@ -121,6 +122,7 @@ class IngestFactory:
     def from_config(self, env, currency, version) -> IngestModule:
         schema_type = currency_to_schema_type.get(currency, "")
         if schema_type in ["account", "account_trx"] and version == 1:
+            warn("Serial ingestion is deprecated, use asynchronous ingestion instead.")
             return IngestModuleAccount()
         if schema_type in ["account", "account_trx"] and version == 2:
             return IngestModuleAccountAsync()

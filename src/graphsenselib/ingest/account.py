@@ -379,7 +379,8 @@ def prepare_blocks_inplace_trx(items, block_bucket_size):
     prepare_blocks_inplace_eth(items, block_bucket_size)
 
     for b in items:
-        b["timestamp"] = b["timestamp"]
+        # b["timestamp"] = b["timestamp"]
+        check_timestamp(b["timestamp"])
 
 
 def prepare_transactions_inplace_eth(
@@ -501,6 +502,9 @@ def prepare_trc10_tokens_inplace(items: Iterable):
         for field in times:
             if field in item:
                 item[field] = item[field] // 1000
+                # there are some known anomalous timestamps in the data.
+                # We dont want to send too many warnings therefore omit check.
+                # check_timestamp(item[field])
 
     # cast id to int
     for item in items:
@@ -589,9 +593,12 @@ def ingest(
             batch_size=WEB3_QUERY_BATCH_SIZE,
             max_workers=WEB3_QUERY_WORKERS,
         )
-        # compose prepare_transactions_inplace_trx
-        # = prepare_transactions_inplace > prepare_transactions_inplace_trx
-        # todo: wrap these prepare functions in a class and make one for each currency
+
+        # ingest trc10 table
+        token_infos = adapter.get_trc10_token_infos()
+        prepare_trc10_tokens_inplace(token_infos)
+        write_to_sinks(db, sink_config, "trc10", token_infos)
+
         prepare_transactions_inplace = prepare_transactions_inplace_trx
         prepare_blocks_inplace = prepare_blocks_inplace_trx
         prepare_traces_inplace = prepare_traces_inplace_trx
