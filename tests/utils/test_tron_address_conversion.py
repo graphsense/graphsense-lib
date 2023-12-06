@@ -6,6 +6,7 @@ from graphsenselib.utils.tron import (
     decode_note,
     evm_to_bytes,
     evm_to_tron_address_string,
+    partial_tron_to_partial_evm,
     tron_address_equal,
     tron_address_to_bytes,
     tron_address_to_evm_string,
@@ -85,3 +86,18 @@ def test_tron_bijection():
 
 def test_decode_note():
     assert decode_note("63616c6c") == "call"
+
+
+def test_partial_prefix_conversion():
+    eth_style = "0x5095d4f4d26ebc672ca12fc0e3a48d6ce3b169d2"
+    tron_style = "THKJYuUmMKKARNf7s2VT51g5uPY6KEqnat"
+
+    for slice_len in range(34):
+        actual = eth_style[:slice_len]
+        converted = partial_tron_to_partial_evm(tron_style[:slice_len])
+        assert actual == converted
+
+    for slice_len in range(34, 43):
+        actual = eth_style[:slice_len]
+        converted = partial_tron_to_partial_evm(tron_style[:slice_len])
+        assert actual == converted[:slice_len]
