@@ -1,2 +1,0 @@
-class BadUserInputError(Exception):
-    pass

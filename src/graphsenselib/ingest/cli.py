@@ -83,25 +83,11 @@ def ingesting():
 @click.option(
     "--mode",
     type=click.Choice(
-        [
-            "legacy",
-            "utxo_with_tx_graph",
-            "utxo_only_tx_graph",
-            "account_traces_only",
-            "account_fees_only",
-        ],
-        case_sensitive=False,
+        ["legacy", "utxo_with_tx_graph", "utxo_only_tx_graph"], case_sensitive=False
     ),
     help="Importer mode",
     default="legacy",
     multiple=False,
-)
-@click.option(
-    "--version",
-    type=int,
-    default=1,
-    help="Which version of the ingest to use, 1: legacy (sequential), 2:parallel"
-    "(default: 1)",
 )
 def ingest(
     env,
@@ -115,7 +101,6 @@ def ingest(
     previous_day,
     create_schema,
     mode,
-    version,
 ):
     """Ingests cryptocurrency data form the client/node to the graphsense db
     \f
@@ -124,22 +109,14 @@ def ingest(
         currency (str): currency to work on
     """
     ks_config = config.get_keyspace_config(env, currency)
-    sources = ks_config.ingest_config.all_node_references
+    provider = ks_config.ingest_config.node_reference
     parquet_file_sink_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
 
-    if (
-        (
-            ks_config.schema_type in ["account", "account_trx"]
-            and mode.startswith("utxo_")
-        )
-        or ks_config.schema_type == "utxo"
-        and not mode.startswith("utxo_")
-    ):
+    if ks_config.schema_type == "account" and mode != "legacy":
         logger.error(
-            f"Mode {mode} is not available for "
-            f"{ks_config.schema_type} type currencies. Exiting."
+            "Only legacy mode is available for account type currencies. Exiting."
         )
         sys.exit(11)
 
@@ -166,10 +143,10 @@ def ingest(
         )
 
     with DbFactory().from_config(env, currency) as db:
-        IngestFactory().from_config(env, currency, version).ingest(
+        IngestFactory().from_config(env, currency).ingest(
             db=db,
             currency=currency,
-            sources=sources,
+            source=provider,
             sink_config={k: create_sink_config(k, currency) for k in sinks},
             user_start_block=start_block,
             user_end_block=end_block,
@@ -265,7 +242,7 @@ def export_csv(
         sys.exit(11)
 
     ks_config = config.get_keyspace_config(env, currency)
-    source_node_uri = ks_config.ingest_config.get_first_node_reference()
+    provider = ks_config.ingest_config.node_reference
     csv_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "csv", None
     )
@@ -285,7 +262,7 @@ def export_csv(
         export_csv(
             db=db,
             currency=currency,
-            provider_uri=source_node_uri,
+            provider_uri=provider,
             directory=csv_directory,
             user_start_block=start_block,
             user_end_block=end_block,
