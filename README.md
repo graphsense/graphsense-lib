@@ -1,8 +1,6 @@
 # graphsense-lib
 
-[![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions)
-
-[![PyPI version](https://badge.fury.io/py/graphsense-lib.svg)](https://badge.fury.io/py/graphsense-lib)
+[![Test and Build Status](https://github.com/graphsense/graphsense-lib/actions/workflows/run_tests.yaml/badge.svg)](https://github.com/graphsense/graphsense-lib/actions) [![PyPI version](https://badge.fury.io/py/graphsense-lib.svg)](https://badge.fury.io/py/graphsense-lib) [![Python](https://img.shields.io/pypi/pyversions/graphsense-lib)](https://pypi.org/project/graphsense-lib/) [![Downloads](https://static.pepy.tech/badge/graphsense-lib)](https://pepy.tech/project/graphsense-lib)
 
 A central repository for python utility functions and everything that deals with the graphsense backend. Its CLI interface can be used to control important graphsense maintainance tasks.
 
@@ -244,6 +242,7 @@ or
 
 ## Development
 
+Caution: python 3.11 is currently not supported. Please use ```python3.10```.
 
 it is advised to use a virtual environment (venv) for development. Run the following command to initialize one
 ```bash
@@ -306,3 +305,6 @@ To apply the tags run
 ```bash
     > make tag-version
 ```
+
+### Open SSL - Errors running test suites
+Some components used by graphsense-lib use OpenSSL, to provide certain hash functions. Since OpenSSL 3.0 some hash functions needed are not available anymore by default (e.g. ripemd160). This leads to errors while running the test suite. To avoid these errors, enable legacy providers in the OpenSSL config. An example of the necessary changes can be found in the "fix openssl legacy mode" step in .github/workflows/run_tests.yaml
