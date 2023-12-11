@@ -22,7 +22,7 @@ class CrashRecoverer:
 
     """
     Class permanently stores (in a file) a crash hint if a program crashes in a critical
-    If the class is reinstatement with the same identifier and a crash hint is present
+    If the class is reinstantiated with the same identifier and a crash hint is present
     the class does not allow the program to enter the critical section again until
     the crash and the underlying inconsistency is resolved
     (e.g. by calling leave_recover_mode) or by deleting the crash hint file.

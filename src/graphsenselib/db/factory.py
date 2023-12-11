@@ -21,6 +21,8 @@ def get_db_types_by_schema_type(schema_type) -> DbTypeStrategy:
         return DbTypeStrategy(RawDbUtxo, TransformedDbUtxo, AddressUtxo)
     elif schema_type == "account":
         return DbTypeStrategy(RawDbAccount, TransformedDbAccount, AddressAccount)
+    elif schema_type == "account_trx":
+        return DbTypeStrategy(RawDbAccount, TransformedDbAccount, AddressAccount)
     else:
         raise ValueError(f"{schema_type} not yet supported.")
 

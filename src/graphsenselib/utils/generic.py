@@ -1,6 +1,6 @@
 import bisect
 import itertools
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 import pandas as pd
 
@@ -39,6 +39,13 @@ class GenericArrayFacade:
 
     def __getitem__(self, key):
         return self.getter(key)
+
+
+def remove_prefix(s: str, prefix: str) -> str:
+    if s.startswith(prefix):
+        return s[len(prefix) :]
+    else:
+        return s
 
 
 def group_by(lst: Iterable, key) -> dict:
@@ -124,3 +131,7 @@ def subkey_exists(item, key_list) -> bool:
         return subkey_exists(item[h], rest)
     else:
         return False
+
+
+def first_or_default(seq: Sequence[object], pred, default=None):
+    return next(filter(pred, seq), default)

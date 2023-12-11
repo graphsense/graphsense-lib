@@ -1025,16 +1025,16 @@ class AnalyticsDb:
     def __init__(
         self, raw: KeyspaceConfig, transformed: KeyspaceConfig, db: CassandraDb
     ):
-        self._raw_keyspace = raw.keyspace_name
-        self._transformed_keyspace = transformed.keyspace_name
+        self._raw_config = raw
+        self._transformed_config = transformed
         self._db = db
         self._raw = raw.db_type(raw, db)
         self._transformed = transformed.db_type(transformed, db)
 
     def __repr__(self):
         return (
-            f"Raw: {self._raw_keyspace}, "
-            f"Transformed: {self._transformed_keyspace}, "
+            f"Raw: {self._raw_config.keyspace_name}, "
+            f"Transformed: {self._transformed_config.keyspace_name}, "
             f"DB: {self._db}"
         )
 
@@ -1050,6 +1050,10 @@ class AnalyticsDb:
     def __enter__(self):
         self.open()
         return self
+
+    def clone(self) -> "AnalyticsDb":
+        db_cloned = self._db.clone()
+        return AnalyticsDb(self._raw_config, self._transformed_config, db_cloned)
 
     def __exit__(self, exc_type, exc_value, tb):
         self.close()
