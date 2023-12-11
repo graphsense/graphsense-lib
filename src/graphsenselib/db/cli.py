@@ -42,14 +42,22 @@ def state(env, currency):
         with DbFactory().from_config(env, cur) as db:
             hb_ft = db.transformed.get_highest_block_fulltransform()
             hb_raw = db.raw.get_highest_block()
-            start_block = db.transformed.get_highest_block_delta_updater() + 1
-            latest_address_id = db.transformed.get_highest_address_id()
-            latest_clstr_id = db.transformed.get_highest_cluster_id()
+            start_block = (db.transformed.get_highest_block_delta_updater() or -1) + 1
+            transformed_exists = db.transformed.exists()
+            if transformed_exists:
+                latest_address_id = db.transformed.get_highest_address_id()
+                latest_clstr_id = db.transformed.get_highest_cluster_id()
+            else:
+                latest_address_id = 0
+                latest_clstr_id = 0
             console.print(f"Last addr id:       {latest_address_id:12}")
             if latest_clstr_id is not None:
                 console.print(f"Last cltr id:       {latest_clstr_id:12}")
             console.print(f"Raw     Config:      {db.raw.get_configuration()}")
-            console.print(f"Transf. Config:      {db.transformed.get_configuration()}")
+            if transformed_exists:
+                console.print(
+                    f"Transf. Config:      {db.transformed.get_configuration()}"
+                )
             end_block = db.raw.find_highest_block_with_exchange_rates()
             console.print(
                 f"Last delta-transform: {(start_block -1):10}"
@@ -64,16 +72,17 @@ def state(env, currency):
                 f" ({db.raw.get_block_timestamp(end_block)}) "
                 "(with exchanges rates)."
             )
-            console.print(
-                f"Transf. behind raw:   {(end_block - (start_block - 1)):10}"
-                f" ({db.raw.get_block_timestamp(end_block - (start_block - 1))})"
-                " (delta-transform)"
-            )
-            console.print(
-                f"Transf. behind raw:   {(end_block - hb_ft):10}"
-                f" ({db.raw.get_block_timestamp((end_block - hb_ft))})"
-                " (full-transform)"
-            )
+            if transformed_exists:
+                console.print(
+                    f"Transf. behind raw:   {(end_block - (start_block - 1)):10}"
+                    f" ({db.raw.get_block_timestamp(end_block - (start_block - 1))})"
+                    " (delta-transform)"
+                )
+                console.print(
+                    f"Transf. behind raw:   {(end_block - hb_ft):10}"
+                    f" ({db.raw.get_block_timestamp((end_block - hb_ft))})"
+                    " (full-transform)"
+                )
 
 
 @db.group()

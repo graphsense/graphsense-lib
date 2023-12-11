@@ -51,9 +51,9 @@ CREATE TABLE address_ids_by_address_prefix (
 CREATE TABLE block_transactions(
     block_id_group int,
     block_id int,
-    txs list<bigint>,
-    PRIMARY KEY (block_id_group, block_id)
-);
+    tx_id bigint,
+    PRIMARY KEY (block_id_group, block_id, tx_id)
+) WITH CLUSTERING ORDER BY (block_id DESC, tx_id DESC);
 
 CREATE TABLE address_transactions (
     address_id_group int,
@@ -79,8 +79,8 @@ CREATE TABLE address (
     no_outgoing_txs int,
     no_incoming_txs_zero_value int,
     no_outgoing_txs_zero_value int,
-    first_tx_id int,
-    last_tx_id int,
+    first_tx_id bigint,
+    last_tx_id bigint,
     total_received FROZEN <currency>,
     total_spent FROZEN <currency>,
     total_tokens_received map<text, frozen <currency>>,
