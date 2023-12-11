@@ -32,13 +32,13 @@ class FlowWatcherFactory:
         ks_config = config.get_keyspace_config(env, currency)
         if (
             ks_config.ingest_config is None
-            or ks_config.ingest_config.get_first_node_reference() is None
+            or ks_config.ingest_config.node_reference is None
         ):
             raise ConfigError(
                 "There is no node_reference specified in the config "
                 f"({env}.{currency}.ingest_config.node_reference is missing)"
             )
-        node_ref = ks_config.ingest_config.get_first_node_reference()
+        node_ref = ks_config.ingest_config.node_reference
 
         return FlowWatcher(
             state=JsonWatcherState(state_file),

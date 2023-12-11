@@ -5,14 +5,14 @@ from typing import Dict, List, Optional
 from goodconf import Field, GoodConf
 from pydantic import BaseModel, validator
 
-from ..utils import first_or_default, flatten
+from ..utils import flatten
 
 supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec", "trx"]
 default_environments = ["prod", "test", "dev", "exp1", "exp2", "exp3"]
-schema_types = ["utxo", "account", "account_trx"]
+schema_types = ["utxo", "account"]
 keyspace_types = ["raw", "transformed"]
 currency_to_schema_type = {
-    cur: "account_trx" if cur == "trx" else "account" if cur == "eth" else "utxo"
+    cur: "account" if cur == "eth" or cur == "trx" else "utxo"
     for cur in supported_base_currencies
 }
 supported_fiat_currencies = ["USD", "EUR"]
@@ -32,7 +32,7 @@ CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
 )
 
 
-def get_approx_reorg_backoff_blocks(network: str, lag_in_hours: int = 1.2) -> int:
+def get_approx_reorg_backoff_blocks(network: str, lag_in_hours: int = 2) -> int:
     """For imports we do not want to always catch up with the latest block
     since we want to avoid reorgs lead to spurious data in the database.
 
@@ -52,18 +52,8 @@ class FileSink(BaseModel):
 
 class IngestConfig(BaseModel):
     node_reference: str = Field(default_factory=lambda: "")
-    secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
     # raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
-
-    @property
-    def all_node_references(self) -> List[str]:
-        return [self.node_reference] + self.secondary_node_references
-
-    def get_first_node_reference(self, protocol: str = "http") -> Optional[str]:
-        return first_or_default(
-            self.all_node_references, lambda x: x.startswith(protocol)
-        )
 
 
 class KeyspaceSetupConfig(BaseModel):

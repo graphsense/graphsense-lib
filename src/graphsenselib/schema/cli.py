@@ -120,19 +120,7 @@ def create(env, currency, keyspace_type):
     help="suffix to append to default "
     "[currency]_transformed_[date]_[suffix] keyspace name.",
 )
-@click.option(
-    "--suffix",
-    type=str,
-    required=False,
-    help="suffix to append to default "
-    "[currency]_transformed_[date]_[suffix] keyspace name.",
-)
-@click.option(
-    "--no-date",
-    is_flag=True,
-    help="omits the date in the keyspace name",
-)
-def create_new_tf(env, currency, suffix, no_date):
+def create_new_tf(env, currency, suffix):
     """Summary
         Creates new/empty transformed keyspace.
         \f
@@ -141,11 +129,7 @@ def create_new_tf(env, currency, suffix, no_date):
         currency (str): currency to work on
         suffix (str): suffix for the new keyspace
     """
-    print(
-        GraphsenseSchemas().create_new_transformed_ks_if_not_exist(
-            env, currency, suffix, no_date
-        )
-    )
+    GraphsenseSchemas().create_new_transformed_ks_if_not_exist(env, currency, suffix)
 
 
 @schema.command(
