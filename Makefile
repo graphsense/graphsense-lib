@@ -2,7 +2,7 @@ SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
 RELEASE := 'v23.09'
-RELEASESEM := 'v2.1.0'
+RELEASESEM := 'v2.0.0'
 
 all: format lint test build
 
@@ -55,18 +55,7 @@ publish: build version
 version:
 	python -m setuptools_scm
 
-generate-tron-grpc-code:
-	python -m grpc_tools.protoc\
-		--python_out=./src/\
-		--grpc_python_out=./src/\
-		--proto_path=./src/\
-		./src/graphsenselib/ingest/tron/grpc/api/tron_api.proto
-	python -m grpc_tools.protoc\
-		--python_out=./src/\
-		--proto_path=./src/\
-		./src/graphsenselib/ingest/tron/grpc/core/*.proto
-
 click-bash-completion:
 	_GRAPHSENSE_CLI_COMPLETE=bash_source graphsense-cli
 
-.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code
+.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion

@@ -29,7 +29,7 @@ class ClickSlackErrorNotificationContext:
             return
         if isinstance(e, click.exceptions.ClickException):
             return
-        if isinstance(e, SystemExit) and e.code is not None and (e.code > 10):
+        if isinstance(e, SystemExit) and (e.code > 10):
             # Exit code 911 is used when lockfile is already used in
             # delta updates we don't what notifications for that
             # exit codes are chosen such that only below 10 are critical

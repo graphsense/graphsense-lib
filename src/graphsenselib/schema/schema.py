@@ -1,13 +1,11 @@
 import logging
-import re
 from datetime import datetime
 from importlib.resources import files, read_text
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 
 from parsy import forward_declaration, seq, string
 
 from ..config import config, currency_to_schema_type, keyspace_types
-from ..datatypes import BadUserInputError
 from ..db import DbFactory
 from ..db.cassandra import build_create_stmt, normalize_cql_statement
 from ..utils import flatten, split_list_on_condition
@@ -19,8 +17,6 @@ from ..utils.parsing import (
     space,
     tableidentifier,
 )
-
-SCHEMA_TYPE_MAPPING_OVERWRITES = {("account_trx", "transformed"): "account_trx"}
 
 MAGIC_SCHEMA_CONSTANT = "0x8BADF00D"
 
@@ -72,16 +68,10 @@ create_parser = seq(
 )
 
 
-def remove_eol_comments(statement: str) -> str:
-    return re.sub(r"\s*?--.*?$", "", statement, 0, re.MULTILINE)
-
-
 class CreateTableStatement:
     @classmethod
     def from_schema(Cls, schema_str):
-        res = create_parser.parse(
-            normalize_cql_statement(remove_eol_comments(schema_str))
-        )
+        res = create_parser.parse(normalize_cql_statement(schema_str))
         keyspace = res["table"]["keyspace"] if "keyspace" in res["table"] else None
         cols = res["columns"]
         w_compound, wo_compound = split_list_on_condition(
@@ -148,8 +138,7 @@ class Schema:
     def __init__(self, schema_str):
         self.original_schema = schema_str
         self.statements_str = [
-            normalize_cql_statement(remove_eol_comments(s))
-            for s in schema_str.split(";")
+            normalize_cql_statement(s) for s in schema_str.split(";")
         ]
 
     def parse_create_table_statements(self) -> Iterable[CreateTableStatement]:
@@ -197,8 +186,6 @@ class GraphsenseSchemas:
         self, currency, keyspace_type=None, no_extensions=False
     ) -> List[tuple[str, str]]:
         schema_type = currency_to_schema_type[currency]
-        if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
-            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
         return [
             x
             for x in self.get_by_schema_type(
@@ -262,9 +249,7 @@ class GraphsenseSchemas:
                     )
                     keyspacedb.ingest("configuration", [config_defaults])
 
-    def create_new_transformed_ks_if_not_exist(
-        self, env, currency, suffix=None, no_date=False
-    ) -> Optional[str]:
+    def create_new_transformed_ks_if_not_exist(self, env, currency, suffix=None):
         keyspace_type = "transformed"
         with DbFactory().from_config(env, currency) as db:
             schema = self.get_by_currency(
@@ -273,15 +258,13 @@ class GraphsenseSchemas:
             if len(schema) > 0:
                 schema = schema[0][1]
             else:
-                raise BadUserInputError(
+                raise Exception(
                     "No schema definition found for "
                     f"{env}, {currency}, type: {keyspace_type}"
                 )
 
             date_str = datetime.now().strftime("%Y%m%d")
-            keyspace_name = f"{currency}_transformed"
-            if not no_date:
-                keyspace_name = f"{keyspace_name}_{date_str}"
+            keyspace_name = f"{currency}_transformed_{date_str}"
             if suffix is not None:
                 keyspace_name = f"{keyspace_name}_{suffix}"
             c_db = db.db()
@@ -291,7 +274,6 @@ class GraphsenseSchemas:
                     f"{env}:{currency} exists; please remove "
                     "or specify an fresh suffix."
                 )
-                return None
             else:
                 replication_config = (
                     config.get_keyspace_config(env, currency)
@@ -307,13 +289,10 @@ class GraphsenseSchemas:
                     f"{env}:{currency} created "
                     f"with replication config {replication_config}."
                 )
-                return keyspace_name
 
     def get_by_schema_type(
         self, schema_type, keyspace_type=None
     ) -> List[tuple[str, str]]:
-        if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
-            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
         return [
             (f, s)
             for (f, s) in self.get_all_schemas()
