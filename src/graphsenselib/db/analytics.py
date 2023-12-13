@@ -618,7 +618,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         """Return last ingested address ID from address table."""
         du = self.get_last_delta_updater_state()
         ha = self._get_hightest_id(table="address", sanity_check=sanity_check)
-        return max(ha, du.highest_address_id) if du is not None else ha
+        return max(ha or 0, du.highest_address_id) if du is not None else ha
 
     @abstractmethod
     def get_highest_cluster_id(self, sanity_check=True) -> Optional[int]:

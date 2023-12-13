@@ -2,7 +2,7 @@ from collections import namedtuple
 
 from ..config import config, schema_types
 from ..datatypes import AddressAccount, AddressUtxo
-from .account import RawDbAccount, TransformedDbAccount
+from .account import RawDbAccount, RawDbAccountTrx, TransformedDbAccount
 from .analytics import AnalyticsDb
 from .analytics import KeyspaceConfig as KeyspaceConfigDB
 from .cassandra import CassandraDb
@@ -22,7 +22,7 @@ def get_db_types_by_schema_type(schema_type) -> DbTypeStrategy:
     elif schema_type == "account":
         return DbTypeStrategy(RawDbAccount, TransformedDbAccount, AddressAccount)
     elif schema_type == "account_trx":
-        return DbTypeStrategy(RawDbAccount, TransformedDbAccount, AddressAccount)
+        return DbTypeStrategy(RawDbAccountTrx, TransformedDbAccount, AddressAccount)
     else:
         raise ValueError(f"{schema_type} not yet supported.")
 
