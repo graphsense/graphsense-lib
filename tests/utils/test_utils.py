@@ -7,6 +7,7 @@ from graphsenselib.utils import (
     remove_prefix,
     strip_0x,
     subkey_exists,
+    subkey_get,
     to_int,
 )
 from graphsenselib.utils.errorhandling import CrashRecoverer
@@ -95,6 +96,21 @@ def test_subkey_exists():
     assert subkey_exists({"abc": []}, ["abc", "cbd"]) is False
     assert subkey_exists({"abc": {"cbd": 1}}, ["abc", "cbd"]) is True
     assert subkey_exists({"abc": {"cbd": None}}, ["abc", "cbd"]) is True
+
+
+def test_subkey_get():
+    assert subkey_get({}, ["abc"]) is None
+    assert subkey_get({"abc": None}, ["abc"]) is None
+    assert subkey_get({"abc": []}, ["abc", "cbd"]) is None
+    assert subkey_get({"abc": {"cbd": 1}}, ["abc", "cbd"]) == 1
+    assert subkey_get({"abc": {"cbd": "string"}}, ["abc", "cbd"]) == "string"
+    assert (
+        subkey_get({"abc": {"cbd": ["a", "b"], "bbb": [1, 2, 3]}}, ["abc", "cbd", "1"])
+        == "b"
+    )
+    assert subkey_get(
+        {"abc": {"cbd": ["a", "b"], "bbb": [1, 2, 3]}}, ["abc", "bbb"]
+    ) == [1, 2, 3]
 
 
 def test_first_or_default():
