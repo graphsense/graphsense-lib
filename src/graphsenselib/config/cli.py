@@ -1,5 +1,6 @@
 import click
 
+from ..utils import subkey_get
 from ..utils.console import console
 from .config import config as cfg
 
@@ -23,6 +24,19 @@ def show(json):
         console.print_json(cfg.json())
     else:
         console.print(cfg.text())
+
+
+@config.command("get")
+@click.option(
+    "--path",
+    help="path in the config file sep. is a dot (.)",
+    type=str,
+    required=True,
+    default=False,
+)
+def get(path):
+    """Prints the configuration used in the environment."""
+    console.print(subkey_get(cfg.dict(), path.split(".")))
 
 
 @config.command("path")

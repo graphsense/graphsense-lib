@@ -133,5 +133,19 @@ def subkey_exists(item, key_list) -> bool:
         return False
 
 
+def subkey_get(item, key_list) -> bool:
+    if item is None and len(key_list) > 0:
+        return item
+    if not key_list:
+        return item
+    h, *rest = key_list
+    if h.isdigit() and isinstance(item, list) and int(h) < len(item):
+        return subkey_get(item[int(h)], rest)
+    elif h in item:
+        return subkey_get(item[h], rest)
+    else:
+        return None
+
+
 def first_or_default(seq: Sequence[object], pred, default=None):
     return next(filter(pred, seq), default)
