@@ -45,8 +45,8 @@ def delta():
     "--updater-version",
     type=int,
     default=1,
-    help="Which version of the delta-updater to use, 1: legacy (addresses only), 2:full"
-    "(default: 1)",
+    help="Which version of the delta-updater to use, 1: legacy (addresses only)"
+    ", 2: full (default: 1)",
 )
 @click.option("--write-new/--no-write-new", default=True)
 @click.option("--write-dirty/--no-write-dirty", default=True)

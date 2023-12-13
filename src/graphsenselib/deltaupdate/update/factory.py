@@ -35,7 +35,7 @@ class UpdaterFactory:
                 patch_mode,
                 forward_fill_rates=forward_fill_rates,
             )
-        if schema_type == "account" and version == 1:
+        if (schema_type == "account" or schema_type == "account_trx") and version == 1:
             return UpdateStrategyAccount(
                 db,
                 currency,

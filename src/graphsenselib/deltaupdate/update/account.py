@@ -76,11 +76,12 @@ class UpdateStrategyAccount(LegacyUpdateStrategy):
                     self._new_addresses[addr] = addresses[addr]
                     self._nr_new_addresses += 1
 
-            logger.info(
-                f"Found {self._nr_new_addresses} new addresses so "
-                f"far {(self._nr_new_addresses/self._nr_queried_addresses):.3f} "
-                "are new."
-            )
+            if self._nr_queried_addresses > 0:
+                logger.info(
+                    f"Found {self._nr_new_addresses} new addresses so "
+                    f"far {(self._nr_new_addresses/self._nr_queried_addresses):.3f} "
+                    "are new."
+                )
             # logging.info(self._db.transformed.knows_address.cache_info())
 
             # At the end of the batch write data to the db.

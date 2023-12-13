@@ -49,4 +49,23 @@ class RawDbAccount(RawDb):
 
 
 class RawDbAccountTrx(RawDbAccount):
-    pass
+    def get_addresses_in_block(self, block: int) -> Iterable:
+        group = block // self.get_block_bucket_size()
+
+        # The fetch size is needed since traces currenly contain a lot of null values
+        # the null values create tombestones and cassandra refuses to read more than
+        # 100k tombestones by default per select, this is avoided by reading in chunks
+        # https://community.datastax.com/questions/8110/read-operation-failure-error.html
+        # the error happens for example in eth block 15676732 since it has more
+        # than 50k traces
+        result = self.select(
+            "trace",
+            columns=["caller_address", "transferto_address", "block_id", "tx_hash"],
+            where={"block_id_group": group, "block_id": block},
+            fetch_size=10000,
+        )
+        for x in result:
+            x["from_address"] = x.pop("caller_address")
+            x["to_address"] = x.pop("transferto_address")
+
+        return result
