@@ -160,7 +160,7 @@ def fetch_impl(
                 "Error: found missing values for currency "
                 f"{fiat_currency}, aborting import."
             )
-            # logger.error(merged_df[merged_df["fx_rate"].isnull()])
+            logger.error(merged_df[merged_df["fx_rate"].isnull()])
             if not dry_run:
                 # in case of dry run let it run
                 # to see what would have been written to the db
