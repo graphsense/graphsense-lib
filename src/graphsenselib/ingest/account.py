@@ -347,6 +347,19 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
 
         item["topics"] = [hex_to_bytearray(t) for t in tpcs]
 
+        # if topics contain duplicates
+        if (
+            len(item["topics"]) % 2 == 0
+        ):  # todo may be removed if we are that there are no duplicates
+            if (
+                item["topics"][: len(item["topics"]) // 2]
+                == item["topics"][len(item["topics"]) // 2 :]
+            ):
+                logger.warning(
+                    f"duplicate found; hash: {item['tx_hash']};"
+                    f" topics: {item['topics']}"
+                )
+
         if "transaction_hash" in item:
             item.pop("transaction_hash")
 
