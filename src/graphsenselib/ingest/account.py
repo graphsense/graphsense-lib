@@ -347,18 +347,6 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
 
         item["topics"] = [hex_to_bytearray(t) for t in tpcs]
 
-        # if topics contain duplicates
-        if len(item["topics"]) % 2 == 0:
-            if (
-                item["topics"][: len(item["topics"]) // 2]
-                == item["topics"][len(item["topics"]) // 2 :]
-            ):
-                print("duplicate found")
-            else:
-                print("No dup2")
-        else:
-            print("No dup1")
-
         if "transaction_hash" in item:
             item.pop("transaction_hash")
 
