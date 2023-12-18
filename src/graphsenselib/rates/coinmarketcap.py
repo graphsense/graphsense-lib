@@ -155,16 +155,21 @@ def fetch_impl(
         # fill gaps over weekends
         merged_df["fx_rate"].fillna(method="ffill", inplace=True)
         merged_df["fx_rate"].fillna(method="bfill", inplace=True)
+
         if abort_on_gaps and merged_df["fx_rate"].isnull().values.any():
             logger.error(
                 "Error: found missing values for currency "
-                f"{fiat_currency}, aborting import."
+                f"{fiat_currency}, aborting import. Probably a weekend."
             )
             logger.error(merged_df[merged_df["fx_rate"].isnull()])
             if not dry_run:
                 # in case of dry run let it run
                 # to see what would have been written to the db
-                raise SystemExit
+                if len(merged_df[merged_df["fx_rate"].isnull()]) > 4:
+                    # if missing more than 4 days, critical error
+                    raise SystemExit(2)
+                else:
+                    raise SystemExit(15)
         merged_df[fiat_currency] = merged_df["USD"] * merged_df["fx_rate"]
         merged_df = merged_df[["date", fiat_currency]]
         exchange_rates = exchange_rates.merge(merged_df, on="date")
