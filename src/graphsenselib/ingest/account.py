@@ -236,8 +236,8 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         channel = grpc.insecure_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
-        def getTransactionById(hash):
-            msg = BytesMessage(value=bytes.fromhex(hash[2:]))
+        def getTransactionById(tx_hash):
+            msg = BytesMessage(value=bytes.fromhex(tx_hash[2:]))
             info = wallet_stub.GetTransactionById(msg)
             return info
 
