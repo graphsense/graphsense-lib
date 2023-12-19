@@ -516,6 +516,11 @@ class CassandraDb:
                     if not success:
                         while True:
                             try:
+                                logger.warning(
+                                    "Retrying failed statement:",
+                                    prepared_stmt,
+                                    parameters[i],
+                                )
                                 self.session.execute(prepared_stmt, parameters[i])
                             except Exception as exception:
                                 logger.warning(
