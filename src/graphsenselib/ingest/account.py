@@ -1352,7 +1352,7 @@ def ingest_async(
                     completed = next(concurrent.futures.as_completed(tasks))
                     tasks.remove(completed)
                     for cont_task, data in completed.result():
-                        # Get the data for the progess indicator
+                        # Get the data for the progress indicator
                         if isinstance(cont_task, StoreTask) and data[0] == "block":
                             blocks = data[1]
 
