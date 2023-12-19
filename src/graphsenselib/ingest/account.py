@@ -767,8 +767,8 @@ class LoadLogsTask(AbstractTask):
 
 
 class LoadLogsAndTypeTask(AbstractTask):
-    def __init__(self, is_update_type_mode: bool = False):
-        self.is_update_type_mode = is_update_type_mode
+    def __init__(self, is_update_transactions_mode: bool = False):
+        self.is_update_transactions_mode = is_update_transactions_mode
 
     def run(self, ctx, data):
         txs = data
@@ -781,7 +781,7 @@ class LoadLogsAndTypeTask(AbstractTask):
         txst = ctx.strategy.transform_transactions(
             enriched_txs, ctx.TX_HASH_PREFIX_LEN, ctx.BLOCK_BUCKET_SIZE
         )
-        if self.is_update_type_mode:
+        if self.is_update_transactions_mode:
             return [(StoreTask(), ("transaction", txst))]
 
         logst = ctx.strategy.transform_logs(logs, ctx.BLOCK_BUCKET_SIZE)
@@ -800,22 +800,16 @@ class LoadBlockTask(AbstractTask):
 
 
 class LoadBlockTaskTrx(AbstractTask):
-    def __init__(self, is_update_type_mode: bool = False):
-        self.is_update_type_mode = is_update_type_mode
+    def __init__(self, is_update_transactions_mode: bool = False):
+        self.is_update_transactions_mode = is_update_transactions_mode
 
     def run(self, ctx, data):
         start, end = data
         blocks, txs = ctx.adapter.export_blocks_and_transactions(start, end)
-
-        if self.is_update_type_mode:
-            return [
-                (LoadLogsAndTypeTask(self.is_update_type_mode), txs),
-            ]
-
         blockst = ctx.strategy.transform_blocks(blocks, ctx.BLOCK_BUCKET_SIZE)
         return [
             (StoreTask(), ("block", blockst)),
-            (LoadLogsAndTypeTask(), txs),
+            (LoadLogsAndTypeTask(self.is_update_transactions_mode), txs),
         ]
 
 
@@ -909,14 +903,14 @@ class TrxETLStrategy(EthETLStrategy):
         provider_timeout: int,
         grpc_provider_uri: str,
         is_trace_only_mode: bool,
-        is_update_type_mode: bool,
+        is_update_transactions_mode: bool,
         fees_only_mode: bool = False,
     ):
         super().__init__(
             http_provider_uri, provider_timeout, is_trace_only_mode, fees_only_mode
         )
         self.grpc_provider_uri = grpc_provider_uri
-        self.is_update_type_mode = is_update_type_mode
+        self.is_update_transactions_mode = is_update_transactions_mode
 
     def pre_processing_tasks(self):
         return [LoadTrc10TokenInfoTask()]
@@ -958,8 +952,8 @@ class TrxETLStrategy(EthETLStrategy):
     def per_blockrange_tasks(self):
         if self.is_trace_only_mode:
             return [LoadTracesTask(self.fees_only_mode)]
-        elif self.is_update_type_mode:
-            return [LoadBlockTaskTrx(self.is_update_type_mode)]
+        elif self.is_update_transactions_mode:
+            return [LoadBlockTaskTrx(self.is_update_transactions_mode)]
         else:
             return [LoadBlockTaskTrx(), LoadTracesTask()]
 
@@ -988,7 +982,7 @@ def ingest_async(
 
     fees_only_mode = mode == "account_fees_only"
     is_trace_only_mode = mode == "account_traces_only" or fees_only_mode
-    is_update_type_mode = mode == "account_update_type"
+    is_update_transactions_mode = mode == "trx_update_transactions"
 
     http_provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
     if http_provider_uri is None:
@@ -1016,7 +1010,7 @@ def ingest_async(
             provider_timeout,
             grpc_provider_uri,
             is_trace_only_mode,
-            is_update_type_mode,
+            is_update_transactions_mode,
             fees_only_mode=fees_only_mode,
         )
 
