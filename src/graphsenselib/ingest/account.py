@@ -1160,20 +1160,20 @@ def ingest_async(
                 # if count % 1000 == 0:
                 time2 = datetime.now()
                 time_delta = (time2 - time1).total_seconds()
-                logging.disable(logging.NOTSET)
+                # logging.disable(logging.NOTSET)
                 logger.info(
                     f"Last processed block: {current_end_block:,} "
                     f"[{last_block_date_str}] "  # noqa
                     f"({count/time_delta:.1f} blks/s)"
                 )
-                logging.disable(logging.INFO)
+                # logging.disable(logging.INFO)
                 time1 = time2
                 count = 0
 
                 if check_shutdown_initialized():
                     break
 
-    logging.disable(logging.NOTSET)
+    # logging.disable(logging.NOTSET)
     logger.info(
         f"Processed block range "
         f"{start_block:,} - {end_block:,} "

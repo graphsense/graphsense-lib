@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import threading
 import time
 from functools import wraps
 from typing import Iterable, List, Optional, Sequence, Union
@@ -519,10 +518,7 @@ class CassandraDb:
 
             # assert len([v for v in dic.values() if v > 1]) == 0
             blks = [it["block_id"] for it in items if "block_id" in it]
-            logger.debug(
-                f"{threading.get_ident()}, {table},"
-                f" {min(blks)}, {max(blks)}, {len(items)}"
-            )
+            logger.debug(f"{table}," f" {min(blks)}, {max(blks)}, {len(items)}")
 
         self._exe_with_retries(stmt, items, concurrency=concurrency)
 
