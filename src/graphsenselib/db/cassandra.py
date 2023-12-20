@@ -49,10 +49,12 @@ class GraphsenseRetryPolicy(RetryPolicy):
         return (self.RETHROW, None)
 
     def on_request_error(self, query, consistency, error, retry_num):
-        if (
-            query.query_string.upper().startswith("SELECT ")
-            and retry_num < self.max_retries
-        ):
+        query_string = (
+            query.prepared_statement.query_string
+            if isinstance(query, BoundStatement)
+            else query.query_string
+        )
+        if query_string.upper().startswith("SELECT ") and retry_num < self.max_retries:
             logger.warning(
                 f"Error while executing request; was read; retry on next host: {error}"
             )
