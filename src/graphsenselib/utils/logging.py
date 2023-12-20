@@ -64,6 +64,7 @@ def configure_logging(loglevel):
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.ERROR)
         logging.getLogger("ProgressLogger").setLevel(logging.ERROR)
+        logging.getLogger("BatchWorkExecutor").setLevel(logging.DEBUG)
     else:
         logging.getLogger("cassandra").setLevel(logging.WARNING)
         logging.getLogger("ethereumetl").setLevel(logging.WARNING)
@@ -71,6 +72,7 @@ def configure_logging(loglevel):
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.ERROR)
         logging.getLogger("ProgressLogger").setLevel(logging.ERROR)
+        logging.getLogger("BatchWorkExecutor").setLevel(logging.ERROR)
 
 
 class IndentLogger(logging.LoggerAdapter):
