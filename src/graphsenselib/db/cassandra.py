@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # taken from https://github.com/apache/cassandra-dtest/blob/0085d21bc687995478e338302e619e82ad4a4644/dtest.py#L88C5-L88C5 # noqa
-class ReadRetryPolicy(RetryPolicy):
+class GraphsenseRetryPolicy(RetryPolicy):
     """
     A retry policy that retries 5 times by default, but can be configured to
     retry more times.
@@ -45,9 +45,11 @@ class ReadRetryPolicy(RetryPolicy):
             return (self.RETHROW, None)
 
     def on_write_timeout(self, *args, **kwargs):
-        logger.debug(
-            "Retrying read after timeout. Attempt #" + str(kwargs["retry_num"])
-        )
+        logger.debug("write timeout; propagate error to application")
+        return (self.RETHROW, None)
+
+    def on_request_error(self, *args, **kwargs):
+        logger.debug("Error while executing request; propagate error to application")
         return (self.RETHROW, None)
 
     # def on_unavailable(self, *args, **kwargs):
@@ -299,7 +301,7 @@ class CassandraDb:
     def connect(self):
         """Connect to given Cassandra cluster nodes."""
         exec_prof = ExecutionProfile(
-            retry_policy=ReadRetryPolicy(),
+            retry_policy=GraphsenseRetryPolicy(),
             request_timeout=self._default_timeout,
             load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
         )
