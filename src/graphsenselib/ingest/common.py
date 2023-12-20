@@ -6,7 +6,7 @@ from .parquet import write_parquet
 
 INGEST_SINKS = ["parquet", "cassandra"]
 
-CASSANDRA_INGEST_DEFAULT_CONCURRENCY = 100
+CASSANDRA_INGEST_DEFAULT_CONCURRENCY = 1000
 
 logger = logging.getLogger(__name__)
 
