@@ -37,7 +37,7 @@ class GraphsenseRetryPolicy(RetryPolicy):
 
     def on_read_timeout(self, *args, **kwargs):
         if kwargs["retry_num"] < self.max_retries:
-            logger.debug(
+            logger.warning(
                 "Retrying read after timeout. Attempt #" + str(kwargs["retry_num"])
             )
             return (self.RETRY, None)
@@ -45,11 +45,24 @@ class GraphsenseRetryPolicy(RetryPolicy):
             return (self.RETHROW, None)
 
     def on_write_timeout(self, *args, **kwargs):
-        logger.debug("write timeout; propagate error to application")
+        logger.warning("write timeout; propagate error to application")
         return (self.RETHROW, None)
 
-    def on_request_error(self, *args, **kwargs):
-        logger.debug("Error while executing request; propagate error to application")
+    def on_request_error(self, query, consistency, error, retry_num):
+        if (
+            query.query_string.upper().startswith("SELECT ")
+            and retry_num < self.max_retries
+        ):
+            logger.warning(
+                f"Error while executing request; was read; retry on next host: {error}"
+            )
+            return (self.RETRY_NEXT_HOST, None)
+        else:
+            logger.warning(
+                "Error while executing request; "
+                f"propagate error to application: {error}"
+            )
+
         return (self.RETHROW, None)
 
     # def on_unavailable(self, *args, **kwargs):
