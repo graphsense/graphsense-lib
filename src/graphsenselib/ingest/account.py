@@ -565,11 +565,11 @@ def print_block_info(
 ) -> None:
     """Display information about number of synced/ingested blocks."""
 
-    logger.warning(f"Last synced block: {last_synced_block:,}")
+    logger.info(f"Last synced block: {last_synced_block:,}")
     if last_ingested_block is None:
-        logger.warning("Last ingested block: None")
+        logger.info("Last ingested block: None")
     else:
-        logger.warning(f"Last ingested block: {last_ingested_block:,}")
+        logger.info(f"Last ingested block: {last_ingested_block:,}")
 
 
 def get_connection_from_url(provider_uri: str, provider_timeout=600):
