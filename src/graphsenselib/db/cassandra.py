@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import threading
 import time
 from functools import wraps
 from typing import Iterable, List, Optional, Sequence, Union
@@ -8,7 +9,7 @@ from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 
 # Session,
 from cassandra.concurrent import execute_concurrent, execute_concurrent_with_args
-from cassandra.policies import RetryPolicy
+from cassandra.policies import DCAwareRoundRobinPolicy, RetryPolicy, TokenAwarePolicy
 from cassandra.query import (
     UNSET_VALUE,
     BatchStatement,
@@ -44,14 +45,11 @@ class ReadRetryPolicy(RetryPolicy):
         else:
             return (self.RETHROW, None)
 
-    # def on_write_timeout(self, *args, **kwargs):
-    #     if kwargs["retry_num"] < self.max_retries:
-    #         logger.debug(
-    #             "Retrying write after timeout. Attempt #" + str(kwargs["retry_num"])
-    #         )
-    #         return (self.RETRY, None)
-    #     else:
-    #         return (self.RETHROW, None)
+    def on_write_timeout(self, *args, **kwargs):
+        logger.debug(
+            "Retrying read after timeout. Attempt #" + str(kwargs["retry_num"])
+        )
+        return (self.RETHROW, None)
 
     # def on_unavailable(self, *args, **kwargs):
     #     if kwargs["retry_num"] < self.max_retries:
@@ -291,21 +289,27 @@ class CassandraDb:
         self.cluster = None
         self.session = None
         self.prep_stmts = {}
-        self._session_timeout = default_timeout
+        self._default_timeout = default_timeout
 
     def clone(self) -> "CassandraDb":
-        return CassandraDb(self.db_nodes, self._session_timeout)
+        return CassandraDb(self.db_nodes, self._default_timeout)
 
     def __repr__(self):
         return f"{', '.join(self.db_nodes)}"
 
     def connect(self):
         """Connect to given Cassandra cluster nodes."""
-        exec_prof = ExecutionProfile(retry_policy=ReadRetryPolicy(), request_timeout=30)
+        exec_prof = ExecutionProfile(
+            retry_policy=ReadRetryPolicy(),
+            request_timeout=self._default_timeout,
+            load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
+        )
         self.cluster = Cluster(
             self.db_nodes,
             execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
-            connect_timeout=self._session_timeout,
+            connect_timeout=self._default_timeout,
+            protocol_version=5,
+            compression="lz4",
         )
         try:
             self.session = self.cluster.connect()
@@ -488,6 +492,37 @@ class CassandraDb:
 
         if auto_none_to_unset:
             items = [none_to_unset(row) for row in items]
+
+        if table == "log":
+            x = [
+                item
+                for item in items
+                if len(item["topics"]) % 2 == 0
+                and len(item["topics"]) > 0
+                and item["topics"][: len(item["topics"]) // 2]
+                == item["topics"][len(item["topics"]) // 2 :]
+            ]
+            if len(x) > 0:
+                logger.warning(x)
+            # from collections import defaultdict
+
+            # dic = defaultdict(int)
+            # for i in items:
+            #     dic[
+            #         (
+            #             i["block_id_group"],
+            #             i["block_id"],
+            #             i["topic0"].hex(),
+            #             i["log_index"],
+            #         )
+            #     ] += 1
+
+            # assert len([v for v in dic.values() if v > 1]) == 0
+            blks = [it["block_id"] for it in items if "block_id" in it]
+            logger.debug(
+                f"{threading.get_ident()}, {table},"
+                f" {min(blks)}, {max(blks)}, {len(items)}"
+            )
 
         self._exe_with_retries(stmt, items, concurrency=concurrency)
 
