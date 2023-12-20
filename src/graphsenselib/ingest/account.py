@@ -35,7 +35,7 @@ from ..utils import (
     parse_timestamp,
     remove_prefix,
 )
-from ..utils.logging import suppress_log_level
+from ..utils.logging import configure_logging, suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from ..utils.tron import evm_to_bytes, strip_tron_prefix
 from .common import (
@@ -350,7 +350,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
 
         # if topics contain duplicates
         if (
-            len(item["topics"]) % 2 == 0
+            len(item["topics"]) % 2 == 0 and len(item["topics"]) > 0
         ):  # todo may be removed if we are that there are no duplicates
             if (
                 item["topics"][: len(item["topics"]) // 2]
@@ -904,11 +904,13 @@ class TrxETLStrategy(EthETLStrategy):
         grpc_provider_uri: str,
         is_trace_only_mode: bool,
         is_update_transactions_mode: bool,
+        batch_size: int = WEB3_QUERY_BATCH_SIZE,
         fees_only_mode: bool = False,
     ):
         super().__init__(
             http_provider_uri, provider_timeout, is_trace_only_mode, fees_only_mode
         )
+        self.batch_size = batch_size
         self.grpc_provider_uri = grpc_provider_uri
         self.is_update_transactions_mode = is_update_transactions_mode
 
@@ -945,7 +947,7 @@ class TrxETLStrategy(EthETLStrategy):
         return TronStreamerAdapter(
             get_connection_from_url(self.http_provider_uri, self.provider_timeout),
             grpc_endpoint=self.grpc_provider_uri,
-            batch_size=WEB3_QUERY_BATCH_SIZE,
+            batch_size=self.batch_size,
             max_workers=WEB3_QUERY_WORKERS,
         )
 
@@ -972,6 +974,13 @@ def ingest_async(
     mode: str,
 ):
     logger.info("Writing data in parallel")
+
+    interleave_batches = 3
+    batch_size = (
+        (batch_size_user // interleave_batches)
+        if batch_size_user >= 3
+        else batch_size_user
+    )
 
     # make sure that only supported sinks are selected.
     if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
@@ -1011,6 +1020,7 @@ def ingest_async(
             grpc_provider_uri,
             is_trace_only_mode,
             is_update_transactions_mode,
+            batch_size=batch_size,
             fees_only_mode=fees_only_mode,
         )
 
@@ -1060,8 +1070,8 @@ def ingest_async(
 
     thread_context = threading.local()
 
-    def initializer_worker(thrd_ctx, db, sink_config, strategy):
-        logging.disable(logging.INFO)
+    def initializer_worker(thrd_ctx, db, sink_config, strategy, loglevel):
+        configure_logging(loglevel)
         new_db_conn = db.clone()
         new_db_conn.open()
         thrd_ctx.db = new_db_conn
@@ -1086,13 +1096,16 @@ def ingest_async(
             for cmd in tasks
         ]
 
-    interleave_batches = 3
-    batch_size = batch_size_user // interleave_batches
-
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         with concurrent.futures.ThreadPoolExecutor(
             initializer=initializer_worker,
-            initargs=(thread_context, db, sink_config, transform_strategy),
+            initargs=(
+                thread_context,
+                db,
+                sink_config,
+                transform_strategy,
+                logger.getEffectiveLevel(),
+            ),
             max_workers=15,  # we write at most 4 tables in parallel
         ) as ex:
             time1 = datetime.now()

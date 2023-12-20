@@ -9,6 +9,9 @@ from rich.logging import RichHandler
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 
+# create logger
+logger = logging.getLogger(__name__)
+
 
 @contextmanager
 def suppress_log_level(loglevel: int):
@@ -22,12 +25,16 @@ def suppress_log_level(loglevel: int):
 def configure_logging(loglevel):
     log_format = " | %(message)s"
 
-    if loglevel == 0:
-        loglevel = logging.WARNING
-    elif loglevel == 1:
-        loglevel = logging.INFO
-    elif loglevel >= 2:
-        loglevel = logging.DEBUG
+    if loglevel < 10:
+        # this means the value passed is
+        # not a valid log level in python
+        if loglevel == 0:
+            loglevel = logging.WARNING
+        elif loglevel == 1:
+            loglevel = logging.INFO
+        elif loglevel >= 2:
+            loglevel = logging.DEBUG
+            log_format = " | %(name)s | %(thread)d | %(message)s"
 
     """ RichHandler colorizes the logs """
     c = Console(width=220)
@@ -48,11 +55,22 @@ def configure_logging(loglevel):
         handlers=[rh],
     )
 
-    logging.getLogger("cassandra").setLevel(logging.ERROR)
-    logging.getLogger("ethereumetl").setLevel(logging.ERROR)
-    logging.getLogger("Cluster").setLevel(logging.ERROR)
-    logging.getLogger("requests").setLevel(logging.ERROR)
-    logging.getLogger("urllib3").setLevel(logging.ERROR)
+    if loglevel <= logging.DEBUG:
+        logger.warning("Logging set to verbose mode.")
+        logging.getLogger("cassandra").setLevel(logging.DEBUG)
+        logging.getLogger("ethereumetl").setLevel(logging.WARNING)
+        logging.getLogger("web3").setLevel(logging.WARNING)
+        logging.getLogger("Cluster").setLevel(logging.DEBUG)
+        logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.ERROR)
+        logging.getLogger("ProgressLogger").setLevel(logging.ERROR)
+    else:
+        logging.getLogger("cassandra").setLevel(logging.WARNING)
+        logging.getLogger("ethereumetl").setLevel(logging.WARNING)
+        logging.getLogger("Cluster").setLevel(logging.ERROR)
+        logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.ERROR)
+        logging.getLogger("ProgressLogger").setLevel(logging.ERROR)
 
 
 class IndentLogger(logging.LoggerAdapter):
