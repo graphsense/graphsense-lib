@@ -96,6 +96,8 @@ def format_blocks_csv(
     for item in items:
         # remove column
         item.pop("type")
+        item.pop("withdrawals")
+        item.pop("withdrawals_root")
         # rename/add columns
         item["block_id"] = item.pop("number")
         item["block_id_group"] = item["block_id"] // block_bucket_size
