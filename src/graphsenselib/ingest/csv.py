@@ -113,6 +113,11 @@ def format_transactions_csv(
     for item in items:
         # remove column
         item.pop("type")
+        item.pop("receipt_l1_fee")
+        item.pop("receipt_l1_fee_scalar")
+        item.pop("receipt_l1_gas_price")
+        item.pop("receipt_l1_gas_used")
+
         # rename/add columns
         item["tx_hash"] = item.pop("hash")
         hash_slice = slice(2, 2 + tx_hash_prefix_len)
