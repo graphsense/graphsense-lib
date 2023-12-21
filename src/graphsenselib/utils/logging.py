@@ -56,7 +56,7 @@ def configure_logging(loglevel):
     )
 
     if loglevel <= logging.DEBUG:
-        logger.warning("Logging set to verbose mode.")
+        logger.debug("Logging set to verbose mode.")
         logging.getLogger("cassandra").setLevel(logging.DEBUG)
         logging.getLogger("ethereumetl").setLevel(logging.WARNING)
         logging.getLogger("web3").setLevel(logging.WARNING)
