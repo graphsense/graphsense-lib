@@ -55,12 +55,12 @@ class GraphsenseRetryPolicy(RetryPolicy):
             else query.query_string
         )
         if query_string.upper().startswith("SELECT ") and retry_num < self.max_retries:
-            logger.warning(
+            logger.debug(
                 f"Error while executing request; was read; retry on next host: {error}"
             )
             return (self.RETRY_NEXT_HOST, None)
         else:
-            logger.warning(
+            logger.debug(
                 "Error while executing request; "
                 f"propagate error to application: {error}"
             )
