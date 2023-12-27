@@ -773,11 +773,11 @@ class LoadLogsAndTypeTask(AbstractTask):
     def run(self, ctx, data):
         txs = data
         receipts, logs = ctx.adapter.export_receipts_and_logs(txs)
-        hash_to_type = ctx.adapter.export_hash_to_type_mappings(txs)
+        # hash_to_type = ctx.adapter.export_hash_to_type_mappings(txs)
         enriched_txs = ctx.strategy.enrich_transactions(txs, receipts)
-        enriched_txs = ctx.strategy.enrich_transactions_with_type(
-            enriched_txs, hash_to_type
-        )
+        # enriched_txs = ctx.strategy.enrich_transactions_with_type(
+        #     enriched_txs, hash_to_type
+        # )
         txst = ctx.strategy.transform_transactions(
             enriched_txs, ctx.TX_HASH_PREFIX_LEN, ctx.BLOCK_BUCKET_SIZE
         )
@@ -948,7 +948,7 @@ class TrxETLStrategy(EthETLStrategy):
             get_connection_from_url(self.http_provider_uri, self.provider_timeout),
             grpc_endpoint=self.grpc_provider_uri,
             batch_size=self.batch_size,
-            max_workers=WEB3_QUERY_WORKERS,
+            max_workers=self.batch_size,
         )
 
     def per_blockrange_tasks(self):
