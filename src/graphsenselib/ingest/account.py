@@ -254,7 +254,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         txs_grpc = [tx for block in blocks_data for tx in block.transactions]
         types = [get_type(tx) for tx in txs_grpc]
         tx_hashes = [tx["hash"] for tx in transactions]
-        hash_to_type = {tx_hash: type_ for tx_hash, type_ in zip(tx_hashes, types)}
+        hash_to_type = dict(zip(tx_hashes, types))
 
         # def getTransactionById(tx_hash):
         #    msg = BytesMessage(value=bytes.fromhex(tx_hash[2:]))
