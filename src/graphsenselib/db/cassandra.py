@@ -535,7 +535,8 @@ class CassandraDb:
 
             # assert len([v for v in dic.values() if v > 1]) == 0
             blks = [it["block_id"] for it in items if "block_id" in it]
-            logger.debug(f"{table}," f" {min(blks)}, {max(blks)}, {len(items)}")
+            if len(blks) > 0:
+                logger.debug(f"{table}," f" {min(blks)}, {max(blks)}, {len(items)}")
 
         self._exe_with_retries(stmt, items, concurrency=concurrency)
 
