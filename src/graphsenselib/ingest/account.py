@@ -57,7 +57,7 @@ from .csv import (
     write_csv,
 )
 from .tron.export_traces_job import TronExportTracesJob
-from .tron.grpc.api.tron_api_pb2 import BytesMessage, EmptyMessage
+from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
 from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
 from .tron.txTypeTransformer import TxTypeTransformer
 
@@ -232,26 +232,37 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         # traces = exporter.get_items("trace")
         # return traces
 
-    def export_hash_to_type_mappings(self, transactions: Iterable) -> Dict:
+    def export_hash_to_type_mappings(
+        self, transactions: Iterable, blocks: Iterable
+    ) -> Dict:
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
         channel = grpc.insecure_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
-
-        def getTransactionById(tx_hash):
-            msg = BytesMessage(value=bytes.fromhex(tx_hash[2:]))
-            info = wallet_stub.GetTransactionById(msg)
-            return info
 
         def get_type(tx):
             type_container = tx.raw_data.contract
             assert len(type_container) == 1
             return type_container[0].type
 
+        def get_block(i):  # contains type
+            msg = NumberMessage(num=i)
+            info = wallet_stub.GetBlockByNum(msg)
+            return info
+
+        block_ids = [b["block_id"] for b in blocks]
+        blocks_data = [get_block(b) for b in block_ids]
+        txs_grpc = [tx for block in blocks_data for tx in block.transactions]
+        types = [get_type(tx) for tx in txs_grpc]
         tx_hashes = [tx["hash"] for tx in transactions]
-        grpc_txs = [getTransactionById(tx_hash) for tx_hash in tx_hashes]
-        hash_to_type = {
-            tx_hash: get_type(tx) for tx_hash, tx in zip(tx_hashes, grpc_txs)
-        }
+        hash_to_type = {tx_hash: type_ for tx_hash, type_ in zip(tx_hashes, types)}
+
+        # def getTransactionById(tx_hash):
+        #    msg = BytesMessage(value=bytes.fromhex(tx_hash[2:]))
+        #    info = wallet_stub.GetTransactionById(msg)
+        #    return info
+        # types2 = [get_type(getTransactionById(tx_hash)) for tx_hash in tx_hashes]
+        # import numpy as np
+        # assert np.all(np.array(types) == np.array(types2))
 
         return hash_to_type
 
@@ -767,17 +778,20 @@ class LoadLogsTask(AbstractTask):
 
 
 class LoadLogsAndTypeTask(AbstractTask):
-    def __init__(self, is_update_transactions_mode: bool = False):
+    def __init__(
+        self, is_update_transactions_mode: bool = False, blocks: Iterable = None
+    ):
         self.is_update_transactions_mode = is_update_transactions_mode
+        self.blocks = blocks
 
     def run(self, ctx, data):
         txs = data
         receipts, logs = ctx.adapter.export_receipts_and_logs(txs)
-        # hash_to_type = ctx.adapter.export_hash_to_type_mappings(txs)
+        hash_to_type = ctx.adapter.export_hash_to_type_mappings(txs, self.blocks)
         enriched_txs = ctx.strategy.enrich_transactions(txs, receipts)
-        # enriched_txs = ctx.strategy.enrich_transactions_with_type(
-        #     enriched_txs, hash_to_type
-        # )
+        enriched_txs = ctx.strategy.enrich_transactions_with_type(
+            enriched_txs, hash_to_type
+        )
         txst = ctx.strategy.transform_transactions(
             enriched_txs, ctx.TX_HASH_PREFIX_LEN, ctx.BLOCK_BUCKET_SIZE
         )
@@ -809,7 +823,7 @@ class LoadBlockTaskTrx(AbstractTask):
         blockst = ctx.strategy.transform_blocks(blocks, ctx.BLOCK_BUCKET_SIZE)
         return [
             (StoreTask(), ("block", blockst)),
-            (LoadLogsAndTypeTask(self.is_update_transactions_mode), txs),
+            (LoadLogsAndTypeTask(self.is_update_transactions_mode, blocks), txs),
         ]
 
 
@@ -975,10 +989,10 @@ def ingest_async(
 ):
     logger.info("Writing data in parallel")
 
-    interleave_batches = 3
+    interleave_batches = 2
     batch_size = (
         (batch_size_user // interleave_batches)
-        if batch_size_user >= 3
+        if batch_size_user >= interleave_batches
         else batch_size_user
     )
 
