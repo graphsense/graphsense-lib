@@ -509,35 +509,6 @@ class CassandraDb:
         if auto_none_to_unset:
             items = [none_to_unset(row) for row in items]
 
-        if table == "log":
-            x = [
-                item
-                for item in items
-                if len(item["topics"]) % 2 == 0
-                and len(item["topics"]) > 0
-                and item["topics"][: len(item["topics"]) // 2]
-                == item["topics"][len(item["topics"]) // 2 :]
-            ]
-            if len(x) > 0:
-                logger.warning(x)
-            # from collections import defaultdict
-
-            # dic = defaultdict(int)
-            # for i in items:
-            #     dic[
-            #         (
-            #             i["block_id_group"],
-            #             i["block_id"],
-            #             i["topic0"].hex(),
-            #             i["log_index"],
-            #         )
-            #     ] += 1
-
-            # assert len([v for v in dic.values() if v > 1]) == 0
-            blks = [it["block_id"] for it in items if "block_id" in it]
-            if len(blks) > 0:
-                logger.debug(f"{table}," f" {min(blks)}, {max(blks)}, {len(items)}")
-
         self._exe_with_retries(stmt, items, concurrency=concurrency)
 
     @needs_session
