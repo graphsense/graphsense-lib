@@ -89,6 +89,7 @@ def ingesting():
             "utxo_only_tx_graph",
             "account_traces_only",
             "account_fees_only",
+            "trx_update_transactions",
         ],
         case_sensitive=False,
     ),
