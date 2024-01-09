@@ -3,9 +3,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.01/2.1.0] 2024-01-09
+### added
+- ingest now works stores additional details/tables in raw keyspace (tx_type, fees)
+- new field for address table, zero value tx stats (eth and trx)
+- graphsense-cli config get --path function to access config values for scripting
+### changed
+- more robust retry handling on ingest
+### fixed
+- minor bug with system.exit handling and slack notifications
+- timestamp micro instead of milliseconds bug trx transactions
+
 ## [23.09/2.0.0] 2023-11-21
 ### fixed
-- new pk for summary stats to avoid duplicate entries.
+- new pk for summary stats to avoid duplicate entries. Breaking: needs recreation of table
 
 ## [23.09/1.8.3] 2023-11-07
 ### fixed
