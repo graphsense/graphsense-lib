@@ -212,10 +212,15 @@ class DbReaderMixin:
             fetch_size=fetch_size,
         )
 
-    def _get_hightest_id(self, table="block", sanity_check=True) -> Optional[int]:
+    def _get_hightest_id(
+        self, table="block", sanity_check=True, id_col=None
+    ) -> Optional[int]:
         """Return last ingested address ID from a table."""
-        group_id_col = f"{table}_id_group"
-        id_col = f"{table}_id"
+
+        if id_col is None:
+            id_col = f"{table}_id"
+
+        group_id_col = f"{id_col}_group"
 
         result = self.select(table=table, columns=[group_id_col], per_partition_limit=1)
         groups = [getattr(row, group_id_col) for row in result.current_rows]
@@ -243,10 +248,12 @@ class DbReaderMixin:
     ) -> bool:
         if query_id is None:
             return None
+
         groups = self._get_bucket_divisors_by_table_name()
+
         if table in groups:
             # this case handles tables with group ids.
-            group_id_col = f"{table}_id_group"
+            group_id_col = f"{id_col}_group"
             bucket_divisor = groups[table]
             w = {group_id_col: (query_id + 1) // bucket_divisor, id_col: query_id + 1}
         else:
@@ -580,9 +587,11 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self._db_config = None
 
     def _get_bucket_divisors_by_table_name(self) -> dict:
+        bucket_size = self.get_address_id_bucket_size()
         return {
-            "address": self.get_address_id_bucket_size(),
+            "address": bucket_size,
             "cluster": self.get_cluster_id_bucket_size(),
+            "transaction_ids_by_transaction_id_group": bucket_size,
         }
 
     def exists(self) -> bool:
@@ -619,6 +628,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         du = self.get_last_delta_updater_state()
         ha = self._get_hightest_id(table="address", sanity_check=sanity_check)
         return max(ha or 0, du.highest_address_id) if du is not None else ha
+
+    def get_highest_transaction_id(self):
+        return None
 
     @abstractmethod
     def get_highest_cluster_id(self, sanity_check=True) -> Optional[int]:
