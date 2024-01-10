@@ -1,104 +1,822 @@
 import logging
+import time
+from datetime import datetime
+from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple
 
-from .abstractupdater import (
-    TABLE_NAME_DIRTY,
-    TABLE_NAME_NEW,
-    LegacyUpdateStrategy,
-    write_dirty_addresses,
-    write_new_addresses,
+from ...datatypes import EntityType, FlowDirection
+from ...db import AnalyticsDb, DbChange
+from ...rates import convert_to_fiat
+from ...schema.schema import GraphsenseSchemas
+from ...utils import DataObject as MutableNamedTuple
+from ...utils import group_by, no_nones
+from ...utils.account import get_slim_tx_from_trace, get_unique_addresses_from_traces
+from ...utils.errorhandling import CrashRecoverer
+from ...utils.logging import LoggerScope
+from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
+from .generic import (
+    ApplicationStrategy,
+    DbDelta,
+    DeltaValue,
+    EntityDelta,
+    RawEntityTx,
+    RelationDelta,
+    prepare_entities_for_ingest,
+    prepare_relations_for_ingest,
+    prepare_txs_for_ingest,
 )
+from .utxo import apply_changes
 
 logger = logging.getLogger(__name__)
 
 
-class UpdateStrategyAccount(LegacyUpdateStrategy):
-    def __init__(self, db, currency, write_new, write_dirty, forward_fill_rates=False):
-        super().__init__(
-            db, currency, write_new, write_dirty, forward_fill_rates=forward_fill_rates
+COINBASE_PSEUDO_ADDRESS = "coinbase"
+PSEUDO_ADDRESS_AND_IDS = {COINBASE_PSEUDO_ADDRESS: 0}
+
+DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
+    **{
+        "id": 0,
+        "timestamp": 0,
+        "timestamp_transform": 0,
+        "no_blocks": 0,
+        "no_blocks_transform": 0,
+        "no_transactions": 0,
+        "no_addresses": 0,
+        "no_address_relations": 0,
+        "no_clusters": 0,
+        "no_cluster_relations": 0,
+    }
+)
+
+
+logger = logging.getLogger(__name__)
+
+
+def dbdelta_from_account_trace(trace: dict, rates: List[int]) -> DbDelta:
+    """Create a DbDelta instance from a trace
+
+    Args:
+        trace (dict): Row object to build the delta from
+        rates (List[int]): convertion rates to use.
+
+    Returns:
+        DbDelta: delta to apply to the db.
+    """
+
+    slim_tx = get_slim_tx_from_trace(trace)
+
+    sending_addr = [x.address for x in slim_tx if x.direction == FlowDirection.OUT][0]
+    receiving_addr = [x.address for x in slim_tx if x.direction == FlowDirection.IN][0]
+
+    entity_updates = []
+    new_entity_transactions = []
+    relations_updates = []
+
+    # create deltas for sending and receiving address
+    entity_updates.append(
+        EntityDelta(
+            identifier=sending_addr,
+            total_spent=DeltaValue(
+                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
+            ),
+            total_received=DeltaValue(value=0, fiat_values=convert_to_fiat(0, rates)),
+            first_tx_id=trace.tx_id,
+            last_tx_id=trace.tx_id,
+            no_incoming_txs=0,
+            no_outgoing_txs=1,  # traces are also tracked in transactions
         )
+    )
 
-    def prepare_database(self):
-        super().prepare_database()
-        ADDRESS_TABLE_COLUMNS = ["address_prefix text", "address blob"]
-        ADDRESS_TABLE_PK = ["address_prefix", "address"]
+    entity_updates.append(
+        EntityDelta(
+            identifier=receiving_addr,
+            total_spent=DeltaValue(value=0, fiat_values=convert_to_fiat(0, rates)),
+            total_received=DeltaValue(
+                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
+            ),
+            first_tx_id=trace.tx_id,
+            last_tx_id=trace.tx_id,
+            no_incoming_txs=1,  # traces are also tracked in transactions
+            no_outgoing_txs=0,
+        )
+    )
 
-        if self._write_new:
-            self._db.transformed.ensure_table_exists(
-                TABLE_NAME_NEW,
-                ADDRESS_TABLE_COLUMNS
-                + ["address_id int", "block_id int", "timestamp int", "tx_hash blob"],
-                ADDRESS_TABLE_PK,
-                truncate=False,
+    # create new entity transactions for sending and receiving address
+    new_entity_transactions.append(
+        RawEntityTx(
+            identifier=sending_addr,
+            is_outgoing=True,
+            value=trace.value,
+            tx_id=trace.tx_id,
+        )
+    )
+
+    new_entity_transactions.append(
+        RawEntityTx(
+            identifier=receiving_addr,
+            is_outgoing=True,
+            value=trace.value,
+            tx_id=trace.tx_id,
+        )
+    )
+
+    # create a delta for the relation between sending and receiving address
+    relations_updates.append(
+        RelationDelta(
+            src_identifier=sending_addr,
+            dst_identifier=receiving_addr,
+            estimated_value=DeltaValue(
+                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
+            ),
+            no_transactions=1,
+        )
+    )
+
+    return DbDelta(
+        entity_updates=entity_updates,
+        new_entity_txs=new_entity_transactions,
+        relation_updates=relations_updates,
+    )
+
+
+def get_transaction_changes(
+    db: AnalyticsDb,
+    transactions: List,
+    rates: Dict[int, List],
+    get_next_address_id: Callable[[], int],
+    get_next_cluster_id: Callable[[], int],
+) -> None:  # todo change
+    # index transaction hashes
+    tx_hashes = [x.tx_hash for x in transactions]
+    print(tx_hashes)
+
+
+def get_trace_changes(
+    db: AnalyticsDb,
+    traces: List,
+    rates: Dict[int, List],
+    get_next_address_id: Callable[[], int],
+    get_next_cluster_id: Callable[[], int],
+) -> Tuple[List[DbChange], int, int, int, int]:
+    """Main function to transform a list of traces from the raw
+    keyspace to changes to the transformed db.
+
+    Args:
+        db (AnalyticsDb): database instance
+        txs (List): list of transaction rows (raw db schema)
+        rates (Dict[int, List]): Mapping from block to exchange rates
+        (transformed db schema)
+        get_next_address_id (Callable[[], int]): Function to fetch next new address_id
+        get_next_cluster_id (Callable[[], int]): Function to fetch next new cluster_id
+    """
+    # tdb = db.transformed
+
+    """
+        Add pseudo inputs for coinbase txs
+    """
+    # new_traces = []
+    # for trace in traces:
+    #    if trace.reward_type == "block":
+    #        new_traces.append(
+    #            trace._replace(from_address = COINBASE_PSEUDO_ADDRESS)
+    #        )
+    #    else:
+    #        # non-coinbase tx, nothing to do
+    #        new_traces.append(trace)
+    # traces = new_traces
+    # del new_traces
+    traces = [trace for trace in traces if trace.from_address is not None]
+
+    """
+        Build dict of unique addresses in the batch.
+    """
+    addresses = get_unique_addresses_from_traces(traces)
+
+    len_addr = len(addresses)
+
+    """
+        Start loading the address_ids for the addresses async
+    """
+    with LoggerScope.debug(logger, f"Checking existence for {len_addr} addresses") as _:
+        addr_ids = {  # noqa: C416
+            adr: address_id
+            for adr, address_id in db.transformed.get_address_id_async_batch(
+                list(addresses)
+            )
+        }
+
+        del addresses
+    print(addr_ids)  # todo this makes flake8 happy
+    """
+        Sort transactions by block and tx id.
+        Database should already return them sorted.
+        This is just for caution
+    """
+    # todo skip for now. not sure if needed
+    # with LoggerScope.debug(logger, "Prepare transaction data") as lg:
+    #    traces = sorted(traces, key=lambda row: (row.block_id, row.tx_id))
+    #    lg.debug(f"Working on batch of {len(traces)} transactions.")
+    #    ordered_output_addresses = (
+    #        get_unique_ordered_output_addresses_from_transactions(traces)
+    #    )
+    #    ordered_input_addresses = get_unique_ordered_input_addresses_from_transactions(
+    #        traces
+    #    )
+
+    """
+        Compute the changeset for each trace of the batch and convert
+        all currency values with the corresponding rates.
+    """
+    with LoggerScope.debug(logger, "Creating address changeset") as _:
+        per_trace_changes = []
+
+        for trace in traces:
+            per_trace_changes.append(
+                dbdelta_from_account_trace(trace, rates[trace.block_id])
             )
 
-        if self._write_dirty:
-            self._db.transformed.ensure_table_exists(
-                TABLE_NAME_DIRTY,
-                ADDRESS_TABLE_COLUMNS,
-                ADDRESS_TABLE_PK,
+        del rates
+        del traces
+
+        """
+            Aggregate and compress the changeset to minimize database writes
+        """
+        address_delta = DbDelta.merge(per_trace_changes)
+        print(address_delta)  # todo this makes flake8 happy
+        del per_trace_changes
+
+
+def todo_bypassflake8_continue_here(
+    ordered_output_addresses,
+    ordered_input_addresses,
+    addr_ids,
+    tdb,
+    get_next_address_id,
+    get_next_cluster_id,
+    address_delta,
+):
+    """
+    Read address data to merge for address updates
+    """
+    with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
+        existing_addr_ids = no_nones(
+            [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
+        )
+        addresses_resolved = {  # noqa: C416
+            addr_id: address
+            for addr_id, address in tdb.get_address_async_batch(
+                [adr.address_id for adr in existing_addr_ids]
+            )
+        }
+        del existing_addr_ids
+
+        def get_resolved_address(addr_id_exc):
+            addr_id = addr_id_exc.result_or_exc.one()
+            return (
+                (None, None)
+                if addr_id is None
+                else (
+                    addr_id.address_id,
+                    addresses_resolved[addr_id.address_id].result_or_exc.one(),  # noqa
+                )
+            )
+
+        addresses = {
+            adr: get_resolved_address(address_id)
+            for adr, address_id in addr_ids.items()
+        }
+
+        del addresses_resolved
+
+    def get_next_address_ids_with_aliases(address: str):
+        return (
+            get_next_address_id()
+            if address not in PSEUDO_ADDRESS_AND_IDS
+            else PSEUDO_ADDRESS_AND_IDS[address]
+        )
+
+    with LoggerScope.debug(
+        logger, "Assigning new address ids and cluster ids for new addresses"
+    ) as lg:
+        new_cluster_ids = {}
+
+        for out_addr in ordered_output_addresses:
+            addr_id, address = addresses[out_addr]
+            if addr_id is None:
+                new_addr_id = get_next_address_ids_with_aliases(address)
+                addresses[out_addr] = (new_addr_id, None)
+                new_cluster_ids[new_addr_id] = get_next_cluster_id()
+            elif address is None:
+                """
+                I have found cases where address_prefix table is written
+                But not the address table, for those cases we set a new
+                cluster id and create the address in turn
+                """
+                lg.warning(
+                    f"Address {out_addr} has address "
+                    f"id {addr_id} but no address entry"
+                )
+                new_cluster_ids[addr_id] = get_next_cluster_id()
+
+        del ordered_output_addresses
+
+        not_yet_seen_input_addresses = {
+            k for k, (addr_id2, _) in addresses.items() if addr_id2 is None
+        }
+
+        if len(not_yet_seen_input_addresses) > 0:
+            for out_addr in ordered_input_addresses:
+                if out_addr in not_yet_seen_input_addresses:
+                    new_addr_id = get_next_address_ids_with_aliases(out_addr)
+                    lg.debug(
+                        "Encountered new input address - "
+                        f"{out_addr:64}. Creating it with id {new_addr_id}."
+                    )
+                    addresses[out_addr] = (new_addr_id, None)
+                    new_cluster_ids[new_addr_id] = get_next_cluster_id()
+
+            del ordered_input_addresses
+
+        del not_yet_seen_input_addresses
+
+        assert (
+            len([1 for k, (addr_id2, _) in addresses.items() if addr_id2 is None]) == 0
+        )
+
+    """
+        Reading relations to be updated.
+    """
+    with LoggerScope.debug(logger, "Reading address relations to be updated") as _:
+        rel_to_query = [
+            (addresses[update.src_identifier][0], addresses[update.dst_identifier][0])
+            for update in address_delta.relation_updates
+        ]
+        addr_outrelations_q = tdb.get_address_outgoing_relations_async_batch(
+            rel_to_query
+        )
+        addr_outrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(address_delta.relation_updates, addr_outrelations_q)
+        }
+
+        rel_to_query = [
+            (addresses[update.dst_identifier][0], addresses[update.src_identifier][0])
+            for update in address_delta.relation_updates
+        ]
+        addr_inrelations_q = tdb.get_address_incoming_relations_async_batch(
+            rel_to_query
+        )
+        addr_inrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(address_delta.relation_updates, addr_inrelations_q)
+        }
+
+        del rel_to_query, addr_inrelations_q, addr_outrelations_q
+
+    with LoggerScope.debug(logger, "Reading clusters for addresses") as _:
+        clusters_resolved = {  # noqa: C416
+            cluster_id: cluster
+            for cluster_id, cluster in tdb.get_cluster_async_batch(
+                [
+                    address.cluster_id
+                    for adr, (addr_id, address) in addresses.items()
+                    if address is not None
+                ]
+            )
+        }
+
+        def get_resolved_cluster(address_tuple):
+            aidr, address = address_tuple
+            if address is not None:
+                assert address.cluster_id not in new_cluster_ids.values()
+                assert aidr == address.address_id
+                return (
+                    aidr,
+                    address,
+                    address.cluster_id,
+                    clusters_resolved[address.cluster_id].result_or_exc.one(),  # noqa
+                )
+            else:
+                return (aidr, None, new_cluster_ids[aidr], None)
+
+        """Assigning new address ids and cluster ids for new addresses"""
+
+        addresses_with_cluster = {
+            adr: get_resolved_cluster(address_tuple)
+            for adr, address_tuple in addresses.items()
+        }
+        del clusters_resolved, addresses
+
+    with LoggerScope.debug(logger, "Creating local lookup tables") as lg:
+        cluster_to_addr_id = group_by(
+            [
+                (cluster_id, address_id)
+                for _, (
+                    address_id,
+                    _,
+                    cluster_id,
+                    _,
+                ) in addresses_with_cluster.items()
+            ],
+            lambda x: x[0],
+        )
+
+        cluster_from_cluster_id = group_by(
+            [
+                (cluster_id, cluster)
+                for _, (_, _, cluster_id, cluster) in addresses_with_cluster.items()
+            ],
+            lambda x: x[0],
+        )
+
+        def address_to_cluster_id(addr: str) -> int:
+            return addresses_with_cluster[addr][2]
+
+        def address_to_address_id(addr: str) -> int:
+            return addresses_with_cluster[addr][0]
+
+        def address_to_address_obj(addr: str) -> int:
+            return addresses_with_cluster[addr][1]
+
+        def address_to_cluster(addr: str) -> int:
+            return addresses_with_cluster[addr][3]
+
+        def cluster_id_to_address_id(cluster_id: int) -> Set[int]:
+            s = {addr_id for _, addr_id in cluster_to_addr_id[cluster_id]}
+            if len(s) != 1:
+                raise Exception(f"Found more than one address id for cluster_id {s}")
+            return list(s)[0]
+
+        def cluster_id_to_cluster(cluster_id: int) -> Any:
+            clusters = [
+                x for (_, x) in cluster_from_cluster_id[cluster_id] if x is not None
+            ]
+            assert len({x.cluster_id for x in clusters}) <= 1
+            return clusters[0] if len(clusters) > 0 else None
+
+        def get_address_prefix(address_str):
+            address = tdb.to_db_address(address_str)
+            return (address.db_encoding, address.prefix)
+
+    with LoggerScope.debug(logger, "Creating cluster changeset") as lg:
+        cluster_delta = address_delta.to_cluster_delta(address_to_cluster_id)
+
+    with LoggerScope.debug(logger, "Reading cluster relations to be updated") as lg:
+        rel_to_query = [
+            (update.src_identifier, update.dst_identifier)
+            for update in cluster_delta.relation_updates
+        ]
+        clstr_outrelations_q = tdb.get_cluster_outgoing_relations_async_batch(
+            rel_to_query
+        )
+        clstr_outrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(cluster_delta.relation_updates, clstr_outrelations_q)
+        }
+
+        rel_to_query = [
+            (update.dst_identifier, update.src_identifier)
+            for update in cluster_delta.relation_updates
+        ]
+        clstr_inrelations_q = tdb.get_cluster_incoming_relations_async_batch(
+            rel_to_query
+        )
+        clstr_inrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(cluster_delta.relation_updates, clstr_inrelations_q)
+        }
+
+        del rel_to_query, clstr_inrelations_q, clstr_outrelations_q
+
+    """
+        Merge Db Entries with deltas
+    """
+
+    with LoggerScope.debug(logger, "Preparing data to be written.") as lg:
+        changes = []
+
+        ingest_configs = {
+            EntityType.ADDRESS: {
+                "bucket_size": tdb.get_address_id_bucket_size(),
+                "delta": address_delta,
+                "id_transformation": address_to_address_id,
+                "get_entity": address_to_address_obj,
+                "incoming_relations_db": addr_inrelations,
+                "outgoing_relations_db": addr_outrelations,
+            },
+            EntityType.CLUSTER: {
+                "bucket_size": tdb.get_cluster_id_bucket_size(),
+                "delta": cluster_delta,
+                "id_transformation": (lambda x: x),
+                "get_entity": cluster_id_to_cluster,
+                "incoming_relations_db": clstr_inrelations,
+                "outgoing_relations_db": clstr_outrelations,
+            },
+        }
+
+        new_relations_in = {}
+        new_relations_out = {}
+        nr_new_relations = {}
+        nr_new_entities_created = {}
+        for mode, config in ingest_configs.items():
+            lg.debug(f"Prepare {mode} data.")
+            """
+            Creating new address/cluster transaction
+            """
+            changes.extend(
+                prepare_txs_for_ingest(
+                    config["delta"].new_entity_txs,
+                    config["id_transformation"],
+                    config["bucket_size"],
+                    mode=mode,
+                )
+            )
+
+            """ Merging relations deltas """
+            (
+                changes_relations,
+                new_rels_in,
+                new_rels_out,
+                nr_new_rel_total,
+            ) = prepare_relations_for_ingest(
+                config["delta"].relation_updates,
+                config["id_transformation"],
+                config["incoming_relations_db"],
+                config["outgoing_relations_db"],
+                config["bucket_size"],
+                mode=mode,
+            )
+            nr_new_rels = sum(new_rels_in.values()) + sum(new_rels_out.values())
+            assert nr_new_rels == nr_new_rel_total
+            nr_new_relations[mode] = nr_new_rels
+
+            new_relations_in[mode] = new_rels_in
+            new_relations_out[mode] = new_rels_out
+            changes.extend(changes_relations)
+
+            """ Merging entity deltas """
+            entity_changes, nr_new_entities = prepare_entities_for_ingest(
+                config["delta"].entity_updates,
+                config["id_transformation"],
+                config["get_entity"],
+                address_to_cluster_id,
+                cluster_id_to_address_id,
+                new_relations_in[mode],
+                new_relations_out[mode],
+                config["bucket_size"],
+                get_address_prefix,
+                mode=mode,
+            )
+            changes.extend(entity_changes)
+            nr_new_entities_created[mode] = nr_new_entities
+            del nr_new_entities
+
+    return (
+        changes,
+        nr_new_entities_created[EntityType.ADDRESS],
+        nr_new_entities_created[EntityType.CLUSTER],
+        nr_new_relations[EntityType.ADDRESS],
+        nr_new_relations[EntityType.CLUSTER],
+    )
+
+
+def get_bookkeeping_changes(
+    base_statistics: MutableNamedTuple,
+    current_statistics: NamedTuple,
+    last_block_processed: int,
+    nr_new_address_relations: int,
+    nr_new_addresses: int,
+    nr_new_cluster_relations: int,
+    nr_new_clusters: int,
+    nr_new_tx: int,
+    highest_address_id: int,
+    runtime_seconds: int,
+    bts: Dict[int, datetime],
+    patch_mode: bool,
+) -> List[DbChange]:
+    """Creates changes for the bookkeeping tables like summary statistics after
+    other data has been updated.
+
+    Args:
+        base_statistics (MutableNamedTuple): statistics db row, all the other
+        parameters are note data is updated in this process
+        current_statistics (NamedTuple): Current value of db statistics for comparison
+        last_block_processed (int): Last block processed
+        nr_new_address_relations (int): Delta new addresses relations in changeset
+        nr_new_addresses (int): Delta new addresses in changeset
+        nr_new_cluster_relations (int): Delta new cluster relations in changeset
+        nr_new_clusters (int): Delta new clusters in changeset
+        nr_new_tx (int): Delta new txs in changeset
+        highest_address_id (int): current highest address_id
+        runtime_seconds (int): runtime to create the last changes in seconds
+        bts (Dict[int, datetime]): mapping from block to its timestamp
+        delta values
+    """
+    changes = []
+    with LoggerScope.debug(logger, "Creating summary_statistics updates") as lg:
+        lb_date = bts[last_block_processed]
+        stats = base_statistics
+        no_blocks = last_block_processed - 1
+
+        """ Update local stats """
+        if not patch_mode:
+            """when in patch mode (end block set by user)"""
+            stats.no_blocks = no_blocks
+        stats.timestamp = int(lb_date.timestamp())
+        stats.no_address_relations += nr_new_address_relations
+        stats.no_addresses += nr_new_addresses
+        stats.no_cluster_relations += nr_new_cluster_relations
+        stats.no_clusters += nr_new_clusters
+        stats.no_transactions += nr_new_tx
+
+        statistics = stats.as_dict()
+        if current_statistics is not None and current_statistics.no_blocks != no_blocks:
+            if not patch_mode:
+                assert current_statistics.no_blocks < no_blocks
+            # changes.append(
+            #     DbChange.delete(
+            #         table="summary_statistics",
+            #         data={"no_blocks": current_statistics.no_blocks},
+            #     )
+            # )
+        changes.append(DbChange.new(table="summary_statistics", data=statistics))
+
+        lg.debug(f"Statistics: {statistics}")
+
+        data_history = {
+            "last_synced_block": last_block_processed,
+            "last_synced_block_timestamp": lb_date,
+            "highest_address_id": highest_address_id,
+            "timestamp": datetime.now(),
+            "write_new": False,
+            "write_dirty": False,
+            "runtime_seconds": runtime_seconds,
+        }
+        changes.append(DbChange.new(table=TABLE_NAME_DELTA_HISTORY, data=data_history))
+
+        lg.debug(f"History: {data_history}")
+    return changes
+
+
+class UpdateStrategyAccount(UpdateStrategy):
+    def __init__(
+        self,
+        db,
+        currency: str,
+        pedantic: bool,
+        application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
+        patch_mode: bool = False,
+        forward_fill_rates: bool = False,
+    ):
+        super().__init__(db, currency, forward_fill_rates=forward_fill_rates)
+        crash_file = (
+            "/tmp/utxo_deltaupdate_"
+            f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
+            "_crashreport.err"
+        )
+        stats_value = self._db.transformed.get_summary_statistics()
+        """ Make statistics row mutable"""
+        self._statistics = (
+            MutableNamedTuple(**stats_value._asdict())
+            if stats_value is not None
+            else DEFAULT_SUMMARY_STATISTICS
+        )
+        self._pedantic = pedantic
+        self._patch_mode = patch_mode
+        self.changes = None
+        self.application_strategy = application_strategy
+        logger.info(f"Updater running in {application_strategy} mode.")
+        self.crash_recoverer = CrashRecoverer(crash_file)
+
+    def persist_updater_progress(self):
+        if self.changes is not None:
+            atomic = ApplicationStrategy.TX == self.application_strategy
+            apply_changes(
+                self._db, self.changes, self._pedantic, try_atomic_writes=atomic
+            )
+            self.changes = None
+        self._time_last_batch = time.time() - self._batch_start_time
+
+    def prepare_database(self):
+        with LoggerScope.debug(logger, "Preparing database"):
+            if self._db.transformed.has_delta_updater_v1_tables():
+                raise Exception(
+                    "Tables of the delta-updater v1 detected. "
+                    "please delete new_addresses, dirty_address, "
+                    "detla_updater_state and delta-updater_history "
+                    "before using delta updater v2."
+                )
+            GraphsenseSchemas().ensure_table_exists_by_name(
+                self._db.transformed,
+                TABLE_NAME_DELTA_HISTORY,
                 truncate=False,
             )
 
     def process_batch_impl_hook(self, batch):
-        addresses = {}
-        bts = self._db.raw.get_block_timestamps_batch(batch)
-
-        for block in batch:
-            for row in self._db.raw.get_addresses_in_block(block):
-                if row.from_address is not None and row.from_address not in addresses:
-                    # From address can be None for coinbase
-                    addresses[row.from_address] = row
-
-                if row.to_address is not None and row.to_address not in addresses:
-                    # To addresses can be None for e.g. deployments
-                    # addresses.add(row.to_address)
-                    addresses[row.to_address] = row
-
-        if self._write_dirty:
-            write_dirty_addresses(self._db, TABLE_NAME_DIRTY, set(addresses.keys()))
-
-        self._nr_queryied_addresses_batch = len(addresses)
-        self._nr_queried_addresses += self._nr_queryied_addresses_batch
-
-        if self._write_new:
-            logger.info(
-                "Checking existence for "
-                f"{self._nr_queryied_addresses_batch} addresses"
-            )
-
-            ret = self._db.transformed.known_addresses_batch(
-                addresses.keys(), inlcude_new_adresses_table=True
-            )
-
-            for addr, exists in ret.items():
-                # this is very slow but good for crosschecking
-                if not exists:
-                    self._new_addresses[addr] = addresses[addr]
-                    self._nr_new_addresses += 1
-
-            if self._nr_queried_addresses > 0:
-                logger.info(
-                    f"Found {self._nr_new_addresses} new addresses so "
-                    f"far {(self._nr_new_addresses/self._nr_queried_addresses):.3f} "
-                    "are new."
+        rates = {}
+        transactions = []
+        traces = []
+        bts = {}
+        """
+            Read transaction and exchange rates data
+        """
+        with LoggerScope.debug(logger, "Checking recovery state.") as lg:
+            if self.crash_recoverer.is_in_recovery_mode():
+                """
+                If we are in recovery mode we start with a block earlier to catch up
+                the delta otherwise would start with whats in the db +1
+                In case of an error in between blocks this would mean skipping to
+                the next block
+                """
+                mb = max(0, min(batch) - 1)
+                lg.warning(
+                    "Delta update is in crash recovery mode. Crash hint is "
+                    f"{self.crash_recoverer.get_recovery_hint()} in "
+                    f"{self.crash_recoverer.get_recovery_hint_filename()} "
+                    f" restarting at block {mb}."
                 )
-            # logging.info(self._db.transformed.knows_address.cache_info())
+                batch = [mb] + batch
 
-            # At the end of the batch write data to the db.
-            write_new_addresses(
+        with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
+            missing_rates_in_block = False
+            for block in batch:
+                transactions.extend(self._db.raw.get_transactions_in_block(block))
+                traces.extend(self._db.raw.get_traces_in_block(block))
+                fiat_values = self._db.transformed.get_exchange_rates_by_block(
+                    block
+                ).fiat_values
+                if fiat_values is None:
+                    # raise Exception(
+                    #     "No exchange rate for block {block}. Abort processing."
+                    # )
+                    missing_rates_in_block = True
+                    fiat_values = [0, 0]
+                rates[block] = fiat_values
+                bts[block] = self._db.raw.get_block_timestamp(block)
+
+            if missing_rates_in_block:
+                log.warning("Block Range has missing exchange rates. Using Zero.")
+
+        if self.application_strategy == ApplicationStrategy.BATCH:
+            if self.crash_recoverer.is_in_recovery_mode():
+                raise Exception("Batch mode is not allowed in recovery mode.")
+
+            tx_changes = get_transaction_changes(
                 self._db,
-                TABLE_NAME_NEW,
-                [
-                    (
-                        addr,
-                        self.consume_address_id(),
-                        int(bts[row.block_id].timestamp()),
-                        row.block_id,
-                        row.tx_hash,
-                    )
-                    for addr, row in self._new_addresses.items()
-                ],
+                transactions,
+                rates,
+                self.consume_address_id,
+                self.consume_transaction_id,
             )
-            # Resetting here means less memory footprint for this job
-            # But more writes to Cassandra.
-            self._new_addresses = {}
+            print(tx_changes)  # todo this makes flake8 happy
+
+            changes = []
+            (
+                delta_changes,
+                nr_new_addresses,
+                nr_new_clusters,
+                nr_new_address_relations,
+                nr_new_cluster_relations,
+            ) = get_trace_changes(  # todo could rename
+                self._db,
+                traces,
+                rates,
+                self.consume_address_id,
+                self.consume_cluster_id,
+            )
+
+            last_block_processed = batch[-1]
+            nr_new_tx = len(traces)
+            changes.extend(delta_changes)
+            runtime_seconds = int(time.time() - self.batch_start_time)
+
+            changes.extend(
+                get_bookkeeping_changes(
+                    self._statistics,
+                    self._db.transformed.get_summary_statistics(),
+                    last_block_processed,
+                    nr_new_address_relations,
+                    nr_new_addresses,
+                    nr_new_cluster_relations,
+                    nr_new_clusters,
+                    nr_new_tx,
+                    self.highest_address_id,
+                    runtime_seconds,
+                    bts,
+                    patch_mode=self._patch_mode,
+                )
+            )
+
+            # Store changes to be written
+            # They are applied at the end of the batch in
+            # persist_updater_progress
+            self.changes = changes
+
+        elif self.application_strategy == ApplicationStrategy.TX:
+            raise ValueError(
+                f"Unknown application strategy {self.application_strategy}"
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown application strategy {self.application_strategy}"
+            )
