@@ -9,7 +9,11 @@ from parsy import forward_declaration, seq, string
 from ..config import config, currency_to_schema_type, keyspace_types
 from ..datatypes import BadUserInputError
 from ..db import DbFactory
-from ..db.cassandra import build_create_stmt, normalize_cql_statement
+from ..db.cassandra import (
+    build_create_stmt,
+    build_truncate_stmt,
+    normalize_cql_statement,
+)
 from ..utils import flatten, split_list_on_condition
 from ..utils.parsing import (
     anything,
@@ -404,3 +408,32 @@ class GraphsenseSchemas:
                 )
 
         return report
+
+    def get_table_columns_from_file(self, keyspace_type: str, table: str):
+        schemas = self.get_by_schema_type(keyspace_type)[0][1].statements_str
+        potential_schemas = [s for s in schemas if table in s]
+        assert len(potential_schemas) == 1
+        schema_str = potential_schemas[0]
+        columns = schema_str.split("(")[1].split(")")[0].split(",")[:-1]
+        columns = [c.strip() for c in columns]
+        pk_columns = schema_str.split("primary key (")[1].split(")")[0].split(",")
+        return columns, pk_columns
+
+    def ensure_table_exists_by_name(
+        self, db_transformed, table_name: str, truncate: bool = False
+    ):
+        keyspace = db_transformed.get_keyspace()
+        columns, pk_columns = self.get_table_columns_from_file(keyspace, table_name)
+        db_transformed._db.execute(
+            build_create_stmt(
+                columns,
+                pk_columns,
+                table_name,
+                fail_if_exists=False,
+                keyspace=keyspace,
+            )
+        )
+        if truncate:
+            db_transformed._db.execute(
+                build_truncate_stmt(table_name, keyspace=keyspace)
+            )
