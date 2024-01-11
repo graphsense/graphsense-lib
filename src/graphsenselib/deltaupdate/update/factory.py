@@ -45,9 +45,7 @@ class UpdaterFactory:
                 forward_fill_rates=forward_fill_rates,
             )
         if (schema_type == "account" or schema_type == "account_trx") and version == 2:
-            app_strat = (
-                ApplicationStrategy.BATCH if write_batch > 1 else ApplicationStrategy.TX
-            )
+            app_strat = ApplicationStrategy.BATCH
             return UpdateStrategyAccount(
                 db,
                 currency,
