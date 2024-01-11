@@ -46,8 +46,43 @@ class DeltaValue(DeltaUpdate):
 
 
 @dataclass
+class TxDelta(DeltaUpdate):
+    block_id: int
+    tx_id: int
+    tx_hash: bytes
+    tx_index: int
+
+    def merge(self, other_delta):  # txs should not be merged, but here for compliance:
+        raise NotImplementedError("Why do you want to merge transactions")
+
+
+@dataclass
+class TraceDelta(
+    DeltaUpdate
+):  # todo for tron maybe we should just emit (potentially) multiple of these
+    tx_hash: str
+    from_address: str
+    to_address: str
+    asset: str
+    value: int
+
+    def merge(self, other_delta):
+        assert self.tx_hash == other_delta.tx_hash
+        assert self.from_address == other_delta.from_address
+        assert self.to_address == other_delta.to_address
+        assert self.asset == other_delta.asset
+        return TraceDelta(
+            tx_hash=self.tx_hash,
+            from_address=self.from_address,
+            to_address=self.to_address,
+            asset=self.asset,
+            value=self.value + other_delta.value,
+        )
+
+
+@dataclass
 class EntityDelta(DeltaUpdate):
-    """The identifier is either an address of cluster identifier"""
+    """The identifier is either an address or cluster identifier"""
 
     identifier: Union[str, int]
     total_received: DeltaValue
@@ -60,11 +95,11 @@ class EntityDelta(DeltaUpdate):
     @classmethod
     def from_db(Cls, db_row, mode: EntityType):
         if mode == EntityType.CLUSTER:
-            idetifier = db_row.cluster_id
+            identifier = db_row.cluster_id
         elif mode == EntityType.ADDRESS:
-            idetifier = db_row.address
+            identifier = db_row.address
         return Cls(
-            identifier=idetifier,
+            identifier=identifier,
             total_received=DeltaValue.from_db(db_row.total_received),
             total_spent=DeltaValue.from_db(db_row.total_spent),
             first_tx_id=db_row.first_tx_id,
@@ -211,6 +246,67 @@ def prepare_txs_for_ingest(
 
         changes.append(chng)
     return changes
+
+
+def prepare_txs_for_ingest_account(  # todo move this somewhere else, not generic enough
+    delta: List[TxDelta],
+    id_bucket_size: int,
+    block_bucket_size: int,
+    get_transaction_prefix: Callable[[str], Tuple[str, str]],
+) -> Tuple[List[DbChange], int]:
+    changes = []
+
+    for update in delta:
+        transaction_id = update.tx_id
+        transaction_id_group = transaction_id // id_bucket_size
+        transaction = update.tx_hash
+        address, transaction_prefix = get_transaction_prefix(transaction)
+        data = {
+            "transaction_id_group": transaction_id_group,
+            "transaction_id": transaction_id,
+            "transaction": transaction,
+        }
+
+        chng = DbChange.new(
+            table="transaction_ids_by_transaction_id_group",
+            data=data,
+        )
+        changes.append(chng)
+
+        data = {
+            "transaction_prefix": transaction_prefix,
+            "transaction": transaction,
+            "transaction_id": transaction_id,
+        }
+
+        chng = DbChange.new(
+            table="transaction_ids_by_transaction_prefix",
+            data=data,
+        )
+        changes.append(chng)
+
+        # get transaction ids
+
+        changes.append(chng)
+
+    # insert blocks in block_transactions
+    grouped = groupby_property(delta, "block_id", sort_by="tx_id")
+    changes.extend(
+        [
+            DbChange.new(
+                table="block_transactions",
+                data={
+                    "block_id_group": block_id // block_bucket_size,
+                    "block_id": block_id,
+                    "txs": [tx.tx_id for tx in txs],
+                },
+            )
+            for block_id, txs in grouped.items()
+        ]
+    )
+
+    nr_new_txs = len(delta)
+    return changes, nr_new_txs
 
 
 def prepare_entities_for_ingest(

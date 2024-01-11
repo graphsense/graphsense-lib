@@ -94,3 +94,8 @@ class AddressAccount:
     @property
     def bytearray(self) -> bytearray:  # noqa
         return self.address_bytes
+
+
+class AddressAccountTrx:
+    def __init__(self, adr: Union[str, bytearray], config):
+        raise NotImplementedError("AddressAccountTrx not implemented yet")

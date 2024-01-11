@@ -72,10 +72,11 @@ class DbChange:
 
 
 class KeyspaceConfig:
-    def __init__(self, keyspace_name, db_type, address_type):
+    def __init__(self, keyspace_name, db_type, address_type, tx_hash_type):
         self._keyspace_name = keyspace_name
         self._db_type = db_type
         self._address_type = address_type
+        self._tx_hash_type = tx_hash_type
 
     @property
     def keyspace_name(self):
@@ -88,6 +89,10 @@ class KeyspaceConfig:
     @property
     def address_type(self):
         return self._address_type
+
+    @property
+    def tx_hash_type(self):
+        return self._tx_hash_type
 
 
 class WithinKeyspace:
@@ -576,7 +581,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             )
             for b in batch
         ]
-        return [{"block_id": b, "fiat_values": get_values_list(er)} for b, er in ers]
+        return [
+            {"block_id": b, "fiat_values": get_values_list(er)} for b, er in ers
+        ]  # todo restore
 
 
 class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
@@ -609,6 +616,10 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         return self.select_one("exchange_rates", where={"block_id": block})
 
     def get_address_id_bucket_size(self) -> Optional[int]:
+        config = self.get_configuration()
+        return int(config.bucket_size) if config is not None else None
+
+    def get_block_id_bucket_size(self) -> Optional[int]:
         config = self.get_configuration()
         return int(config.bucket_size) if config is not None else None
 
@@ -691,6 +702,10 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def to_db_address(self, address):
         Address = self._keyspace_config.address_type
         return Address(address, self.get_configuration())
+
+    def to_db_tx_hash(self, tx_hash):
+        TxHash = self._keyspace_config.tx_hash_type
+        return TxHash(tx_hash, self.get_configuration())
 
     @lru_cache(maxsize=1_000_000)
     def knows_address(self, address: Union[str, bytearray]) -> bool:
