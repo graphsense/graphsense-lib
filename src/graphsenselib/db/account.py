@@ -35,7 +35,6 @@ class RawDbAccount(RawDb):
         raise NotImplementedError
 
     def get_transactions_in_block(self, block: int) -> Iterable:
-        # todo not tested, prepared for trx, use together with get_traces_in_block
         result = self.select(
             "transaction",
             where={"block_id": block},

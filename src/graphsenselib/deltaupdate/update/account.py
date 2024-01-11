@@ -1,3 +1,4 @@
+# flake8: noqa
 import logging
 import time
 from datetime import datetime
@@ -20,9 +21,11 @@ from .generic import (
     EntityDelta,
     RawEntityTx,
     RelationDelta,
+    TraceDelta,
+    TxDelta,
     prepare_entities_for_ingest,
     prepare_relations_for_ingest,
-    prepare_txs_for_ingest,
+    prepare_txs_for_ingest_account,
 )
 from .utxo import apply_changes
 
@@ -51,7 +54,77 @@ DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
 logger = logging.getLogger(__name__)
 
 
+def txdeltas_from_account_transaction(
+    transaction: dict,
+    tx_ids: dict,
+    rates: List[int],
+    bucket_size: int,
+    prefix_length: int,
+) -> List[TxDelta]:
+    """Create a DbDelta instance from a transaction
+
+    Args:
+        transaction (dict): Row object to build the delta from
+        tx_ids (dict): Mapping from tx_hash to tx_id
+        rates (List[int]): convertion rates to use.
+        bucket_size (int): bucket size to use for tx_id_group
+        prefix_length (int): prefix length to use for tx_prefix
+
+    Returns:
+        DbDelta: delta to apply to the db.
+    """
+    raise NotImplementedError
+
+
 def dbdelta_from_account_trace(trace: dict, rates: List[int]) -> DbDelta:
+    """Create a DbDelta instance from a trace
+
+    Args:
+        trace (dict): Row object to build the delta from
+        rates (List[int]): convertion rates to use.
+
+    Returns:
+        DbDelta: delta to apply to the db.
+    """
+
+    slim_tx = get_slim_tx_from_trace(trace)
+
+    sending_addr = [x.address for x in slim_tx if x.direction == FlowDirection.OUT][0]
+    receiving_addr = [x.address for x in slim_tx if x.direction == FlowDirection.IN][0]
+
+    entity_updates = []
+    new_entity_transactions = []
+    relations_updates = []
+
+    # create deltas for sending and receiving address
+    entity_updates.append(
+        TraceDelta(
+            tx_hash=trace.tx_hash,
+            from_address=sending_addr,
+            to_address=receiving_addr,
+            asset="native",
+            value=trace.value,
+        )
+    )
+
+    entity_updates.append(
+        TraceDelta(
+            identifier=receiving_addr,
+            total_spent=DeltaValue(value=0, fiat_values=convert_to_fiat(0, rates)),
+            total_received=DeltaValue(
+                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
+            ),
+            first_tx_id=trace.tx_id,
+            last_tx_id=trace.tx_id,
+            no_incoming_txs=1,  # traces are also tracked in transactions
+            no_outgoing_txs=0,
+        )
+    )
+
+
+def dbdelta_from_account_trace_old(
+    trace: dict, rates: List[int]
+) -> DbDelta:  # todo remove when finished
     """Create a DbDelta instance from a trace
 
     Args:
@@ -141,16 +214,107 @@ def dbdelta_from_account_trace(trace: dict, rates: List[int]) -> DbDelta:
 def get_transaction_changes(
     db: AnalyticsDb,
     transactions: List,
+    traces: List,
     rates: Dict[int, List],
     get_next_address_id: Callable[[], int],
-    get_next_cluster_id: Callable[[], int],
-) -> None:  # todo change
+    get_next_transaction_id: Callable[[], int],
+) -> List[DbChange]:  # todo change
     # index transaction hashes
-    tx_hashes = [x.tx_hash for x in transactions]
-    print(tx_hashes)
+    tx_hashes = [tx.tx_hash for tx in transactions]
+    # assign ids
+    tx_ids = {tx_hash: get_next_transaction_id() for tx_hash in tx_hashes}
+    hash_to_tx = {tx_hash: tx for tx_hash, tx in zip(tx_hashes, transactions)}
+
+    id_bucket_size = db.transformed.get_address_id_bucket_size()
+    block_bucket_size = db.transformed.get_block_id_bucket_size()
+
+    txdeltas = []
+
+    for tx_hash in tx_hashes:
+        tx_id = tx_ids[tx_hash]
+        tx_index = hash_to_tx[tx_hash].transaction_index
+        block_id = hash_to_tx[tx_hash].block_id
+
+        txdeltas.append(
+            TxDelta(block_id=block_id, tx_id=tx_id, tx_hash=tx_hash, tx_index=tx_index)
+        )
+
+    def get_tx_prefix(tx_hash):
+        tx_hash = db.transformed.to_db_tx_hash(tx_hash)
+        return (tx_hash.db_encoding, tx_hash.prefix)
+
+    changes, _ = prepare_txs_for_ingest_account(  # todo also put traces in here
+        txdeltas, id_bucket_size, block_bucket_size, get_tx_prefix
+    )
+
+    return changes
+
+    """
+    (
+        delta_changes,
+        nr_new_addresses,
+        nr_new_clusters,
+        nr_new_address_relations,
+        nr_new_cluster_relations,
+    ) = get_trace_deltas(
+        db,
+        traces,
+        rates,
+        get_next_address_id,
+        get_next_transaction_id,
+    )
 
 
-def get_trace_changes(
+    def to_fiat_currency(value_column, fiat_value_column, data):
+        for row in data:
+            if value_column in row and fiat_value_column in row:
+                row[fiat_value_column] = (row[value_column] * row[fiat_value_column]) / 1e18
+        return data
+
+    def compute_encoded_transactions(traces, transactions_ids, address_ids, exchange_rates):
+        # Filter traces where status is 1 and rename 'txHash' to 'transaction'
+        filtered_traces = [
+            dict(trace, transaction=trace['txHash']) for trace in traces if trace['status'] == 1
+        ]
+
+        # Join operations (left join)
+        def left_join(primary, secondary, key):
+            joined = []
+            for p_item in primary:
+                match = next((s_item for s_item in secondary if s_item[key] == p_item[key]), None)
+                joined.append({**p_item, **(match if match else {})})
+            return joined
+
+        # Performing joins
+        traces_transactions = left_join(filtered_traces, transactions_ids, 'transaction')
+        traces_transactions_from = left_join(traces_transactions, [
+            {**item, 'fromAddress': item['address'], 'fromAddressId': item['addressId']} for item in address_ids],
+                                             'fromAddress')
+        final_join = left_join(traces_transactions_from,
+                               [{**item, 'toAddress': item['address'], 'toAddressId': item['addressId']} for item in
+                                address_ids], 'toAddress')
+
+        # Dropping unnecessary columns
+        for item in final_join:
+            for key in ['blockIdGroup', 'status', 'callType', 'toAddress', 'fromAddress', 'receiptGasUsed',
+                        'transaction', 'traceId']:
+                item.pop(key, None)
+
+            # Renaming columns
+            item['srcAddressId'] = item.pop('fromAddressId', None)
+            item['dstAddressId'] = item.pop('toAddressId', None)
+
+        # Join with exchange rates and apply currency conversion
+        final_data = left_join(final_join, exchange_rates, 'blockId')
+        encoded_transactions = to_fiat_currency('value', 'fiatValues', final_data)
+
+        return encoded_transactions
+
+    return changes
+    """
+
+
+def get_trace_deltas(
     db: AnalyticsDb,
     traces: List,
     rates: Dict[int, List],
@@ -502,15 +666,7 @@ def todo_bypassflake8_continue_here(
                 "get_entity": address_to_address_obj,
                 "incoming_relations_db": addr_inrelations,
                 "outgoing_relations_db": addr_outrelations,
-            },
-            EntityType.CLUSTER: {
-                "bucket_size": tdb.get_cluster_id_bucket_size(),
-                "delta": cluster_delta,
-                "id_transformation": (lambda x: x),
-                "get_entity": cluster_id_to_cluster,
-                "incoming_relations_db": clstr_inrelations,
-                "outgoing_relations_db": clstr_outrelations,
-            },
+            }
         }
 
         new_relations_in = {}
@@ -519,11 +675,9 @@ def todo_bypassflake8_continue_here(
         nr_new_entities_created = {}
         for mode, config in ingest_configs.items():
             lg.debug(f"Prepare {mode} data.")
-            """
-            Creating new address/cluster transaction
-            """
+            """ Merging new transactions """
             changes.extend(
-                prepare_txs_for_ingest(
+                prepare_txs_for_ingest_account(
                     config["delta"].new_entity_txs,
                     config["id_transformation"],
                     config["bucket_size"],
@@ -760,23 +914,33 @@ class UpdateStrategyAccount(UpdateStrategy):
             if self.crash_recoverer.is_in_recovery_mode():
                 raise Exception("Batch mode is not allowed in recovery mode.")
 
+            changes = []
             tx_changes = get_transaction_changes(
                 self._db,
                 transactions,
+                traces,
                 rates,
                 self.consume_address_id,
                 self.consume_transaction_id,
-            )
+            )  # noqa: E501
+
+            changes.extend(tx_changes)
+            self.changes = changes
+
+            # todo continue here
+            """
+            changes += tx_changes
+
+
             print(tx_changes)  # todo this makes flake8 happy
 
-            changes = []
             (
                 delta_changes,
                 nr_new_addresses,
                 nr_new_clusters,
                 nr_new_address_relations,
                 nr_new_cluster_relations,
-            ) = get_trace_changes(  # todo could rename
+            ) = get_trace_changes(
                 self._db,
                 traces,
                 rates,
@@ -810,11 +974,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             # They are applied at the end of the batch in
             # persist_updater_progress
             self.changes = changes
-
-        elif self.application_strategy == ApplicationStrategy.TX:
-            raise ValueError(
-                f"Unknown application strategy {self.application_strategy}"
-            )
+            """
 
         else:
             raise ValueError(
