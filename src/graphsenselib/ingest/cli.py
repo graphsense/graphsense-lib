@@ -1,5 +1,6 @@
 import logging
 import sys
+from typing import Dict
 
 import click
 
@@ -7,11 +8,39 @@ from ..cli.common import require_currency, require_environment
 from ..config import config, currency_to_schema_type
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
+from ..utils import subkey_get
 from .common import INGEST_SINKS
 from .factory import IngestFactory
-from .parquet import SCHEMA_MAPPING
+from .parquet import SCHEMA_MAPPING as PARQUET_SCHEMA_MAPPING
 
 logger = logging.getLogger(__name__)
+
+
+def create_sink_config(sink: str, network: str, ks_config: Dict):
+    schema_type = currency_to_schema_type[network]
+    sink_config = ks_config.ingest_config.dict().get("raw_keyspace_file_sinks", None)
+    if (sink == "parquet" and schema_type.startswith("account")) or sink == "fs-cache":
+        file_sink_dir = subkey_get(sink_config, f"{sink}.directory".split("."))
+        if file_sink_dir is None:
+            logger.warning(
+                f"No {sink} file output directory "
+                f"({sink}.directory) is configured for {network}. "
+                "Ignoring sink."
+            )
+            return None
+
+        sc = {"output_directory": file_sink_dir}
+
+        if sink == "parquet":
+            sc["schema"] = PARQUET_SCHEMA_MAPPING[schema_type]
+        if sink == "fs-cache":
+            sc["ignore_tables"] = ["trc10", "configuration"]
+            if network == "trx":
+                sc["key_by"] = {"fee": "tx_hash", "default": "block_id"}
+
+        return sc
+    else:
+        return {}
 
 
 @click.group()
@@ -126,9 +155,6 @@ def ingest(
     """
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
-    parquet_file_sink_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "parquet", None
-    )
 
     if (
         (
@@ -144,34 +170,19 @@ def ingest(
         )
         sys.exit(11)
 
-    parquet_file_sink = (
-        parquet_file_sink_config.directory
-        if parquet_file_sink_config is not None
-        else None
-    )
-
     if create_schema:
         GraphsenseSchemas().create_keyspace_if_not_exist(
             env, currency, keyspace_type="raw"
         )
 
-    def create_sink_config(sink, currency):
-        schema_type = currency_to_schema_type[currency]
-        return (
-            {
-                "output_directory": parquet_file_sink,
-                "schema": SCHEMA_MAPPING[schema_type],
-            }
-            if sink == "parquet" and schema_type == "account"
-            else {}
-        )
+    sink_configs = [(k, create_sink_config(k, currency, ks_config)) for k in sinks]
 
     with DbFactory().from_config(env, currency) as db:
         IngestFactory().from_config(env, currency, version).ingest(
             db=db,
             currency=currency,
             sources=sources,
-            sink_config={k: create_sink_config(k, currency) for k in sinks},
+            sink_config={k: v for k, v in sink_configs if v is not None},
             user_start_block=start_block,
             user_end_block=end_block,
             batch_size=batch_size,
