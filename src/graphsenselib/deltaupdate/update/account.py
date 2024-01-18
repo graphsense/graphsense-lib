@@ -921,6 +921,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         traces = [
             trace for trace in traces if trace.tx_hash is not None
         ]  # todo ignores reward tx
+        # make sure they go through
+        traces = [trace for trace in traces if trace.status == 1]
 
         def ignore_coinbase(hashes):
             return [hash for hash in hashes if hash not in PSEUDO_ADDRESS_AND_IDS]
@@ -1047,6 +1049,81 @@ class UpdateStrategyAccount(UpdateStrategy):
             get_tx_prefix,
             address_hash_to_id_with_new,
         )
+
+        # hash to id mapping
+        # hash_to_id = {tx_hash: self.consume_transaction_id() for tx_hash in tx_hashes}
+
+        # get address_transactions
+        # first create RawEntityTx
+        # then create DbChange
+        from typing import Union
+
+        from .generic import RawEntityTxAccount
+
+        def prepare_txs_for_ingest(
+            delta: List[RawEntityTxAccount],
+            id_bucket_size: int,
+        ) -> List[DbChange]:
+            """
+            Creating new address transaction
+            """
+            changes = []
+            for atx in delta:
+                ident = atx.identifier
+
+                chng = DbChange.new(
+                    table=f"address_transactions",
+                    data={
+                        "address_id_group": get_id_group(ident, id_bucket_size),
+                        "address_id_secondary_group": 0,  # todo, verify
+                        "address_id": ident,
+                        "currency": atx.currency,
+                        "transaction_id": atx.tx_id,
+                        "is_outgoing": atx.is_outgoing,
+                        "tx_reference": atx.tx_reference,
+                    },
+                )
+
+                changes.append(chng)
+            return changes
+
+        def get_entitytx_from_trace(trace, is_outgoing):
+            tx_id = hash_to_id[trace.tx_hash]
+            address_hash = trace.from_address if is_outgoing else trace.to_address
+            address_id = address_hash_to_id_with_new[address_hash]
+            currency = self.currency.upper()
+            from cassandra.cluster import Cluster
+            from cassandra.cqlengine.columns import Integer
+            from cassandra.cqlengine.usertype import UserType
+
+            # Step 1: Define the UserType in Python
+            class TxReference(UserType):
+                trace_index = Integer(required=False)
+                log_index = Integer(required=False)
+
+            tx_reference = {
+                "trace_index": trace.trace_index,
+                "log_index": None,
+            }  # todo tokens (log_index)
+            tx_reference = TxReference(**tx_reference)
+
+            reta = RawEntityTxAccount(
+                identifier=address_id,
+                is_outgoing=is_outgoing,
+                currency=currency,
+                tx_id=tx_id,
+                tx_reference=tx_reference,
+            )
+            return reta
+
+        new_entity_transactions = []
+        new_entity_transactions.extend(
+            [get_entitytx_from_trace(trace, True) for trace in traces]
+        )
+        new_entity_transactions.extend(
+            [get_entitytx_from_trace(trace, False) for trace in traces]
+        )
+        changes += prepare_txs_for_ingest(new_entity_transactions, id_bucket_size)
 
         return changes
 
