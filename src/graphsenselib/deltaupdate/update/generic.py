@@ -11,6 +11,7 @@ from typing import Any, Callable, List, Tuple, Union
 from ...datatypes import EntityType
 from ...db import DbChange
 from ...utils import group_by, groupby_property
+from ...utils.tron import get_id_group
 
 
 class ApplicationStrategy(Enum):
@@ -236,7 +237,7 @@ def prepare_txs_for_ingest(
         chng = DbChange.new(
             table=f"{mode}_transactions",
             data={
-                f"{mode}_id_group": ident // id_bucket_size,
+                f"{mode}_id_group": get_id_group(ident, id_bucket_size),
                 f"{mode}_id": ident,
                 "tx_id": atx.tx_id,
                 "is_outgoing": atx.is_outgoing,
@@ -246,67 +247,6 @@ def prepare_txs_for_ingest(
 
         changes.append(chng)
     return changes
-
-
-def prepare_txs_for_ingest_account(  # todo move this somewhere else, not generic enough
-    delta: List[TxDelta],
-    id_bucket_size: int,
-    block_bucket_size: int,
-    get_transaction_prefix: Callable[[str], Tuple[str, str]],
-) -> Tuple[List[DbChange], int]:
-    changes = []
-
-    for update in delta:
-        transaction_id = update.tx_id
-        transaction_id_group = transaction_id // id_bucket_size
-        transaction = update.tx_hash
-        address, transaction_prefix = get_transaction_prefix(transaction)
-        data = {
-            "transaction_id_group": transaction_id_group,
-            "transaction_id": transaction_id,
-            "transaction": transaction,
-        }
-
-        chng = DbChange.new(
-            table="transaction_ids_by_transaction_id_group",
-            data=data,
-        )
-        changes.append(chng)
-
-        data = {
-            "transaction_prefix": transaction_prefix,
-            "transaction": transaction,
-            "transaction_id": transaction_id,
-        }
-
-        chng = DbChange.new(
-            table="transaction_ids_by_transaction_prefix",
-            data=data,
-        )
-        changes.append(chng)
-
-        # get transaction ids
-
-        changes.append(chng)
-
-    # insert blocks in block_transactions
-    grouped = groupby_property(delta, "block_id", sort_by="tx_id")
-    changes.extend(
-        [
-            DbChange.new(
-                table="block_transactions",
-                data={
-                    "block_id_group": block_id // block_bucket_size,
-                    "block_id": block_id,
-                    "txs": [tx.tx_id for tx in txs],
-                },
-            )
-            for block_id, txs in grouped.items()
-        ]
-    )
-
-    nr_new_txs = len(delta)
-    return changes, nr_new_txs
 
 
 def prepare_entities_for_ingest(
@@ -328,7 +268,7 @@ def prepare_entities_for_ingest(
             resolve_identifier(update.identifier),
             resolve_entity(update.identifier),
         )
-        group = int_ident // id_bucket_size
+        group = get_id_group(int_ident, id_bucket_size)
         if entity is not None:
             """old Address/cluster"""
 
@@ -443,8 +383,8 @@ def prepare_relations_for_ingest(
 
         id_src = resolve_identifier(relations_update.src_identifier)
         id_dst = resolve_identifier(relations_update.dst_identifier)
-        src_group = id_src // id_bucket_size
-        dst_group = id_dst // id_bucket_size
+        src_group = get_id_group(id_src, id_bucket_size)
+        dst_group = get_id_group(id_dst, id_bucket_size)
 
         if outr is None:
             """new address/cluster relation to insert"""
