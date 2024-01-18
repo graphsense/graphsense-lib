@@ -22,6 +22,7 @@ from ..utils import bytes_to_hex, flatten, hex_to_bytearray, parse_timestamp, st
 from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
+from ..utils.tron import get_id_group
 from .common import cassandra_ingest, write_to_sinks
 
 TX_HASH_PREFIX_LENGTH = 5
@@ -258,7 +259,7 @@ def ingest_block_transactions(
     for block, block_txs in mapping.items():
         items.append(
             {
-                "block_id_group": block // block_bucket_size,
+                "block_id_group": get_id_group(block, block_bucket_size),
                 "block_id": block,
                 "txs": [tx_stats(x) for x in block_txs],
             }
@@ -312,7 +313,7 @@ def prepare_blocks_inplace(blocks: Iterable, block_bucket_size: int) -> None:
                 block[elem]
             )  # convert hex strings to byte arrays (blob in Cassandra)
 
-        block["block_id_group"] = block["number"] // block_bucket_size
+        block["block_id_group"] = get_id_group(block["number"], block_bucket_size)
 
         block["block_id"] = block.pop("number")
         block["block_hash"] = block.pop("hash")
@@ -574,7 +575,7 @@ def prepare_transactions_inplace(
         tx["total_output"] = tx.pop("output_value")
         tx["tx_hash"] = tx.pop("hash")
 
-        tx["tx_id_group"] = next_tx_id // tx_bucket_size
+        tx["tx_id_group"] = get_id_group(next_tx_id, tx_bucket_size)
         tx["tx_id"] = next_tx_id
         next_tx_id += 1
 

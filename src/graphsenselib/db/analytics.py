@@ -18,6 +18,7 @@ from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 from ..config import keyspace_types
 from ..datatypes import DbChangeType
 from ..utils import GenericArrayFacade, binary_search, parse_timestamp
+from ..utils.tron import get_id_group
 from .cassandra import (
     CassandraDb,
     build_create_stmt,
@@ -260,7 +261,13 @@ class DbReaderMixin:
             # this case handles tables with group ids.
             group_id_col = f"{id_col}_group"
             bucket_divisor = groups[table]
-            w = {group_id_col: (query_id + 1) // bucket_divisor, id_col: query_id + 1}
+            highest_plus_one = query_id + 1
+
+            id_group_highest_plus_one = self.get_id_group(
+                highest_plus_one, bucket_divisor
+            )
+
+            w = {group_id_col: id_group_highest_plus_one, id_col: highest_plus_one}
         else:
             # this case handles tables with no group column and increasing integer ids.
             w = {id_col: query_id + 1}
@@ -281,6 +288,9 @@ class DbReaderMixin:
 
     def _get_only_row_from_table(self, table: str = "configuration"):
         return self._at_most_one_result(self.select(table, limit=2))
+
+    def get_id_group(self, id_, bucket_size):
+        return get_id_group(id_, bucket_size)
 
 
 class DbWriterMixin:
@@ -420,7 +430,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         return r
 
     def find_highest_block_with_exchange_rates(
-        self, lookback_in_blocks=86400, validate=True
+        self,
+        lookback_in_blocks=86400,
+        validate=True,
     ) -> int:
         """Summary
             Searches for the highest block with available exchange_rates in
@@ -536,7 +548,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             where={"block_id_group": "?", "block_id": "?"},
             limit=1,
         )
-        parameters = [(b, [b // bucket_size, b]) for b in blocks]
+        parameters = [(b, [self.get_id_group(b, bucket_size), b]) for b in blocks]
         results = self._db.execute_batch(stmt, parameters)
         return {
             a: (parse_timestamp(row.current_rows[0].timestamp))
@@ -806,7 +818,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         bstmts = [
             prep.bind(
                 {
-                    "address_id_group": addr_id // bs,
+                    "address_id_group": self.get_id_group(addr_id, bs),
                     "address_id": addr_id,
                 }
             )
@@ -818,7 +830,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         )
 
     def get_address_async(self, address_id: int):
-        bucket = address_id // self.get_address_id_bucket_size()
+        bucket = self.get_id_group(address_id, self.get_address_id_bucket_size())
         w = {"address_id_group": bucket, "address_id": f"{address_id}"}
         return self.select_async(
             "address",
@@ -844,8 +856,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         bstmts = [
             prep.bind(
                 {
-                    "dst_address_id_group": dst_address
-                    // self.get_address_id_bucket_size(),
+                    "dst_address_id_group": self.get_id_group(
+                        dst_address, self.get_address_id_bucket_size()
+                    ),
                     "dst_address_id": dst_address,
                     "src_address_id": src_address,
                 }
@@ -859,7 +872,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self, address_id: int, src_address_id: Optional[int]
     ):
         w = {
-            "dst_address_id_group": address_id // self.get_address_id_bucket_size(),
+            "dst_address_id_group": self.get_id_group(
+                address_id, self.get_address_id_bucket_size()
+            ),
             "dst_address_id": address_id,
         }
         if src_address_id is not None:
@@ -888,8 +903,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         bstmts = [
             prep.bind(
                 {
-                    "src_address_id_group": src_address
-                    // self.get_address_id_bucket_size(),
+                    "src_address_id_group": self.get_id_group(
+                        src_address, self.get_address_id_bucket_size()
+                    ),
                     "src_address_id": src_address,
                     "dst_address_id": dst_address,
                 }
@@ -903,7 +919,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self, address_id: int, dst_address_id: Optional[int]
     ):
         w = {
-            "src_address_id_group": address_id // self.get_address_id_bucket_size(),
+            "src_address_id_group": self.get_id_group(
+                address_id, self.get_address_id_bucket_size()
+            ),
             "src_address_id": address_id,
         }
         if dst_address_id is not None:
@@ -928,7 +946,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         bstmts = [
             prep.bind(
                 {
-                    "cluster_id_group": clstr_id // bs,
+                    "cluster_id_group": self.get_id_group(clstr_id, bs),
                     "cluster_id": clstr_id,
                 }
             )
@@ -940,7 +958,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         )
 
     def get_cluster_async(self, cluster_id: int):
-        bucket = cluster_id // self.get_cluster_id_bucket_size()
+        bucket = self.get_id_group(cluster_id, self.get_cluster_id_bucket_size())
         w = {"cluster_id_group": bucket, "cluster_id": f"{cluster_id}"}
         return self.select_async(
             "cluster",
@@ -966,8 +984,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         bstmts = [
             prep.bind(
                 {
-                    "dst_cluster_id_group": dst_address
-                    // self.get_address_id_bucket_size(),
+                    "dst_cluster_id_group": self.get_id_group(
+                        dst_address, self.get_address_id_bucket_size()
+                    ),
                     "dst_cluster_id": dst_address,
                     "src_cluster_id": src_address,
                 }
@@ -981,7 +1000,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self, cluster_id: int, src_cluster_id: Optional[int]
     ):
         w = {
-            "dst_cluster_id_group": cluster_id // self.get_cluster_id_bucket_size(),
+            "dst_cluster_id_group": self.get_id_group(
+                cluster_id, self.get_cluster_id_bucket_size()
+            ),
             "dst_cluster_id": cluster_id,
         }
         if src_cluster_id is not None:
@@ -1010,8 +1031,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         bstmts = [
             prep.bind(
                 {
-                    "src_cluster_id_group": src_address
-                    // self.get_address_id_bucket_size(),
+                    "src_cluster_id_group": self.get_id_group(
+                        src_address, self.get_address_id_bucket_size()
+                    ),
                     "src_cluster_id": src_address,
                     "dst_cluster_id": dst_address,
                 }
@@ -1025,7 +1047,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self, cluster_id: int, dst_cluster_id: Optional[int]
     ):
         w = {
-            "src_cluster_id_group": cluster_id // self.get_cluster_id_bucket_size(),
+            "src_cluster_id_group": self.get_id_group(
+                cluster_id, self.get_cluster_id_bucket_size()
+            ),
             "src_cluster_id": cluster_id,
         }
         if dst_cluster_id is not None:

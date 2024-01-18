@@ -10,7 +10,13 @@ from ...rates import convert_to_fiat
 from ...schema.schema import GraphsenseSchemas
 from ...utils import DataObject as MutableNamedTuple
 from ...utils import group_by, no_nones
-from ...utils.account import get_slim_tx_from_trace, get_unique_addresses_from_traces
+from ...utils.account import (
+    get_slim_tx_from_trace,
+    get_unique_addresses_from_traces,
+    get_unique_ordered_receiver_addresses_from_traces,
+    get_unique_ordered_sender_addresses_from_traces,
+)
+from ...utils.adapters import EthTraceAdapter, TrxTraceAdapter
 from ...utils.errorhandling import CrashRecoverer
 from ...utils.logging import LoggerScope
 from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
@@ -23,16 +29,17 @@ from .generic import (
     RelationDelta,
     TraceDelta,
     TxDelta,
+    get_id_group,
+    groupby_property,
     prepare_entities_for_ingest,
     prepare_relations_for_ingest,
-    prepare_txs_for_ingest_account,
 )
 from .utxo import apply_changes
 
 logger = logging.getLogger(__name__)
 
 
-COINBASE_PSEUDO_ADDRESS = "coinbase"
+COINBASE_PSEUDO_ADDRESS = None  # todo is this true
 PSEUDO_ADDRESS_AND_IDS = {COINBASE_PSEUDO_ADDRESS: 0}
 
 DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
@@ -209,109 +216,6 @@ def dbdelta_from_account_trace_old(
         new_entity_txs=new_entity_transactions,
         relation_updates=relations_updates,
     )
-
-
-def get_transaction_changes(
-    db: AnalyticsDb,
-    transactions: List,
-    traces: List,
-    rates: Dict[int, List],
-    get_next_address_id: Callable[[], int],
-    get_next_transaction_id: Callable[[], int],
-) -> List[DbChange]:  # todo change
-    # index transaction hashes
-    tx_hashes = [tx.tx_hash for tx in transactions]
-    # assign ids
-    tx_ids = {tx_hash: get_next_transaction_id() for tx_hash in tx_hashes}
-    hash_to_tx = {tx_hash: tx for tx_hash, tx in zip(tx_hashes, transactions)}
-
-    id_bucket_size = db.transformed.get_address_id_bucket_size()
-    block_bucket_size = db.transformed.get_block_id_bucket_size()
-
-    txdeltas = []
-
-    for tx_hash in tx_hashes:
-        tx_id = tx_ids[tx_hash]
-        tx_index = hash_to_tx[tx_hash].transaction_index
-        block_id = hash_to_tx[tx_hash].block_id
-
-        txdeltas.append(
-            TxDelta(block_id=block_id, tx_id=tx_id, tx_hash=tx_hash, tx_index=tx_index)
-        )
-
-    def get_tx_prefix(tx_hash):
-        tx_hash = db.transformed.to_db_tx_hash(tx_hash)
-        return (tx_hash.db_encoding, tx_hash.prefix)
-
-    changes, _ = prepare_txs_for_ingest_account(  # todo also put traces in here
-        txdeltas, id_bucket_size, block_bucket_size, get_tx_prefix
-    )
-
-    return changes
-
-    """
-    (
-        delta_changes,
-        nr_new_addresses,
-        nr_new_clusters,
-        nr_new_address_relations,
-        nr_new_cluster_relations,
-    ) = get_trace_deltas(
-        db,
-        traces,
-        rates,
-        get_next_address_id,
-        get_next_transaction_id,
-    )
-
-
-    def to_fiat_currency(value_column, fiat_value_column, data):
-        for row in data:
-            if value_column in row and fiat_value_column in row:
-                row[fiat_value_column] = (row[value_column] * row[fiat_value_column]) / 1e18
-        return data
-
-    def compute_encoded_transactions(traces, transactions_ids, address_ids, exchange_rates):
-        # Filter traces where status is 1 and rename 'txHash' to 'transaction'
-        filtered_traces = [
-            dict(trace, transaction=trace['txHash']) for trace in traces if trace['status'] == 1
-        ]
-
-        # Join operations (left join)
-        def left_join(primary, secondary, key):
-            joined = []
-            for p_item in primary:
-                match = next((s_item for s_item in secondary if s_item[key] == p_item[key]), None)
-                joined.append({**p_item, **(match if match else {})})
-            return joined
-
-        # Performing joins
-        traces_transactions = left_join(filtered_traces, transactions_ids, 'transaction')
-        traces_transactions_from = left_join(traces_transactions, [
-            {**item, 'fromAddress': item['address'], 'fromAddressId': item['addressId']} for item in address_ids],
-                                             'fromAddress')
-        final_join = left_join(traces_transactions_from,
-                               [{**item, 'toAddress': item['address'], 'toAddressId': item['addressId']} for item in
-                                address_ids], 'toAddress')
-
-        # Dropping unnecessary columns
-        for item in final_join:
-            for key in ['blockIdGroup', 'status', 'callType', 'toAddress', 'fromAddress', 'receiptGasUsed',
-                        'transaction', 'traceId']:
-                item.pop(key, None)
-
-            # Renaming columns
-            item['srcAddressId'] = item.pop('fromAddressId', None)
-            item['dstAddressId'] = item.pop('toAddressId', None)
-
-        # Join with exchange rates and apply currency conversion
-        final_data = left_join(final_join, exchange_rates, 'blockId')
-        encoded_transactions = to_fiat_currency('value', 'fiatValues', final_data)
-
-        return encoded_transactions
-
-    return changes
-    """
 
 
 def get_trace_deltas(
@@ -677,7 +581,7 @@ def todo_bypassflake8_continue_here(
             lg.debug(f"Prepare {mode} data.")
             """ Merging new transactions """
             changes.extend(
-                prepare_txs_for_ingest_account(
+                self.prepare_txs_for_ingest_account(
                     config["delta"].new_entity_txs,
                     config["id_transformation"],
                     config["bucket_size"],
@@ -866,6 +770,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
 
     def process_batch_impl_hook(self, batch):
+        global trace_adapter
         rates = {}
         transactions = []
         traces = []
@@ -893,6 +798,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
             missing_rates_in_block = False
             for block in batch:
+                # todo, next line requires an index
+                # todo, if necessary CREATE INDEX blockindex ON eth_raw_dev.transaction (block_id);
                 transactions.extend(self._db.raw.get_transactions_in_block(block))
                 traces.extend(self._db.raw.get_traces_in_block(block))
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
@@ -914,14 +821,19 @@ class UpdateStrategyAccount(UpdateStrategy):
             if self.crash_recoverer.is_in_recovery_mode():
                 raise Exception("Batch mode is not allowed in recovery mode.")
 
+            if self.currency == "trx":
+                trace_adapter = TrxTraceAdapter()
+            elif self.currency == "eth":
+                trace_adapter = EthTraceAdapter()
+
+            traces = trace_adapter.cassandra_rows_to_dataclass(
+                traces
+            )  # todo change if we get data directly from ingest
+            traces = trace_adapter.rename_fields_in_list(traces)
+
             changes = []
-            tx_changes = get_transaction_changes(
-                self._db,
-                transactions,
-                traces,
-                rates,
-                self.consume_address_id,
-                self.consume_transaction_id,
+            tx_changes = self.get_transaction_changes(
+                transactions, traces, rates
             )  # noqa: E501
 
             changes.extend(tx_changes)
@@ -980,3 +892,317 @@ class UpdateStrategyAccount(UpdateStrategy):
             raise ValueError(
                 f"Unknown application strategy {self.application_strategy}"
             )
+
+    def get_transaction_changes(
+        self, transactions: List, traces: List, rates: Dict[int, List]
+    ) -> List[DbChange]:
+        # index transaction hashes
+        tx_hashes = [tx.tx_hash for tx in transactions]
+        # assign ids
+        hash_to_id = {tx_hash: self.consume_transaction_id() for tx_hash in tx_hashes}
+        hash_to_tx = {tx_hash: tx for tx_hash, tx in zip(tx_hashes, transactions)}
+
+        id_bucket_size = self._db.transformed.get_address_id_bucket_size()
+        block_bucket_size = self._db.transformed.get_block_id_bucket_size()
+
+        txdeltas = []
+
+        for tx_hash in tx_hashes:
+            tx_id = hash_to_id[tx_hash]
+            tx_index = hash_to_tx[tx_hash].transaction_index
+            block_id = hash_to_tx[tx_hash].block_id
+            txdeltas.append(
+                TxDelta(
+                    block_id=block_id, tx_id=tx_id, tx_hash=tx_hash, tx_index=tx_index
+                )
+            )
+
+        tdb = self._db.transformed
+        traces = [
+            trace for trace in traces if trace.tx_hash is not None
+        ]  # todo ignores reward tx
+
+        def ignore_coinbase(hashes):
+            return [hash for hash in hashes if hash not in PSEUDO_ADDRESS_AND_IDS]
+
+        with LoggerScope.debug(logger, "Prepare transaction data") as lg:
+            traces = sorted(
+                traces, key=lambda row: (row.block_id, hash_to_id[row.tx_hash])
+            )
+            lg.debug(f"Working on batch of {len(traces)} transactions.")
+            ordered_receiver_addresses = ignore_coinbase(
+                get_unique_ordered_receiver_addresses_from_traces(traces)
+            )
+            ordered_sender_addresses = ignore_coinbase(
+                get_unique_ordered_sender_addresses_from_traces(traces)
+            )
+
+        addresses = list(set(ordered_receiver_addresses + ordered_sender_addresses))
+        len_addr = len(addresses)
+
+        with LoggerScope.debug(
+            logger, f"Checking existence for {len_addr} addresses"
+        ) as _:
+            addr_ids = {  # noqa: C416
+                adr: address_id
+                for adr, address_id in tdb.get_address_id_async_batch(list(addresses))
+            }
+
+        with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
+            existing_addr_ids = no_nones(
+                [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
+            )
+            addresses_resolved = {  # noqa: C416
+                addr_id: address
+                for addr_id, address in tdb.get_address_async_batch(
+                    [adr.address_id for adr in existing_addr_ids]
+                )
+            }
+            del existing_addr_ids
+
+            def get_resolved_address(addr_id_exc):
+                addr_id = addr_id_exc.result_or_exc.one()
+                return (
+                    (None, None)
+                    if addr_id is None
+                    else (
+                        addr_id.address_id,
+                        addresses_resolved[
+                            addr_id.address_id
+                        ].result_or_exc.one(),  # noqa
+                    )
+                )
+
+            addresses = {
+                adr: get_resolved_address(address_id)
+                for adr, address_id in addr_ids.items()
+            }
+
+            del addresses_resolved
+
+        def get_next_address_ids_with_aliases(address: str):
+            return (
+                self.consume_address_id()
+                # if address not in PSEUDO_ADDRESS_AND_IDS # todo ignores coinbase
+                # else PSEUDO_ADDRESS_AND_IDS[address]
+            )
+
+        with LoggerScope.debug(
+            logger, "Assigning new address ids for new addresses"
+        ) as lg:
+            for out_addr in ordered_receiver_addresses:
+                addr_id, address = addresses[out_addr]
+                if addr_id is None:
+                    new_addr_id = get_next_address_ids_with_aliases(address)
+                    addresses[out_addr] = (new_addr_id, None)
+                elif address is None:
+                    lg.warning(
+                        f"TODO WIP: The following is because the addresses "
+                        f"are in the prefix table but not in the address table. "
+                        f"Address {out_addr} has address "
+                        f"id {addr_id} but no address entry"
+                    )
+
+            del ordered_receiver_addresses
+
+            not_yet_seen_sender_addresses = {
+                k for k, (addr_id2, _) in addresses.items() if addr_id2 is None
+            }
+
+            if len(not_yet_seen_sender_addresses) > 0:
+                for out_addr in ordered_sender_addresses:
+                    if out_addr in not_yet_seen_sender_addresses:
+                        new_addr_id = get_next_address_ids_with_aliases(out_addr)
+                        lg.debug(
+                            "Encountered new sender address - "
+                            f"{out_addr.hex()}. Creating it with id {new_addr_id}."
+                        )
+                        addresses[out_addr] = (new_addr_id, None)
+
+                del ordered_sender_addresses
+
+            del not_yet_seen_sender_addresses
+
+            assert (
+                len([1 for k, (addr_id2, _) in addresses.items() if addr_id2 is None])
+                == 0
+            )
+
+        def get_tx_prefix(tx_hash):
+            tx_hash = tdb.to_db_tx_hash(tx_hash)
+            return (tx_hash.db_encoding, tx_hash.prefix)
+
+        def get_address_prefix(address_str):
+            address = tdb.to_db_address(address_str)
+            return (address.db_encoding, address.prefix)
+
+        address_hash_to_id_with_new = {adr: addresses[adr][0] for adr in addresses}
+        # TODO could filter here for only new ones (not in hash_to_id), to make it easier for cassandra
+        # but i think it wasnt done btc so there could be a reason
+        changes, _ = self.prepare_txs_for_ingest_account(
+            txdeltas,
+            id_bucket_size,
+            block_bucket_size,
+            get_address_prefix,
+            get_tx_prefix,
+            address_hash_to_id_with_new,
+        )
+
+        return changes
+
+        """
+        (
+            delta_changes,
+            nr_new_addresses,
+            nr_new_clusters,
+            nr_new_address_relations,
+            nr_new_cluster_relations,
+        ) = get_trace_deltas(
+            db,
+            traces,
+            rates,
+            get_next_address_id,
+            get_next_transaction_id,
+        )
+
+
+        def to_fiat_currency(value_column, fiat_value_column, data):
+            for row in data:
+                if value_column in row and fiat_value_column in row:
+                    row[fiat_value_column] = (row[value_column] * row[fiat_value_column]) / 1e18
+            return data
+
+        def compute_encoded_transactions(traces, transactions_ids, address_ids, exchange_rates):
+            # Filter traces where status is 1 and rename 'txHash' to 'transaction'
+            filtered_traces = [
+                dict(trace, transaction=trace['txHash']) for trace in traces if trace['status'] == 1
+            ]
+
+            # Join operations (left join)
+            def left_join(primary, secondary, key):
+                joined = []
+                for p_item in primary:
+                    match = next((s_item for s_item in secondary if s_item[key] == p_item[key]), None)
+                    joined.append({**p_item, **(match if match else {})})
+                return joined
+
+            # Performing joins
+            traces_transactions = left_join(filtered_traces, transactions_ids, 'transaction')
+            traces_transactions_from = left_join(traces_transactions, [
+                {**item, 'fromAddress': item['address'], 'fromAddressId': item['addressId']} for item in address_ids],
+                                                 'fromAddress')
+            final_join = left_join(traces_transactions_from,
+                                   [{**item, 'toAddress': item['address'], 'toAddressId': item['addressId']} for item in
+                                    address_ids], 'toAddress')
+
+            # Dropping unnecessary columns
+            for item in final_join:
+                for key in ['blockIdGroup', 'status', 'callType', 'toAddress', 'fromAddress', 'receiptGasUsed',
+                            'transaction', 'traceId']:
+                    item.pop(key, None)
+
+                # Renaming columns
+                item['srcAddressId'] = item.pop('fromAddressId', None)
+                item['dstAddressId'] = item.pop('toAddressId', None)
+
+            # Join with exchange rates and apply currency conversion
+            final_data = left_join(final_join, exchange_rates, 'blockId')
+            encoded_transactions = to_fiat_currency('value', 'fiatValues', final_data)
+
+            return encoded_transactions
+
+        return changes
+        """
+
+    def prepare_txs_for_ingest_account(
+        self,
+        delta: List[TxDelta],
+        id_bucket_size: int,
+        block_bucket_size: int,
+        get_address_prefix: Callable[[bytes], Tuple[str, str]],
+        get_transaction_prefix: Callable[[bytes], Tuple[str, str]],
+        address_hash_to_id_with_new: Dict[str, bytes],
+    ) -> Tuple[List[DbChange], int]:
+        changes = []
+
+        for update in delta:
+            transaction_id = update.tx_id
+            transaction_id_group = self._db.transformed.get_id_group(
+                transaction_id, id_bucket_size
+            )
+            transaction = update.tx_hash
+            transaction_prefix = get_transaction_prefix(transaction)[1]
+            data = {
+                "transaction_id_group": transaction_id_group,
+                "transaction_id": transaction_id,
+                "transaction": transaction,
+            }
+
+            chng = DbChange.new(
+                table="transaction_ids_by_transaction_id_group",
+                data=data,
+            )
+            changes.append(chng)
+
+            data = {
+                "transaction_prefix": transaction_prefix,
+                "transaction": transaction,
+                "transaction_id": transaction_id,
+            }
+
+            chng = DbChange.new(
+                table="transaction_ids_by_transaction_prefix",
+                data=data,
+            )
+            changes.append(chng)
+
+            # get transaction ids
+
+            changes.append(chng)
+        if self.currency == "eth":
+            # insert blocks in block_transactions
+            grouped = groupby_property(delta, "block_id", sort_by="tx_id")
+            changes.extend(
+                [
+                    DbChange.new(
+                        table="block_transactions",
+                        data={
+                            "block_id_group": get_id_group(block_id, block_bucket_size),
+                            "block_id": block_id,
+                            "txs": [tx.tx_id for tx in txs],
+                        },
+                    )
+                    for block_id, txs in grouped.items()
+                ]
+            )
+        elif self.currency == "trx":
+            # keep it flat
+            changes.extend(
+                [
+                    DbChange.new(
+                        table="block_transactions",
+                        data={
+                            "block_id_group": get_id_group(
+                                tx.block_id, block_bucket_size
+                            ),
+                            "block_id": tx.block_id,
+                            "tx_id": tx.tx_id,
+                        },
+                    )
+                    for tx in delta
+                ]
+            )
+
+        for hash_ in address_hash_to_id_with_new:
+            chng = DbChange.new(
+                table="address_ids_by_address_prefix",
+                data={
+                    "address_prefix": get_address_prefix(hash_)[1],
+                    "address": hash_,
+                    "address_id": address_hash_to_id_with_new[hash_],
+                },
+            )
+            changes.append(chng)
+
+        nr_new_txs = len(delta)
+        return changes, nr_new_txs

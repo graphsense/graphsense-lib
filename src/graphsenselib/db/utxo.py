@@ -15,7 +15,7 @@ class TransformedDbUtxo(TransformedDb):
 class RawDbUtxo(RawDb):
     def get_transaction_ids_in_block(self, block: int) -> Iterable:
         block_bucket_size = self.get_block_bucket_size()
-        group = block // block_bucket_size
+        group = self.get_id_group(block, block_bucket_size)
         result = self.select(
             "block_transactions",
             columns=["txs"],
@@ -34,7 +34,10 @@ class RawDbUtxo(RawDb):
             limit=1,
         )
 
-        parameters = [(tx_id, [tx_id // tx_bucket_size, tx_id]) for tx_id in tx_ids]
+        parameters = [
+            (tx_id, [self.get_id_group(tx_id, tx_bucket_size), tx_id])
+            for tx_id in tx_ids
+        ]
         results = self._db.execute_batch_async(stmt, parameters)
         return [tx.one() for tx_id, tx in self._db.await_batch(results)]
 
@@ -43,7 +46,7 @@ class RawDbUtxo(RawDb):
         tx_bucket_size = self.get_tx_bucket_size()
         addresses = []
         for tx_id in tx_ids:
-            group = tx_id // tx_bucket_size
+            group = self.get_id_group(tx_id, tx_bucket_size)
             result = self.select_one(
                 "transaction",
                 columns=["inputs", "outputs", "block_id", "tx_hash", "timestamp"],
@@ -75,7 +78,10 @@ class RawDbUtxo(RawDb):
             result = self.select_one_safe(
                 "transaction",
                 columns=["outputs"],
-                where={"tx_id_group": tx_id // tx_bucket_size, "tx_id": tx_id},
+                where={
+                    "tx_id_group": self.get_id_group(tx_id, tx_bucket_size),
+                    "tx_id": tx_id,
+                },
             )
 
             res = {}
@@ -95,7 +101,10 @@ class RawDbUtxo(RawDb):
 
         block = self.select_one_safe(
             "block_transactions",
-            where={"block_id_group": last_block // bucket_size, "block_id": last_block},
+            where={
+                "block_id_group": self.get_id_group(last_block, bucket_size),
+                "block_id": last_block,
+            },
         )
         latest_tx_id = -1
 
