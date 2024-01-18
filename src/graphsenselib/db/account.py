@@ -17,7 +17,7 @@ class TransformedDbAccount(TransformedDb):
 
 class RawDbAccount(RawDb):
     def get_logs_in_block(self, block: int, topic0=None, contract=None) -> Iterable:
-        group = block // self.get_block_bucket_size()
+        group = self.get_id_group(block, self.get_block_bucket_size())
         if topic0 is None:
             data = self.select_safe(
                 "log", where={"block_id": block, "block_id_group": group}
@@ -43,7 +43,7 @@ class RawDbAccount(RawDb):
 
     def get_traces_in_block(self, block: int) -> Iterable:
         block_bucket_size = self.get_block_bucket_size()
-        group = block // block_bucket_size
+        group = self.get_id_group(block, block_bucket_size)
 
         results = self.select(
             "trace", where={"block_id_group": group, "block_id": block}
@@ -52,7 +52,7 @@ class RawDbAccount(RawDb):
         return results
 
     def get_addresses_in_block(self, block: int) -> Iterable:
-        group = block // self.get_block_bucket_size()
+        group = self.get_id_group(block, self.get_block_bucket_size())
 
         # The fetch size is needed since traces currenly contain a lot of null values
         # the null values create tombestones and cassandra refuses to read more than
@@ -71,7 +71,7 @@ class RawDbAccount(RawDb):
 
 class RawDbAccountTrx(RawDbAccount):
     def get_addresses_in_block(self, block: int) -> Iterable:
-        group = block // self.get_block_bucket_size()
+        group = self.get_id_group(block, self.get_block_bucket_size())
 
         # The fetch size is needed since traces currenly contain a lot of null values
         # the null values create tombestones and cassandra refuses to read more than
