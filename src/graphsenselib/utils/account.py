@@ -1,6 +1,5 @@
-from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable, List, Set
+from typing import Iterable, Set
 
 from ..datatypes import FlowDirection
 from .generic import flatten
@@ -13,36 +12,6 @@ class SlimTx:
     timestamp: int
     tx_hash: str
     direction: FlowDirection
-
-
-def filter_inoutputs(inoutputs_list: list) -> List:
-    if inoutputs_list is None:
-        return []
-    return [
-        (inout.address[0], inout.value)
-        for inout in inoutputs_list
-        if inout.address is not None and len(inout.address) == 1
-    ]
-
-
-def regularize_inoutputs(inoutputs_list: list) -> dict:
-    """
-    Sums the in/outputs for the same address in a inputput list of a tx
-
-    Args:
-        inoutputs_list (list): Inout-list like stored in raw keyspace
-
-    Returns:
-        dict: keyed by address.
-    """
-    # Ignore inouts with more than one address (copied form spark transform)
-    if inoutputs_list is None:
-        return {}
-    r = filter_inoutputs(inoutputs_list)
-    cnt = Counter()
-    for adr, value in r:
-        cnt[adr] += value
-    return dict(cnt)
 
 
 def get_total_input_sum(input_list: list) -> int:
@@ -98,56 +67,22 @@ def get_slim_tx_from_trace(trace) -> Iterable[SlimTx]:
     ]
 
 
-def get_slim_tx_from_traces(transactions) -> Iterable[SlimTx]:
-    return flatten([get_slim_tx_from_trace(tx) for tx in transactions])
+def get_slim_tx_from_traces(traces) -> Iterable[SlimTx]:
+    return flatten([get_slim_tx_from_trace(tx) for tx in traces])
 
 
 def get_unique_addresses_from_traces(traces) -> Set[str]:
     return {adr.address for adr in get_slim_tx_from_traces(traces)}
 
 
-def get_slim_tx_from_transaction(transaction) -> Iterable[SlimTx]:
-    # Only take first address from address array
-    # this is equivalent to the spark job, but is ignoring multisig
-
-    output_addresses = [
-        (address, FlowDirection.OUT)
-        for (address, value) in filter_inoutputs(transaction.outputs)
-    ]
-    input_addresses = [
-        (address, FlowDirection.IN)
-        for (address, value) in filter_inoutputs(transaction.inputs)
-    ]
-
-    addresses = input_addresses + output_addresses
-    return [
-        SlimTx(
-            addr,
-            transaction.block_id,
-            transaction.timestamp,
-            transaction.tx_hash,
-            direction,
-        )
-        for addr, direction in addresses
-    ]
-
-
-def get_slim_tx_from_transactions(transactions) -> Iterable[SlimTx]:
-    return flatten([get_slim_tx_from_transaction(tx) for tx in transactions])
-
-
-def get_unique_addresses_from_transactions(transactions) -> Set[str]:
-    return {adr.address for adr in get_slim_tx_from_transactions(transactions)}
-
-
-def get_unique_ordered_output_addresses_from_transactions(
-    transactions,
+def get_unique_ordered_receiver_addresses_from_traces(
+    traces,
 ) -> Iterable[str]:
     """Returns all unique output addresses in the order they appear in the txs.
     This is useful to assign address ids where order should matter.
 
     Args:
-        transactions (TYPE): Iterable of dbtransactions
+        traces (TYPE): Iterable of dbtraces
 
     Returns:
         Iterable[str]: order preserving Iterable
@@ -160,21 +95,21 @@ def get_unique_ordered_output_addresses_from_transactions(
         dict.fromkeys(
             [
                 tx.address
-                for tx in get_slim_tx_from_transactions(transactions)
+                for tx in get_slim_tx_from_traces(traces)
                 if tx.direction == FlowDirection.OUT
             ]
         )
     )
 
 
-def get_unique_ordered_input_addresses_from_transactions(
-    transactions,
+def get_unique_ordered_sender_addresses_from_traces(
+    traces,
 ) -> Iterable[str]:
     """Returns all unique input addresses in the order they appear in the txs.
     This is useful to assign address ids where order should matter.
 
     Args:
-        transactions (TYPE): Iterable of dbtransactions
+        traces (TYPE): Iterable of dbtraces
 
     Returns:
         Iterable[str]: order preserving Iterable
@@ -187,7 +122,7 @@ def get_unique_ordered_input_addresses_from_transactions(
         dict.fromkeys(
             [
                 tx.address
-                for tx in get_slim_tx_from_transactions(transactions)
+                for tx in get_slim_tx_from_traces(traces)
                 if tx.direction == FlowDirection.IN
             ]
         )

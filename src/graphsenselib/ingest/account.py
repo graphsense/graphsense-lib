@@ -37,7 +37,7 @@ from ..utils import (
 )
 from ..utils.logging import configure_logging, suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
-from ..utils.tron import evm_to_bytes, strip_tron_prefix
+from ..utils.tron import evm_to_bytes, get_id_group, strip_tron_prefix
 from .common import (
     AbstractETLStrategy,
     AbstractTask,
@@ -340,7 +340,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
 
         # Used for partitioning in parquet files
         # ignored otherwise
@@ -411,7 +411,7 @@ def prepare_blocks_inplace_eth(
         item.pop("type")
         # rename/add columns
         item["block_id"] = item.pop("number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
         item["block_hash"] = item.pop("hash")
 
         # Used for partitioning in parquet files
@@ -451,7 +451,7 @@ def prepare_transactions_inplace_eth(
         hash_slice = slice(2, 2 + tx_hash_prefix_len)
         item["tx_hash_prefix"] = item["tx_hash"][hash_slice]
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
 
         # Used for partitioning in parquet files
         # ignored otherwise
@@ -481,7 +481,7 @@ def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
 
         # Used for partitioning in parquet files
         # ignored otherwise
@@ -503,7 +503,7 @@ def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
         item["transferto_address"] = item.pop("transferTo_address")
 
         # Used for partitioning in parquet files
