@@ -8,6 +8,8 @@ from enum import Enum
 from functools import reduce
 from typing import Any, Callable, List, Tuple, Union
 
+from cassandra.cqlengine.usertype import UserType
+
 from ...datatypes import EntityType
 from ...db import DbChange
 from ...utils import group_by, groupby_property
@@ -128,6 +130,15 @@ class RawEntityTx:
     is_outgoing: bool
     value: int
     tx_id: int
+
+
+@dataclass
+class RawEntityTxAccount:
+    identifier: Union[str, int]
+    is_outgoing: bool
+    currency: str
+    tx_id: int
+    tx_reference: UserType
 
 
 @dataclass
