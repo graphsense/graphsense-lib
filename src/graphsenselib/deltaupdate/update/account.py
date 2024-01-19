@@ -4,6 +4,11 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple
 
+from diskcache import Cache
+
+from graphsenselib.utils.cache import TableBasedCache
+
+from ...config.config import DeltaUpdaterConfig
 from ...datatypes import EntityType, FlowDirection
 from ...db import AnalyticsDb, DbChange
 from ...rates import convert_to_fiat
@@ -16,7 +21,11 @@ from ...utils.account import (
     get_unique_ordered_receiver_addresses_from_traces,
     get_unique_ordered_sender_addresses_from_traces,
 )
-from ...utils.adapters import EthTraceAdapter, TrxTraceAdapter
+from ...utils.adapters import (
+    AccountTransactionAdapter,
+    EthTraceAdapter,
+    TrxTraceAdapter,
+)
 from ...utils.errorhandling import CrashRecoverer
 from ...utils.logging import LoggerScope
 from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
@@ -719,15 +728,16 @@ class UpdateStrategyAccount(UpdateStrategy):
     def __init__(
         self,
         db,
-        currency: str,
+        du_config: DeltaUpdaterConfig,
         pedantic: bool,
         application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
     ):
-        super().__init__(db, currency, forward_fill_rates=forward_fill_rates)
+        super().__init__(db, du_config.currency, forward_fill_rates=forward_fill_rates)
+        self.du_config = du_config
         crash_file = (
-            "/tmp/utxo_deltaupdate_"
+            "/tmp/account_deltaupdate_"
             f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
             "_crashreport.err"
         )
@@ -738,6 +748,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             if stats_value is not None
             else DEFAULT_SUMMARY_STATISTICS
         )
+        # get ingest config
         self._pedantic = pedantic
         self._patch_mode = patch_mode
         self.changes = None
@@ -797,11 +808,10 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
             missing_rates_in_block = False
+            cache = TableBasedCache(Cache(self.du_config.fs_cache.directory))
             for block in batch:
-                # todo, next line requires an index
-                # todo, if necessary CREATE INDEX blockindex ON eth_raw_dev.transaction (block_id);
-                transactions.extend(self._db.raw.get_transactions_in_block(block))
-                traces.extend(self._db.raw.get_traces_in_block(block))
+                transactions.extend(cache.get(("transaction", block), []))
+                traces.extend(cache.get(("traces", block), []))
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
                 ).fiat_values
@@ -826,10 +836,12 @@ class UpdateStrategyAccount(UpdateStrategy):
             elif self.currency == "eth":
                 trace_adapter = EthTraceAdapter()
 
-            traces = trace_adapter.cassandra_rows_to_dataclass(
-                traces
-            )  # todo change if we get data directly from ingest
+            transaction_adapter = AccountTransactionAdapter()
+            traces = trace_adapter.dicts_to_dataclasses(traces)
             traces = trace_adapter.rename_fields_in_list(traces)
+            traces = trace_adapter.process_fields_in_list(traces)
+
+            transactions = transaction_adapter.dicts_to_dataclasses(transactions)
 
             changes = []
             tx_changes = self.get_transaction_changes(
@@ -898,7 +910,7 @@ class UpdateStrategyAccount(UpdateStrategy):
     ) -> List[DbChange]:
         # index transaction hashes
         tx_hashes = [tx.tx_hash for tx in transactions]
-        # assign ids
+
         hash_to_id = {tx_hash: self.consume_transaction_id() for tx_hash in tx_hashes}
         hash_to_tx = {tx_hash: tx for tx_hash, tx in zip(tx_hashes, transactions)}
 
@@ -1208,7 +1220,10 @@ class UpdateStrategyAccount(UpdateStrategy):
                 transaction_id, id_bucket_size
             )
             transaction = update.tx_hash
+            if transaction is None:
+                print("asdf")
             transaction_prefix = get_transaction_prefix(transaction)[1]
+
             data = {
                 "transaction_id_group": transaction_id_group,
                 "transaction_id": transaction_id,

@@ -593,9 +593,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             )
             for b in batch
         ]
-        return [
-            {"block_id": b, "fiat_values": get_values_list(er)} for b, er in ers
-        ]  # todo restore
+        return [{"block_id": b, "fiat_values": get_values_list(er)} for b, er in ers]
 
 
 class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):

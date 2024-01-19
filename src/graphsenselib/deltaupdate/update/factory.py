@@ -1,4 +1,5 @@
 from ...config import currency_to_schema_type
+from ...config.config import DeltaUpdaterConfig
 from ...db import AnalyticsDb
 from .abstractupdater import AbstractUpdateStrategy
 from .account import UpdateStrategyAccount
@@ -11,7 +12,7 @@ from .utxolegacy import UpdateStrategyUtxoLegacy
 class UpdaterFactory:
     def get_updater(
         self,
-        currency: str,
+        du_config: DeltaUpdaterConfig,
         db: AnalyticsDb,
         version: int,
         write_new: bool,
@@ -21,6 +22,7 @@ class UpdaterFactory:
         patch_mode: bool,
         forward_fill_rates: bool = False,
     ) -> AbstractUpdateStrategy:
+        currency = du_config.currency
         schema_type = currency_to_schema_type[currency]
         if schema_type == "utxo" and version == 1:
             return UpdateStrategyUtxoLegacy(db, currency, write_new, write_dirty)
@@ -48,7 +50,7 @@ class UpdaterFactory:
             app_strat = ApplicationStrategy.BATCH
             return UpdateStrategyAccount(
                 db,
-                currency,
+                du_config,
                 pedantic,
                 app_strat,
                 patch_mode,
