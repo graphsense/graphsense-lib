@@ -41,3 +41,6 @@ def test_cache():
 
     with pytest.raises(KeyError):
         c.get_item("abc", 2)
+
+    assert c.get(("abc", 2), None) is None
+    assert c.get(("abc", 2), []) == []
