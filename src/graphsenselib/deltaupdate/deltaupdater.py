@@ -213,11 +213,12 @@ def update(
                         )
                         db.transformed.ingest("configuration", [config_defaults])
 
+                    du_config = config.get_deltaupdater_config(env, currency)
                     update_transformed(
                         start_block,
                         end_block,
                         UpdaterFactory().get_updater(
-                            currency,
+                            du_config,
                             db,
                             updater_version,
                             write_new,
