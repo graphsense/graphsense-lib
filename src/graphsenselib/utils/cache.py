@@ -55,5 +55,11 @@ class TableBasedCache:
         table, key = kv
         return self.get_item(table, key)
 
+    def get(self, kv: Tuple[str, Union[bytes, int, str]], default=None):
+        try:
+            return self[kv]
+        except KeyError:
+            return default
+
     def get_item(self, table: str, key: str):
         return self.internal_key_value_cache[self.get_key(table, key)]
