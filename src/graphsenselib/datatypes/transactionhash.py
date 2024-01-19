@@ -4,7 +4,7 @@ Transaction Class. Functionality depending on the address type.
 
 from typing import Union
 
-from ..utils import hex_to_bytearray
+from ..utils import hex_to_bytes
 
 
 class TransactionHashUtxo:
@@ -26,7 +26,7 @@ class TransactionHashAccount:
         """
         self.prefix_length = int(config.tx_prefix_length)
         if type(txhash) == str:
-            self.tx_hash_bytes = hex_to_bytearray(txhash)
+            self.tx_hash_bytes = hex_to_bytes(txhash)
         elif type(txhash) == bytearray:
             self.tx_hash_bytes = txhash
         elif type(txhash) == bytes:

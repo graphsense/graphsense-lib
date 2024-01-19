@@ -1,6 +1,6 @@
 from typing import Iterable, Optional
 
-from ..utils import flatten, hex_to_bytearray
+from ..utils import flatten, hex_to_bytes
 from ..utils.utxo import SlimTx, get_slim_tx_from_transaction
 from .analytics import RawDb, TransformedDb
 
@@ -70,7 +70,7 @@ class RawDbUtxo(RawDb):
             columns=["tx_id"],
             where={
                 "tx_prefix": f"{tx_hash[:tx_prefix_length]}",
-                "tx_hash": hex_to_bytearray(tx_hash),
+                "tx_hash": hex_to_bytes(tx_hash),
             },
         )
         if tx_id_record:

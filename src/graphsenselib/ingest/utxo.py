@@ -18,7 +18,7 @@ from methodtools import lru_cache as mlru_cache
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
 from ..db import AnalyticsDb
-from ..utils import bytes_to_hex, flatten, hex_to_bytearray, parse_timestamp, strip_0x
+from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_0x
 from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
@@ -309,7 +309,7 @@ def prepare_blocks_inplace(blocks: Iterable, block_bucket_size: int) -> None:
             block.pop(i)
 
         for elem in blob_columns:
-            block[elem] = hex_to_bytearray(
+            block[elem] = hex_to_bytes(
                 block[elem]
             )  # convert hex strings to byte arrays (blob in Cassandra)
 
@@ -557,7 +557,7 @@ def prepare_transactions_inplace(
         tx["tx_prefix"] = tx["hash"][:tx_hash_prefix_len]
 
         for elem in blob_columns:
-            tx[elem] = hex_to_bytearray(
+            tx[elem] = hex_to_bytes(
                 tx[elem]
             )  # convert hex strings to byte arrays (blob in Cassandra)
 
@@ -582,10 +582,10 @@ def prepare_transactions_inplace(
 
 def get_tx_refs(spending_tx_hash: str, raw_inputs: Iterable, tx_hash_prefix_len: int):
     tx_refs = []
-    spending_tx_hash = hex_to_bytearray(spending_tx_hash)
+    spending_tx_hash = hex_to_bytes(spending_tx_hash)
     for inp in raw_inputs:
         spending_input_index = inp["index"]
-        spent_tx_hash = hex_to_bytearray(inp["spent_transaction_hash"])
+        spent_tx_hash = hex_to_bytes(inp["spent_transaction_hash"])
         spent_output_index = inp["spent_output_index"]
         if spending_tx_hash is not None and spent_tx_hash is not None:
             # in zcash refs can be None in case of shielded txs.
