@@ -38,6 +38,6 @@ def to_int(string: Union[str, int]) -> int:
 
 
 @typechecked
-def hex_to_bytearray(hex_str: Optional[str]) -> Optional[bytearray]:
+def hex_to_bytes(hex_str: Optional[str]) -> Optional[bytes]:
     """Convert hexstring (starting with 0x) to bytearray."""
-    return bytearray.fromhex(strip_0x(hex_str)) if hex_str is not None else None
+    return bytes.fromhex(strip_0x(hex_str)) if hex_str is not None else None

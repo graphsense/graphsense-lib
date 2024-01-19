@@ -32,7 +32,7 @@ from ..utils import (
     batch,
     check_timestamp,
     first_or_default,
-    hex_to_bytearray,
+    hex_to_bytes,
     parse_timestamp,
     remove_prefix,
 )
@@ -366,7 +366,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
             # key columns in cassandra and can not be filtered
             item["topic0"] = tpcs[0] if len(tpcs) > 0 else "0x"
 
-        item["topics"] = [hex_to_bytearray(t) for t in tpcs]
+        item["topics"] = [hex_to_bytes(t) for t in tpcs]
 
         # if topics contain duplicates
         if (
@@ -385,7 +385,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
             item.pop("transaction_hash")
 
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def ingest_logs(
@@ -429,7 +429,7 @@ def prepare_blocks_inplace_eth(
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def prepare_blocks_inplace_trx(items, block_bucket_size):
@@ -468,7 +468,7 @@ def prepare_transactions_inplace_eth(
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def prepare_transactions_inplace_trx(
@@ -503,7 +503,7 @@ def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
         )
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
