@@ -87,6 +87,14 @@ class AccountTransactionAdapter(BlockchainAdapter):
         self.field_processing = {}
 
 
+class AccountLogAdapter(BlockchainAdapter):
+    dataclass_name = "Log"
+
+    def __init__(self):
+        self.name_remapping = {}
+        self.field_processing = {}
+
+
 class TrxTraceAdapter(AccountTraceAdapter):
     def __init__(self):
         self.name_remapping = {
