@@ -1,9 +1,13 @@
 # flake8: noqa
 import logging
 import time
+from collections import defaultdict
 from datetime import datetime
-from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple, Union
 
+from cassandra.cluster import Cluster
+from cassandra.cqlengine.columns import Integer
+from cassandra.cqlengine.usertype import UserType
 from diskcache import Cache
 
 from graphsenselib.utils.cache import TableBasedCache
@@ -18,10 +22,10 @@ from ...utils import group_by, no_nones
 from ...utils.account import (
     get_slim_tx_from_trace,
     get_unique_addresses_from_traces,
-    get_unique_ordered_receiver_addresses_from_traces,
-    get_unique_ordered_sender_addresses_from_traces,
+    get_unique_ordered_addresses,
 )
 from ...utils.adapters import (
+    AccountLogAdapter,
     AccountTransactionAdapter,
     EthTraceAdapter,
     TrxTraceAdapter,
@@ -31,21 +35,23 @@ from ...utils.logging import LoggerScope
 from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
 from .generic import (
     ApplicationStrategy,
-    DbDelta,
+    DbDeltaAccount,
     DeltaValue,
-    EntityDelta,
-    RawEntityTx,
-    RelationDelta,
-    TraceDelta,
-    TxDelta,
+    EntityDeltaAccount,
+    RawEntityTxAccount,
+    RelationDeltaAccount,
+    Tx,
     get_id_group,
     groupby_property,
-    prepare_entities_for_ingest,
-    prepare_relations_for_ingest,
 )
 from .utxo import apply_changes
 
 logger = logging.getLogger(__name__)
+
+
+class TxReference(UserType):
+    trace_index = Integer(required=False)
+    log_index = Integer(required=False)
 
 
 COINBASE_PSEUDO_ADDRESS = None  # todo is this true
@@ -70,590 +76,12 @@ DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
 logger = logging.getLogger(__name__)
 
 
-def txdeltas_from_account_transaction(
-    transaction: dict,
-    tx_ids: dict,
-    rates: List[int],
-    bucket_size: int,
-    prefix_length: int,
-) -> List[TxDelta]:
-    """Create a DbDelta instance from a transaction
-
-    Args:
-        transaction (dict): Row object to build the delta from
-        tx_ids (dict): Mapping from tx_hash to tx_id
-        rates (List[int]): convertion rates to use.
-        bucket_size (int): bucket size to use for tx_id_group
-        prefix_length (int): prefix length to use for tx_prefix
-
-    Returns:
-        DbDelta: delta to apply to the db.
-    """
-    raise NotImplementedError
-
-
-def dbdelta_from_account_trace(trace: dict, rates: List[int]) -> DbDelta:
-    """Create a DbDelta instance from a trace
-
-    Args:
-        trace (dict): Row object to build the delta from
-        rates (List[int]): convertion rates to use.
-
-    Returns:
-        DbDelta: delta to apply to the db.
-    """
-
-    slim_tx = get_slim_tx_from_trace(trace)
-
-    sending_addr = [x.address for x in slim_tx if x.direction == FlowDirection.OUT][0]
-    receiving_addr = [x.address for x in slim_tx if x.direction == FlowDirection.IN][0]
-
-    entity_updates = []
-    new_entity_transactions = []
-    relations_updates = []
-
-    # create deltas for sending and receiving address
-    entity_updates.append(
-        TraceDelta(
-            tx_hash=trace.tx_hash,
-            from_address=sending_addr,
-            to_address=receiving_addr,
-            asset="native",
-            value=trace.value,
-        )
-    )
-
-    entity_updates.append(
-        TraceDelta(
-            identifier=receiving_addr,
-            total_spent=DeltaValue(value=0, fiat_values=convert_to_fiat(0, rates)),
-            total_received=DeltaValue(
-                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
-            ),
-            first_tx_id=trace.tx_id,
-            last_tx_id=trace.tx_id,
-            no_incoming_txs=1,  # traces are also tracked in transactions
-            no_outgoing_txs=0,
-        )
-    )
-
-
-def dbdelta_from_account_trace_old(
-    trace: dict, rates: List[int]
-) -> DbDelta:  # todo remove when finished
-    """Create a DbDelta instance from a trace
-
-    Args:
-        trace (dict): Row object to build the delta from
-        rates (List[int]): convertion rates to use.
-
-    Returns:
-        DbDelta: delta to apply to the db.
-    """
-
-    slim_tx = get_slim_tx_from_trace(trace)
-
-    sending_addr = [x.address for x in slim_tx if x.direction == FlowDirection.OUT][0]
-    receiving_addr = [x.address for x in slim_tx if x.direction == FlowDirection.IN][0]
-
-    entity_updates = []
-    new_entity_transactions = []
-    relations_updates = []
-
-    # create deltas for sending and receiving address
-    entity_updates.append(
-        EntityDelta(
-            identifier=sending_addr,
-            total_spent=DeltaValue(
-                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
-            ),
-            total_received=DeltaValue(value=0, fiat_values=convert_to_fiat(0, rates)),
-            first_tx_id=trace.tx_id,
-            last_tx_id=trace.tx_id,
-            no_incoming_txs=0,
-            no_outgoing_txs=1,  # traces are also tracked in transactions
-        )
-    )
-
-    entity_updates.append(
-        EntityDelta(
-            identifier=receiving_addr,
-            total_spent=DeltaValue(value=0, fiat_values=convert_to_fiat(0, rates)),
-            total_received=DeltaValue(
-                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
-            ),
-            first_tx_id=trace.tx_id,
-            last_tx_id=trace.tx_id,
-            no_incoming_txs=1,  # traces are also tracked in transactions
-            no_outgoing_txs=0,
-        )
-    )
-
-    # create new entity transactions for sending and receiving address
-    new_entity_transactions.append(
-        RawEntityTx(
-            identifier=sending_addr,
-            is_outgoing=True,
-            value=trace.value,
-            tx_id=trace.tx_id,
-        )
-    )
-
-    new_entity_transactions.append(
-        RawEntityTx(
-            identifier=receiving_addr,
-            is_outgoing=True,
-            value=trace.value,
-            tx_id=trace.tx_id,
-        )
-    )
-
-    # create a delta for the relation between sending and receiving address
-    relations_updates.append(
-        RelationDelta(
-            src_identifier=sending_addr,
-            dst_identifier=receiving_addr,
-            estimated_value=DeltaValue(
-                value=trace.value, fiat_values=convert_to_fiat(trace.value, rates)
-            ),
-            no_transactions=1,
-        )
-    )
-
-    return DbDelta(
-        entity_updates=entity_updates,
-        new_entity_txs=new_entity_transactions,
-        relation_updates=relations_updates,
-    )
-
-
-def get_trace_deltas(
-    db: AnalyticsDb,
-    traces: List,
-    rates: Dict[int, List],
-    get_next_address_id: Callable[[], int],
-    get_next_cluster_id: Callable[[], int],
-) -> Tuple[List[DbChange], int, int, int, int]:
-    """Main function to transform a list of traces from the raw
-    keyspace to changes to the transformed db.
-
-    Args:
-        db (AnalyticsDb): database instance
-        txs (List): list of transaction rows (raw db schema)
-        rates (Dict[int, List]): Mapping from block to exchange rates
-        (transformed db schema)
-        get_next_address_id (Callable[[], int]): Function to fetch next new address_id
-        get_next_cluster_id (Callable[[], int]): Function to fetch next new cluster_id
-    """
-    # tdb = db.transformed
-
-    """
-        Add pseudo inputs for coinbase txs
-    """
-    # new_traces = []
-    # for trace in traces:
-    #    if trace.reward_type == "block":
-    #        new_traces.append(
-    #            trace._replace(from_address = COINBASE_PSEUDO_ADDRESS)
-    #        )
-    #    else:
-    #        # non-coinbase tx, nothing to do
-    #        new_traces.append(trace)
-    # traces = new_traces
-    # del new_traces
-    traces = [trace for trace in traces if trace.from_address is not None]
-
-    """
-        Build dict of unique addresses in the batch.
-    """
-    addresses = get_unique_addresses_from_traces(traces)
-
-    len_addr = len(addresses)
-
-    """
-        Start loading the address_ids for the addresses async
-    """
-    with LoggerScope.debug(logger, f"Checking existence for {len_addr} addresses") as _:
-        addr_ids = {  # noqa: C416
-            adr: address_id
-            for adr, address_id in db.transformed.get_address_id_async_batch(
-                list(addresses)
-            )
-        }
-
-        del addresses
-    print(addr_ids)  # todo this makes flake8 happy
-    """
-        Sort transactions by block and tx id.
-        Database should already return them sorted.
-        This is just for caution
-    """
-    # todo skip for now. not sure if needed
-    # with LoggerScope.debug(logger, "Prepare transaction data") as lg:
-    #    traces = sorted(traces, key=lambda row: (row.block_id, row.tx_id))
-    #    lg.debug(f"Working on batch of {len(traces)} transactions.")
-    #    ordered_output_addresses = (
-    #        get_unique_ordered_output_addresses_from_transactions(traces)
-    #    )
-    #    ordered_input_addresses = get_unique_ordered_input_addresses_from_transactions(
-    #        traces
-    #    )
-
-    """
-        Compute the changeset for each trace of the batch and convert
-        all currency values with the corresponding rates.
-    """
-    with LoggerScope.debug(logger, "Creating address changeset") as _:
-        per_trace_changes = []
-
-        for trace in traces:
-            per_trace_changes.append(
-                dbdelta_from_account_trace(trace, rates[trace.block_id])
-            )
-
-        del rates
-        del traces
-
-        """
-            Aggregate and compress the changeset to minimize database writes
-        """
-        address_delta = DbDelta.merge(per_trace_changes)
-        print(address_delta)  # todo this makes flake8 happy
-        del per_trace_changes
-
-
-def todo_bypassflake8_continue_here(
-    ordered_output_addresses,
-    ordered_input_addresses,
-    addr_ids,
-    tdb,
-    get_next_address_id,
-    get_next_cluster_id,
-    address_delta,
-):
-    """
-    Read address data to merge for address updates
-    """
-    with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
-        existing_addr_ids = no_nones(
-            [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
-        )
-        addresses_resolved = {  # noqa: C416
-            addr_id: address
-            for addr_id, address in tdb.get_address_async_batch(
-                [adr.address_id for adr in existing_addr_ids]
-            )
-        }
-        del existing_addr_ids
-
-        def get_resolved_address(addr_id_exc):
-            addr_id = addr_id_exc.result_or_exc.one()
-            return (
-                (None, None)
-                if addr_id is None
-                else (
-                    addr_id.address_id,
-                    addresses_resolved[addr_id.address_id].result_or_exc.one(),  # noqa
-                )
-            )
-
-        addresses = {
-            adr: get_resolved_address(address_id)
-            for adr, address_id in addr_ids.items()
-        }
-
-        del addresses_resolved
-
-    def get_next_address_ids_with_aliases(address: str):
-        return (
-            get_next_address_id()
-            if address not in PSEUDO_ADDRESS_AND_IDS
-            else PSEUDO_ADDRESS_AND_IDS[address]
-        )
-
-    with LoggerScope.debug(
-        logger, "Assigning new address ids and cluster ids for new addresses"
-    ) as lg:
-        new_cluster_ids = {}
-
-        for out_addr in ordered_output_addresses:
-            addr_id, address = addresses[out_addr]
-            if addr_id is None:
-                new_addr_id = get_next_address_ids_with_aliases(address)
-                addresses[out_addr] = (new_addr_id, None)
-                new_cluster_ids[new_addr_id] = get_next_cluster_id()
-            elif address is None:
-                """
-                I have found cases where address_prefix table is written
-                But not the address table, for those cases we set a new
-                cluster id and create the address in turn
-                """
-                lg.warning(
-                    f"Address {out_addr} has address "
-                    f"id {addr_id} but no address entry"
-                )
-                new_cluster_ids[addr_id] = get_next_cluster_id()
-
-        del ordered_output_addresses
-
-        not_yet_seen_input_addresses = {
-            k for k, (addr_id2, _) in addresses.items() if addr_id2 is None
-        }
-
-        if len(not_yet_seen_input_addresses) > 0:
-            for out_addr in ordered_input_addresses:
-                if out_addr in not_yet_seen_input_addresses:
-                    new_addr_id = get_next_address_ids_with_aliases(out_addr)
-                    lg.debug(
-                        "Encountered new input address - "
-                        f"{out_addr:64}. Creating it with id {new_addr_id}."
-                    )
-                    addresses[out_addr] = (new_addr_id, None)
-                    new_cluster_ids[new_addr_id] = get_next_cluster_id()
-
-            del ordered_input_addresses
-
-        del not_yet_seen_input_addresses
-
-        assert (
-            len([1 for k, (addr_id2, _) in addresses.items() if addr_id2 is None]) == 0
-        )
-
-    """
-        Reading relations to be updated.
-    """
-    with LoggerScope.debug(logger, "Reading address relations to be updated") as _:
-        rel_to_query = [
-            (addresses[update.src_identifier][0], addresses[update.dst_identifier][0])
-            for update in address_delta.relation_updates
-        ]
-        addr_outrelations_q = tdb.get_address_outgoing_relations_async_batch(
-            rel_to_query
-        )
-        addr_outrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(address_delta.relation_updates, addr_outrelations_q)
-        }
-
-        rel_to_query = [
-            (addresses[update.dst_identifier][0], addresses[update.src_identifier][0])
-            for update in address_delta.relation_updates
-        ]
-        addr_inrelations_q = tdb.get_address_incoming_relations_async_batch(
-            rel_to_query
-        )
-        addr_inrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(address_delta.relation_updates, addr_inrelations_q)
-        }
-
-        del rel_to_query, addr_inrelations_q, addr_outrelations_q
-
-    with LoggerScope.debug(logger, "Reading clusters for addresses") as _:
-        clusters_resolved = {  # noqa: C416
-            cluster_id: cluster
-            for cluster_id, cluster in tdb.get_cluster_async_batch(
-                [
-                    address.cluster_id
-                    for adr, (addr_id, address) in addresses.items()
-                    if address is not None
-                ]
-            )
-        }
-
-        def get_resolved_cluster(address_tuple):
-            aidr, address = address_tuple
-            if address is not None:
-                assert address.cluster_id not in new_cluster_ids.values()
-                assert aidr == address.address_id
-                return (
-                    aidr,
-                    address,
-                    address.cluster_id,
-                    clusters_resolved[address.cluster_id].result_or_exc.one(),  # noqa
-                )
-            else:
-                return (aidr, None, new_cluster_ids[aidr], None)
-
-        """Assigning new address ids and cluster ids for new addresses"""
-
-        addresses_with_cluster = {
-            adr: get_resolved_cluster(address_tuple)
-            for adr, address_tuple in addresses.items()
-        }
-        del clusters_resolved, addresses
-
-    with LoggerScope.debug(logger, "Creating local lookup tables") as lg:
-        cluster_to_addr_id = group_by(
-            [
-                (cluster_id, address_id)
-                for _, (
-                    address_id,
-                    _,
-                    cluster_id,
-                    _,
-                ) in addresses_with_cluster.items()
-            ],
-            lambda x: x[0],
-        )
-
-        cluster_from_cluster_id = group_by(
-            [
-                (cluster_id, cluster)
-                for _, (_, _, cluster_id, cluster) in addresses_with_cluster.items()
-            ],
-            lambda x: x[0],
-        )
-
-        def address_to_cluster_id(addr: str) -> int:
-            return addresses_with_cluster[addr][2]
-
-        def address_to_address_id(addr: str) -> int:
-            return addresses_with_cluster[addr][0]
-
-        def address_to_address_obj(addr: str) -> int:
-            return addresses_with_cluster[addr][1]
-
-        def address_to_cluster(addr: str) -> int:
-            return addresses_with_cluster[addr][3]
-
-        def cluster_id_to_address_id(cluster_id: int) -> Set[int]:
-            s = {addr_id for _, addr_id in cluster_to_addr_id[cluster_id]}
-            if len(s) != 1:
-                raise Exception(f"Found more than one address id for cluster_id {s}")
-            return list(s)[0]
-
-        def cluster_id_to_cluster(cluster_id: int) -> Any:
-            clusters = [
-                x for (_, x) in cluster_from_cluster_id[cluster_id] if x is not None
-            ]
-            assert len({x.cluster_id for x in clusters}) <= 1
-            return clusters[0] if len(clusters) > 0 else None
-
-        def get_address_prefix(address_str):
-            address = tdb.to_db_address(address_str)
-            return (address.db_encoding, address.prefix)
-
-    with LoggerScope.debug(logger, "Creating cluster changeset") as lg:
-        cluster_delta = address_delta.to_cluster_delta(address_to_cluster_id)
-
-    with LoggerScope.debug(logger, "Reading cluster relations to be updated") as lg:
-        rel_to_query = [
-            (update.src_identifier, update.dst_identifier)
-            for update in cluster_delta.relation_updates
-        ]
-        clstr_outrelations_q = tdb.get_cluster_outgoing_relations_async_batch(
-            rel_to_query
-        )
-        clstr_outrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(cluster_delta.relation_updates, clstr_outrelations_q)
-        }
-
-        rel_to_query = [
-            (update.dst_identifier, update.src_identifier)
-            for update in cluster_delta.relation_updates
-        ]
-        clstr_inrelations_q = tdb.get_cluster_incoming_relations_async_batch(
-            rel_to_query
-        )
-        clstr_inrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(cluster_delta.relation_updates, clstr_inrelations_q)
-        }
-
-        del rel_to_query, clstr_inrelations_q, clstr_outrelations_q
-
-    """
-        Merge Db Entries with deltas
-    """
-
-    with LoggerScope.debug(logger, "Preparing data to be written.") as lg:
-        changes = []
-
-        ingest_configs = {
-            EntityType.ADDRESS: {
-                "bucket_size": tdb.get_address_id_bucket_size(),
-                "delta": address_delta,
-                "id_transformation": address_to_address_id,
-                "get_entity": address_to_address_obj,
-                "incoming_relations_db": addr_inrelations,
-                "outgoing_relations_db": addr_outrelations,
-            }
-        }
-
-        new_relations_in = {}
-        new_relations_out = {}
-        nr_new_relations = {}
-        nr_new_entities_created = {}
-        for mode, config in ingest_configs.items():
-            lg.debug(f"Prepare {mode} data.")
-            """ Merging new transactions """
-            changes.extend(
-                self.prepare_txs_for_ingest_account(
-                    config["delta"].new_entity_txs,
-                    config["id_transformation"],
-                    config["bucket_size"],
-                    mode=mode,
-                )
-            )
-
-            """ Merging relations deltas """
-            (
-                changes_relations,
-                new_rels_in,
-                new_rels_out,
-                nr_new_rel_total,
-            ) = prepare_relations_for_ingest(
-                config["delta"].relation_updates,
-                config["id_transformation"],
-                config["incoming_relations_db"],
-                config["outgoing_relations_db"],
-                config["bucket_size"],
-                mode=mode,
-            )
-            nr_new_rels = sum(new_rels_in.values()) + sum(new_rels_out.values())
-            assert nr_new_rels == nr_new_rel_total
-            nr_new_relations[mode] = nr_new_rels
-
-            new_relations_in[mode] = new_rels_in
-            new_relations_out[mode] = new_rels_out
-            changes.extend(changes_relations)
-
-            """ Merging entity deltas """
-            entity_changes, nr_new_entities = prepare_entities_for_ingest(
-                config["delta"].entity_updates,
-                config["id_transformation"],
-                config["get_entity"],
-                address_to_cluster_id,
-                cluster_id_to_address_id,
-                new_relations_in[mode],
-                new_relations_out[mode],
-                config["bucket_size"],
-                get_address_prefix,
-                mode=mode,
-            )
-            changes.extend(entity_changes)
-            nr_new_entities_created[mode] = nr_new_entities
-            del nr_new_entities
-
-    return (
-        changes,
-        nr_new_entities_created[EntityType.ADDRESS],
-        nr_new_entities_created[EntityType.CLUSTER],
-        nr_new_relations[EntityType.ADDRESS],
-        nr_new_relations[EntityType.CLUSTER],
-    )
-
-
 def get_bookkeeping_changes(
     base_statistics: MutableNamedTuple,
     current_statistics: NamedTuple,
     last_block_processed: int,
     nr_new_address_relations: int,
     nr_new_addresses: int,
-    nr_new_cluster_relations: int,
-    nr_new_clusters: int,
     nr_new_tx: int,
     highest_address_id: int,
     runtime_seconds: int,
@@ -687,15 +115,14 @@ def get_bookkeeping_changes(
         """ Update local stats """
         if not patch_mode:
             """when in patch mode (end block set by user)"""
-            stats.no_blocks = no_blocks
+            stats.no_blocks = no_blocks  # todo dont get this yet
         stats.timestamp = int(lb_date.timestamp())
         stats.no_address_relations += nr_new_address_relations
         stats.no_addresses += nr_new_addresses
-        stats.no_cluster_relations += nr_new_cluster_relations
-        stats.no_clusters += nr_new_clusters
         stats.no_transactions += nr_new_tx
 
         statistics = stats.as_dict()
+
         if current_statistics is not None and current_statistics.no_blocks != no_blocks:
             if not patch_mode:
                 assert current_statistics.no_blocks < no_blocks
@@ -785,6 +212,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         rates = {}
         transactions = []
         traces = []
+        logs = []
         bts = {}
         """
             Read transaction and exchange rates data
@@ -811,7 +239,8 @@ class UpdateStrategyAccount(UpdateStrategy):
             cache = TableBasedCache(Cache(self.du_config.fs_cache.directory))
             for block in batch:
                 transactions.extend(cache.get(("transaction", block), []))
-                traces.extend(cache.get(("traces", block), []))
+                traces.extend(cache.get(("trace", block), []))
+                logs.extend(cache.get(("log", block), []))
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
                 ).fiat_values
@@ -837,81 +266,86 @@ class UpdateStrategyAccount(UpdateStrategy):
                 trace_adapter = EthTraceAdapter()
 
             transaction_adapter = AccountTransactionAdapter()
-            traces = trace_adapter.dicts_to_dataclasses(traces)
-            traces = trace_adapter.rename_fields_in_list(traces)
+            log_adapter = AccountLogAdapter()
+            traces = trace_adapter.dicts_to_dataclasses(traces)  # todo slow
+            traces = trace_adapter.rename_fields_in_list(traces)  # todo slow
             traces = trace_adapter.process_fields_in_list(traces)
 
-            transactions = transaction_adapter.dicts_to_dataclasses(transactions)
+            transactions = transaction_adapter.dicts_to_dataclasses(
+                transactions
+            )  # todo slow
+            logs = log_adapter.dicts_to_dataclasses(logs)  # todo slow
 
             changes = []
-            tx_changes = self.get_transaction_changes(
-                transactions, traces, rates
+
+            (tx_changes, nr_new_addresses, nr_new_address_relations) = self.get_changes(
+                transactions, traces, logs, rates
             )  # noqa: E501
 
             changes.extend(tx_changes)
-            self.changes = changes
-
-            # todo continue here
-            """
-            changes += tx_changes
-
-
-            print(tx_changes)  # todo this makes flake8 happy
-
-            (
-                delta_changes,
-                nr_new_addresses,
-                nr_new_clusters,
-                nr_new_address_relations,
-                nr_new_cluster_relations,
-            ) = get_trace_changes(
-                self._db,
-                traces,
-                rates,
-                self.consume_address_id,
-                self.consume_cluster_id,
-            )
+            print("made changes for blocks", batch)
 
             last_block_processed = batch[-1]
-            nr_new_tx = len(traces)
-            changes.extend(delta_changes)
+            nr_new_tx = len(traces)  # todo not true, get from get_changes function
             runtime_seconds = int(time.time() - self.batch_start_time)
-
-            changes.extend(
-                get_bookkeeping_changes(
+            """
+            bookkeeping_changes = get_bookkeeping_changes(
                     self._statistics,
                     self._db.transformed.get_summary_statistics(),
                     last_block_processed,
                     nr_new_address_relations,
                     nr_new_addresses,
-                    nr_new_cluster_relations,
-                    nr_new_clusters,
                     nr_new_tx,
                     self.highest_address_id,
                     runtime_seconds,
                     bts,
                     patch_mode=self._patch_mode,
                 )
-            )
 
+            changes.extend(bookkeeping_changes)
+            """
             # Store changes to be written
             # They are applied at the end of the batch in
             # persist_updater_progress
             self.changes = changes
-            """
 
         else:
             raise ValueError(
                 f"Unknown application strategy {self.application_strategy}"
             )
 
-    def get_transaction_changes(
-        self, transactions: List, traces: List, rates: Dict[int, List]
+    def get_changes(
+        self, transactions: List, traces: List, logs: List, rates: Dict[int, List]
     ) -> List[DbChange]:
         # index transaction hashes
         tx_hashes = [tx.tx_hash for tx in transactions]
 
-        hash_to_id = {tx_hash: self.consume_transaction_id() for tx_hash in tx_hashes}
+        if self.currency == "eth":
+            hash_to_id = {
+                tx.tx_hash: self.consume_transaction_id() for tx in transactions
+            }
+        elif self.currency == "trx":
+            # 64 bit integer, first 32 is defined by block and the other by transaction index
+            consume_transaction_id_trx = (
+                lambda block_id, transaction_index: (block_id << 32) + transaction_index
+            )
+            hash_to_id = {
+                tx.tx_hash: consume_transaction_id_trx(
+                    tx.block_id, tx.transaction_index
+                )
+                for tx in transactions
+            }
+
+        if self.currency == "eth":
+            coin_decimals = 18
+        elif self.currency == "trx":
+            coin_decimals = 6
+
+        from graphsenselib.deltaupdate.update.tokens import TokenTransfer
+
+        from .generic import RawEntityTxAccount
+        from .tokens import ERC20Decoder
+
         hash_to_tx = {tx_hash: tx for tx_hash, tx in zip(tx_hashes, transactions)}
 
         id_bucket_size = self._db.transformed.get_address_id_bucket_size()
@@ -924,9 +358,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             tx_index = hash_to_tx[tx_hash].transaction_index
             block_id = hash_to_tx[tx_hash].block_id
             txdeltas.append(
-                TxDelta(
-                    block_id=block_id, tx_id=tx_id, tx_hash=tx_hash, tx_index=tx_index
-                )
+                Tx(block_id=block_id, tx_id=tx_id, tx_hash=tx_hash, tx_index=tx_index)
             )
 
         tdb = self._db.transformed
@@ -939,19 +371,36 @@ class UpdateStrategyAccount(UpdateStrategy):
         def ignore_coinbase(hashes):
             return [hash for hash in hashes if hash not in PSEUDO_ADDRESS_AND_IDS]
 
-        with LoggerScope.debug(logger, "Prepare transaction data") as lg:
-            traces = sorted(
-                traces, key=lambda row: (row.block_id, hash_to_id[row.tx_hash])
-            )
-            lg.debug(f"Working on batch of {len(traces)} transactions.")
-            ordered_receiver_addresses = ignore_coinbase(
-                get_unique_ordered_receiver_addresses_from_traces(traces)
-            )
-            ordered_sender_addresses = ignore_coinbase(
-                get_unique_ordered_sender_addresses_from_traces(traces)
+        tokendecoder = ERC20Decoder(self.currency)
+
+        with LoggerScope.debug(logger, "Prepare transaction/transfer data") as lg:
+            lg.debug(f"Decode logs to token transfers.")
+            token_transfers = no_nones(
+                [tokendecoder.log_to_transfer(log) for log in logs]
             )
 
-        addresses = list(set(ordered_receiver_addresses + ordered_sender_addresses))
+            # transaction > traces > token_transfers within a transaction
+            address_containing_objects = transactions + traces + token_transfers
+            address_containing_objects_sorted = sorted(
+                address_containing_objects,
+                key=lambda row: (row.block_id, hash_to_id[row.tx_hash]),
+            )
+            ordered_receiver_addresses = ignore_coinbase(
+                get_unique_ordered_addresses(
+                    address_containing_objects_sorted, mode="sender"
+                )
+            )
+            ordered_sender_addresses = ignore_coinbase(
+                get_unique_ordered_addresses(
+                    address_containing_objects_sorted, mode="receiver"
+                )
+            )
+            addresses = no_nones(
+                get_unique_ordered_addresses(
+                    address_containing_objects_sorted, mode="both"
+                )
+            )
+
         len_addr = len(addresses)
 
         with LoggerScope.debug(
@@ -966,13 +415,11 @@ class UpdateStrategyAccount(UpdateStrategy):
             existing_addr_ids = no_nones(
                 [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
             )
-            addresses_resolved = {  # noqa: C416
-                addr_id: address
-                for addr_id, address in tdb.get_address_async_batch(
+            addresses_resolved = dict(
+                tdb.get_address_async_batch(
                     [adr.address_id for adr in existing_addr_ids]
                 )
-            }
-            del existing_addr_ids
+            )
 
             def get_resolved_address(addr_id_exc):
                 addr_id = addr_id_exc.result_or_exc.one()
@@ -987,7 +434,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                     )
                 )
 
-            addresses = {
+            addresses_to_id__rows = {
                 adr: get_resolved_address(address_id)
                 for adr, address_id in addr_ids.items()
             }
@@ -1001,14 +448,20 @@ class UpdateStrategyAccount(UpdateStrategy):
                 # else PSEUDO_ADDRESS_AND_IDS[address]
             )
 
+        # bytes_to_row_address = {
+        #    address: addresses_to_rows[address][1] for address in addresses_to_rows
+        # }
+        bytes_to_row_address = {
+            address: row[1] for address, row in addresses_to_id__rows.items()
+        }
         with LoggerScope.debug(
             logger, "Assigning new address ids for new addresses"
         ) as lg:
             for out_addr in ordered_receiver_addresses:
-                addr_id, address = addresses[out_addr]
+                addr_id, address = addresses_to_id__rows[out_addr]
                 if addr_id is None:
                     new_addr_id = get_next_address_ids_with_aliases(address)
-                    addresses[out_addr] = (new_addr_id, None)
+                    addresses_to_id__rows[out_addr] = (new_addr_id, None)
                 elif address is None:
                     lg.warning(
                         f"TODO WIP: The following is because the addresses "
@@ -1020,7 +473,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             del ordered_receiver_addresses
 
             not_yet_seen_sender_addresses = {
-                k for k, (addr_id2, _) in addresses.items() if addr_id2 is None
+                k
+                for k, (addr_id2, _) in addresses_to_id__rows.items()
+                if addr_id2 is None
             }
 
             if len(not_yet_seen_sender_addresses) > 0:
@@ -1031,14 +486,20 @@ class UpdateStrategyAccount(UpdateStrategy):
                             "Encountered new sender address - "
                             f"{out_addr.hex()}. Creating it with id {new_addr_id}."
                         )
-                        addresses[out_addr] = (new_addr_id, None)
+                        addresses_to_id__rows[out_addr] = (new_addr_id, None)
 
                 del ordered_sender_addresses
 
             del not_yet_seen_sender_addresses
 
             assert (
-                len([1 for k, (addr_id2, _) in addresses.items() if addr_id2 is None])
+                len(
+                    [
+                        1
+                        for k, (addr_id2, _) in addresses_to_id__rows.items()
+                        if addr_id2 is None
+                    ]
+                )
                 == 0
             )
 
@@ -1050,7 +511,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             address = tdb.to_db_address(address_str)
             return (address.db_encoding, address.prefix)
 
-        address_hash_to_id_with_new = {adr: addresses[adr][0] for adr in addresses}
+        address_hash_to_id_with_new = {
+            address: id_row[0] for address, id_row in addresses_to_id__rows.items()
+        }
         # TODO could filter here for only new ones (not in hash_to_id), to make it easier for cassandra
         # but i think it wasnt done btc so there could be a reason
         changes, _ = self.prepare_txs_for_ingest_account(
@@ -1062,15 +525,29 @@ class UpdateStrategyAccount(UpdateStrategy):
             address_hash_to_id_with_new,
         )
 
-        # hash to id mapping
-        # hash_to_id = {tx_hash: self.consume_transaction_id() for tx_hash in tx_hashes}
+        currency = self.currency.upper()
 
-        # get address_transactions
-        # first create RawEntityTx
-        # then create DbChange
-        from typing import Union
+        def get_prices(
+            value, decimals, block_rates, usd_equivalent, coin_equivalent
+        ) -> List[int]:
+            dollar_rate = block_rates[0]
+            euro_rate = block_rates[1]
+            dollar_to_euro = dollar_rate / euro_rate
 
-        from .generic import RawEntityTxAccount
+            if usd_equivalent == 1:
+                dollar_value = value / 10**decimals
+            elif coin_equivalent == 1:
+                dollar_value = value / 10**decimals * dollar_to_euro
+            else:
+                raise Exception(
+                    "Unknown price type. only native coin and dollar equivalent supported atm"
+                )
+
+            euro_value = dollar_value * dollar_to_euro
+            return [dollar_value, euro_value]
+
+        def get_prices_coin(value, block_rates):
+            return get_prices(value, coin_decimals, block_rates, 0, 1)
 
         def prepare_txs_for_ingest(
             delta: List[RawEntityTxAccount],
@@ -1082,14 +559,30 @@ class UpdateStrategyAccount(UpdateStrategy):
             changes = []
             for atx in delta:
                 ident = atx.identifier
+                for tokenname in atx.token_values.keys():
+                    chng = DbChange.new(
+                        table=f"address_transactions",
+                        data={
+                            "address_id_group": get_id_group(ident, id_bucket_size),
+                            "address_id_secondary_group": atx.tx_id % 128,
+                            "address_id": ident,
+                            "currency": tokenname,
+                            "transaction_id": atx.tx_id,
+                            "is_outgoing": atx.is_outgoing,
+                            "tx_reference": atx.tx_reference,
+                        },
+                    )
+                    changes.append(
+                        chng
+                    )  # todo not sure how RawEntityTxAccount are bundled and therefore how to create the changes
 
                 chng = DbChange.new(
                     table=f"address_transactions",
                     data={
                         "address_id_group": get_id_group(ident, id_bucket_size),
-                        "address_id_secondary_group": 0,  # todo, verify
+                        "address_id_secondary_group": atx.tx_id % 128,
                         "address_id": ident,
-                        "currency": atx.currency,
+                        "currency": currency,
                         "transaction_id": atx.tx_id,
                         "is_outgoing": atx.is_outgoing,
                         "tx_reference": atx.tx_reference,
@@ -1099,47 +592,439 @@ class UpdateStrategyAccount(UpdateStrategy):
                 changes.append(chng)
             return changes
 
-        def get_entitytx_from_trace(trace, is_outgoing):
+        def get_entitytx_from_trace(trace, is_outgoing) -> RawEntityTxAccount:
             tx_id = hash_to_id[trace.tx_hash]
             address_hash = trace.from_address if is_outgoing else trace.to_address
             address_id = address_hash_to_id_with_new[address_hash]
-            currency = self.currency.upper()
-            from cassandra.cluster import Cluster
-            from cassandra.cqlengine.columns import Integer
-            from cassandra.cqlengine.usertype import UserType
-
-            # Step 1: Define the UserType in Python
-            class TxReference(UserType):
-                trace_index = Integer(required=False)
-                log_index = Integer(required=False)
 
             tx_reference = {
                 "trace_index": trace.trace_index,
                 "log_index": None,
-            }  # todo tokens (log_index)
+            }
             tx_reference = TxReference(**tx_reference)
 
             reta = RawEntityTxAccount(
                 identifier=address_id,
                 is_outgoing=is_outgoing,
-                currency=currency,
                 tx_id=tx_id,
                 tx_reference=tx_reference,
+                value=trace.value,
+                token_values={},  # we dont support TRC10 right now
             )
             return reta
 
-        new_entity_transactions = []
-        new_entity_transactions.extend(
+        def get_entitytx_from_tokentransfer(
+            tokentransfer: TokenTransfer, is_outgoing
+        ) -> RawEntityTxAccount:
+            tx_id = hash_to_id[tokentransfer.tx_hash]
+
+            address_hash = (
+                tokentransfer.from_address if is_outgoing else tokentransfer.to_address
+            )
+            address_id = address_hash_to_id_with_new[address_hash]
+
+            dv = DeltaValue(
+                tokentransfer.value,
+                get_prices(
+                    tokentransfer.value,
+                    tokentransfer.decimals,
+                    rates[tokentransfer.block_id],
+                    tokentransfer.usd_equivalent,
+                    tokentransfer.coin_equivalent,
+                ),
+            )
+
+            token_values = {tokentransfer.asset: dv}
+
+            tx_reference = {
+                "trace_index": None,
+                "log_index": tokentransfer.log_index,
+            }
+            tx_reference = TxReference(**tx_reference)
+
+            reta = RawEntityTxAccount(
+                identifier=address_id,
+                is_outgoing=is_outgoing,
+                tx_id=tx_id,
+                tx_reference=tx_reference,
+                value=tokentransfer.value,
+                token_values=token_values,
+            )
+            return reta
+
+        def get_entitytx_from_transaction(tx, is_outgoing) -> RawEntityTxAccount:
+            tx_id = hash_to_id[tx.tx_hash]
+            address_hash = tx.from_address if is_outgoing else tx.to_address
+
+            address_id = address_hash_to_id_with_new[address_hash]
+
+            tx_reference = {
+                "trace_index": None,
+                "log_index": None,
+            }
+            tx_reference = TxReference(**tx_reference)
+
+            reta = RawEntityTxAccount(
+                identifier=address_id,
+                is_outgoing=is_outgoing,
+                tx_id=tx_id,
+                tx_reference=tx_reference,
+                value=tx.value,
+                token_values={},
+            )
+            return reta
+
+        def get_entitydelta_from_trace(trace, is_outgoing):
+            identifier = trace.from_address if is_outgoing else trace.to_address
+            total_received_value = 0 if is_outgoing else trace.value
+            total_spent_value = trace.value if is_outgoing else 0
+            total_received = DeltaValue(
+                total_received_value,
+                get_prices_coin(trace.value, rates[trace.block_id]),
+            )
+            total_spent = DeltaValue(
+                total_spent_value, get_prices_coin(trace.value, rates[trace.block_id])
+            )
+            total_tokens_received = (
+                {}
+            )  # for now we dont support TRC10, so an empty dict is fine
+            total_tokens_spent = (
+                {}
+            )  # for now we dont support TRC10, so an empty dict is fine
+            first_tx_id = hash_to_id[trace.tx_hash]
+            last_tx_id = hash_to_id[trace.tx_hash]
+            no_incoming_txs = int(not is_outgoing)  # todo should we count if its zero?
+            no_outgoing_txs = int(is_outgoing)  # todo should we count if its zero?
+            no_incoming_txs_zero_value = 0 if is_outgoing else int(trace.value == 0)
+            no_outgoing_txs_zero_value = int(trace.value == 0) if is_outgoing else 0
+
+            eda = EntityDeltaAccount(
+                identifier=identifier,
+                total_received=total_received,
+                total_spent=total_spent,
+                total_tokens_received=total_tokens_received,
+                total_tokens_spent=total_tokens_spent,
+                first_tx_id=first_tx_id,
+                last_tx_id=last_tx_id,
+                no_incoming_txs=no_incoming_txs,
+                no_outgoing_txs=no_outgoing_txs,
+                no_incoming_txs_zero_value=no_incoming_txs_zero_value,
+                no_outgoing_txs_zero_value=no_outgoing_txs_zero_value,
+            )
+            return eda
+
+        def get_entitydelta_from_tokentransfer(tokentransfer, is_outgoing):
+            identifier = (
+                tokentransfer.from_address if is_outgoing else tokentransfer.to_address
+            )
+            total_received_value = 0 if is_outgoing else tokentransfer.value
+            total_spent_value = tokentransfer.value if is_outgoing else 0
+
+            fiat_values = get_prices(
+                tokentransfer.value,
+                tokentransfer.decimals,
+                rates[tokentransfer.block_id],
+                tokentransfer.usd_equivalent,
+                tokentransfer.coin_equivalent,
+            )
+
+            received_fiat = [0, 0] if is_outgoing else fiat_values
+            spent_fiat = fiat_values if is_outgoing else [0, 0]
+
+            total_received = DeltaValue(total_received_value, received_fiat)
+            total_spent = DeltaValue(total_spent_value, spent_fiat)
+            total_tokens_received = {tokentransfer.asset: total_received}
+            total_tokens_spent = {tokentransfer.asset: total_spent}
+            first_tx_id = hash_to_id[tokentransfer.tx_hash]
+            last_tx_id = hash_to_id[tokentransfer.tx_hash]
+            no_incoming_txs = int(not is_outgoing)
+            no_outgoing_txs = int(is_outgoing)
+            no_incoming_txs_zero_value = 0
+            no_outgoing_txs_zero_value = 0
+
+            eda = EntityDeltaAccount(
+                identifier=identifier,
+                total_received=total_received,
+                total_spent=total_spent,
+                total_tokens_received=total_tokens_received,
+                total_tokens_spent=total_tokens_spent,
+                first_tx_id=first_tx_id,
+                last_tx_id=last_tx_id,
+                no_incoming_txs=no_incoming_txs,
+                no_outgoing_txs=no_outgoing_txs,
+                no_incoming_txs_zero_value=no_incoming_txs_zero_value,
+                no_outgoing_txs_zero_value=no_outgoing_txs_zero_value,
+            )
+            return eda
+
+        def get_entitydelta_from_transaction(tx, is_outgoing):
+            identifier = tx.from_address if is_outgoing else tx.to_address
+            total_received_value = 0 if is_outgoing else tx.value
+            total_spent_value = tx.value if is_outgoing else 0
+            total_received = DeltaValue(
+                total_received_value, get_prices_coin(tx.value, rates[tx.block_id])
+            )
+            total_spent = DeltaValue(
+                total_spent_value, get_prices_coin(tx.value, rates[tx.block_id])
+            )
+            total_tokens_received = {}
+            total_tokens_spent = {}
+            first_tx_id = hash_to_id[tx.tx_hash]
+            last_tx_id = hash_to_id[tx.tx_hash]
+            no_incoming_txs = int(not is_outgoing)
+            no_outgoing_txs = int(is_outgoing)
+            no_incoming_txs_zero_value = 0 if is_outgoing else int(tx.value == 0)
+            no_outgoing_txs_zero_value = int(tx.value == 0) if is_outgoing else 0
+
+            eda = EntityDeltaAccount(
+                identifier=identifier,
+                total_received=total_received,
+                total_spent=total_spent,
+                total_tokens_received=total_tokens_received,
+                total_tokens_spent=total_tokens_spent,
+                first_tx_id=first_tx_id,
+                last_tx_id=last_tx_id,
+                no_incoming_txs=no_incoming_txs,
+                no_outgoing_txs=no_outgoing_txs,
+                no_incoming_txs_zero_value=no_incoming_txs_zero_value,
+                no_outgoing_txs_zero_value=no_outgoing_txs_zero_value,
+            )
+            return eda
+
+        def relationdelta_from_trace(trace):
+            iadr, oadr = trace.from_address, trace.to_address
+            value = DeltaValue(
+                trace.value, get_prices_coin(trace.value, rates[trace.block_id])
+            )
+            token_values = {}  # for now we dont support TRC10, so an empty dict is fine
+            no_transactions = 1
+            return RelationDeltaAccount(
+                src_identifier=iadr,
+                dst_identifier=oadr,
+                no_transactions=no_transactions,
+                value=value,
+                token_values=token_values,
+            )
+
+        def relationdelta_from_transaction(tx):
+            iadr, oadr = tx.from_address, tx.to_address
+
+            value = DeltaValue(tx.value, get_prices_coin(tx.value, rates[tx.block_id]))
+            token_values = {}
+            no_transactions = 1
+            return RelationDeltaAccount(
+                src_identifier=iadr,
+                dst_identifier=oadr,
+                no_transactions=no_transactions,
+                value=value,
+                token_values=token_values,
+            )
+
+        def relationdelta_from_tokentransfer(tokentransfer: TokenTransfer):
+            iadr, oadr = tokentransfer.from_address, tokentransfer.to_address
+            dollar_rate = rates[tokentransfer.block_id][0]
+            euro_rate = rates[tokentransfer.block_id][1]
+            dollar_to_euro = dollar_rate / euro_rate
+            value = tokentransfer.value
+            if tokentransfer.usd_equivalent == 1:
+                dollar_value = value / tokentransfer.decimals
+            elif tokentransfer.coin_equivalent == 1:
+                dollar_value = value / tokentransfer.decimals * dollar_to_euro
+            else:
+                raise Exception(
+                    "Unknown price type. only native coin and dollar equivalent supported atm"
+                )
+
+            euro_value = dollar_value * dollar_to_euro
+
+            value = DeltaValue(value, [dollar_value, euro_value])
+
+            token_values = {tokentransfer.asset: value}
+            no_transactions = 1
+            return RelationDeltaAccount(
+                src_identifier=iadr,
+                dst_identifier=oadr,
+                no_transactions=no_transactions,
+                value=DeltaValue(0, [0, 0]),
+                token_values=token_values,
+            )
+
+        entity_transactions = []
+
+        # entity transactions from traces
+        entity_transactions.extend(
             [get_entitytx_from_trace(trace, True) for trace in traces]
         )
-        new_entity_transactions.extend(
+        entity_transactions.extend(
             [get_entitytx_from_trace(trace, False) for trace in traces]
         )
-        changes += prepare_txs_for_ingest(new_entity_transactions, id_bucket_size)
+
+        # entity transactions from token transfers
+        entity_transactions.extend(
+            [get_entitytx_from_tokentransfer(tt, True) for tt in token_transfers]
+        )
+        entity_transactions.extend(
+            [get_entitytx_from_tokentransfer(tt, False) for tt in token_transfers]
+        )
+
+        # entity deltas from traces
+        entity_deltas = []
+        entity_deltas.extend(
+            [get_entitydelta_from_trace(trace, True) for trace in traces]
+        )
+        entity_deltas.extend(
+            [get_entitydelta_from_trace(trace, False) for trace in traces]
+        )
+
+        # entity deltas from token transfers
+        entity_deltas.extend(
+            [get_entitydelta_from_tokentransfer(tt, True) for tt in token_transfers]
+        )
+        entity_deltas.extend(
+            [get_entitydelta_from_tokentransfer(tt, False) for tt in token_transfers]
+        )
+
+        # relation deltas from traces
+        relation_updates = [relationdelta_from_trace(trace) for trace in traces]
+
+        # relation deltas from token transfers
+        relation_updates.extend(
+            [relationdelta_from_tokentransfer(tt) for tt in token_transfers]
+        )
+
+        # in eth we disregard the eth values because they are already in the traces
+        # in tron only traces that are not the initial transaction have values, so we still need to add
+        # the value from the transaction
+        if self.currency == "trx":
+            transactions_nonone = [
+                tx
+                for tx in transactions
+                if tx.from_address is not None and tx.to_address is not None
+            ]
+            # todo no coinbase txs
+
+            entity_transactions.extend(
+                [get_entitytx_from_transaction(tx, True) for tx in transactions_nonone]
+            )
+            entity_transactions.extend(
+                [get_entitytx_from_transaction(tx, False) for tx in transactions_nonone]
+            )
+
+            entity_deltas.extend(
+                [
+                    get_entitydelta_from_transaction(tx, True)
+                    for tx in transactions_nonone
+                ]
+            )
+            entity_deltas.extend(
+                [
+                    get_entitydelta_from_transaction(tx, False)
+                    for tx in transactions_nonone
+                ]
+            )
+
+            relation_updates.extend(
+                [relationdelta_from_transaction(tx) for tx in transactions_nonone]
+            )
+
+        bucket_size = id_bucket_size
+        dbdelta = DbDeltaAccount(
+            entity_deltas,
+            entity_transactions,
+            relation_updates,
+        )
+        dbdelta = dbdelta.compress()
+
+        rel_to_query = [
+            (
+                addresses_to_id__rows[update.src_identifier][0],
+                addresses_to_id__rows[update.dst_identifier][0],
+            )
+            for update in dbdelta.relation_updates
+        ]
+        addr_outrelations_q = tdb.get_address_outgoing_relations_async_batch_account(
+            rel_to_query
+        )
+        addr_outrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(dbdelta.relation_updates, addr_outrelations_q)
+        }
+
+        rel_to_query = [
+            (
+                addresses_to_id__rows[update.dst_identifier][0],
+                addresses_to_id__rows[update.src_identifier][0],
+            )
+            for update in dbdelta.relation_updates
+        ]
+        addr_inrelations_q = tdb.get_address_incoming_relations_async_batch_account(
+            rel_to_query
+        )
+
+        addr_inrelations = {
+            (update.src_identifier, update.dst_identifier): qr
+            for update, qr in zip(dbdelta.relation_updates, addr_inrelations_q)
+        }
+        rel_to_query_from_to = [(100, 14743)]
+        rel_to_query_to_from = [(14743, 100)]
+        list(
+            tdb.get_address_outgoing_relations_async_batch_account(rel_to_query_from_to)
+        )[0].result_or_exc.one()
+        list(
+            tdb.get_address_incoming_relations_async_batch_account(rel_to_query_to_from)
+        )[0].result_or_exc.one()
+
+        lg.debug(f"Prepare data.")
+        """
+        Creating new transactions
+        """
+        changes += prepare_txs_for_ingest(dbdelta.new_entity_txs, id_bucket_size)
+
+        """ Merging relations deltas """
+        (
+            changes_relations,
+            new_rels_in,
+            new_rels_out,
+            nr_new_rel_total,
+        ) = self.prepare_relations_for_ingest(
+            dbdelta.relation_updates,
+            address_hash_to_id_with_new,
+            addr_inrelations,
+            addr_outrelations,
+            bucket_size,
+        )
+        nr_new_rels = sum(new_rels_in.values()) + sum(new_rels_out.values())
+        assert nr_new_rels == nr_new_rel_total
+
+        new_relations_in = new_rels_in
+        new_relations_out = new_rels_out
+        changes.extend(changes_relations)
+
+        """ Merging entity deltas """
+        entity_changes, nr_new_entities = self.prepare_entities_for_ingest(
+            dbdelta.entity_updates,
+            address_hash_to_id_with_new,
+            bytes_to_row_address,
+            new_relations_in,
+            new_relations_out,
+            bucket_size,
+            get_address_prefix,
+        )
+        changes.extend(entity_changes)
+        nr_new_entities_created = nr_new_entities
+        del nr_new_entities
+
+        return (
+            changes,
+            nr_new_entities_created,
+            nr_new_rels,
+        )
+
+        """
+
 
         return changes
 
-        """
         (
             delta_changes,
             nr_new_addresses,
@@ -1205,12 +1090,12 @@ class UpdateStrategyAccount(UpdateStrategy):
 
     def prepare_txs_for_ingest_account(
         self,
-        delta: List[TxDelta],
+        delta: List[Tx],
         id_bucket_size: int,
         block_bucket_size: int,
         get_address_prefix: Callable[[bytes], Tuple[str, str]],
         get_transaction_prefix: Callable[[bytes], Tuple[str, str]],
-        address_hash_to_id_with_new: Dict[str, bytes],
+        address_hash_to_id_with_new: Dict[bytes, int],
     ) -> Tuple[List[DbChange], int]:
         changes = []
 
@@ -1220,8 +1105,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 transaction_id, id_bucket_size
             )
             transaction = update.tx_hash
-            if transaction is None:
-                print("asdf")
+
             transaction_prefix = get_transaction_prefix(transaction)[1]
 
             data = {
@@ -1285,16 +1169,230 @@ class UpdateStrategyAccount(UpdateStrategy):
                 ]
             )
 
-        for hash_ in address_hash_to_id_with_new:
-            chng = DbChange.new(
-                table="address_ids_by_address_prefix",
-                data={
-                    "address_prefix": get_address_prefix(hash_)[1],
-                    "address": hash_,
-                    "address_id": address_hash_to_id_with_new[hash_],
-                },
-            )
-            changes.append(chng)
+        # comment out because its done later in entity perparation
+        # for hash_ in address_hash_to_id_with_new:
+        #    chng = DbChange.new(
+        #        table="address_ids_by_address_prefix",
+        #        data={
+        #            "address_prefix": get_address_prefix(hash_)[1],
+        #            "address": hash_,
+        #            "address_id": address_hash_to_id_with_new[hash_],
+        #        },
+        #    )
+        #    changes.append(chng)
 
         nr_new_txs = len(delta)
+
         return changes, nr_new_txs
+
+    def prepare_relations_for_ingest(
+        self,
+        delta: List[RelationDeltaAccount],
+        hash_to_id: Dict[str, bytes],
+        inrelations: dict,
+        outrelations: dict,
+        id_bucket_size: int,
+    ) -> Tuple[List[DbChange], dict, dict, int]:
+        new_relations_in = defaultdict(int)
+        new_relations_out = defaultdict(int)
+        nr_new_rel = 0
+
+        changes = []
+        """ Merging relations deltas """
+        for relations_update in delta:
+            outr = outrelations[
+                (relations_update.src_identifier, relations_update.dst_identifier)
+            ].result_or_exc.one()
+            inr = inrelations[
+                (relations_update.src_identifier, relations_update.dst_identifier)
+            ].result_or_exc.one()
+            assert (outr is None) == (inr is None)
+
+            id_src = hash_to_id[relations_update.src_identifier]
+            id_dst = hash_to_id[relations_update.dst_identifier]
+            src_group = get_id_group(id_src, id_bucket_size)
+            dst_group = get_id_group(id_dst, id_bucket_size)
+
+            if outr is None:
+                """new address/cluster relation to insert"""
+                new_relations_out[relations_update.src_identifier] += 1
+                new_relations_in[relations_update.dst_identifier] += 1
+
+                chng_in = DbChange.new(
+                    table=f"address_incoming_relations",
+                    data={
+                        "dst_address_id_group": dst_group,
+                        "dst_address_id_secondary_group": id_dst % 100,
+                        "dst_address_id": id_dst,
+                        "src_address_id": id_src,
+                        "no_transactions": relations_update.no_transactions,
+                        "value": {},
+                        "token_values": relations_update.token_values,
+                    },
+                )
+                chng_out = DbChange.new(
+                    table=f"address_outgoing_relations",
+                    data={
+                        "src_address_id_group": src_group,
+                        "src_address_id_secondary_group": id_src % 100,
+                        "src_address_id": id_src,
+                        "dst_address_id": id_dst,
+                        "no_transactions": relations_update.no_transactions,
+                        "value": relations_update.value,
+                    },
+                )
+                nr_new_rel += 2
+            else:
+                """update existing adddress relation"""
+                nv = DeltaValue.from_db(outr.value).merge(relations_update.value)
+
+                nv_token = (
+                    outr.token_values
+                )  # todo adding the dicts together, maybe a dedicated datastrucure would be better
+                nv_token = nv_token if nv_token is not None else {}
+                new_token = relations_update.token_values
+                keys = set(nv_token.keys()).union(new_token.keys())
+                for key in keys:
+                    if key in nv_token and key in relations_update.token_values:
+                        nv_token[key] = DeltaValue.from_db(nv_token[key]).merge(
+                            relations_update.token_values[key]
+                        )
+                    elif key in nv_token:
+                        pass
+                    elif key in relations_update.token_values:
+                        nv_token[key] = relations_update.token_values[key]
+
+                chng_in = DbChange.update(
+                    table=f"address_incoming_relations",
+                    data={
+                        "dst_address_id_group": dst_group,
+                        "dst_address_id_secondary_group": id_dst % 100,
+                        "dst_address_id": id_dst,
+                        "src_address_id": id_src,
+                        "no_transactions": outr.no_transactions
+                        + relations_update.no_transactions,
+                        "value": nv,
+                        "token_values": nv_token,
+                    },
+                )
+
+                chng_out = DbChange.update(
+                    table=f"address_outgoing_relations",
+                    data={
+                        "src_address_id_group": src_group,
+                        "src_address_id_secondary_group": id_src % 100,
+                        "src_address_id": id_src,
+                        "dst_address_id": id_dst,
+                        "no_transactions": outr.no_transactions,
+                        "value": nv,
+                        "token_values": nv_token,
+                    },
+                )
+
+            changes.append(chng_in)
+            changes.append(chng_out)
+
+        return changes, new_relations_in, new_relations_out, nr_new_rel
+
+    def prepare_entities_for_ingest(
+        self,
+        delta: List[EntityDeltaAccount],
+        resolve_identifier: Dict[str, int],
+        bytes_to_row_address: Dict[str, Any],
+        new_rel_in: dict,
+        new_rel_out: dict,
+        id_bucket_size: int,
+        get_address_prefix: Callable[[str], Tuple[str, str]],
+    ) -> Tuple[List[DbChange], int]:
+        changes = []
+        nr_new_entities = 0
+        for update in delta:
+            int_ident, entity = (
+                resolve_identifier[update.identifier],
+                bytes_to_row_address[update.identifier],
+            )
+
+            if int_ident == 19280:
+                print("----\n", int_ident, "-\n", entity, "-\n", update)
+            group = get_id_group(int_ident, id_bucket_size)
+            if entity is not None:
+                """old Address"""
+
+                assert getattr(entity, f"address_id") == int_ident
+
+                # recast so we can calculate without handling None all the time
+                new_value = EntityDeltaAccount.from_db(entity).merge(update)
+                # bytes to hex
+                bytes_ = new_value.identifier
+                bytes_.hex()
+                assert new_value.first_tx_id <= new_value.last_tx_id
+
+                # Nr. of addresses (no_addresses) is currently not updated for clusters
+                # Since no merges happen there should not be a difference
+                generic_data = {
+                    "no_incoming_txs": new_value.no_incoming_txs,
+                    "no_outgoing_txs": new_value.no_outgoing_txs,
+                    "no_incoming_txs_zero_value": new_value.no_incoming_txs_zero_value,
+                    "no_outgoing_txs_zero_value": new_value.no_outgoing_txs_zero_value,
+                    "first_tx_id": new_value.first_tx_id,
+                    "last_tx_id": new_value.last_tx_id,
+                    "total_received": new_value.total_received,
+                    "total_spent": new_value.total_spent,
+                    "total_tokens_received": new_value.total_tokens_received,
+                    "total_tokens_spent": new_value.total_tokens_spent,
+                    "in_degree": entity.in_degree + new_rel_in[update.identifier],
+                    "out_degree": entity.out_degree + new_rel_out[update.identifier],
+                    "in_degree_zero_value": entity.in_degree_zero_value
+                    + new_value.no_incoming_txs_zero_value,
+                    "out_degree_zero_value": entity.out_degree_zero_value
+                    + new_value.no_outgoing_txs_zero_value,
+                    "address_id": int_ident,
+                    "address_id_group": group,
+                }
+
+                chng = DbChange.update(
+                    table=f"address",
+                    data=generic_data,
+                )
+
+                changes.append(chng)
+            else:
+                """new address"""
+                assert update.first_tx_id <= update.last_tx_id
+                nr_new_entities += 1
+
+                data = {
+                    "no_incoming_txs": update.no_incoming_txs,
+                    "no_outgoing_txs": update.no_outgoing_txs,
+                    "no_incoming_txs_zero_value": update.no_incoming_txs_zero_value,
+                    "no_outgoing_txs_zero_value": update.no_outgoing_txs_zero_value,
+                    "first_tx_id": update.first_tx_id,
+                    "last_tx_id": update.last_tx_id,
+                    "total_received": update.total_received,
+                    "total_spent": update.total_spent,
+                    "total_tokens_received": update.total_tokens_received,
+                    "total_tokens_spent": update.total_tokens_spent,
+                    f"address_id": int_ident,
+                    f"address_id_group": group,
+                    "in_degree": new_rel_in[update.identifier],
+                    "out_degree": new_rel_out[update.identifier],
+                    "in_degree_zero_value": update.no_incoming_txs_zero_value,
+                    "out_degree_zero_value": update.no_outgoing_txs_zero_value,
+                    "is_contract": False,  # todo
+                }
+                data["address"] = update.identifier
+                chng = DbChange.new(table=f"address", data=data)
+                changes.append(chng)
+                address, address_prefix = get_address_prefix(update.identifier)
+
+                changes.append(
+                    DbChange.new(
+                        table="address_ids_by_address_prefix",
+                        data={
+                            "address": address,
+                            "address_id": int_ident,
+                            "address_prefix": address_prefix,
+                        },
+                    )
+                )
+        return changes, nr_new_entities
