@@ -430,9 +430,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         return r
 
     def find_highest_block_with_exchange_rates(
-        self,
-        lookback_in_blocks=86400,
-        validate=True,
+        self, lookback_in_blocks=86400, validate=True
     ) -> int:
         """Summary
             Searches for the highest block with available exchange_rates in
@@ -866,6 +864,41 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         return self._db.execute_statements_async(bstmts, concurrency=2000)
 
+    def get_address_incoming_relations_async_batch_account(
+        self, rel_ids: List[Tuple[int, int]]
+    ):
+        stmt = self.select_stmt(
+            "address_incoming_relations",
+            columns=["*"],
+            where={
+                k: "?"
+                for k in [
+                    "dst_address_id_group",
+                    "dst_address_id_secondary_group",
+                    "dst_address_id",
+                    "src_address_id",
+                ]
+            },
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "dst_address_id_group": self.get_id_group(
+                        dst_address, self.get_address_id_bucket_size()
+                    ),
+                    "dst_address_id_secondary_group": dst_address % 100,
+                    "dst_address_id": dst_address,
+                    "src_address_id": src_address,
+                }
+            )
+            for dst_address, src_address in rel_ids
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=2000)
+
     def get_address_incoming_relations_async(
         self, address_id: int, src_address_id: Optional[int]
     ):
@@ -904,6 +937,41 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
                     "src_address_id_group": self.get_id_group(
                         src_address, self.get_address_id_bucket_size()
                     ),
+                    "src_address_id": src_address,
+                    "dst_address_id": dst_address,
+                }
+            )
+            for src_address, dst_address in rel_ids
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=2000)
+
+    def get_address_outgoing_relations_async_batch_account(
+        self, rel_ids: List[Tuple[int, int]]
+    ):
+        stmt = self.select_stmt(
+            "address_outgoing_relations",
+            columns=["*"],
+            where={
+                k: "?"
+                for k in [
+                    "src_address_id_group",
+                    "src_address_id_secondary_group",
+                    "src_address_id",
+                    "dst_address_id",
+                ]
+            },
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "src_address_id_group": self.get_id_group(
+                        src_address, self.get_address_id_bucket_size()
+                    ),
+                    "src_address_id_secondary_group": src_address % 100,
                     "src_address_id": src_address,
                     "dst_address_id": dst_address,
                 }

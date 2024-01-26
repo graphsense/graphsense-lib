@@ -102,8 +102,9 @@ def get_unique_ordered_receiver_addresses_from_traces(
     )
 
 
-def get_unique_ordered_sender_addresses_from_traces(
-    traces,
+def get_unique_ordered_addresses(
+    address_containing_objects,
+    mode: str,
 ) -> Iterable[str]:
     """Returns all unique input addresses in the order they appear in the txs.
     This is useful to assign address ids where order should matter.
@@ -118,12 +119,15 @@ def get_unique_ordered_sender_addresses_from_traces(
         Construction see
         https://stackoverflow.com/questions/1653970/does-python-have-an-ordered-set
     """
-    return list(
-        dict.fromkeys(
-            [
-                tx.address
-                for tx in get_slim_tx_from_traces(traces)
-                if tx.direction == FlowDirection.IN
-            ]
-        )
-    )
+    if mode == "sender":
+        list_to_prepare = [x.to_address for x in address_containing_objects]
+    elif mode == "receiver":
+        list_to_prepare = [x.from_address for x in address_containing_objects]
+    elif mode == "both":
+        list_to_prepare = [
+            [x.to_address, x.from_address] for x in address_containing_objects
+        ]
+        list_to_prepare = flatten(list_to_prepare)
+    else:
+        raise Exception("Unknown mode")
+    return list(dict.fromkeys(list_to_prepare))
