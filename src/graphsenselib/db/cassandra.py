@@ -4,7 +4,12 @@ import time
 from functools import wraps
 from typing import Iterable, List, Optional, Sequence, Union
 
-from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
+from cassandra.cluster import (
+    EXEC_PROFILE_DEFAULT,
+    Cluster,
+    ConsistencyLevel,
+    ExecutionProfile,
+)
 
 # Session,
 from cassandra.concurrent import execute_concurrent, execute_concurrent_with_args
@@ -317,6 +322,8 @@ class CassandraDb:
         """Connect to given Cassandra cluster nodes."""
         exec_prof = ExecutionProfile(
             retry_policy=GraphsenseRetryPolicy(),
+            consistency_level=ConsistencyLevel.LOCAL_QUORUM,
+            serial_consistency_level=ConsistencyLevel.LOCAL_SERIAL,
             request_timeout=self._default_timeout,
             load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
         )

@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.01.1/2.1.1] 2024-02-02
+### changed
+- change consistency level Cassandra, consistency_level=LOCAL_QUORUM, serial_consistency_level=LOCAL_SERIAL
+
 ## [24.01/2.1.0] 2024-01-09
 ### added
 - ingest now works stores additional details/tables in raw keyspace (tx_type, fees)
