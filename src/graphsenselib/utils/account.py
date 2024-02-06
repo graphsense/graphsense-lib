@@ -124,10 +124,9 @@ def get_unique_ordered_addresses(
     elif mode == "receiver":
         list_to_prepare = [x.from_address for x in address_containing_objects]
     elif mode == "both":
-        list_to_prepare = [
-            [x.to_address, x.from_address] for x in address_containing_objects
-        ]
-        list_to_prepare = flatten(list_to_prepare)
+        list_to = [x.to_address for x in address_containing_objects]
+        list_from = [x.from_address for x in address_containing_objects]
+        list_to_prepare = list_to + list_from
     else:
         raise Exception("Unknown mode")
-    return list(dict.fromkeys(list_to_prepare))
+    return list(dict.fromkeys(list_to_prepare[::-1]))[::-1]

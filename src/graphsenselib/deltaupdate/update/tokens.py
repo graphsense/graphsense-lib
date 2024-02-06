@@ -4,10 +4,10 @@ from eth_abi import decode_single
 from eth_utils import function_abi_to_4byte_selector, to_hex
 from web3 import Web3
 
-from src.graphsenselib.deltaupdate.update.resources.supported_tokens_eth import (
+from graphsenselib.deltaupdate.update.resources.supported_tokens_eth import (
     SUPPORTED_TOKENS as eth_tokens,
 )
-from src.graphsenselib.deltaupdate.update.resources.supported_tokens_trx import (
+from graphsenselib.deltaupdate.update.resources.supported_tokens_trx import (
     SUPPORTED_TOKENS as trx_tokens,
 )
 
@@ -107,7 +107,7 @@ class ERC20Decoder:
 
 
 if __name__ == "__main__":
-    from src.graphsenselib.utils.adapters import AccountLogAdapter
+    from graphsenselib.utils.adapters import AccountLogAdapter
 
     adapter = AccountLogAdapter()
     # todo move to tests
