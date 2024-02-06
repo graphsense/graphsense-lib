@@ -31,6 +31,14 @@ class DeltaUpdate(ABC):
 
 
 @dataclass
+class DeltaScalar(DeltaUpdate):
+    value: int
+
+    def merge(self, other):
+        return DeltaScalar(self.value + other.value)
+
+
+@dataclass
 class DeltaValue(DeltaUpdate):
     value: int
     fiat_values: List[int]
@@ -40,6 +48,8 @@ class DeltaValue(DeltaUpdate):
         return Cls(value=db_row.value, fiat_values=list(db_row.fiat_values))
 
     def merge(self, other):
+        if other is None:
+            return self
         assert self.fiat_values is not None and other.fiat_values is not None
         assert len(self.fiat_values) == len(other.fiat_values)
         return DeltaValue(
@@ -48,12 +58,20 @@ class DeltaValue(DeltaUpdate):
         )
 
 
+def merge_asset_dicts(d1, d2):  # probably better to wrap in class and define __add__
+    d = {}
+    for k in set(d1.keys()) | set(d2.keys()):
+        d[k] = d1.get(k, DeltaValue(0, [0, 0])).merge(d2.get(k, DeltaValue(0, [0, 0])))
+    return d
+
+
 @dataclass
 class Tx:
     block_id: int
     tx_id: int
     tx_hash: bytes
     tx_index: int
+    failed: bool
 
 
 @dataclass
@@ -125,6 +143,7 @@ class EntityDeltaAccount(DeltaUpdate):
             total_tokens_spent = {
                 k: DeltaValue.from_db(v) for k, v in db_row.total_tokens_spent.items()
             }
+
         if db_row.total_tokens_received is None:
             total_tokens_received = {}
         else:
@@ -152,15 +171,13 @@ class EntityDeltaAccount(DeltaUpdate):
 
         # self and other total_tokens_received
         # may not have the same keys, fix the following:
-        total_tokens_received = {
-            k: self.total_tokens_received.get(k, DeltaValue(0, [0, 0])).merge(v)
-            for k, v in other_delta.total_tokens_received.items()
-        }
+        total_tokens_received = merge_asset_dicts(
+            self.total_tokens_received, other_delta.total_tokens_received
+        )
 
-        total_tokens_spent = {
-            k: self.total_tokens_spent.get(k, DeltaValue(0, [0, 0])).merge(v)
-            for k, v in other_delta.total_tokens_spent.items()
-        }
+        total_tokens_spent = merge_asset_dicts(
+            self.total_tokens_spent, other_delta.total_tokens_spent
+        )
 
         return EntityDeltaAccount(
             identifier=self.identifier,
@@ -198,6 +215,54 @@ class RawEntityTxAccount:
 
 
 @dataclass
+class BalanceDelta(DeltaUpdate):
+    identifier: int
+    asset_balances: dict[str, DeltaScalar]
+
+    @classmethod
+    def from_db(Cls, identifier, db_row_list):
+        if len(db_row_list) == 0:
+            return Cls(
+                identifier=identifier,
+                asset_balances={},
+            )
+
+        asset_balances = {x.currency: DeltaScalar(x.balance) for x in db_row_list}
+        return Cls(
+            identifier=identifier,
+            asset_balances=asset_balances,
+        )
+
+    def merge(self, other_delta):
+        assert self.identifier == other_delta.identifier
+
+        asset_balances = {
+            k: self.asset_balances.get(k, DeltaScalar(0)).merge(
+                other_delta.asset_balances.get(k, DeltaScalar(0))
+            )
+            for k in set(self.asset_balances.keys())
+            | set(other_delta.asset_balances.keys())
+        }
+        return BalanceDelta(
+            identifier=self.identifier,
+            asset_balances=asset_balances,
+        )
+
+    def left_join(self, other_delta):
+        assert self.identifier == other_delta.identifier
+        asset_balances = {
+            k: self.asset_balances.get(k, DeltaScalar(0)).merge(
+                other_delta.asset_balances.get(k, DeltaScalar(0))
+            )
+            for k in self.asset_balances.keys()
+        }
+        return BalanceDelta(
+            identifier=self.identifier,
+            asset_balances=asset_balances,
+        )
+
+
+@dataclass
 class RelationDelta(DeltaUpdate):
     src_identifier: Union[str, int]
     dst_identifier: Union[str, int]
@@ -231,6 +296,7 @@ class RelationDeltaAccount(DeltaUpdate):
     no_transactions: int
     value: DeltaValue
     token_values: dict[str, DeltaValue]
+    type: str
 
     @classmethod
     def from_db(Cls, db_row):
@@ -242,16 +308,14 @@ class RelationDeltaAccount(DeltaUpdate):
             token_values={
                 k: DeltaValue.from_db(v) for k, v in db_row.token_values.items()
             },
+            type="from_db",
         )
 
     def merge(self, other_delta):
         assert self.src_identifier == other_delta.src_identifier
         assert self.dst_identifier == other_delta.dst_identifier
 
-        token_values = {
-            k: self.token_values.get(k, DeltaValue(0, [0, 0])).merge(v)
-            for k, v in other_delta.token_values.items()
-        }
+        token_values = merge_asset_dicts(self.token_values, other_delta.token_values)
 
         return RelationDeltaAccount(
             src_identifier=self.src_identifier,
@@ -259,6 +323,7 @@ class RelationDeltaAccount(DeltaUpdate):
             value=self.value.merge(other_delta.value),
             token_values=token_values,
             no_transactions=self.no_transactions + other_delta.no_transactions,
+            type="merged",
         )
 
 
@@ -331,35 +396,19 @@ class DbDeltaAccount:
     entity_updates: List[EntityDeltaAccount]
     new_entity_txs: List[RawEntityTxAccount]
     relation_updates: List[RelationDeltaAccount]
+    balance_updates: List[BalanceDelta]
 
     def concat(self, other):
         return DbDeltaAccount(
             entity_updates=self.entity_updates + other.entity_updates,
             new_entity_txs=self.new_entity_txs + other.new_entity_txs,
             relation_updates=self.relation_updates + other.relation_updates,
+            balance_updates=self.balance_updates + other.balance_updates,
         )
 
     @staticmethod
     def merge(change_sets: List[DbDeltaAccount]) -> "DbDeltaAccount":
         return reduce(lambda x, y: x.concat(y), change_sets).compress()
-
-    def to_cluster_delta(self, address_to_cluster_id: Callable[[str], int]):
-        eu = deepcopy(self.entity_updates)
-        etxs = deepcopy(self.new_entity_txs)
-        rel = deepcopy(self.relation_updates)
-        for update in eu:
-            update.identifier = address_to_cluster_id(update.identifier)
-
-        for update in etxs:
-            update.identifier = address_to_cluster_id(update.identifier)
-
-        for update in rel:
-            update.src_identifier = address_to_cluster_id(update.src_identifier)
-            update.dst_identifier = address_to_cluster_id(update.dst_identifier)
-
-        return DbDeltaAccount(
-            entity_updates=eu, new_entity_txs=etxs, relation_updates=rel
-        ).compress()
 
     def compress(self):
         grouped = groupby_property(
@@ -380,6 +429,11 @@ class DbDeltaAccount:
             for (src, dst), v in grouped.items()
         }
 
+        grouped = group_by(self.balance_updates, lambda x: x.identifier)
+        balance_updates_merged = {
+            k: reduce(lambda x, y: x.merge(y), v) for k, v in grouped.items()
+        }
+
         return DbDeltaAccount(
             entity_updates=sorted(
                 entity_updates_merged.values(),
@@ -387,6 +441,7 @@ class DbDeltaAccount:
             ),
             new_entity_txs=self.new_entity_txs,
             relation_updates=list(relations_updates_merged.values()),
+            balance_updates=list(balance_updates_merged.values()),
         )
 
 

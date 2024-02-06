@@ -109,3 +109,11 @@ class EthTraceAdapter(AccountTraceAdapter):
     def __init__(self):
         self.name_remapping = {}
         self.field_processing = {}
+
+
+class AccountBlockAdapter(BlockchainAdapter):
+    dataclass_name = "Block"
+
+    def __init__(self):
+        self.name_remapping = {}
+        self.field_processing = {}

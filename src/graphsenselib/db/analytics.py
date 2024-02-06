@@ -378,6 +378,13 @@ class DbWriterMixin:
         )
 
 
+def get_last_notnone(result, start, end):
+    for i in range(end, start, -1):
+        if result[i] is not None:
+            return i
+    return -1
+
+
 class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def __init__(self, keyspace_config: KeyspaceConfig, db: CassandraDb):
         self._keyspace_config = keyspace_config
@@ -415,6 +422,8 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         get_item_date = partial(get_item, date)
 
         r = binary_search(GenericArrayFacade(get_item_date), 1, lo=start, hi=hb)
+        # r = get_last_notnone(GenericArrayFacade(get_item_date), start, hb)
+        # todo only for testing, remove in production
 
         if r == -1:
             # minus one could mean two things, either
@@ -455,6 +464,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             return 0 if has_er_value(batch) else 1
 
         r = binary_search(GenericArrayFacade(get_item), 1, lo=start, hi=hb)
+        # r = get_last_notnone(GenericArrayFacade(get_item), start, hb)
+        # todo only for testing, remove in production
+        # binary search should work again as soon as we have enough blocks ingested
 
         if r == -1:
             # minus one could mean two things, either
@@ -977,6 +989,28 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
                 }
             )
             for src_address, dst_address in rel_ids
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=2000)
+
+    def get_balance_async_batch_account(self, address_ids: List[id]):
+        stmt = self.select_stmt(
+            "balance",
+            columns=["*"],
+            where={k: "?" for k in ["address_id_group", "address_id"]},
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind(
+                {
+                    "address_id_group": self.get_id_group(
+                        address_id, self.get_address_id_bucket_size()
+                    ),
+                    "address_id": address_id,
+                }
+            )
+            for address_id in address_ids
         ]
 
         return self._db.execute_statements_async(bstmts, concurrency=2000)
