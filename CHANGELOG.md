@@ -5,11 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [24.02.beta1/2.2.0] 2024-02-07
 ### changed
-- block tx table to long format instead of cassandra lists (breaking)
+- block tx table to long format instead of Cassandra lists (breaking)
 
-## [24.01.1/2.1.1] 2024-02-02
+## [24.01.1/2.1.2] 2024-02-07
 ### changed
 - change consistency level Cassandra, consistency_level=LOCAL_QUORUM, serial_consistency_level=LOCAL_SERIAL
+
+## [24.01.1/2.1.1] 2024-02-07
+### fixed
+- address.first_tx_id and last_tx_id should be long type
 
 ## [24.01/2.1.0] 2024-01-09
 ### added
