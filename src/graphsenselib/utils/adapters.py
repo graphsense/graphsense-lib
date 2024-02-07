@@ -25,11 +25,9 @@ class BlockchainAdapter(ABC):
         return dc(**data_dict)
 
     def dict_to_dataclass(self, data_dict):
-        dc = make_dataclass(
-            self.dataclass_name,
-            [(name, type(field)) for name, field in data_dict.items()],
-        )
-        return dc(**data_dict)
+        dc = self.datamodel
+        data_req = {k: v for k, v in data_dict.items() if k in self.field_dict}
+        return dc(**data_req)
 
     def rename_fields(self, data_object):
         # Check if the object is an instance of a dataclass
@@ -46,11 +44,10 @@ class BlockchainAdapter(ABC):
                 field_dict[new_name] = field_dict.pop(old_name)
 
         # Create a new dataclass with the new field names
-        NewDataClass = make_dataclass(
-            self.dataclass_name,
-            [(name, type(field)) for name, field in field_dict.items()],
-        )
-        return NewDataClass(**field_dict)
+        NewDataClass = self.datamodel
+        # only use the required fields
+        req_fields = {k: v for k, v in field_dict.items() if k in self.field_dict}
+        return NewDataClass(**req_fields)
 
     def process_fields(self, data_object):
         # Check if the object is an instance of a dataclass
@@ -77,10 +74,42 @@ class BlockchainAdapter(ABC):
 
 class AccountTraceAdapter(BlockchainAdapter):
     dataclass_name = "Trace"
+    field_dict = {
+        "block_id": int,
+        "tx_hash": bytes,
+        "trace_index": bytes,
+        "from_address": bytes,
+        "to_address": bytes,
+        "value": int,
+        "call_type": str,
+        "status": int,
+        "error": str,
+    }
+    datamodel = make_dataclass(  # todo could be placed better
+        dataclass_name,
+        [(name, type(field)) for name, field in field_dict.items()],
+    )
 
 
 class AccountTransactionAdapter(BlockchainAdapter):
     dataclass_name = "Transaction"
+    field_dict = {
+        "transaction_index": int,
+        "tx_hash": bytes,
+        "from_address": bytes,
+        "to_address": bytes,
+        "value": int,
+        "gas_price": int,
+        "transaction_type": int,
+        "receipt_gas_used": int,
+        "receipt_contract_address": bytes,
+        "receipt_status": int,
+        "block_id": int,
+    }
+    datamodel = make_dataclass(  # todo could be placed better
+        dataclass_name,
+        [(name, type(field)) for name, field in field_dict.items()],
+    )
 
     def __init__(self):
         self.name_remapping = {}
@@ -89,6 +118,19 @@ class AccountTransactionAdapter(BlockchainAdapter):
 
 class AccountLogAdapter(BlockchainAdapter):
     dataclass_name = "Log"
+    field_dict = {
+        "block_id": int,
+        "tx_hash": bytes,
+        "log_index": int,
+        "address": bytes,
+        "topics": list,
+        "data": bytes,
+    }
+
+    datamodel = make_dataclass(  # todo could be placed better
+        dataclass_name,
+        [(name, type(field)) for name, field in field_dict.items()],
+    )
 
     def __init__(self):
         self.name_remapping = {}
@@ -113,6 +155,16 @@ class EthTraceAdapter(AccountTraceAdapter):
 
 class AccountBlockAdapter(BlockchainAdapter):
     dataclass_name = "Block"
+    field_dict = {
+        "block_id": int,
+        "miner": bytes,
+        "base_fee_per_gas": int,
+        "gas_used": int,
+    }
+    datamodel = make_dataclass(  # todo could be placed better
+        dataclass_name,
+        [(name, type(field)) for name, field in field_dict.items()],
+    )
 
     def __init__(self):
         self.name_remapping = {}
