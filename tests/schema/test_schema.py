@@ -258,7 +258,7 @@ def test_schema_trx_loads():
         for (n, s) in GraphsenseSchemas().get_by_schema_type(
             "account_trx", "transformed"
         )
-        if n == "transformed_account_trx_schema.sql"
+        if n == "transformed_account_schema.sql"
     ]
     assert len(schema) == 1
     schema = schema[0]
