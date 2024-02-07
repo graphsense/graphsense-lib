@@ -92,6 +92,7 @@ def get_bookkeeping_changes(
     highest_address_id: int,
     runtime_seconds: int,
     bts: Dict[int, datetime],
+    new_blocks: int,
     patch_mode: bool,
 ) -> List[DbChange]:
     """Creates changes for the bookkeeping tables like summary statistics after
@@ -116,12 +117,11 @@ def get_bookkeeping_changes(
     with LoggerScope.debug(logger, "Creating summary_statistics updates") as lg:
         lb_date = bts[last_block_processed]
         stats = base_statistics
-        no_blocks = last_block_processed - 1
-
-        """ Update local stats """
-        if not patch_mode:
-            """when in patch mode (end block set by user)"""
-            stats.no_blocks = no_blocks  # todo dont get this yet
+        # """ Update local stats """
+        # if not patch_mode:
+        #    """when in patch mode (end block set by user)"""
+        #    stats.no_blocks = no_blocks  # todo dont get this yet
+        stats.no_blocks = current_statistics.no_blocks + new_blocks
         stats.timestamp = int(lb_date.timestamp())
         stats.no_address_relations += nr_new_address_relations
         stats.no_addresses += nr_new_addresses
@@ -129,9 +129,12 @@ def get_bookkeeping_changes(
 
         statistics = stats.as_dict()
 
-        if current_statistics is not None and current_statistics.no_blocks != no_blocks:
+        if (
+            current_statistics is not None
+            and current_statistics.no_blocks != stats.no_blocks
+        ):
             if not patch_mode:
-                assert current_statistics.no_blocks < no_blocks
+                assert current_statistics.no_blocks < stats.no_blocks
 
         changes.append(DbChange.new(table="summary_statistics", data=statistics))
 
@@ -289,7 +292,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             )  # noqa: E501
 
             changes.extend(tx_changes)
-            print("made changes for blocks", batch)
 
             last_block_processed = batch[-1]
             nr_new_tx = len(transactions)
@@ -305,6 +307,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 self.highest_address_id,
                 runtime_seconds,
                 bts,
+                len(batch),
                 patch_mode=self._patch_mode,
             )
 
@@ -330,6 +333,12 @@ class UpdateStrategyAccount(UpdateStrategy):
     ) -> List[DbChange]:
         # index transaction hashes
         tx_hashes = [tx.tx_hash for tx in transactions]
+        import time
+
+        start = time.time()
+        end = time.time()
+        print("time: ", start - end)
+        start = time.time()
 
         if self.currency == "eth":
             hash_to_id = {
@@ -385,6 +394,10 @@ class UpdateStrategyAccount(UpdateStrategy):
         traces = [trace for trace in traces if trace.status == 1]
 
         tokendecoder = ERC20Decoder(self.currency)
+
+        end = time.time()
+        print("time: ", start - end)
+        start = time.time()
 
         with LoggerScope.debug(logger, "Prepare transaction/transfer data") as lg:
             lg.debug(f"Decode logs to token transfers.")
@@ -453,6 +466,9 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         len_addr = len(addresses)
 
+        end = time.time()
+        print("time sorted addresses: ", start - end)
+        start = time.time()
         with LoggerScope.debug(
             logger, f"Checking existence for {len_addr} addresses"
         ) as _:
@@ -460,11 +476,15 @@ class UpdateStrategyAccount(UpdateStrategy):
                 adr: address_id
                 for adr, address_id in tdb.get_address_id_async_batch(list(addresses))
             }
+            end = time.time()
+            print("time created query: ", start - end)
+            start = time.time()
 
         with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
             existing_addr_ids = no_nones(
                 [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
             )
+
             addresses_resolved = dict(
                 tdb.get_address_async_batch(
                     [adr.address_id for adr in existing_addr_ids]
@@ -491,11 +511,14 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             del addresses_resolved
 
+        end = time.time()
+        print("time queried addresses: ", start - end)
+        start = time.time()
+
         def get_next_address_ids_with_aliases(address: str):
             return (
                 self.consume_address_id()
-                if address
-                not in PSEUDO_ADDRESS_AND_IDS  # todo coinbase is address -1 now.
+                if address not in PSEUDO_ADDRESS_AND_IDS
                 else PSEUDO_ADDRESS_AND_IDS[address]
             )
 
@@ -712,7 +735,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             if trace.tx_hash is None:
                 import numpy as np
 
-                first_tx_id = np.inf
+                first_tx_id = -1
                 last_tx_id = -1
                 no_incoming_txs = 0  # spark logic
             else:
@@ -725,16 +748,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             no_zerovalue = int((trace.value == 0))  # and trace.call_type == "call")
             no_incoming_txs_zero_value = 0 if is_outgoing else no_zerovalue
             no_outgoing_txs_zero_value = no_zerovalue if is_outgoing else 0
-
-            # tx_has_caused_zerovalue[(trace.tx_hash, is_outgoing, identifier)] = (
-            #        bool(no_zerovalue) or
-            #       tx_has_caused_zerovalue[(trace.tx_hash, is_outgoing, identifier)])
-
-            # if identifier == bytes.fromhex("0x9468e2c401e13522e684e60005e388f7c395de92"):
-            #    print("asdasd")
-            #    print(trace.tx_hash)
-            #    print(trace.trace_index)
-            #    print(trace)
 
             eda = EntityDeltaAccount(
                 identifier=identifier,
@@ -764,9 +777,6 @@ class UpdateStrategyAccount(UpdateStrategy):
                 tokentransfer.coin_equivalent,
             )
             dv = DeltaValue(tokentransfer.value, fiat_values)
-            # todo remove
-            # if tokentransfer.value == 1600000000:
-            #    print("asdasd")
 
             total_received = DeltaValue(0, [0, 0])
             total_spent = DeltaValue(0, [0, 0])
@@ -778,13 +788,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             no_outgoing_txs = int(is_outgoing)
             no_incoming_txs_zero_value = 0
             no_outgoing_txs_zero_value = 0
-
-            if tokentransfer.value == 1600000000:
-                print("asdasd")
-                print(tokentransfer.tx_hash)
-                print(tokentransfer.value)
-                print(tokentransfer)
-                print(is_outgoing)
 
             eda = EntityDeltaAccount(
                 identifier=identifier,
@@ -841,20 +844,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
             token_values = {}
 
-            # for now we dont support TRC10, so an empty dict is fine
-            sus = bytes.fromhex("1a5ca17341abc1b5f94c582183b4d3cdc447a28b")
-            if sus in [fadr, tadr]:
-                from_ = fadr == sus
-                print("asdasd")
-                print(trace.tx_hash)
-                print(trace.trace_index)
-                if from_:
-                    print("outgoing ETH")
-                else:
-                    print("incoming ETH")
-                print(trace.value)
-                print(trace)
-
             no_transactions = 1
             return RelationDeltaAccount(
                 src_identifier=fadr,
@@ -902,6 +891,9 @@ class UpdateStrategyAccount(UpdateStrategy):
                 type="token",
             )
 
+        end = time.time()
+        print("time addresses are in the prefix table check: ", start - end)
+        start = time.time()
         entity_transactions = []
         # entity transactions from traces
         entity_transactions.extend(
@@ -1008,8 +1000,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             updates = []
             for update in relation_updates:
                 for token, value in update.token_values.items():
-                    if value.value == 1600000000:
-                        print("asdasd")
                     updates.append(
                         BalanceDelta(
                             address_hash_to_id[update.src_identifier],
@@ -1035,9 +1025,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
             for t in reward_traces
         ]
-
-        txFeeDebits = []  # todo
-
         # this is only to make it work when we dont start from block 0 with spark
         txFeeCredits = [
             BalanceDelta(
@@ -1075,17 +1062,19 @@ class UpdateStrategyAccount(UpdateStrategy):
             + miner_rewards
         )
 
-        updates_to_filter = miner_rewards
-        filtered = [bu for bu in updates_to_filter if bu.identifier == 2734]
-        print(len(filtered))
-        print(filtered)
-
         bucket_size = id_bucket_size
         dbdelta = DbDeltaAccount(
             entity_deltas, entity_transactions, relation_updates, balance_updates
         )
+
+        end = time.time()
+        print("time: ", start - end)
+        start = time.time()
         dbdelta = dbdelta.compress()
 
+        end = time.time()
+        print("time compressed: ", start - end)
+        start = time.time()
         rel_to_query = [
             (
                 addresses_to_id__rows[update.src_identifier][0],
@@ -1128,6 +1117,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             for addr_id, qr in zip(address_ids, addr_balances_q)
         }
 
+        end = time.time()
+        print("queried stuff: ", start - end)
+        start = time.time()
         lg.debug(f"Prepare data.")
         """
         Creating new transactions
@@ -1172,6 +1164,9 @@ class UpdateStrategyAccount(UpdateStrategy):
         nr_new_entities_created = nr_new_entities
         del nr_new_entities
 
+        end = time.time()
+        print("prepared changes: ", start - end)
+        start = time.time()
         return (
             changes,
             nr_new_entities_created,
@@ -1325,7 +1320,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             dst_group = get_id_group(id_dst, id_bucket_size)
 
             if outr is None:
-                print("new address")
                 """new address relation to insert"""
                 new_relations_out[relations_update.src_identifier] += 1
                 new_relations_in[relations_update.dst_identifier] += 1
@@ -1428,8 +1422,6 @@ class UpdateStrategyAccount(UpdateStrategy):
                 bytes_to_row_address[update.identifier],
             )
 
-            if int_ident == 19280:
-                print("----\n", int_ident, "-\n", entity, "-\n", update)
             group = get_id_group(int_ident, id_bucket_size)
             if entity is not None:
                 """old Address"""
@@ -1472,6 +1464,8 @@ class UpdateStrategyAccount(UpdateStrategy):
                 changes.append(chng)
             else:
                 """new address"""
+                if update.first_tx_id > update.last_tx_id:
+                    print("asd")
                 assert update.first_tx_id <= update.last_tx_id
                 nr_new_entities += 1
 
