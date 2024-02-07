@@ -115,6 +115,20 @@ class EntityDelta(DeltaUpdate):
         )
 
 
+def minusone_respecting_function(x, y, f):
+    """
+    -1 is a placeholder for first and last tx id in reward traces
+    which dont have a tx_id
+    """
+    if x == -1 and y == -1:
+        return -1
+    if x == -1:
+        return y
+    if y == -1:
+        return x
+    return f(x, y)
+
+
 @dataclass
 class EntityDeltaAccount(DeltaUpdate):
     identifier: str
@@ -185,8 +199,12 @@ class EntityDeltaAccount(DeltaUpdate):
             total_spent=self.total_spent.merge(other_delta.total_spent),
             total_tokens_received=total_tokens_received,
             total_tokens_spent=total_tokens_spent,
-            first_tx_id=min(self.first_tx_id, other_delta.first_tx_id),
-            last_tx_id=max(self.last_tx_id, other_delta.last_tx_id),
+            first_tx_id=minusone_respecting_function(
+                self.first_tx_id, other_delta.first_tx_id, min
+            ),
+            last_tx_id=minusone_respecting_function(
+                self.last_tx_id, other_delta.last_tx_id, max
+            ),
             no_incoming_txs=self.no_incoming_txs + other_delta.no_incoming_txs,
             no_outgoing_txs=self.no_outgoing_txs + other_delta.no_outgoing_txs,
             no_incoming_txs_zero_value=self.no_incoming_txs_zero_value

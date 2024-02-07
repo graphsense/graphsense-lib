@@ -17,7 +17,7 @@ from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 
 from ..config import keyspace_types
 from ..datatypes import DbChangeType
-from ..utils import GenericArrayFacade, binary_search, parse_timestamp
+from ..utils import GenericArrayFacade, parse_timestamp  # binary_search,
 from ..utils.tron import get_id_group
 from .cassandra import (
     CassandraDb,
@@ -421,9 +421,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         get_item_date = partial(get_item, date)
 
-        r = binary_search(GenericArrayFacade(get_item_date), 1, lo=start, hi=hb)
-        # r = get_last_notnone(GenericArrayFacade(get_item_date), start, hb)
+        # r = binary_search(GenericArrayFacade(get_item_date), 1, lo=start, hi=hb)
         # todo only for testing, remove in production
+        r = get_last_notnone(GenericArrayFacade(get_item_date), start, hb)
 
         if r == -1:
             # minus one could mean two things, either
@@ -463,9 +463,10 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             batch = self.get_exchange_rates_for_block_batch([index])
             return 0 if has_er_value(batch) else 1
 
-        r = binary_search(GenericArrayFacade(get_item), 1, lo=start, hi=hb)
-        # r = get_last_notnone(GenericArrayFacade(get_item), start, hb)
+        # r = binary_search(GenericArrayFacade(get_item), 1, lo=start, hi=hb)
         # todo only for testing, remove in production
+        r = get_last_notnone(GenericArrayFacade(get_item), start, hb)
+        r += 1
         # binary search should work again as soon as we have enough blocks ingested
 
         if r == -1:
