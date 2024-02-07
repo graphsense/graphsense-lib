@@ -20,7 +20,7 @@ from ..utils.parsing import (
     tableidentifier,
 )
 
-SCHEMA_TYPE_MAPPING_OVERWRITES = {("account_trx", "transformed"): "account_trx"}
+SCHEMA_TYPE_MAPPING_OVERWRITES = {("account_trx", "transformed"): "account"}
 
 MAGIC_SCHEMA_CONSTANT = "0x8BADF00D"
 
