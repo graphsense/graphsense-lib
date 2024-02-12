@@ -28,6 +28,7 @@ from .cassandra import (
     build_truncate_stmt,
 )
 
+CONCURRENCY = 2000
 DATE_FORMAT = "%Y-%m-%d"
 
 logger = logging.getLogger(__name__)
@@ -801,7 +802,8 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         ]
 
         return zip(
-            addresses, self._db.execute_statements_async(bstmts, concurrency=2000)
+            addresses,
+            self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY),
         )
 
     def get_address_id_async(self, address: str):
@@ -835,7 +837,8 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         ]
 
         return zip(
-            address_ids, self._db.execute_statements_async(bstmts, concurrency=2000)
+            address_ids,
+            self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY),
         )
 
     def get_address_async(self, address_id: int):
@@ -875,7 +878,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for dst_address, src_address in rel_ids
         ]
 
-        return self._db.execute_statements_async(bstmts, concurrency=2000)
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
     def get_address_incoming_relations_async_batch_account(
         self, rel_ids: List[Tuple[int, int]]
@@ -910,7 +913,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for dst_address, src_address in rel_ids
         ]
 
-        return self._db.execute_statements_async(bstmts, concurrency=2000)
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
     def get_address_incoming_relations_async(
         self, address_id: int, src_address_id: Optional[int]
@@ -957,7 +960,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for src_address, dst_address in rel_ids
         ]
 
-        return self._db.execute_statements_async(bstmts, concurrency=2000)
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
     def get_address_outgoing_relations_async_batch_account(
         self, rel_ids: List[Tuple[int, int]]
@@ -992,7 +995,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for src_address, dst_address in rel_ids
         ]
 
-        return self._db.execute_statements_async(bstmts, concurrency=2000)
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
     def get_balance_async_batch_account(self, address_ids: List[id]):
         stmt = self.select_stmt(
@@ -1014,7 +1017,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for address_id in address_ids
         ]
 
-        return self._db.execute_statements_async(bstmts, concurrency=2000)
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
     def get_address_outgoing_relations_async(
         self, address_id: int, dst_address_id: Optional[int]
@@ -1055,7 +1058,8 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         ]
 
         return zip(
-            cluster_ids, self._db.execute_statements_async(bstmts, concurrency=2000)
+            cluster_ids,
+            self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY),
         )
 
     def get_cluster_async(self, cluster_id: int):
@@ -1095,7 +1099,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for dst_address, src_address in rel_ids
         ]
 
-        return self._db.execute_statements_async(bstmts, concurrency=2000)
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
     def get_cluster_incoming_relations_async(
         self, cluster_id: int, src_cluster_id: Optional[int]
@@ -1142,7 +1146,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for src_address, dst_address in rel_ids
         ]
 
-        return self._db.execute_statements_async(bstmts, concurrency=2000)
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
     def get_cluster_outgoing_relations_async(
         self, cluster_id: int, dst_cluster_id: Optional[int]
