@@ -26,12 +26,11 @@ class BlockchainAdapter(ABC):
 
     def dict_to_dataclass(self, data_dict):
         dc = self.datamodel
+
         data_req = {k: v for k, v in data_dict.items() if k in self.field_dict}
         return dc(**data_req)
 
     def rename_fields(self, data_object):
-        # Check if the object is an instance of a dataclass
-
         if not is_dataclass(data_object):
             raise ValueError("Provided object is not a dataclass")
 
@@ -59,8 +58,23 @@ class BlockchainAdapter(ABC):
             )
         return data_object
 
+    def rename_dict(self, data_dict):
+        for old_name, new_name in self.name_remapping.items():
+            if old_name in data_dict:
+                data_dict[new_name] = data_dict.pop(old_name)
+        return data_dict
+
+    def dict_to_renamed_dataclass(self, data_dict):
+        dc = self.datamodel
+        renamed_dict = self.rename_dict(data_dict)
+        data_req = {k: v for k, v in renamed_dict.items() if k in self.field_dict}
+        return dc(**data_req)
+
     def dicts_to_dataclasses(self, data_dicts):
         return [self.dict_to_dataclass(data_dict) for data_dict in data_dicts]
+
+    def dicts_to_renamed_dataclasses(self, data_dicts):
+        return [self.dict_to_renamed_dataclass(data_dict) for data_dict in data_dicts]
 
     def cassandra_rows_to_dataclasses(self, rows):
         return [self.cassandra_row_to_dataclass(row) for row in rows]
@@ -83,7 +97,6 @@ class AccountTraceAdapter(BlockchainAdapter):
         "value": int,
         "call_type": str,
         "status": int,
-        "error": str,
     }
     datamodel = make_dataclass(  # todo could be placed better
         dataclass_name,
@@ -91,21 +104,38 @@ class AccountTraceAdapter(BlockchainAdapter):
     )
 
 
+base_tx_field_dict = {
+    "transaction_index": int,
+    "tx_hash": bytes,
+    "from_address": bytes,
+    "to_address": bytes,
+    "value": int,
+    "gas_price": int,
+    "transaction_type": int,
+    "receipt_gas_used": int,
+    "receipt_contract_address": bytes,
+    "receipt_status": int,
+    "block_id": int,
+}
+
+
 class AccountTransactionAdapter(BlockchainAdapter):
     dataclass_name = "Transaction"
-    field_dict = {
-        "transaction_index": int,
-        "tx_hash": bytes,
-        "from_address": bytes,
-        "to_address": bytes,
-        "value": int,
-        "gas_price": int,
-        "transaction_type": int,
-        "receipt_gas_used": int,
-        "receipt_contract_address": bytes,
-        "receipt_status": int,
-        "block_id": int,
-    }
+    field_dict = base_tx_field_dict
+    datamodel = make_dataclass(  # todo could be placed better
+        dataclass_name,
+        [(name, type(field)) for name, field in field_dict.items()],
+    )
+
+    def __init__(self):
+        self.name_remapping = {}
+        self.field_processing = {}
+
+
+class TrxTransactionAdapter(BlockchainAdapter):
+    dataclass_name = "Transaction"
+    field_dict = base_tx_field_dict
+    field_dict.update({"fee": int})
     datamodel = make_dataclass(  # todo could be placed better
         dataclass_name,
         [(name, type(field)) for name, field in field_dict.items()],
@@ -143,8 +173,10 @@ class TrxTraceAdapter(AccountTraceAdapter):
             "caller_address": "from_address",
             "transferto_address": "to_address",
             "rejected": "status",
+            "note": "call_type",
+            "call_value": "value",
         }
-        self.field_processing = {"status": lambda x: int(x)}  # cast boolean to int
+        self.field_processing = {"status": lambda x: int(not x)}  # cast boolean to int
 
 
 class EthTraceAdapter(AccountTraceAdapter):
