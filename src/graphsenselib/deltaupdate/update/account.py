@@ -12,6 +12,7 @@ from cassandra.cqlengine.columns import Integer
 from cassandra.cqlengine.usertype import UserType
 from diskcache import Cache
 
+from graphsenselib.deltaupdate.update.tokens import ERC20Decoder, TokenTransfer
 from graphsenselib.utils.cache import TableBasedCache
 
 from ...config.config import DeltaUpdaterConfig
@@ -21,11 +22,6 @@ from ...rates import convert_to_fiat
 from ...schema.schema import GraphsenseSchemas
 from ...utils import DataObject as MutableNamedTuple
 from ...utils import group_by, no_nones
-from ...utils.account import (
-    get_slim_tx_from_trace,
-    get_unique_addresses_from_traces,
-    get_unique_ordered_addresses,
-)
 from ...utils.adapters import (
     AccountBlockAdapter,
     AccountLogAdapter,
@@ -39,16 +35,18 @@ from ...utils.logging import LoggerScope
 from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
 from .generic import (
     ApplicationStrategy,
-    BalanceDelta,
-    DbDeltaAccount,
     DeltaScalar,
     DeltaValue,
-    EntityDeltaAccount,
-    RawEntityTxAccount,
-    RelationDeltaAccount,
     Tx,
     get_id_group,
     groupby_property,
+)
+from .modelsaccount import (
+    BalanceDelta,
+    DbDeltaAccount,
+    EntityDeltaAccount,
+    RawEntityTxAccount,
+    RelationDeltaAccount,
 )
 from .utxo import apply_changes
 
@@ -122,10 +120,6 @@ def get_bookkeeping_changes(
     with LoggerScope.debug(logger, "Creating summary_statistics updates") as lg:
         lb_date = bts[last_block_processed]
         stats = base_statistics
-        # """ Update local stats """
-        # if not patch_mode:
-        #    """when in patch mode (end block set by user)"""
-        #    stats.no_blocks = no_blocks  # todo dont get this yet
         stats.no_blocks = current_statistics.no_blocks + new_blocks
         stats.timestamp = int(lb_date.timestamp())
         stats.no_address_relations += nr_new_address_relations
@@ -214,6 +208,16 @@ class UpdateStrategyAccount(UpdateStrategy):
                 truncate=False,
             )
 
+    def get_block_data(self, cache, block):
+        txs = cache.get(("transaction", block), [])
+        traces = cache.get(("trace", block), [])
+        logs = cache.get(("log", block), [])
+        blocks = cache.get(("block", block), [])
+        return txs, traces, logs, blocks
+
+    def get_fee_data(self, cache, txs):
+        return cache.get(("fee", txs), [{"fee": None}])[0]["fee"]
+
     def process_batch_impl_hook(self, batch):
         rates = {}
         transactions = []
@@ -245,17 +249,18 @@ class UpdateStrategyAccount(UpdateStrategy):
             missing_rates_in_block = False
             cache = TableBasedCache(Cache(self.du_config.fs_cache.directory))
             for block in batch:
-                transactions.extend(cache.get(("transaction", block), []))
-                traces.extend(cache.get(("trace", block), []))
-                logs.extend(cache.get(("log", block), []))
-                blocks.extend(cache.get(("block", block), []))
+                txs_new, traces_new, logs_new, blocks_new = self.get_block_data(
+                    cache, block
+                )
+                transactions.extend(txs_new)
+                traces.extend(traces_new)
+                logs.extend(logs_new)
+                blocks.extend(blocks_new)
+
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
                 ).fiat_values
                 if fiat_values is None:
-                    # raise Exception(
-                    #     "No exchange rate for block {block}. Abort processing."
-                    # )
                     missing_rates_in_block = True
                     fiat_values = [0, 0]
                 rates[block] = fiat_values
@@ -272,36 +277,34 @@ class UpdateStrategyAccount(UpdateStrategy):
                 trace_adapter = TrxTraceAdapter()
                 transaction_adapter = TrxTransactionAdapter()
                 for tx in transactions:
-                    tx["fee"] = cache.get(("fee", tx["tx_hash"]), [{"fee": None}])[0][
-                        "fee"
-                    ]
+                    tx["fee"] = self.get_fee_data(cache, tx["tx_hash"])
 
             elif self.currency == "eth":
                 trace_adapter = EthTraceAdapter()
                 transaction_adapter = AccountTransactionAdapter()
 
+            # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()
             block_adapter = AccountBlockAdapter()
             traces = trace_adapter.dicts_to_renamed_dataclasses(traces)
             traces = trace_adapter.process_fields_in_list(traces)
-
             transactions = transaction_adapter.dicts_to_dataclasses(transactions)
             logs = log_adapter.dicts_to_dataclasses(logs)
             blocks = block_adapter.dicts_to_dataclasses(blocks)
 
             changes = []
-            print("batch", batch)
             (tx_changes, nr_new_addresses, nr_new_address_relations) = self.get_changes(
                 transactions, traces, logs, blocks, rates
-            )  # noqa: E501
+            )
 
             changes.extend(tx_changes)
-
             last_block_processed = batch[-1]
+
             if self.currency == "trx":
                 nr_new_tx = len([tx for tx in transactions if tx.receipt_status == 1])
             else:
                 nr_new_tx = len(transactions)
+
             runtime_seconds = int(time.time() - self.batch_start_time)
 
             bookkeeping_changes = get_bookkeeping_changes(
@@ -338,8 +341,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         blocks: List,
         rates: Dict[int, List],
     ) -> List[DbChange]:
-        # index transaction hashes
-        if self.currency == "trx":
+        if self.currency == "trx":  # in the tron spark transformation
             transactions = [tx for tx in transactions if tx.to_address is not None]
             transactions = [tx for tx in transactions if tx.receipt_status == 1]
 
@@ -371,9 +373,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             coin_decimals = 18
         elif self.currency == "trx":
             coin_decimals = 6
-
-        from graphsenselib.deltaupdate.update.generic import RawEntityTxAccount
-        from graphsenselib.deltaupdate.update.tokens import ERC20Decoder, TokenTransfer
 
         hash_to_tx = {tx_hash: tx for tx_hash, tx in zip(tx_hashes, transactions)}
 
@@ -644,7 +643,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                         table=f"address_transactions",
                         data={
                             "address_id_group": get_id_group(ident, id_bucket_size),
-                            "address_id_secondary_group": atx.tx_id % 128,
+                            "address_id_secondary_group": atx.block_id // 100_000,
                             "address_id": ident,
                             "currency": tokenname,
                             "transaction_id": atx.tx_id,
@@ -661,7 +660,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                         table=f"address_transactions",
                         data={
                             "address_id_group": get_id_group(ident, id_bucket_size),
-                            "address_id_secondary_group": atx.tx_id % 128,
+                            "address_id_secondary_group": atx.block_id // 100_000,
                             "address_id": ident,
                             "currency": currency,
                             "transaction_id": atx.tx_id,
@@ -691,6 +690,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 tx_reference=tx_reference,
                 value=trace.value,
                 token_values={},  # we dont support TRC10 right now
+                block_id=trace.block_id,
             )
             return reta
 
@@ -730,6 +730,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 tx_reference=tx_reference,
                 value=0,
                 token_values=token_values,
+                block_id=tokentransfer.block_id,
             )
             return reta
 
@@ -753,6 +754,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 tx_reference=tx_reference,
                 value=tx.value,
                 token_values={},
+                block_id=tx.block_id,
             )
             return reta
 
