@@ -933,6 +933,29 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             limit=1,
         )
 
+    def get_max_secondary_ids_async(
+        self, address_id_groups: List[int], tablename: str, id_group_col: str
+    ):
+        stmt = self.select_stmt(
+            tablename,  # address_transactions_secondary_ids
+            columns=["*"],
+            where={
+                k: "?"
+                for k in [
+                    id_group_col,
+                ]
+            },
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [
+            prep.bind({id_group_col: address_id_group})
+            for address_id_group in address_id_groups
+        ]
+
+        return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
+
     def get_address_outgoing_relations_async_batch(
         self, rel_ids: List[Tuple[int, int]]
     ):

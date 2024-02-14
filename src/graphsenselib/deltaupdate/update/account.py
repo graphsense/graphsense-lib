@@ -53,6 +53,18 @@ from .utxo import apply_changes
 logger = logging.getLogger(__name__)
 
 
+def get_id_group_with_secondary_addresstransactions(id, bucket_size, block_id):
+    address_id_group = get_id_group(id, bucket_size)
+    address_id_secondary_group = block_id // 100_000
+    return address_id_group, address_id_secondary_group
+
+
+def get_id_group_with_secondary_relations(id, bucket_size):
+    address_id_group = get_id_group(id, bucket_size)
+    address_id_secondary_group = id % 100
+    return address_id_group, address_id_secondary_group
+
+
 @dataclass
 class TxReference(UserType):
     trace_index: Integer(required=False)
@@ -639,11 +651,17 @@ class UpdateStrategyAccount(UpdateStrategy):
                 ident = atx.identifier
                 is_token_transfer = len(atx.token_values.keys()) > 0
                 for tokenname in atx.token_values.keys():
+                    (
+                        address_id_group,
+                        address_id_secondary_group,
+                    ) = get_id_group_with_secondary_addresstransactions(
+                        ident, id_bucket_size, atx.block_id
+                    )
                     chng = DbChange.new(
                         table=f"address_transactions",
                         data={
-                            "address_id_group": get_id_group(ident, id_bucket_size),
-                            "address_id_secondary_group": atx.block_id // 100_000,
+                            "address_id_group": address_id_group,
+                            "address_id_secondary_group": address_id_secondary_group,
                             "address_id": ident,
                             "currency": tokenname,
                             "transaction_id": atx.tx_id,
@@ -656,11 +674,17 @@ class UpdateStrategyAccount(UpdateStrategy):
                     )  # todo not sure how RawEntityTxAccount are bundled and therefore how to create the changes
 
                 if not is_token_transfer:
+                    (
+                        address_id_group,
+                        address_id_secondary_group,
+                    ) = get_id_group_with_secondary_addresstransactions(
+                        ident, id_bucket_size, atx.block_id
+                    )
                     chng = DbChange.new(
                         table=f"address_transactions",
                         data={
-                            "address_id_group": get_id_group(ident, id_bucket_size),
-                            "address_id_secondary_group": atx.block_id // 100_000,
+                            "address_id_group": address_id_group,
+                            "address_id_secondary_group": address_id_secondary_group,
                             "address_id": ident,
                             "currency": currency,
                             "transaction_id": atx.tx_id,
@@ -1221,6 +1245,84 @@ class UpdateStrategyAccount(UpdateStrategy):
         """
         Creating new transactions
         """
+
+        def get_max_secondary_changes(data, tablename, id_group_col):
+            grp_col, sec_col = "address_id_group", "address_id_secondary_group"
+            max_col = "max_secondary_id"
+            df = pd.DataFrame(data, columns=[grp_col, sec_col])
+            df = df.groupby(grp_col).max()
+            df = df.reset_index()
+            df = df.rename(columns={sec_col: max_col})
+            # query max secondary ids from database
+            unique_address_id_groups = list(df.index)
+            max_secondary_atx = tdb.get_max_secondary_ids_async(
+                unique_address_id_groups, tablename, id_group_col
+            )
+            max_secondary_atx = [qr.result_or_exc.one() for qr in max_secondary_atx]
+            # use placeholder -1 if there is nothing in the database yet. Will be consumed by max
+            # and not 0, or otherwise the logic will say it shouldnt update
+            max_secondary_atx = [
+                res[1] if res is not None else -1 for res in max_secondary_atx
+            ]
+            max_secondary_atx = dict(zip(unique_address_id_groups, max_secondary_atx))
+            df[max_col + "old"] = df[grp_col].map(max_secondary_atx)
+            df[max_col] = df[[max_col, max_col + "old"]].max(axis=1)
+            # convert to Db changes
+
+            changes = [
+                DbChange.update(
+                    table=tablename,
+                    data={
+                        "address_id_group": row[grp_col],
+                        "max_secondary_id": row[max_col],
+                    },
+                )
+                for _, row in df.iterrows()
+                if row[max_col] != row[max_col + "old"]
+            ]
+            return changes
+
+        tablename = "address_transactions_secondary_ids"
+        id_group_col = "address_id_group"
+        data = [
+            get_id_group_with_secondary_addresstransactions(
+                tx.identifier, id_bucket_size, tx.block_id
+            )
+            for tx in dbdelta.new_entity_txs
+        ]
+        changes_secondary_address_transactions = get_max_secondary_changes(
+            data, tablename, id_group_col
+        )
+
+        tablename = "address_outgoing_relations_secondary_ids"
+        id_group_col = "src_address_id_group"
+
+        data = [
+            get_id_group_with_secondary_relations(
+                address_hash_to_id[tx.src_identifier], id_bucket_size
+            )
+            for tx in dbdelta.relation_updates
+        ]
+        changes_secondary_aor = get_max_secondary_changes(data, tablename, id_group_col)
+
+        tablename = "address_incoming_relations_secondary_ids"
+        id_group_col = "dst_address_id_group"
+        data = [
+            get_id_group_with_secondary_relations(
+                address_hash_to_id[tx.dst_identifier], id_bucket_size
+            )
+            for tx in dbdelta.relation_updates
+        ]
+        changes_secondary_air = get_max_secondary_changes(data, tablename, id_group_col)
+
+        changes += changes_secondary_address_transactions
+        changes += changes_secondary_aor
+        changes += changes_secondary_air
+
+        end = time.time()
+        print("prepared secondary ids: ", start - end)
+        start = time.time()
+
         changes += prepare_txs_for_ingest(dbdelta.new_entity_txs, id_bucket_size)
 
         """ balances"""
@@ -1228,6 +1330,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         changes += self.prepare_balances_for_ingest(
             dbdelta.balance_updates, id_bucket_size, addr_balances, address_hash_to_id
         )
+        ###
+        """ secondary group id for address transactions"""
 
         """ Merging relations deltas """
         (
@@ -1414,8 +1518,13 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             id_src = hash_to_id[relations_update.src_identifier]
             id_dst = hash_to_id[relations_update.dst_identifier]
-            src_group = get_id_group(id_src, id_bucket_size)
-            dst_group = get_id_group(id_dst, id_bucket_size)
+
+            src_group, src_secondary = get_id_group_with_secondary_relations(
+                id_src, id_bucket_size
+            )
+            dst_group, dst_secondary = get_id_group_with_secondary_relations(
+                id_dst, id_bucket_size
+            )
 
             if outr is None:
                 """new address relation to insert"""
@@ -1426,7 +1535,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                     table=f"address_incoming_relations",
                     data={
                         "dst_address_id_group": dst_group,
-                        "dst_address_id_secondary_group": id_dst % 100,
+                        "dst_address_id_secondary_group": dst_secondary,
                         "dst_address_id": id_dst,
                         "src_address_id": id_src,
                         "no_transactions": relations_update.no_transactions,
@@ -1438,7 +1547,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                     table=f"address_outgoing_relations",
                     data={
                         "src_address_id_group": src_group,
-                        "src_address_id_secondary_group": id_src % 100,
+                        "src_address_id_secondary_group": src_secondary,
                         "src_address_id": id_src,
                         "dst_address_id": id_dst,
                         "no_transactions": relations_update.no_transactions,
