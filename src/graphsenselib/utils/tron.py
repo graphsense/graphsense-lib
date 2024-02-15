@@ -1,5 +1,4 @@
 import hashlib
-from math import floor
 
 import base58
 
@@ -150,24 +149,3 @@ def partial_tron_to_partial_evm(
         return ("0x" + bytes_to_hex(partial_evm))[:len_taddress]
     except Exception as e:
         raise ValueError(f"Could not convert partial TRON address: {e}")
-
-
-def calculate_id_group_with_overflow(tx_id: int, bucket_size: int):
-    blub = int(floor(float(tx_id) / bucket_size))
-
-    if blub.bit_length() >= 31:
-        # downcast to 32bit integer
-        # blub = ctypes.c_uint32(blub).value
-        blub = (blub + 2**31) % 2**32 - 2**31
-    return blub
-
-
-def get_id_group(id_, bucket_size):
-    gid = floor(int(id_) / bucket_size)
-    if gid.bit_length() > 31:
-        # tron tx_id are long and the group is int
-        # thus we need to also consider overflows in this case
-        # additionally spark does not calculate ids on int basis but
-        # based on floats which can lead to rounding errors.
-        gid = calculate_id_group_with_overflow(id_, bucket_size)
-    return gid

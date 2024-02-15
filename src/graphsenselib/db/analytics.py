@@ -18,7 +18,7 @@ from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 from ..config import keyspace_types
 from ..datatypes import DbChangeType
 from ..utils import GenericArrayFacade, parse_timestamp  # binary_search,
-from ..utils.tron import get_id_group
+from ..utils.account import get_id_group, get_id_group_with_secondary_relations
 from .cassandra import (
     CassandraDb,
     build_create_stmt,
@@ -899,19 +899,23 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         )
         prep = self._db.get_prepared_statement(stmt)
 
-        bstmts = [
-            prep.bind(
-                {
-                    "dst_address_id_group": self.get_id_group(
-                        dst_address, self.get_address_id_bucket_size()
-                    ),
-                    "dst_address_id_secondary_group": dst_address % 100,
-                    "dst_address_id": dst_address,
-                    "src_address_id": src_address,
-                }
+        bucketsize = self.get_address_id_bucket_size()
+
+        bstmts = []
+        for dst_address, src_address in rel_ids:
+            address_group, secondary_group = get_id_group_with_secondary_relations(
+                dst_address, src_address, bucketsize
             )
-            for dst_address, src_address in rel_ids
-        ]
+            bstmts.append(
+                prep.bind(
+                    {
+                        "dst_address_id_group": address_group,
+                        "dst_address_id_secondary_group": secondary_group,
+                        "dst_address_id": dst_address,
+                        "src_address_id": src_address,
+                    }
+                )
+            )
 
         return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
@@ -1003,20 +1007,23 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
+        bucketsize = self.get_address_id_bucket_size()
 
-        bstmts = [
-            prep.bind(
-                {
-                    "src_address_id_group": self.get_id_group(
-                        src_address, self.get_address_id_bucket_size()
-                    ),
-                    "src_address_id_secondary_group": src_address % 100,
-                    "src_address_id": src_address,
-                    "dst_address_id": dst_address,
-                }
+        bstmts = []
+        for src_address, dst_address in rel_ids:
+            address_group, secondary_group = get_id_group_with_secondary_relations(
+                src_address, dst_address, bucketsize
             )
-            for src_address, dst_address in rel_ids
-        ]
+            bstmts.append(
+                prep.bind(
+                    {
+                        "src_address_id_group": address_group,
+                        "src_address_id_secondary_group": secondary_group,
+                        "src_address_id": src_address,
+                        "dst_address_id": dst_address,
+                    }
+                )
+            )
 
         return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
