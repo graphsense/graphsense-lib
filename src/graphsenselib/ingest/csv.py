@@ -2,7 +2,7 @@ import gzip
 from csv import DictWriter
 from typing import Iterable
 
-from ..utils.tron import get_id_group
+from ..utils.account import get_id_group
 
 BLOCK_HEADER = [
     "parent_hash",

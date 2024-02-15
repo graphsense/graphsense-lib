@@ -1,4 +1,3 @@
-# flake8: noqa
 import logging
 import time
 from datetime import datetime
@@ -15,6 +14,10 @@ from ...db import DbChange
 from ...schema.schema import GraphsenseSchemas
 from ...utils import DataObject as MutableNamedTuple
 from ...utils import no_nones
+from ...utils.account import (
+    get_id_group_with_secondary_addresstransactions,
+    get_id_group_with_secondary_relations,
+)
 from ...utils.adapters import (
     AccountBlockAdapter,
     AccountLogAdapter,
@@ -35,8 +38,6 @@ from .deltahelpers import (
     get_entitytx_from_tokentransfer,
     get_entitytx_from_trace,
     get_entitytx_from_transaction,
-    get_id_group_with_secondary_addresstransactions,
-    get_id_group_with_secondary_relations,
     get_sorted_unique_addresses,
     relationdelta_from_tokentransfer,
     relationdelta_from_trace,
@@ -361,7 +362,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         if currency == "TRX":
             transactions = [tx for tx in transactions if tx.to_address is not None]
             transactions = [tx for tx in transactions if tx.receipt_status == 1]
-            # 64 bit integer, first 32 is defined by block and the other by transaction index
+
             consume_transaction_id_trx = (
                 lambda block_id, transaction_index: (block_id << 32) + transaction_index
             )
@@ -386,7 +387,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         # calculate successful traces:
         traces_s = [trace for trace in traces if trace.status == 1]
 
-        hash_to_tx = {tx_hash: tx for tx_hash, tx in zip(tx_hashes, transactions)}
+        hash_to_tx = dict(zip(tx_hashes, transactions))
 
         txdeltas = []
 
@@ -429,16 +430,14 @@ class UpdateStrategyAccount(UpdateStrategy):
         with LoggerScope.debug(
             logger, f"Checking existence for {len_addr} addresses"
         ) as _:
-            addr_ids = {  # noqa: C416
-                adr: address_id
-                for adr, address_id in tdb.get_address_id_async_batch(list(addresses))
-            }
+            addr_ids = dict(tdb.get_address_id_async_batch(list(addresses)))
 
         with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
             existing_addr_ids = no_nones(
                 [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
             )
 
+            global addresses_resolved
             addresses_resolved = dict(
                 tdb.get_address_async_batch(
                     [adr.address_id for adr in existing_addr_ids]
@@ -478,7 +477,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             address: id_row[0] for address, id_row in addresses_to_id__rows.items()
         }
 
-        changes, _ = prepare_txs_for_ingest(
+        changes = prepare_txs_for_ingest(
             txdeltas,
             id_bucket_size,
             block_bucket_size,
@@ -488,9 +487,9 @@ class UpdateStrategyAccount(UpdateStrategy):
         entity_transactions = []
 
         if currency == "TRX":
-            traces_s_c = only_call_traces(traces_s)  # successful and call
+            traces_s_filtered = only_call_traces(traces_s)  # successful and call
         elif currency == "ETH":
-            traces_s_c = traces_s
+            traces_s_filtered = traces_s
         else:
             raise ValueError(f"Unknown currency {currency}")
 
@@ -498,13 +497,13 @@ class UpdateStrategyAccount(UpdateStrategy):
         entity_transactions.extend(
             [
                 get_entitytx_from_trace(trace, True, hash_to_id, address_hash_to_id)
-                for trace in traces_s_c
+                for trace in traces_s_filtered
             ]
         )
         entity_transactions.extend(
             [
                 get_entitytx_from_trace(trace, False, hash_to_id, address_hash_to_id)
-                for trace in traces_s_c
+                for trace in traces_s_filtered
             ]
         )
 
@@ -531,13 +530,13 @@ class UpdateStrategyAccount(UpdateStrategy):
         entity_deltas.extend(
             [
                 get_entitydelta_from_trace(trace, True, rates, hash_to_id, currency)
-                for trace in traces_s_c
+                for trace in traces_s_filtered
             ]
         )
         entity_deltas.extend(
             [
                 get_entitydelta_from_trace(trace, False, rates, hash_to_id, currency)
-                for trace in traces_s_c + reward_traces
+                for trace in traces_s_filtered + reward_traces
             ]
         )
 
@@ -557,7 +556,8 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         # relation deltas from traces
         relation_updates_trace = [
-            relationdelta_from_trace(trace, rates, currency) for trace in traces_s_c
+            relationdelta_from_trace(trace, rates, currency)
+            for trace in traces_s_filtered
         ]
 
         # relation deltas from token transfers
@@ -568,30 +568,26 @@ class UpdateStrategyAccount(UpdateStrategy):
         relation_updates = relation_updates_trace + relation_updates_tokens
 
         # in eth we disregard the eth values because they are already in the traces
-        # in tron only traces that are not the initial transaction have values, so we still need to add
-        # the value from the transaction
+        # in tron only traces that are not the initial transaction have values,
+        # so we still need to add the value from the transaction
         if currency == "TRX":
-            transactions_nonone = [tx for tx in transactions]
-
             entity_transactions.extend(
-                no_nones(
-                    [
-                        get_entitytx_from_transaction(
-                            tx, True, hash_to_id, address_hash_to_id
-                        )
-                        for tx in transactions_nonone
-                    ]
-                )  # todo maybe change this none action in the get_entitytx_from_transaction function and here
+                [
+                    get_entitytx_from_transaction(
+                        tx, True, hash_to_id, address_hash_to_id
+                    )
+                    for tx in transactions
+                    if tx.from_address is not None
+                ]
             )
             entity_transactions.extend(
-                no_nones(
-                    [
-                        get_entitytx_from_transaction(
-                            tx, False, hash_to_id, address_hash_to_id
-                        )
-                        for tx in transactions_nonone
-                    ]
-                )  # todo maybe change this none action in the get_entitytx_from_transaction function and here
+                [
+                    get_entitytx_from_transaction(
+                        tx, False, hash_to_id, address_hash_to_id
+                    )
+                    for tx in transactions
+                    if tx.to_address is not None
+                ]
             )
 
             entity_deltas_txs = []
@@ -600,7 +596,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                     get_entitydelta_from_transaction(
                         tx, True, rates, hash_to_id, currency
                     )
-                    for tx in transactions_nonone
+                    for tx in transactions
                 ]
             )
             entity_deltas_txs.extend(
@@ -608,14 +604,14 @@ class UpdateStrategyAccount(UpdateStrategy):
                     get_entitydelta_from_transaction(
                         tx, False, rates, hash_to_id, currency
                     )
-                    for tx in transactions_nonone
+                    for tx in transactions
                 ]
             )
             entity_deltas.extend(no_nones(entity_deltas_txs))
 
             relation_updates_tx = [
                 relationdelta_from_transaction(tx, rates, hash_to_id)
-                for tx in transactions_nonone
+                for tx in transactions
             ]
 
             relation_updates_tx = [
@@ -739,7 +735,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             for addr_id, qr in zip(address_ids, addr_balances_q)
         }
 
-        lg.debug(f"Prepare data.")
+        lg.debug("Prepare data.")
         changes += self.prepare_and_query_max_secondary_id(
             dbdelta.relation_updates,
             dbdelta.new_entity_txs,
@@ -862,7 +858,9 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         secondary_group_data = [
             get_id_group_with_secondary_relations(
-                tx.src_identifier, address_hash_to_id[tx.dst_identifier], id_bucket_size
+                address_hash_to_id[tx.src_identifier],
+                address_hash_to_id[tx.dst_identifier],
+                id_bucket_size,
             )
             for tx in relation_updates
         ]
@@ -875,7 +873,9 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         secondary_group_data = [
             get_id_group_with_secondary_relations(
-                tx.dst_identifier, address_hash_to_id[tx.src_identifier], id_bucket_size
+                address_hash_to_id[tx.dst_identifier],
+                address_hash_to_id[tx.src_identifier],
+                id_bucket_size,
             )
             for tx in relation_updates
         ]

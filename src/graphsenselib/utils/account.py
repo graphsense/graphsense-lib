@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import floor
 from typing import Iterable, Set
 
 from ..datatypes import FlowDirection
@@ -130,3 +131,36 @@ def get_unique_ordered_addresses(
     else:
         raise Exception("Unknown mode")
     return list(dict.fromkeys(list_to_prepare[::-1]))[::-1]
+
+
+def calculate_id_group_with_overflow(tx_id: int, bucket_size: int):
+    blub = int(floor(float(tx_id) / bucket_size))
+
+    if blub.bit_length() >= 31:
+        # downcast to 32bit integer
+        # blub = ctypes.c_uint32(blub).value
+        blub = (blub + 2**31) % 2**32 - 2**31
+    return blub
+
+
+def get_id_group(id_, bucket_size):
+    gid = floor(int(id_) / bucket_size)
+    if gid.bit_length() > 31:
+        # tron tx_id are long and the group is int
+        # thus we need to also consider overflows in this case
+        # additionally spark does not calculate ids on int basis but
+        # based on floats which can lead to rounding errors.
+        gid = calculate_id_group_with_overflow(id_, bucket_size)
+    return gid
+
+
+def get_id_group_with_secondary_addresstransactions(id, bucket_size, block_id):
+    address_id_group = get_id_group(id, bucket_size)
+    address_id_secondary_group = block_id // 150_000  # todo make this adaptable
+    return address_id_group, address_id_secondary_group
+
+
+def get_id_group_with_secondary_relations(id, id_for_secondary, bucket_size):
+    address_id_group = get_id_group(id, bucket_size)
+    address_id_secondary_group = id_for_secondary % 100  # todo make this adaptable
+    return address_id_group, address_id_secondary_group

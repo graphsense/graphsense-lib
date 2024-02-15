@@ -11,7 +11,7 @@ from typing import Any, Callable, List, Tuple, Union
 from ...datatypes import EntityType
 from ...db import DbChange
 from ...utils import group_by, groupby_property
-from ...utils.tron import get_id_group
+from ...utils.account import get_id_group
 
 
 class ApplicationStrategy(Enum):

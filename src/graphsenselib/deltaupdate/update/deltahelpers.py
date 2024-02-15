@@ -1,54 +1,19 @@
-# flake8: noqa
-import logging
-import time
-from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple, Union
+from typing import Dict, List, Tuple
 
 import pandas as pd
-from cassandra.cluster import Cluster
 from cassandra.cqlengine.columns import Integer
 from cassandra.cqlengine.usertype import UserType
-from diskcache import Cache
 
-from graphsenselib.deltaupdate.update.tokens import ERC20Decoder, TokenTransfer
-from graphsenselib.utils.cache import TableBasedCache
+from graphsenselib.deltaupdate.update.tokens import TokenTransfer
 
-from ...config.config import DeltaUpdaterConfig
-from ...datatypes import EntityType, FlowDirection
-from ...db import AnalyticsDb, DbChange
-from ...rates import convert_to_fiat
-from ...schema.schema import GraphsenseSchemas
-from ...utils import DataObject as MutableNamedTuple
-from ...utils import group_by, no_nones
-from ...utils.adapters import (
-    AccountBlockAdapter,
-    AccountLogAdapter,
-    AccountTransactionAdapter,
-    EthTraceAdapter,
-    TrxTraceAdapter,
-    TrxTransactionAdapter,
-)
-from ...utils.errorhandling import CrashRecoverer
-from ...utils.logging import LoggerScope
-from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
-from .generic import (
-    ApplicationStrategy,
-    DeltaScalar,
-    DeltaValue,
-    Tx,
-    get_id_group,
-    groupby_property,
-)
+from .generic import DeltaScalar, DeltaValue, Tx
 from .modelsaccount import (
     BalanceDelta,
-    DbDeltaAccount,
     EntityDeltaAccount,
     RawEntityTxAccount,
     RelationDeltaAccount,
 )
-from .utxo import apply_changes
 
 currency_to_decimals = {
     "ETH": 18,
@@ -60,18 +25,6 @@ currency_to_decimals = {
 class TxReference(UserType):
     trace_index: Integer(required=False)
     log_index: Integer(required=False)
-
-
-def get_id_group_with_secondary_addresstransactions(id, bucket_size, block_id):
-    address_id_group = get_id_group(id, bucket_size)
-    address_id_secondary_group = block_id // 150_000  # todo make this adaptable
-    return address_id_group, address_id_secondary_group
-
-
-def get_id_group_with_secondary_relations(id, id_for_secondary, bucket_size):
-    address_id_group = get_id_group(id, bucket_size)
-    address_id_secondary_group = id_for_secondary % 100
-    return address_id_group, address_id_secondary_group
 
 
 def get_entitytx_from_tokentransfer(
@@ -120,8 +73,7 @@ def get_entitytx_from_transaction(
 ) -> RawEntityTxAccount:
     tx_id = hash_to_id[tx.tx_hash]
     address_hash = tx.from_address if is_outgoing else tx.to_address
-    if address_hash is None:
-        return None
+
     address_id = address_hash_to_id[address_hash]
 
     tx_reference = {

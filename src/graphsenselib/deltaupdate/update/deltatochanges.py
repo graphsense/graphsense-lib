@@ -1,18 +1,16 @@
-# flake8: noqa
-
 import logging
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Tuple
 
 from ...db import DbChange
-from .deltahelpers import (
+from ...utils.account import (
+    get_id_group,
     get_id_group_with_secondary_addresstransactions,
     get_id_group_with_secondary_relations,
 )
-from .generic import DeltaValue, Tx, get_id_group
+from .generic import DeltaValue, Tx
 from .modelsaccount import (
     BalanceDelta,
-    DbDeltaAccount,
     EntityDeltaAccount,
     RawEntityTxAccount,
     RelationDeltaAccount,
@@ -147,7 +145,7 @@ def prepare_relations_for_ingest(
             new_relations_in[relations_update.dst_identifier] += 1
 
             chng_in = DbChange.new(
-                table=f"address_incoming_relations",
+                table="address_incoming_relations",
                 data={
                     "dst_address_id_group": dst_group,
                     "dst_address_id_secondary_group": dst_secondary,
@@ -159,7 +157,7 @@ def prepare_relations_for_ingest(
                 },
             )
             chng_out = DbChange.new(
-                table=f"address_outgoing_relations",
+                table="address_outgoing_relations",
                 data={
                     "src_address_id_group": src_group,
                     "src_address_id_secondary_group": src_secondary,
@@ -194,7 +192,7 @@ def prepare_relations_for_ingest(
             assert outr.no_transactions == inr.no_transactions
 
             chng_in = DbChange.update(
-                table=f"address_incoming_relations",
+                table="address_incoming_relations",
                 data={
                     "dst_address_id_group": dst_group,
                     "dst_address_id_secondary_group": dst_secondary,
@@ -209,7 +207,7 @@ def prepare_relations_for_ingest(
             )
 
             chng_out = DbChange.update(
-                table=f"address_outgoing_relations",
+                table="address_outgoing_relations",
                 data={
                     "src_address_id_group": src_group,
                     "src_address_id_secondary_group": src_secondary,
@@ -249,7 +247,7 @@ def prepare_entities_for_ingest(
         if entity is not None:
             """old Address"""
 
-            assert getattr(entity, f"address_id") == int_ident
+            assert getattr(entity, "address_id") == int_ident
 
             # recast so we can calculate without handling None all the time
             new_value = EntityDeltaAccount.from_db(entity).merge(update)
@@ -280,7 +278,7 @@ def prepare_entities_for_ingest(
             }
 
             chng = DbChange.update(
-                table=f"address",
+                table="address",
                 data=generic_data,
             )
 
@@ -312,7 +310,7 @@ def prepare_entities_for_ingest(
                 "is_contract": False,  # todo
             }
             data["address"] = update.identifier
-            chng = DbChange.new(table=f"address", data=data)
+            chng = DbChange.new(table="address", data=data)
             changes.append(chng)
             address, address_prefix = get_address_prefix(update.identifier)
 
@@ -347,7 +345,7 @@ def prepare_entity_txs_for_ingest(
                 ident, id_bucket_size, atx.block_id
             )
             chng = DbChange.new(
-                table=f"address_transactions",
+                table="address_transactions",
                 data={
                     "address_id_group": address_id_group,
                     "address_id_secondary_group": address_id_secondary_group,
@@ -368,7 +366,7 @@ def prepare_entity_txs_for_ingest(
                 ident, id_bucket_size, atx.block_id
             )
             chng = DbChange.new(
-                table=f"address_transactions",
+                table="address_transactions",
                 data={
                     "address_id_group": address_id_group,
                     "address_id_secondary_group": address_id_secondary_group,

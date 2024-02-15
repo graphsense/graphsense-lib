@@ -36,10 +36,11 @@ from ..utils import (
     parse_timestamp,
     remove_prefix,
 )
+from ..utils.account import get_id_group
 from ..utils.cache import TableBasedCache
 from ..utils.logging import configure_logging, suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
-from ..utils.tron import evm_to_bytes, get_id_group, strip_tron_prefix
+from ..utils.tron import evm_to_bytes, strip_tron_prefix
 from .common import (
     AbstractETLStrategy,
     AbstractTask,

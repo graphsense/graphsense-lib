@@ -19,10 +19,10 @@ from methodtools import lru_cache as mlru_cache
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
 from ..db import AnalyticsDb
 from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_0x
+from ..utils.account import get_id_group
 from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
-from ..utils.tron import get_id_group
 from .common import cassandra_ingest, write_to_sinks
 
 TX_HASH_PREFIX_LENGTH = 5
