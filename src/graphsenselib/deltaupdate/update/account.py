@@ -473,7 +473,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             relation_updates += relation_updates_tx
 
         elif currency == "ETH":
-            pass
+            relation_updates_tx = []
         else:
             raise ValueError(f"Unknown currency {currency}")
 
