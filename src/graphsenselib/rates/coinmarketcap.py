@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import date, datetime, timedelta
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 import requests
@@ -101,22 +101,22 @@ def fetch(env, currency, fiat_currencies, start_date, end_date):
 
 
 def fetch_impl(
-    db,
-    env,
-    currency,
-    fiat_currencies,
-    start_date,
-    end_date,
-    table,
-    force,
-    dry_run,
-    abort_on_gaps,
+    db: Optional[object],
+    env: Optional[str],
+    currency: str,
+    fiat_currencies: List[str],
+    start_date: Optional[str],
+    end_date: Optional[str],
+    table: Optional[str],
+    force: bool,
+    dry_run: bool,
+    abort_on_gaps: bool,
 ):
     if datetime.fromisoformat(start_date) < datetime.fromisoformat(MIN_START):
         start_date = MIN_START
 
     # query most recent data
-    if not force:
+    if not force and db:
         logger.info(f"Get last imported rate from {db.raw.get_keyspace()}")
         most_recent_date = db.raw.get_last_exchange_rate_date(table=table)
         if most_recent_date is not None:

@@ -10,6 +10,7 @@ from .coindesk import fetch as fetchCD
 from .coindesk import ingest as ingestCD
 from .coinmarketcap import MIN_START as MS_CMK
 from .coinmarketcap import fetch as fetchCMK
+from .coinmarketcap import fetch_impl as fetchCMKDump
 from .coinmarketcap import ingest as ingestCMK
 
 
@@ -107,6 +108,49 @@ def coindesk():
 def coinmarketcap():
     """From coinmarketcap."""
     pass
+
+
+@coinmarketcap.command("dump")
+@require_currency()
+@shared_flags()
+@click.option(
+    "--out-file",
+    default="rates.csv",
+    type=str,
+    help="file to dump into.",
+)
+def fetch_cmk_dump(
+    currency: str,
+    fiat_currencies: list[str],
+    start_date: str,
+    end_date: str,
+    out_file: str,
+):
+    """Safe exchange rates to file.
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+    """
+    df = fetchCMKDump(
+        None,
+        None,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        None,
+        True,
+        False,
+        False,
+    )
+    console.rule("Rates Coinmarketcap")
+    console.print(df)
+    console.rule(f"Writing to {out_file}")
+    df.to_csv(out_file)
 
 
 @coinmarketcap.command("fetch")
