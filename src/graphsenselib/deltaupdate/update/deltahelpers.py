@@ -1,5 +1,7 @@
+import logging
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from datetime import datetime
+from typing import Dict, List, NamedTuple, Tuple
 
 import pandas as pd
 from cassandra.cqlengine.columns import Integer
@@ -7,6 +9,10 @@ from cassandra.cqlengine.usertype import UserType
 
 from graphsenselib.deltaupdate.update.tokens import TokenTransfer
 
+from ...db import DbChange
+from ...utils import DataObject as MutableNamedTuple
+from ...utils.logging import LoggerScope
+from .abstractupdater import TABLE_NAME_DELTA_HISTORY
 from .generic import DeltaScalar, DeltaValue, Tx
 from .modelsaccount import (
     BalanceDelta,
@@ -14,6 +20,8 @@ from .modelsaccount import (
     RawEntityTxAccount,
     RelationDeltaAccount,
 )
+
+logger = logging.getLogger(__name__)
 
 currency_to_decimals = {
     "ETH": 18,
@@ -25,6 +33,75 @@ currency_to_decimals = {
 class TxReference(UserType):
     trace_index: Integer(required=False)
     log_index: Integer(required=False)
+
+
+def only_call_traces(traces: List) -> List:
+    return [trace for trace in traces if trace.call_type == "call"]
+
+
+def get_bookkeeping_changes(
+    base_statistics: MutableNamedTuple,
+    current_statistics: NamedTuple,
+    last_block_processed: int,
+    nr_new_address_relations: int,
+    nr_new_addresses: int,
+    nr_new_tx: int,
+    highest_address_id: int,
+    runtime_seconds: int,
+    bts: Dict[int, datetime],
+    new_blocks: int,
+    patch_mode: bool,
+) -> List[DbChange]:
+    """Creates changes for the bookkeeping tables like summary statistics after
+    other data has been updated.
+
+    Args:
+        base_statistics (MutableNamedTuple): statistics db row, all the other
+        parameters are note data is updated in this process
+        current_statistics (NamedTuple): Current value of db statistics for comparison
+        last_block_processed (int): Last block processed
+        nr_new_address_relations (int): Delta new addresses relations in changeset
+        nr_new_addresses (int): Delta new addresses in changeset
+        nr_new_tx (int): Delta new txs in changeset
+        highest_address_id (int): current highest address_id
+        runtime_seconds (int): runtime to create the last changes in seconds
+        bts (Dict[int, datetime]): mapping from block to its timestamp
+        delta values
+    """
+    changes = []
+    with LoggerScope.debug(logger, "Creating summary_statistics updates") as lg:
+        lb_date = bts[last_block_processed]
+        stats = base_statistics
+        stats.no_blocks = current_statistics.no_blocks + new_blocks
+        stats.timestamp = int(lb_date.timestamp())
+        stats.no_address_relations += nr_new_address_relations
+        stats.no_addresses += nr_new_addresses
+        stats.no_transactions += nr_new_tx
+
+        statistics = stats.as_dict()
+
+        if current_statistics.no_blocks != stats.no_blocks:
+            if not patch_mode:
+                assert current_statistics.no_blocks < stats.no_blocks
+
+        changes.append(DbChange.new(table="summary_statistics", data=statistics))
+
+        lg.debug(f"Statistics: {statistics}")
+
+        data_history = {
+            "last_synced_block": last_block_processed,
+            "last_synced_block_timestamp": lb_date,
+            "highest_address_id": highest_address_id,
+            "timestamp": datetime.now(),
+            "write_new": False,
+            "write_dirty": False,
+            "runtime_seconds": runtime_seconds,
+        }
+        changes.append(DbChange.new(table=TABLE_NAME_DELTA_HISTORY, data=data_history))
+
+        lg.debug(f"History: {data_history}")
+
+    return changes
 
 
 def get_entitytx_from_tokentransfer(
@@ -116,7 +193,6 @@ def get_prices(
 
 def get_prices_coin(value, currency, block_rates):
     coin_decimals = currency_to_decimals[currency]
-
     return get_prices(value, coin_decimals, block_rates, 0, 1)
 
 
@@ -295,9 +371,6 @@ def get_entitydelta_from_transaction(
 ) -> EntityDeltaAccount:
     identifier = tx.from_address if is_outgoing else tx.to_address
 
-    if identifier is None:
-        return None
-
     total_received_value = 0 if is_outgoing else tx.value
     total_spent_value = tx.value if is_outgoing else 0
 
@@ -453,7 +526,8 @@ def get_sorted_unique_addresses(
             "address": obj.from_address,
             "block_id": obj.block_id,
             "is_log": False,
-            "index": obj.transaction_index - 1000000,  # todo
+            # this is a hack to imitate spark; we assume there a max 1M tx per block
+            "index": obj.transaction_index - 1_000_000,
             "is_from_address": True,
         }
         for obj in transactions
@@ -464,7 +538,8 @@ def get_sorted_unique_addresses(
             "address": obj.to_address,
             "block_id": obj.block_id,
             "is_log": False,
-            "index": obj.transaction_index - 1000000,  # todo
+            # this is a hack to imitate spark; we assume there a max 1M tx per block
+            "index": obj.transaction_index - 1_000_000,
             "is_from_address": False,
         }
         for obj in transactions
