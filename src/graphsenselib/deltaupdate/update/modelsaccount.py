@@ -119,7 +119,7 @@ class RelationDeltaAccount(DeltaUpdate):
     no_transactions: int
     value: DeltaValue
     token_values: dict[str, DeltaValue]
-    type: str
+    type: str  # noqa
 
     @classmethod
     def from_db(Cls, db_row):
