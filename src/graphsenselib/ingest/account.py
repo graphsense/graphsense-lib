@@ -1103,7 +1103,7 @@ def ingest_async(
         if "fs-cache" in sink_config:
             odirectory = sink_config["fs-cache"]["output_directory"]
             sink_config["fs-cache"]["cache"] = TableBasedCache(
-                Cache(odirectory, eviction_policy=None)
+                Cache(odirectory, eviction_policy="none")
             )
         thrd_ctx.adapter = strategy.get_source_adapter()
         thrd_ctx.strategy = strategy
