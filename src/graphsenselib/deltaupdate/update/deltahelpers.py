@@ -558,10 +558,9 @@ def get_sorted_unique_addresses(
 
     addresses_sorting_df.sort_values(
         inplace=True, by=["block_id", "is_log", "index", "is_from_address"]
-    )  # imitate spark
-    addresses_sorting_df.drop_duplicates(keep="first")  # imitate spark
-    df_sorted = addresses_sorting_df.sort_values(
-        by=["block_id", "is_log", "index", "is_from_address"]
     )
-    addresses = df_sorted["address"]
+    df_sorted_unique = addresses_sorting_df.drop_duplicates(
+        keep="first", subset=["address"]
+    )
+    addresses = df_sorted_unique["address"]
     return addresses

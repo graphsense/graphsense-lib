@@ -1,72 +1,321 @@
-from graphsenselib.deltaupdate.update.generic import DbDelta
-from graphsenselib.deltaupdate.update.utxo import dbdelta_from_utxo_transaction
-from graphsenselib.utils import group_by, groupby_property
-from graphsenselib.utils.utxo import get_unique_addresses_from_transaction
+import pickle
 
-from .test_data import get_arel, get_atxs, get_exchange_rates_per_block, get_txs
+from graphsenselib.deltaupdate.update.deltahelpers import get_sorted_unique_addresses
+from graphsenselib.deltaupdate.update.tokens import ERC20Decoder, TokenTransfer
+from graphsenselib.utils.adapters import (
+    AccountBlockAdapter,
+    AccountLogAdapter,
+    AccountTransactionAdapter,
+    EthTraceAdapter,
+    TrxTraceAdapter,
+    TrxTransactionAdapter,
+)
 
+currencies = ["trx", "eth"]
+folder = "tests/deltaupdate/resources/account"
+filetypes = ["transactions", "traces", "logs", "blocks"]
 
-def test_transaction_changeset_address_txs():
-    rates = get_exchange_rates_per_block()
-    expected_atxs = get_atxs()
+tx_schema = {
+    "transaction_index": int,
+    "tx_hash": bytes,
+    "from_address": bytes,
+    "to_address": bytes,
+    "value": int,
+    "gas_price": int,
+    "transaction_type": int,
+    "receipt_gas_used": int,
+    "receipt_status": int,
+    "block_id": int,
+}
 
-    expected = groupby_property(expected_atxs, "tx_id", sort_by="identifier")
-    atxs = []
-    for tx in get_txs():
-        cngset = dbdelta_from_utxo_transaction(tx, rates[tx.block_id])
-        atxs.extend(list(cngset.new_entity_txs))
-    res = groupby_property(atxs, "tx_id", sort_by="identifier")
+log_schema = {
+    "block_id": int,
+    "tx_hash": bytes,
+    "log_index": int,
+    "address": bytes,
+    "topics": list,
+    "data": bytes,
+}
+block_schema = {
+    "block_id": int,
+    "miner": bytes,
+    "base_fee_per_gas": int,
+    "gas_used": int,
+}
 
-    assert res == expected
-
-
-def test_merge_address_deltas():
-    rates = get_exchange_rates_per_block()
-    changes = DbDelta.merge(
-        [dbdelta_from_utxo_transaction(tx, rates[tx.block_id]) for tx in get_txs()]
-    )
-
-    expected = get_arel()
-
-    expected_grouped = group_by(expected, key=lambda x: (x.src_address, x.dst_address))
-
-    changes_grouped = group_by(
-        changes.relation_updates, key=lambda x: (x.src_identifier, x.dst_identifier)
-    )
-
-    assert len(expected) == len(changes.relation_updates)
-
-    for k, v in changes_grouped.items():
-        ev = expected_grouped[k]
-        assert len(v) == 1
-        assert len(ev) == 1
-        v = v[0]
-        ev = ev[0]
-        assert ev.estimated_value == v.estimated_value
-
-
-def test_address_updates_order():
-    rates = get_exchange_rates_per_block()
-    changes = DbDelta.merge(
-        [dbdelta_from_utxo_transaction(tx, rates[tx.block_id]) for tx in get_txs()]
-    )
-    last_tx_id = (-1, -1)
-    for cng in changes.entity_updates:
-        assert last_tx_id <= (cng.first_tx_id, cng.last_tx_id)
-        last_tx_id = (cng.first_tx_id, cng.last_tx_id)
-
-
-def test_address_addresses_unique():
-    rates = get_exchange_rates_per_block()
-    changes = DbDelta.merge(
-        [dbdelta_from_utxo_transaction(tx, rates[tx.block_id]) for tx in get_txs()]
-    )
-    addr = [chng.identifier for chng in changes.entity_updates]
-    assert len(addr) == len(set(addr))
+trace_schema = {
+    "block_id": int,
+    "tx_hash": bytes,
+    "trace_index": bytes,
+    "from_address": bytes,
+    "to_address": bytes,
+    "value": int,
+    "call_type": str,
+    "status": int,
+}
 
 
-def test_unique_addresses_in_tx():
-    assert get_unique_addresses_from_transaction(get_txs()[5]) == {
-        "3Fkx2TFdcHoab4xGgSjhAVh5YBPvbBWjNL",
-        "1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB",
+def load_data():
+    # load txs, traces, logs, and blocks
+    # read the jsons
+    data = {
+        currency: {
+            filetype: pickle.load(open(f"{folder}/{currency}/{filetype}.pkl", "rb"))
+            for filetype in filetypes
+        }
+        for currency in currencies
     }
+    return data
+
+
+def load_reference_data():
+    lengths = {
+        "trx": {
+            "transactions": 293,
+            "traces": 2,
+            "logs": 76,
+            "blocks": 1,
+        },
+        "eth": {
+            "transactions": 117,
+            "traces": 671,
+            "logs": 300,
+            "blocks": 1,
+        },
+    }
+
+    blocks = {"trx": 50000011, "eth": 18000011}
+
+    return lengths, blocks
+
+
+def test_adapters_regression():
+    data = load_data()
+    lengths_ref, blocks_ref = load_reference_data()
+    for currency in currencies:
+        data_currency = data[currency]
+        transactions, traces, logs, blocks = (
+            data_currency["transactions"],
+            data_currency["traces"],
+            data_currency["logs"],
+            data_currency["blocks"],
+        )
+
+        if currency == "trx":
+            trace_adapter = TrxTraceAdapter()
+            transaction_adapter = TrxTransactionAdapter()
+
+        elif currency == "eth":
+            trace_adapter = EthTraceAdapter()
+            transaction_adapter = AccountTransactionAdapter()
+
+        # convert dictionaries to dataclasses and unify naming
+        log_adapter = AccountLogAdapter()
+        block_adapter = AccountBlockAdapter()
+        traces = trace_adapter.dicts_to_renamed_dataclasses(traces)
+        traces = trace_adapter.process_fields_in_list(traces)
+        transactions = transaction_adapter.dicts_to_dataclasses(transactions)
+        logs = log_adapter.dicts_to_dataclasses(logs)
+        blocks = block_adapter.dicts_to_dataclasses(blocks)
+
+        length_ref = lengths_ref[currency]
+        assert len(transactions) == length_ref["transactions"]
+        assert len(traces) == length_ref["traces"]
+        assert len(logs) == length_ref["logs"]
+        assert len(blocks) == length_ref["blocks"]
+
+        assert traces[0].block_id == blocks_ref[currency]
+
+        # check that the files have the correct schema
+        for transaction in transactions:
+            assert isinstance(transaction, transaction_adapter.datamodel)
+            assert isinstance(transaction.tx_hash, bytes)
+            assert (
+                isinstance(transaction.from_address, bytes)
+                or transaction.from_address is None
+            )
+            assert isinstance(transaction.to_address, bytes)
+            assert isinstance(transaction.value, int)
+            assert isinstance(transaction.gas_price, int)
+            assert isinstance(transaction.transaction_type, int)
+            assert isinstance(transaction.receipt_gas_used, int)
+            assert isinstance(transaction.receipt_status, int)
+            assert isinstance(transaction.block_id, int)
+
+        for trace in traces:
+            assert isinstance(trace, trace_adapter.datamodel)
+            assert isinstance(trace.tx_hash, bytes) or trace.tx_hash is None
+            assert isinstance(trace.from_address, bytes) or trace.from_address is None
+            assert isinstance(trace.to_address, bytes)
+            assert isinstance(trace.value, int)
+            assert isinstance(trace.call_type, str) or trace.call_type is None
+            assert isinstance(trace.status, int)
+            assert isinstance(trace.block_id, int)
+
+        for log in logs:
+            assert isinstance(log, log_adapter.datamodel)
+            assert isinstance(log.block_id, int)
+            assert isinstance(log.tx_hash, bytes)
+            assert isinstance(log.log_index, int)
+            assert isinstance(log.address, bytes)
+            assert isinstance(log.topics, list)
+            assert isinstance(log.data, bytes)
+
+        for block in blocks:
+            assert isinstance(block, block_adapter.datamodel)
+            assert isinstance(block.block_id, int)
+            assert isinstance(block.miner, bytes)
+            assert isinstance(block.base_fee_per_gas, int)
+            assert isinstance(block.gas_used, int)
+
+
+def test_tokens_detected():
+    tokendecoder = ERC20Decoder("eth")
+    data = load_data()
+    eth_data = data["eth"]
+    logs = eth_data["logs"]
+    log_adapter = AccountLogAdapter()
+    logs = log_adapter.dicts_to_dataclasses(logs)
+    token_transfers = [tokendecoder.log_to_transfer(log) for log in logs]
+    token_transfers = [x for x in token_transfers if x is not None]
+
+    assert len(token_transfers) == 51
+
+
+def test_token_decoding():
+    adapter = AccountLogAdapter()
+    # todo move to tests
+    example_log = {
+        "log_index": 0,
+        "transaction_index": 1,
+        "block_hash": b"\x00\x00\x00\x00\x02\xfa\xf0\xe5A\xeab\x1d\xed\xc7%\x00\x074^"
+        b"\x10\xaa5\xe7\xbd\xb7\xa9\x1c\xee\x99\x0f96",
+        "address": b"\xa6\x14\xf8\x03\xb6\xfdx\t\x86\xa4,x\xec\x9c\x7fw\xe6\xde\xd1<",
+        "data": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xba\x81@",
+        "topics": [
+            b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h\xfc7\x8d\xaa\x95+\xa7\xf1c"
+            b"\xc4\xa1\x16(\xf5ZM\xf5#\xb3\xef",
+            b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb3\xa8"da\xf0\xe6'
+            b"\xa9\xa1\x06?\xeb\xea\x88\xc6\xf6\xa5\xa0\x85~",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0LT\xf6\xb6\xa2"
+            b'\x9a\xf0ZT\x95\x8cIt\xc3\x83\xb4\xd9"\xac',
+        ],
+        "tx_hash": b"\xe0}\xe10\xe5\xc2\xb1\xde\x13\xcd\x88\xee!\xfa\x1e\xca]e\xba\xbb"
+        b"\xecVG\xd3\x1c\xb7\x90\x1f\xc92wo",
+        "block_id": 50000101,
+        "block_id_group": 50000,
+        "partition": 500,
+        "topic0": b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h\xfc7\x8d\xaa\x95+\xa7\xf1c"
+        b"\xc4\xa1\x16(\xf5ZM\xf5#\xb3\xef",
+    }
+
+    example_log = adapter.dict_to_dataclass(example_log)
+
+    decoder = ERC20Decoder("eth")
+    decoded_transfer = decoder.log_to_transfer(example_log)
+    assert decoded_transfer is None
+
+    example_log = {
+        "log_index": 0,
+        "transaction_index": 1,
+        "block_hash": b"\x00\x00\x00\x00\x02\xfa\xf0\xe5A\xeab\x1d\xed\xc7%\x00\x074^"
+        b"\x10\xaa5\xe7\xbd\xb7\xa9\x1c\xee\x99\x0f96",
+        "address": bytes.fromhex("dac17f958d2ee523a2206206994597c13d831ec7"),
+        "data": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xba\x81@",
+        "topics": [
+            b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h"
+            b"\xfc7\x8d\xaa\x95+\xa7\xf1c\xc4\xa1"
+            b"\x16(\xf5ZM\xf5#\xb3\xef",
+            b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb3\xa8"da\xf0\xe6\xa9'
+            b"\xa1\x06?\xeb\xea\x88\xc6\xf6\xa5\xa0\x85~",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0LT\xf6\xb6\xa2\x9a"
+            b'\xf0ZT\x95\x8cIt\xc3\x83\xb4\xd9"\xac',
+        ],
+        "tx_hash": b"\xe0}\xe10\xe5\xc2\xb1\xde\x13\xcd\x88\xee!\xfa\x1e\xca]e\xba\xbb"
+        b"\xecVG\xd3\x1c\xb7\x90\x1f\xc92wo",
+        "block_id": 50000101,
+        "block_id_group": 50000,
+        "partition": 500,
+        "topic0": b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h\xfc7\x8d\xaa\x95+\xa7\xf1c"
+        b"\xc4\xa1\x16(\xf5ZM\xf5#\xb3\xef",
+    }
+
+    example_log = adapter.dict_to_dataclass(example_log)
+    decoder = ERC20Decoder("eth")
+    decoded_transfer = decoder.log_to_transfer(example_log)
+    check = TokenTransfer(
+        from_address=bytes.fromhex("B3a8226461F0e6A9a1063fEBeA88C6f6A5a0857E"),
+        to_address=bytes.fromhex("F04C54F6b6A29aF05A54958c4974C383B4D922ac"),
+        value=29000000,
+        asset="USDT",
+        coin_equivalent=0,
+        usd_equivalent=1,
+        block_id=50000101,
+        tx_hash=b"\xe0}\xe10\xe5\xc2\xb1\xde\x13\xcd\x88\xee!\xfa\x1e\xca]e\xba\xbb"
+        b"\xecVG\xd3\x1c\xb7\x90\x1f\xc92wo",
+        log_index=0,
+        decimals=6,
+    )
+
+    assert decoded_transfer == check
+
+    decoder = ERC20Decoder("trx")
+    decoded_transfer = decoder.log_to_transfer(example_log)
+    assert decoded_transfer is None
+
+
+def test_address_sorting():
+    class SortableAssetTransfer:
+        def __init__(
+            self,
+            from_address=None,
+            to_address=None,
+            block_id=None,
+            log_index=None,
+            trace_index=None,
+            transaction_index=None,
+        ):
+            self.from_address = from_address
+            self.to_address = to_address
+            self.block_id = block_id
+            self.log_index = log_index
+            self.trace_index = trace_index
+            self.transaction_index = transaction_index
+
+    traces_s = [
+        SortableAssetTransfer(
+            from_address="0x1", to_address="0x2", block_id=1, trace_index=2
+        ),
+        SortableAssetTransfer(
+            from_address="0x3", to_address="0x4", block_id=2, trace_index=1
+        ),
+    ]
+    reward_traces = [SortableAssetTransfer(to_address="0x5", block_id=3, trace_index=0)]
+    token_transfers = [
+        SortableAssetTransfer(
+            from_address="0x2", to_address="0x3", block_id=1, log_index=1
+        ),
+        SortableAssetTransfer(
+            from_address="0x4", to_address="0x1", block_id=2, log_index=2
+        ),
+    ]
+    transactions = [
+        SortableAssetTransfer(
+            from_address="0x1", to_address="0x0", block_id=1, transaction_index=1000001
+        ),
+        SortableAssetTransfer(
+            from_address="0x2", to_address="0x4", block_id=2, transaction_index=1000002
+        ),
+    ]
+
+    expected_addresses = ["0x0", "0x1", "0x2", "0x3", "0x4", "0x5"]
+
+    result_addresses = list(
+        get_sorted_unique_addresses(
+            traces_s, reward_traces, token_transfers, transactions
+        )
+    )
+
+    assert result_addresses == expected_addresses
