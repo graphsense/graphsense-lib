@@ -113,7 +113,6 @@ base_tx_field_dict = {
     "gas_price": int,
     "transaction_type": int,
     "receipt_gas_used": int,
-    "receipt_contract_address": bytes,
     "receipt_status": int,
     "block_id": int,
 }
