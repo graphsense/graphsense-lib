@@ -1194,6 +1194,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
         logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
 
+    def clear_cache(self):
+        pass
+
     def persist_updater_progress(self):
         if self.changes is not None:
             atomic = ApplicationStrategy.TX == self.application_strategy

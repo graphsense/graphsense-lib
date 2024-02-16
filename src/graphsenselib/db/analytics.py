@@ -880,7 +880,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
-    def get_address_incoming_relations_async_batch_account(
+    def get_address_inrelations_async_batch_account(
         self, rel_ids: List[Tuple[int, int]]
     ):
         stmt = self.select_stmt(
@@ -989,7 +989,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
-    def get_address_outgoing_relations_async_batch_account(
+    def get_address_outrelations_async_batch_account(
         self, rel_ids: List[Tuple[int, int]]
     ):
         stmt = self.select_stmt(

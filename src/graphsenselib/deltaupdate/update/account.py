@@ -113,6 +113,10 @@ class UpdateStrategyAccount(UpdateStrategy):
         logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
 
+    def clear_cache(self):
+        cache = Cache(self.du_config.fs_cache.directory)
+        cache.clear()
+
     def persist_updater_progress(self):
         if self.changes is not None:
             atomic = ApplicationStrategy.TX == self.application_strategy
@@ -223,6 +227,10 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             changes = []
             print(batch)  # todo remove
+            if 0 in [len(blocks), len(transactions)]:
+                logger.debug("No blocks to process. Might not be in the cache.")
+                return  # no blocks to process
+
             (tx_changes, nr_new_addresses, nr_new_address_relations) = self.get_changes(
                 transactions, traces, logs, blocks, rates
             )
@@ -321,15 +329,13 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         hash_to_tx = dict(zip(tx_hashes, transactions))
 
-        with LoggerScope.debug(logger, "Decode logs to token transfers") as lg:
+        with LoggerScope.debug(logger, "Decode logs to token transfers"):
             tokendecoder = ERC20Decoder(self.currency)
             token_transfers = no_nones(
                 [tokendecoder.log_to_transfer(log) for log in logs]
             )
 
-        with LoggerScope.debug(
-            logger, "Compute unique addresses in correct order"
-        ) as lg:
+        with LoggerScope.debug(logger, "Compute unique addresses in correct order"):
             if currency == "TRX":
                 transactions_for_addresses = transactions
             elif currency == "ETH":
@@ -347,7 +353,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         ) as _:
             addr_ids = dict(tdb.get_address_id_async_batch(list(addresses)))
 
-        with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
+        with LoggerScope.debug(logger, "Reading addresses to be updated"):
             existing_addr_ids = no_nones(
                 [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
             )
@@ -379,228 +385,240 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             del addresses_resolved
 
-        bytes_to_row_address = {
-            address: row[1] for address, row in addresses_to_id__rows.items()
-        }
-        for addr in addresses:
-            addr_id, address = addresses_to_id__rows[addr]
-            if addr_id is None:
-                new_addr_id = get_next_address_ids_with_aliases(addr)
-                addresses_to_id__rows[addr] = (new_addr_id, None)
+            bytes_to_row_address = {
+                address: row[1] for address, row in addresses_to_id__rows.items()
+            }
+            for addr in addresses:
+                addr_id, address = addresses_to_id__rows[addr]
+                if addr_id is None:
+                    new_addr_id = get_next_address_ids_with_aliases(addr)
+                    addresses_to_id__rows[addr] = (new_addr_id, None)
 
-        address_hash_to_id = {
-            address: id_row[0] for address, id_row in addresses_to_id__rows.items()
-        }
+            address_hash_to_id = {
+                address: id_row[0] for address, id_row in addresses_to_id__rows.items()
+            }
 
-        """ Get transactions to insert into the database """
-        txs_to_insert = []
+        with LoggerScope.debug(
+            logger, "Get transactions " "to insert into the database"
+        ):
+            txs_to_insert = []
 
-        for tx_hash in tx_hashes:
-            tx_id = hash_to_id[tx_hash]
-            tx_index = hash_to_tx[tx_hash].transaction_index
-            block_id = hash_to_tx[tx_hash].block_id
-            failed = hash_to_tx[tx_hash].receipt_status == 0
-            txs_to_insert.append(
-                Tx(
-                    block_id=block_id,
-                    tx_id=tx_id,
-                    tx_hash=tx_hash,
-                    tx_index=tx_index,
-                    failed=failed,
+            for tx_hash in tx_hashes:
+                tx_id = hash_to_id[tx_hash]
+                tx_index = hash_to_tx[tx_hash].transaction_index
+                block_id = hash_to_tx[tx_hash].block_id
+                failed = hash_to_tx[tx_hash].receipt_status == 0
+                txs_to_insert.append(
+                    Tx(
+                        block_id=block_id,
+                        tx_id=tx_id,
+                        tx_hash=tx_hash,
+                        tx_index=tx_index,
+                        failed=failed,
+                    )
                 )
+
+        with LoggerScope.debug(
+            logger, "Get entity transaction updates " "- traces and tokens"
+        ):
+            entity_transactions = []
+            entity_deltas = []
+
+            if currency == "TRX":
+                traces_s_filtered = only_call_traces(traces_s)  # successful and call
+            elif currency == "ETH":
+                traces_s_filtered = traces_s
+            else:
+                raise ValueError(f"Unknown currency {currency}")
+
+            entity_transactions += get_entity_transaction_updates_trace_token(
+                traces_s_filtered,
+                token_transfers,
+                hash_to_id,
+                address_hash_to_id,
+                rates,
             )
 
-        entity_transactions = []
-        entity_deltas = []
-
-        if currency == "TRX":
-            traces_s_filtered = only_call_traces(traces_s)  # successful and call
-        elif currency == "ETH":
-            traces_s_filtered = traces_s
-        else:
-            raise ValueError(f"Unknown currency {currency}")
-
-        """ Get entity transaction updates from traces and tokens"""
-        entity_transactions += get_entity_transaction_updates_trace_token(
-            traces_s_filtered, token_transfers, hash_to_id, address_hash_to_id, rates
-        )
-
-        """ Get entity updates from traces and tokens"""
-        entity_deltas += get_entity_updates_trace_token(
-            traces_s_filtered,
-            token_transfers,
-            reward_traces,
-            hash_to_id,
-            currency,
-            rates,
-        )
-
-        """ Get relation updates from traces and tokens"""
-        relation_updates_trace = [
-            relationdelta_from_trace(trace, rates, currency)
-            for trace in traces_s_filtered
-        ]
-        relation_updates_tokens = [
-            relationdelta_from_tokentransfer(tt, rates) for tt in token_transfers
-        ]
-        relation_updates = relation_updates_trace + relation_updates_tokens
-
-        # in eth we disregard the eth values because they are already in the traces
-        # in tron only traces that are not the initial transaction have values,
-        # so we still need to add the value from the transaction
-        """ Get entity and entity transaction updates from tranasactions (only tron)"""
-        if currency == "TRX":
-            entity_transactions_tx = get_entity_transactions_updates_tx(
-                transactions, hash_to_id, address_hash_to_id
-            )
-
-            entity_deltas_tx = get_entity_updates_tx(
-                transactions,
+        with LoggerScope.debug(logger, "Get entity updates - traces and tokens"):
+            entity_deltas += get_entity_updates_trace_token(
+                traces_s_filtered,
+                token_transfers,
+                reward_traces,
                 hash_to_id,
                 currency,
                 rates,
             )
 
-            entity_deltas += entity_deltas_tx
-
-            relation_updates_tx = [
-                relationdelta_from_transaction(tx, rates, currency)
-                for tx in transactions
-                if tx.from_address is not None
+        with LoggerScope.debug(logger, "Get relation updates - traces and tokens"):
+            relation_updates_trace = [
+                relationdelta_from_trace(trace, rates, currency)
+                for trace in traces_s_filtered
             ]
+            relation_updates_tokens = [
+                relationdelta_from_tokentransfer(tt, rates) for tt in token_transfers
+            ]
+            relation_updates = relation_updates_trace + relation_updates_tokens
 
-            entity_transactions += entity_transactions_tx
-            relation_updates += relation_updates_tx
+        with LoggerScope.debug(
+            logger,
+            "Get entity and entity transaction "
+            "updates from tranasactions (only tron)",
+        ):
+            # in eth we disregard the eth values because they are already in the traces
+            # in tron only traces that are not the initial transaction have values,
+            # so we still need to add the value from the transaction
+            if currency == "TRX":
+                entity_transactions_tx = get_entity_transactions_updates_tx(
+                    transactions, hash_to_id, address_hash_to_id
+                )
 
-        elif currency == "ETH":
-            relation_updates_tx = []
-        else:
-            raise ValueError(f"Unknown currency {currency}")
+                entity_deltas_tx = get_entity_updates_tx(
+                    transactions,
+                    hash_to_id,
+                    currency,
+                    rates,
+                )
 
-        """ Get balance updates"""
-        balance_updates = get_balance_updates(
-            relation_updates_trace,
-            relation_updates_tx,
-            relation_updates_tokens,
-            reward_traces,
-            transactions,
-            blocks,
-            address_hash_to_id,
-            currency,
-        )
+                entity_deltas += entity_deltas_tx
 
-        """ Combine all updates except the pure inserts into a delta object"""
-        dbdelta = DbDeltaAccount(
-            entity_deltas, entity_transactions, relation_updates, balance_updates
-        )
-        """ Group and merge deltas before merge with db deltas """
-        dbdelta = dbdelta.compress()
+                relation_updates_tx = [
+                    relationdelta_from_transaction(tx, rates, currency)
+                    for tx in transactions
+                    if tx.from_address is not None
+                ]
 
-        """ Query data from database"""
-        # Query outrelations
-        rel_to_query = [
+                entity_transactions += entity_transactions_tx
+                relation_updates += relation_updates_tx
+
+            elif currency == "ETH":
+                relation_updates_tx = []
+            else:
+                raise ValueError(f"Unknown currency {currency}")
+
+        with LoggerScope.debug(logger, "Get balance updates"):
+            """Get balance updates"""
+            balance_updates = get_balance_updates(
+                relation_updates_trace,
+                relation_updates_tx,
+                relation_updates_tokens,
+                reward_traces,
+                transactions,
+                blocks,
+                address_hash_to_id,
+                currency,
+            )
+
+        with LoggerScope.debug(logger, "Create dbdelta and compress"):
+            """Combine all updates except the pure inserts into a delta object"""
+            dbdelta = DbDeltaAccount(
+                entity_deltas, entity_transactions, relation_updates, balance_updates
+            )
+            """ Group and merge deltas before merge with db deltas """
+            dbdelta = dbdelta.compress()
+
+        with LoggerScope.debug(logger, "Query data from database"):
+            # Query outrelations
+            rel_to_query = [
+                (
+                    addresses_to_id__rows[update.src_identifier][0],
+                    addresses_to_id__rows[update.dst_identifier][0],
+                )
+                for update in dbdelta.relation_updates
+            ]
+            addr_outrelations_q = tdb.get_address_outrelations_async_batch_account(
+                rel_to_query
+            )
+            addr_outrelations = {
+                (update.src_identifier, update.dst_identifier): qr
+                for update, qr in zip(dbdelta.relation_updates, addr_outrelations_q)
+            }
+
+            # Query inrelations
+            rel_to_query = [
+                (
+                    addresses_to_id__rows[update.dst_identifier][0],
+                    addresses_to_id__rows[update.src_identifier][0],
+                )
+                for update in dbdelta.relation_updates
+            ]
+            addr_inrelations_q = tdb.get_address_inrelations_async_batch_account(
+                rel_to_query
+            )
+            addr_inrelations = {
+                (update.src_identifier, update.dst_identifier): qr
+                for update, qr in zip(dbdelta.relation_updates, addr_inrelations_q)
+            }
+
+            # Query balances of addresses
+            address_ids = [addresses_to_id__rows[address][0] for address in addresses]
+            addr_balances_q = (
+                tdb.get_balance_async_batch_account(  # could probably query less
+                    address_ids
+                )
+            )
+            addr_balances = {
+                addr_id: BalanceDelta.from_db(addr_id, qr.result_or_exc.all())
+                for addr_id, qr in zip(address_ids, addr_balances_q)
+            }
+
+        with LoggerScope.debug(logger, "Prepare changes"):
+            changes = []
+
+            """ Inserts of new transactions """
+            changes += prepare_txs_for_ingest(
+                txs_to_insert,
+                id_bucket_size,
+                block_bucket_size,
+                get_tx_prefix,
+            )
+
+            """ Merging max secondary ID """
+            changes += self.prepare_and_query_max_secondary_id(
+                dbdelta.relation_updates,
+                dbdelta.new_entity_txs,
+                id_bucket_size,
+                address_hash_to_id,
+            )
+
+            """ Merging entity transactions """
+            changes += prepare_entity_txs_for_ingest(
+                dbdelta.new_entity_txs, id_bucket_size, currency
+            )
+
+            """ Merging balances"""
+            changes += prepare_balances_for_ingest(
+                dbdelta.balance_updates, id_bucket_size, addr_balances
+            )
+
+            """ Merging relations deltas """
             (
-                addresses_to_id__rows[update.src_identifier][0],
-                addresses_to_id__rows[update.dst_identifier][0],
+                changes_relations,
+                new_rels_in,
+                new_rels_out,
+            ) = prepare_relations_for_ingest(
+                dbdelta.relation_updates,
+                address_hash_to_id,
+                addr_inrelations,
+                addr_outrelations,
+                id_bucket_size,
             )
-            for update in dbdelta.relation_updates
-        ]
-        addr_outrelations_q = tdb.get_address_outgoing_relations_async_batch_account(
-            rel_to_query
-        )
-        addr_outrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(dbdelta.relation_updates, addr_outrelations_q)
-        }
+            changes += changes_relations
 
-        # Query inrelations
-        rel_to_query = [
-            (
-                addresses_to_id__rows[update.dst_identifier][0],
-                addresses_to_id__rows[update.src_identifier][0],
+            """ Merging entity deltas """
+            entity_changes, nr_new_entities = prepare_entities_for_ingest(
+                dbdelta.entity_updates,
+                address_hash_to_id,
+                bytes_to_row_address,
+                new_rels_in,
+                new_rels_out,
+                id_bucket_size,
+                get_address_prefix,
             )
-            for update in dbdelta.relation_updates
-        ]
-        addr_inrelations_q = tdb.get_address_incoming_relations_async_batch_account(
-            rel_to_query
-        )
-        addr_inrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(dbdelta.relation_updates, addr_inrelations_q)
-        }
+            changes += entity_changes
 
-        # Query balances of addresses
-        address_ids = [addresses_to_id__rows[address][0] for address in addresses]
-        addr_balances_q = (
-            tdb.get_balance_async_batch_account(  # could probably query less
-                address_ids
-            )
-        )
-        addr_balances = {
-            addr_id: BalanceDelta.from_db(addr_id, qr.result_or_exc.all())
-            for addr_id, qr in zip(address_ids, addr_balances_q)
-        }
-
-        lg.debug("Prepare data.")
-
-        """ Prepare changes"""
-        changes = []
-
-        """ Inserts of new transactions """
-        changes += prepare_txs_for_ingest(
-            txs_to_insert,
-            id_bucket_size,
-            block_bucket_size,
-            get_tx_prefix,
-        )
-
-        """ Merging max secondary ID """
-        changes += self.prepare_and_query_max_secondary_id(
-            dbdelta.relation_updates,
-            dbdelta.new_entity_txs,
-            id_bucket_size,
-            address_hash_to_id,
-        )
-
-        """ Creating new transactions """
-        changes += prepare_entity_txs_for_ingest(
-            dbdelta.new_entity_txs, id_bucket_size, currency
-        )
-
-        """ Merging balances"""
-        changes += prepare_balances_for_ingest(
-            dbdelta.balance_updates, id_bucket_size, addr_balances
-        )
-
-        """ Merging relations deltas """
-        (
-            changes_relations,
-            new_rels_in,
-            new_rels_out,
-        ) = prepare_relations_for_ingest(
-            dbdelta.relation_updates,
-            address_hash_to_id,
-            addr_inrelations,
-            addr_outrelations,
-            id_bucket_size,
-        )
-        changes += changes_relations
-
-        """ Merging entity deltas """
-        entity_changes, nr_new_entities = prepare_entities_for_ingest(
-            dbdelta.entity_updates,
-            address_hash_to_id,
-            bytes_to_row_address,
-            new_rels_in,
-            new_rels_out,
-            id_bucket_size,
-            get_address_prefix,
-        )
-        changes += entity_changes
-
-        assert sum(new_rels_in.values()) == sum(new_rels_out.values())
-        nr_new_rels = sum(new_rels_in.values())
-        nr_new_entities_created = nr_new_entities
+            assert sum(new_rels_in.values()) == sum(new_rels_out.values())
+            nr_new_rels = sum(new_rels_in.values())
+            nr_new_entities_created = nr_new_entities
 
         return (
             changes,

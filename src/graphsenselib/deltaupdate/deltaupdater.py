@@ -145,6 +145,8 @@ def update_transformed(
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
                 return b[-1]
 
+        updater.clear_cache()
+
     return end_block
 
 
@@ -230,6 +232,7 @@ def update(
                         ),
                         batch_size=write_batch_size,
                     )
+
                 elif end_block == start_block or start_block - 1 == end_block:
                     logger.info("Nothing to do. Data is up to date.")
                 else:
