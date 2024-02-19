@@ -1,12 +1,15 @@
+from graphsenselib.deltaupdate.update.utxo.accountlegacy import (
+    UpdateStrategyAccountLegacy,
+)
+from graphsenselib.deltaupdate.update.utxo.utxolegacy import UpdateStrategyUtxoLegacy
+
 from ...config import currency_to_schema_type
 from ...config.config import DeltaUpdaterConfig
 from ...db import AnalyticsDb
 from .abstractupdater import AbstractUpdateStrategy
 from .account import UpdateStrategyAccount
-from .accountlegacy import UpdateStrategyAccountLegacy
 from .generic import ApplicationStrategy
 from .utxo import UpdateStrategyUtxo
-from .utxolegacy import UpdateStrategyUtxoLegacy
 
 
 class UpdaterFactory:

@@ -6,14 +6,14 @@ from typing import List
 
 from cassandra.cqlengine.usertype import UserType
 
-from ...utils import group_by, groupby_property
-from .generic import (
+from graphsenselib.deltaupdate.update.generic import (
     DeltaScalar,
     DeltaUpdate,
     DeltaValue,
     merge_asset_dicts,
     minusone_respecting_function,
 )
+from graphsenselib.utils import group_by, groupby_property
 
 
 @dataclass

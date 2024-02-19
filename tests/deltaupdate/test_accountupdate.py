@@ -1,8 +1,9 @@
 import pickle
 
-from graphsenselib.deltaupdate.update.deltahelpers import get_sorted_unique_addresses
-from graphsenselib.deltaupdate.update.tokens import ERC20Decoder, TokenTransfer
-from graphsenselib.utils.adapters import (
+from graphsenselib.deltaupdate.update.account.createdeltas import (
+    get_sorted_unique_addresses,
+)
+from graphsenselib.deltaupdate.update.account.modelsraw import (
     AccountBlockAdapter,
     AccountLogAdapter,
     AccountTransactionAdapter,
@@ -10,6 +11,7 @@ from graphsenselib.utils.adapters import (
     TrxTraceAdapter,
     TrxTransactionAdapter,
 )
+from graphsenselib.deltaupdate.update.account.tokens import ERC20Decoder, TokenTransfer
 
 currencies = ["trx", "eth"]
 folder = "tests/deltaupdate/resources/account"
