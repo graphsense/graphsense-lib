@@ -1,5 +1,5 @@
 from graphsenselib.deltaupdate.update.generic import DbDelta
-from graphsenselib.deltaupdate.update.utxo import dbdelta_from_utxo_transaction
+from graphsenselib.deltaupdate.update.utxo.update import dbdelta_from_utxo_transaction
 from graphsenselib.utils import group_by, groupby_property
 from graphsenselib.utils.utxo import get_unique_addresses_from_transaction
 

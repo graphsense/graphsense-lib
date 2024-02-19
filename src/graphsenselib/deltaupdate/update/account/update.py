@@ -5,19 +5,39 @@ from typing import Dict, List, Tuple
 import pandas as pd
 from diskcache import Cache
 
-from graphsenselib.deltaupdate.update.tokens import ERC20Decoder
-from graphsenselib.utils.cache import TableBasedCache
-
-from ...config.config import DeltaUpdaterConfig
-from ...db import DbChange
-from ...schema.schema import GraphsenseSchemas
-from ...utils import DataObject as MutableNamedTuple
-from ...utils import no_nones
-from ...utils.account import (
-    get_id_group_with_secondary_addresstransactions,
-    get_id_group_with_secondary_relations,
+from graphsenselib.config.config import DeltaUpdaterConfig
+from graphsenselib.db import DbChange
+from graphsenselib.deltaupdate.update.abstractupdater import (
+    TABLE_NAME_DELTA_HISTORY,
+    UpdateStrategy,
 )
-from ...utils.adapters import (
+from graphsenselib.deltaupdate.update.account.createchanges import (
+    prepare_balances_for_ingest,
+    prepare_entities_for_ingest,
+    prepare_entity_txs_for_ingest,
+    prepare_relations_for_ingest,
+    prepare_txs_for_ingest,
+)
+from graphsenselib.deltaupdate.update.account.createdeltas import (
+    get_balance_deltas,
+    get_bookkeeping_changes,
+    get_entity_transaction_updates_trace_token,
+    get_entity_transactions_updates_tx,
+    get_entity_updates_trace_token,
+    get_entity_updates_tx,
+    get_sorted_unique_addresses,
+    only_call_traces,
+    relationdelta_from_tokentransfer,
+    relationdelta_from_trace,
+    relationdelta_from_transaction,
+)
+from graphsenselib.deltaupdate.update.account.modelsdelta import (
+    BalanceDelta,
+    DbDeltaAccount,
+    RawEntityTxAccount,
+    RelationDeltaAccount,
+)
+from graphsenselib.deltaupdate.update.account.modelsraw import (
     AccountBlockAdapter,
     AccountLogAdapter,
     AccountTransactionAdapter,
@@ -25,39 +45,19 @@ from ...utils.adapters import (
     TrxTraceAdapter,
     TrxTransactionAdapter,
 )
-from ...utils.errorhandling import CrashRecoverer
-from ...utils.logging import LoggerScope
-from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
-from .deltahelpers import (
-    get_bookkeeping_changes,
-    get_sorted_unique_addresses,
-    only_call_traces,
-    relationdelta_from_tokentransfer,
-    relationdelta_from_trace,
-    relationdelta_from_transaction,
+from graphsenselib.deltaupdate.update.account.tokens import ERC20Decoder
+from graphsenselib.deltaupdate.update.generic import ApplicationStrategy, Tx
+from graphsenselib.deltaupdate.update.utxo.update import apply_changes
+from graphsenselib.schema.schema import GraphsenseSchemas
+from graphsenselib.utils import DataObject as MutableNamedTuple
+from graphsenselib.utils import no_nones
+from graphsenselib.utils.account import (
+    get_id_group_with_secondary_addresstransactions,
+    get_id_group_with_secondary_relations,
 )
-from .deltatochanges import (
-    prepare_balances_for_ingest,
-    prepare_entities_for_ingest,
-    prepare_entity_txs_for_ingest,
-    prepare_relations_for_ingest,
-    prepare_txs_for_ingest,
-)
-from .generic import ApplicationStrategy, Tx
-from .modelsaccount import (
-    BalanceDelta,
-    DbDeltaAccount,
-    RawEntityTxAccount,
-    RelationDeltaAccount,
-)
-from .updates import (
-    get_balance_updates,
-    get_entity_transaction_updates_trace_token,
-    get_entity_transactions_updates_tx,
-    get_entity_updates_trace_token,
-    get_entity_updates_tx,
-)
-from .utxo import apply_changes
+from graphsenselib.utils.cache import TableBasedCache
+from graphsenselib.utils.errorhandling import CrashRecoverer
+from graphsenselib.utils.logging import LoggerScope
 
 logger = logging.getLogger(__name__)
 
@@ -497,7 +497,7 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         with LoggerScope.debug(logger, "Get balance updates"):
             """Get balance updates"""
-            balance_updates = get_balance_updates(
+            balance_updates = get_balance_deltas(
                 relation_updates_trace,
                 relation_updates_tx,
                 relation_updates_tokens,

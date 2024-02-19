@@ -2,18 +2,18 @@ import logging
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Tuple
 
-from ...db import DbChange
-from ...utils.account import (
-    get_id_group,
-    get_id_group_with_secondary_addresstransactions,
-    get_id_group_with_secondary_relations,
-)
-from .generic import DeltaValue, Tx
-from .modelsaccount import (
+from graphsenselib.db import DbChange
+from graphsenselib.deltaupdate.update.account.modelsdelta import (
     BalanceDelta,
     EntityDeltaAccount,
     RawEntityTxAccount,
     RelationDeltaAccount,
+)
+from graphsenselib.deltaupdate.update.generic import DeltaValue, Tx
+from graphsenselib.utils.account import (
+    get_id_group,
+    get_id_group_with_secondary_addresstransactions,
+    get_id_group_with_secondary_relations,
 )
 
 logger = logging.getLogger(__name__)
