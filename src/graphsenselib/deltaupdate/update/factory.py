@@ -1,3 +1,4 @@
+from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
 from graphsenselib.deltaupdate.update.utxo.accountlegacy import (
     UpdateStrategyAccountLegacy,
 )
@@ -8,7 +9,6 @@ from ...config.config import DeltaUpdaterConfig
 from ...db import AnalyticsDb
 from .abstractupdater import AbstractUpdateStrategy
 from .account import UpdateStrategyAccount
-from .generic import ApplicationStrategy
 from .utxo import UpdateStrategyUtxo
 
 
