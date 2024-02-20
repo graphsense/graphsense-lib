@@ -113,6 +113,9 @@ class UpdateStrategyAccount(UpdateStrategy):
         logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
 
+    def consume_transaction_id_composite(self, block_id, transaction_index):
+        return (block_id << 32) + transaction_index
+
     def clear_cache(self):
         cache = Cache(self.du_config.fs_cache.directory)
         cache.clear()
@@ -303,22 +306,17 @@ class UpdateStrategyAccount(UpdateStrategy):
             transactions = [tx for tx in transactions if tx.to_address is not None]
             transactions = [tx for tx in transactions if tx.receipt_status == 1]
 
-            consume_transaction_id_trx = (
-                lambda block_id, transaction_index: (block_id << 32) + transaction_index
-            )
-            hash_to_id = {
-                tx.tx_hash: consume_transaction_id_trx(
-                    tx.block_id, tx.transaction_index
-                )
-                for tx in transactions
-            }
-
         elif currency == "ETH":
-            hash_to_id = {
-                tx.tx_hash: self.consume_transaction_id() for tx in transactions
-            }
+            pass
         else:
             raise ValueError(f"Unknown currency {currency}")
+
+        hash_to_id = {
+            tx.tx_hash: self.consume_transaction_id_composite(
+                tx.block_id, tx.transaction_index
+            )
+            for tx in transactions
+        }
 
         tx_hashes = [tx.tx_hash for tx in transactions]
         reward_traces = [t for t in traces if t.tx_hash is None]
