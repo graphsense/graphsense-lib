@@ -12,6 +12,7 @@ from graphsenselib.deltaupdate.update.abstractupdater import (
     UpdateStrategy,
 )
 from graphsenselib.deltaupdate.update.account.createchanges import (
+    get_bookkeeping_changes,
     prepare_balances_for_ingest,
     prepare_entities_for_ingest,
     prepare_entity_txs_for_ingest,
@@ -20,7 +21,6 @@ from graphsenselib.deltaupdate.update.account.createchanges import (
 )
 from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_balance_deltas,
-    get_bookkeeping_changes,
     get_entity_transaction_updates_trace_token,
     get_entity_transactions_updates_tx,
     get_entity_updates_trace_token,
@@ -284,10 +284,10 @@ class UpdateStrategyAccount(UpdateStrategy):
         currency = self.currency.upper()
         id_bucket_size = self._db.transformed.get_address_id_bucket_size()
         block_bucket_size = self._db.transformed.get_block_id_bucket_size()
-        addrtxs_bucket_size = (
+        block_bucket_size_address_txs = (
             self._db.transformed.get_address_transactions_id_bucket_size()
         )
-        relations_nbuckets = self._db.transformed.get_addressrelations_nbuckets()
+        relations_nbuckets = self._db.transformed.get_addressrelations_ids_nbuckets()
         tdb = self._db.transformed
 
         def get_next_address_ids_with_aliases(address: str):
@@ -583,7 +583,10 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             """ Merging entity transactions """
             changes += prepare_entity_txs_for_ingest(
-                dbdelta.new_entity_txs, id_bucket_size, currency, addrtxs_bucket_size
+                dbdelta.new_entity_txs,
+                id_bucket_size,
+                currency,
+                block_bucket_size_address_txs,
             )
 
             """ Merging balances"""
@@ -635,7 +638,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         id_bucket_size: int,
         address_hash_to_id: Dict[bytes, int],
     ):
-        relations_nbuckets = self._db.transformed.get_addressrelations_nbuckets()
+        relations_nbuckets = self._db.transformed.get_addressrelations_ids_nbuckets()
 
         def max_secondary_dict_from_db(df, id_group_col, grp_col):
             # query max secondary ids from database
@@ -677,7 +680,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             ]
             return changes
 
-        addrtxs_bucket_size = (
+        block_bucket_size_address_txs = (
             self._db.transformed.get_address_transactions_id_bucket_size()
         )
         """ secondary group id for address transactions and address in/out relations"""
@@ -685,7 +688,10 @@ class UpdateStrategyAccount(UpdateStrategy):
         grp_col, sec_col = "address_id_group", "address_id_secondary_group"
         secondary_group_data = [
             get_id_group_with_secondary_addresstransactions(
-                tx.identifier, id_bucket_size, tx.block_id, addrtxs_bucket_size
+                tx.identifier,
+                id_bucket_size,
+                tx.block_id,
+                block_bucket_size_address_txs,
             )
             for tx in new_entity_txs
         ]

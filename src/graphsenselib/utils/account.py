@@ -155,10 +155,10 @@ def get_id_group(id_, bucket_size):
 
 
 def get_id_group_with_secondary_addresstransactions(
-    iid, bucket_size, block_id, addrtxs_bucketsize
+    iid, bucket_size, block_id, block_bucket_size_address_txs
 ):
     address_id_group = get_id_group(iid, bucket_size)
-    address_id_secondary_group = block_id // addrtxs_bucketsize
+    address_id_secondary_group = block_id // block_bucket_size_address_txs
     return address_id_group, address_id_secondary_group
 
 
