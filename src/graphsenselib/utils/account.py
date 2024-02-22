@@ -154,13 +154,17 @@ def get_id_group(id_, bucket_size):
     return gid
 
 
-def get_id_group_with_secondary_addresstransactions(iid, bucket_size, block_id):
+def get_id_group_with_secondary_addresstransactions(
+    iid, bucket_size, block_id, addrtxs_bucketsize
+):
     address_id_group = get_id_group(iid, bucket_size)
-    address_id_secondary_group = block_id // 150_000  # todo make this adaptable
+    address_id_secondary_group = block_id // addrtxs_bucketsize
     return address_id_group, address_id_secondary_group
 
 
-def get_id_group_with_secondary_relations(iid, id_for_secondary, bucket_size):
+def get_id_group_with_secondary_relations(
+    iid, id_for_secondary, bucket_size, relations_nbuckets
+):
     address_id_group = get_id_group(iid, bucket_size)
-    address_id_secondary_group = id_for_secondary % 100  # todo make this adaptable
+    address_id_secondary_group = id_for_secondary % relations_nbuckets
     return address_id_group, address_id_secondary_group

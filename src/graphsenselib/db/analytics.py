@@ -645,6 +645,14 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         config = self.get_configuration()
         return int(config.bucket_size) if config is not None else None
 
+    def get_address_transactions_id_bucket_size(self) -> Optional[int]:
+        config = self.get_configuration()
+        return int(config.addrtxs_bucket_size) if config is not None else None
+
+    def get_addressrelations_nbuckets(self) -> Optional[int]:
+        config = self.get_configuration()
+        return int(config.relations_nbuckets) if config is not None else None
+
     def get_cluster_id_bucket_size(self) -> Optional[int]:
         return self.get_address_id_bucket_size()
 
@@ -900,11 +908,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         prep = self._db.get_prepared_statement(stmt)
 
         bucketsize = self.get_address_id_bucket_size()
+        relations_nbuckets = self.get_addressrelations_nbuckets()
 
         bstmts = []
         for dst_address, src_address in rel_ids:
             address_group, secondary_group = get_id_group_with_secondary_relations(
-                dst_address, src_address, bucketsize
+                dst_address, src_address, bucketsize, relations_nbuckets
             )
             bstmts.append(
                 prep.bind(
@@ -1008,11 +1017,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         )
         prep = self._db.get_prepared_statement(stmt)
         bucketsize = self.get_address_id_bucket_size()
+        relations_nbuckets = self.get_addressrelations_nbuckets()
 
         bstmts = []
         for src_address, dst_address in rel_ids:
             address_group, secondary_group = get_id_group_with_secondary_relations(
-                src_address, dst_address, bucketsize
+                src_address, dst_address, bucketsize, relations_nbuckets
             )
             bstmts.append(
                 prep.bind(

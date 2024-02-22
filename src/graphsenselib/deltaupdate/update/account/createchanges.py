@@ -113,6 +113,7 @@ def prepare_relations_for_ingest(
     inrelations: dict,
     outrelations: dict,
     id_bucket_size: int,
+    relations_nbuckets: int,
 ) -> Tuple[List[DbChange], dict, dict]:
     new_relations_in = defaultdict(int)
     new_relations_out = defaultdict(int)
@@ -133,10 +134,10 @@ def prepare_relations_for_ingest(
         id_dst = hash_to_id[relations_update.dst_identifier]
 
         src_group, src_secondary = get_id_group_with_secondary_relations(
-            id_src, id_dst, id_bucket_size
+            id_src, id_dst, id_bucket_size, relations_nbuckets
         )
         dst_group, dst_secondary = get_id_group_with_secondary_relations(
-            id_dst, id_src, id_bucket_size
+            id_dst, id_src, id_bucket_size, relations_nbuckets
         )
 
         if outr is None:
@@ -328,7 +329,10 @@ def prepare_entities_for_ingest(
 
 
 def prepare_entity_txs_for_ingest(
-    delta: List[RawEntityTxAccount], id_bucket_size: int, currency: str
+    delta: List[RawEntityTxAccount],
+    id_bucket_size: int,
+    currency: str,
+    addrtxs_bucketsize: int,
 ) -> List[DbChange]:
     """
     Creating new address transaction
@@ -342,7 +346,7 @@ def prepare_entity_txs_for_ingest(
                 address_id_group,
                 address_id_secondary_group,
             ) = get_id_group_with_secondary_addresstransactions(
-                ident, id_bucket_size, atx.block_id
+                ident, id_bucket_size, atx.block_id, addrtxs_bucketsize
             )
             chng = DbChange.new(
                 table="address_transactions",
@@ -363,7 +367,7 @@ def prepare_entity_txs_for_ingest(
                 address_id_group,
                 address_id_secondary_group,
             ) = get_id_group_with_secondary_addresstransactions(
-                ident, id_bucket_size, atx.block_id
+                ident, id_bucket_size, atx.block_id, addrtxs_bucketsize
             )
             chng = DbChange.new(
                 table="address_transactions",
