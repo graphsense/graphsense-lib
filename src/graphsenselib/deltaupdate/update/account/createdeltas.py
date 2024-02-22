@@ -204,7 +204,7 @@ def balance_updates_traces_txs(
         "delegatecall",
         "callcode",
         "staticcall",
-    ]  # todo combine with trx logic somehow, now its scattered
+    ]
     filtered_updates = [
         update for update in relation_updates if update.type not in excludedCallTypes
     ]

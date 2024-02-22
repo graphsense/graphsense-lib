@@ -229,7 +229,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             blocks = block_adapter.dicts_to_dataclasses(blocks)
 
             changes = []
-            print(batch)  # todo remove
             if 0 in [len(blocks), len(transactions)]:
                 logger.debug("No blocks to process. Might not be in the cache.")
                 return  # no blocks to process
@@ -285,6 +284,10 @@ class UpdateStrategyAccount(UpdateStrategy):
         currency = self.currency.upper()
         id_bucket_size = self._db.transformed.get_address_id_bucket_size()
         block_bucket_size = self._db.transformed.get_block_id_bucket_size()
+        addrtxs_bucket_size = (
+            self._db.transformed.get_address_transactions_id_bucket_size()
+        )
+        relations_nbuckets = self._db.transformed.get_addressrelations_nbuckets()
         tdb = self._db.transformed
 
         def get_next_address_ids_with_aliases(address: str):
@@ -580,7 +583,7 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             """ Merging entity transactions """
             changes += prepare_entity_txs_for_ingest(
-                dbdelta.new_entity_txs, id_bucket_size, currency
+                dbdelta.new_entity_txs, id_bucket_size, currency, addrtxs_bucket_size
             )
 
             """ Merging balances"""
@@ -599,6 +602,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 addr_inrelations,
                 addr_outrelations,
                 id_bucket_size,
+                relations_nbuckets,
             )
             changes += changes_relations
 
@@ -631,6 +635,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         id_bucket_size: int,
         address_hash_to_id: Dict[bytes, int],
     ):
+        relations_nbuckets = self._db.transformed.get_addressrelations_nbuckets()
+
         def max_secondary_dict_from_db(df, id_group_col, grp_col):
             # query max secondary ids from database
             unique_address_id_groups = list(df[grp_col])
@@ -671,12 +677,15 @@ class UpdateStrategyAccount(UpdateStrategy):
             ]
             return changes
 
+        addrtxs_bucket_size = (
+            self._db.transformed.get_address_transactions_id_bucket_size()
+        )
         """ secondary group id for address transactions and address in/out relations"""
         tablename = "address_transactions_secondary_ids"
         grp_col, sec_col = "address_id_group", "address_id_secondary_group"
         secondary_group_data = [
             get_id_group_with_secondary_addresstransactions(
-                tx.identifier, id_bucket_size, tx.block_id
+                tx.identifier, id_bucket_size, tx.block_id, addrtxs_bucket_size
             )
             for tx in new_entity_txs
         ]
@@ -692,6 +701,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 address_hash_to_id[tx.src_identifier],
                 address_hash_to_id[tx.dst_identifier],
                 id_bucket_size,
+                relations_nbuckets,
             )
             for tx in relation_updates
         ]
@@ -707,6 +717,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 address_hash_to_id[tx.dst_identifier],
                 address_hash_to_id[tx.src_identifier],
                 id_bucket_size,
+                relations_nbuckets,
             )
             for tx in relation_updates
         ]

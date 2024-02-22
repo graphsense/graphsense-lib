@@ -47,7 +47,7 @@ class BlockchainAdapter:
 class Trace(BaseModel):
     block_id: int
     tx_hash: Union[bytes, None]
-    trace_index: bytes
+    trace_index: int
     from_address: Union[bytes, None]
     to_address: bytes
     value: int
@@ -59,7 +59,7 @@ class Transaction(BaseModel):
     transaction_index: int
     tx_hash: bytes
     from_address: Union[bytes, None]
-    to_address: bytes
+    to_address: Union[bytes, None]
     value: int
     gas_price: int
     transaction_type: int
