@@ -179,8 +179,6 @@ def prepare_relations_for_ingest(
             nv = DeltaValue.from_db(outr.value).merge(relations_update.value)
 
             nv_token = outr.token_values
-            # todo adding the dicts together,
-            #  maybe a dedicated datastrucure would be better
             nv_token = nv_token if nv_token is not None else {}
             new_token = relations_update.token_values
             keys = set(nv_token.keys()).union(new_token.keys())
