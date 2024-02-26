@@ -49,7 +49,7 @@ class Trace(BaseModel):
     tx_hash: Union[bytes, None]
     trace_index: int
     from_address: Union[bytes, None]
-    to_address: bytes
+    to_address: Union[bytes, None]
     value: int
     call_type: Union[str, None]
     status: int
