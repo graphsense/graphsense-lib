@@ -41,7 +41,11 @@ from graphsenselib.deltaupdate.update.account.modelsraw import (
     AccountBlockAdapter,
     AccountLogAdapter,
     AccountTransactionAdapter,
+    Block,
     EthTraceAdapter,
+    Log,
+    Trace,
+    Transaction,
     TrxTraceAdapter,
     TrxTransactionAdapter,
 )
@@ -275,10 +279,10 @@ class UpdateStrategyAccount(UpdateStrategy):
 
     def get_changes(
         self,
-        transactions: List,
-        traces: List,
-        logs: List,
-        blocks: List,
+        transactions: List[Transaction],
+        traces: List[Trace],
+        logs: List[Log],
+        blocks: List[Block],
         rates: Dict[int, List],
     ) -> Tuple[List[DbChange], int, int]:
         currency = self.currency.upper()
@@ -399,9 +403,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 address: id_row[0] for address, id_row in addresses_to_id__rows.items()
             }
 
-        with LoggerScope.debug(
-            logger, "Get transactions " "to insert into the database"
-        ):
+        with LoggerScope.debug(logger, "Get transactions to insert into the database"):
             txs_to_insert = []
 
             for tx_hash in tx_hashes:
@@ -420,7 +422,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 )
 
         with LoggerScope.debug(
-            logger, "Get entity transaction updates " "- traces and tokens"
+            logger, "Get entity transaction updates - traces and tokens"
         ):
             entity_transactions = []
             entity_deltas = []

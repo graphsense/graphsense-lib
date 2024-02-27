@@ -143,9 +143,6 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self._nr_new_transactions = 0
         self._highest_address_id = db.transformed.get_highest_address_id() or 0
         self._highest_cluster_id = db.transformed.get_highest_cluster_id() or 1
-        self._highest_transaction_id = (  # todo
-            db.transformed.get_highest_transaction_id() or 0
-        )
         self.forward_fill_rates = forward_fill_rates
 
     def get_forward_fill_rate(self):
@@ -179,11 +176,6 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self._highest_address_id += 1
         self._nr_new_addresses += 1
         return self._highest_address_id
-
-    def consume_transaction_id(self):
-        self._highest_transaction_id += 1
-        self._nr_new_transactions += 1
-        return self._highest_transaction_id
 
     def consume_cluster_id(self):
         self._highest_cluster_id += 1

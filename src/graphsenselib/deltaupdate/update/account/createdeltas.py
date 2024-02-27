@@ -12,8 +12,9 @@ from graphsenselib.deltaupdate.update.account.modelsdelta import (
     RawEntityTxAccount,
     RelationDeltaAccount,
 )
+from graphsenselib.deltaupdate.update.account.modelsraw import Block, Trace, Transaction
 from graphsenselib.deltaupdate.update.account.tokens import TokenTransfer
-from graphsenselib.deltaupdate.update.generic import DeltaScalar, DeltaValue, Tx
+from graphsenselib.deltaupdate.update.generic import DeltaScalar, DeltaValue
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,31 @@ class TxReference(UserType):
 
 def only_call_traces(traces: List) -> List:
     return [trace for trace in traces if trace.call_type == "call"]
+
+
+def get_prices(
+    value, decimals, block_rates, usd_equivalent, coin_equivalent
+) -> List[int]:
+    euro_per_eth = block_rates[0]
+    dollar_per_eth = block_rates[1]
+    dollar_per_euro = dollar_per_eth / euro_per_eth
+
+    if usd_equivalent == 1:
+        dollar_value = value / 10**decimals
+    elif coin_equivalent == 1:
+        dollar_value = value / 10**decimals * dollar_per_eth
+    else:
+        raise Exception(
+            "Unknown price type. only native coin and dollar equivalent supported atm"
+        )
+
+    euro_value = dollar_value / dollar_per_euro
+    return [euro_value, dollar_value]
+
+
+def get_prices_coin(value, currency, block_rates):
+    coin_decimals = currency_to_decimals[currency]
+    return get_prices(value, coin_decimals, block_rates, 0, 1)
 
 
 def get_entitytx_from_tokentransfer(
@@ -75,7 +101,7 @@ def get_entitytx_from_tokentransfer(
 
 
 def get_entitytx_from_transaction(
-    tx, is_outgoing, hash_to_id, address_hash_to_id
+    tx: Transaction, is_outgoing, hash_to_id, address_hash_to_id
 ) -> RawEntityTxAccount:
     tx_id = hash_to_id[tx.tx_hash]
     address_hash = tx.from_address if is_outgoing else tx.to_address
@@ -98,31 +124,6 @@ def get_entitytx_from_transaction(
         block_id=tx.block_id,
     )
     return reta
-
-
-def get_prices(
-    value, decimals, block_rates, usd_equivalent, coin_equivalent
-) -> List[int]:
-    euro_per_eth = block_rates[0]
-    dollar_per_eth = block_rates[1]
-    dollar_per_euro = dollar_per_eth / euro_per_eth
-
-    if usd_equivalent == 1:
-        dollar_value = value / 10**decimals
-    elif coin_equivalent == 1:
-        dollar_value = value / 10**decimals * dollar_per_eth
-    else:
-        raise Exception(
-            "Unknown price type. only native coin and dollar equivalent supported atm"
-        )
-
-    euro_value = dollar_value / dollar_per_euro
-    return [euro_value, dollar_value]
-
-
-def get_prices_coin(value, currency, block_rates):
-    coin_decimals = currency_to_decimals[currency]
-    return get_prices(value, coin_decimals, block_rates, 0, 1)
 
 
 def balance_updates_traces_txs(
@@ -178,7 +179,7 @@ def balance_updates_tokens(
 
 
 def get_entitytx_from_trace(
-    trace, is_outgoing, hash_to_id, address_hash_to_id
+    trace: Trace, is_outgoing: bool, hash_to_id: dict, address_hash_to_id: dict
 ) -> RawEntityTxAccount:
     tx_id = hash_to_id[trace.tx_hash]
     address_hash = trace.from_address if is_outgoing else trace.to_address
@@ -203,7 +204,11 @@ def get_entitytx_from_trace(
 
 
 def get_entitydelta_from_trace(
-    trace, is_outgoing, rates, hash_to_id, currency
+    trace: Trace,
+    is_outgoing: bool,
+    rates: Dict[int, Tuple[float, float]],
+    hash_to_id: dict,
+    currency: str,
 ) -> EntityDeltaAccount:
     identifier = trace.from_address if is_outgoing else trace.to_address
     total_received_value = 0 if is_outgoing else trace.value
@@ -251,7 +256,10 @@ def get_entitydelta_from_trace(
 
 
 def get_entitydelta_from_tokentransfer(
-    tokentransfer, is_outgoing, rates, hash_to_id
+    tokentransfer: TokenTransfer,
+    is_outgoing: bool,
+    rates: Dict[int, Tuple[float, float]],
+    hash_to_id: dict,
 ) -> EntityDeltaAccount:
     identifier = tokentransfer.from_address if is_outgoing else tokentransfer.to_address
 
@@ -292,8 +300,8 @@ def get_entitydelta_from_tokentransfer(
 
 
 def get_entitydelta_from_transaction(
-    tx,
-    is_outgoing,
+    tx: Transaction,
+    is_outgoing: bool,
     rates: Dict[int, Tuple[float, float]],
     hash_to_id: Dict[str, int],
     currency: str,
@@ -338,7 +346,7 @@ def get_entitydelta_from_transaction(
 
 
 def relationdelta_from_trace(
-    trace, rates: Dict[int, Tuple[float, float]], currency: str
+    trace: Trace, rates: Dict[int, Tuple[float, float]], currency: str
 ) -> RelationDeltaAccount:
     fadr, tadr = trace.from_address, trace.to_address
     value = DeltaValue(
@@ -358,7 +366,7 @@ def relationdelta_from_trace(
 
 
 def relationdelta_from_transaction(
-    tx: Tx, rates: Dict[int, Tuple[float, float]], currency: str
+    tx: Transaction, rates: Dict[int, Tuple[float, float]], currency: str
 ) -> RelationDeltaAccount:
     iadr, oadr = tx.from_address, tx.to_address
     value = DeltaValue(
@@ -404,8 +412,11 @@ def relationdelta_from_tokentransfer(
 
 
 def get_sorted_unique_addresses(
-    traces_s: list, reward_traces: list, token_transfers: list, transactions: list
-):
+    traces_s: List[Trace],
+    reward_traces: List[Trace],
+    token_transfers: List[TokenTransfer],
+    transactions: List[Transaction],
+) -> pd.Series:
     addresses_sorting_df_to_tokens = [
         {
             "address": obj.to_address,
@@ -496,8 +507,8 @@ def get_sorted_unique_addresses(
 
 
 def get_entity_transaction_updates_trace_token(
-    traces_s_filtered: list,
-    token_transfers: list,
+    traces_s_filtered: List[Trace],
+    token_transfers: List[TokenTransfer],
     hash_to_id: dict,
     address_hash_to_id: dict,
     rates: dict,
@@ -530,9 +541,9 @@ def get_entity_transaction_updates_trace_token(
 
 
 def get_entity_updates_trace_token(
-    traces_s_filtered: list,
-    token_transfers: list,
-    reward_traces: list,
+    traces_s_filtered: List[Trace],
+    token_transfers: List[TokenTransfer],
+    reward_traces: List[Trace],
     hash_to_id: dict,
     currency: str,
     rates: dict,
@@ -564,7 +575,9 @@ def get_entity_updates_trace_token(
 
 
 def get_entity_transactions_updates_tx(
-    transactions: List, hash_to_id: Dict[str, int], address_hash_to_id: Dict[bytes, int]
+    transactions: List[Transaction],
+    hash_to_id: Dict[str, int],
+    address_hash_to_id: Dict[bytes, int],
 ) -> List[RawEntityTxAccount]:
     outgoing = [
         get_entitytx_from_transaction(tx, True, hash_to_id, address_hash_to_id)
@@ -581,7 +594,7 @@ def get_entity_transactions_updates_tx(
 
 
 def get_entity_updates_tx(
-    transactions: List,
+    transactions: List[Transaction],
     hash_to_id: Dict[str, int],
     currency: str,
     rates: Dict[int, Tuple[float, float]],
@@ -606,9 +619,9 @@ def get_balance_deltas(
     relation_updates_trace: List[RelationDeltaAccount],
     relation_updates_tx: List[RelationDeltaAccount],
     relation_updates_tokens: List[RelationDeltaAccount],
-    reward_traces: List,
-    transactions: List,
-    blocks: List,
+    reward_traces: List[Trace],
+    transactions: List[Transaction],
+    blocks: List[Block],
     address_hash_to_id: Dict[bytes, int],
     currency: str,
 ) -> List[BalanceDelta]:

@@ -1,7 +1,7 @@
-from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
-from graphsenselib.deltaupdate.update.utxo.accountlegacy import (
+from graphsenselib.deltaupdate.update.account.accountlegacy import (
     UpdateStrategyAccountLegacy,
 )
+from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
 from graphsenselib.deltaupdate.update.utxo.utxolegacy import UpdateStrategyUtxoLegacy
 
 from ...config import currency_to_schema_type
