@@ -147,6 +147,8 @@ CREATE TABLE balance (
 CREATE TABLE configuration (
     keyspace_name text PRIMARY KEY,
     bucket_size int,
+    block_bucket_size_address_txs int,
+    addressrelations_ids_nbuckets int,
     address_prefix_length int,
     tx_prefix_length int,
     fiat_currencies list<text>

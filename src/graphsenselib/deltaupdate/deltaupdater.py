@@ -145,6 +145,8 @@ def update_transformed(
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
                 return b[-1]
 
+        updater.clear_cache()
+
     return end_block
 
 
@@ -213,11 +215,12 @@ def update(
                         )
                         db.transformed.ingest("configuration", [config_defaults])
 
+                    du_config = config.get_deltaupdater_config(env, currency)
                     update_transformed(
                         start_block,
                         end_block,
                         UpdaterFactory().get_updater(
-                            currency,
+                            du_config,
                             db,
                             updater_version,
                             write_new,
@@ -229,6 +232,7 @@ def update(
                         ),
                         batch_size=write_batch_size,
                     )
+
                 elif end_block == start_block or start_block - 1 == end_block:
                     logger.info("Nothing to do. Data is up to date.")
                 else:
