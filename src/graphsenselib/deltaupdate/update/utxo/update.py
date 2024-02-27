@@ -5,24 +5,13 @@ from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple
 
 from cassandra import InvalidRequest
 
-from ...datatypes import DbChangeType, EntityType
-from ...db import AnalyticsDb, DbChange
-from ...rates import convert_to_fiat
-from ...utils import DataObject as MutableNamedTuple
-from ...utils import group_by, no_nones
-from ...utils.errorhandling import CrashRecoverer
-from ...utils.logging import LoggerScope
-from ...utils.utxo import (
-    get_regflow,
-    get_total_input_sum,
-    get_unique_addresses_from_transaction,
-    get_unique_addresses_from_transactions,
-    get_unique_ordered_input_addresses_from_transactions,
-    get_unique_ordered_output_addresses_from_transactions,
-    regularize_inoutputs,
+from graphsenselib.datatypes import DbChangeType, EntityType
+from graphsenselib.db import AnalyticsDb, DbChange
+from graphsenselib.deltaupdate.update.abstractupdater import (
+    TABLE_NAME_DELTA_HISTORY,
+    UpdateStrategy,
 )
-from .abstractupdater import TABLE_NAME_DELTA_HISTORY, UpdateStrategy
-from .generic import (
+from graphsenselib.deltaupdate.update.generic import (
     ApplicationStrategy,
     DbDelta,
     DeltaValue,
@@ -32,6 +21,20 @@ from .generic import (
     prepare_entities_for_ingest,
     prepare_relations_for_ingest,
     prepare_txs_for_ingest,
+)
+from graphsenselib.rates import convert_to_fiat
+from graphsenselib.utils import DataObject as MutableNamedTuple
+from graphsenselib.utils import group_by, no_nones
+from graphsenselib.utils.errorhandling import CrashRecoverer
+from graphsenselib.utils.logging import LoggerScope
+from graphsenselib.utils.utxo import (
+    get_regflow,
+    get_total_input_sum,
+    get_unique_addresses_from_transaction,
+    get_unique_addresses_from_transactions,
+    get_unique_ordered_input_addresses_from_transactions,
+    get_unique_ordered_output_addresses_from_transactions,
+    regularize_inoutputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -1193,6 +1196,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
         self.application_strategy = application_strategy
         logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
+
+    def clear_cache(self):
+        pass
 
     def persist_updater_progress(self):
         if self.changes is not None:

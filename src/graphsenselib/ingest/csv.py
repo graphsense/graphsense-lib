@@ -2,6 +2,8 @@ import gzip
 from csv import DictWriter
 from typing import Iterable
 
+from ..utils.account import get_id_group
+
 BLOCK_HEADER = [
     "parent_hash",
     "nonce",
@@ -100,7 +102,7 @@ def format_blocks_csv(
         item.pop("withdrawals_root")
         # rename/add columns
         item["block_id"] = item.pop("number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
         item["block_hash"] = item.pop("hash")
 
     return items
@@ -141,7 +143,7 @@ def format_traces_csv(
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
         item["trace_address"] = (
             "|".join(map(str, item["trace_address"]))
             if item["trace_address"] is not None
@@ -163,7 +165,7 @@ def format_logs_csv(
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
 
         tpcs = item["topics"]
 

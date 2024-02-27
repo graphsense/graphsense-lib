@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 from typing import Dict, List, Optional
@@ -71,6 +72,11 @@ class KeyspaceSetupConfig(BaseModel):
         default_factory=lambda: CASSANDRA_DEFAULT_REPLICATION_CONFIG
     )
     data_configuration: Dict[str, object] = Field(default_factory=lambda: {})
+
+
+class DeltaUpdaterConfig(BaseModel):
+    fs_cache: Optional[FileSink]
+    currency: str
 
 
 class KeyspaceConfig(BaseModel):
@@ -229,6 +235,16 @@ class AppConfig(GoodConf):
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)
+
+    def get_deltaupdater_config(self, env: str, currency: str) -> DeltaUpdaterConfig:
+        fs_cache = (
+            self.get_environment(env)
+            .keyspaces[currency]
+            .ingest_config.raw_keyspace_file_sinks.get("fs-cache")
+        )
+        if fs_cache is None:
+            logging.debug(f"fs-cache not configured for {currency} in {env}")
+        return DeltaUpdaterConfig(fs_cache=fs_cache, currency=currency)
 
 
 config = AppConfig(load=False)

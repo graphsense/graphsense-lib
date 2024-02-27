@@ -7,10 +7,17 @@ class TransformedDbAccount(TransformedDb):
     def get_highest_cluster_id(self, sanity_check=True) -> Optional[int]:
         return None
 
+    def get_highest_transaction_id(self):
+        return self._get_hightest_id(
+            table="transaction_ids_by_transaction_id_group",
+            sanity_check=True,
+            id_col="transaction_id",
+        )
+
 
 class RawDbAccount(RawDb):
     def get_logs_in_block(self, block: int, topic0=None, contract=None) -> Iterable:
-        group = block // self.get_block_bucket_size()
+        group = self.get_id_group(block, self.get_block_bucket_size())
         if topic0 is None:
             data = self.select_safe(
                 "log", where={"block_id": block, "block_id_group": group}
@@ -25,13 +32,27 @@ class RawDbAccount(RawDb):
         return data
 
     def get_transaction_ids_in_block(self, block: int) -> Iterable:
-        raise Exception("Not yet implemented.")
+        raise NotImplementedError
 
     def get_transactions_in_block(self, block: int) -> Iterable:
-        raise Exception("Not yet implemented.")
+        result = self.select(
+            "transaction",
+            where={"block_id": block},
+        )
+        return result
+
+    def get_traces_in_block(self, block: int) -> Iterable:
+        block_bucket_size = self.get_block_bucket_size()
+        group = self.get_id_group(block, block_bucket_size)
+
+        results = self.select(
+            "trace", where={"block_id_group": group, "block_id": block}
+        )
+
+        return results
 
     def get_addresses_in_block(self, block: int) -> Iterable:
-        group = block // self.get_block_bucket_size()
+        group = self.get_id_group(block, self.get_block_bucket_size())
 
         # The fetch size is needed since traces currenly contain a lot of null values
         # the null values create tombestones and cassandra refuses to read more than
@@ -50,7 +71,7 @@ class RawDbAccount(RawDb):
 
 class RawDbAccountTrx(RawDbAccount):
     def get_addresses_in_block(self, block: int) -> Iterable:
-        group = block // self.get_block_bucket_size()
+        group = self.get_id_group(block, self.get_block_bucket_size())
 
         # The fetch size is needed since traces currenly contain a lot of null values
         # the null values create tombestones and cassandra refuses to read more than

@@ -125,15 +125,22 @@ class AbstractUpdateStrategy(ABC):
     def persist_updater_progress(self):
         pass
 
+    @abstractmethod
+    def clear_cache(self):
+        pass
+
 
 class UpdateStrategy(AbstractUpdateStrategy):
-    def __init__(self, db, currency, forward_fill_rates=False):
+    def __init__(
+        self, db: AnalyticsDb, currency: str, forward_fill_rates: bool = False
+    ):
         super().__init__()
         self._db = db
         self._currency = currency
         self._batch_start_time = None
         self._nr_new_addresses = 0
         self._nr_new_clusters = 0
+        self._nr_new_transactions = 0
         self._highest_address_id = db.transformed.get_highest_address_id() or 0
         self._highest_cluster_id = db.transformed.get_highest_cluster_id() or 1
         self.forward_fill_rates = forward_fill_rates

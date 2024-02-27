@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import grpc
+from diskcache import Cache
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
 from ethereumetl.jobs.export_traces_job import (
@@ -31,10 +32,12 @@ from ..utils import (
     batch,
     check_timestamp,
     first_or_default,
-    hex_to_bytearray,
+    hex_to_bytes,
     parse_timestamp,
     remove_prefix,
 )
+from ..utils.account import get_id_group
+from ..utils.cache import TableBasedCache
 from ..utils.logging import configure_logging, suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from ..utils.tron import evm_to_bytes, strip_tron_prefix
@@ -89,6 +92,7 @@ class InMemoryItemExporter:
         item_type = item.get("type", None)
         if item_type is None:
             raise ValueError(f"type key is not found in item {item}")
+
         self.items[item_type].append(item)
 
     def close(self) -> None:
@@ -102,6 +106,11 @@ class InMemoryItemExporter:
 class AccountStreamerAdapter:
     """Standard Ethereum API style streaming adapter to export blocks, transactions,
     receipts, logs and traces."""
+
+    # TODO: the adapter setup is sub optimal,
+    # currently we create a Exporter*Job per call/batch
+    # which in turn spins up a new thread pool for every call
+    # which is not efficient and unnecessary overhead
 
     def __init__(
         self,
@@ -228,6 +237,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
             grpc_endpoint=self.grpc_endpoint,
             max_workers=self.max_workers,
         )
+
         return job.run()
         # traces = exporter.get_items("trace")
         # return traces
@@ -340,7 +350,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
 
         # Used for partitioning in parquet files
         # ignored otherwise
@@ -357,7 +367,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
             # key columns in cassandra and can not be filtered
             item["topic0"] = tpcs[0] if len(tpcs) > 0 else "0x"
 
-        item["topics"] = [hex_to_bytearray(t) for t in tpcs]
+        item["topics"] = [hex_to_bytes(t) for t in tpcs]
 
         # if topics contain duplicates
         if (
@@ -376,7 +386,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
             item.pop("transaction_hash")
 
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def ingest_logs(
@@ -411,7 +421,7 @@ def prepare_blocks_inplace_eth(
         item.pop("type")
         # rename/add columns
         item["block_id"] = item.pop("number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
         item["block_hash"] = item.pop("hash")
 
         # Used for partitioning in parquet files
@@ -420,7 +430,7 @@ def prepare_blocks_inplace_eth(
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def prepare_blocks_inplace_trx(items, block_bucket_size):
@@ -451,7 +461,7 @@ def prepare_transactions_inplace_eth(
         hash_slice = slice(2, 2 + tx_hash_prefix_len)
         item["tx_hash_prefix"] = item["tx_hash"][hash_slice]
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
 
         # Used for partitioning in parquet files
         # ignored otherwise
@@ -459,7 +469,7 @@ def prepare_transactions_inplace_eth(
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def prepare_transactions_inplace_trx(
@@ -481,7 +491,7 @@ def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
 
         # Used for partitioning in parquet files
         # ignored otherwise
@@ -494,7 +504,7 @@ def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
         )
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytearray(item[elem])
+            item[elem] = hex_to_bytes(item[elem])
 
 
 def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
@@ -503,7 +513,7 @@ def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
         # rename/add columns
         item["tx_hash"] = item.pop("transaction_hash")
         item["block_id"] = item.pop("block_number")
-        item["block_id_group"] = item["block_id"] // block_bucket_size
+        item["block_id_group"] = get_id_group(item["block_id"], block_bucket_size)
         item["transferto_address"] = item.pop("transferTo_address")
 
         # Used for partitioning in parquet files
@@ -997,7 +1007,7 @@ def ingest_async(
     )
 
     # make sure that only supported sinks are selected.
-    if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
+    if not all((x in ["cassandra", "parquet", "fs-cache"]) for x in sink_config.keys()):
         raise BadUserInputError(
             "Unsupported sink selected, supported: cassandra,"
             f" parquet; got {list(sink_config.keys())}"
@@ -1089,6 +1099,12 @@ def ingest_async(
         new_db_conn = db.clone()
         new_db_conn.open()
         thrd_ctx.db = new_db_conn
+
+        if "fs-cache" in sink_config:
+            odirectory = sink_config["fs-cache"]["output_directory"]
+            sink_config["fs-cache"]["cache"] = TableBasedCache(
+                Cache(odirectory, eviction_policy="none")
+            )
         thrd_ctx.adapter = strategy.get_source_adapter()
         thrd_ctx.strategy = strategy
         thrd_ctx.sink_config = sink_config
@@ -1096,7 +1112,6 @@ def ingest_async(
         thrd_ctx.BLOCK_BUCKET_SIZE = BLOCK_BUCKET_SIZE
 
     def process_task(thrd_ctx, task, data):
-        # print(task, data)
         return task.run(thrd_ctx, data)
 
     def submit_tasks(ex, thrd_ctx, tasks, data=None):
@@ -1120,7 +1135,7 @@ def ingest_async(
                 transform_strategy,
                 logger.getEffectiveLevel(),
             ),
-            max_workers=15,  # we write at most 4 tables in parallel
+            max_workers=4,  # we write at most 4 tables in parallel
         ) as ex:
             time1 = datetime.now()
             count = 0

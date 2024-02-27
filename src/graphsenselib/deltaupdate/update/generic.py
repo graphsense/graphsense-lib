@@ -11,6 +11,7 @@ from typing import Any, Callable, List, Tuple, Union
 from ...datatypes import EntityType
 from ...db import DbChange
 from ...utils import group_by, groupby_property
+from ...utils.account import get_id_group
 
 
 class ApplicationStrategy(Enum):
@@ -28,6 +29,14 @@ class DeltaUpdate(ABC):
 
 
 @dataclass
+class DeltaScalar(DeltaUpdate):
+    value: int
+
+    def merge(self, other):
+        return DeltaScalar(self.value + other.value)
+
+
+@dataclass
 class DeltaValue(DeltaUpdate):
     value: int
     fiat_values: List[int]
@@ -37,6 +46,8 @@ class DeltaValue(DeltaUpdate):
         return Cls(value=db_row.value, fiat_values=list(db_row.fiat_values))
 
     def merge(self, other):
+        if other is None:
+            return self
         assert self.fiat_values is not None and other.fiat_values is not None
         assert len(self.fiat_values) == len(other.fiat_values)
         return DeltaValue(
@@ -45,9 +56,25 @@ class DeltaValue(DeltaUpdate):
         )
 
 
+def merge_asset_dicts(d1, d2):  # probably better to wrap in class and define __add__
+    d = {}
+    for k in set(d1.keys()) | set(d2.keys()):
+        d[k] = d1.get(k, DeltaValue(0, [0, 0])).merge(d2.get(k, DeltaValue(0, [0, 0])))
+    return d
+
+
+@dataclass
+class Tx:
+    block_id: int
+    tx_id: int
+    tx_hash: bytes
+    tx_index: int
+    failed: bool
+
+
 @dataclass
 class EntityDelta(DeltaUpdate):
-    """The identifier is either an address of cluster identifier"""
+    """The identifier is either an address or cluster identifier"""
 
     identifier: Union[str, int]
     total_received: DeltaValue
@@ -60,11 +87,11 @@ class EntityDelta(DeltaUpdate):
     @classmethod
     def from_db(Cls, db_row, mode: EntityType):
         if mode == EntityType.CLUSTER:
-            idetifier = db_row.cluster_id
+            identifier = db_row.cluster_id
         elif mode == EntityType.ADDRESS:
-            idetifier = db_row.address
+            identifier = db_row.address
         return Cls(
-            identifier=idetifier,
+            identifier=identifier,
             total_received=DeltaValue.from_db(db_row.total_received),
             total_spent=DeltaValue.from_db(db_row.total_spent),
             first_tx_id=db_row.first_tx_id,
@@ -84,6 +111,20 @@ class EntityDelta(DeltaUpdate):
             no_incoming_txs=self.no_incoming_txs + other_delta.no_incoming_txs,
             no_outgoing_txs=self.no_outgoing_txs + other_delta.no_outgoing_txs,
         )
+
+
+def minusone_respecting_function(x, y, f):
+    """
+    -1 is a placeholder for first and last tx id in reward traces
+    which dont have a tx_id
+    """
+    if x == -1 and y == -1:
+        return -1
+    if x == -1:
+        return y
+    if y == -1:
+        return x
+    return f(x, y)
 
 
 @dataclass
@@ -201,7 +242,7 @@ def prepare_txs_for_ingest(
         chng = DbChange.new(
             table=f"{mode}_transactions",
             data={
-                f"{mode}_id_group": ident // id_bucket_size,
+                f"{mode}_id_group": get_id_group(ident, id_bucket_size),
                 f"{mode}_id": ident,
                 "tx_id": atx.tx_id,
                 "is_outgoing": atx.is_outgoing,
@@ -232,7 +273,7 @@ def prepare_entities_for_ingest(
             resolve_identifier(update.identifier),
             resolve_entity(update.identifier),
         )
-        group = int_ident // id_bucket_size
+        group = get_id_group(int_ident, id_bucket_size)
         if entity is not None:
             """old Address/cluster"""
 
@@ -347,8 +388,8 @@ def prepare_relations_for_ingest(
 
         id_src = resolve_identifier(relations_update.src_identifier)
         id_dst = resolve_identifier(relations_update.dst_identifier)
-        src_group = id_src // id_bucket_size
-        dst_group = id_dst // id_bucket_size
+        src_group = get_id_group(id_src, id_bucket_size)
+        dst_group = get_id_group(id_dst, id_bucket_size)
 
         if outr is None:
             """new address/cluster relation to insert"""

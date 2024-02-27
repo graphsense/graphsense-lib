@@ -1,6 +1,6 @@
 from typing import Union
 
-from ..utils import hex_to_bytearray
+from ..utils import hex_to_bytes
 
 
 class AddressUtxo:
@@ -61,7 +61,7 @@ class AddressAccount:
         """
         self.prefix_length = int(config.address_prefix_length)
         if type(adr) == str:
-            self.address_bytes = hex_to_bytearray(adr)
+            self.address_bytes = hex_to_bytes(adr)
         elif type(adr) == bytearray:
             self.address_bytes = adr
         elif type(adr) == bytes:
@@ -94,3 +94,8 @@ class AddressAccount:
     @property
     def bytearray(self) -> bytearray:  # noqa
         return self.address_bytes
+
+
+class AddressAccountTrx:
+    def __init__(self, adr: Union[str, bytearray], config):
+        raise NotImplementedError("AddressAccountTrx not implemented yet")
