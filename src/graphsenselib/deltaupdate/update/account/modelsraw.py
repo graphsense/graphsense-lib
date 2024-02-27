@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -46,20 +46,20 @@ class BlockchainAdapter:
 
 class Trace(BaseModel):
     block_id: int
-    tx_hash: Union[bytes, None]
+    tx_hash: Optional[bytes]
     trace_index: int
-    from_address: Union[bytes, None]
-    to_address: Union[bytes, None]
+    from_address: Optional[bytes]
+    to_address: Optional[bytes]
     value: int
-    call_type: Union[str, None]
+    call_type: Optional[str]
     status: int
 
 
 class Transaction(BaseModel):
     transaction_index: int
     tx_hash: bytes
-    from_address: Union[bytes, None]
-    to_address: Union[bytes, None]
+    from_address: Optional[bytes]
+    to_address: Optional[bytes]
     value: int
     gas_price: int
     transaction_type: int
@@ -69,7 +69,7 @@ class Transaction(BaseModel):
 
 
 class TronTransaction(Transaction):
-    fee: Union[int, None]
+    fee: Optional[int]
 
 
 class Log(BaseModel):
