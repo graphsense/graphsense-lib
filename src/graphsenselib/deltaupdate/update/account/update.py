@@ -149,10 +149,10 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
 
     def get_block_data(self, cache, block):
+        blocks = cache.get(("block", block), [])
         txs = cache.get(("transaction", block), [])
         traces = cache.get(("trace", block), [])
         logs = cache.get(("log", block), [])
-        blocks = cache.get(("block", block), [])
         return txs, traces, logs, blocks
 
     def get_fee_data(self, cache, txs):
@@ -192,6 +192,14 @@ class UpdateStrategyAccount(UpdateStrategy):
                 txs_new, traces_new, logs_new, blocks_new = self.get_block_data(
                     cache, block
                 )
+
+                if len(blocks_new) == 0:  #
+                    msg = (
+                        f"Block {block} is not present in cache. Please ingest with"
+                        f"option --sinks fs-cache"
+                    )
+                    log.error(msg)
+                    raise Exception(msg)
                 transactions.extend(txs_new)
                 traces.extend(traces_new)
                 logs.extend(logs_new)
