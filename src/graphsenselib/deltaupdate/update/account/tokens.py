@@ -46,7 +46,6 @@ class ERC20Decoder:
         )
         self.network = network
 
-        # todo this should be in a config file
         if self.network == "eth":
             self.supported_tokens = eth_tokens
         elif self.network == "trx":

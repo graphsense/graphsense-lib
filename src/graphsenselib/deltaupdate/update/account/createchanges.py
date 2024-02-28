@@ -274,8 +274,8 @@ def prepare_entities_for_ingest(
                 "total_tokens_spent": new_value.total_tokens_spent,
                 "in_degree": entity.in_degree + new_rel_in[update.identifier],
                 "out_degree": entity.out_degree + new_rel_out[update.identifier],
-                "in_degree_zero_value": entity.in_degree_zero_value,  # todo too broad
-                "out_degree_zero_value": entity.out_degree_zero_value,  # todo too broad
+                "in_degree_zero_value": entity.in_degree_zero_value,  # too broad
+                "out_degree_zero_value": entity.out_degree_zero_value,  # too broad
                 "address_id": int_ident,
                 "address_id_group": group,
             }
@@ -307,10 +307,10 @@ def prepare_entities_for_ingest(
                 "in_degree": new_rel_in[update.identifier],
                 "out_degree": new_rel_out[update.identifier],
                 "in_degree_zero_value": 0,
-                # update.no_incoming_txs_zero_value, # todo too broad
+                # update.no_incoming_txs_zero_value, # too broad
                 "out_degree_zero_value": 0,
-                # update.no_outgoing_txs_zero_value, # todo too broad
-                "is_contract": False,  # todo
+                # update.no_outgoing_txs_zero_value, #  too broad
+                "is_contract": False,
             }
             data["address"] = update.identifier
             chng = DbChange.new(table="address", data=data)
