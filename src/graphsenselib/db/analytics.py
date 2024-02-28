@@ -465,7 +465,6 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         r = binary_search(GenericArrayFacade(get_item), 1, lo=start, hi=hb)
         # r = get_last_notnone(GenericArrayFacade(get_item), start, hb)
-        r += 1
 
         if r == -1:
             # minus one could mean two things, either
