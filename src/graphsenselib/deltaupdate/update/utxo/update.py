@@ -631,7 +631,7 @@ def get_bookkeeping_changes(
     with LoggerScope.debug(logger, "Creating summary_statistics updates") as lg:
         lb_date = bts[last_block_processed]
         stats = base_statistics
-        no_blocks = last_block_processed - 1
+        no_blocks = last_block_processed + 1
 
         """ Update local stats """
         if not patch_mode:

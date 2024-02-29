@@ -158,7 +158,7 @@ class UpdateStrategyAccount(UpdateStrategy):
     def get_fee_data(self, cache, txs):
         return cache.get(("fee", txs), [{"fee": None}])[0]["fee"]
 
-    def process_batch_impl_hook(self, batch):
+    def process_batch_impl_hook(self, batch: List[int]) -> int:
         rates = {}
         transactions = []
         traces = []
@@ -195,11 +195,23 @@ class UpdateStrategyAccount(UpdateStrategy):
 
                 if len(blocks_new) == 0:  #
                     msg = (
-                        f"Block {block} is not present in cache. Please ingest with"
-                        f"option --sinks fs-cache"
+                        f"Block {block} is not present in cache. Please ingest"
+                        f" more blocks with option --sinks fs-cache"
                     )
                     log.error(msg)
-                    raise Exception(msg)
+
+                    if block == batch[0]:
+                        log.warning("First block of batch not in cache.")
+                        return -1
+                    else:
+                        log.warning(
+                            "Skipping block without data in cache."
+                            "Continuing with next block."
+                        )
+                        break
+
+                final_block = block
+
                 transactions.extend(txs_new)
                 traces.extend(traces_new)
                 logs.extend(logs_new)
@@ -250,7 +262,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
 
             changes.extend(tx_changes)
-            last_block_processed = batch[-1]
 
             if self.currency == "trx":
                 nr_new_tx = len([tx for tx in transactions if tx.receipt_status == 1])
@@ -262,14 +273,14 @@ class UpdateStrategyAccount(UpdateStrategy):
             bookkeeping_changes = get_bookkeeping_changes(
                 self._statistics,
                 self._db.transformed.get_summary_statistics(),
-                last_block_processed,
+                final_block,
                 nr_new_address_relations,
                 nr_new_addresses,
                 nr_new_tx,
                 self.highest_address_id,
                 runtime_seconds,
                 bts,
-                len(batch),
+                len(blocks),
                 patch_mode=self._patch_mode,
             )
 
@@ -279,6 +290,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             # They are applied at the end of the batch in
             # persist_updater_progress
             self.changes = changes
+            return final_block
 
         else:
             raise ValueError(
@@ -343,7 +355,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         hash_to_tx = dict(zip(tx_hashes, transactions))
 
         with LoggerScope.debug(logger, "Decode logs to token transfers"):
-            tokendecoder = ERC20Decoder(self.currency)
+            supported_tokens = self._db.transformed.get_token_configuration()
+            tokendecoder = ERC20Decoder(currency, supported_tokens)
             token_transfers = no_nones(
                 [tokendecoder.log_to_transfer(log) for log in logs]
             )

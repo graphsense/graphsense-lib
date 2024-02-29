@@ -12,6 +12,7 @@ from datetime import datetime
 from functools import lru_cache, partial
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
+import pandas as pd
 from cassandra import WriteTimeout
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 
@@ -74,11 +75,12 @@ class DbChange:
 
 
 class KeyspaceConfig:
-    def __init__(self, keyspace_name, db_type, address_type, tx_hash_type):
+    def __init__(self, keyspace_name, db_type, address_type, tx_hash_type, currency):
         self._keyspace_name = keyspace_name
         self._db_type = db_type
         self._address_type = address_type
         self._tx_hash_type = tx_hash_type
+        self._currency = currency
 
     @property
     def keyspace_name(self):
@@ -463,8 +465,16 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             batch = self.get_exchange_rates_for_block_batch([index])
             return 0 if has_er_value(batch) else 1
 
-        r = binary_search(GenericArrayFacade(get_item), 1, lo=start, hi=hb)
-        # r = get_last_notnone(GenericArrayFacade(get_item), start, hb)
+        def get_item_first_rates(index):
+            batch = self.get_exchange_rates_for_block_batch([index])
+            return 1 if has_er_value(batch) else 0
+
+        # find first block with exchange rates
+        first_rates = max(
+            binary_search(GenericArrayFacade(get_item_first_rates), 1, lo=start, hi=hb),
+            0,
+        )
+        r = binary_search(GenericArrayFacade(get_item), 1, lo=first_rates, hi=hb)
 
         if r == -1:
             # minus one could mean two things, either
@@ -675,9 +685,16 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def get_highest_block(self) -> Optional[int]:
         stats = self.get_summary_statistics()
-        return int(stats.no_blocks) + 1 if stats is not None else None
+        if stats is None:
+            return None
 
-    def is_first_dalta_update_run(self) -> bool:
+        # minus one when starting to count at 0
+        height_minus_noblocks = -1
+        height = height_minus_noblocks + int(stats.no_blocks)
+
+        return height
+
+    def is_first_delta_update_run(self) -> bool:
         stats = self.get_summary_statistics()
         return stats is not None and int(stats.no_blocks) == int(
             stats.no_blocks_transform
@@ -685,12 +702,14 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def get_highest_block_fulltransform(self) -> Optional[int]:
         stats = self.get_summary_statistics()
-        if stats is not None and hasattr(stats, "no_blocks_transform"):
-            return int(stats.no_blocks_transform) + 1
-        if stats is not None:
-            return int(stats.no_blocks) + 1
-        else:
+        height_minus_noblocks = -1
+        if stats is None:
             return None
+
+        if hasattr(stats, "no_blocks_transform"):
+            return height_minus_noblocks + int(stats.no_blocks_transform)
+        else:
+            return height_minus_noblocks + int(stats.no_blocks)
 
     def get_highest_exchange_rate_block(self, sanity_check=True) -> Optional[int]:
         res = self.select("exchange_rates", columns=["block_id"], per_partition_limit=1)
@@ -790,6 +809,13 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
                 a: (len(row.current_rows) > 0)
                 for (a, row) in self._db.await_batch(results)
             }
+
+    def get_token_configuration(self):
+        stmt = self.select_stmt("token_configuration", limit=100)
+        res = self._db.execute(stmt)
+        df = pd.DataFrame(res)
+        df["token_address"] = df["token_address"].apply(lambda x: "0x" + x.hex())
+        return df
 
     def get_address_id_async_batch(self, addresses: List[str]):
         stmt = self.select_stmt(
