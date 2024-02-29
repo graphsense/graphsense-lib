@@ -51,10 +51,16 @@ class DbFactory:
             ks.transformed_keyspace_name,
             ks.schema_type,
             e.cassandra_nodes,
+            currency,
         )
 
     def from_name(
-        self, raw_keyspace_name, transformed_keyspace_name, schema_type, cassandra_nodes
+        self,
+        raw_keyspace_name,
+        transformed_keyspace_name,
+        schema_type,
+        cassandra_nodes,
+        currency,
     ) -> AnalyticsDb:
         db_types = get_db_types_by_schema_type(schema_type)
         return AnalyticsDb(
@@ -63,12 +69,14 @@ class DbFactory:
                 db_types.raw_db_type,
                 db_types.address_type,
                 db_types.transaction_type,
+                currency,
             ),
             transformed=KeyspaceConfigDB(
                 transformed_keyspace_name,
                 db_types.transformed_db_type,
                 db_types.address_type,
                 db_types.transaction_type,
+                currency,
             ),
             db=CassandraDb(cassandra_nodes),
         )

@@ -197,10 +197,12 @@ class UpdateStrategy(AbstractUpdateStrategy):
             self.import_exchange_rates(batch_int)
 
         with LoggerScope.debug(logger, "Transform data"):
-            self.process_batch_impl_hook(batch_int)
+            final_block = self.process_batch_impl_hook(batch_int)
 
         self._time_last_batch = time.time() - self._batch_start_time
-        self._last_block_processed = batch[-1]
+        if final_block != -1:
+            self._last_block_processed = final_block
+        return final_block
 
 
 class LegacyUpdateStrategy(AbstractUpdateStrategy):

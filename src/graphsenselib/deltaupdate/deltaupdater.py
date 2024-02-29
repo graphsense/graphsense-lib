@@ -34,6 +34,23 @@ def find_import_range(
     hb_du = 0 if hb_du is None else hb_du
     hb_ft = 0 if hb_ft is None else hb_ft
 
+    if start_block_overwrite is not None:
+        last_block = max([i for i in (hb_du, hb_ft) if i is not None])
+        if start_block_overwrite <= last_block:
+            raise Exception(
+                f"Start block {start_block_overwrite} is before last "
+                f"delta update {hb_du}."
+                f" Or before last full transform {hb_ft}."
+                f" This would corrupt the state of balances. Exiting."
+            )
+        if start_block_overwrite > last_block + 1:
+            raise Exception(
+                f"Start block {start_block_overwrite} is in the future."
+                f" It looks like blocks are left out in the transformation"
+                f" Start block should be {last_block+1}"
+                f" Tried starting at {start_block_overwrite}. Exiting."
+            )
+
     start_block = hb_du + 1 if start_block_overwrite is None else start_block_overwrite
     latest_address_id = db.transformed.get_highest_address_id()
     latest_cluster_id = db.transformed.get_highest_cluster_id()
@@ -128,7 +145,12 @@ def update_transformed(
                 f"Done with {min(b) - start_block}, {end_block - min(b) + 1} to go."
             )
 
-            updater.process_batch(b)
+            final_block = updater.process_batch(b)
+            if final_block == -1:
+                logger.warning(
+                    f"First block in batch {min(b)} is empty." f"Finishing update."
+                )
+                break
             updater.persist_updater_progress()
 
             blocks_processed = (updater.last_block_processed - start_block) + 1
@@ -180,7 +202,7 @@ def update(
                     db, start_block, end_block, forward_fill_rates=forward_fill_rates
                 )
                 if end_block >= start_block:
-                    is_first_delta_run = db.transformed.is_first_dalta_update_run()
+                    is_first_delta_run = db.transformed.is_first_delta_update_run()
                     if is_first_delta_run:
                         # Full transform set nr_blocks a bit different (currency dep).
                         # To be sure about the block we look at exchange rates table

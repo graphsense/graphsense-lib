@@ -1,4 +1,8 @@
+# flake8: noqa
 import pickle
+from io import StringIO
+
+import pandas as pd
 
 from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_sorted_unique_addresses,
@@ -12,6 +16,20 @@ from graphsenselib.deltaupdate.update.account.modelsraw import (
     TrxTransactionAdapter,
 )
 from graphsenselib.deltaupdate.update.account.tokens import ERC20Decoder, TokenTransfer
+
+data_eth = """
+currency_ticker,assettype,decimals,token_address,peg_currency
+USDT,ERC20,6,0xdac17f958d2ee523a2206206994597c13d831ec7,USD
+USDC,ERC20,6,0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48,USD
+WETH,ERC20,18,0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2,ETH
+"""
+
+data_trx = """currency_ticker,assettype,decimals,token_address,coin_equivalent,peg_currency
+USDT,TRC20,6,0xa614f803b6fd780986a42c78ec9c7f77e6ded13c,0,USD
+USDC,TRC20,6,0x3487b63d30b5b2c87fb7ffa8bcfade38eaac1abe,0,USD
+WTRX,TRC20,6,0x891cdb91d149f23b1a45d9c5ca78a88d0cb44c18,1,ETH
+"""
+
 
 currencies = ["trx", "eth"]
 folder = "tests/deltaupdate/resources/account"
@@ -172,7 +190,9 @@ def test_adapters_regression():
 
 
 def test_tokens_detected():
-    tokendecoder = ERC20Decoder("eth")
+    SUPPORTED_TOKENS = pd.read_csv(StringIO(data_eth))
+
+    tokendecoder = ERC20Decoder("eth", SUPPORTED_TOKENS)
     data = load_data()
     eth_data = data["eth"]
     logs = eth_data["logs"]
@@ -213,8 +233,9 @@ def test_token_decoding():
     }
 
     example_log = adapter.dict_to_dataclass(example_log)
+    SUPPORTED_TOKENS = pd.read_csv(StringIO(data_eth))
 
-    decoder = ERC20Decoder("eth")
+    decoder = ERC20Decoder("eth", SUPPORTED_TOKENS)
     decoded_transfer = decoder.log_to_transfer(example_log)
     assert decoded_transfer is None
 
@@ -245,7 +266,7 @@ def test_token_decoding():
     }
 
     example_log = adapter.dict_to_dataclass(example_log)
-    decoder = ERC20Decoder("eth")
+    decoder = ERC20Decoder("eth", SUPPORTED_TOKENS)
     decoded_transfer = decoder.log_to_transfer(example_log)
     check = TokenTransfer(
         from_address=bytes.fromhex("B3a8226461F0e6A9a1063fEBeA88C6f6A5a0857E"),
@@ -263,7 +284,8 @@ def test_token_decoding():
 
     assert decoded_transfer == check
 
-    decoder = ERC20Decoder("trx")
+    SUPPORTED_TOKENS = pd.read_csv(StringIO(data_trx))
+    decoder = ERC20Decoder("trx", SUPPORTED_TOKENS)
     decoded_transfer = decoder.log_to_transfer(example_log)
     assert decoded_transfer is None
 
