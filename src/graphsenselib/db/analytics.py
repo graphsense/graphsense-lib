@@ -7,6 +7,7 @@ Attributes:
 """
 import logging
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache, partial
@@ -31,7 +32,8 @@ from .cassandra import (
 
 CONCURRENCY = 2000
 DATE_FORMAT = "%Y-%m-%d"
-
+FIRST_BLOCK = defaultdict(lambda: 0)
+FIRST_BLOCK["trx"] = 1
 logger = logging.getLogger(__name__)
 
 
@@ -689,7 +691,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             return None
 
         # minus one when starting to count at 0
-        height_minus_noblocks = -1
+        height_minus_noblocks = FIRST_BLOCK[self._keyspace_config._currency] - 1
         height = height_minus_noblocks + int(stats.no_blocks)
 
         return height
@@ -702,7 +704,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def get_highest_block_fulltransform(self) -> Optional[int]:
         stats = self.get_summary_statistics()
-        height_minus_noblocks = -1
+        height_minus_noblocks = FIRST_BLOCK[self._keyspace_config._currency] - 1
         if stats is None:
             return None
 

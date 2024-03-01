@@ -84,7 +84,7 @@ class Log(BaseModel):
 class Block(BaseModel):
     block_id: int
     miner: bytes
-    base_fee_per_gas: int
+    base_fee_per_gas: Optional[int]
     gas_used: int
 
 
@@ -120,5 +120,12 @@ class EthTraceAdapter(AccountTraceAdapter):
     pass
 
 
+def zero_if_none(x):
+    return x if x is not None else 0
+
+
 class AccountBlockAdapter(BlockchainAdapter):
     datamodel = Block
+
+    def __init__(self):
+        self.field_processing = {"base_fee_per_gas": zero_if_none}

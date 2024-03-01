@@ -251,11 +251,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             transactions = transaction_adapter.dicts_to_dataclasses(transactions)
             logs = log_adapter.dicts_to_dataclasses(logs)
             blocks = block_adapter.dicts_to_dataclasses(blocks)
+            blocks = block_adapter.process_fields_in_list(blocks)
 
             changes = []
-            if 0 in [len(blocks), len(transactions)]:
-                logger.debug("No blocks to process. Might not be in the cache.")
-                return  # no blocks to process
 
             (tx_changes, nr_new_addresses, nr_new_address_relations) = self.get_changes(
                 transactions, traces, logs, blocks, rates
