@@ -2,10 +2,11 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from ...db.analytics import AnalyticsDb
 from ...utils.logging import LoggerScope
+from .generic import Action
 
 logger = logging.getLogger(__name__)
 
@@ -183,13 +184,13 @@ class UpdateStrategy(AbstractUpdateStrategy):
         return self._highest_cluster_id
 
     @abstractmethod
-    def process_batch_impl_hook(self, batch):
+    def process_batch_impl_hook(self, batch) -> Tuple[Action, Optional[int]]:
         pass
 
     def import_exchange_rates(self, batch: List[int]):
         fill_and_store_rates(self._db, batch, self.forward_fill_rates)
 
-    def process_batch(self, batch: Iterable[int]):
+    def process_batch(self, batch: Iterable[int]) -> Action:
         self._batch_start_time = time.time()
 
         batch_int = list(batch)
@@ -197,12 +198,14 @@ class UpdateStrategy(AbstractUpdateStrategy):
             self.import_exchange_rates(batch_int)
 
         with LoggerScope.debug(logger, "Transform data"):
-            final_block = self.process_batch_impl_hook(batch_int)
+            action, final_block = self.process_batch_impl_hook(batch_int)
 
         self._time_last_batch = time.time() - self._batch_start_time
-        if final_block != -1:
+
+        if action == Action.CONTINUE:
             self._last_block_processed = final_block
-        return final_block
+
+        return action
 
 
 class LegacyUpdateStrategy(AbstractUpdateStrategy):

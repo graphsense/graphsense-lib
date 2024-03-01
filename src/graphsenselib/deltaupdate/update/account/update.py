@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from diskcache import Cache
@@ -50,7 +50,7 @@ from graphsenselib.deltaupdate.update.account.modelsraw import (
     TrxTransactionAdapter,
 )
 from graphsenselib.deltaupdate.update.account.tokens import ERC20Decoder
-from graphsenselib.deltaupdate.update.generic import ApplicationStrategy, Tx
+from graphsenselib.deltaupdate.update.generic import Action, ApplicationStrategy, Tx
 from graphsenselib.deltaupdate.update.utxo.update import apply_changes
 from graphsenselib.schema.schema import GraphsenseSchemas
 from graphsenselib.utils import DataObject as MutableNamedTuple
@@ -158,7 +158,7 @@ class UpdateStrategyAccount(UpdateStrategy):
     def get_fee_data(self, cache, txs):
         return cache.get(("fee", txs), [{"fee": None}])[0]["fee"]
 
-    def process_batch_impl_hook(self, batch: List[int]) -> int:
+    def process_batch_impl_hook(self, batch: List[int]) -> Tuple[Action, Optional[int]]:
         rates = {}
         transactions = []
         traces = []
@@ -202,7 +202,7 @@ class UpdateStrategyAccount(UpdateStrategy):
 
                     if block == batch[0]:
                         log.warning("First block of batch not in cache.")
-                        return -1
+                        return Action.BREAK, None
                     else:
                         log.warning(
                             "Skipping block without data in cache."
@@ -288,7 +288,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             # They are applied at the end of the batch in
             # persist_updater_progress
             self.changes = changes
-            return final_block
+            return Action.CONTINUE, final_block
 
         else:
             raise ValueError(
