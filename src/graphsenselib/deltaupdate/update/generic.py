@@ -450,3 +450,8 @@ def prepare_relations_for_ingest(
         changes.append(chng_out)
 
     return changes, new_relations_in, new_relations_out, nr_new_rel
+
+
+class Action(Enum):
+    CONTINUE = 1
+    BREAK = 2

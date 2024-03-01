@@ -1,7 +1,7 @@
 import logging
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, NamedTuple, Set, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from cassandra import InvalidRequest
 
@@ -12,6 +12,7 @@ from graphsenselib.deltaupdate.update.abstractupdater import (
     UpdateStrategy,
 )
 from graphsenselib.deltaupdate.update.generic import (
+    Action,
     ApplicationStrategy,
     DbDelta,
     DeltaValue,
@@ -1237,7 +1238,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 truncate=False,
             )
 
-    def process_batch_impl_hook(self, batch):
+    def process_batch_impl_hook(self, batch) -> Tuple[Action, Optional[int]]:
         rates = {}
         txs = []
         bts = {}
@@ -1423,3 +1424,5 @@ class UpdateStrategyUtxo(UpdateStrategy):
             raise ValueError(
                 f"Unknown application strategy {self.application_strategy}"
             )
+
+        return Action.CONTINUE, batch[-1]

@@ -11,6 +11,7 @@ from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.console import console
 from ..utils.signals import graceful_ctlc_shutdown
 from .update import AbstractUpdateStrategy, UpdaterFactory
+from .update.generic import Action
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +147,8 @@ def update_transformed(
                 f"from block {min(b)} to {max(b)}. "
                 f"Done with {min(b) - start_block}, {end_block - min(b) + 1} to go."
             )
-
-            final_block = updater.process_batch(b)
-            if final_block == -1:
+            action = updater.process_batch(b)
+            if action == Action.BREAK:
                 logger.warning(
                     f"First block in batch {min(b)} is empty." f"Finishing update."
                 )
