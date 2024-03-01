@@ -495,6 +495,8 @@ def get_sorted_unique_addresses(
     )
 
     addresses_sorting_df = pd.DataFrame(addresses_sorting_df_data)
+    if addresses_sorting_df.empty:
+        return pd.Series([])
 
     addresses_sorting_df.sort_values(
         inplace=True, by=["block_id", "is_log", "index", "is_from_address"]

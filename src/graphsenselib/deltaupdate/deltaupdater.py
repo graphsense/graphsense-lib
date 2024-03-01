@@ -41,14 +41,16 @@ def find_import_range(
                 f"Start block {start_block_overwrite} is before last "
                 f"delta update {hb_du}."
                 f" Or before last full transform {hb_ft}."
-                f" This would corrupt the state of balances. Exiting."
+                f" This would corrupt the state of balances. "
+                f"Also make sure the transformations starts at block 0. Exiting."
             )
         if start_block_overwrite > last_block + 1:
             raise Exception(
                 f"Start block {start_block_overwrite} is in the future."
                 f" It looks like blocks are left out in the transformation"
                 f" Start block should be {last_block+1}"
-                f" Tried starting at {start_block_overwrite}. Exiting."
+                f" Tried starting at {start_block_overwrite}. "
+                f"Also make sure the transformations starts at block 0. Exiting."
             )
 
     start_block = hb_du + 1 if start_block_overwrite is None else start_block_overwrite
