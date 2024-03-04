@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+
+## [24.02.1/2.2.1] 2024-03-04
+### fixed
+- Warning instead of exception on ingest filelock timeout
+
 ## [24.02.0/2.2.0] 2024-03-04
 ### changed
 - full delta updates for tron and ethereum

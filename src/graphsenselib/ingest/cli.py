@@ -5,6 +5,7 @@ from typing import Dict
 
 import click
 from filelock import FileLock
+from filelock import Timeout as LockFileTimeout
 
 from ..cli.common import require_currency, require_environment
 from ..config import config, currency_to_schema_type
@@ -186,29 +187,36 @@ def ingest(
     sink_configs = [(k, create_sink_config(k, currency, ks_config)) for k in sinks]
 
     with DbFactory().from_config(env, currency) as db:
-        lockfile_name = (
-            f"/tmp/{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}.lock"
-        )
-        if not no_file_lock:
-            logger.info(f"Try acquiring lockfile {lockfile_name}")
-        with (
-            contextlib.nullcontext()
-            if no_file_lock
-            else FileLock(lockfile_name, timeout=1)
-        ):
-            IngestFactory().from_config(env, currency, version).ingest(
-                db=db,
-                currency=currency,
-                sources=sources,
-                sink_config={k: v for k, v in sink_configs if v is not None},
-                user_start_block=start_block,
-                user_end_block=end_block,
-                batch_size=batch_size,
-                info=info,
-                previous_day=previous_day,
-                provider_timeout=timeout,
-                mode=mode,
+        try:
+            lockfile_name = (
+                f"/tmp/{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}.lock"
             )
+            if not no_file_lock:
+                logger.info(f"Try acquiring lockfile {lockfile_name}")
+            with (
+                contextlib.nullcontext()
+                if no_file_lock
+                else FileLock(lockfile_name, timeout=1)
+            ):
+                IngestFactory().from_config(env, currency, version).ingest(
+                    db=db,
+                    currency=currency,
+                    sources=sources,
+                    sink_config={k: v for k, v in sink_configs if v is not None},
+                    user_start_block=start_block,
+                    user_end_block=end_block,
+                    batch_size=batch_size,
+                    info=info,
+                    previous_day=previous_day,
+                    provider_timeout=timeout,
+                    mode=mode,
+                )
+        except LockFileTimeout:
+            logger.error(
+                f"Lockfile {lockfile_name} could not be acquired. "
+                "Is another ingest running? If not delete the lockfile."
+            )
+            sys.exit(911)
 
 
 @ingesting.command("to-csv")
