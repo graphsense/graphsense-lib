@@ -3,11 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [24.02.beta1/2.2.0] 2024-02-07
+## [24.02.0/2.2.0] 2024-03-04
 ### changed
+- full delta updates for tron and ethereum
 - block tx table to long format instead of Cassandra lists (breaking)
+### fixed
+- off by one error in utxo delta updates
 
-## [24.01.1/2.1.2] 2024-02-07
+## [24.01.2/2.1.2] 2024-02-07
 ### changed
 - change consistency level Cassandra, consistency_level=LOCAL_QUORUM, serial_consistency_level=LOCAL_SERIAL
 
