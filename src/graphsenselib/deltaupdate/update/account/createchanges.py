@@ -21,7 +21,6 @@ from graphsenselib.utils.account import (
 from graphsenselib.utils.logging import LoggerScope
 
 logger = logging.getLogger(__name__)
-inout_logger = logging.getLogger("inout_logger")
 
 
 def prepare_txs_for_ingest(
@@ -136,12 +135,12 @@ def prepare_relations_for_ingest(
         if (outr is None) == (inr is None):
             pass
         else:
-            debug_msg = "\n"
-            debug_msg += f"src: {bytes.hex(relations_update.src_identifier)}\n"
-            debug_msg += f"dst: {bytes.hex(relations_update.dst_identifier)}\n"
-            debug_msg += f"inr: {inr}\n"
-            debug_msg += f"outr: {outr}\n"
-            inout_logger.debug(debug_msg)
+            debug_msg = "inoutcheck: inconsistency "
+            debug_msg += f"src: {bytes.hex(relations_update.src_identifier)} "
+            debug_msg += f"dst: {bytes.hex(relations_update.dst_identifier)} "
+            debug_msg += f"inr: {inr} "
+            debug_msg += f"outr: {outr} "
+            logger.warning(debug_msg)
 
         # assert (outr is None) == (inr is None)
 
