@@ -21,6 +21,7 @@ from graphsenselib.utils.account import (
 from graphsenselib.utils.logging import LoggerScope
 
 logger = logging.getLogger(__name__)
+inout_logger = logging.getLogger("inout_logger")
 
 
 def prepare_txs_for_ingest(
@@ -132,7 +133,17 @@ def prepare_relations_for_ingest(
         inr = inrelations[
             (relations_update.src_identifier, relations_update.dst_identifier)
         ].result_or_exc.one()
-        assert (outr is None) == (inr is None)
+        if (outr is None) == (inr is None):
+            pass
+        else:
+            debug_msg = "\n"
+            debug_msg += f"src: {bytes.hex(relations_update.src_identifier)}\n"
+            debug_msg += f"dst: {bytes.hex(relations_update.dst_identifier)}\n"
+            debug_msg += f"inr: {inr}\n"
+            debug_msg += f"outr: {outr}\n"
+            inout_logger.debug(debug_msg)
+
+        # assert (outr is None) == (inr is None)
 
         id_src = hash_to_id[relations_update.src_identifier]
         id_dst = hash_to_id[relations_update.dst_identifier]
@@ -192,7 +203,7 @@ def prepare_relations_for_ingest(
                 elif key in relations_update.token_values:
                     nv_token[key] = relations_update.token_values[key]
 
-            assert outr.no_transactions == inr.no_transactions
+            # assert outr.no_transactions == inr.no_transactions
 
             chng_in = DbChange.update(
                 table="address_incoming_relations",

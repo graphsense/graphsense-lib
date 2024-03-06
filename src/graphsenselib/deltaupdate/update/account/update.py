@@ -64,6 +64,7 @@ from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.logging import LoggerScope
 
 logger = logging.getLogger(__name__)
+inout_logger = logging.getLogger("inout_logger")
 
 
 COINBASE_PSEUDO_ADDRESS = None
@@ -159,6 +160,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         return cache.get(("fee", txs), [{"fee": None}])[0]["fee"]
 
     def process_batch_impl_hook(self, batch: List[int]) -> Tuple[Action, Optional[int]]:
+        inout_logger.debug(f"batch {batch}")
         rates = {}
         transactions = []
         traces = []
@@ -168,6 +170,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         """
             Read transaction and exchange rates data
         """
+
         with LoggerScope.debug(logger, "Checking recovery state.") as lg:
             if self.crash_recoverer.is_in_recovery_mode():
                 """
