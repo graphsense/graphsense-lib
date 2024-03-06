@@ -3,6 +3,9 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.02.2/2.2.2] 2024-03-06
+### fixed
+- gracefully handle inconsistencies in address relations
 
 ## [24.02.1/2.2.1] 2024-03-04
 ### fixed
