@@ -132,15 +132,6 @@ def prepare_relations_for_ingest(
         inr = inrelations[
             (relations_update.src_identifier, relations_update.dst_identifier)
         ].result_or_exc.one()
-        if (outr is None) == (inr is None):
-            pass
-        else:
-            debug_msg = "inoutcheck: inconsistency "
-            debug_msg += f"src: {bytes.hex(relations_update.src_identifier)} "
-            debug_msg += f"dst: {bytes.hex(relations_update.dst_identifier)} "
-            debug_msg += f"inr: {inr} "
-            debug_msg += f"outr: {outr} "
-            logger.warning(debug_msg)
 
         # assert (outr is None) == (inr is None)
 
@@ -153,6 +144,30 @@ def prepare_relations_for_ingest(
         dst_group, dst_secondary = get_id_group_with_secondary_relations(
             id_dst, id_src, id_bucket_size, relations_nbuckets
         )
+
+        # checking and logging inconsistencies
+        if (outr is None) == (inr is None):
+            pass
+        else:
+            debug_msg = "inoutcheck: inconsistency "
+            debug_msg += f"src: {bytes.hex(relations_update.src_identifier)} "
+            debug_msg += f"dst: {bytes.hex(relations_update.dst_identifier)} "
+            debug_msg += f"inr: {inr} "
+            debug_msg += f"outr: {outr} "
+            logger.warning(debug_msg)
+
+        # missing record patching
+        if (outr is None) and (inr is not None):
+            outr = MutableNamedTuple(**inr._asdict())
+
+            outr.src_address_id_group = src_group
+            outr.src_address_id_secondary_group = src_secondary
+
+        if (inr is None) and (outr is not None):
+            inr = MutableNamedTuple(**outr._asdict())
+
+            inr.dst_address_id_group = dst_group
+            inr.dst_address_id_secondary_group = dst_secondary
 
         if outr is None:
             """new address relation to insert"""
