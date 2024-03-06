@@ -14,23 +14,6 @@ from .update import AbstractUpdateStrategy, Action, UpdaterFactory
 
 logger = logging.getLogger(__name__)
 
-# Generate a unique logger name to avoid conflicts
-inout_logger = "inout_logger"
-log_file_name = "inout.log"
-
-inout_logger = logging.getLogger(inout_logger)
-inout_logger.setLevel(logging.DEBUG)
-# Ensure this logger does not propagate messages to the root logger
-inout_logger.propagate = False
-inout_file_handler = logging.FileHandler(log_file_name)
-inout_file_handler.setLevel(logging.DEBUG)
-
-inout_formatter = logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-inout_file_handler.setFormatter(inout_formatter)
-inout_logger.addHandler(inout_file_handler)
-
 
 def adjust_start_block(db, start_block) -> int:
     last_er = None

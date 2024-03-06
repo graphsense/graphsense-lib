@@ -160,7 +160,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         return cache.get(("fee", txs), [{"fee": None}])[0]["fee"]
 
     def process_batch_impl_hook(self, batch: List[int]) -> Tuple[Action, Optional[int]]:
-        inout_logger.debug(f"batch {batch}")
+        logger.warning(f"inoutcheck: batch {batch}")
         rates = {}
         transactions = []
         traces = []
