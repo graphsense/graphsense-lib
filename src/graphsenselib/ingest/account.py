@@ -28,6 +28,7 @@ from web3 import Web3
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
+from ..schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
 from ..utils import (
     batch,
     check_timestamp,
@@ -59,6 +60,7 @@ from .csv import (
     format_transactions_csv,
     write_csv,
 )
+from .parquet import write_parquet
 from .tron.export_traces_job import TronExportTracesJob
 from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
 from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
@@ -1400,6 +1402,276 @@ def export_csv(
                 tx_list.clear()
                 trace_list.clear()
                 logs_list.clear()
+
+                if check_shutdown_initialized():
+                    break
+
+    logger.info(
+        f"[{datetime.now()}] Processed block range "
+        f"{rounded_start_block:,}:{rounded_end_block:,}"
+        f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
+    )
+
+
+def export_parquet(
+    currency: str,
+    provider_uri: str,
+    directory: str,
+    user_start_block: Optional[int],
+    user_end_block: Optional[int],
+    continue_export: bool,
+    batch_size: int,
+    partitioning: str,
+    file_batch_size: int,
+    partition_batch_size: int,
+    info: bool,
+    provider_timeout: int,
+):
+    logger.setLevel(logging.DEBUG)  # todo
+    logger.info(f"Writing data as parquet to {directory}")
+
+    thread_proxy = get_connection_from_url(provider_uri, provider_timeout)
+
+    logger.info("Connecting to RPC")
+    adapter = EthStreamerAdapter(
+        thread_proxy, batch_size=WEB3_QUERY_BATCH_SIZE, max_workers=WEB3_QUERY_WORKERS
+    )
+
+    start_block = 0
+    if user_start_block is None:
+        if continue_export:
+            block_files = sorted(pathlib.Path(directory).rglob("block*"))
+            if block_files:
+                last_file = block_files[-1].name
+                logger.info(f"Last exported file: {block_files[-1]}")
+                start_block = int(re.match(r".*-(\d+)", last_file).group(1)) + 1
+    else:
+        start_block = user_start_block
+
+    end_block = get_last_synced_block(thread_proxy)
+    logger.info(f"Last synced block: {end_block:,}")
+    if user_end_block is not None:
+        end_block = user_end_block
+
+    time1 = datetime.now()
+    count = 0
+
+    block_bucket_size = file_batch_size
+    if file_batch_size % batch_size != 0:
+        logger.error("Error: file_batch_size is not a multiple of batch_size")
+        sys.exit(1)
+
+    if partition_batch_size % file_batch_size != 0:
+        logger.error("Error: partition_batch_size is not a multiple of file_batch_size")
+        sys.exit(1)
+
+    rounded_start_block = start_block // block_bucket_size * block_bucket_size
+    rounded_end_block = (end_block + 1) // block_bucket_size * block_bucket_size - 1
+
+    if rounded_start_block > rounded_end_block:
+        print("No blocks to export")
+        return
+
+    block_range = (
+        rounded_start_block,
+        rounded_start_block + block_bucket_size - 1,
+    )
+
+    if info:
+        logger.info(
+            f"Would process block range "
+            f"{rounded_start_block:,} - {rounded_end_block:,}"
+        )
+        return
+
+    path = pathlib.Path(directory)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, NotADirectoryError) as exception:
+        logger.error(f"Could not output directory {directory}: {str(exception)}")
+        sys.exit(1)
+
+    logger.info(
+        f"Processing block range " f"{rounded_start_block:,} - {rounded_end_block:,}"
+    )
+
+    with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        for block_id in range(rounded_start_block, rounded_end_block + 1, batch_size):
+            if partitioning == "block-based":
+                partition = block_id // partition_batch_size
+            else:
+                raise NotImplementedError(
+                    f"Partitioning {partitioning} not implemented"
+                )
+
+            block_list = []
+            tx_list = []
+            trace_list = []
+            logs_list = []
+            block_file = ""  # "block_%08d-%08d.parquet" % block_range
+            tx_file = ""  # "tx_%08d-%08d.parquet" % block_range
+            trace_file = ""  # "trace_%08d-%08d.parquet" % block_range
+            logs_file = ""  # "logs_%08d-%08d.parquet" % block_range
+
+            current_end_block = min(end_block, block_id + batch_size - 1)
+
+            with suppress_log_level(logging.INFO):
+                blocks, txs = adapter.export_blocks_and_transactions(
+                    block_id, current_end_block
+                )
+                if (
+                    block_id == 0 and currency == "trx"
+                ):  # genesis tx of block 0 have no receipts
+                    # to avoid errors we drop them
+                    txs = [tx for tx in txs if tx["block_number"] > 0]
+                receipts, logs = adapter.export_receipts_and_logs(txs)
+                traces, fees = adapter.export_traces(
+                    block_id, current_end_block, True, True
+                )
+                enriched_txs = enrich_transactions(txs, receipts)
+
+            # todo
+            block_list.extend(format_blocks_csv(blocks))
+            tx_list.extend(format_transactions_csv(enriched_txs, TX_HASH_PREFIX_LEN))
+            trace_list.extend(format_traces_csv(traces))
+            logs_list.extend(format_logs_csv(logs))
+
+            from ast import literal_eval
+
+            from pyarrow.types import (
+                is_binary,
+                is_fixed_size_binary,
+                is_large_binary,
+                is_list,
+            )
+
+            is_binary_list = [is_binary, is_fixed_size_binary, is_large_binary]
+
+            def is_any_binary(x):
+                return any([check(x) for check in is_binary_list])
+
+            def hex_to_bytes_by_schema(data, schema):
+                binary_cols = [
+                    fieldname
+                    for fieldname in schema.names
+                    if is_any_binary(schema.field(fieldname).type)
+                ]
+
+                for item in data:
+                    for k_bin in binary_cols:
+                        item[k_bin] = hex_to_bytes(item[k_bin])
+
+                # if it is a list of bytes
+                listtype_cols = [
+                    fieldname
+                    for fieldname in schema.names
+                    if is_list(schema.field(fieldname).type)
+                ]
+                listbinary_cols = [
+                    fieldname
+                    for fieldname in listtype_cols
+                    if is_any_binary(schema.field(fieldname).type.value_type)
+                ]
+
+                for item in data:
+                    for k_bin in listbinary_cols:
+                        item[k_bin] = [
+                            hex_to_bytes(x) for x in literal_eval(item[k_bin])
+                        ]
+
+                return data
+
+            def with_partition(data, partition):
+                for item in data:
+                    item["partition"] = partition
+                return data
+
+            trace_list = hex_to_bytes_by_schema(trace_list, ACCOUNT_SCHEMA_RAW["trace"])
+            tx_list = hex_to_bytes_by_schema(tx_list, ACCOUNT_SCHEMA_RAW["transaction"])
+            block_list = hex_to_bytes_by_schema(block_list, ACCOUNT_SCHEMA_RAW["block"])
+            logs_list = hex_to_bytes_by_schema(logs_list, ACCOUNT_SCHEMA_RAW["log"])
+
+            trace_list = with_partition(trace_list, partition)
+            tx_list = with_partition(tx_list, partition)
+            block_list = with_partition(block_list, partition)
+            logs_list = with_partition(logs_list, partition)
+
+            count += batch_size
+
+            last_block = block_list[-1]
+            last_block_ts = last_block["timestamp"]
+            last_block_date = parse_timestamp(last_block_ts)
+
+            if count >= 1000:
+                time2 = datetime.now()
+                time_delta = (time2 - time1).total_seconds()
+                logger.info(
+                    f"Last processed block {current_end_block:,} "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                    f"({count/time_delta:.1f} blks/s)"
+                )
+                time1 = time2
+                count = 0
+
+            if (block_id + batch_size) % block_bucket_size == 0:
+                sub_dir = ""  # f"{partition_start:08d}-{partition_end:08d}"
+                full_path = path / sub_dir
+                full_path.mkdir(parents=True, exist_ok=True)
+
+                # todo
+                if currency == "trx":
+                    prepare_transactions_inplace_trx(tx_list)
+                    prepare_blocks_inplace_trx(block_list)
+
+                # todo add fees table for trx
+                # todo add utxo functionality
+
+                write_parquet(
+                    str(full_path / trace_file),
+                    "trace",
+                    trace_list,
+                    ACCOUNT_SCHEMA_RAW,
+                    partition_cols=["partition"],
+                    deltatable=True,
+                )
+                write_parquet(
+                    str(full_path / tx_file),
+                    "transaction",
+                    tx_list,
+                    ACCOUNT_SCHEMA_RAW,
+                    partition_cols=["partition"],
+                    deltatable=True,
+                )
+                write_parquet(
+                    str(full_path / block_file),
+                    "block",
+                    block_list,
+                    ACCOUNT_SCHEMA_RAW,
+                    partition_cols=["partition"],
+                    deltatable=True,
+                )
+                write_parquet(
+                    str(full_path / logs_file),
+                    "log",
+                    logs_list,
+                    ACCOUNT_SCHEMA_RAW,
+                    partition_cols=["partition"],
+                    deltatable=True,
+                )
+
+                last_block = block_list[-1]
+                last_block_ts = last_block["timestamp"]
+                last_block_date = parse_timestamp(last_block_ts)
+
+                logger.info(
+                    f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                )
+
+                block_range = (
+                    block_id + batch_size,
+                    block_id + batch_size + block_bucket_size - 1,
+                )
 
                 if check_shutdown_initialized():
                     break

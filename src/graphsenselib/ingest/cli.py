@@ -12,6 +12,7 @@ from ..config import config, currency_to_schema_type
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
+from .account import export_parquet
 from .common import INGEST_SINKS
 from .factory import IngestFactory
 from .parquet import SCHEMA_MAPPING as PARQUET_SCHEMA_MAPPING
@@ -335,3 +336,122 @@ def export_csv(
             previous_day=previous_day,
             provider_timeout=timeout,
         )
+
+
+@ingesting.command("dump-rawdata")
+@require_environment()
+@require_currency(required=True)
+@click.option(
+    "--start-block",
+    type=int,
+    required=False,
+    help="start block (default: 0)",
+)
+@click.option(
+    "--end-block",
+    type=int,
+    required=False,
+    help="end block (default: last available block)",
+)
+@click.option(
+    "--continue",
+    "continue_export",
+    is_flag=True,
+    help="continue export from position",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=10,
+    help="number of blocks to export (write) at a time (default: 10)",
+)
+@click.option(
+    "--partitioning",
+    type=click.Choice(
+        [
+            "block-based",
+        ],
+        case_sensitive=False,
+    ),
+    help="Partitioning type. Defines units to import (default: block-based)",
+    default="block-based",
+    multiple=False,
+)
+@click.option(
+    "--file-batch-size",
+    type=int,
+    default=1000,
+    help="Numer of units (blocks) to export to a parquet file (default: 1000)",
+)
+@click.option(
+    "--partition-batch-size",
+    type=int,
+    default=1_000_000,
+    help="number of blocks to export in partition for block-based (default: 1_000)",
+)
+@click.option(
+    "--info",
+    is_flag=True,
+    help="display block information and exit",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    required=False,
+    default=3600,
+    help="Web3 API timeout in seconds (default: 3600s)",
+)
+def dump_rawdata(
+    env,
+    currency,
+    start_block,
+    end_block,
+    continue_export,
+    batch_size,
+    partitioning,
+    file_batch_size,
+    partition_batch_size,
+    info,
+    timeout,
+):
+    """Exports raw cryptocurrency data to gziped csv files.
+    \f
+    Args:
+        env (str): Environment to work on
+        currency (str): currency to work on
+    """
+    logger.setLevel(logging.DEBUG)
+    logger.info(f"Dumping raw data for {currency} in {env}")
+    if currency != "eth" and currency != "trx":
+        logger.error("Csv export is only supported for eth/trx at the moment.")
+        sys.exit(11)
+
+    ks_config = config.get_keyspace_config(env, currency)
+    source_node_uri = ks_config.ingest_config.get_first_node_reference()
+    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
+        "parquet", None
+    )
+
+    if parquet_directory_config is None:
+        logger.error(
+            "Please provide an output directory in your "
+            "config (raw_keyspace_file_sinks.parquet.directory)"
+        )
+        sys.exit(11)
+
+    parquet_directory = parquet_directory_config.directory
+
+    export_parquet(
+        currency=currency,
+        provider_uri=source_node_uri,
+        directory=parquet_directory,
+        user_start_block=start_block,
+        user_end_block=end_block,
+        continue_export=continue_export,
+        batch_size=batch_size,
+        partitioning=partitioning,
+        file_batch_size=file_batch_size,
+        partition_batch_size=partition_batch_size,
+        info=info,
+        provider_timeout=timeout,
+    )
