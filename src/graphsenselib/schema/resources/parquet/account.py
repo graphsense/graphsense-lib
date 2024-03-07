@@ -1,16 +1,9 @@
-from pathlib import Path
-from urllib.parse import urlparse
-
-import deltalake as dl
 import pyarrow as pa
-import pyarrow.parquet as pq
-from pyarrow.fs import HadoopFileSystem
 
-# todo clean up this table, could have dependency
 ACCOUNT_SCHEMA_RAW = {
     "log": pa.schema(
         [
-            ("partition", pa.int16()),
+            ("partition", pa.int32()),
             ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
@@ -19,13 +12,13 @@ ACCOUNT_SCHEMA_RAW = {
             ("topics", pa.list_(pa.binary(32))),
             ("topic0", pa.binary(32)),
             ("tx_hash", pa.binary(32)),
-            ("log_index", pa.int32()),
+            ("log_index", pa.int16()),
             ("transaction_index", pa.int32()),
         ]
     ),
     "trace": pa.schema(
         [
-            ("partition", pa.int16()),
+            ("partition", pa.int32()),
             ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("tx_hash", pa.binary(32)),
@@ -50,7 +43,7 @@ ACCOUNT_SCHEMA_RAW = {
     ),
     "block": pa.schema(
         [
-            ("partition", pa.int16()),
+            ("partition", pa.int32()),
             ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
@@ -75,7 +68,7 @@ ACCOUNT_SCHEMA_RAW = {
     ),
     "transaction": pa.schema(
         [
-            ("partition", pa.int16()),
+            ("partition", pa.int32()),
             ("tx_hash_prefix", pa.string()),
             ("tx_hash", pa.binary(32)),
             ("nonce", pa.int32()),
@@ -102,48 +95,3 @@ ACCOUNT_SCHEMA_RAW = {
         ]
     ),
 }
-
-SCHEMA_MAPPING = {"account": ACCOUNT_SCHEMA_RAW}
-
-
-def write_parquet(
-    path: str,
-    table_name: str,
-    parameters: list,
-    schema_table: dict,
-    partition_cols: list = ["partition"],
-    deltatable: bool = False,
-) -> None:
-    if not parameters:
-        return
-    table = pa.Table.from_pylist(parameters, schema=schema_table[table_name])
-
-    if deltatable:
-        path = Path(path)
-        dl.write_deltalake(
-            path / table_name, table, partition_by=partition_cols, mode="overwrite"
-        )
-        return
-
-    if path.startswith("hdfs://"):
-        o = urlparse(path)
-        fs = HadoopFileSystem(o.hostname, o.port)
-
-        pq.write_to_dataset(
-            table,
-            root_path=o.path / table_name,
-            partition_cols=partition_cols,
-            existing_data_behavior="overwrite_or_ignore",
-            filesystem=fs,
-        )
-    else:
-        path = Path(path)
-        if path.exists():
-            pq.write_to_dataset(
-                table,
-                root_path=path / table_name,
-                partition_cols=partition_cols,
-                existing_data_behavior="overwrite_or_ignore",
-            )
-        else:
-            raise Exception(f"Parquet file path not found: {path}")
