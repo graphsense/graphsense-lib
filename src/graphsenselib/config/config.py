@@ -1,5 +1,4 @@
 import logging
-import math
 import os
 from typing import Dict, List, Optional
 
@@ -26,6 +25,16 @@ avg_blocktimes_by_currencies = {
     "ltc": 150,
 }
 
+reorg_backoff_blocks = {
+    "trx": 20,
+    "eth": 70,
+    "btc": 3,
+    "bch": 15,
+    "zec": 150,
+    "ltc": 12,
+}
+
+
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
@@ -33,7 +42,7 @@ CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
 )
 
 
-def get_approx_reorg_backoff_blocks(network: str, lag_in_hours: int = 1.2) -> int:
+def get_reorg_backoff_blocks(network: str) -> int:
     """For imports we do not want to always catch up with the latest block
     since we want to avoid reorgs lead to spurious data in the database.
 
@@ -42,9 +51,7 @@ def get_approx_reorg_backoff_blocks(network: str, lag_in_hours: int = 1.2) -> in
     Args:
         network (str): currency/network label
     """
-    return math.ceil(
-        (lag_in_hours * 3600) / avg_blocktimes_by_currencies[network.lower()]
-    )
+    return reorg_backoff_blocks[network.lower()]
 
 
 class FileSink(BaseModel):
