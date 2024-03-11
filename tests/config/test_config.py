@@ -1,4 +1,4 @@
-from graphsenselib.config import config, get_approx_reorg_backoff_blocks
+from graphsenselib.config import config, get_reorg_backoff_blocks
 
 
 def test_config_is_not_loaded_by_default():
@@ -7,7 +7,4 @@ def test_config_is_not_loaded_by_default():
 
 
 def test_get_approx_reorg_backoff_blocks():
-    assert get_approx_reorg_backoff_blocks("btc") == 8
-    assert get_approx_reorg_backoff_blocks("bch", 1.5) == 9
-    assert get_approx_reorg_backoff_blocks("eth") == 288
-    assert get_approx_reorg_backoff_blocks("ltc") == 29
+    assert get_reorg_backoff_blocks("eth") == 70

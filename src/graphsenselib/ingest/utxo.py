@@ -16,7 +16,7 @@ from btcpy.structs.address import P2pkhAddress
 from btcpy.structs.script import ScriptBuilder
 from methodtools import lru_cache as mlru_cache
 
-from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
+from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..db import AnalyticsDb
 from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_0x
 from ..utils.account import get_id_group
@@ -795,7 +795,7 @@ def ingest(
     else:
         start_block = user_start_block
 
-    end_block = last_synced_block - get_approx_reorg_backoff_blocks(currency)
+    end_block = last_synced_block - get_reorg_backoff_blocks(currency)
     if user_end_block is not None:
         end_block = user_end_block
 
