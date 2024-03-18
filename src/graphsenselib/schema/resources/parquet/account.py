@@ -10,7 +10,7 @@ ACCOUNT_SCHEMA_RAW = {
             ("address", pa.binary(20)),
             ("data", pa.large_binary()),
             ("topics", pa.list_(pa.binary(32))),
-            ("topic0", pa.binary(32)),
+            ("topic0", pa.binary()),  # either 32 long or 0 in rare cases
             ("tx_hash", pa.binary(32)),
             ("log_index", pa.int16()),
             ("transaction_index", pa.int32()),

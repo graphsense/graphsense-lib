@@ -29,6 +29,7 @@ from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backof
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
 from ..schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
+from ..schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
 from ..utils import (
     batch,
     check_timestamp,
@@ -338,7 +339,11 @@ def ingest_configuration_cassandra(
     )
 
 
-def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
+def prepare_logs_inplace(
+    items: Iterable,
+    block_bucket_size: int,
+    partition_size: int = PARQUET_PARTITION_SIZE,
+) -> None:
     blob_colums = [
         "block_hash",
         "address",
@@ -356,7 +361,7 @@ def prepare_logs_inplace(items: Iterable, block_bucket_size: int):
 
         # Used for partitioning in parquet files
         # ignored otherwise
-        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+        item["partition"] = item["block_id"] // partition_size
 
         tpcs = item["topics"]
 
@@ -405,6 +410,7 @@ def ingest_logs(
 def prepare_blocks_inplace_eth(
     items: Iterable,
     block_bucket_size: int,
+    partition_size: int = PARQUET_PARTITION_SIZE,
 ):
     blob_colums = [
         "block_hash",
@@ -428,15 +434,17 @@ def prepare_blocks_inplace_eth(
 
         # Used for partitioning in parquet files
         # ignored otherwise
-        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+        item["partition"] = item["block_id"] // partition_size
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
             item[elem] = hex_to_bytes(item[elem])
 
 
-def prepare_blocks_inplace_trx(items, block_bucket_size):
-    prepare_blocks_inplace_eth(items, block_bucket_size)
+def prepare_blocks_inplace_trx(
+    items, block_bucket_size, partition_size=PARQUET_PARTITION_SIZE
+):
+    prepare_blocks_inplace_eth(items, block_bucket_size, partition_size)
 
     for b in items:
         # b["timestamp"] = b["timestamp"]
@@ -444,7 +452,10 @@ def prepare_blocks_inplace_trx(items, block_bucket_size):
 
 
 def prepare_transactions_inplace_eth(
-    items: Iterable, tx_hash_prefix_len: int, block_bucket_size: int
+    items: Iterable,
+    tx_hash_prefix_len: int,
+    block_bucket_size: int,
+    partition_size: int = PARQUET_PARTITION_SIZE,
 ):
     blob_colums = [
         "tx_hash",
@@ -467,7 +478,7 @@ def prepare_transactions_inplace_eth(
 
         # Used for partitioning in parquet files
         # ignored otherwise
-        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+        item["partition"] = item["block_id"] // partition_size
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
@@ -475,9 +486,14 @@ def prepare_transactions_inplace_eth(
 
 
 def prepare_transactions_inplace_trx(
-    items: Iterable, tx_hash_prefix_len: int, block_bucket_size: int
+    items: Iterable,
+    tx_hash_prefix_len: int,
+    block_bucket_size: int,
+    partition_size: int = PARQUET_PARTITION_SIZE,
 ):
-    prepare_transactions_inplace_eth(items, tx_hash_prefix_len, block_bucket_size)
+    prepare_transactions_inplace_eth(
+        items, tx_hash_prefix_len, block_bucket_size, partition_size
+    )
 
     for tx in items:
         type_transformer = TxTypeTransformer()
@@ -485,7 +501,11 @@ def prepare_transactions_inplace_trx(
         check_timestamp(tx["block_timestamp"])
 
 
-def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
+def prepare_traces_inplace_eth(
+    items: Iterable,
+    block_bucket_size: int,
+    partition_size: int = PARQUET_PARTITION_SIZE,
+):
     blob_colums = ["tx_hash", "from_address", "to_address", "input", "output"]
     for item in items:
         # remove column
@@ -497,7 +517,7 @@ def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
 
         # Used for partitioning in parquet files
         # ignored otherwise
-        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+        item["partition"] = item["block_id"] // partition_size
 
         item["trace_address"] = (
             ",".join(map(str, item["trace_address"]))
@@ -509,7 +529,11 @@ def prepare_traces_inplace_eth(items: Iterable, block_bucket_size: int):
             item[elem] = hex_to_bytes(item[elem])
 
 
-def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
+def prepare_traces_inplace_trx(
+    items: Iterable,
+    block_bucket_size: int,
+    partition_size: int = PARQUET_PARTITION_SIZE,
+):
     blob_colums = ["tx_hash", "caller_address", "transferto_address"]
     for item in items:
         # rename/add columns
@@ -520,7 +544,7 @@ def prepare_traces_inplace_trx(items: Iterable, block_bucket_size: int):
 
         # Used for partitioning in parquet files
         # ignored otherwise
-        item["partition"] = item["block_id"] // PARQUET_PARTITION_SIZE
+        item["partition"] = item["block_id"] // partition_size
 
         # item["trace_address"] = (
         #    ",".join(map(str, item["trace_address"]))
@@ -1415,7 +1439,7 @@ def export_csv(
 
 def export_parquet(
     currency: str,
-    provider_uri: str,
+    sources: list,
     directory: str,
     user_start_block: Optional[int],
     user_end_block: Optional[int],
@@ -1430,12 +1454,44 @@ def export_parquet(
     logger.setLevel(logging.DEBUG)  # todo
     logger.info(f"Writing data as parquet to {directory}")
 
+    provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
+
     thread_proxy = get_connection_from_url(provider_uri, provider_timeout)
 
     logger.info("Connecting to RPC")
-    adapter = EthStreamerAdapter(
-        thread_proxy, batch_size=WEB3_QUERY_BATCH_SIZE, max_workers=WEB3_QUERY_WORKERS
-    )
+    if currency == "eth":
+        adapter = EthStreamerAdapter(
+            thread_proxy,
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
+    elif currency == "trx":
+        grpc_provider_uri = first_or_default(sources, lambda x: x.startswith("grpc"))
+        adapter = TronStreamerAdapter(
+            thread_proxy,
+            grpc_endpoint=grpc_provider_uri,
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
+
+        strategy = TrxETLStrategy(
+            http_provider_uri=provider_uri,
+            provider_timeout=provider_timeout,
+            grpc_provider_uri=grpc_provider_uri,
+            batch_size=batch_size,
+            is_trace_only_mode=False,
+            is_update_transactions_mode=False,
+        )
+
+    # todo
+    if currency == "trx":
+        prepare_transactions_inplace = prepare_transactions_inplace_trx
+        prepare_blocks_inplace = prepare_blocks_inplace_trx
+        prepare_traces_inplace = prepare_traces_inplace_trx
+    elif currency == "eth":
+        prepare_transactions_inplace = prepare_transactions_inplace_eth
+        prepare_blocks_inplace = prepare_blocks_inplace_eth
+        prepare_traces_inplace = prepare_traces_inplace_eth
 
     start_block = 0
     if user_start_block is None:
@@ -1459,6 +1515,16 @@ def export_parquet(
     block_bucket_size = file_batch_size
     if file_batch_size % batch_size != 0:
         logger.error("Error: file_batch_size is not a multiple of batch_size")
+        sys.exit(1)
+
+    if file_batch_size != batch_size:
+        logger.error(
+            "Error: At the moment file_batch_size has to be batch_size because"
+            "if file_batch_size is larger, only the last write will persist "
+            "because the first ones are overwritten"
+            "if file_batch_size is smaller, i dont know right now, "
+            "probably something bad, todo look into it"
+        )
         sys.exit(1)
 
     if partition_batch_size % file_batch_size != 0:
@@ -1498,16 +1564,12 @@ def export_parquet(
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(rounded_start_block, rounded_end_block + 1, batch_size):
             if partitioning == "block-based":
-                partition = block_id // partition_batch_size
+                pass
             else:
                 raise NotImplementedError(
                     f"Partitioning {partitioning} not implemented"
                 )
 
-            block_list = []
-            tx_list = []
-            trace_list = []
-            logs_list = []
             block_file = ""  # "block_%08d-%08d.parquet" % block_range
             tx_file = ""  # "tx_%08d-%08d.parquet" % block_range
             trace_file = ""  # "trace_%08d-%08d.parquet" % block_range
@@ -1528,77 +1590,38 @@ def export_parquet(
                 traces, fees = adapter.export_traces(
                     block_id, current_end_block, True, True
                 )
-                enriched_txs = enrich_transactions(txs, receipts)
+                prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN)
 
-            # todo
-            block_list.extend(format_blocks_csv(blocks))
-            tx_list.extend(format_transactions_csv(enriched_txs, TX_HASH_PREFIX_LEN))
-            trace_list.extend(format_traces_csv(traces))
-            logs_list.extend(format_logs_csv(logs))
+                prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE, partition_batch_size)
 
-            from ast import literal_eval
+                if currency == "trx":
+                    hash_to_type = adapter.export_hash_to_type_mappings(txs, blocks)
+                    txs = enrich_transactions(txs, receipts)
+                    txs = strategy.enrich_transactions_with_type(txs, hash_to_type)
+                else:
+                    txs = enrich_transactions(txs, receipts)
 
-            from pyarrow.types import (
-                is_binary,
-                is_fixed_size_binary,
-                is_large_binary,
-                is_list,
+            prepare_transactions_inplace(
+                txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, partition_batch_size
             )
+            prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, partition_batch_size)
+            prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, partition_batch_size)
 
-            is_binary_list = [is_binary, is_fixed_size_binary, is_large_binary]
+            if currency == "eth":
+                SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
+            elif currency == "trx":
+                SCHEMA_RAW = ACCOUNT_TRX_SCHEMA_RAW
 
-            def is_any_binary(x):
-                return any([check(x) for check in is_binary_list])
-
-            def hex_to_bytes_by_schema(data, schema):
-                binary_cols = [
-                    fieldname
-                    for fieldname in schema.names
-                    if is_any_binary(schema.field(fieldname).type)
-                ]
-
-                for item in data:
-                    for k_bin in binary_cols:
-                        item[k_bin] = hex_to_bytes(item[k_bin])
-
-                # if it is a list of bytes
-                listtype_cols = [
-                    fieldname
-                    for fieldname in schema.names
-                    if is_list(schema.field(fieldname).type)
-                ]
-                listbinary_cols = [
-                    fieldname
-                    for fieldname in listtype_cols
-                    if is_any_binary(schema.field(fieldname).type.value_type)
-                ]
-
-                for item in data:
-                    for k_bin in listbinary_cols:
-                        item[k_bin] = [
-                            hex_to_bytes(x) for x in literal_eval(item[k_bin])
-                        ]
-
-                return data
-
-            def with_partition(data, partition):
-                for item in data:
-                    item["partition"] = partition
-                return data
-
-            trace_list = hex_to_bytes_by_schema(trace_list, ACCOUNT_SCHEMA_RAW["trace"])
-            tx_list = hex_to_bytes_by_schema(tx_list, ACCOUNT_SCHEMA_RAW["transaction"])
-            block_list = hex_to_bytes_by_schema(block_list, ACCOUNT_SCHEMA_RAW["block"])
-            logs_list = hex_to_bytes_by_schema(logs_list, ACCOUNT_SCHEMA_RAW["log"])
-
-            trace_list = with_partition(trace_list, partition)
-            tx_list = with_partition(tx_list, partition)
-            block_list = with_partition(block_list, partition)
-            logs_list = with_partition(logs_list, partition)
+            # todo make sure that appending works correctly
+            #     -> no overwriting of files
+            #     -> no appending of existing data
+            #    Solution? -> Create partition files and only write
+            #    partition files new, find out how
+            # todo add utxo functionality
 
             count += batch_size
 
-            last_block = block_list[-1]
+            last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
             last_block_date = parse_timestamp(last_block_ts)
 
@@ -1618,50 +1641,48 @@ def export_parquet(
                 full_path = path / sub_dir
                 full_path.mkdir(parents=True, exist_ok=True)
 
-                # todo
-                if currency == "trx":
-                    prepare_transactions_inplace_trx(tx_list)
-                    prepare_blocks_inplace_trx(block_list)
-
-                # todo add fees table for trx
-                # todo add utxo functionality
-
                 write_parquet(
                     str(full_path / trace_file),
                     "trace",
-                    trace_list,
-                    ACCOUNT_SCHEMA_RAW,
+                    traces,
+                    SCHEMA_RAW,
                     partition_cols=["partition"],
                     deltatable=True,
                 )
                 write_parquet(
                     str(full_path / tx_file),
                     "transaction",
-                    tx_list,
-                    ACCOUNT_SCHEMA_RAW,
+                    txs,
+                    SCHEMA_RAW,
                     partition_cols=["partition"],
                     deltatable=True,
                 )
                 write_parquet(
                     str(full_path / block_file),
                     "block",
-                    block_list,
-                    ACCOUNT_SCHEMA_RAW,
+                    blocks,
+                    SCHEMA_RAW,
                     partition_cols=["partition"],
                     deltatable=True,
                 )
                 write_parquet(
                     str(full_path / logs_file),
                     "log",
-                    logs_list,
-                    ACCOUNT_SCHEMA_RAW,
+                    logs,
+                    SCHEMA_RAW,
                     partition_cols=["partition"],
                     deltatable=True,
                 )
-
-                last_block = block_list[-1]
-                last_block_ts = last_block["timestamp"]
-                last_block_date = parse_timestamp(last_block_ts)
+                if currency == "trx":
+                    fee_file = ""
+                    write_parquet(
+                        str(full_path / fee_file),
+                        "fee",
+                        fees,
+                        SCHEMA_RAW,
+                        partition_cols=["partition"],
+                        deltatable=True,
+                    )
 
                 logger.info(
                     f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
@@ -1675,6 +1696,18 @@ def export_parquet(
 
                 if check_shutdown_initialized():
                     break
+
+        trc10_file = ""
+        token_infos = adapter.get_trc10_token_infos()
+        prepare_trc10_tokens_inplace(token_infos)
+        write_parquet(
+            str(full_path / trc10_file),
+            "trc10",
+            token_infos,
+            SCHEMA_RAW,
+            partition_cols=["partition"],
+            deltatable=True,
+        )
 
     logger.info(
         f"[{datetime.now()}] Processed block range "
