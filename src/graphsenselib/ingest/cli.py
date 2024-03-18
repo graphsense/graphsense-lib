@@ -11,19 +11,25 @@ from ..cli.common import require_currency, require_environment
 from ..config import config, currency_to_schema_type
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
+from ..schema.resources.parquet import account, account_trx, utxo
 from ..utils import subkey_get
 from .account import export_parquet
 from .common import INGEST_SINKS
 from .factory import IngestFactory
-from .parquet import SCHEMA_MAPPING as PARQUET_SCHEMA_MAPPING
 
 logger = logging.getLogger(__name__)
+
+PARQUET_SCHEMA_MAPPING = {
+    "account": account.ACCOUNT_SCHEMA_RAW,
+    "account_trx": account_trx.ACCOUNT_TRX_SCHEMA_RAW,
+    "utxo": utxo.UTXO_SCHEMA_RAW,
+}
 
 
 def create_sink_config(sink: str, network: str, ks_config: Dict):
     schema_type = currency_to_schema_type[network]
     sink_config = ks_config.ingest_config.dict().get("raw_keyspace_file_sinks", None)
-    if (sink == "parquet" and schema_type.startswith("account")) or sink == "fs-cache":
+    if sink == "parquet" or sink == "fs-cache":
         file_sink_dir = subkey_get(sink_config, f"{sink}.directory".split("."))
         if file_sink_dir is None:
             logger.warning(
@@ -427,10 +433,11 @@ def dump_rawdata(
         sys.exit(11)
 
     ks_config = config.get_keyspace_config(env, currency)
-    source_node_uri = ks_config.ingest_config.get_first_node_reference()
+    sources = ks_config.ingest_config.all_node_references
     parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
+    sink_config = create_sink_config("parquet", currency, ks_config)
 
     if parquet_directory_config is None:
         logger.error(
@@ -441,17 +448,38 @@ def dump_rawdata(
 
     parquet_directory = parquet_directory_config.directory
 
-    export_parquet(
-        currency=currency,
-        provider_uri=source_node_uri,
-        directory=parquet_directory,
-        user_start_block=start_block,
-        user_end_block=end_block,
-        continue_export=continue_export,
-        batch_size=batch_size,
-        partitioning=partitioning,
-        file_batch_size=file_batch_size,
-        partition_batch_size=partition_batch_size,
-        info=info,
-        provider_timeout=timeout,
-    )
+    if currency in ["trx", "eth"]:
+        export_parquet(
+            currency=currency,
+            sources=sources,
+            directory=parquet_directory,
+            user_start_block=start_block,
+            user_end_block=end_block,
+            continue_export=continue_export,
+            batch_size=batch_size,
+            partitioning=partitioning,
+            file_batch_size=file_batch_size,
+            partition_batch_size=partition_batch_size,
+            info=info,
+            provider_timeout=timeout,
+        )
+    elif currency in ["btc", "ltc", "zec", "bch"]:  # todo make based on type utxo
+        from .utxo import export_parquet as export_utxo_parquet  # todo
+
+        with DbFactory().from_config(env, currency) as db:
+            export_utxo_parquet(
+                db=db,
+                sink_config=sink_config,
+                currency=currency,
+                sources=sources,
+                directory=parquet_directory,
+                user_start_block=start_block,
+                user_end_block=end_block,
+                continue_export=continue_export,
+                batch_size=batch_size,
+                partitioning=partitioning,
+                file_batch_size=file_batch_size,
+                partition_batch_size=partition_batch_size,
+                info=info,
+                provider_timeout=timeout,
+            )

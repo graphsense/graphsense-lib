@@ -114,6 +114,7 @@ def write_parquet(
     partition_cols: list = ["partition"],
     deltatable: bool = False,
 ) -> None:
+    print("Wriitng ", table_name)
     if not parameters:
         return
     table = pa.Table.from_pylist(parameters, schema=schema_table[table_name])
@@ -121,7 +122,7 @@ def write_parquet(
     if deltatable:
         path = Path(path)
         dl.write_deltalake(
-            path / table_name, table, partition_by=partition_cols, mode="overwrite"
+            path / table_name, table, partition_by=partition_cols, mode="append"
         )
         return
 
@@ -133,7 +134,7 @@ def write_parquet(
             table,
             root_path=o.path / table_name,
             partition_cols=partition_cols,
-            existing_data_behavior="overwrite_or_ignore",
+            existing_data_behavior="app",
             filesystem=fs,
         )
     else:

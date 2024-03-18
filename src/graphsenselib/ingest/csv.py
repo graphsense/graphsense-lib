@@ -92,7 +92,7 @@ LOGS_HEADER = [
 def format_blocks_csv(
     items: Iterable,
     block_bucket_size: int = 1_000,
-) -> None:
+):
     """Format blocks."""
 
     for item in items:

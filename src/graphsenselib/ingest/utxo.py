@@ -245,12 +245,7 @@ def get_last_block_yesterday(
     return block_number
 
 
-def ingest_block_transactions(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-    block_bucket_size: int,
-) -> None:
+def preprocess_block_transactions(items: Iterable, block_bucket_size: int) -> List:
     mapping = {}
     for tx in items:
         mapping.setdefault(tx["block_id"], []).append(tx)
@@ -264,7 +259,16 @@ def ingest_block_transactions(
                 "txs": [tx_stats(x) for x in block_txs],
             }
         )
+    return items
 
+
+def ingest_block_transactions(
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+    block_bucket_size: int,
+) -> None:
+    items = preprocess_block_transactions(items, block_bucket_size)
     write_to_sinks(db, sink_config, "block_transactions", items)
 
 
@@ -615,12 +619,17 @@ def ingest_transactions(
     write_to_sinks(db, sink_config, "transaction", items)
 
 
+def preprocess_transaction_lookups(items: Iterable) -> List[Dict]:
+    res = [{k: tx[k] for k in ("tx_prefix", "tx_hash", "tx_id")} for tx in items]
+    return res
+
+
 def ingest_transaction_lookups(
     items: Iterable,
     db: AnalyticsDb,
     sink_config: dict,
 ) -> None:
-    res = [{k: tx[k] for k in ("tx_prefix", "tx_hash", "tx_id")} for tx in items]
+    res = preprocess_transaction_lookups(items)
     write_to_sinks(db, sink_config, "transaction_by_tx_prefix", res)
 
 
@@ -910,3 +919,186 @@ def ingest(
             total_blocks=last_block_id + 1,
             total_txs=last_tx["tx_id"] + 1,
         )
+
+
+def export_parquet(
+    db: AnalyticsDb,
+    sink_config,
+    currency: str,
+    sources,
+    directory,
+    user_start_block: Optional[int],
+    user_end_block: Optional[int],
+    continue_export,
+    batch_size,
+    partitioning,
+    file_batch_size,
+    partition_batch_size,
+    info,
+    provider_timeout,
+):
+    # TODO harmonize the usage of schema. utxo seems more correct right now.
+    from ..utils import first_or_default
+
+    provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
+
+    if currency not in CHAIN_MAPPING:
+        raise ValueError(
+            f"{currency} not supported by ingest module,"
+            f" supported {list(CHAIN_MAPPING.keys())}"
+        )
+
+    btc_adapter = get_stream_adapter(currency, provider_uri, batch_size=batch_size)
+    start_block, end_block = user_start_block, user_end_block
+
+    # if info then only print block info and exit
+    if info:
+        logger.info(
+            f"Would dump block range "
+            f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+        )
+        return
+
+    time1 = datetime.now()
+    count = 0
+
+    logger.info(
+        f"Dumping block range "
+        f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+    )
+
+    with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        for block_id in range(start_block, end_block + 1, batch_size):
+            current_end_block = min(end_block, block_id + batch_size - 1)
+
+            with suppress_log_level(logging.INFO):
+                blocks, txs = btc_adapter.export_blocks_and_transactions(
+                    block_id, current_end_block
+                )
+
+            tx_refs = flatten(
+                [
+                    get_tx_refs(tx["hash"], tx["inputs"], TX_HASH_PREFIX_LENGTH)
+                    for tx in txs
+                ]
+            )
+
+            prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
+
+            resolver = CassandraOutputResolver(
+                db,
+                tx_bucket_size=TX_BUCKET_SIZE,
+                tx_prefix_length=TX_HASH_PREFIX_LENGTH,
+            )
+
+            # until bitcoin-etl progresses
+            # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
+            enrich_txs(txs, resolver, ignore_missing_outputs=False)
+
+            latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
+
+            prepare_transactions_inplace(
+                txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE
+            )
+            from .parquet import write_parquet
+
+            path_blocks = directory
+            path_txs = directory
+            block_transactions_path = directory
+            transaction_spending_path = directory
+
+            # todo preprocess data
+            # todo add partition column
+
+            SCHEMA_RAW = sink_config["schema"]
+
+            def prepare_txs_parquet(items):
+                # for fields inputs and outputs give the list elements
+                # names with a dictionary address, value, address_type
+                def prepare_single(item):
+                    i = item["inputs"]
+                    item["inputs"] = [
+                        {"address": el[0], "value": el[1], "address_type": el[2]}
+                        for el in i
+                    ]
+                    o = item["outputs"]
+                    item["outputs"] = [
+                        {"address": el[0], "value": el[1], "address_type": el[2]}
+                        for el in o
+                    ]
+
+                    return item
+
+                return [prepare_single(item) for item in items]
+
+            txs = prepare_txs_parquet(txs)
+
+            write_parquet(
+                path_blocks,
+                "block",
+                blocks,
+                SCHEMA_RAW,
+                partition_cols=["partition"],
+                deltatable=True,
+            )
+
+            write_parquet(
+                path_txs,
+                "transaction",
+                txs,
+                SCHEMA_RAW,
+                partition_cols=["partition"],
+                deltatable=True,
+            )
+            # todo tx refs only save transactions_spending not
+            #  transactions_spent_in as of now
+            # TODO transaction_by_tx_prefix necessary?
+            # ingest_transaction_lookups(
+            #    txs,
+            #    db,
+            #    sink_config,
+            # )
+            block_transactions = preprocess_block_transactions(txs, BLOCK_BUCKET_SIZE)
+            write_parquet(
+                block_transactions_path,
+                "block_transactions",
+                block_transactions,
+                SCHEMA_RAW,
+                partition_cols=["partition"],
+                deltatable=True,
+            )
+
+            write_parquet(
+                transaction_spending_path,
+                "transaction_spending",
+                tx_refs,
+                SCHEMA_RAW,
+                partition_cols=["partition"],
+                deltatable=True,
+            )
+
+            last_block = blocks[-1]
+            last_block_ts = last_block["timestamp"]
+            last_block_id = last_block["block_id"]
+            count += batch_size
+
+            if count % 100 == 0:
+                last_block_date = parse_timestamp(last_block_ts)
+                time2 = datetime.now()
+                time_delta = (time2 - time1).total_seconds()
+                logger.info(
+                    f"Last processed block: {current_end_block:,} "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                    f"({count/time_delta:.1f} blocks/s)"
+                )
+                time1 = time2
+                count = 0
+
+            if check_shutdown_initialized():
+                break
+
+    last_block_date = parse_timestamp(last_block_ts)
+    logger.info(
+        f"Processed block range {start_block:,} - {last_block_id:,} "
+        f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
+    )
