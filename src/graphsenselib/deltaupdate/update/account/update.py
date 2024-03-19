@@ -329,6 +329,13 @@ class UpdateStrategyAccount(UpdateStrategy):
             address = tdb.to_db_address(address_str)
             return (address.db_encoding, address.prefix)
 
+        hash_to_id = {
+            tx.tx_hash: self.consume_transaction_id_composite(
+                tx.block_id, tx.transaction_index
+            )
+            for tx in transactions
+        }
+
         if currency == "TRX":
             transactions = [tx for tx in transactions if tx.to_address is not None]
             transactions = [tx for tx in transactions if tx.receipt_status == 1]
@@ -337,13 +344,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             pass
         else:
             raise ValueError(f"Unknown currency {currency}")
-
-        hash_to_id = {
-            tx.tx_hash: self.consume_transaction_id_composite(
-                tx.block_id, tx.transaction_index
-            )
-            for tx in transactions
-        }
 
         tx_hashes = [tx.tx_hash for tx in transactions]
         reward_traces = [t for t in traces if t.tx_hash is None]
