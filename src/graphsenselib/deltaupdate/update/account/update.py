@@ -125,6 +125,20 @@ class UpdateStrategyAccount(UpdateStrategy):
         cache = Cache(self.du_config.fs_cache.directory)
         cache.clear()
 
+    def clear_cache_for_blocks(self, blocks: List[int]):
+        cache = TableBasedCache(Cache(self.du_config.fs_cache.directory))
+        for block in blocks:
+            cache.delete_item("block", block)
+            cache.delete_item("trace", block)
+            cache.delete_item("log", block)
+
+            if self.currency == "trx":
+                transactions = cache.get(("transaction", block), [])
+                for tx in transactions:
+                    cache.delete_item("fee", tx["tx_hash"])
+
+            cache.delete_item("transaction", block)
+
     def persist_updater_progress(self):
         if self.changes is not None:
             atomic = ApplicationStrategy.TX == self.application_strategy
@@ -156,8 +170,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         logs = cache.get(("log", block), [])
         return txs, traces, logs, blocks
 
-    def get_fee_data(self, cache, txs):
-        return cache.get(("fee", txs), [{"fee": None}])[0]["fee"]
+    def get_fee_data(self, cache, tx):
+        return cache.get(("fee", tx), [{"fee": None}])[0]["fee"]
 
     def process_batch_impl_hook(self, batch: List[int]) -> Tuple[Action, Optional[int]]:
         rates = {}
