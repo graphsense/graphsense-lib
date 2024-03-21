@@ -1201,6 +1201,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
     def clear_cache(self):
         pass
 
+    def clear_cache_for_blocks(self, blocks: List[int]):
+        pass
+
     def persist_updater_progress(self):
         if self.changes is not None:
             atomic = ApplicationStrategy.TX == self.application_strategy
