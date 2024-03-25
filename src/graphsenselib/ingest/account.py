@@ -1483,7 +1483,6 @@ def export_parquet(
             is_update_transactions_mode=False,
         )
 
-    # todo
     if currency == "trx":
         prepare_transactions_inplace = prepare_transactions_inplace_trx
         prepare_blocks_inplace = prepare_blocks_inplace_trx
@@ -1570,22 +1569,12 @@ def export_parquet(
                     f"Partitioning {partitioning} not implemented"
                 )
 
-            block_file = ""  # "block_%08d-%08d.parquet" % block_range
-            tx_file = ""  # "tx_%08d-%08d.parquet" % block_range
-            trace_file = ""  # "trace_%08d-%08d.parquet" % block_range
-            logs_file = ""  # "logs_%08d-%08d.parquet" % block_range
-
             current_end_block = min(end_block, block_id + batch_size - 1)
 
             with suppress_log_level(logging.INFO):
                 blocks, txs = adapter.export_blocks_and_transactions(
                     block_id, current_end_block
                 )
-                if (
-                    block_id == 0 and currency == "trx"
-                ):  # genesis tx of block 0 have no receipts
-                    # to avoid errors we drop them
-                    txs = [tx for tx in txs if tx["block_number"] > 0]
                 receipts, logs = adapter.export_receipts_and_logs(txs)
                 traces, fees = adapter.export_traces(
                     block_id, current_end_block, True, True
@@ -1637,12 +1626,11 @@ def export_parquet(
                 count = 0
 
             if (block_id + batch_size) % block_bucket_size == 0:
-                sub_dir = ""  # f"{partition_start:08d}-{partition_end:08d}"
-                full_path = path / sub_dir
+                full_path = path
                 full_path.mkdir(parents=True, exist_ok=True)
 
                 write_parquet(
-                    str(full_path / trace_file),
+                    str(full_path),
                     "trace",
                     traces,
                     SCHEMA_RAW,
@@ -1650,7 +1638,7 @@ def export_parquet(
                     deltatable=True,
                 )
                 write_parquet(
-                    str(full_path / tx_file),
+                    str(full_path),
                     "transaction",
                     txs,
                     SCHEMA_RAW,
@@ -1658,7 +1646,7 @@ def export_parquet(
                     deltatable=True,
                 )
                 write_parquet(
-                    str(full_path / block_file),
+                    str(full_path),
                     "block",
                     blocks,
                     SCHEMA_RAW,
@@ -1666,7 +1654,7 @@ def export_parquet(
                     deltatable=True,
                 )
                 write_parquet(
-                    str(full_path / logs_file),
+                    str(full_path),
                     "log",
                     logs,
                     SCHEMA_RAW,
@@ -1674,9 +1662,8 @@ def export_parquet(
                     deltatable=True,
                 )
                 if currency == "trx":
-                    fee_file = ""
                     write_parquet(
-                        str(full_path / fee_file),
+                        str(full_path),
                         "fee",
                         fees,
                         SCHEMA_RAW,
@@ -1697,17 +1684,17 @@ def export_parquet(
                 if check_shutdown_initialized():
                     break
 
-        trc10_file = ""
-        token_infos = adapter.get_trc10_token_infos()
-        prepare_trc10_tokens_inplace(token_infos)
-        write_parquet(
-            str(full_path / trc10_file),
-            "trc10",
-            token_infos,
-            SCHEMA_RAW,
-            partition_cols=["partition"],
-            deltatable=True,
-        )
+        if currency == "trx":
+            token_infos = adapter.get_trc10_token_infos()
+            prepare_trc10_tokens_inplace(token_infos)
+            write_parquet(
+                str(full_path),
+                "trc10",
+                token_infos,
+                SCHEMA_RAW,
+                partition_cols=["partition"],
+                deltatable=True,
+            )
 
     logger.info(
         f"[{datetime.now()}] Processed block range "

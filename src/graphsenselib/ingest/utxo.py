@@ -441,7 +441,7 @@ def parse_script(s: str) -> Tuple[List[str], str]:
 
 
 def enrich_txs(
-    txs: Iterable, resolver: OutputResolverBase, ignore_missing_outputs: bool
+    txs: Iterable, resolver: OutputResolverBase, ignore_missing_outputs: bool, mode=None
 ) -> None:
     """Resolves transaction input links to the spent transactions.
 
@@ -529,6 +529,10 @@ def enrich_txs(
         tx["input_value"] = sum(
             [i["value"] for i in tx["inputs"] if i["value"] is not None]
         )
+        if mode == "parquet":
+            tx["spent_transaction_hashes"] = [
+                hex_to_bytes(i["spent_transaction_hash"]) for i in tx["inputs"]
+            ]
 
 
 def prepare_transactions_inplace(
@@ -536,6 +540,7 @@ def prepare_transactions_inplace(
     next_tx_id: int,
     tx_hash_prefix_len: int,
     tx_bucket_size: int,
+    no_inputs=False,
 ) -> None:
     pop_columns = [
         "type",
@@ -572,7 +577,11 @@ def prepare_transactions_inplace(
         tx["inputs_raw"] = tx["inputs"]
         tx["outputs_raw"] = tx["outputs"]
 
-        tx["inputs"] = [tx_io_summary(x) for x in tx["inputs"]]
+        if no_inputs:
+            pass
+        else:
+            tx["inputs"] = [tx_io_summary(x) for x in tx["inputs"]]
+
         tx["outputs"] = [tx_io_summary(x) for x in tx["outputs"]]
         tx["timestamp"] = tx.pop("block_timestamp")
         tx["total_input"] = tx.pop("input_value")
@@ -937,7 +946,14 @@ def export_parquet(
     info,
     provider_timeout,
 ):
-    # TODO harmonize the usage of schema. utxo seems more correct right now.
+    if continue_export:
+        raise NotImplementedError("Continue export not yet implemented")
+
+    if partitioning == "block-based":
+        pass
+    else:
+        raise ValueError(f"Unsupported partitioning {partitioning}")
+
     from ..utils import first_or_default
 
     provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
@@ -993,12 +1009,16 @@ def export_parquet(
 
             # until bitcoin-etl progresses
             # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
-            enrich_txs(txs, resolver, ignore_missing_outputs=False)
+            enrich_txs(txs, resolver, ignore_missing_outputs=True, mode="parquet")
 
             latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
 
             prepare_transactions_inplace(
-                txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE
+                txs,
+                latest_tx_id + 1,
+                TX_HASH_PREFIX_LENGTH,
+                TX_BUCKET_SIZE,
+                no_inputs=True,
             )
             from .parquet import write_parquet
 
@@ -1016,11 +1036,6 @@ def export_parquet(
                 # for fields inputs and outputs give the list elements
                 # names with a dictionary address, value, address_type
                 def prepare_single(item):
-                    i = item["inputs"]
-                    item["inputs"] = [
-                        {"address": el[0], "value": el[1], "address_type": el[2]}
-                        for el in i
-                    ]
                     o = item["outputs"]
                     item["outputs"] = [
                         {"address": el[0], "value": el[1], "address_type": el[2]}
@@ -1059,6 +1074,10 @@ def export_parquet(
             #    sink_config,
             # )
             block_transactions = preprocess_block_transactions(txs, BLOCK_BUCKET_SIZE)
+
+            if len(tx_refs) > 0:
+                print("asd")
+
             write_parquet(
                 block_transactions_path,
                 "block_transactions",

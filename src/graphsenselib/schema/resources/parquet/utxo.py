@@ -23,18 +23,6 @@ UTXO_SCHEMA_RAW = {
             ("total_input", pa.int64()),
             ("total_output", pa.int64()),
             (
-                "inputs",
-                pa.list_(
-                    pa.struct(
-                        [
-                            ("address", pa.list_(pa.string())),
-                            ("value", pa.int64()),
-                            ("address_type", pa.int16()),
-                        ]
-                    )
-                ),
-            ),
-            (
                 "outputs",
                 pa.list_(
                     pa.struct(
@@ -46,6 +34,7 @@ UTXO_SCHEMA_RAW = {
                     )
                 ),
             ),
+            ("spent_transaction_hashes", pa.list_(pa.binary(32))),
             ("coinjoin", pa.bool_()),
         ]
     ),

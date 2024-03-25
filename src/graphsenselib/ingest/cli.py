@@ -428,9 +428,6 @@ def dump_rawdata(
     """
     logger.setLevel(logging.DEBUG)
     logger.info(f"Dumping raw data for {currency} in {env}")
-    if currency != "eth" and currency != "trx":
-        logger.error("Csv export is only supported for eth/trx at the moment.")
-        sys.exit(11)
 
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
