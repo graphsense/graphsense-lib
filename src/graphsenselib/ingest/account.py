@@ -61,7 +61,7 @@ from .csv import (
     format_transactions_csv,
     write_csv,
 )
-from .parquet import write_parquet
+from .parquet import write_delta
 from .tron.export_traces_job import TronExportTracesJob
 from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
 from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
@@ -1516,16 +1516,6 @@ def export_parquet(
         logger.error("Error: file_batch_size is not a multiple of batch_size")
         sys.exit(1)
 
-    if file_batch_size != batch_size:
-        logger.error(
-            "Error: At the moment file_batch_size has to be batch_size because"
-            "if file_batch_size is larger, only the last write will persist "
-            "because the first ones are overwritten"
-            "if file_batch_size is smaller, i dont know right now, "
-            "probably something bad, todo look into it"
-        )
-        sys.exit(1)
-
     if partition_batch_size % file_batch_size != 0:
         logger.error("Error: partition_batch_size is not a multiple of file_batch_size")
         sys.exit(1)
@@ -1579,7 +1569,6 @@ def export_parquet(
                 traces, fees = adapter.export_traces(
                     block_id, current_end_block, True, True
                 )
-                prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN)
 
                 prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE, partition_batch_size)
 
@@ -1587,6 +1576,7 @@ def export_parquet(
                     hash_to_type = adapter.export_hash_to_type_mappings(txs, blocks)
                     txs = enrich_transactions(txs, receipts)
                     txs = strategy.enrich_transactions_with_type(txs, hash_to_type)
+                    prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN)
                 else:
                     txs = enrich_transactions(txs, receipts)
 
@@ -1629,46 +1619,58 @@ def export_parquet(
                 full_path = path
                 full_path.mkdir(parents=True, exist_ok=True)
 
-                write_parquet(
-                    str(full_path),
-                    "trace",
-                    traces,
-                    SCHEMA_RAW,
-                    partition_cols=["partition"],
-                    deltatable=True,
-                )
-                write_parquet(
-                    str(full_path),
-                    "transaction",
-                    txs,
-                    SCHEMA_RAW,
-                    partition_cols=["partition"],
-                    deltatable=True,
-                )
-                write_parquet(
-                    str(full_path),
-                    "block",
-                    blocks,
-                    SCHEMA_RAW,
-                    partition_cols=["partition"],
-                    deltatable=True,
-                )
-                write_parquet(
-                    str(full_path),
-                    "log",
-                    logs,
-                    SCHEMA_RAW,
-                    partition_cols=["partition"],
-                    deltatable=True,
-                )
+                def to_bytes(data, col):
+                    for d in data:
+                        if d[col] is not None:
+                            d[col] = d[col].to_bytes(32, byteorder="big")
+                    return data
+
+                txs = to_bytes(txs, "value")
+
+                tablename_data_pks = [
+                    ("transaction", txs, ["tx_hash"]),
+                    ("block", blocks, ["block_id"]),
+                    ("trace", traces, ["tx_hash", "trace_id"]),
+                    ("log", logs, ["block_id", "log_index"]),
+                ]
                 if currency == "trx":
-                    write_parquet(
-                        str(full_path),
-                        "fee",
-                        fees,
+                    tablename_data_pks.append(("fee", fees, ["tx_hash", "fee_id"]))
+
+                import decimal
+
+                def int_to_decimal(data: List[Dict], cols: List[str]) -> List[Dict]:
+                    """
+                    Convert integer columns to decimal columns
+                    """
+                    for col in cols:
+                        for d in data:
+                            if d[col] is not None:
+                                d[col] = decimal.Decimal(d[col])
+                    return data
+
+                def int_to_decimal_table(data, tablename, schema):
+                    schema_table = schema[tablename]
+
+                    decimal_cols = [
+                        col.name
+                        for col in schema_table
+                        if str(col.dataType)[:11] == "DecimalType"
+                    ]
+
+                    data = int_to_decimal(data, decimal_cols)
+
+                    return data
+
+                for tablename, data, primary_keys in tablename_data_pks:
+                    data = int_to_decimal_table(data, tablename, SCHEMA_RAW)
+
+                    write_delta(
+                        directory,
+                        tablename,
+                        data,
                         SCHEMA_RAW,
                         partition_cols=["partition"],
-                        deltatable=True,
+                        primary_keys=primary_keys,
                     )
 
                 logger.info(
@@ -1687,13 +1689,12 @@ def export_parquet(
         if currency == "trx":
             token_infos = adapter.get_trc10_token_infos()
             prepare_trc10_tokens_inplace(token_infos)
-            write_parquet(
+            write_delta(
                 str(full_path),
                 "trc10",
                 token_infos,
                 SCHEMA_RAW,
                 partition_cols=["partition"],
-                deltatable=True,
             )
 
     logger.info(

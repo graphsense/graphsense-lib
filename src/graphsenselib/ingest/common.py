@@ -2,7 +2,7 @@ import logging
 from typing import List, Tuple
 
 from ..db import AnalyticsDb
-from .parquet import write_parquet
+from .parquet import write_delta
 
 INGEST_SINKS = ["parquet", "cassandra", "fs-cache"]
 
@@ -36,7 +36,7 @@ def write_to_sinks(
                     "Please provide a schema definition for the pq output data "
                     "in the keyspace config."
                 )
-            write_parquet(path, table_name, parameters, schema_table)
+            write_delta(path, table_name, parameters, schema_table)
         elif sink == "fs-cache":
             c = config.get("cache", None)
             kc = config.get("key_by", {"default": "block_id"})
