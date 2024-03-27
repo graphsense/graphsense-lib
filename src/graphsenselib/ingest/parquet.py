@@ -1,51 +1,75 @@
-from pathlib import Path
-from urllib.parse import urlparse
+import logging
+import os
 
-import deltalake as dl
-import pyarrow as pa
-import pyarrow.parquet as pq
-from pyarrow.fs import HadoopFileSystem
+# todo  requirements delta-spark and pyspark
+import time
+
+import pyspark
+from delta import configure_spark_with_delta_pip
+from delta.tables import DeltaTable
+
+logger = logging.getLogger(__name__)
+
+# todo restore previous parquet functionality?
 
 
-def write_parquet(
+def write_delta(
     path: str,
     table_name: str,
-    parameters: list,
+    data: list,
     schema_table: dict,
     partition_cols: list = ["partition"],
-    deltatable: bool = False,
+    primary_keys: list = None,
 ) -> None:
     print("Writing ", table_name)
-    if not parameters:
-        return
-    table = pa.Table.from_pylist(parameters, schema=schema_table[table_name])
-
-    if deltatable:
-        path = Path(path)
-        dl.write_deltalake(
-            path / table_name, table, partition_by=partition_cols, mode="append"
-        )
+    if not data:
         return
 
-    if path.startswith("hdfs://"):
-        o = urlparse(path)
-        fs = HadoopFileSystem(o.hostname, o.port)
-
-        pq.write_to_dataset(
-            table,
-            root_path=o.path / table_name,
-            partition_cols=partition_cols,
-            existing_data_behavior="app",
-            filesystem=fs,
+    builder = (
+        pyspark.sql.SparkSession.builder.appName("MyApp")
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config(
+            "spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog",
         )
+    )
+
+    spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+    df = spark.createDataFrame(data, schema=schema_table[table_name])
+
+    table_path = os.path.join(path, table_name)
+    # check if there is a deltatable existing already
+    if not os.path.exists(table_path):
+        print(f"Creating Delta table {table_name} at {table_path}")
+        time_ = time.time()
+        df.write.format("delta").mode("overwrite").partitionBy(partition_cols).save(
+            table_path
+        )
+        print(f"Time to write {table_name} to Delta: {time.time() - time_}")
     else:
-        path = Path(path)
-        if path.exists():
-            pq.write_to_dataset(
-                table,
-                root_path=path / table_name,
-                partition_cols=partition_cols,
-                existing_data_behavior="overwrite_or_ignore",
-            )
+        rewrite_existing = False
+        # upsert
+        print(f"Merge Delta table {table_name} at {table_path} using pyspark")
+
+        time_ = time.time()
+        target = DeltaTable.forPath(spark, table_path)
+
+        condition_str = " AND ".join(
+            [f"target.{key} = source.{key}" for key in primary_keys + partition_cols]
+        )
+        merge_builder = (
+            target.alias("target")
+            .merge(df.alias("source"), condition_str)
+            .whenNotMatchedInsertAll()
+        )
+
+        if rewrite_existing:
+            merge_builder.whenMatchedUpdateAll().execute()
         else:
-            raise Exception(f"Parquet file path not found: {path}")
+            merge_builder.execute()
+
+        print(
+            f"Time to merge {table_name} of length {len(data)} to Delta: "
+            f"{time.time() - time_}"
+        )

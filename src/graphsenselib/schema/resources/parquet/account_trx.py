@@ -1,11 +1,7 @@
-import pyarrow as pa
+# flake8: noqa: F401
 
-from .account import ACCOUNT_SCHEMA_RAW
-
-ACCOUNT_TRX_SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
-
+"""
 block_schema = ACCOUNT_TRX_SCHEMA_RAW["block"]
-
 
 def set_field_type(schema, field_name, new_type):
     ind = schema.get_field_index(field_name)
@@ -87,3 +83,9 @@ ACCOUNT_SCHEMA_RAW.update(
         ),
     }
 )
+"""
+
+from .account import ACCOUNT_SCHEMA_RAW
+
+ACCOUNT_TRX_SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
+# todo restore functionality for tron

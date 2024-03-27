@@ -954,6 +954,17 @@ def export_parquet(
     else:
         raise ValueError(f"Unsupported partitioning {partitioning}")
 
+    if file_batch_size % batch_size != 0:
+        raise ValueError(
+            f"Batch size {batch_size} must be a multiple of file "
+            f"batch size {file_batch_size}"
+        )
+    if partition_batch_size % file_batch_size != 0:
+        raise ValueError(
+            f"File batch size {file_batch_size} must be a multiple of "
+            f"partition batch size {partition_batch_size}"
+        )
+
     from ..utils import first_or_default
 
     provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
@@ -1020,15 +1031,9 @@ def export_parquet(
                 TX_BUCKET_SIZE,
                 no_inputs=True,
             )
-            from .parquet import write_parquet
+            from .parquet import write_delta
 
-            path_blocks = directory
-            path_txs = directory
-            block_transactions_path = directory
-            transaction_spending_path = directory
-
-            # todo preprocess data
-            # todo add partition column
+            # todo add partition column for
 
             SCHEMA_RAW = sink_config["schema"]
 
@@ -1046,25 +1051,37 @@ def export_parquet(
 
                 return [prepare_single(item) for item in items]
 
+            partition = block_id // partition_batch_size
+            assert (
+                block_id // partition_batch_size
+                == current_end_block // partition_batch_size
+            )
+
+            def with_partition(items: list) -> list:
+                for item in items:
+                    item["partition"] = partition
+                return items
+
             txs = prepare_txs_parquet(txs)
 
-            write_parquet(
-                path_blocks,
-                "block",
-                blocks,
-                SCHEMA_RAW,
-                partition_cols=["partition"],
-                deltatable=True,
-            )
+            if len(tx_refs) > 0:
+                print("asd")
 
-            write_parquet(
-                path_txs,
-                "transaction",
-                txs,
-                SCHEMA_RAW,
-                partition_cols=["partition"],
-                deltatable=True,
-            )
+            tablename_data_pks = [
+                ("block", blocks, ["block_id"]),
+                ("transaction", txs, ["block_id", "tx_id"]),
+                ("transaction_spending", tx_refs, ["spending_tx_hash"]),
+            ]
+            for tablename, data, primary_keys in tablename_data_pks:
+                write_delta(
+                    directory,
+                    tablename,
+                    with_partition(data),
+                    SCHEMA_RAW,
+                    partition_cols=["partition"],
+                    primary_keys=primary_keys,
+                )
+
             # todo tx refs only save transactions_spending not
             #  transactions_spent_in as of now
             # TODO transaction_by_tx_prefix necessary?
@@ -1073,28 +1090,22 @@ def export_parquet(
             #    db,
             #    sink_config,
             # )
-            block_transactions = preprocess_block_transactions(txs, BLOCK_BUCKET_SIZE)
+            # block_transactions = preprocess_block_transactions(txs, BLOCK_BUCKET_SIZE)
 
-            if len(tx_refs) > 0:
-                print("asd")
+            # todo probably not necessary at this stage since parquet allows
+            #  convenient groupby?
+            # write_parquet(
+            #    directory,
+            #    "block_transactions",
+            #    block_transactions,
+            #    SCHEMA_RAW,
+            #    partition_cols=["partition"],
+            #    deltatable=True,
+            # )
 
-            write_parquet(
-                block_transactions_path,
-                "block_transactions",
-                block_transactions,
-                SCHEMA_RAW,
-                partition_cols=["partition"],
-                deltatable=True,
-            )
-
-            write_parquet(
-                transaction_spending_path,
-                "transaction_spending",
-                tx_refs,
-                SCHEMA_RAW,
-                partition_cols=["partition"],
-                deltatable=True,
-            )
+            # todo maybe remove spending_tx_prefix and spent_tx_prefix
+            # todo general question: Should this directly feed into cassandra
+            #  imo there should be a transformation step in between.
 
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
