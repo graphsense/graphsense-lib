@@ -25,7 +25,7 @@ from ethereumetl.streaming.eth_item_timestamp_calculator import (
 from ethereumetl.thread_local_proxy import ThreadLocalProxy
 from web3 import Web3
 
-from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
+from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
 from ..schema.resources.parquet.account import (
@@ -713,7 +713,7 @@ def ingest(
     else:
         start_block = user_start_block
 
-    end_block = last_synced_block - get_approx_reorg_backoff_blocks(currency)
+    end_block = last_synced_block - get_reorg_backoff_blocks(currency)
     if user_end_block is not None:
         end_block = user_end_block
 
@@ -1097,7 +1097,7 @@ def ingest_async(
     else:
         start_block = user_start_block
 
-    end_block = last_synced_block - get_approx_reorg_backoff_blocks(currency)
+    end_block = last_synced_block - get_reorg_backoff_blocks(currency)
     if user_end_block is not None:
         end_block = user_end_block
 
