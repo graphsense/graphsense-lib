@@ -28,8 +28,14 @@ from web3 import Web3
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_approx_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
-from ..schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
-from ..schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
+from ..schema.resources.parquet.account import (
+    ACCOUNT_SCHEMA_RAW,
+    BINARY_COL_CONVERSION_MAP_ACCOUNT,
+)
+from ..schema.resources.parquet.account_trx import (
+    ACCOUNT_TRX_SCHEMA_RAW,
+    BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
+)
 from ..utils import (
     batch,
     check_timestamp,
@@ -1588,8 +1594,10 @@ def export_parquet(
 
             if currency == "eth":
                 SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
+                BINARY_COL_CONVERSION_MAP = BINARY_COL_CONVERSION_MAP_ACCOUNT
             elif currency == "trx":
                 SCHEMA_RAW = ACCOUNT_TRX_SCHEMA_RAW
+                BINARY_COL_CONVERSION_MAP = BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX
 
             # todo make sure that appending works correctly
             #     -> no overwriting of files
@@ -1619,13 +1627,18 @@ def export_parquet(
                 full_path = path
                 full_path.mkdir(parents=True, exist_ok=True)
 
-                def to_bytes(data, col):
+                def to_bytes(data, cols):
                     for d in data:
-                        if d[col] is not None:
-                            d[col] = d[col].to_bytes(32, byteorder="big")
+                        for col in cols:
+                            if d[col] is not None:
+                                bytes_needed = (d[col].bit_length() + 7) // 8
+                                d[col] = d[col].to_bytes(bytes_needed, byteorder="big")
                     return data
 
-                txs = to_bytes(txs, "value")
+                txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP["transaction"])
+                blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP["block"])
+                traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP["trace"])
+                logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP["log"])
 
                 tablename_data_pks = [
                     ("transaction", txs, ["tx_hash"]),
@@ -1633,37 +1646,11 @@ def export_parquet(
                     ("trace", traces, ["tx_hash", "trace_id"]),
                     ("log", logs, ["block_id", "log_index"]),
                 ]
+
                 if currency == "trx":
                     tablename_data_pks.append(("fee", fees, ["tx_hash", "fee_id"]))
 
-                import decimal
-
-                def int_to_decimal(data: List[Dict], cols: List[str]) -> List[Dict]:
-                    """
-                    Convert integer columns to decimal columns
-                    """
-                    for col in cols:
-                        for d in data:
-                            if d[col] is not None:
-                                d[col] = decimal.Decimal(d[col])
-                    return data
-
-                def int_to_decimal_table(data, tablename, schema):
-                    schema_table = schema[tablename]
-
-                    decimal_cols = [
-                        col.name
-                        for col in schema_table
-                        if str(col.dataType)[:11] == "DecimalType"
-                    ]
-
-                    data = int_to_decimal(data, decimal_cols)
-
-                    return data
-
                 for tablename, data, primary_keys in tablename_data_pks:
-                    data = int_to_decimal_table(data, tablename, SCHEMA_RAW)
-
                     write_delta(
                         directory,
                         tablename,

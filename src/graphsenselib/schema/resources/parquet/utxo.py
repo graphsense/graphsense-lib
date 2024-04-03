@@ -1,3 +1,5 @@
+# flake8: noqa
+
 import pyarrow as pa
 
 UTXO_SCHEMA_RAW = {
@@ -16,7 +18,6 @@ UTXO_SCHEMA_RAW = {
             ("partition", pa.int32()),
             ("tx_id_group", pa.int32()),
             ("tx_id", pa.int64()),
-            ("tx_hash", pa.binary(32)),
             ("block_id", pa.int32()),
             ("timestamp", pa.int32()),
             ("coinbase", pa.bool_()),
@@ -34,7 +35,32 @@ UTXO_SCHEMA_RAW = {
                     )
                 ),
             ),
-            ("spent_transaction_hashes", pa.list_(pa.binary(32))),
+            # ("spent_transaction_hashes", pa.list_(pa.binary(32))),
+            (
+                "inputs",
+                pa.list_(
+                    pa.struct(
+                        [
+                            ("spent_transaction_hash", pa.binary(32)),
+                            (
+                                "spent_output_index",
+                                pa.uint16(),
+                            ),
+                            # should be sufficient, reference: https://bitcoin.stackexchange.com/questions/35570/what-is-the-maximum-number-of-inputs-outputs-a-transaction-can-have
+                            (
+                                "value",
+                                pa.int64(),
+                            ),  # todo maybe unnecessarily expensive,
+                            # sparse coinbase txs?
+                            (
+                                "addresses",
+                                pa.list_(pa.string()),
+                            ),  # todo change to binary soon? todo:
+                            # call it addresses or address (as in cassandra)?
+                        ]
+                    )
+                ),
+            ),
             ("coinjoin", pa.bool_()),
         ]
     ),

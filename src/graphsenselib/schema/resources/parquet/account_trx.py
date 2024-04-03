@@ -1,7 +1,11 @@
-# flake8: noqa: F401
+import pyarrow as pa
 
-"""
+from .account import ACCOUNT_SCHEMA_RAW
+
+ACCOUNT_TRX_SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
+
 block_schema = ACCOUNT_TRX_SCHEMA_RAW["block"]
+
 
 def set_field_type(schema, field_name, new_type):
     ind = schema.get_field_index(field_name)
@@ -24,7 +28,9 @@ trace_schema = set_field_type(trace_schema, "internal_index", pa.int16())
 trace_schema = set_field_type(trace_schema, "transferto_address", pa.binary(20))
 trace_schema = set_field_type(trace_schema, "call_info_index", pa.int16())
 trace_schema = set_field_type(trace_schema, "caller_address", pa.binary(20))
-trace_schema = set_field_type(trace_schema, "call_value", pa.decimal128(38, 0))
+trace_schema = set_field_type(
+    trace_schema, "call_value", pa.int64()
+)  # TODO: check if this is enough or needs binary encoding
 trace_schema = set_field_type(trace_schema, "rejected", pa.bool_())
 trace_schema = set_field_type(trace_schema, "call_token_id", pa.int32())
 trace_schema = set_field_type(trace_schema, "note", pa.string())
@@ -39,11 +45,26 @@ ACCOUNT_SCHEMA_RAW.update(
                 ("owner_address", pa.binary(20)),
                 ("name", pa.string()),
                 ("abbr", pa.string()),
-                ("total_supply", pa.decimal128(38, 0)),
-                ("trx_num", pa.decimal128(38, 0)),
-                ("num", pa.decimal128(38, 0)),
-                ("start_time", pa.decimal128(38, 0)),
-                ("end_time", pa.decimal128(38, 0)),
+                (
+                    "total_supply",
+                    pa.int64(),
+                ),  # TODO: check if this is enough or needs binary encoding
+                (
+                    "trx_num",
+                    pa.int64(),
+                ),  # TODO: check if this is enough or needs binary encoding
+                (
+                    "num",
+                    pa.int64(),
+                ),  # TODO: check if this is enough or needs binary encoding
+                (
+                    "start_time",
+                    pa.int64(),
+                ),  # TODO: check if this is enough or needs binary encoding
+                (
+                    "end_time",
+                    pa.int64(),
+                ),  # TODO: check if this is enough or needs binary encoding
                 ("description", pa.string()),
                 ("url", pa.string()),
                 ("id", pa.int32()),
@@ -58,7 +79,10 @@ ACCOUNT_SCHEMA_RAW.update(
                         )
                     ),
                 ),
-                ("public_latest_free_net_time", pa.decimal128(38, 0)),
+                (
+                    "public_latest_free_net_time",
+                    pa.int64(),
+                ),  # TODO: check if this is enough or needs binary encoding
                 ("vote_score", pa.int16()),
                 ("free_asset_net_limit", pa.int64()),
                 ("public_free_asset_net_limit", pa.int64()),
@@ -83,9 +107,10 @@ ACCOUNT_SCHEMA_RAW.update(
         ),
     }
 )
-"""
 
-from .account import ACCOUNT_SCHEMA_RAW
-
-ACCOUNT_TRX_SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
-# todo restore functionality for tron
+BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX = {
+    "transaction": ["value"],
+    "trace": [],
+    "block": ["difficulty", "total_difficulty"],
+    "log": [],
+}
