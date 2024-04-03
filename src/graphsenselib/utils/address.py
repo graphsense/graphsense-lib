@@ -135,8 +135,8 @@ class AddressConverterBtcLike(AddressConverter):
                 self.base58codec.decode_bitarray(self.bech32_prefix_bit) == "YCRa"
                 or self.base58codec.decode_bitarray(self.bech32_prefix_bit) == "ZRa"
             ), (
-                "if new bech prefixes are added make sure that there are no possible"
-                " collisions with other addresses e.g. ZRa is the base58 "
+                "if new bech prefixes are added make sure that there are no possible "
+                "collisions with other addresses e.g. ZRa is the base58 "
                 "version of bc1, no valid btc adress starts this way so "
                 "no decoding collisions are possible."
             )
