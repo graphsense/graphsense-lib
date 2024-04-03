@@ -100,6 +100,11 @@ def test_Other():
         == "31nwvkZwyPdgzjBJZXfDmSWsC4ZLKpYyUw"
     )
 
+    assert (
+        bch_address_to_legacy("122c9XmGjeMcirALbBP1g2kh9N3uZZofbR")
+        == "122c9XmGjeMcirALbBP1g2kh9N3uZZofbR"
+    )
+
     # taken from
     # https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md#larger-test-vectors
     # currently addresses with payload > 160bit are not supported by cashaddress 1.0.6

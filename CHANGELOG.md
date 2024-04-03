@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.02.3/2.2.4] 2024-03-19
+### fixed
+- tron delta update: missing tx_hash for traces in deployment txs.
+
+## [24.02.3/2.2.3] 2024-03-11
+### changed
+- Changed number of backoff blocks used in ingestion to avoid spurious data (mostly lowered)
+
 ## [24.02.2/2.2.2] 2024-03-06
 ### fixed
 - gracefully handle inconsistencies in address relations
