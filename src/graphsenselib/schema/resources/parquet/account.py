@@ -1,5 +1,7 @@
 import pyarrow as pa
 
+# todo test if changing large binary to binary changes anything (should be better)
+
 ACCOUNT_SCHEMA_RAW = {
     "log": pa.schema(
         [
@@ -8,7 +10,7 @@ ACCOUNT_SCHEMA_RAW = {
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
             ("address", pa.binary(20)),
-            ("data", pa.large_binary()),
+            ("data", pa.binary()),
             ("topics", pa.list_(pa.binary(32))),
             ("topic0", pa.binary()),  # either 32 long or 0 in rare cases
             ("tx_hash", pa.binary(32)),
@@ -25,9 +27,9 @@ ACCOUNT_SCHEMA_RAW = {
             ("transaction_index", pa.int32()),
             ("from_address", pa.binary(20)),
             ("to_address", pa.binary(20)),
-            ("value", pa.large_binary()),
-            ("input", pa.large_binary()),
-            ("output", pa.large_binary()),
+            ("value", pa.binary()),
+            ("input", pa.binary()),
+            ("output", pa.binary()),
             ("trace_type", pa.string()),
             ("call_type", pa.string()),
             ("reward_type", pa.string()),
@@ -55,10 +57,10 @@ ACCOUNT_SCHEMA_RAW = {
             ("state_root", pa.binary(32)),
             ("receipts_root", pa.binary(32)),
             ("miner", pa.binary(20)),
-            ("difficulty", pa.large_binary()),
-            ("total_difficulty", pa.large_binary()),
+            ("difficulty", pa.binary()),
+            ("total_difficulty", pa.binary()),
             ("size", pa.int64()),
-            ("extra_data", pa.large_binary()),
+            ("extra_data", pa.binary()),
             ("gas_limit", pa.int32()),
             ("gas_used", pa.int32()),
             ("base_fee_per_gas", pa.int64()),
@@ -78,13 +80,13 @@ ACCOUNT_SCHEMA_RAW = {
             ("transaction_index", pa.int32()),
             ("from_address", pa.binary(20)),
             ("to_address", pa.binary(20)),
-            ("value", pa.large_binary()),
+            ("value", pa.binary()),
             ("gas", pa.int32()),
             (
                 "gas_price",
                 pa.int64(),
             ),  # todo check, ethereumetl has this, but varint in gslib
-            ("input", pa.large_binary()),
+            ("input", pa.binary()),
             ("block_timestamp", pa.int32()),
             ("max_fee_per_gas", pa.int64()),
             ("max_priority_fee_per_gas", pa.int64()),

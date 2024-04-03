@@ -10,7 +10,10 @@ UTXO_SCHEMA_RAW = {
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
             ("timestamp", pa.int32()),
-            ("no_transactions", pa.int32()),
+            (
+                "no_transactions",
+                pa.int32(),
+            ),  # todo add cols dropped in parquet; todo write check if there are fields that are not in the schema
         ]
     ),
     "transaction": pa.schema(
@@ -28,9 +31,13 @@ UTXO_SCHEMA_RAW = {
                 pa.list_(
                     pa.struct(
                         [
-                            ("address", pa.list_(pa.string())),
+                            ("index", pa.int32()),
+                            ("script_asm", pa.string()),
+                            ("script_hex", pa.string()),
+                            ("addresses", pa.list_(pa.binary())),  # todo binary
+                            ("required_signatures", pa.int8()),
+                            ("type", pa.string()),
                             ("value", pa.int64()),
-                            ("address_type", pa.int16()),
                         ]
                     )
                 ),
@@ -46,22 +53,30 @@ UTXO_SCHEMA_RAW = {
                                 "spent_output_index",
                                 pa.uint16(),
                             ),
-                            # should be sufficient, reference: https://bitcoin.stackexchange.com/questions/35570/what-is-the-maximum-number-of-inputs-outputs-a-transaction-can-have
-                            (
-                                "value",
-                                pa.int64(),
-                            ),  # todo maybe unnecessarily expensive,
-                            # sparse coinbase txs?
-                            (
-                                "addresses",
-                                pa.list_(pa.string()),
-                            ),  # todo change to binary soon? todo:
-                            # call it addresses or address (as in cassandra)?
+                            ("index", pa.int32()),
+                            # ("script_asm", pa.string()),
+                            # ("script_hex", pa.string()),
+                            ("sequence", pa.uint64()),
+                            # ("required_signatures", pa.int8()),
+                            # ("type", pa.string()),  # Optional, can be None
+                            # ("addresses", pa.list_(pa.string())),
+                            # ("value", pa.int64()),
                         ]
                     )
                 ),
             ),
             ("coinjoin", pa.bool_()),
+            ("type", pa.string()),
+            ("size", pa.int32()),
+            ("virtual_size", pa.int32()),
+            ("version", pa.int32()),
+            ("lock_time", pa.int32()),
+            ("index", pa.int32()),
+            ("input_count", pa.int32()),
+            ("output_count", pa.int32()),
+            ("fee", pa.int64()),
+            ("tx_hash", pa.binary(32)),
+            # Assuming tx_hash is binary, considering your JSON example
         ]
     ),
     "transaction_spent_in": pa.schema(
