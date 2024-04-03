@@ -20,6 +20,7 @@ from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_block
 from ..db import AnalyticsDb
 from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_0x
 from ..utils.account import get_id_group
+from ..utils.address import address_to_bytes
 from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
@@ -1079,7 +1080,9 @@ def export_parquet(
                 ]
             )
 
-            prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE, process_fields=False)
+            prepare_blocks_inplace(
+                blocks, BLOCK_BUCKET_SIZE, process_fields=False, drop_fields=False
+            )
 
             # until bitcoin-etl progresses
             # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
@@ -1098,6 +1101,7 @@ def export_parquet(
                     tx_hash_prefix_len=None,
                     tx_bucket_size=None,
                     process_fields=False,
+                    drop_fields=False,
                 )
 
                 # additionally drop the block_hash in transactions
@@ -1109,6 +1113,15 @@ def export_parquet(
                         input["spent_transaction_hash"] = hex_to_bytes(
                             input["spent_transaction_hash"]
                         )
+
+                    for output in tx["outputs"]:
+                        output["addresses"] = [
+                            address_to_bytes(currency, address)
+                            for address in output["addresses"]
+                        ]
+
+                        if len(output["addresses"]) > 0:
+                            print(output["addresses"][0])
 
             prepare_transactions_inplace_parquet(txs)
 
