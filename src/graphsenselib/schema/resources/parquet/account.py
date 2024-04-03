@@ -1,5 +1,3 @@
-"""
-
 import pyarrow as pa
 
 ACCOUNT_SCHEMA_RAW = {
@@ -27,14 +25,14 @@ ACCOUNT_SCHEMA_RAW = {
             ("transaction_index", pa.int32()),
             ("from_address", pa.binary(20)),
             ("to_address", pa.binary(20)),
-            ("value", pa.decimal128(38, 0)),
+            ("value", pa.large_binary()),
             ("input", pa.large_binary()),
             ("output", pa.large_binary()),
             ("trace_type", pa.string()),
             ("call_type", pa.string()),
             ("reward_type", pa.string()),
             ("gas", pa.int32()),
-            ("gas_used", pa.decimal128(38, 0)),
+            ("gas_used", pa.int64()),
             ("subtraces", pa.int32()),
             ("trace_address", pa.string()),
             ("error", pa.string()),
@@ -57,13 +55,13 @@ ACCOUNT_SCHEMA_RAW = {
             ("state_root", pa.binary(32)),
             ("receipts_root", pa.binary(32)),
             ("miner", pa.binary(20)),
-            ("difficulty", pa.decimal128(38, 0)),
-            ("total_difficulty", pa.decimal128(38, 0)),
+            ("difficulty", pa.large_binary()),
+            ("total_difficulty", pa.large_binary()),
             ("size", pa.int64()),
             ("extra_data", pa.large_binary()),
             ("gas_limit", pa.int32()),
             ("gas_used", pa.int32()),
-            ("base_fee_per_gas", pa.decimal128(38, 0)),
+            ("base_fee_per_gas", pa.int64()),
             ("timestamp", pa.int32()),
             ("transaction_count", pa.int32()),
         ]
@@ -80,138 +78,38 @@ ACCOUNT_SCHEMA_RAW = {
             ("transaction_index", pa.int32()),
             ("from_address", pa.binary(20)),
             ("to_address", pa.binary(20)),
-            ("value", pa.decimal128(38, 0)),
+            ("value", pa.large_binary()),
             ("gas", pa.int32()),
-            ("gas_price", pa.decimal128(38, 0)),
+            (
+                "gas_price",
+                pa.int64(),
+            ),  # todo check, ethereumetl has this, but varint in gslib
             ("input", pa.large_binary()),
             ("block_timestamp", pa.int32()),
-            ("max_fee_per_gas", pa.decimal128(38, 0)),
-            ("max_priority_fee_per_gas", pa.decimal128(38, 0)),
-            ("transaction_type", pa.decimal128(38, 0)),
-            ("receipt_cumulative_gas_used", pa.decimal128(38, 0)),
-            ("receipt_gas_used", pa.decimal128(38, 0)),
+            ("max_fee_per_gas", pa.int64()),
+            ("max_priority_fee_per_gas", pa.int64()),
+            ("transaction_type", pa.int64()),
+            (
+                "receipt_cumulative_gas_used",
+                pa.int64(),
+            ),  # todo check, ethereumetl has this, but varint in gslib
+            (
+                "receipt_gas_used",
+                pa.int64(),
+            ),  # todo check, ethereumetl has this, but varint in gslib
             ("receipt_contract_address", pa.binary(20)),
             ("receipt_root", pa.binary(32)),
-            ("receipt_status", pa.decimal128(38, 0)),
-            ("receipt_effective_gas_price", pa.decimal128(38, 0)),
+            ("receipt_status", pa.int64()),
+            ("receipt_effective_gas_price", pa.int64()),
         ]
     ),
 }
-"""
-from pyspark.sql.types import (
-    ArrayType,
-    BinaryType,
-    DecimalType,
-    IntegerType,
-    LongType,
-    ShortType,
-    StringType,
-    StructField,
-    StructType,
-)
 
-ACCOUNT_SCHEMA_RAW = {
-    "log": StructType(
-        [
-            StructField("partition", IntegerType(), True),
-            StructField("block_id_group", IntegerType(), True),
-            StructField("block_id", IntegerType(), True),
-            StructField("block_hash", BinaryType(), True),
-            StructField("address", BinaryType(), True),
-            StructField(
-                "data", BinaryType(), True
-            ),  # pyspark does not have large_binary, using BinaryType
-            StructField("topics", ArrayType(BinaryType(), True), True),
-            StructField("topic0", BinaryType(), True),
-            StructField("tx_hash", BinaryType(), True),
-            StructField("log_index", ShortType(), True),
-            StructField("transaction_index", IntegerType(), True),
-        ]
-    ),
-    "trace": StructType(
-        [
-            StructField("partition", IntegerType(), True),
-            StructField("block_id_group", IntegerType(), True),
-            StructField("block_id", IntegerType(), True),
-            StructField("tx_hash", BinaryType(), True),
-            StructField("transaction_index", IntegerType(), True),
-            StructField("from_address", BinaryType(), True),
-            StructField("to_address", BinaryType(), True),
-            StructField("value", DecimalType(38, 0), True),
-            StructField(
-                "input", BinaryType(), True
-            ),  # pyspark does not have large_binary, using BinaryType
-            StructField(
-                "output", BinaryType(), True
-            ),  # pyspark does not have large_binary, using BinaryType
-            StructField("trace_type", StringType(), True),
-            StructField("call_type", StringType(), True),
-            StructField("reward_type", StringType(), True),
-            StructField("gas", IntegerType(), True),
-            StructField("gas_used", DecimalType(38, 0), True),
-            StructField("subtraces", IntegerType(), True),
-            StructField("trace_address", StringType(), True),
-            StructField("error", StringType(), True),
-            StructField("status", ShortType(), True),
-            StructField("trace_id", StringType(), True),
-            StructField("trace_index", IntegerType(), True),
-        ]
-    ),
-    "block": StructType(
-        [
-            StructField("partition", IntegerType(), True),
-            StructField("block_id_group", IntegerType(), True),
-            StructField("block_id", IntegerType(), True),
-            StructField("block_hash", BinaryType(), True),
-            StructField("parent_hash", BinaryType(), True),
-            StructField("nonce", BinaryType(), True),
-            StructField("sha3_uncles", BinaryType(), True),
-            StructField("logs_bloom", BinaryType(), True),
-            StructField("transactions_root", BinaryType(), True),
-            StructField("state_root", BinaryType(), True),
-            StructField("receipts_root", BinaryType(), True),
-            StructField("miner", BinaryType(), True),
-            StructField("difficulty", DecimalType(38, 0), True),
-            StructField("total_difficulty", DecimalType(38, 0), True),
-            StructField("size", LongType(), True),
-            StructField(
-                "extra_data", BinaryType(), True
-            ),  # pyspark does not have large_binary, using BinaryType
-            StructField("gas_limit", IntegerType(), True),
-            StructField("gas_used", IntegerType(), True),
-            StructField("base_fee_per_gas", DecimalType(38, 0), True),
-            StructField("timestamp", IntegerType(), True),
-            StructField("transaction_count", IntegerType(), True),
-        ]
-    ),
-    "transaction": StructType(
-        [
-            StructField("partition", IntegerType(), True),
-            StructField("tx_hash_prefix", StringType(), True),
-            StructField("tx_hash", BinaryType(), True),
-            StructField("nonce", IntegerType(), True),
-            StructField("block_hash", BinaryType(), True),
-            StructField("block_id_group", IntegerType(), True),
-            StructField("block_id", IntegerType(), True),
-            StructField("transaction_index", IntegerType(), True),
-            StructField("from_address", BinaryType(), True),
-            StructField("to_address", BinaryType(), True),
-            StructField("value", BinaryType(), True),
-            StructField("gas", IntegerType(), True),
-            StructField("gas_price", DecimalType(38, 0), True),
-            StructField(
-                "input", BinaryType(), True
-            ),  # pyspark does not have large_binary, using BinaryType
-            StructField("block_timestamp", IntegerType(), True),
-            StructField("max_fee_per_gas", DecimalType(38, 0), True),
-            StructField("max_priority_fee_per_gas", DecimalType(38, 0), True),
-            StructField("transaction_type", DecimalType(38, 0), True),
-            StructField("receipt_cumulative_gas_used", DecimalType(38, 0), True),
-            StructField("receipt_gas_used", DecimalType(38, 0), True),
-            StructField("receipt_contract_address", BinaryType(), True),
-            StructField("receipt_root", BinaryType(), True),
-            StructField("receipt_status", DecimalType(38, 0), True),
-            StructField("receipt_effective_gas_price", DecimalType(38, 0), True),
-        ]
-    ),
+BINARY_COL_CONVERSION_MAP_ACCOUNT = {
+    "transaction": ["value"],
+    "trace": ["value"],
+    "block": ["difficulty", "total_difficulty"],
+    "log": [],
 }
+
+# todo check size

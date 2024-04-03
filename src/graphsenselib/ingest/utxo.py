@@ -24,13 +24,13 @@ from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
+from .parquet import write_delta
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
 BLOCK_BUCKET_SIZE = 100
 
 OUTPUTS_CACHE_ITEMS = 2**24  # approx 16 mio.
-
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,39 @@ CHAIN_MAPPING = {
     "bch": Chain.BITCOIN,
     "zec": Chain.ZCASH,
 }
+
+POP_COLUMNS_TX = []
+
+FIELDNAME_MAP_TX = {
+    "block_number": "block_id",
+    "hash": "tx_hash",
+    "is_coinbase": "coinbase",
+    "block_timestamp": "timestamp",
+    "input_value": "total_input",
+    "output_value": "total_output",
+}
+
+BLOB_COLUMNS_TX = ["tx_hash"]
+
+POP_COLUMNS_BLOCK = [
+    "type",
+    "size",
+    "stripped_size",
+    "weight",
+    "version",
+    "merkle_root",
+    "nonce",
+    "bits",
+    "coinbase_param",
+]
+
+FIELDNAME_MAP_BLOCK = {
+    "number": "block_id",
+    "hash": "block_hash",
+    "transaction_count": "no_transactions",
+}
+
+BLOB_COLUMNS_BLOCK = ["block_hash"]
 
 
 class UnknownScriptType(Exception):
@@ -289,39 +322,31 @@ def ingest_tx_refs(
     write_to_sinks(db, sink_config, "transaction_spending", items)
 
 
-def prepare_blocks_inplace(blocks: Iterable, block_bucket_size: int) -> None:
-    """Preprocesses a block and for ingestation into Cassandra.
-
-    Args:
-        blocks (Iterable): iterable of block structures
-        block_bucket_size (int): size of a block bucket for cassandra partitioning
-    """
-    blob_columns = ["hash"]
-    pop_columns = [
-        "type",
-        "size",
-        "stripped_size",
-        "weight",
-        "version",
-        "merkle_root",
-        "nonce",
-        "bits",
-        "coinbase_param",
-    ]
+def prepare_blocks_inplace(
+    blocks: Iterable,
+    block_bucket_size: int,
+    drop_fields=True,
+    rename_fields=True,
+    process_fields=True,
+    cast_blob_fields=True,
+) -> None:
     for block in blocks:
-        for i in pop_columns:
-            block.pop(i)
+        if drop_fields:
+            for i in POP_COLUMNS_BLOCK:
+                block.pop(i)
 
-        for elem in blob_columns:
-            block[elem] = hex_to_bytes(
-                block[elem]
-            )  # convert hex strings to byte arrays (blob in Cassandra)
+        if rename_fields:
+            for oldname, newname in FIELDNAME_MAP_BLOCK.items():
+                block[newname] = block.pop(oldname)
 
-        block["block_id_group"] = get_id_group(block["number"], block_bucket_size)
+        if process_fields:
+            block["block_id_group"] = get_id_group(block["block_id"], block_bucket_size)
 
-        block["block_id"] = block.pop("number")
-        block["block_hash"] = block.pop("hash")
-        block["no_transactions"] = block.pop("transaction_count")
+        if cast_blob_fields:
+            for elem in BLOB_COLUMNS_BLOCK:
+                block[elem] = hex_to_bytes(
+                    block[elem]
+                )  # convert hex strings to byte arrays (blob in Cassandra)
 
 
 _address_types = {  # based on BlockSci values (type 0 .. 10)
@@ -441,7 +466,10 @@ def parse_script(s: str) -> Tuple[List[str], str]:
 
 
 def enrich_txs(
-    txs: Iterable, resolver: OutputResolverBase, ignore_missing_outputs: bool, mode=None
+    txs: Iterable,
+    resolver: Optional[OutputResolverBase],
+    ignore_missing_outputs: bool,
+    input_reference_only=False,
 ) -> None:
     """Resolves transaction input links to the spent transactions.
 
@@ -487,55 +515,97 @@ def enrich_txs(
                             f"{exception}: cannot parse output script {o}"
                             f" from tx {tx.get('hash')}"
                         )
+                if not input_reference_only:
+                    resolver.add_output(tx["hash"], o)
 
-                resolver.add_output(tx["hash"], o)
-
-    for tx in txs:
-        if not tx["is_coinbase"]:
-            # process inputs
-            for i in tx["inputs"]:
-                if i["spent_transaction_hash"]:
-                    ref, ind = (
-                        i["spent_transaction_hash"],
-                        i["spent_output_index"],
-                    )
-                    try:
-                        resolved_outputs = resolver.get_output(ref)
-                        resolved = (
-                            resolved_outputs.get(ind) if resolved_outputs else None
+    if input_reference_only:
+        pass
+    else:
+        for tx in txs:
+            if not tx["is_coinbase"]:
+                # process inputs
+                for i in tx["inputs"]:
+                    if i["spent_transaction_hash"]:
+                        ref, ind = (
+                            i["spent_transaction_hash"],
+                            i["spent_output_index"],
                         )
-
-                        if resolved is None and ignore_missing_outputs:
-                            logger.warning("Could not resolve spent_txs outputs")
-                            continue
-                        elif resolved is None:
-                            raise InputNotFoundException(
-                                f"Spent Tx ({ref}) outputs " " not found"
+                        try:
+                            resolved_outputs = resolver.get_output(ref)
+                            resolved = (
+                                resolved_outputs.get(ind) if resolved_outputs else None
                             )
 
-                        i["addresses"] = resolved["addresses"]
-                        i["type"] = resolved["type"]
-                        i["value"] = resolved["value"]
-                    except (
-                        UnknownScriptType,
-                        UnknownAddressType,
-                        P2pkParserException,
-                    ) as exception:
-                        logger.warning(
-                            f"tx input cannot be resolved for {i['addresses']}"
-                        )
-                        logger.warning(exception)
+                            if resolved is None and ignore_missing_outputs:
+                                logger.warning("Could not resolve spent_txs outputs")
+                                continue
+                            elif resolved is None:
+                                raise InputNotFoundException(
+                                    f"Spent Tx ({ref}) outputs " " not found"
+                                )
 
-        tx["input_value"] = sum(
-            [i["value"] for i in tx["inputs"] if i["value"] is not None]
-        )
-        if mode == "parquet":
-            tx["spent_transaction_hashes"] = [
-                hex_to_bytes(i["spent_transaction_hash"]) for i in tx["inputs"]
-            ]
+                            i["addresses"] = resolved["addresses"]
+                            i["type"] = resolved["type"]
+                            i["value"] = resolved["value"]
+                        except (
+                            UnknownScriptType,
+                            UnknownAddressType,
+                            P2pkParserException,
+                        ) as exception:
+                            logger.warning(
+                                f"tx input cannot be resolved for {i['addresses']}"
+                            )
+                            logger.warning(exception)
+
+            tx["input_value"] = sum(
+                [i["value"] for i in tx["inputs"] if i["value"] is not None]
+            )
 
 
 def prepare_transactions_inplace(
+    txs: Iterable,
+    next_tx_id: Optional[int],
+    tx_hash_prefix_len: Optional[int],
+    tx_bucket_size: Optional[int],
+    drop_fields=True,
+    rename_fields=True,
+    process_fields=True,
+    cast_blob_fields=True,
+) -> None:
+    assert all(tx["index"] is not None for tx in txs)
+
+    txs = sorted(
+        txs, key=itemgetter("block_number", "index")
+    )  # because bitcoin-etl does not guarantee a sort order
+
+    for tx in txs:
+        if drop_fields:
+            for field in POP_COLUMNS_TX:
+                tx.pop(field)
+
+        if rename_fields:
+            for oldname, newname in FIELDNAME_MAP_TX.items():
+                tx[newname] = tx.pop(oldname)
+
+        if process_fields:
+            tx["inputs_raw"] = tx["inputs"]
+            tx["outputs_raw"] = tx["outputs"]
+            tx["coinjoin"] = is_coinjoin(tx)
+            tx["inputs"] = [tx_io_summary(x) for x in tx["inputs"]]
+            tx["outputs"] = [tx_io_summary(x) for x in tx["outputs"]]
+            tx["tx_id_group"] = get_id_group(next_tx_id, tx_bucket_size)
+            tx["tx_id"] = next_tx_id
+            tx["tx_prefix"] = tx["tx_hash"][:tx_hash_prefix_len]
+            next_tx_id += 1
+
+        if cast_blob_fields:
+            for elem in BLOB_COLUMNS_TX:
+                tx[elem] = hex_to_bytes(
+                    tx[elem]
+                )  # convert hex strings to byte arrays (blob in Cassandra)
+
+
+def prepare_transactions_inplace_old(
     txs: Iterable,
     next_tx_id: int,
     tx_hash_prefix_len: int,
@@ -1002,7 +1072,6 @@ def export_parquet(
                 blocks, txs = btc_adapter.export_blocks_and_transactions(
                     block_id, current_end_block
                 )
-
             tx_refs = flatten(
                 [
                     get_tx_refs(tx["hash"], tx["inputs"], TX_HASH_PREFIX_LENGTH)
@@ -1010,46 +1079,40 @@ def export_parquet(
                 ]
             )
 
-            prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
-
-            resolver = CassandraOutputResolver(
-                db,
-                tx_bucket_size=TX_BUCKET_SIZE,
-                tx_prefix_length=TX_HASH_PREFIX_LENGTH,
-            )
+            prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE, process_fields=False)
 
             # until bitcoin-etl progresses
             # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
-            enrich_txs(txs, resolver, ignore_missing_outputs=True, mode="parquet")
-
-            latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
-
-            prepare_transactions_inplace(
+            enrich_txs(
                 txs,
-                latest_tx_id + 1,
-                TX_HASH_PREFIX_LENGTH,
-                TX_BUCKET_SIZE,
-                no_inputs=True,
+                resolver=None,
+                ignore_missing_outputs=True,
+                input_reference_only=True,
             )
-            from .parquet import write_delta
 
-            # todo add partition column for
+            def prepare_transactions_inplace_parquet(txs):
+                # like in the cassandra ingestion
+                prepare_transactions_inplace(
+                    txs,
+                    next_tx_id=None,
+                    tx_hash_prefix_len=None,
+                    tx_bucket_size=None,
+                    process_fields=False,
+                )
+
+                # additionally drop the block_hash in transactions
+                for tx in txs:
+                    tx.pop("block_hash")
+
+                for tx in txs:
+                    for input in tx["inputs"]:
+                        input["spent_transaction_hash"] = hex_to_bytes(
+                            input["spent_transaction_hash"]
+                        )
+
+            prepare_transactions_inplace_parquet(txs)
 
             SCHEMA_RAW = sink_config["schema"]
-
-            def prepare_txs_parquet(items):
-                # for fields inputs and outputs give the list elements
-                # names with a dictionary address, value, address_type
-                def prepare_single(item):
-                    o = item["outputs"]
-                    item["outputs"] = [
-                        {"address": el[0], "value": el[1], "address_type": el[2]}
-                        for el in o
-                    ]
-
-                    return item
-
-                return [prepare_single(item) for item in items]
 
             partition = block_id // partition_batch_size
             assert (
@@ -1061,8 +1124,6 @@ def export_parquet(
                 for item in items:
                     item["partition"] = partition
                 return items
-
-            txs = prepare_txs_parquet(txs)
 
             if len(tx_refs) > 0:
                 print("asd")
