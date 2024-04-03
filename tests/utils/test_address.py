@@ -1,9 +1,13 @@
 # flake8: noqa: F501
+import importlib
+import random
 from functools import reduce
 
 import pytest
 
 from graphsenselib.utils.address import InvalidAddress, address_to_bytes, address_to_str
+
+from . import resources
 
 testset_correct = [
     (
@@ -265,3 +269,29 @@ def test_address_converter_inject_nonencodable_char():
         ac = reduce(lambda a, kv: a.replace(*kv), rpmts, a)
         with pytest.raises(InvalidAddress):
             b = address_to_bytes(n, ac)
+
+
+@pytest.mark.slow
+def test_address_converter_testset():
+    tests = 0
+    pct = 0.8
+    networks = ["bch", "btc", "ltc", "zec"]
+    addresses_per_network = 100000
+    pct_error = len(networks) * addresses_per_network * (0.01)
+    e_tests = len(networks) * addresses_per_network * (1 - pct) - pct_error
+
+    for network in networks:
+        with importlib.resources.path(
+            resources,
+            f"{network}_addresses.txt",
+        ) as path:
+            with open(path) as f:
+                for a in f.readlines():
+                    if random.uniform(0, 1) > pct:
+                        a = a.strip()
+                        b = address_to_bytes(network, a)
+                        c = address_to_str(network, b)
+                        assert a == c
+                        tests += 1
+
+    assert tests > e_tests
