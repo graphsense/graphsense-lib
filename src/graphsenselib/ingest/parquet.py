@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 # todo dependecies pip install boto3 s3fs deltalake?
 
 
-def delta_table_exists(table_path):
+def delta_table_exists(table_path, storage_options=None):
     try:
         # Attempt to load the DeltaTable
-        DeltaTable(table_path)
+        DeltaTable(table_path, storage_options=storage_options)
 
         # If the DeltaTable can be loaded, it exists
         print("Delta table exists.")
@@ -76,8 +76,6 @@ class DeltaTableWriter:
 
         table = pa.Table.from_pylist(data, schema=self.schema)
 
-        time_ = time.time()
-
         if self.s3_credentials:
             storage_options = {
                 "AWS_ALLOW_HTTP": "true",
@@ -88,6 +86,8 @@ class DeltaTableWriter:
             storage_options = {}
 
         if self.mode == "overwrite":
+            time_ = time.time()
+
             unique_partitions = table.column("partition").unique()
 
             # only 1 partition is allowed to be written at once in overwrite mode
@@ -111,20 +111,29 @@ class DeltaTableWriter:
                 partition_filters=partition_filters,
                 storage_options=storage_options,
             )
+
+            print("Writing took ", time.time() - time_)
+
             return
 
         elif self.mode == "merge":
+            time_ = time.time()
+
             # MERGE MODE
-            if not delta_table_exists(table_path):
+            """ check shouldnt be needed for our usecase
+            if not delta_table_exists(table_path, storage_options=storage_options):
                 dl.write_deltalake(
                     table_path,
                     table,
-                    partition_by=self.partition_cols,
+                    partition_by=list(self.partition_cols),
                     mode="overwrite",
                 )
                 return
+            print("Checking took ", time.time() - time_)
+            time_ = time.time()
+            """
 
-            target = DeltaTable(table_path)
+            target = DeltaTable(table_path, storage_options=storage_options)
             # can either use overwrite with partition_filters; or try to merge
             predicate_cols = (
                 ["partition"] + self.primary_keys
@@ -149,3 +158,12 @@ class DeltaTableWriter:
                 f"took {time.time() - time_} seconds"
             )
             return
+
+
+def read_table(path: str, table_name: str, s3_credentials: Optional[dict] = None):
+    if not path.startswith("s3://"):
+        table_path = f"{path}/{table_name}"
+        table = dl.DeltaTable(table_path)
+        return table.to_pandas()
+    else:
+        raise NotImplementedError("Reading from s3 not implemented yet")

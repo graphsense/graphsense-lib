@@ -27,6 +27,7 @@ UTXO_SCHEMA_RAW = {
     ),
     "transaction": pa.schema(
         [
+            ("tx_hash", pa.binary(32)),
             ("partition", pa.int32()),
             ("tx_id_group", pa.int32()),
             ("tx_id", pa.int64()),
@@ -84,8 +85,6 @@ UTXO_SCHEMA_RAW = {
             ("input_count", pa.int32()),
             ("output_count", pa.int32()),
             ("fee", pa.int64()),
-            ("tx_hash", pa.binary(32)),
-            # Assuming tx_hash is binary, considering your JSON example
         ]
     ),
     "transaction_spent_in": pa.schema(

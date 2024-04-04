@@ -1027,9 +1027,6 @@ def prepare_transactions_inplace_parquet(txs, currency):
                 address_to_bytes(currency, address) for address in output["addresses"]
             ]
 
-            if len(output["addresses"]) > 0:
-                print(output["addresses"][0])
-
 
 def export_parquet(
     sink_config,
@@ -1046,6 +1043,7 @@ def export_parquet(
     info,
     provider_timeout,
     s3_credentials: Optional[dict] = None,
+    write_mode: str = "overwrite",
 ):
     if continue_export:
         raise NotImplementedError("Continue export not yet implemented")
@@ -1102,7 +1100,7 @@ def export_parquet(
         table_name="transaction",
         schema=SCHEMA_RAW["transaction"],
         partition_cols=("partition",),
-        mode="overwrite",
+        mode=write_mode,
         primary_keys=["block_id", "tx_id"],
         s3_credentials=s3_credentials,
     )
@@ -1112,7 +1110,7 @@ def export_parquet(
         table_name="block",
         schema=SCHEMA_RAW["block"],
         partition_cols=("partition",),
-        mode="overwrite",
+        mode=write_mode,
         primary_keys=["block_id"],
         s3_credentials=s3_credentials,
     )
@@ -1122,7 +1120,7 @@ def export_parquet(
         table_name="transaction_spending",
         schema=SCHEMA_RAW["transaction_spending"],
         partition_cols=("partition",),
-        mode="overwrite",
+        mode=write_mode,
         primary_keys=["spending_tx_hash"],
         s3_credentials=s3_credentials,
     )
@@ -1167,9 +1165,6 @@ def export_parquet(
                 for item in items:
                     item["partition"] = partition
                 return items
-
-            if len(tx_refs) > 0:
-                print("asd")
 
             tablename_data_pks = [
                 (blocks, deltawriter_blocks),
