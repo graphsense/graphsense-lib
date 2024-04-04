@@ -21,7 +21,7 @@ def write_to_sinks(
     for sink, config in sink_config.items():
         if sink == "cassandra":
             cassandra_ingest(db, table_name, parameters, concurrency=concurrency)
-        elif sink == "parquet":
+        elif sink == "parquet":  # todo make this work or remove
             path = config.get("output_directory", None)
             schema_table = config.get("schema", None)
             if path is None:

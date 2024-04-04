@@ -25,7 +25,7 @@ from ..utils.bch import bch_address_to_legacy
 from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
-from .parquet import write_delta
+from .parquet import DeltaTableWriter
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
@@ -1001,8 +1001,37 @@ def ingest(
         )
 
 
+def prepare_transactions_inplace_parquet(txs, currency):
+    # like in the cassandra ingestion
+    prepare_transactions_inplace(
+        txs,
+        next_tx_id=None,
+        tx_hash_prefix_len=None,
+        tx_bucket_size=None,
+        process_fields=False,
+        drop_fields=False,
+    )
+
+    # additionally drop the block_hash in transactions
+    for tx in txs:
+        tx.pop("block_hash")
+
+    for tx in txs:
+        for input in tx["inputs"]:
+            input["spent_transaction_hash"] = hex_to_bytes(
+                input["spent_transaction_hash"]
+            )
+
+        for output in tx["outputs"]:
+            output["addresses"] = [
+                address_to_bytes(currency, address) for address in output["addresses"]
+            ]
+
+            if len(output["addresses"]) > 0:
+                print(output["addresses"][0])
+
+
 def export_parquet(
-    db: AnalyticsDb,
     sink_config,
     currency: str,
     sources,
@@ -1016,6 +1045,7 @@ def export_parquet(
     partition_batch_size,
     info,
     provider_timeout,
+    s3_credentials: Optional[dict] = None,
 ):
     if continue_export:
         raise NotImplementedError("Continue export not yet implemented")
@@ -1065,6 +1095,38 @@ def export_parquet(
         f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
     )
 
+    SCHEMA_RAW = sink_config["schema"]
+
+    deltawriter_txs = DeltaTableWriter(
+        path=directory,
+        table_name="transaction",
+        schema=SCHEMA_RAW["transaction"],
+        partition_cols=("partition",),
+        mode="overwrite",
+        primary_keys=["block_id", "tx_id"],
+        s3_credentials=s3_credentials,
+    )
+
+    deltawriter_blocks = DeltaTableWriter(
+        path=directory,
+        table_name="block",
+        schema=SCHEMA_RAW["block"],
+        partition_cols=("partition",),
+        mode="overwrite",
+        primary_keys=["block_id"],
+        s3_credentials=s3_credentials,
+    )
+
+    deltawriter_tx_refs = DeltaTableWriter(
+        path=directory,
+        table_name="transaction_spending",
+        schema=SCHEMA_RAW["transaction_spending"],
+        partition_cols=("partition",),
+        mode="overwrite",
+        primary_keys=["spending_tx_hash"],
+        s3_credentials=s3_credentials,
+    )
+
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(start_block, end_block + 1, batch_size):
             current_end_block = min(end_block, block_id + batch_size - 1)
@@ -1093,39 +1155,7 @@ def export_parquet(
                 input_reference_only=True,
             )
 
-            def prepare_transactions_inplace_parquet(txs):
-                # like in the cassandra ingestion
-                prepare_transactions_inplace(
-                    txs,
-                    next_tx_id=None,
-                    tx_hash_prefix_len=None,
-                    tx_bucket_size=None,
-                    process_fields=False,
-                    drop_fields=False,
-                )
-
-                # additionally drop the block_hash in transactions
-                for tx in txs:
-                    tx.pop("block_hash")
-
-                for tx in txs:
-                    for input in tx["inputs"]:
-                        input["spent_transaction_hash"] = hex_to_bytes(
-                            input["spent_transaction_hash"]
-                        )
-
-                    for output in tx["outputs"]:
-                        output["addresses"] = [
-                            address_to_bytes(currency, address)
-                            for address in output["addresses"]
-                        ]
-
-                        if len(output["addresses"]) > 0:
-                            print(output["addresses"][0])
-
-            prepare_transactions_inplace_parquet(txs)
-
-            SCHEMA_RAW = sink_config["schema"]
+            prepare_transactions_inplace_parquet(txs, currency)
 
             partition = block_id // partition_batch_size
             assert (
@@ -1142,18 +1172,13 @@ def export_parquet(
                 print("asd")
 
             tablename_data_pks = [
-                ("block", blocks, ["block_id"]),
-                ("transaction", txs, ["block_id", "tx_id"]),
-                ("transaction_spending", tx_refs, ["spending_tx_hash"]),
+                (blocks, deltawriter_blocks),
+                (txs, deltawriter_txs),
+                (tx_refs, deltawriter_tx_refs),
             ]
-            for tablename, data, primary_keys in tablename_data_pks:
-                write_delta(
-                    directory,
-                    tablename,
+            for data, writer in tablename_data_pks:
+                writer.write_delta(
                     with_partition(data),
-                    SCHEMA_RAW,
-                    partition_cols=["partition"],
-                    primary_keys=primary_keys,
                 )
 
             # todo tx refs only save transactions_spending not

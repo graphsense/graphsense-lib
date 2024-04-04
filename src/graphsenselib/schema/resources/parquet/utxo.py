@@ -6,14 +6,23 @@ UTXO_SCHEMA_RAW = {
     "block": pa.schema(
         [
             ("partition", pa.int32()),
+            ("type", pa.string()),
+            ("size", pa.int32()),
+            ("stripped_size", pa.int64()),
+            ("weight", pa.int64()),
+            ("version", pa.int64()),
+            ("merkle_root", pa.string()),
+            ("nonce", pa.string()),
+            ("bits", pa.string()),
+            ("coinbase_param", pa.string()),
             ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
-            ("timestamp", pa.int32()),
+            ("timestamp", pa.int64()),
             (
                 "no_transactions",
                 pa.int32(),
-            ),  # todo add cols dropped in parquet; todo write check if there are fields that are not in the schema
+            ),
         ]
     ),
     "transaction": pa.schema(
@@ -34,7 +43,7 @@ UTXO_SCHEMA_RAW = {
                             ("index", pa.int32()),
                             ("script_asm", pa.string()),
                             ("script_hex", pa.string()),
-                            ("addresses", pa.list_(pa.binary())),  # todo binary
+                            ("addresses", pa.list_(pa.binary())),
                             ("required_signatures", pa.int8()),
                             ("type", pa.string()),
                             ("value", pa.int64()),
