@@ -177,6 +177,10 @@ class AppConfig(GoodConf):
         initial=lambda: {}, default_factory=lambda: {}
     )
 
+    s3_credentials: Optional[Dict[str, str]] = Field(
+        initial=lambda: None, default_factory=lambda: None
+    )
+
     class Config:
         env_prefix = "GRAPHSENSE_"
         file_env_var = "GRAPHSENSE_CONFIG_YAML"
@@ -239,6 +243,9 @@ class AppConfig(GoodConf):
             return self.slack_topics[topic]
         else:
             return None
+
+    def get_s3_credentials(self) -> Optional[Dict[str, str]]:
+        return self.s3_credentials
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)

@@ -428,13 +428,14 @@ def dump_rawdata(
     """
     logger.setLevel(logging.DEBUG)
     logger.info(f"Dumping raw data for {currency} in {env}")
-
+    # todo fix cli interfaces
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
     parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
     sink_config = create_sink_config("parquet", currency, ks_config)
+    # s3_credentials = config.get_s3_credentials(env)
 
     if parquet_directory_config is None:
         logger.error(

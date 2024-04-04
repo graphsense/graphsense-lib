@@ -1456,6 +1456,7 @@ def export_parquet(
     partition_batch_size: int,
     info: bool,
     provider_timeout: int,
+    s3_credentials: Optional[str] = None,
 ):
     logger.setLevel(logging.DEBUG)  # todo
     logger.info(f"Writing data as parquet to {directory}")
