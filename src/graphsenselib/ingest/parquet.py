@@ -13,20 +13,16 @@ logger = logging.getLogger(__name__)
 # overwrite mode, -> append/merge mode
 # minio -> docker compose
 
-# todo dependecies pip install boto3 s3fs deltalake?
-
 
 def delta_table_exists(table_path, storage_options=None):
     try:
         # Attempt to load the DeltaTable
         DeltaTable(table_path, storage_options=storage_options)
 
-        # If the DeltaTable can be loaded, it exists
-        print("Delta table exists.")
         return True
     except Exception as e:
         # If an exception is raised, the Delta table does not exist
-        print(f"Delta table does not exist. {e}")
+        print(f"Delta table does not exist. \n{e}")
         return False
 
 
@@ -61,7 +57,7 @@ class DeltaTableWriter:
         self,
         data: Iterable[dict],
     ) -> None:
-        print("Writing ", self.table_name)
+        logger.debug(f"Writing table {self.table_name}")
 
         if not data:
             return
@@ -117,7 +113,9 @@ class DeltaTableWriter:
                 storage_options=storage_options,
             )
 
-            print("Writing took ", time.time() - time_)
+            logger.debug(
+                f"Writing {len(table)} records took " f"{time.time() - time_} seconds"
+            )
 
             return
 
@@ -145,7 +143,7 @@ class DeltaTableWriter:
                 .when_not_matched_insert_all().execute()
             )
             logger.warning(
-                f"Delta merge of length {len(data)} on {self.table_name} "
+                f"Delta merge of length {len(table)} on {self.table_name} "
                 f"took {time.time() - time_} seconds"
             )
             return
