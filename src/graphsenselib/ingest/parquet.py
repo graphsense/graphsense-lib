@@ -1,7 +1,7 @@
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import deltalake as dl
 import pyarrow as pa
@@ -40,7 +40,7 @@ class DeltaTableWriter:
         path: str,
         table_name: str,
         schema: dict,
-        partition_cols: tuple = ("partition"),
+        partition_cols: Optional[tuple] = None,
         mode: str = "append",
         primary_keys: Optional[List[str]] = None,
         s3_credentials: Optional[dict] = None,
@@ -59,7 +59,7 @@ class DeltaTableWriter:
 
     def write_delta(
         self,
-        data: List[dict],
+        data: Iterable[dict],
     ) -> None:
         print("Writing ", self.table_name)
 
@@ -101,12 +101,17 @@ class DeltaTableWriter:
                 self.current_partition = partition
                 delta_write_mode = "overwrite"
 
-            partition_filters = [("partition", "=", str(partition))]
+            if self.partition_cols:
+                partition_filters = [("partition", "=", str(partition))]
+                partition_by = list(self.partition_cols)
+            else:
+                partition_filters = None
+                partition_by = None
 
             dl.write_deltalake(
                 table_path,
                 table,
-                partition_by=list(self.partition_cols),
+                partition_by=partition_by,
                 mode=delta_write_mode,
                 partition_filters=partition_filters,
                 storage_options=storage_options,
@@ -118,20 +123,6 @@ class DeltaTableWriter:
 
         elif self.mode == "merge":
             time_ = time.time()
-
-            # MERGE MODE
-            """ check shouldnt be needed for our usecase
-            if not delta_table_exists(table_path, storage_options=storage_options):
-                dl.write_deltalake(
-                    table_path,
-                    table,
-                    partition_by=list(self.partition_cols),
-                    mode="overwrite",
-                )
-                return
-            print("Checking took ", time.time() - time_)
-            time_ = time.time()
-            """
 
             target = DeltaTable(table_path, storage_options=storage_options)
             # can either use overwrite with partition_filters; or try to merge
@@ -160,7 +151,7 @@ class DeltaTableWriter:
             return
 
 
-def read_table(path: str, table_name: str, s3_credentials: Optional[dict] = None):
+def read_table(path: str, table_name: str):
     if not path.startswith("s3://"):
         table_path = f"{path}/{table_name}"
         table = dl.DeltaTable(table_path)

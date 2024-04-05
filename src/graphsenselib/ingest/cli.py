@@ -25,6 +25,11 @@ PARQUET_SCHEMA_MAPPING = {
     "utxo": utxo.UTXO_SCHEMA_RAW,
 }
 
+COLS_AS_BINARY = {
+    "account": account.BINARY_COL_CONVERSION_MAP_ACCOUNT,
+    "account_trx": account_trx.BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
+}
+
 
 def create_sink_config(sink: str, network: str, ks_config: Dict):
     schema_type = currency_to_schema_type[network]
@@ -43,6 +48,7 @@ def create_sink_config(sink: str, network: str, ks_config: Dict):
 
         if sink == "parquet":
             sc["schema"] = PARQUET_SCHEMA_MAPPING[schema_type]
+            sc["binary_col_conversion_map"] = COLS_AS_BINARY.get(schema_type, {})
         if sink == "fs-cache":
             sc["ignore_tables"] = ["trc10", "configuration"]
             if network == "trx":
@@ -454,7 +460,7 @@ def dump_rawdata(
             user_start_block=start_block,
             user_end_block=end_block,
             continue_export=continue_export,
-            batch_size=batch_size,
+            download_batch_size=batch_size,
             partitioning=partitioning,
             file_batch_size=file_batch_size,
             partition_batch_size=partition_batch_size,
@@ -474,7 +480,7 @@ def dump_rawdata(
                 user_start_block=start_block,
                 user_end_block=end_block,
                 continue_export=continue_export,
-                batch_size=batch_size,
+                download_batch_size=batch_size,
                 partitioning=partitioning,
                 file_batch_size=file_batch_size,
                 partition_batch_size=partition_batch_size,

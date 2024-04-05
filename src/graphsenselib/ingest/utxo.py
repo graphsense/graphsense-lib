@@ -18,7 +18,14 @@ from methodtools import lru_cache as mlru_cache
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..db import AnalyticsDb
-from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_0x
+from ..utils import (
+    bytes_to_hex,
+    first_or_default,
+    flatten,
+    hex_to_bytes,
+    parse_timestamp,
+    strip_0x,
+)
 from ..utils.account import get_id_group
 from ..utils.address import address_to_bytes
 from ..utils.bch import bch_address_to_legacy
@@ -1035,36 +1042,28 @@ def export_parquet(
     directory,
     user_start_block: Optional[int],
     user_end_block: Optional[int],
-    continue_export,
-    batch_size,
     partitioning,
     file_batch_size,
     partition_batch_size,
     info,
-    provider_timeout,
     s3_credentials: Optional[dict] = None,
     write_mode: str = "overwrite",
 ):
-    if continue_export:
-        raise NotImplementedError("Continue export not yet implemented")
+    is_start_of_partition = user_start_block % partition_batch_size == 0
+    assert is_start_of_partition, (
+        "Start block must be a multiple of " "partition_batch_size"
+    )
 
     if partitioning == "block-based":
         pass
     else:
         raise ValueError(f"Unsupported partitioning {partitioning}")
 
-    if file_batch_size % batch_size != 0:
-        raise ValueError(
-            f"Batch size {batch_size} must be a multiple of file "
-            f"batch size {file_batch_size}"
-        )
     if partition_batch_size % file_batch_size != 0:
         raise ValueError(
             f"File batch size {file_batch_size} must be a multiple of "
             f"partition batch size {partition_batch_size}"
         )
-
-    from ..utils import first_or_default
 
     provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
 
@@ -1074,7 +1073,7 @@ def export_parquet(
             f" supported {list(CHAIN_MAPPING.keys())}"
         )
 
-    btc_adapter = get_stream_adapter(currency, provider_uri, batch_size=batch_size)
+    btc_adapter = get_stream_adapter(currency, provider_uri, batch_size=30)
     start_block, end_block = user_start_block, user_end_block
 
     # if info then only print block info and exit
@@ -1126,8 +1125,8 @@ def export_parquet(
     )
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
-        for block_id in range(start_block, end_block + 1, batch_size):
-            current_end_block = min(end_block, block_id + batch_size - 1)
+        for block_id in range(start_block, end_block + 1, file_batch_size):
+            current_end_block = min(end_block, block_id + file_batch_size - 1)
 
             with suppress_log_level(logging.INFO):
                 blocks, txs = btc_adapter.export_blocks_and_transactions(
@@ -1176,35 +1175,12 @@ def export_parquet(
                     with_partition(data),
                 )
 
-            # todo tx refs only save transactions_spending not
-            #  transactions_spent_in as of now
-            # TODO transaction_by_tx_prefix necessary?
-            # ingest_transaction_lookups(
-            #    txs,
-            #    db,
-            #    sink_config,
-            # )
-            # block_transactions = preprocess_block_transactions(txs, BLOCK_BUCKET_SIZE)
-
-            # todo probably not necessary at this stage since parquet allows
-            #  convenient groupby?
-            # write_parquet(
-            #    directory,
-            #    "block_transactions",
-            #    block_transactions,
-            #    SCHEMA_RAW,
-            #    partition_cols=["partition"],
-            #    deltatable=True,
-            # )
-
-            # todo maybe remove spending_tx_prefix and spent_tx_prefix
-            # todo general question: Should this directly feed into cassandra
-            #  imo there should be a transformation step in between.
+            # todo save index structure for input lookups
 
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
             last_block_id = last_block["block_id"]
-            count += batch_size
+            count += file_batch_size
 
             if count % 100 == 0:
                 last_block_date = parse_timestamp(last_block_ts)
