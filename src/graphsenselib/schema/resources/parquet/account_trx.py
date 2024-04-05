@@ -48,23 +48,23 @@ ACCOUNT_SCHEMA_RAW.update(
                 (
                     "total_supply",
                     pa.int64(),
-                ),  # TODO: check if this is enough or needs binary encoding
+                ),
                 (
                     "trx_num",
                     pa.int64(),
-                ),  # TODO: check if this is enough or needs binary encoding
+                ),
                 (
                     "num",
                     pa.int64(),
-                ),  # TODO: check if this is enough or needs binary encoding
+                ),
                 (
                     "start_time",
                     pa.int64(),
-                ),  # TODO: check if this is enough or needs binary encoding
+                ),
                 (
                     "end_time",
                     pa.int64(),
-                ),  # TODO: check if this is enough or needs binary encoding
+                ),
                 ("description", pa.string()),
                 ("url", pa.string()),
                 ("id", pa.int32()),
@@ -82,7 +82,7 @@ ACCOUNT_SCHEMA_RAW.update(
                 (
                     "public_latest_free_net_time",
                     pa.int64(),
-                ),  # TODO: check if this is enough or needs binary encoding
+                ),
                 ("vote_score", pa.int16()),
                 ("free_asset_net_limit", pa.int64()),
                 ("public_free_asset_net_limit", pa.int64()),

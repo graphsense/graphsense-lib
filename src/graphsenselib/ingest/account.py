@@ -28,14 +28,6 @@ from web3 import Web3
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
-from ..schema.resources.parquet.account import (
-    ACCOUNT_SCHEMA_RAW,
-    BINARY_COL_CONVERSION_MAP_ACCOUNT,
-)
-from ..schema.resources.parquet.account_trx import (
-    ACCOUNT_TRX_SCHEMA_RAW,
-    BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
-)
 from ..utils import (
     batch,
     check_timestamp,
@@ -67,7 +59,7 @@ from .csv import (
     format_transactions_csv,
     write_csv,
 )
-from .parquet import write_delta
+from .parquet import DeltaTableWriter
 from .tron.export_traces_job import TronExportTracesJob
 from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
 from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
@@ -562,11 +554,16 @@ def prepare_traces_inplace_trx(
             item[elem] = evm_to_bytes(item[elem])
 
 
-def prepare_fees_inplace(fees: Iterable, tx_hash_prefix_len: int) -> None:
+def prepare_fees_inplace(
+    fees: Iterable, tx_hash_prefix_len: int, partition=None
+) -> None:
     blob_colums = ["tx_hash"]
     for item in fees:
         hash_slice = slice(2, 2 + tx_hash_prefix_len)
         item["tx_hash_prefix"] = item["tx_hash"][hash_slice]
+
+        if partition is not None:
+            item["partition"] = partition
 
         for elem in blob_colums:
             item[elem] = evm_to_bytes(item[elem])
@@ -1443,21 +1440,40 @@ def export_csv(
     )
 
 
+def to_bytes(data, cols):
+    for d in data:
+        for col in cols:
+            if d[col] is not None:
+                bytes_needed = (d[col].bit_length() + 7) // 8
+                d[col] = d[col].to_bytes(bytes_needed, byteorder="big")
+    return data
+
+
 def export_parquet(
+    sink_config,
     currency: str,
     sources: list,
     directory: str,
     user_start_block: Optional[int],
     user_end_block: Optional[int],
-    continue_export: bool,
-    batch_size: int,
     partitioning: str,
     file_batch_size: int,
     partition_batch_size: int,
     info: bool,
     provider_timeout: int,
     s3_credentials: Optional[str] = None,
+    write_mode: str = "overwrite",
 ):
+    is_start_of_partition = user_start_block % partition_batch_size == 0
+    assert is_start_of_partition, (
+        "Start block must be a multiple of " "partition_batch_size"
+    )
+
+    if partitioning == "block-based":
+        pass
+    else:
+        raise ValueError(f"Unsupported partitioning {partitioning}")
+
     logger.setLevel(logging.DEBUG)  # todo
     logger.info(f"Writing data as parquet to {directory}")
 
@@ -1485,7 +1501,6 @@ def export_parquet(
             http_provider_uri=provider_uri,
             provider_timeout=provider_timeout,
             grpc_provider_uri=grpc_provider_uri,
-            batch_size=batch_size,
             is_trace_only_mode=False,
             is_update_transactions_mode=False,
         )
@@ -1501,12 +1516,7 @@ def export_parquet(
 
     start_block = 0
     if user_start_block is None:
-        if continue_export:
-            block_files = sorted(pathlib.Path(directory).rglob("block*"))
-            if block_files:
-                last_file = block_files[-1].name
-                logger.info(f"Last exported file: {block_files[-1]}")
-                start_block = int(re.match(r".*-(\d+)", last_file).group(1)) + 1
+        raise NotImplementedError("Start block must be set")
     else:
         start_block = user_start_block
 
@@ -1518,26 +1528,16 @@ def export_parquet(
     time1 = datetime.now()
     count = 0
 
-    block_bucket_size = file_batch_size
-    if file_batch_size % batch_size != 0:
-        logger.error("Error: file_batch_size is not a multiple of batch_size")
-        sys.exit(1)
-
     if partition_batch_size % file_batch_size != 0:
         logger.error("Error: partition_batch_size is not a multiple of file_batch_size")
         sys.exit(1)
 
-    rounded_start_block = start_block // block_bucket_size * block_bucket_size
-    rounded_end_block = (end_block + 1) // block_bucket_size * block_bucket_size - 1
+    rounded_start_block = start_block // file_batch_size * file_batch_size
+    rounded_end_block = (end_block + 1) // file_batch_size * file_batch_size - 1
 
     if rounded_start_block > rounded_end_block:
         print("No blocks to export")
         return
-
-    block_range = (
-        rounded_start_block,
-        rounded_start_block + block_bucket_size - 1,
-    )
 
     if info:
         logger.info(
@@ -1557,16 +1557,85 @@ def export_parquet(
         f"Processing block range " f"{rounded_start_block:,} - {rounded_end_block:,}"
     )
 
-    with graceful_ctlc_shutdown() as check_shutdown_initialized:
-        for block_id in range(rounded_start_block, rounded_end_block + 1, batch_size):
-            if partitioning == "block-based":
-                pass
-            else:
-                raise NotImplementedError(
-                    f"Partitioning {partitioning} not implemented"
-                )
+    SCHEMA_RAW = sink_config["schema"]
+    BINARY_COL_CONVERSION_MAP = sink_config["binary_col_conversion_map"]
 
-            current_end_block = min(end_block, block_id + batch_size - 1)
+    if currency == "trx":
+        deltawriter_trc10 = DeltaTableWriter(
+            path=directory,
+            table_name="trc10",
+            schema=SCHEMA_RAW["trc10"],
+            mode="overwrite",  # always overwrite because small
+            primary_keys=["contract_address"],
+            s3_credentials=s3_credentials,
+        )
+
+        deltawriter_fee = DeltaTableWriter(
+            path=directory,
+            table_name="fee",
+            schema=SCHEMA_RAW["fee"],
+            partition_cols=("partition",),
+            mode=write_mode,
+            primary_keys=["tx_hash", "fee_id"],
+            s3_credentials=s3_credentials,
+        )
+
+    deltawriter_txs = DeltaTableWriter(
+        path=directory,
+        table_name="transaction",
+        schema=SCHEMA_RAW["transaction"],
+        partition_cols=("partition",),
+        mode=write_mode,
+        primary_keys=["block_id", "tx_id"],
+        s3_credentials=s3_credentials,
+    )
+
+    deltawriter_blocks = DeltaTableWriter(
+        path=directory,
+        table_name="block",
+        schema=SCHEMA_RAW["block"],
+        partition_cols=("partition",),
+        mode=write_mode,
+        primary_keys=["block_id"],
+        s3_credentials=s3_credentials,
+    )
+
+    deltawriter_traces = DeltaTableWriter(
+        path=directory,
+        table_name="trace",
+        schema=SCHEMA_RAW["trace"],
+        partition_cols=("partition",),
+        mode=write_mode,
+        primary_keys=["tx_hash", "trace_id"],
+        s3_credentials=s3_credentials,
+    )
+
+    deltawriter_logs = DeltaTableWriter(
+        path=directory,
+        table_name="log",
+        schema=SCHEMA_RAW["log"],
+        partition_cols=("partition",),
+        mode=write_mode,
+        primary_keys=["tx_hash", "log_id"],
+        s3_credentials=s3_credentials,
+    )
+
+    block_range = (
+        rounded_start_block,
+        rounded_start_block + file_batch_size - 1,
+    )
+
+    with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        for block_id in range(
+            rounded_start_block, rounded_end_block + 1, file_batch_size
+        ):
+            current_end_block = min(end_block, block_id + file_batch_size - 1)
+
+            partition = block_id // partition_batch_size
+            assert (
+                block_id // partition_batch_size
+                == current_end_block // partition_batch_size
+            )
 
             with suppress_log_level(logging.INFO):
                 blocks, txs = adapter.export_blocks_and_transactions(
@@ -1583,7 +1652,7 @@ def export_parquet(
                     hash_to_type = adapter.export_hash_to_type_mappings(txs, blocks)
                     txs = enrich_transactions(txs, receipts)
                     txs = strategy.enrich_transactions_with_type(txs, hash_to_type)
-                    prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN)
+                    prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN, partition)
                 else:
                     txs = enrich_transactions(txs, receipts)
 
@@ -1593,21 +1662,7 @@ def export_parquet(
             prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, partition_batch_size)
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, partition_batch_size)
 
-            if currency == "eth":
-                SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
-                BINARY_COL_CONVERSION_MAP = BINARY_COL_CONVERSION_MAP_ACCOUNT
-            elif currency == "trx":
-                SCHEMA_RAW = ACCOUNT_TRX_SCHEMA_RAW
-                BINARY_COL_CONVERSION_MAP = BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX
-
-            # todo make sure that appending works correctly
-            #     -> no overwriting of files
-            #     -> no appending of existing data
-            #    Solution? -> Create partition files and only write
-            #    partition files new, find out how
-            # todo add utxo functionality
-
-            count += batch_size
+            count += file_batch_size
 
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
@@ -1624,66 +1679,44 @@ def export_parquet(
                 time1 = time2
                 count = 0
 
-            if (block_id + batch_size) % block_bucket_size == 0:
-                full_path = path
-                full_path.mkdir(parents=True, exist_ok=True)
+            full_path = path
+            full_path.mkdir(parents=True, exist_ok=True)
 
-                def to_bytes(data, cols):
-                    for d in data:
-                        for col in cols:
-                            if d[col] is not None:
-                                bytes_needed = (d[col].bit_length() + 7) // 8
-                                d[col] = d[col].to_bytes(bytes_needed, byteorder="big")
-                    return data
+            txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP["transaction"])
+            blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP["block"])
+            traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP["trace"])
+            logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP["log"])
 
-                txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP["transaction"])
-                blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP["block"])
-                traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP["trace"])
-                logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP["log"])
+            data_and_writers = [
+                (txs, deltawriter_txs),
+                (blocks, deltawriter_blocks),
+                (traces, deltawriter_traces),
+                (logs, deltawriter_logs),
+            ]
 
-                tablename_data_pks = [
-                    ("transaction", txs, ["tx_hash"]),
-                    ("block", blocks, ["block_id"]),
-                    ("trace", traces, ["tx_hash", "trace_id"]),
-                    ("log", logs, ["block_id", "log_index"]),
-                ]
+            if currency == "trx":
+                data_and_writers.append((fees, deltawriter_fee))
 
-                if currency == "trx":
-                    tablename_data_pks.append(("fee", fees, ["tx_hash", "fee_id"]))
+            for data, writer in data_and_writers:
+                writer.write_delta(data)
 
-                for tablename, data, primary_keys in tablename_data_pks:
-                    write_delta(
-                        directory,
-                        tablename,
-                        data,
-                        SCHEMA_RAW,
-                        partition_cols=["partition"],
-                        primary_keys=primary_keys,
-                    )
+            logger.info(
+                f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
+                f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+            )
 
-                logger.info(
-                    f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
-                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                )
+            block_range = (
+                block_id + file_batch_size,
+                block_id + file_batch_size + file_batch_size - 1,
+            )
 
-                block_range = (
-                    block_id + batch_size,
-                    block_id + batch_size + block_bucket_size - 1,
-                )
-
-                if check_shutdown_initialized():
-                    break
+            if check_shutdown_initialized():
+                break
 
         if currency == "trx":
             token_infos = adapter.get_trc10_token_infos()
             prepare_trc10_tokens_inplace(token_infos)
-            write_delta(
-                str(full_path),
-                "trc10",
-                token_infos,
-                SCHEMA_RAW,
-                partition_cols=["partition"],
-            )
+            deltawriter_trc10.write_delta(token_infos)
 
     logger.info(
         f"[{datetime.now()}] Processed block range "
