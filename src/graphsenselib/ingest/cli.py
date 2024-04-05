@@ -16,6 +16,7 @@ from ..utils import subkey_get
 from .account import export_parquet
 from .common import INGEST_SINKS
 from .factory import IngestFactory
+from .utxo import export_parquet as export_utxo_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -366,18 +367,6 @@ def export_csv(
     help="end block (default: last available block)",
 )
 @click.option(
-    "--continue",
-    "continue_export",
-    is_flag=True,
-    help="continue export from position",
-)
-@click.option(
-    "--batch-size",
-    type=int,
-    default=10,
-    help="number of blocks to export (write) at a time (default: 10)",
-)
-@click.option(
     "--partitioning",
     type=click.Choice(
         [
@@ -392,14 +381,14 @@ def export_csv(
 @click.option(
     "--file-batch-size",
     type=int,
-    default=1000,
-    help="Numer of units (blocks) to export to a parquet file (default: 1000)",
+    default=100,
+    help="Numer of units (blocks) to export to a parquet file (default: 100)",
 )
 @click.option(
     "--partition-batch-size",
     type=int,
-    default=1_000_000,
-    help="number of blocks to export in partition for block-based (default: 1_000)",
+    default=10_000,
+    help="number of blocks to export in partition for block-based (default: 10_000)",
 )
 @click.option(
     "--info",
@@ -418,8 +407,6 @@ def dump_rawdata(
     currency,
     start_block,
     end_block,
-    continue_export,
-    batch_size,
     partitioning,
     file_batch_size,
     partition_batch_size,
@@ -433,15 +420,16 @@ def dump_rawdata(
         currency (str): currency to work on
     """
     logger.setLevel(logging.DEBUG)
+
     logger.info(f"Dumping raw data for {currency} in {env}")
-    # todo fix cli interfaces
+
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
     parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "parquet", None
     )
     sink_config = create_sink_config("parquet", currency, ks_config)
-    # s3_credentials = config.get_s3_credentials(env)
+    s3_credentials = config.get_s3_credentials()
 
     if parquet_directory_config is None:
         logger.error(
@@ -451,39 +439,34 @@ def dump_rawdata(
         sys.exit(11)
 
     parquet_directory = parquet_directory_config.directory
+    schema_type = currency_to_schema_type[currency]
 
-    if currency in ["trx", "eth"]:
+    if schema_type in ["account", "account_trx"]:
         export_parquet(
+            sink_config=sink_config,
             currency=currency,
             sources=sources,
             directory=parquet_directory,
-            user_start_block=start_block,
-            user_end_block=end_block,
-            continue_export=continue_export,
-            download_batch_size=batch_size,
+            start_block=start_block,
+            end_block=end_block,
             partitioning=partitioning,
             file_batch_size=file_batch_size,
             partition_batch_size=partition_batch_size,
             info=info,
             provider_timeout=timeout,
+            s3_credentials=s3_credentials,
         )
-    elif currency in ["btc", "ltc", "zec", "bch"]:  # todo make based on type utxo
-        from .utxo import export_parquet as export_utxo_parquet  # todo
-
-        with DbFactory().from_config(env, currency) as db:
-            export_utxo_parquet(
-                db=db,
-                sink_config=sink_config,
-                currency=currency,
-                sources=sources,
-                directory=parquet_directory,
-                user_start_block=start_block,
-                user_end_block=end_block,
-                continue_export=continue_export,
-                download_batch_size=batch_size,
-                partitioning=partitioning,
-                file_batch_size=file_batch_size,
-                partition_batch_size=partition_batch_size,
-                info=info,
-                provider_timeout=timeout,
-            )
+    elif schema_type == "utxo":
+        export_utxo_parquet(
+            sink_config=sink_config,
+            currency=currency,
+            sources=sources,
+            directory=parquet_directory,
+            start_block=start_block,
+            end_block=end_block,
+            partitioning=partitioning,
+            file_batch_size=file_batch_size,
+            partition_batch_size=partition_batch_size,
+            info=info,
+            s3_credentials=s3_credentials,
+        )

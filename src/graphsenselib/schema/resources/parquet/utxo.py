@@ -80,7 +80,7 @@ UTXO_SCHEMA_RAW = {
             ("size", pa.int32()),
             ("virtual_size", pa.int32()),
             ("version", pa.int32()),
-            ("lock_time", pa.int32()),
+            ("lock_time", pa.int64()),
             ("index", pa.int32()),
             ("input_count", pa.int32()),
             ("output_count", pa.int32()),

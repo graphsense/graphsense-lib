@@ -1036,20 +1036,21 @@ def prepare_transactions_inplace_parquet(txs, currency):
 
 
 def export_parquet(
-    sink_config,
+    sink_config: dict,
     currency: str,
-    sources,
-    directory,
-    user_start_block: Optional[int],
-    user_end_block: Optional[int],
-    partitioning,
-    file_batch_size,
-    partition_batch_size,
-    info,
+    sources: List[str],
+    directory: str,
+    start_block: Optional[int],
+    end_block: Optional[int],
+    partitioning: str,
+    file_batch_size: int,
+    partition_batch_size: int,
+    info: bool,
     s3_credentials: Optional[dict] = None,
     write_mode: str = "overwrite",
 ):
-    is_start_of_partition = user_start_block % partition_batch_size == 0
+    logger.setLevel(logging.INFO)
+    is_start_of_partition = start_block % partition_batch_size == 0
     assert is_start_of_partition, (
         "Start block must be a multiple of " "partition_batch_size"
     )
@@ -1074,7 +1075,6 @@ def export_parquet(
         )
 
     btc_adapter = get_stream_adapter(currency, provider_uri, batch_size=30)
-    start_block, end_block = user_start_block, user_end_block
 
     # if info then only print block info and exit
     if info:
@@ -1122,6 +1122,11 @@ def export_parquet(
         mode=write_mode,
         primary_keys=["spending_tx_hash"],
         s3_credentials=s3_credentials,
+    )
+
+    block_range = (
+        start_block,
+        start_block + file_batch_size - 1,
     )
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
@@ -1180,19 +1185,30 @@ def export_parquet(
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
             last_block_id = last_block["block_id"]
+            last_block_date = parse_timestamp(last_block_ts)
+
+            logger.info(
+                f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
+                f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+            )
+
             count += file_batch_size
 
-            if count % 100 == 0:
-                last_block_date = parse_timestamp(last_block_ts)
+            if count >= 100:
                 time2 = datetime.now()
                 time_delta = (time2 - time1).total_seconds()
                 logger.info(
-                    f"Last processed block: {current_end_block:,} "
+                    f"Last processed block {current_end_block:,} "
                     f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                    f"({count/time_delta:.1f} blocks/s)"
+                    f"({count/time_delta:.1f} blks/s)"
                 )
                 time1 = time2
                 count = 0
+
+            block_range = (
+                block_id + file_batch_size,
+                block_id + file_batch_size + file_batch_size - 1,
+            )
 
             if check_shutdown_initialized():
                 break

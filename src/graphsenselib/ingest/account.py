@@ -1450,12 +1450,12 @@ def to_bytes(data, cols):
 
 
 def export_parquet(
-    sink_config,
+    sink_config: dict,
     currency: str,
-    sources: list,
+    sources: List[str],
     directory: str,
-    user_start_block: Optional[int],
-    user_end_block: Optional[int],
+    start_block: Optional[int],
+    end_block: Optional[int],
     partitioning: str,
     file_batch_size: int,
     partition_batch_size: int,
@@ -1464,7 +1464,8 @@ def export_parquet(
     s3_credentials: Optional[str] = None,
     write_mode: str = "overwrite",
 ):
-    is_start_of_partition = user_start_block % partition_batch_size == 0
+    logger.setLevel(logging.INFO)
+    is_start_of_partition = start_block % partition_batch_size == 0
     assert is_start_of_partition, (
         "Start block must be a multiple of " "partition_batch_size"
     )
@@ -1474,7 +1475,6 @@ def export_parquet(
     else:
         raise ValueError(f"Unsupported partitioning {partitioning}")
 
-    logger.setLevel(logging.DEBUG)  # todo
     logger.info(f"Writing data as parquet to {directory}")
 
     provider_uri = first_or_default(sources, lambda x: x.startswith("http"))
@@ -1514,16 +1514,9 @@ def export_parquet(
         prepare_blocks_inplace = prepare_blocks_inplace_eth
         prepare_traces_inplace = prepare_traces_inplace_eth
 
-    start_block = 0
-    if user_start_block is None:
-        raise NotImplementedError("Start block must be set")
-    else:
-        start_block = user_start_block
-
-    end_block = get_last_synced_block(thread_proxy)
+    if end_block is None:
+        end_block = get_last_synced_block(thread_proxy)
     logger.info(f"Last synced block: {end_block:,}")
-    if user_end_block is not None:
-        end_block = user_end_block
 
     time1 = datetime.now()
     count = 0
@@ -1532,18 +1525,12 @@ def export_parquet(
         logger.error("Error: partition_batch_size is not a multiple of file_batch_size")
         sys.exit(1)
 
-    rounded_start_block = start_block // file_batch_size * file_batch_size
-    rounded_end_block = (end_block + 1) // file_batch_size * file_batch_size - 1
-
-    if rounded_start_block > rounded_end_block:
+    if start_block > end_block:
         print("No blocks to export")
         return
 
     if info:
-        logger.info(
-            f"Would process block range "
-            f"{rounded_start_block:,} - {rounded_end_block:,}"
-        )
+        logger.info(f"Would process block range " f"{end_block:,} - {end_block:,}")
         return
 
     path = pathlib.Path(directory)
@@ -1553,9 +1540,7 @@ def export_parquet(
         logger.error(f"Could not output directory {directory}: {str(exception)}")
         sys.exit(1)
 
-    logger.info(
-        f"Processing block range " f"{rounded_start_block:,} - {rounded_end_block:,}"
-    )
+    logger.info(f"Processing block range " f"{start_block:,} - {end_block:,}")
 
     SCHEMA_RAW = sink_config["schema"]
     BINARY_COL_CONVERSION_MAP = sink_config["binary_col_conversion_map"]
@@ -1621,13 +1606,15 @@ def export_parquet(
     )
 
     block_range = (
-        rounded_start_block,
-        rounded_start_block + file_batch_size - 1,
+        start_block,
+        start_block + file_batch_size - 1,
     )
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(
-            rounded_start_block, rounded_end_block + 1, file_batch_size
+            start_block,
+            end_block + 1,
+            file_batch_size,  # todo make sure the last snippet is also handled
         ):
             current_end_block = min(end_block, block_id + file_batch_size - 1)
 
@@ -1662,22 +1649,9 @@ def export_parquet(
             prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, partition_batch_size)
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, partition_batch_size)
 
-            count += file_batch_size
-
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
             last_block_date = parse_timestamp(last_block_ts)
-
-            if count >= 1000:
-                time2 = datetime.now()
-                time_delta = (time2 - time1).total_seconds()
-                logger.info(
-                    f"Last processed block {current_end_block:,} "
-                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                    f"({count/time_delta:.1f} blks/s)"
-                )
-                time1 = time2
-                count = 0
 
             full_path = path
             full_path.mkdir(parents=True, exist_ok=True)
@@ -1705,6 +1679,18 @@ def export_parquet(
                 f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
             )
 
+            count += file_batch_size
+            if count >= 1000:
+                time2 = datetime.now()
+                time_delta = (time2 - time1).total_seconds()
+                logger.info(
+                    f"Last processed block {current_end_block:,} "
+                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                    f"({count/time_delta:.1f} blks/s)"
+                )
+                time1 = time2
+                count = 0
+
             block_range = (
                 block_id + file_batch_size,
                 block_id + file_batch_size + file_batch_size - 1,
@@ -1720,6 +1706,6 @@ def export_parquet(
 
     logger.info(
         f"[{datetime.now()}] Processed block range "
-        f"{rounded_start_block:,}:{rounded_end_block:,}"
+        f"{start_block:,}:{end_block:,}"
         f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
     )
