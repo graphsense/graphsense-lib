@@ -1273,9 +1273,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
                     block
                 ).fiat_values
                 if fiat_values is None:
-                    # raise Exception(
-                    #     "No exchange rate for block {block}. Abort processing."
-                    # )
                     missing_rates_in_block = True
                     fiat_values = [0, 0]
                 rates[block] = fiat_values
