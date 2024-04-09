@@ -2,7 +2,6 @@ import logging
 from typing import List, Tuple
 
 from ..db import AnalyticsDb
-from .parquet import write_delta
 
 INGEST_SINKS = ["parquet", "cassandra", "fs-cache"]
 
@@ -21,22 +20,6 @@ def write_to_sinks(
     for sink, config in sink_config.items():
         if sink == "cassandra":
             cassandra_ingest(db, table_name, parameters, concurrency=concurrency)
-        elif sink == "parquet":  # todo make this work or remove
-            path = config.get("output_directory", None)
-            schema_table = config.get("schema", None)
-            if path is None:
-                raise Exception(
-                    "No output_dir is set. "
-                    "Please set raw_keyspace_file_sinks['parquet'].directory "
-                    "in the keyspace config."
-                )
-            if schema_table is None:
-                raise Exception(
-                    "No schema_table is set. "
-                    "Please provide a schema definition for the pq output data "
-                    "in the keyspace config."
-                )
-            write_delta(path, table_name, parameters, schema_table)
         elif sink == "fs-cache":
             c = config.get("cache", None)
             kc = config.get("key_by", {"default": "block_id"})

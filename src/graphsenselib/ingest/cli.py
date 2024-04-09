@@ -80,7 +80,7 @@ def ingesting():
     multiple=True,
     default=["cassandra"],
     help="Where the raw data is written to currently"
-    " either cassandra, parquet or both (default: cassandra)",
+    " either cassandra, fs-cache, or both (default: cassandra)",
 )
 @click.option(
     "--start-block",
@@ -98,8 +98,7 @@ def ingesting():
     "--batch-size",
     type=int,
     default=10,
-    help="number of blocks to export (write) at a time (default: 10)"
-    "esp. export to parquet benefits from larger values.",
+    help="number of blocks to export (write) at a time (default: 10)",
 )
 @click.option(
     "--timeout",
