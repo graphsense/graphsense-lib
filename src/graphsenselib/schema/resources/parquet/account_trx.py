@@ -87,6 +87,8 @@ ACCOUNT_SCHEMA_RAW.update(
                 ("free_asset_net_limit", pa.int64()),
                 ("public_free_asset_net_limit", pa.int64()),
                 ("precision", pa.int16()),
+                ("public_free_asset_net_usage", pa.int64()),
+                ("order", pa.int64()),
             ]
         ),
         "fee": pa.schema(
