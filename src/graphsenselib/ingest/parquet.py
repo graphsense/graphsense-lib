@@ -70,7 +70,16 @@ class DeltaTableWriter:
         else:
             Path(table_path).mkdir(parents=True, exist_ok=True)
 
+        fields_in_data = [list(d.keys()) for d in data]
+        unique_fields = set([item for sublist in fields_in_data for item in sublist])
         table = pa.Table.from_pylist(data, schema=self.schema)
+
+        fields_not_covered = unique_fields - set(table.column_names)
+        if fields_not_covered:
+            logger.warning(
+                f"Fields {fields_not_covered} in table {self.table_name}"
+                f" not covered by schema. "
+            )
 
         if self.s3_credentials:
             storage_options = {
