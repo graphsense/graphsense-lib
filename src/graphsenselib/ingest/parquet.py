@@ -26,10 +26,6 @@ def delta_table_exists(table_path, storage_options=None):
         return False
 
 
-def write_delta(*args, **kwargs):
-    pass
-
-
 class DeltaTableWriter:
     def __init__(
         self,
