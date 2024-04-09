@@ -66,6 +66,23 @@ ACCOUNT_SCHEMA_RAW = {
             ("base_fee_per_gas", pa.int64()),
             ("timestamp", pa.int32()),
             ("transaction_count", pa.int32()),
+            # withdrawals', 'excess_blob_gas', 'withdrawals_root', 'blob_gas_used
+            (
+                "withdrawals",
+                pa.list_(
+                    pa.struct(
+                        [
+                            ("index", pa.int64()),  # maybe int32?
+                            ("validator_index", pa.int64()),  # maybe int32?
+                            ("address", pa.string()),
+                            ("amount", pa.binary()),
+                        ]
+                    )
+                ),
+            ),
+            ("excess_blob_gas", pa.int64()),
+            ("withdrawals_root", pa.string()),
+            ("blob_gas_used", pa.int64()),
         ]
     ),
     "transaction": pa.schema(
@@ -103,6 +120,14 @@ ACCOUNT_SCHEMA_RAW = {
             ("receipt_root", pa.binary(32)),
             ("receipt_status", pa.int64()),
             ("receipt_effective_gas_price", pa.int64()),
+            ("receipt_l1_gas_used", pa.int64()),
+            ("receipt_l1_fee", pa.int64()),
+            ("receipt_l1_fee_scalar", pa.float32()),
+            ("receipt_l1_gas_price", pa.int64()),
+            ("receipt_blob_gas_used", pa.int64()),
+            ("receipt_blob_gas_price", pa.int64()),
+            ("max_fee_per_blob_gas", pa.int64()),
+            ("blob_versioned_hashes", pa.list_(pa.binary(32))),
         ]
     ),
 }

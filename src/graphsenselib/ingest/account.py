@@ -438,6 +438,12 @@ def prepare_blocks_inplace_eth(
         for elem in blob_colums:
             item[elem] = hex_to_bytes(item[elem])
 
+        ws = item["withdrawals"]
+        for w in ws:
+            bytes_needed = (w["amount"].bit_length() + 7) // 8
+            w["amount"] = w["amount"].to_bytes(bytes_needed, byteorder="big")
+        item["withdrawals"] = ws
+
 
 def prepare_blocks_inplace_trx(
     items, block_bucket_size, partition_size=PARQUET_PARTITION_SIZE
@@ -481,6 +487,10 @@ def prepare_transactions_inplace_eth(
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
             item[elem] = hex_to_bytes(item[elem])
+
+        item["blob_versioned_hashes"] = [
+            hex_to_bytes(t) for t in item["blob_versioned_hashes"]
+        ]  # todo probably not needed for tron?
 
 
 def prepare_transactions_inplace_trx(
@@ -1483,12 +1493,20 @@ def export_parquet(
 
     logger.info("Connecting to RPC")
     if currency == "eth":
+        prepare_transactions_inplace = prepare_transactions_inplace_eth
+        prepare_blocks_inplace = prepare_blocks_inplace_eth
+        prepare_traces_inplace = prepare_traces_inplace_eth
+
         adapter = EthStreamerAdapter(
             thread_proxy,
             batch_size=WEB3_QUERY_BATCH_SIZE,
             max_workers=WEB3_QUERY_WORKERS,
         )
     elif currency == "trx":
+        prepare_transactions_inplace = prepare_transactions_inplace_trx
+        prepare_blocks_inplace = prepare_blocks_inplace_trx
+        prepare_traces_inplace = prepare_traces_inplace_trx
+
         grpc_provider_uri = first_or_default(sources, lambda x: x.startswith("grpc"))
         adapter = TronStreamerAdapter(
             thread_proxy,
@@ -1504,15 +1522,8 @@ def export_parquet(
             is_trace_only_mode=False,
             is_update_transactions_mode=False,
         )
-
-    if currency == "trx":
-        prepare_transactions_inplace = prepare_transactions_inplace_trx
-        prepare_blocks_inplace = prepare_blocks_inplace_trx
-        prepare_traces_inplace = prepare_traces_inplace_trx
-    elif currency == "eth":
-        prepare_transactions_inplace = prepare_transactions_inplace_eth
-        prepare_blocks_inplace = prepare_blocks_inplace_eth
-        prepare_traces_inplace = prepare_traces_inplace_eth
+    else:
+        raise NotImplementedError(f"Currency {currency} not implemented")
 
     if end_block is None:
         end_block = get_last_synced_block(thread_proxy)
@@ -1532,13 +1543,6 @@ def export_parquet(
     if info:
         logger.info(f"Would process block range " f"{end_block:,} - {end_block:,}")
         return
-
-    path = pathlib.Path(directory)
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except (PermissionError, NotADirectoryError) as exception:
-        logger.error(f"Could not output directory {directory}: {str(exception)}")
-        sys.exit(1)
 
     logger.info(f"Processing block range " f"{start_block:,} - {end_block:,}")
 
@@ -1652,9 +1656,6 @@ def export_parquet(
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
             last_block_date = parse_timestamp(last_block_ts)
-
-            full_path = path
-            full_path.mkdir(parents=True, exist_ok=True)
 
             txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP["transaction"])
             blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP["block"])

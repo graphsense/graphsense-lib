@@ -102,6 +102,13 @@ class InputNotFoundException(Exception):
     pass
 
 
+def drop_columns(data, cols):
+    for d in data:
+        for col in cols:
+            d.pop(col, None)
+    return data
+
+
 class BtcStreamerAdapter:
     def __init__(self, bitcoin_rpc, chain=Chain.BITCOIN, batch_size=2, max_workers=5):
         """Summary
@@ -340,8 +347,7 @@ def prepare_blocks_inplace(
 ) -> None:
     for block in blocks:
         if drop_fields:
-            for i in POP_COLUMNS_BLOCK:
-                block.pop(i)
+            drop_columns(block, POP_COLUMNS_BLOCK)
 
         if rename_fields:
             for oldname, newname in FIELDNAME_MAP_BLOCK.items():
@@ -588,8 +594,7 @@ def prepare_transactions_inplace(
 
     for tx in txs:
         if drop_fields:
-            for field in POP_COLUMNS_TX:
-                tx.pop(field)
+            drop_columns(tx, POP_COLUMNS_TX)
 
         if rename_fields:
             for oldname, newname in FIELDNAME_MAP_TX.items():
@@ -611,64 +616,6 @@ def prepare_transactions_inplace(
                 tx[elem] = hex_to_bytes(
                     tx[elem]
                 )  # convert hex strings to byte arrays (blob in Cassandra)
-
-
-def prepare_transactions_inplace_old(
-    txs: Iterable,
-    next_tx_id: int,
-    tx_hash_prefix_len: int,
-    tx_bucket_size: int,
-    no_inputs=False,
-) -> None:
-    pop_columns = [
-        "type",
-        "size",
-        "virtual_size",
-        "version",
-        "lock_time",
-        "index",
-        "fee",
-    ]
-    blob_columns = ["hash"]
-
-    assert all(tx["index"] is not None for tx in txs)
-
-    txs = sorted(
-        txs, key=itemgetter("block_number", "index")
-    )  # because bitcoin-etl does not guarantee a sort order
-
-    for tx in txs:
-        for i in pop_columns:
-            tx.pop(i)
-
-        tx["tx_prefix"] = tx["hash"][:tx_hash_prefix_len]
-
-        for elem in blob_columns:
-            tx[elem] = hex_to_bytes(
-                tx[elem]
-            )  # convert hex strings to byte arrays (blob in Cassandra)
-
-        tx["block_id"] = tx.pop("block_number")
-        tx["coinbase"] = tx.pop("is_coinbase")
-        tx["coinjoin"] = is_coinjoin(tx)
-
-        tx["inputs_raw"] = tx["inputs"]
-        tx["outputs_raw"] = tx["outputs"]
-
-        if no_inputs:
-            pass
-        else:
-            tx["inputs"] = [tx_io_summary(x) for x in tx["inputs"]]
-
-        tx["outputs"] = [tx_io_summary(x) for x in tx["outputs"]]
-        tx["timestamp"] = tx.pop("block_timestamp")
-        tx["total_input"] = tx.pop("input_value")
-        tx["total_output"] = tx.pop("output_value")
-        tx["tx_hash"] = tx.pop("hash")
-
-        tx["tx_id_group"] = get_id_group(next_tx_id, tx_bucket_size)
-        tx["tx_id"] = next_tx_id
-        next_tx_id += 1
 
 
 def get_tx_refs(spending_tx_hash: str, raw_inputs: Iterable, tx_hash_prefix_len: int):
@@ -1020,8 +967,7 @@ def prepare_transactions_inplace_parquet(txs, currency):
     )
 
     # additionally drop the block_hash in transactions
-    for tx in txs:
-        tx.pop("block_hash")
+    drop_columns(txs, ["block_hash"])
 
     for tx in txs:
         for input in tx["inputs"]:
@@ -1033,6 +979,10 @@ def prepare_transactions_inplace_parquet(txs, currency):
             output["addresses"] = [
                 address_to_bytes(currency, address) for address in output["addresses"]
             ]
+
+
+def prepare_refs_inplace_parquet(tx_refs):
+    drop_columns(tx_refs, ["spent_tx_prefix"])
 
 
 def export_parquet(
@@ -1158,6 +1108,7 @@ def export_parquet(
             )
 
             prepare_transactions_inplace_parquet(txs, currency)
+            prepare_refs_inplace_parquet(tx_refs)
 
             partition = block_id // partition_batch_size
             assert (
@@ -1179,8 +1130,6 @@ def export_parquet(
                 writer.write_delta(
                     with_partition(data),
                 )
-
-            # todo save index structure for input lookups
 
             last_block = blocks[-1]
             last_block_ts = last_block["timestamp"]
