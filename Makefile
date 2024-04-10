@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v24.02.5'
-RELEASESEM := 'v2.2.5'
+RELEASE := 'v24.02.6'
+RELEASESEM := 'v2.2.6'
 
 all: format lint test build
 
@@ -21,7 +21,7 @@ test-all:
 	pytest --cov=src
 
 install-dev: dev
-	pip install -e .
+	pip install -e . --force-reinstall --upgrade
 
 install:
 	pip install .

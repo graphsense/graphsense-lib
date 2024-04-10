@@ -3,6 +3,9 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.02.6/2.2.6] 2024-04-10
+### fixed
+- csv export with new version of ethereum etl 2.4
 
 ## [24.02.5/2.2.5] 2024-04-08
 ### fixed
