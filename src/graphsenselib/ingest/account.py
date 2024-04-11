@@ -1614,16 +1614,11 @@ def export_parquet(
         s3_credentials=s3_credentials,
     )
 
-    block_range = (
-        start_block,
-        start_block + file_batch_size - 1,
-    )
-
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(
             start_block,
             end_block + 1,
-            file_batch_size,  # todo make sure the last snippet is also handled
+            file_batch_size,
         ):
             current_end_block = min(end_block, block_id + file_batch_size - 1)
             start_batch_time = datetime.now()
@@ -1681,23 +1676,13 @@ def export_parquet(
             for data, writer in data_and_writers:
                 writer.write_delta(data)
 
+            speed = (current_end_block - block_id + 1) / (
+                datetime.now() - start_batch_time
+            ).total_seconds()
             logger.info(
-                f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
-                f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-            )
-
-            speed = (
-                file_batch_size / (datetime.now() - start_batch_time).total_seconds()
-            )
-            logger.info(
-                f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
+                f"Written blocks: {block_id:,} - {current_end_block:,} "
                 f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
                 f"({speed:.1f} blks/s)"
-            )
-
-            block_range = (
-                block_id + file_batch_size,
-                block_id + file_batch_size + file_batch_size - 1,
             )
 
             if check_shutdown_initialized():
