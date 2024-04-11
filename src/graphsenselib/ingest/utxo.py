@@ -1035,9 +1035,6 @@ def export_parquet(
         )
         return
 
-    time1 = datetime.now()
-    count = 0
-
     logger.info(
         f"Dumping block range "
         f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
@@ -1083,6 +1080,7 @@ def export_parquet(
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(start_block, end_block + 1, file_batch_size):
             current_end_block = min(end_block, block_id + file_batch_size - 1)
+            start_batch_time = datetime.now()
 
             with suppress_log_level(logging.INFO):
                 blocks, txs = btc_adapter.export_blocks_and_transactions(
@@ -1132,28 +1130,19 @@ def export_parquet(
                     with_partition(data),
                 )
 
-            last_block = blocks[-1]
+            last_block = sorted(blocks, key=lambda x: x["block_id"])[-1]
             last_block_ts = last_block["timestamp"]
             last_block_id = last_block["block_id"]
             last_block_date = parse_timestamp(last_block_ts)
 
+            speed = (
+                file_batch_size / (datetime.now() - start_batch_time).total_seconds()
+            )
             logger.info(
                 f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
                 f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                f"({speed:.1f} blks/s)"
             )
-
-            count += file_batch_size
-
-            if count >= 100:
-                time2 = datetime.now()
-                time_delta = (time2 - time1).total_seconds()
-                logger.info(
-                    f"Last processed block {current_end_block:,} "
-                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                    f"({count/time_delta:.1f} blks/s)"
-                )
-                time1 = time2
-                count = 0
 
             block_range = (
                 block_id + file_batch_size,
