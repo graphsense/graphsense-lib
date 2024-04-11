@@ -979,6 +979,7 @@ def prepare_transactions_inplace_parquet(txs, currency):
             output["addresses"] = [
                 address_to_bytes(currency, address) for address in output["addresses"]
             ]
+            output.pop("script_asm", None)
 
 
 def prepare_refs_inplace_parquet(tx_refs):
