@@ -1082,8 +1082,6 @@ def export_parquet(
         for block_id in range(start_block, end_block + 1, file_batch_size):
             current_end_block = min(end_block, block_id + file_batch_size - 1)
 
-            block_range = (start_block, current_end_block)
-
             start_batch_time = datetime.now()
 
             with suppress_log_level(logging.INFO):
@@ -1139,11 +1137,11 @@ def export_parquet(
             last_block_id = last_block["block_id"]
             last_block_date = parse_timestamp(last_block_ts)
 
-            speed = (
-                file_batch_size / (datetime.now() - start_batch_time).total_seconds()
-            )
+            speed = (current_end_block - block_id + 1) / (
+                datetime.now() - start_batch_time
+            ).total_seconds()
             logger.info(
-                f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
+                f"Written blocks: {block_id:,} - {current_end_block:,} "
                 f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
                 f"({speed:.1f} blks/s)"
             )
