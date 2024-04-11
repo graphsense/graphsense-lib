@@ -232,6 +232,13 @@ testset_correct = [
         None,
         "8598813d540839b05a4c730e2561551120de10d7841506551cf7d71c24c34470",
     ),  # Bech32 pubkey hash or script hash
+    (
+        "btc",
+        "nonstandard08348844dbe5a6ef742b5e64407d8462b3c472b0",
+        None,
+        "cb3cb7e25ca8976a012441492451689a91a51e9a88143986a47145"
+        "048a091470e61271480e6040",  # nonstandard address
+    ),
 ]
 
 
