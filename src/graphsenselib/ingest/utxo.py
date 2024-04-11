@@ -1069,18 +1069,21 @@ def export_parquet(
         schema=SCHEMA_RAW["transaction_spending"],
         partition_cols=("partition",),
         mode=write_mode,
-        primary_keys=["spending_tx_hash"],
+        primary_keys=[
+            "spending_tx_hash",
+            "spent_tx_hash",
+            "spending_input_index",
+            "spent_output_index",
+        ],
         s3_credentials=s3_credentials,
-    )
-
-    block_range = (
-        start_block,
-        start_block + file_batch_size - 1,
     )
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(start_block, end_block + 1, file_batch_size):
             current_end_block = min(end_block, block_id + file_batch_size - 1)
+
+            block_range = (start_block, current_end_block)
+
             start_batch_time = datetime.now()
 
             with suppress_log_level(logging.INFO):
@@ -1143,11 +1146,6 @@ def export_parquet(
                 f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
                 f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
                 f"({speed:.1f} blks/s)"
-            )
-
-            block_range = (
-                block_id + file_batch_size,
-                block_id + file_batch_size + file_batch_size - 1,
             )
 
             if check_shutdown_initialized():
