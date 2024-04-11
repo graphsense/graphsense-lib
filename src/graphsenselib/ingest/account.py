@@ -1529,9 +1529,6 @@ def export_parquet(
         end_block = get_last_synced_block(thread_proxy)
     logger.info(f"Last synced block: {end_block:,}")
 
-    time1 = datetime.now()
-    count = 0
-
     if partition_batch_size % file_batch_size != 0:
         logger.error("Error: partition_batch_size is not a multiple of file_batch_size")
         sys.exit(1)
@@ -1621,6 +1618,7 @@ def export_parquet(
             file_batch_size,  # todo make sure the last snippet is also handled
         ):
             current_end_block = min(end_block, block_id + file_batch_size - 1)
+            start_batch_time = datetime.now()
 
             partition = block_id // partition_batch_size
             assert (
@@ -1653,7 +1651,7 @@ def export_parquet(
             prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, partition_batch_size)
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, partition_batch_size)
 
-            last_block = blocks[-1]
+            last_block = sorted(blocks, key=lambda x: x["block_id"])[-1]
             last_block_ts = last_block["timestamp"]
             last_block_date = parse_timestamp(last_block_ts)
 
@@ -1680,17 +1678,14 @@ def export_parquet(
                 f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
             )
 
-            count += file_batch_size
-            if count >= 1000:
-                time2 = datetime.now()
-                time_delta = (time2 - time1).total_seconds()
-                logger.info(
-                    f"Last processed block {current_end_block:,} "
-                    f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                    f"({count/time_delta:.1f} blks/s)"
-                )
-                time1 = time2
-                count = 0
+            speed = (
+                file_batch_size / (datetime.now() - start_batch_time).total_seconds()
+            )
+            logger.info(
+                f"Written blocks: {block_range[0]:,} - {block_range[1]:,} "
+                f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
+                f"({speed:.1f} blks/s)"
+            )
 
             block_range = (
                 block_id + file_batch_size,
