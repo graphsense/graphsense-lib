@@ -401,6 +401,19 @@ def export_csv(
     default=3600,
     help="Web3 API timeout in seconds (default: 3600s)",
 )
+@click.option(
+    "--write-mode",
+    type=click.Choice(
+        [
+            "overwrite",
+            "merge",
+        ],
+        case_sensitive=False,
+    ),
+    help="Write mode for the parquet files (default: overwrite)",
+    default="overwrite",
+    multiple=False,
+)
 def dump_rawdata(
     env,
     currency,
@@ -411,6 +424,7 @@ def dump_rawdata(
     partition_batch_size,
     info,
     timeout,
+    write_mode,
 ):
     """Exports raw cryptocurrency data to gziped csv files.
     \f
@@ -454,6 +468,7 @@ def dump_rawdata(
             info=info,
             provider_timeout=timeout,
             s3_credentials=s3_credentials,
+            write_mode=write_mode,
         )
     elif schema_type == "utxo":
         export_utxo_parquet(
@@ -468,4 +483,5 @@ def dump_rawdata(
             partition_batch_size=partition_batch_size,
             info=info,
             s3_credentials=s3_credentials,
+            write_mode=write_mode,
         )

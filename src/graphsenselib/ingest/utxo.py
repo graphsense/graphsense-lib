@@ -1002,9 +1002,10 @@ def export_parquet(
 ):
     logger.setLevel(logging.INFO)
     is_start_of_partition = start_block % partition_batch_size == 0
-    assert is_start_of_partition, (
-        "Start block must be a multiple of " "partition_batch_size"
-    )
+    if write_mode == "overwrite":
+        assert is_start_of_partition, (
+            "Start block must be a multiple of " "partition_batch_size"
+        )
 
     if partitioning == "block-based":
         pass
@@ -1031,13 +1032,13 @@ def export_parquet(
     if info:
         logger.info(
             f"Would dump block range "
-            f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+            f"{start_block:,} - {end_block:,} ({end_block-start_block + 1:,} blks) "
         )
         return
 
     logger.info(
         f"Dumping block range "
-        f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+        f"{start_block:,} - {end_block:,} ({end_block-start_block + 1:,} blks) "
     )
 
     SCHEMA_RAW = sink_config["schema"]
@@ -1048,7 +1049,7 @@ def export_parquet(
         schema=SCHEMA_RAW["transaction"],
         partition_cols=("partition",),
         mode=write_mode,
-        primary_keys=["block_id", "tx_id"],
+        primary_keys=["block_id", "index"],
         s3_credentials=s3_credentials,
     )
 
