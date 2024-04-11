@@ -78,6 +78,14 @@ class Bech32BitCoder(BitCoder):
         super().__init__("qpzry9x8gf2tvdw0s3jn54khce6mua7lb1", bit_width=6)
 
 
+class Base62BitCoder(BitCoder):
+    def __init__(self):
+        super().__init__(
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcde" "fghijklmnopqrstuvwxyz",
+            bit_width=6,
+        )
+
+
 class AddressConverter(ABC):
     @property
     def supports_partial_address_conversion(self) -> bool:
@@ -124,23 +132,51 @@ class AddressConverterTrx(AddressConverterEth):
 
 
 class AddressConverterBtcLike(AddressConverter):
-    def __init__(self, bech32_prefix: Optional[str] = None):
+    def __init__(
+        self,
+        bech32_prefix: Optional[str] = None,
+        nonstandard_prefix: Optional[str] = None,
+    ) -> None:
         self.base58codec = Base58BitCoder()
+        self.base62codec = Base62BitCoder()
         if bech32_prefix is not None:
             self.bech32codec = Bech32BitCoder()
             self.bech32_prefix_bit = self.bech32codec.encode_bitarray(bech32_prefix)
+
             # make sure that the bech32 prefix is not a valid base58 prefix
             # https://en.bitcoin.it/wiki/List_of_address_prefixes
-            assert (
-                self.base58codec.decode_bitarray(self.bech32_prefix_bit) == "YCRa"
-                or self.base58codec.decode_bitarray(self.bech32_prefix_bit) == "ZRa"
-            ), (
+            assert self.base58codec.decode_bitarray(self.bech32_prefix_bit) in [
+                "YCRa",
+                "ZRa",
+            ], (
                 "if new bech prefixes are added make sure that there are no possible "
                 "collisions with other addresses e.g. ZRa is the base58 "
-                "version of bc1, no valid btc adress starts this way so "
+                "version of bc1, no valid btc address starts this way so "
                 "no decoding collisions are possible."
             )
+
+            assert self.base62codec.decode_bitarray(self.bech32_prefix_bit) in [
+                "VBOX",
+                "WOX",
+            ], (
+                "Collision check for bech32 prefix against base62 failed."
+                "Make sure the decoded prefix is not a valid btc address and add here"
+            )
+
+        if nonstandard_prefix is not None:
+            self.nonstandard_prefix_bit = self.base62codec.encode_bitarray(
+                nonstandard_prefix
+            )
+            assert (
+                self.base58codec.decode_bitarray(self.nonstandard_prefix_bit)
+                == "rsrwxdrgdvg"
+            ), (
+                "Collision check for nonstandard prefix against base58 failed."
+                "Make sure the decoded prefix is not a valid btc address and add here"
+            )
+
         self.bech32_prefix = bech32_prefix
+        self.nonstandard_prefix = nonstandard_prefix
 
     @property
     def supports_bech32(self) -> bool:
@@ -149,6 +185,8 @@ class AddressConverterBtcLike(AddressConverter):
     def get_codec(self, address: Union[str, bytes]) -> BitCoder:
         if self.supports_bech32 and self.is_bech32(address):
             return self.bech32codec
+        elif self.is_nonstandard(address):
+            return self.base62codec
         else:
             return self.base58codec
 
@@ -159,6 +197,13 @@ class AddressConverterBtcLike(AddressConverter):
             else self.is_bech32_str(address)
         )
 
+    def is_nonstandard(self, address: Union[str, bytes]) -> bool:
+        return (
+            self.is_nonstandard_bytes(address)
+            if isinstance(address, bytes)
+            else self.is_nonstandard_str(address)
+        )
+
     def is_bech32_str(self, address: str) -> bool:
         return address.startswith(self.bech32_prefix) if self.bech32_prefix else False
 
@@ -166,6 +211,22 @@ class AddressConverterBtcLike(AddressConverter):
         arr = bitarray()
         arr.frombytes(address)
         return arr.find(self.bech32_prefix_bit) == 0 if self.bech32_prefix else False
+
+    def is_nonstandard_str(self, address: str) -> bool:
+        return (
+            address.startswith(self.nonstandard_prefix)
+            if self.nonstandard_prefix
+            else False
+        )
+
+    def is_nonstandard_bytes(self, address: bytes) -> bool:
+        arr = bitarray()
+        arr.frombytes(address)
+        return (
+            arr.find(self.nonstandard_prefix_bit) == 0
+            if self.nonstandard_prefix
+            else False
+        )
 
     def to_bytes(self, address: str) -> bytes:
         c = self.get_codec(address)
@@ -178,7 +239,7 @@ class AddressConverterBtcLike(AddressConverter):
 
 class AddressConverterBch(AddressConverterBtcLike):
     def __init__(self):
-        super().__init__(bech32_prefix=None)
+        super().__init__(bech32_prefix=None, nonstandard_prefix="nonstandard")
 
     def to_canonical_address_str(self, address: str) -> str:
         try:
@@ -190,10 +251,16 @@ class AddressConverterBch(AddressConverterBtcLike):
 converters = {
     "eth": AddressConverterEth(),
     "trx": AddressConverterTrx(),
-    "ltc": AddressConverterBtcLike(bech32_prefix="ltc1"),
-    "btc": AddressConverterBtcLike(bech32_prefix="bc1"),
+    "ltc": AddressConverterBtcLike(
+        bech32_prefix="ltc1", nonstandard_prefix="nonstandard"
+    ),
+    "btc": AddressConverterBtcLike(
+        bech32_prefix="bc1", nonstandard_prefix="nonstandard"
+    ),
     "bch": AddressConverterBch(),
-    "zec": AddressConverterBtcLike(bech32_prefix=None),
+    "zec": AddressConverterBtcLike(
+        bech32_prefix=None, nonstandard_prefix="nonstandard"
+    ),
 }
 
 
