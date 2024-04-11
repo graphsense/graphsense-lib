@@ -1476,9 +1476,10 @@ def export_parquet(
 ):
     logger.setLevel(logging.INFO)
     is_start_of_partition = start_block % partition_batch_size == 0
-    assert is_start_of_partition, (
-        "Start block must be a multiple of " "partition_batch_size"
-    )
+    if write_mode == "overwrite":
+        assert is_start_of_partition, (
+            "Start block must be a multiple of " "partition_batch_size"
+        )
 
     if partitioning == "block-based":
         pass
@@ -1537,11 +1538,18 @@ def export_parquet(
         print("No blocks to export")
         return
 
+    # if info then only print block info and exit
     if info:
-        logger.info(f"Would process block range " f"{end_block:,} - {end_block:,}")
+        logger.info(
+            f"Would dump block range "
+            f"{start_block:,} - {end_block:,} ({end_block - start_block + 1:,} blks) "
+        )
         return
 
-    logger.info(f"Processing block range " f"{start_block:,} - {end_block:,}")
+    logger.info(
+        f"Dumping block range "
+        f"{start_block:,} - {end_block:,} ({end_block - start_block + 1:,} blks) "
+    )
 
     SCHEMA_RAW = sink_config["schema"]
     BINARY_COL_CONVERSION_MAP = sink_config["binary_col_conversion_map"]
@@ -1572,7 +1580,7 @@ def export_parquet(
         schema=SCHEMA_RAW["transaction"],
         partition_cols=("partition",),
         mode=write_mode,
-        primary_keys=["block_id", "tx_id"],
+        primary_keys=["block_id", "tx_hash"],
         s3_credentials=s3_credentials,
     )
 
@@ -1592,7 +1600,7 @@ def export_parquet(
         schema=SCHEMA_RAW["trace"],
         partition_cols=("partition",),
         mode=write_mode,
-        primary_keys=["tx_hash", "trace_id"],
+        primary_keys=["block_id", "trace_id"],
         s3_credentials=s3_credentials,
     )
 
@@ -1602,7 +1610,7 @@ def export_parquet(
         schema=SCHEMA_RAW["log"],
         partition_cols=("partition",),
         mode=write_mode,
-        primary_keys=["tx_hash", "log_id"],
+        primary_keys=["block_id", "log_index"],
         s3_credentials=s3_credentials,
     )
 
