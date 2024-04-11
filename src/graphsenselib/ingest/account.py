@@ -1570,7 +1570,7 @@ def export_parquet(
             schema=SCHEMA_RAW["fee"],
             partition_cols=("partition",),
             mode=write_mode,
-            primary_keys=["tx_hash", "fee_id"],
+            primary_keys=["tx_hash"],
             s3_credentials=s3_credentials,
         )
 
@@ -1600,7 +1600,7 @@ def export_parquet(
         schema=SCHEMA_RAW["trace"],
         partition_cols=("partition",),
         mode=write_mode,
-        primary_keys=["block_id", "trace_id"],
+        primary_keys=["block_id", "trace_index"],
         s3_credentials=s3_credentials,
     )
 
