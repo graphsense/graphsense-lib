@@ -42,7 +42,7 @@ UTXO_SCHEMA_RAW = {
                     pa.struct(
                         [
                             ("index", pa.int32()),
-                            ("script_asm", pa.string()),
+                            # ("script_asm", pa.string()),
                             ("script_hex", pa.string()),
                             ("addresses", pa.list_(pa.binary())),
                             ("required_signatures", pa.int8()),
