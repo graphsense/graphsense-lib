@@ -28,9 +28,7 @@ trace_schema = set_field_type(trace_schema, "internal_index", pa.int16())
 trace_schema = set_field_type(trace_schema, "transferto_address", pa.binary(20))
 trace_schema = set_field_type(trace_schema, "call_info_index", pa.int16())
 trace_schema = set_field_type(trace_schema, "caller_address", pa.binary(20))
-trace_schema = set_field_type(
-    trace_schema, "call_value", pa.int64()
-)  # TODO: check if this is enough or needs binary encoding
+trace_schema = set_field_type(trace_schema, "call_value", pa.binary())
 trace_schema = set_field_type(trace_schema, "rejected", pa.bool_())
 trace_schema = set_field_type(trace_schema, "call_token_id", pa.int32())
 trace_schema = set_field_type(trace_schema, "note", pa.string())
@@ -112,7 +110,7 @@ ACCOUNT_SCHEMA_RAW.update(
 
 BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX = {
     "transaction": ["value"],
-    "trace": [],
+    "trace": ["call_value"],
     "block": ["difficulty", "total_difficulty"],
     "log": [],
 }

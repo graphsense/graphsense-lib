@@ -1480,7 +1480,7 @@ def export_parquet(
         assert is_start_of_partition, (
             "Start block must be a multiple of " "partition_batch_size"
         )
-
+    # todo base partition size on average block time
     if partitioning == "block-based":
         pass
     else:
@@ -1554,7 +1554,13 @@ def export_parquet(
     SCHEMA_RAW = sink_config["schema"]
     BINARY_COL_CONVERSION_MAP = sink_config["binary_col_conversion_map"]
 
-    if currency == "trx":
+    from .parquet import WRITER_MAP, DBContent, TableContent
+
+    dump_writer = WRITER_MAP[currency]
+    dump_writer.set_s3_credentials(s3_credentials)
+    dump_writer.set_write_mode(write_mode)
+
+    if currency == "trx":  # todo move to new schema
         deltawriter_trc10 = DeltaTableWriter(
             path=directory,
             table_name="trc10",
@@ -1563,56 +1569,6 @@ def export_parquet(
             primary_keys=["contract_address"],
             s3_credentials=s3_credentials,
         )
-
-        deltawriter_fee = DeltaTableWriter(
-            path=directory,
-            table_name="fee",
-            schema=SCHEMA_RAW["fee"],
-            partition_cols=("partition",),
-            mode=write_mode,
-            primary_keys=["tx_hash"],
-            s3_credentials=s3_credentials,
-        )
-
-    deltawriter_txs = DeltaTableWriter(
-        path=directory,
-        table_name="transaction",
-        schema=SCHEMA_RAW["transaction"],
-        partition_cols=("partition",),
-        mode=write_mode,
-        primary_keys=["block_id", "tx_hash"],
-        s3_credentials=s3_credentials,
-    )
-
-    deltawriter_blocks = DeltaTableWriter(
-        path=directory,
-        table_name="block",
-        schema=SCHEMA_RAW["block"],
-        partition_cols=("partition",),
-        mode=write_mode,
-        primary_keys=["block_id"],
-        s3_credentials=s3_credentials,
-    )
-
-    deltawriter_traces = DeltaTableWriter(
-        path=directory,
-        table_name="trace",
-        schema=SCHEMA_RAW["trace"],
-        partition_cols=("partition",),
-        mode=write_mode,
-        primary_keys=["block_id", "trace_index"],
-        s3_credentials=s3_credentials,
-    )
-
-    deltawriter_logs = DeltaTableWriter(
-        path=directory,
-        table_name="log",
-        schema=SCHEMA_RAW["log"],
-        partition_cols=("partition",),
-        mode=write_mode,
-        primary_keys=["block_id", "log_index"],
-        s3_credentials=s3_credentials,
-    )
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(
@@ -1663,18 +1619,22 @@ def export_parquet(
             traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP["trace"])
             logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP["log"])
 
-            data_and_writers = [
-                (txs, deltawriter_txs),
-                (blocks, deltawriter_blocks),
-                (traces, deltawriter_traces),
-                (logs, deltawriter_logs),
+            table_contents = [
+                TableContent(table_name="transaction", data=txs),
+                TableContent(table_name="block", data=blocks),
+                TableContent(table_name="trace", data=traces),
+                TableContent(table_name="log", data=logs),
             ]
+            # todo add parallel queries
 
             if currency == "trx":
-                data_and_writers.append((fees, deltawriter_fee))
+                table_contents.append(TableContent(table_name="fee", data=fees))
 
-            for data, writer in data_and_writers:
-                writer.write_delta(data)
+            dbcontent = DBContent(  # todo should be output of function
+                network=currency, table_contents=table_contents
+            )
+
+            dump_writer.write_db(dbcontent)
 
             speed = (current_end_block - block_id + 1) / (
                 datetime.now() - start_batch_time
