@@ -406,11 +406,12 @@ def export_csv(
     type=click.Choice(
         [
             "overwrite",
+            "append",
             "merge",
         ],
         case_sensitive=False,
     ),
-    help="Write mode for the parquet files (default: overwrite)",
+    help="Write mode for the parquet files overwrite/append/merge (default: overwrite)",
     default="overwrite",
     multiple=False,
 )
