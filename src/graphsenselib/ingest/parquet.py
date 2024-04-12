@@ -86,21 +86,26 @@ class DeltaTableWriter:
         else:
             storage_options = {}
 
-        if self.mode == "overwrite":
+        if self.mode in ["overwrite", "append"]:
             time_ = time.time()
 
             unique_partitions = table.column("partition").unique()
 
             # only 1 partition is allowed to be written at once in overwrite mode
-            assert len(unique_partitions) == 1
+            assert (
+                len(unique_partitions) == 1
+            )  # in the the case of append we wouldnt need this
 
             partition = unique_partitions[0].as_py()
 
-            if partition == self.current_partition:
-                delta_write_mode = "append"
+            if self.mode == "overwrite":
+                if partition == self.current_partition:
+                    delta_write_mode = "append"
+                else:
+                    self.current_partition = partition
+                    delta_write_mode = "overwrite"
             else:
-                self.current_partition = partition
-                delta_write_mode = "overwrite"
+                delta_write_mode = "append"
 
             if self.partition_cols:
                 partition_filters = [("partition", "=", str(partition))]
@@ -119,7 +124,9 @@ class DeltaTableWriter:
             )
 
             logger.debug(
-                f"Writing {len(table)} records took " f"{time.time() - time_} seconds"
+                f"Writing {len(table)} records in mode {self.mode} "
+                f"took "
+                f"{time.time() - time_} seconds"
             )
 
             return
