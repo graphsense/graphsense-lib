@@ -1041,6 +1041,7 @@ def export_parquet(
         f"{start_block:,} - {end_block:,} ({end_block-start_block + 1:,} blks) "
     )
 
+    # todo abstract dump, deltadumpwriter
     SCHEMA_RAW = sink_config["schema"]
 
     deltawriter_txs = DeltaTableWriter(
@@ -1083,7 +1084,8 @@ def export_parquet(
             current_end_block = min(end_block, block_id + file_batch_size - 1)
 
             start_batch_time = datetime.now()
-
+            # todo parallelize block range imports
+            #
             with suppress_log_level(logging.INFO):
                 blocks, txs = btc_adapter.export_blocks_and_transactions(
                     block_id, current_end_block
@@ -1127,6 +1129,7 @@ def export_parquet(
                 (txs, deltawriter_txs),
                 (tx_refs, deltawriter_tx_refs),
             ]
+
             for data, writer in tablename_data_pks:
                 writer.write_delta(
                     with_partition(data),
