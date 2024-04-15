@@ -8,6 +8,9 @@ import pyarrow as pa
 import pydantic
 from deltalake import DeltaTable
 
+from ..schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
+
+# todo create a lookup for these schemas + for binary col stuff
 from ..schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
 
 logger = logging.getLogger(__name__)
@@ -197,7 +200,6 @@ class DBContent(pydantic.BaseModel):
 
 
 class DBWriteConfig(pydantic.BaseModel):
-    path: str
     table_configs: List[TableWriteConfig]
 
 
@@ -246,33 +248,28 @@ TRX_DBWRITE_CONFIG = DBWriteConfig(
 
 
 ETH_DBWRITE_CONFIG = DBWriteConfig(
-    path="s3://test2/eth",  # todo remove path from graphsense yaml? - No, have
-    # to find way
-    # to incorporate it. probably best in the factory method of writer. path
-    # is something that can change, shouldnt be in this config here
-    # todo make flexible? in graphsense yaml it is the whole path
     table_configs=[
         TableWriteConfig(
             table_name="block",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["block"],
+            table_schema=ACCOUNT_SCHEMA_RAW["block"],
             partition_cols=("partition",),
             primary_keys=["block_id"],
         ),
         TableWriteConfig(
             table_name="transaction",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["transaction"],
+            table_schema=ACCOUNT_SCHEMA_RAW["transaction"],
             partition_cols=("partition",),
             primary_keys=["block_id", "tx_hash"],
         ),
         TableWriteConfig(
             table_name="trace",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["trace"],
+            table_schema=ACCOUNT_SCHEMA_RAW["trace"],
             partition_cols=("partition",),
             primary_keys=["block_id", "trace_index"],
         ),
         TableWriteConfig(
             table_name="log",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["log"],
+            table_schema=ACCOUNT_SCHEMA_RAW["log"],
             partition_cols=("partition",),
             primary_keys=["block_id", "log_index"],
         ),
@@ -283,28 +280,23 @@ ETH_DBWRITE_CONFIG = DBWriteConfig(
 class DeltaDumpWriter:
     def __init__(
         self,
+        directory: str,
         db_write_config: DBWriteConfig,
         s3_credentials: Optional[dict] = None,
         write_mode: str = "overwrite",
     ) -> None:
+        self.directory = directory
         self.db_write_config = db_write_config
         self.s3_credentials = s3_credentials
         self.db_write_config = db_write_config
         self.write_mode = write_mode
 
-    def set_write_mode(self, write_mode: str):  # todo use this in the ingest module
-        self.write_mode = write_mode
-        self.writers = {  # todo this should be in the init, probably requires a factory
+        self.writers = {
             # method instead the lookup we now have which is probably
             # better anyway (see WRITER_MAP)
             table_config.table_name: self.create_table_writer(table_config)
             for table_config in self.db_write_config.table_configs
         }
-
-    def set_s3_credentials(
-        self, s3_credentials: dict
-    ):  # todo use this in the ingest module
-        self.s3_credentials = s3_credentials
 
     def create_table_writer(self, table_config: TableWriteConfig):
         if table_config.small:
@@ -312,7 +304,7 @@ class DeltaDumpWriter:
         else:
             mode = self.write_mode
         return DeltaTableWriter(
-            path=self.db_write_config.path,
+            path=self.directory,
             table_name=table_config.table_name,
             schema=table_config.table_schema,
             partition_cols=table_config.partition_cols,
@@ -332,7 +324,22 @@ class DeltaDumpWriter:
             )  # todo table content for trc10 (small) should be given by the ETL-Module
 
 
-WRITER_MAP = {  # todo kills the connection to the ingest module
-    "trx": DeltaDumpWriter(db_write_config=TRX_DBWRITE_CONFIG),
-    "eth": DeltaDumpWriter(db_write_config=ETH_DBWRITE_CONFIG),
+CONFIG_MAP = {
+    "trx": TRX_DBWRITE_CONFIG,
+    "eth": ETH_DBWRITE_CONFIG,
 }
+
+
+class DeltaDumpWriterFactory:  # todo could be a function
+    @staticmethod
+    def create_writer(currency, s3_credentials, write_mode, directory):
+        db_write_config = CONFIG_MAP.get(currency)
+        if not db_write_config:
+            raise ValueError(f"Invalid currency: {currency}")
+
+        return DeltaDumpWriter(
+            db_write_config=db_write_config,
+            s3_credentials=s3_credentials,
+            write_mode=write_mode,
+            directory=directory,
+        )
