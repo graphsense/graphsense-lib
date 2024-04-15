@@ -59,7 +59,7 @@ from .csv import (
     format_transactions_csv,
     write_csv,
 )
-from .parquet import DeltaTableWriter
+from .parquet import DBContent, DeltaDumpWriterFactory, TableContent
 from .tron.export_traces_job import TronExportTracesJob
 from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
 from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
@@ -1459,6 +1459,216 @@ def to_bytes(data, cols):
     return data
 
 
+# todo define abc
+
+
+class ETL:
+    def query_data_delta(self, start_block, end_block) -> DBContent:
+        data = self.read_from_node(start_block, end_block)
+        data = self.transform(data)
+
+        table_contents = [
+            TableContent(table_name=key, data=value) for key, value in data.items()
+        ]
+        data = DBContent(network=self.network, table_contents=table_contents)
+        return data
+
+    def query_data_delta_small(self) -> DBContent:
+        data = self.read_from_node_small()
+        data = self.transform_small(data)
+
+        table_contents = [
+            TableContent(table_name=key, data=value) for key, value in data.items()
+        ]
+
+        data = DBContent(network=self.network, table_contents=table_contents)
+        return data
+
+    def read_from_node_small(self):
+        return {}
+
+    def transform_small(self, data):
+        return {}
+
+
+class ETLEth(ETL):
+    def __init__(
+        self,
+        thread_proxy,
+        provider_uri,
+        grpc_provider_uri,
+        provider_timeout,
+        partition_batch_size,
+    ):
+        self.thread_proxy = thread_proxy
+        self.provider_uri = provider_uri
+        self.grpc_provider_uri = grpc_provider_uri
+        self.provider_timeout = provider_timeout
+        self.adapter = EthStreamerAdapter(
+            self.thread_proxy,
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
+        self.strategy = EthETLStrategy(
+            http_provider_uri=provider_uri,
+            provider_timeout=provider_timeout,
+            is_trace_only_mode=False,
+        )
+
+        self.partition_batch_size = partition_batch_size
+        self.network = "eth"  # todo not optimal?
+
+    def read_from_node(self, start, end):
+        blocks, txs = self.adapter.export_blocks_and_transactions(start, end)
+        receipts, logs = self.adapter.export_receipts_and_logs(txs)
+        traces, fees = self.adapter.export_traces(start, end, True, True)
+        data = {
+            "blocks": blocks,
+            "txs": txs,
+            "receipts": receipts,
+            "logs": logs,
+            "traces": traces,
+            "fees": fees,
+        }
+
+        return data
+
+    def transform(self, data):
+        blocks = data["blocks"]
+        txs = data["txs"]
+        receipts = data["receipts"]
+        logs = data["logs"]
+        traces = data["traces"]
+
+        prepare_blocks_inplace_eth(blocks, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        txs = enrich_transactions(txs, receipts)
+
+        prepare_transactions_inplace_eth(
+            txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, self.partition_batch_size
+        )
+        prepare_traces_inplace_eth(traces, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+
+        from ..schema.resources.parquet.account import BINARY_COL_CONVERSION_MAP_ACCOUNT
+
+        # todo, should also work to use a lookup to get the right
+        #   BINARY_COL_CONVERSION_MAP
+        txs = to_bytes(
+            txs, BINARY_COL_CONVERSION_MAP_ACCOUNT["transaction"]
+        )  # todo this is only for parquet/delta
+        blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT["block"])
+        traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT["trace"])
+        logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT["log"])
+
+        return {"block": blocks, "transaction": txs, "log": logs, "trace": traces}
+
+
+class ETLTrx(ETL):
+    def __init__(
+        self,
+        thread_proxy,
+        provider_uri,
+        grpc_provider_uri,
+        provider_timeout,
+        partition_batch_size,
+    ):
+        self.thread_proxy = thread_proxy
+        self.provider_uri = provider_uri
+        self.grpc_provider_uri = grpc_provider_uri
+        self.provider_timeout = provider_timeout
+        self.adapter = TronStreamerAdapter(
+            self.thread_proxy,
+            grpc_endpoint=self.grpc_provider_uri,
+            batch_size=WEB3_QUERY_BATCH_SIZE,
+            max_workers=WEB3_QUERY_WORKERS,
+        )
+        self.strategy = TrxETLStrategy(
+            http_provider_uri=provider_uri,
+            provider_timeout=provider_timeout,
+            grpc_provider_uri=grpc_provider_uri,
+            is_trace_only_mode=False,
+            is_update_transactions_mode=False,
+        )
+
+        self.partition_batch_size = partition_batch_size
+        self.network = "trx"  # todo not optimal?
+
+    def read_from_node(self, start, end):
+        blocks, txs = self.adapter.export_blocks_and_transactions(start, end)
+        receipts, logs = self.adapter.export_receipts_and_logs(txs)
+        traces, fees = self.adapter.export_traces(start, end, True, True)
+        data = {
+            "blocks": blocks,
+            "txs": txs,
+            "receipts": receipts,
+            "logs": logs,
+            "traces": traces,
+            "fees": fees,
+        }
+
+        return data
+
+    def transform(self, data):
+        blocks = data["blocks"]
+        txs = data["txs"]
+        receipts = data["receipts"]
+        logs = data["logs"]
+        traces = data["traces"]
+        fees = data["fees"]
+
+        prepare_blocks_inplace = prepare_blocks_inplace_trx
+        prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        partition = (
+            blocks[0]["block_id"] // self.partition_batch_size
+        )  # todo this can be a problem if the there are multiple partitions
+        # for an import range. probably best to add partition col another way
+
+        # TRX ONLY
+        hash_to_type = self.adapter.export_hash_to_type_mappings(txs, blocks)
+        txs = enrich_transactions(txs, receipts)  # todo this one line is also in ETH
+        txs = self.strategy.enrich_transactions_with_type(txs, hash_to_type)
+        prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN, partition)
+        prepare_transactions_inplace = prepare_transactions_inplace_trx
+        prepare_traces_inplace = prepare_traces_inplace_trx
+
+        # COMMON
+        prepare_transactions_inplace(
+            txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, self.partition_batch_size
+        )
+        prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+
+        from ..schema.resources.parquet.account_trx import (
+            BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
+        )
+
+        # todo this is something that i dont want to pass.
+        #   this should come automatically
+        txs = to_bytes(
+            txs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["transaction"]
+        )  # todo this is only for parquet/delta
+        blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["block"])
+        traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"])
+        logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["log"])
+
+        return {
+            "block": blocks,
+            "transaction": txs,
+            "log": logs,
+            "trace": traces,
+            "fee": fees,
+        }
+
+    def read_from_node_small(self):
+        token_infos = self.adapter.get_trc10_token_infos()
+        return {"token_infos": token_infos}
+
+    def transform_small(self, data):
+        token_infos = data["token_infos"]
+        prepare_trc10_tokens_inplace(token_infos)
+        return {"trc10": token_infos}
+
+
 def export_parquet(
     sink_config: dict,
     currency: str,
@@ -1494,34 +1704,18 @@ def export_parquet(
 
     logger.info("Connecting to RPC")
     if currency == "eth":
-        prepare_transactions_inplace = prepare_transactions_inplace_eth
-        prepare_blocks_inplace = prepare_blocks_inplace_eth
-        prepare_traces_inplace = prepare_traces_inplace_eth
-
-        adapter = EthStreamerAdapter(
-            thread_proxy,
-            batch_size=WEB3_QUERY_BATCH_SIZE,
-            max_workers=WEB3_QUERY_WORKERS,
+        etl = ETLEth(
+            thread_proxy, provider_uri, None, provider_timeout, partition_batch_size
         )
     elif currency == "trx":
-        prepare_transactions_inplace = prepare_transactions_inplace_trx
-        prepare_blocks_inplace = prepare_blocks_inplace_trx
-        prepare_traces_inplace = prepare_traces_inplace_trx
-
         grpc_provider_uri = first_or_default(sources, lambda x: x.startswith("grpc"))
-        adapter = TronStreamerAdapter(
-            thread_proxy,
-            grpc_endpoint=grpc_provider_uri,
-            batch_size=WEB3_QUERY_BATCH_SIZE,
-            max_workers=WEB3_QUERY_WORKERS,
-        )
 
-        strategy = TrxETLStrategy(
-            http_provider_uri=provider_uri,
-            provider_timeout=provider_timeout,
-            grpc_provider_uri=grpc_provider_uri,
-            is_trace_only_mode=False,
-            is_update_transactions_mode=False,
+        etl = ETLTrx(
+            thread_proxy,
+            provider_uri,
+            grpc_provider_uri,
+            provider_timeout,
+            partition_batch_size,
         )
     else:
         raise NotImplementedError(f"Currency {currency} not implemented")
@@ -1551,24 +1745,9 @@ def export_parquet(
         f"{start_block:,} - {end_block:,} ({end_block - start_block + 1:,} blks) "
     )
 
-    SCHEMA_RAW = sink_config["schema"]
-    BINARY_COL_CONVERSION_MAP = sink_config["binary_col_conversion_map"]
-
-    from .parquet import WRITER_MAP, DBContent, TableContent
-
-    dump_writer = WRITER_MAP[currency]
-    dump_writer.set_s3_credentials(s3_credentials)
-    dump_writer.set_write_mode(write_mode)
-
-    if currency == "trx":  # todo move to new schema
-        deltawriter_trc10 = DeltaTableWriter(
-            path=directory,
-            table_name="trc10",
-            schema=SCHEMA_RAW["trc10"],
-            mode="overwrite",  # always overwrite because small
-            primary_keys=["contract_address"],
-            s3_credentials=s3_credentials,
-        )
+    dump_writer = DeltaDumpWriterFactory.create_writer(
+        currency, s3_credentials, write_mode, directory
+    )
 
     with graceful_ctlc_shutdown() as check_shutdown_initialized:
         for block_id in range(
@@ -1579,62 +1758,19 @@ def export_parquet(
             current_end_block = min(end_block, block_id + file_batch_size - 1)
             start_batch_time = datetime.now()
 
-            partition = block_id // partition_batch_size
             assert (
                 block_id // partition_batch_size
                 == current_end_block // partition_batch_size
             )
 
             with suppress_log_level(logging.INFO):
-                blocks, txs = adapter.export_blocks_and_transactions(
-                    block_id, current_end_block
-                )
-                receipts, logs = adapter.export_receipts_and_logs(txs)
-                traces, fees = adapter.export_traces(
-                    block_id, current_end_block, True, True
-                )
-
-                prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE, partition_batch_size)
-
-                if currency == "trx":
-                    hash_to_type = adapter.export_hash_to_type_mappings(txs, blocks)
-                    txs = enrich_transactions(txs, receipts)
-                    txs = strategy.enrich_transactions_with_type(txs, hash_to_type)
-                    prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN, partition)
-                else:
-                    txs = enrich_transactions(txs, receipts)
-
-            prepare_transactions_inplace(
-                txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, partition_batch_size
-            )
-            prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, partition_batch_size)
-            prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, partition_batch_size)
-
-            last_block = sorted(blocks, key=lambda x: x["block_id"])[-1]
-            last_block_ts = last_block["timestamp"]
-            last_block_date = parse_timestamp(last_block_ts)
-
-            txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP["transaction"])
-            blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP["block"])
-            traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP["trace"])
-            logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP["log"])
-
-            table_contents = [
-                TableContent(table_name="transaction", data=txs),
-                TableContent(table_name="block", data=blocks),
-                TableContent(table_name="trace", data=traces),
-                TableContent(table_name="log", data=logs),
-            ]
-            # todo add parallel queries
-
-            if currency == "trx":
-                table_contents.append(TableContent(table_name="fee", data=fees))
-
-            dbcontent = DBContent(  # todo should be output of function
-                network=currency, table_contents=table_contents
-            )
+                dbcontent = etl.query_data_delta(block_id, current_end_block)
 
             dump_writer.write_db(dbcontent)
+
+            # last_block = current_end_block
+            last_block_ts = 0
+            last_block_date = parse_timestamp(last_block_ts)
 
             speed = (current_end_block - block_id + 1) / (
                 datetime.now() - start_batch_time
@@ -1648,10 +1784,9 @@ def export_parquet(
             if check_shutdown_initialized():
                 break
 
-        if currency == "trx":
-            token_infos = adapter.get_trc10_token_infos()
-            prepare_trc10_tokens_inplace(token_infos)
-            deltawriter_trc10.write_delta(token_infos)
+        # write small tables
+        dbc = etl.query_data_delta_small()
+        dump_writer.write_db(dbc)
 
     logger.info(
         f"[{datetime.now()}] Processed block range "
