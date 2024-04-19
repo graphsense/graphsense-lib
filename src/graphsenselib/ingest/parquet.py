@@ -1,7 +1,7 @@
 import logging
 import time
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Union
 
 import deltalake as dl
 import pyarrow as pa
@@ -178,25 +178,53 @@ def read_table(path: str, table_name: str):
 
 # a tableconfig contains the name, schema, partition_cols, mode and primary_keys
 # additionally there is an optional field that says if the table is written only once
-# we call it a "small" table
+# we call it a "blockindep" table
 class TableWriteConfig(pydantic.BaseModel):  # todo could be a dataclass
     table_name: str
     table_schema: pa.Schema
     partition_cols: Optional[tuple] = None
     primary_keys: Optional[List[str]] = None
-    small: Optional[bool] = False
+    blockindep: Optional[bool] = False
 
     class Config:
         arbitrary_types_allowed = True
 
 
-class TableContent(pydantic.BaseModel):
-    table_name: str
-    data: List[dict]
+class BlockRangeContent(pydantic.BaseModel):
+    table_contents: Dict[str, Union[List[dict], dict]]
+    start_block: int
+    end_block: int
 
+    @staticmethod
+    def merge(block_range_contents: List["BlockRangeContent"]) -> "BlockRangeContent":
+        # sort block_range_contents by start_block
+        block_range_contents = sorted(block_range_contents, key=lambda x: x.start_block)
+        # make sure that there are no gaps in the block range
+        assert all(
+            block_range_contents[i].end_block + 1
+            == block_range_contents[i + 1].start_block
+            for i in range(len(block_range_contents) - 1)
+        )
+        # all should have the same tables
+        assert all(
+            set(block_range_contents[0].table_contents.keys())
+            == set(block_range_content.table_contents.keys())
+            for block_range_content in block_range_contents
+        )
+        table_contents = {
+            table_name: []
+            for table_name in block_range_contents[0].table_contents.keys()
+        }
 
-class DBContent(pydantic.BaseModel):
-    table_contents: List[TableContent]
+        for block_range_content in block_range_contents:
+            for table_name, table_content in block_range_content.table_contents.items():
+                table_contents[table_name].extend(table_content)
+
+        return BlockRangeContent(
+            table_contents=table_contents,
+            start_block=block_range_contents[0].start_block,
+            end_block=block_range_contents[-1].end_block,
+        )
 
 
 class DBWriteConfig(pydantic.BaseModel):
@@ -235,7 +263,7 @@ TRX_DBWRITE_CONFIG = DBWriteConfig(
             table_name="trc10",
             table_schema=ACCOUNT_TRX_SCHEMA_RAW["trc10"],
             primary_keys=["contract_address"],
-            small=True,
+            blockindep=True,
         ),
         TableWriteConfig(
             table_name="fee",
@@ -299,7 +327,7 @@ class DeltaDumpWriter:
         }
 
     def create_table_writer(self, table_config: TableWriteConfig):
-        if table_config.small:
+        if table_config.blockindep:
             mode = "overwrite"
         else:
             mode = self.write_mode
@@ -313,15 +341,16 @@ class DeltaDumpWriter:
             s3_credentials=self.s3_credentials,
         )
 
-    def write_table(self, table_content: TableContent):
-        writer = self.writers[table_content.table_name]
-        writer.write_delta(table_content.data)
+    from typing import Tuple
 
-    def write_db(self, db_content: DBContent):
-        for table_content in db_content.table_contents:
-            self.write_table(
-                table_content
-            )  # todo table content for trc10 (small) should be given by the ETL-Module
+    def write_table(self, table_content: Tuple[str, List[dict]]):
+        writer = self.writers[table_content[0]]
+        writer.write_delta(table_content[1])
+
+    def write(self, sink_content: BlockRangeContent):
+        for table_content in sink_content.table_contents.items():
+            self.write_table(table_content)  # todo table content for trc10 (blockindep)
+            # should be given by the ETL-Module
 
 
 CONFIG_MAP = {
