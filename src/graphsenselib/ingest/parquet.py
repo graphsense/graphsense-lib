@@ -12,6 +12,7 @@ from ..schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
 
 # todo create a lookup for these schemas + for binary col stuff
 from ..schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
+from ..schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +193,8 @@ class TableWriteConfig(pydantic.BaseModel):  # todo could be a dataclass
 
 class BlockRangeContent(pydantic.BaseModel):
     table_contents: Dict[str, Union[List[dict], dict]]
-    start_block: int
-    end_block: int
+    start_block: Union[int, None]
+    end_block: Union[int, None]
 
     @staticmethod
     def merge(block_range_contents: List["BlockRangeContent"]) -> "BlockRangeContent":
@@ -232,8 +233,6 @@ class DBWriteConfig(pydantic.BaseModel):
 
 
 TRX_DBWRITE_CONFIG = DBWriteConfig(
-    path="s3://test2/trx",
-    # todo make flexible? in graphsense yaml it is the whole path
     table_configs=[
         TableWriteConfig(
             table_name="block",
@@ -304,6 +303,34 @@ ETH_DBWRITE_CONFIG = DBWriteConfig(
     ],
 )
 
+UTXO_DBWRITE_CONFIG = DBWriteConfig(
+    table_configs=[
+        TableWriteConfig(
+            table_name="block",
+            table_schema=UTXO_SCHEMA_RAW["block"],
+            partition_cols=("partition",),
+            primary_keys=["block_id"],
+        ),
+        TableWriteConfig(
+            table_name="transaction",
+            table_schema=UTXO_SCHEMA_RAW["transaction"],
+            partition_cols=("partition",),
+            primary_keys=["block_id", "index"],
+        ),
+        TableWriteConfig(
+            table_name="transaction_spending",
+            table_schema=UTXO_SCHEMA_RAW["transaction_spending"],
+            partition_cols=("partition",),
+            primary_keys=[
+                "spending_tx_hash",
+                "spent_tx_hash",
+                "spending_input_index",
+                "spent_output_index",
+            ],
+        ),
+    ]
+)
+
 
 class DeltaDumpWriter:
     def __init__(
@@ -356,6 +383,10 @@ class DeltaDumpWriter:
 CONFIG_MAP = {
     "trx": TRX_DBWRITE_CONFIG,
     "eth": ETH_DBWRITE_CONFIG,
+    "btc": UTXO_DBWRITE_CONFIG,
+    "ltc": UTXO_DBWRITE_CONFIG,
+    "bch": UTXO_DBWRITE_CONFIG,
+    "zec": UTXO_DBWRITE_CONFIG,
 }
 
 

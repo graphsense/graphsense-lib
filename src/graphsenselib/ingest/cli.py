@@ -13,8 +13,8 @@ from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from ..schema.resources.parquet import account, account_trx, utxo
 from ..utils import subkey_get
-from .account import export_parquet
 from .common import INGEST_SINKS
+from .dump import export_parquet
 from .factory import IngestFactory
 from .utxo import export_parquet as export_utxo_parquet
 
@@ -457,7 +457,6 @@ def dump_rawdata(
 
     if schema_type in ["account", "account_trx"]:
         export_parquet(
-            sink_config=sink_config,
             currency=currency,
             sources=sources,
             directory=parquet_directory,
@@ -466,7 +465,6 @@ def dump_rawdata(
             partitioning=partitioning,
             file_batch_size=file_batch_size,
             partition_batch_size=partition_batch_size,
-            info=info,
             provider_timeout=timeout,
             s3_credentials=s3_credentials,
             write_mode=write_mode,
