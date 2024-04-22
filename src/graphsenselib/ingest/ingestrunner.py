@@ -9,7 +9,7 @@ from .account import logger
 from .source import split_blockrange
 
 
-class ETLRunner:
+class IngestRunner:
     def __init__(self, partition_batch_size: int, file_batch_size: int):
         self.source = None
         self.transformers = []
@@ -70,7 +70,7 @@ class ETLRunner:
                     ]
                     last_block_date = parse_timestamp(last_block_ts)
 
-                    speed = (file_chunk[0] - file_chunk[1] + 1) / (
+                    speed = (file_chunk[1] - file_chunk[0] + 1) / (
                         datetime.now() - start_chunk_time
                     ).total_seconds()
                     logger.info(
@@ -84,11 +84,11 @@ class ETLRunner:
                     if check_shutdown_initialized():
                         break
 
-        logger.info(
-            f"Processed block range "
-            f"{start_block:,} - {end_block:,} "
-            f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
-        )
+            logger.info(
+                f"Processed block range "
+                f"{start_block:,} - {end_block:,} "
+                f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
+            )
         self.ingest_blockindep()
 
         logger.info("Ingested blockindependent data. Finished")
