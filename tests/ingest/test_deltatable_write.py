@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 
-from graphsenselib.ingest.parquet import DeltaTableWriter, read_table
+from graphsenselib.ingest.delta.sink import DeltaTableWriter, read_table
 
 tempfolder = "tests/ingest/temp"
 # create folder if it doesnt exist

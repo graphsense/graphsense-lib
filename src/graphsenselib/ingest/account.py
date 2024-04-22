@@ -243,7 +243,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         # return traces
 
     def export_hash_to_type_mappings(
-        self, transactions: Iterable, blocks: Iterable
+        self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
         channel = grpc.insecure_channel(grpc_endpoint)
@@ -259,7 +259,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
             info = wallet_stub.GetBlockByNum(msg)
             return info
 
-        block_ids = [b["block_id"] for b in blocks]
+        block_ids = [b[block_id_name] for b in blocks]
         blocks_data = [get_block(b) for b in block_ids]
         txs_grpc = [tx for block in blocks_data for tx in block.transactions]
         types = [get_type(tx) for tx in txs_grpc]
