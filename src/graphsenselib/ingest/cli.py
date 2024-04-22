@@ -349,30 +349,6 @@ def export_csv(
     help="end block (default: last available block)",
 )
 @click.option(
-    "--partitioning",
-    type=click.Choice(
-        [
-            "block-based",
-        ],
-        case_sensitive=False,
-    ),
-    help="Partitioning type. Defines units to import (default: block-based)",
-    default="block-based",
-    multiple=False,
-)
-@click.option(
-    "--file-batch-size",
-    type=int,
-    default=100,
-    help="Number of units (blocks) to export to a parquet file (default: 100)",
-)
-@click.option(
-    "--partition-batch-size",
-    type=int,
-    default=10_000,
-    help="number of blocks to export in partition for block-based (default: 10_000)",
-)
-@click.option(
     "--timeout",
     type=int,
     required=False,
@@ -398,9 +374,6 @@ def dump_rawdata(
     currency,
     start_block,
     end_block,
-    partitioning,
-    file_batch_size,
-    partition_batch_size,
     timeout,
     write_mode,
 ):
@@ -436,9 +409,6 @@ def dump_rawdata(
         directory=parquet_directory,
         start_block=start_block,
         end_block=end_block,
-        partitioning=partitioning,
-        file_batch_size=file_batch_size,
-        partition_batch_size=partition_batch_size,
         provider_timeout=timeout,
         s3_credentials=s3_credentials,
         write_mode=write_mode,
