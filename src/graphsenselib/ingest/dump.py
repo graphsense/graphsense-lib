@@ -3,22 +3,20 @@ import sys
 from typing import List, Optional
 
 from graphsenselib.ingest.account import logger
-from graphsenselib.ingest.etlrunner import (
-    ETLRunner,
-    SourceETH,
-    SourceTRX,
-    SourceUTXO,
+from graphsenselib.ingest.delta.sink import DeltaDumpSinkFactory
+from graphsenselib.ingest.etlrunner import ETLRunner
+from graphsenselib.ingest.source import SourceETH, SourceTRX, SourceUTXO
+from graphsenselib.ingest.transform import (
     TransformerETH,
     TransformerTRX,
     TransformerUTXO,
 )
-from graphsenselib.ingest.parquet import DeltaDumpWriterFactory
 from graphsenselib.utils import first_or_default
 
 SUPPORTED = ["trx", "eth", "btc", "ltc", "bch", "zec"]
 
 
-def export_parquet(
+def export_delta(
     currency: str,
     sources: List[str],
     directory: str,
@@ -65,18 +63,13 @@ def export_parquet(
                 provider_uri=provider_uri,
                 grpc_provider_uri=grpc_provider_uri,
                 provider_timeout=provider_timeout,
-                partition_batch_size=partition_batch_size,
             )
         )
         runner.addTransformer(TransformerTRX(partition_batch_size, "trx"))
 
     elif currency == "eth":
         runner.addSource(
-            SourceETH(
-                provider_uri=provider_uri,
-                provider_timeout=provider_timeout,
-                partition_batch_size=partition_batch_size,
-            )
+            SourceETH(provider_uri=provider_uri, provider_timeout=provider_timeout)
         )
         runner.addTransformer(TransformerETH(partition_batch_size, "eth"))
 
@@ -85,7 +78,7 @@ def export_parquet(
         runner.addTransformer(TransformerUTXO(partition_batch_size, currency))
 
     runner.addSink(
-        DeltaDumpWriterFactory.create_writer(
+        DeltaDumpSinkFactory.create_writer(
             currency, s3_credentials, write_mode, directory
         )
     )

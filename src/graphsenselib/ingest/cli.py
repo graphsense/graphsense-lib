@@ -8,32 +8,18 @@ from filelock import FileLock
 from filelock import Timeout as LockFileTimeout
 
 from ..cli.common import require_currency, require_environment
-from ..config import config, currency_to_schema_type
+from ..config import config
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
-from ..schema.resources.parquet import account, account_trx, utxo
 from ..utils import subkey_get
 from .common import INGEST_SINKS
-from .dump import export_parquet
+from .dump import export_delta
 from .factory import IngestFactory
-from .utxo import export_parquet as export_utxo_parquet
 
 logger = logging.getLogger(__name__)
 
-PARQUET_SCHEMA_MAPPING = {
-    "account": account.ACCOUNT_SCHEMA_RAW,
-    "account_trx": account_trx.ACCOUNT_TRX_SCHEMA_RAW,
-    "utxo": utxo.UTXO_SCHEMA_RAW,
-}
-
-COLS_AS_BINARY = {
-    "account": account.BINARY_COL_CONVERSION_MAP_ACCOUNT,
-    "account_trx": account_trx.BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
-}
-
 
 def create_sink_config(sink: str, network: str, ks_config: Dict):
-    schema_type = currency_to_schema_type[network]
     sink_config = ks_config.ingest_config.dict().get("raw_keyspace_file_sinks", None)
     if sink == "parquet" or sink == "fs-cache":
         file_sink_dir = subkey_get(sink_config, f"{sink}.directory".split("."))
@@ -47,9 +33,6 @@ def create_sink_config(sink: str, network: str, ks_config: Dict):
 
         sc = {"output_directory": file_sink_dir}
 
-        if sink == "parquet":
-            sc["schema"] = PARQUET_SCHEMA_MAPPING[schema_type]
-            sc["binary_col_conversion_map"] = COLS_AS_BINARY.get(schema_type, {})
         if sink == "fs-cache":
             sc["ignore_tables"] = ["trc10", "configuration"]
             if network == "trx":
@@ -381,18 +364,13 @@ def export_csv(
     "--file-batch-size",
     type=int,
     default=100,
-    help="Numer of units (blocks) to export to a parquet file (default: 100)",
+    help="Number of units (blocks) to export to a parquet file (default: 100)",
 )
 @click.option(
     "--partition-batch-size",
     type=int,
     default=10_000,
     help="number of blocks to export in partition for block-based (default: 10_000)",
-)
-@click.option(
-    "--info",
-    is_flag=True,
-    help="display block information and exit",
 )
 @click.option(
     "--timeout",
@@ -423,7 +401,6 @@ def dump_rawdata(
     partitioning,
     file_batch_size,
     partition_batch_size,
-    info,
     timeout,
     write_mode,
 ):
@@ -440,9 +417,8 @@ def dump_rawdata(
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
     parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "parquet", None
+        "delta", None
     )
-    sink_config = create_sink_config("parquet", currency, ks_config)
     s3_credentials = config.get_s3_credentials()
 
     if parquet_directory_config is None:
@@ -453,34 +429,17 @@ def dump_rawdata(
         sys.exit(11)
 
     parquet_directory = parquet_directory_config.directory
-    schema_type = currency_to_schema_type[currency]
 
-    if schema_type in ["account", "account_trx"]:
-        export_parquet(
-            currency=currency,
-            sources=sources,
-            directory=parquet_directory,
-            start_block=start_block,
-            end_block=end_block,
-            partitioning=partitioning,
-            file_batch_size=file_batch_size,
-            partition_batch_size=partition_batch_size,
-            provider_timeout=timeout,
-            s3_credentials=s3_credentials,
-            write_mode=write_mode,
-        )
-    elif schema_type == "utxo":
-        export_utxo_parquet(
-            sink_config=sink_config,
-            currency=currency,
-            sources=sources,
-            directory=parquet_directory,
-            start_block=start_block,
-            end_block=end_block,
-            partitioning=partitioning,
-            file_batch_size=file_batch_size,
-            partition_batch_size=partition_batch_size,
-            info=info,
-            s3_credentials=s3_credentials,
-            write_mode=write_mode,
-        )
+    export_delta(
+        currency=currency,
+        sources=sources,
+        directory=parquet_directory,
+        start_block=start_block,
+        end_block=end_block,
+        partitioning=partitioning,
+        file_batch_size=file_batch_size,
+        partition_batch_size=partition_batch_size,
+        provider_timeout=timeout,
+        s3_credentials=s3_credentials,
+        write_mode=write_mode,
+    )

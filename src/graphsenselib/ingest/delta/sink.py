@@ -1,24 +1,19 @@
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Iterable, List, Optional, Tuple
 
 import deltalake as dl
 import pyarrow as pa
 import pydantic
 from deltalake import DeltaTable
 
-from ..schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
-
-# todo create a lookup for these schemas + for binary col stuff
-from ..schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
-from ..schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
+from ...schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
+from ...schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
+from ...schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
+from ..common import BlockRangeContent, Sink
 
 logger = logging.getLogger(__name__)
-
-# 1. Delta
-# overwrite mode, -> append/merge mode
-# minio -> docker compose
 
 
 def delta_table_exists(table_path, storage_options=None):
@@ -75,7 +70,7 @@ class DeltaTableWriter:
 
         fields_in_data = [list(d.keys()) for d in data]
         unique_fields = set([item for sublist in fields_in_data for item in sublist])
-        table = pa.Table.from_pylist(mapping=data, schema=self.schema)  # todo test this
+        table = pa.Table.from_pylist(mapping=data, schema=self.schema)
 
         fields_not_covered = unique_fields - set(table.column_names)
         if fields_not_covered:
@@ -177,10 +172,7 @@ def read_table(path: str, table_name: str):
         raise NotImplementedError("Reading from s3 not implemented yet")
 
 
-# a tableconfig contains the name, schema, partition_cols, mode and primary_keys
-# additionally there is an optional field that says if the table is written only once
-# we call it a "blockindep" table
-class TableWriteConfig(pydantic.BaseModel):  # todo could be a dataclass
+class TableWriteConfig(pydantic.BaseModel):
     table_name: str
     table_schema: pa.Schema
     partition_cols: Optional[tuple] = None
@@ -189,43 +181,6 @@ class TableWriteConfig(pydantic.BaseModel):  # todo could be a dataclass
 
     class Config:
         arbitrary_types_allowed = True
-
-
-class BlockRangeContent(pydantic.BaseModel):
-    table_contents: Dict[str, Union[List[dict], dict]]
-    start_block: Union[int, None]
-    end_block: Union[int, None]
-
-    @staticmethod
-    def merge(block_range_contents: List["BlockRangeContent"]) -> "BlockRangeContent":
-        # sort block_range_contents by start_block
-        block_range_contents = sorted(block_range_contents, key=lambda x: x.start_block)
-        # make sure that there are no gaps in the block range
-        assert all(
-            block_range_contents[i].end_block + 1
-            == block_range_contents[i + 1].start_block
-            for i in range(len(block_range_contents) - 1)
-        )
-        # all should have the same tables
-        assert all(
-            set(block_range_contents[0].table_contents.keys())
-            == set(block_range_content.table_contents.keys())
-            for block_range_content in block_range_contents
-        )
-        table_contents = {
-            table_name: []
-            for table_name in block_range_contents[0].table_contents.keys()
-        }
-
-        for block_range_content in block_range_contents:
-            for table_name, table_content in block_range_content.table_contents.items():
-                table_contents[table_name].extend(table_content)
-
-        return BlockRangeContent(
-            table_contents=table_contents,
-            start_block=block_range_contents[0].start_block,
-            end_block=block_range_contents[-1].end_block,
-        )
 
 
 class DBWriteConfig(pydantic.BaseModel):
@@ -332,7 +287,7 @@ UTXO_DBWRITE_CONFIG = DBWriteConfig(
 )
 
 
-class DeltaDumpWriter:
+class DeltaDumpWriter(Sink):
     def __init__(
         self,
         directory: str,
@@ -368,16 +323,13 @@ class DeltaDumpWriter:
             s3_credentials=self.s3_credentials,
         )
 
-    from typing import Tuple
-
     def write_table(self, table_content: Tuple[str, List[dict]]):
         writer = self.writers[table_content[0]]
         writer.write_delta(table_content[1])
 
     def write(self, sink_content: BlockRangeContent):
         for table_content in sink_content.table_contents.items():
-            self.write_table(table_content)  # todo table content for trc10 (blockindep)
-            # should be given by the ETL-Module
+            self.write_table(table_content)
 
 
 CONFIG_MAP = {
@@ -390,9 +342,11 @@ CONFIG_MAP = {
 }
 
 
-class DeltaDumpWriterFactory:  # todo could be a function
+class DeltaDumpSinkFactory:  # todo could be a function
     @staticmethod
-    def create_writer(currency, s3_credentials, write_mode, directory):
+    def create_writer(
+        currency: str, s3_credentials: dict, write_mode: str, directory: str
+    ) -> Sink:
         db_write_config = CONFIG_MAP.get(currency)
         if not db_write_config:
             raise ValueError(f"Invalid currency: {currency}")
