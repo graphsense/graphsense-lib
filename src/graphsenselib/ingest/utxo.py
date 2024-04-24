@@ -95,9 +95,8 @@ class InputNotFoundException(Exception):
 
 
 def drop_columns(data, cols):
-    for d in data:
-        for col in cols:
-            d.pop(col, None)
+    for col in cols:
+        data.pop(col, None)
     return data
 
 
@@ -958,10 +957,9 @@ def prepare_transactions_inplace_parquet(txs, currency):
         drop_fields=False,
     )
 
-    # additionally drop the block_hash in transactions
-    drop_columns(txs, ["block_hash"])
-
     for tx in txs:
+        drop_columns(tx, ["block_hash"])
+
         for input in tx["inputs"]:
             input["spent_transaction_hash"] = hex_to_bytes(
                 input["spent_transaction_hash"]
@@ -975,4 +973,5 @@ def prepare_transactions_inplace_parquet(txs, currency):
 
 
 def prepare_refs_inplace_parquet(tx_refs):
-    drop_columns(tx_refs, ["spent_tx_prefix"])
+    for tx_ref in tx_refs:
+        drop_columns(tx_ref, ["spent_tx_prefix"])
