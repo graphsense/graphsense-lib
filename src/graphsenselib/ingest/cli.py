@@ -369,6 +369,12 @@ def export_csv(
     default="overwrite",
     multiple=False,
 )
+@click.option(
+    "--ignore-overwrite-safechecks",
+    is_flag=True,
+    help="Ignore check in the overwrite mode that only lets you start at the "
+    "beginning of a partition",
+)
 def dump_rawdata(
     env,
     currency,
@@ -376,6 +382,7 @@ def dump_rawdata(
     end_block,
     timeout,
     write_mode,
+    ignore_overwrite_safechecks,
 ):
     """Exports raw cryptocurrency data to gziped csv files.
     \f
@@ -412,4 +419,5 @@ def dump_rawdata(
         provider_timeout=timeout,
         s3_credentials=s3_credentials,
         write_mode=write_mode,
+        ignore_overwrite_safechecks=ignore_overwrite_safechecks,
     )

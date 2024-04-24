@@ -20,12 +20,12 @@ SUPPORTED = ["trx", "eth", "btc", "ltc", "bch", "zec"]
 # partitions that are between 1000 and 10000 MB
 # TODO check this is for the entire deltalake not per table. review
 FILESIZES = {
-    "zec": 50000,
-    "trx": 50000,
-    "ltc": 2000,
-    "eth": 2000,
-    "btc": 400,
-    "bch": 5000,
+    "zec": 10000,
+    "trx": 10000,
+    "ltc": 1000,
+    "eth": 1000,
+    "btc": 1000,
+    "bch": 1000,
 }
 
 
@@ -38,6 +38,7 @@ def export_delta(
     provider_timeout: int,
     s3_credentials: Optional[str] = None,
     write_mode: str = "overwrite",
+    ignore_overwrite_safechecks: bool = False,
 ):
     logger.setLevel(logging.INFO)
 
@@ -48,9 +49,14 @@ def export_delta(
     partition_batch_size = 10 * file_batch_size
 
     is_start_of_partition = start_block % partition_batch_size == 0
-    if write_mode == "overwrite":
+
+    if (write_mode == "overwrite") and not ignore_overwrite_safechecks:
+        left_partition_start = start_block - (start_block % partition_batch_size)
         assert is_start_of_partition, (
-            "Start block must be a multiple of " "partition_batch_size"
+            f"Start block ({start_block:,}) must be a multiple of partition_batch_size "
+            f"({partition_batch_size:,}) for overwrite mode. "
+            f"Try {left_partition_start:,} "
+            f" instead."
         )
 
     logger.info(f"Writing data as parquet to {directory}")
