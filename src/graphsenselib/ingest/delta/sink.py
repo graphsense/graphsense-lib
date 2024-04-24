@@ -46,7 +46,7 @@ class DeltaTableWriter:
         self.primary_keys = primary_keys
         self.mode = mode
         self.s3_credentials = s3_credentials
-        if mode not in ["overwrite", "merge"]:
+        if mode not in ["overwrite", "merge", "append"]:
             raise ValueError(f"Invalid mode: {mode}")
 
         self.current_partition = -1
