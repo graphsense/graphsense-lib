@@ -242,6 +242,8 @@ class AddressConverterBch(AddressConverterBtcLike):
         super().__init__(bech32_prefix=None, nonstandard_prefix="nonstandard")
 
     def to_canonical_address_str(self, address: str) -> str:
+        if address.startswith(self.nonstandard_prefix):
+            return address
         try:
             return bch_address_to_legacy(address)
         except BCHInvalidAddress as e:
