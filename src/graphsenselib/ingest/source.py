@@ -1,3 +1,4 @@
+import logging
 from typing import Generator, Tuple
 
 from graphsenselib.ingest.account import (
@@ -10,6 +11,8 @@ from graphsenselib.ingest.account import (
 )
 from graphsenselib.ingest.common import BlockRangeContent, Source
 from graphsenselib.ingest.utxo import get_stream_adapter
+
+logger = logging.getLogger(__name__)
 
 
 def split_blockrange(
@@ -35,6 +38,12 @@ class SourceTRX(Source):
         )
 
     def read_blockrange(self, start_block, end_block):
+        if start_block == 0:
+            start_block = 1
+            logging.warning(
+                "Start was set to 1 since genesis blocks "
+                "don't have logs and cause issues."
+            )
         blocks, txs = self.adapter.export_blocks_and_transactions(
             start_block, end_block
         )
