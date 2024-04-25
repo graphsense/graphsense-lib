@@ -1,6 +1,8 @@
+import asyncio
 from typing import List
 
 import grpc
+import grpc.aio  # Import asynchronous gRPC module
 
 from ...utils import remove_prefix
 from .grpc.api.tron_api_pb2 import NumberMessage
@@ -152,3 +154,35 @@ class TronExportTracesJob:
             fees.extend(fees_per_block)
 
         return traces, fees
+
+    async def fetch_and_process_block(self, i, wallet_stub):
+        block = await wallet_stub.GetTransactionInfoByBlockNum(NumberMessage(num=i))
+        traces_per_block = decode_block_to_traces(i, block)
+        fees_per_block = decode_fees(i, block)
+        return traces_per_block, fees_per_block
+
+    def run_parallel(self):
+        # Setup an asynchronous event loop
+        loop = asyncio.get_event_loop()
+
+        async def run_async():
+            async with grpc.aio.insecure_channel(self.grpc_endpoint) as channel:
+                wallet_stub = WalletStub(channel)
+                tasks = [
+                    self.fetch_and_process_block(i, wallet_stub)
+                    for i in range(self.start_block, self.end_block + 1)
+                ]
+                results = await asyncio.gather(*tasks)  # Gather all tasks concurrently
+
+                traces = []
+                fees = []
+
+                # Unpacking results
+                for traces_per_block, fees_per_block in results:
+                    traces.extend(traces_per_block)
+                    fees.extend(fees_per_block)
+
+                return traces, fees
+
+        # Execute the asynchronous run inside a synchronous function
+        return loop.run_until_complete(run_async())

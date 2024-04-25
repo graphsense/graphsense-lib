@@ -29,8 +29,6 @@ UTXO_SCHEMA_RAW = {
         [
             ("tx_hash", pa.binary(32)),
             ("partition", pa.int32()),
-            ("tx_id_group", pa.int32()),
-            ("tx_id", pa.int64()),
             ("block_id", pa.int32()),
             ("timestamp", pa.int32()),
             ("coinbase", pa.bool_()),
