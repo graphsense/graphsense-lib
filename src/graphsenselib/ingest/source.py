@@ -33,8 +33,12 @@ class SourceTRX(Source):
         self.adapter = TronStreamerAdapter(
             self.thread_proxy,
             grpc_endpoint=grpc_provider_uri,
-            batch_size=WEB3_QUERY_BATCH_SIZE,
-            max_workers=WEB3_QUERY_WORKERS,
+            batch_size=20,
+            max_workers=10,
+            batch_size_blockstransactions=20,
+            max_workers_blockstransactions=10,
+            batch_size_receiptslogs=600,
+            max_workers_receiptslogs=20,
         )
 
     def read_blockrange(self, start_block, end_block):
@@ -48,8 +52,8 @@ class SourceTRX(Source):
             start_block, end_block
         )
         receipts, logs = self.adapter.export_receipts_and_logs(txs)
-        traces, fees = self.adapter.export_traces(start_block, end_block, True, True)
-        hash_to_type = self.adapter.export_hash_to_type_mappings(
+        traces, fees = self.adapter.export_traces_parallel(start_block, end_block)
+        hash_to_type = self.adapter.export_hash_to_type_mappings_parallel(
             txs, blocks, block_id_name="number"
         )
 

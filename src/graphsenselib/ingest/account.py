@@ -117,12 +117,30 @@ class AccountStreamerAdapter:
         batch_web3_provider: ThreadLocalProxy,
         batch_size: int = None,
         max_workers: int = None,
+        batch_size_blockstransactions: int = None,
+        max_workers_blockstransactions: int = None,
+        batch_size_receiptslogs: int = None,
+        max_workers_receiptslogs: int = None,
     ) -> None:
         self.batch_web3_provider = batch_web3_provider
         self.batch_size = batch_size
         self.max_workers = max_workers
         self.item_id_calculator = EthItemIdCalculator()
         self.item_timestamp_calculator = EthItemTimestampCalculator()
+
+        if batch_size_blockstransactions is None:
+            batch_size_blockstransactions = batch_size
+        if max_workers_blockstransactions is None:
+            max_workers_blockstransactions = max_workers
+        if batch_size_receiptslogs is None:
+            batch_size_receiptslogs = batch_size
+        if max_workers_receiptslogs is None:
+            max_workers_receiptslogs = max_workers
+
+        self.batch_size_blockstransactions = batch_size_blockstransactions
+        self.max_workers_blockstransactions = max_workers_blockstransactions
+        self.batch_size_receiptslogs = batch_size_receiptslogs
+        self.max_workers_receiptslogs = max_workers_receiptslogs
 
     def export_blocks_and_transactions(
         self,
@@ -139,9 +157,9 @@ class AccountStreamerAdapter:
         blocks_and_transactions_job = ExportBlocksJob(
             start_block=start_block,
             end_block=end_block,
-            batch_size=self.batch_size,
+            batch_size=self.batch_size_blockstransactions,
             batch_web3_provider=self.batch_web3_provider,
-            max_workers=self.max_workers,
+            max_workers=self.max_workers_blockstransactions,
             item_exporter=blocks_and_transactions_item_exporter,
             export_blocks=export_blocks,
             export_transactions=export_transactions,
@@ -162,9 +180,9 @@ class AccountStreamerAdapter:
             transaction_hashes_iterable=(
                 transaction["hash"] for transaction in transactions
             ),
-            batch_size=self.batch_size,
+            batch_size=self.batch_size_receiptslogs,
             batch_web3_provider=self.batch_web3_provider,
-            max_workers=self.max_workers,
+            max_workers=self.max_workers_receiptslogs,
             item_exporter=exporter,
             export_receipts=True,
             export_logs=True,
@@ -216,8 +234,20 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         grpc_endpoint: str,
         batch_size: int = None,
         max_workers: int = None,
+        batch_size_blockstransactions: int = None,
+        max_workers_blockstransactions: int = None,
+        batch_size_receiptslogs: int = None,
+        max_workers_receiptslogs: int = None,
     ) -> None:
-        super().__init__(batch_web3_provider, batch_size, max_workers)
+        super().__init__(
+            batch_web3_provider,
+            batch_size,
+            max_workers,
+            batch_size_blockstransactions,
+            max_workers_blockstransactions,
+            batch_size_receiptslogs,
+            max_workers_receiptslogs,
+        )
         self.grpc_endpoint = grpc_endpoint
 
     def export_traces(
@@ -239,8 +269,22 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         )
 
         return job.run()
-        # traces = exporter.get_items("trace")
-        # return traces
+
+    def export_traces_parallel(
+        self, start_block: int, end_block: int
+    ) -> Iterable[Dict]:
+        """Export traces for specified block range."""
+
+        # exporter = InMemoryItemExporter(item_types=["trace"])
+        job = TronExportTracesJob(
+            start_block=start_block,
+            end_block=end_block,
+            batch_size=self.batch_size,
+            grpc_endpoint=self.grpc_endpoint,
+            max_workers=self.max_workers,
+        )
+
+        return job.run_parallel()
 
     def export_hash_to_type_mappings(
         self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
@@ -266,13 +310,35 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         tx_hashes = [tx["hash"] for tx in transactions]
         hash_to_type = dict(zip(tx_hashes, types))
 
-        # def getTransactionById(tx_hash):
-        #    msg = BytesMessage(value=bytes.fromhex(tx_hash[2:]))
-        #    info = wallet_stub.GetTransactionById(msg)
-        #    return info
-        # types2 = [get_type(getTransactionById(tx_hash)) for tx_hash in tx_hashes]
-        # import numpy as np
-        # assert np.all(np.array(types) == np.array(types2))
+        return hash_to_type
+
+    def export_hash_to_type_mappings_parallel(
+        self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
+    ) -> Dict:
+        grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
+        channel = grpc.insecure_channel(grpc_endpoint)
+        wallet_stub = WalletStub(channel)
+
+        def get_type(tx):
+            type_container = tx.raw_data.contract
+            assert len(type_container) == 1
+            return type_container[0].type
+
+        def get_block(i):  # contains type
+            msg = NumberMessage(num=i)
+            info = wallet_stub.GetBlockByNum(msg)
+            return info
+
+        block_ids = [b[block_id_name] for b in blocks]
+
+        # Using ThreadPoolExecutor to fetch blocks concurrently
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            blocks_data = list(executor.map(get_block, block_ids))
+
+        txs_grpc = [tx for block in blocks_data for tx in block.transactions]
+        types = [get_type(tx) for tx in txs_grpc]
+        tx_hashes = [tx["hash"] for tx in transactions]
+        hash_to_type = dict(zip(tx_hashes, types))
 
         return hash_to_type
 
