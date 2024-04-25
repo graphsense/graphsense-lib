@@ -33,12 +33,10 @@ class SourceTRX(Source):
         self.adapter = TronStreamerAdapter(
             self.thread_proxy,
             grpc_endpoint=grpc_provider_uri,
-            batch_size=20,
-            max_workers=10,
             batch_size_blockstransactions=20,
             max_workers_blockstransactions=10,
             batch_size_receiptslogs=600,
-            max_workers_receiptslogs=20,
+            max_workers_receiptslogs=30,
         )
 
     def read_blockrange(self, start_block, end_block):
