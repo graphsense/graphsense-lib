@@ -121,6 +121,7 @@ class DeltaTableWriter:
                 table,
                 partition_by=partition_by,
                 mode=delta_write_mode,
+                schema_mode="overwrite",
                 partition_filters=partition_filters,
                 storage_options=storage_options,
             )
