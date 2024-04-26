@@ -16,12 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 def split_blockrange(
-    blockrange: Tuple[int, int], size: int
+    blockrange: Tuple[int, int], chunk_size: int
 ) -> Generator[Tuple[int, int], None, None]:
-    current = blockrange[0]
-    while current <= blockrange[1]:
-        yield (current, min(current + size - 1, blockrange[1]))
-        current += size
+    start, end = blockrange
+    temp_end = start
+    while start <= end:
+        temp_end = min((start // chunk_size + 1) * chunk_size - 1, end)
+        yield (start, temp_end)
+        start = temp_end + 1
 
 
 class SourceTRX(Source):
