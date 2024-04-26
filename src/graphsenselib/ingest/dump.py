@@ -54,7 +54,7 @@ def export_delta(
         assert is_start_of_partition, (
             f"Start block ({start_block:,}) must be a multiple of partition_batch_size "
             f"({partition_batch_size:,}) for overwrite mode. "
-            f"Try {left_partition_start:,} "
+            f"Try {left_partition_start:,} or use flag ignore-overwrite-safechecks "
             f" instead."
         )
 
@@ -70,7 +70,7 @@ def export_delta(
     runner = IngestRunner(partition_batch_size, file_batch_size)
 
     if currency == "trx":
-        source = source = SourceTRX(
+        source = SourceTRX(
             provider_uri=provider_uri,
             grpc_provider_uri=grpc_provider_uri,
             provider_timeout=provider_timeout,
@@ -87,12 +87,13 @@ def export_delta(
     else:
         raise ValueError(f"{currency} not supported by ingest module")
 
-    runner.addSource(source)
-    runner.addTransformer(transformer)
-
     delta_sink = DeltaDumpSinkFactory.create_writer(
         currency, s3_credentials, write_mode, directory
     )
+
+    runner.addSource(source)
+    runner.addTransformer(transformer)
+    runner.addSink(delta_sink)
 
     if write_mode == "append":
         highest_block = delta_sink.highest_block()
@@ -117,5 +118,4 @@ def export_delta(
         f"Partition batch size: {partition_batch_size}, "
         f"file batch size: {file_batch_size}"
     )
-    runner.addSink(delta_sink)
     runner.run(start_block, end_block)
