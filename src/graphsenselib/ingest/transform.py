@@ -17,11 +17,8 @@ from graphsenselib.ingest.account import (
 )
 from graphsenselib.ingest.common import BlockRangeContent, Transformer
 from graphsenselib.ingest.utxo import (
-    TX_HASH_PREFIX_LENGTH,
     enrich_txs,
-    get_tx_refs,
     prepare_blocks_inplace,
-    prepare_refs_inplace_parquet,
     prepare_transactions_inplace_parquet,
 )
 from graphsenselib.schema.resources.parquet.account import (
@@ -30,7 +27,6 @@ from graphsenselib.schema.resources.parquet.account import (
 from graphsenselib.schema.resources.parquet.account_trx import (
     BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
 )
-from graphsenselib.utils import flatten
 
 
 class TransformerUTXO(Transformer):
@@ -39,10 +35,6 @@ class TransformerUTXO(Transformer):
 
         blocks = data["blocks"]
         txs = data["txs"]
-
-        tx_refs = flatten(
-            [get_tx_refs(tx["hash"], tx["inputs"], TX_HASH_PREFIX_LENGTH) for tx in txs]
-        )
 
         prepare_blocks_inplace(
             blocks, BLOCK_BUCKET_SIZE, process_fields=False, drop_fields=False
@@ -58,7 +50,6 @@ class TransformerUTXO(Transformer):
         )
 
         prepare_transactions_inplace_parquet(txs, self.network)
-        prepare_refs_inplace_parquet(tx_refs)
 
         partition = (
             blocks[0]["block_id"] // self.partition_batch_size
@@ -72,7 +63,6 @@ class TransformerUTXO(Transformer):
         block_range_content.table_contents = {
             "block": with_partition(blocks),
             "transaction": with_partition(txs),
-            "transaction_spending": with_partition(tx_refs),
         }
         return block_range_content
 
