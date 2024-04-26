@@ -298,7 +298,6 @@ class DeltaDumpWriter(Sink):
         self.directory = directory
         self.db_write_config = db_write_config
         self.s3_credentials = s3_credentials
-        self.db_write_config = db_write_config
         self.write_mode = write_mode
 
         self.writers = {
@@ -330,6 +329,26 @@ class DeltaDumpWriter(Sink):
     def write(self, sink_content: BlockRangeContent):
         for table_content in sink_content.table_contents.items():
             self.write_table(table_content)
+
+    def highest_block(self):
+        logger.info("Getting highest block")
+        if self.s3_credentials:
+            storage_options = {
+                "AWS_ALLOW_HTTP": "true",
+                "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+            }
+            storage_options.update(self.s3_credentials)
+        else:
+            storage_options = {}
+
+        dataset = DeltaTable(
+            f"{self.directory}/block", storage_options=storage_options
+        ).to_pyarrow_dataset()
+        highest_block = pa.compute.max(
+            dataset.to_table(columns=["block_id"])["block_id"]
+        ).as_py()
+        logger.info(f"Highest block: {highest_block}")
+        return highest_block
 
 
 CONFIG_MAP = {
