@@ -51,23 +51,22 @@ class IngestRunner:
         return data
 
     def run(self, start_block, end_block):
-        start_block, end_block = self.source.validate_blockrange(start_block, end_block)
-
         partitions = split_blockrange(
             (start_block, end_block), self.partition_batch_size
         )
 
-        for partition in partitions:
-            file_chunks = split_blockrange(partition, self.file_batch_size)
-            for file_chunk in file_chunks:
-                with graceful_ctlc_shutdown() as check_shutdown_initialized:
+        break_loop = False
+        with graceful_ctlc_shutdown() as check_shutdown_initialized:
+            for partition in partitions:
+                file_chunks = split_blockrange(partition, self.file_batch_size)
+                for file_chunk in file_chunks:
                     start_chunk_time = datetime.now()
                     data = self.ingest_range(file_chunk[0], file_chunk[1])
 
                     blocks = data.table_contents["block"]
-                    last_block_ts = sorted(blocks, key=lambda x: x["block_id"])[-1][
-                        "timestamp"
-                    ]
+                    last_block = sorted(blocks, key=lambda x: x["block_id"])[-1]
+                    last_block_id = last_block["block_id"]
+                    last_block_ts = last_block["timestamp"]
                     last_block_date = parse_timestamp(last_block_ts)
 
                     speed = (file_chunk[1] - file_chunk[0] + 1) / (
@@ -82,11 +81,17 @@ class IngestRunner:
                     )
 
                     if check_shutdown_initialized():
+                        break_loop = True
                         break
+
+                if break_loop:
+                    break
+
+                logger.info(f"Processed partition {partition[0]:,} - {partition[1]:,}")
 
             logger.info(
                 f"Processed block range "
-                f"{start_block:,} - {end_block:,} "
+                f"{start_block:,} - {last_block_id:,} "
                 f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
             )
         self.ingest_blockindep()

@@ -70,24 +70,25 @@ def export_delta(
     runner = IngestRunner(partition_batch_size, file_batch_size)
 
     if currency == "trx":
-        runner.addSource(
-            source=SourceTRX(
-                provider_uri=provider_uri,
-                grpc_provider_uri=grpc_provider_uri,
-                provider_timeout=provider_timeout,
-            )
+        source = source = SourceTRX(
+            provider_uri=provider_uri,
+            grpc_provider_uri=grpc_provider_uri,
+            provider_timeout=provider_timeout,
         )
-        runner.addTransformer(TransformerTRX(partition_batch_size, "trx"))
+        transformer = TransformerTRX(partition_batch_size, "trx")
 
     elif currency == "eth":
-        runner.addSource(
-            SourceETH(provider_uri=provider_uri, provider_timeout=provider_timeout)
-        )
-        runner.addTransformer(TransformerETH(partition_batch_size, "eth"))
+        source = SourceETH(provider_uri=provider_uri, provider_timeout=provider_timeout)
+        transformer = TransformerETH(partition_batch_size, "eth")
 
     elif currency in ["btc", "ltc", "bch", "zec"]:
-        runner.addSource(SourceUTXO(provider_uri=provider_uri, network=currency))
-        runner.addTransformer(TransformerUTXO(partition_batch_size, currency))
+        source = SourceUTXO(provider_uri=provider_uri, network=currency)
+        transformer = TransformerUTXO(partition_batch_size, currency)
+    else:
+        raise ValueError(f"{currency} not supported by ingest module")
+
+    runner.addSource(source)
+    runner.addTransformer(transformer)
 
     delta_sink = DeltaDumpSinkFactory.create_writer(
         currency, s3_credentials, write_mode, directory
@@ -110,6 +111,11 @@ def export_delta(
                 "yet."
             )
 
+    start_block, end_block = source.validate_blockrange(start_block, end_block)
     logger.info(f"Writing data from {start_block} to {end_block} in mode {write_mode}")
+    logger.info(
+        f"Partition batch size: {partition_batch_size}, "
+        f"file batch size: {file_batch_size}"
+    )
     runner.addSink(delta_sink)
     runner.run(start_block, end_block)
