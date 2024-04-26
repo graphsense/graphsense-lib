@@ -110,5 +110,6 @@ def export_delta(
                 "yet."
             )
 
+    logger.info(f"Writing data from {start_block} to {end_block} in mode {write_mode}")
     runner.addSink(delta_sink)
     runner.run(start_block, end_block)
