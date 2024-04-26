@@ -126,11 +126,10 @@ class Source(ABC):
 
     def validate_blockrange(self, start_block: int, end_block: int) -> Tuple[int, int]:
         last_synced_block = self.get_last_synced_block()
-
-        assert start_block >= 0, "Start block must be greater or equal to 0"
-
         if end_block is None:
             end_block = last_synced_block
+
+        assert start_block >= 0, "Start block must be greater or equal to 0"
 
         assert (
             start_block <= end_block
