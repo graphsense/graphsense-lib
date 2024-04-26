@@ -365,7 +365,7 @@ class DeltaDumpSinkFactory:  # todo could be a function
     @staticmethod
     def create_writer(
         currency: str, s3_credentials: dict, write_mode: str, directory: str
-    ) -> Sink:
+    ) -> DeltaDumpWriter:
         db_write_config = CONFIG_MAP.get(currency)
         if not db_write_config:
             raise ValueError(f"Invalid currency: {currency}")

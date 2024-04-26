@@ -57,10 +57,10 @@ class IngestRunner:
             (start_block, end_block), self.partition_batch_size
         )
 
-        with graceful_ctlc_shutdown() as check_shutdown_initialized:
-            for partition in partitions:
-                file_chunks = split_blockrange(partition, self.file_batch_size)
-                for file_chunk in file_chunks:
+        for partition in partitions:
+            file_chunks = split_blockrange(partition, self.file_batch_size)
+            for file_chunk in file_chunks:
+                with graceful_ctlc_shutdown() as check_shutdown_initialized:
                     start_chunk_time = datetime.now()
                     data = self.ingest_range(file_chunk[0], file_chunk[1])
 
