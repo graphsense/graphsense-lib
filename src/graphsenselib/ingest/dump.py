@@ -122,7 +122,7 @@ def export_delta(
         f"file batch size: {file_batch_size}"
     )
 
-    lockfile_name = f"/tmp/{currency}.lock"
+    lockfile_name = f"/tmp/rawdatadump_{currency}.lock"
     logger.info(f"Try acquiring lockfile {lockfile_name}")
     try:
         with FileLock(lockfile_name, timeout=1):
