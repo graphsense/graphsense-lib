@@ -365,11 +365,11 @@ CONFIG_MAP = {
 class DeltaDumpSinkFactory:  # todo could be a function
     @staticmethod
     def create_writer(
-        currency: str, s3_credentials: dict, write_mode: str, directory: str
+        network: str, s3_credentials: dict, write_mode: str, directory: str
     ) -> DeltaDumpWriter:
-        db_write_config = CONFIG_MAP.get(currency)
+        db_write_config = CONFIG_MAP.get(network)
         if not db_write_config:
-            raise ValueError(f"Invalid currency: {currency}")
+            raise ValueError(f"Invalid network: {network}")
 
         return DeltaDumpWriter(
             db_write_config=db_write_config,

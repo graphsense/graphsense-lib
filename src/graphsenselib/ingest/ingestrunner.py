@@ -8,6 +8,15 @@ from ..utils.signals import graceful_ctlc_shutdown
 from .account import logger
 from .source import split_blockrange
 
+AVG_BLOCKTIME = {
+    "eth": 12,
+    "trx": 3,
+    "ltc": int(2.5 * 60),
+    "zec": int(1.25 * 60),
+    "btc": 10 * 60,
+    "bch": 10 * 60,
+}
+
 
 class IngestRunner:
     def __init__(self, partition_batch_size: int, file_batch_size: int):
@@ -72,12 +81,18 @@ class IngestRunner:
                     speed = (file_chunk[1] - file_chunk[0] + 1) / (
                         datetime.now() - start_chunk_time
                     ).total_seconds()
+
+                    avg_blocktime = AVG_BLOCKTIME[self.transformers[0].network]
+                    # velocity is how many blockchain seconds pass per
+                    # ingest second
+                    velocity = speed * avg_blocktime
+
                     logger.info(
                         f"Written blocks: {file_chunk[0]:,} - {file_chunk[1]:,} "
                         f"""[{last_block_date.strftime(
                             GRAPHSENSE_DEFAULT_DATETIME_FORMAT
                         )}] """
-                        f"({speed:.1f} blks/s)"
+                        f"({speed:.1f} blks/s) ({velocity:.1f} network_s/s) "
                     )
 
                     if check_shutdown_initialized():
@@ -87,7 +102,12 @@ class IngestRunner:
                 if break_loop:
                     break
 
-                logger.info(f"Processed partition {partition[0]:,} - {partition[1]:,}")
+                partition_start = (
+                    partition[0] // self.partition_batch_size
+                ) * self.partition_batch_size
+                logger.info(
+                    f"Processed partition {partition_start:,} - {partition[1]:,}"
+                )
 
             logger.info(
                 f"Processed block range "
