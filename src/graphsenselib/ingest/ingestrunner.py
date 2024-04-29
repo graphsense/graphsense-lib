@@ -63,6 +63,7 @@ class IngestRunner:
         partitions = split_blockrange(
             (start_block, end_block), self.partition_batch_size
         )
+        avg_blocktime = AVG_BLOCKTIME[self.transformers[0].network]
 
         break_loop = False
         with graceful_ctlc_shutdown() as check_shutdown_initialized:
@@ -82,17 +83,15 @@ class IngestRunner:
                         datetime.now() - start_chunk_time
                     ).total_seconds()
 
-                    avg_blocktime = AVG_BLOCKTIME[self.transformers[0].network]
-                    # velocity is how many blockchain seconds pass per
-                    # ingest second
-                    velocity = speed * avg_blocktime
+                    network_s_per_ingest_s = speed * avg_blocktime
 
                     logger.info(
                         f"Written blocks: {file_chunk[0]:,} - {file_chunk[1]:,} "
                         f"""[{last_block_date.strftime(
                             GRAPHSENSE_DEFAULT_DATETIME_FORMAT
                         )}] """
-                        f"({speed:.1f} blks/s) ({velocity:.1f} network_s/s) "
+                        f"({speed:.1f} blks/s) ({network_s_per_ingest_s:.1f} "
+                        f"network_s/s) "
                     )
 
                     if check_shutdown_initialized():
