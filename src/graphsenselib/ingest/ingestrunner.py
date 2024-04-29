@@ -115,4 +115,4 @@ class IngestRunner:
             )
         self.ingest_blockindep()
 
-        logger.info("Ingested blockindependent data. Finished")
+        logger.info("Ingested block independent data. Finished")
