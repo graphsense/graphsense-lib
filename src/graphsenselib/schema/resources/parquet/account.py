@@ -1,7 +1,5 @@
 import pyarrow as pa
 
-# todo test if changing large binary to binary changes anything (should be better)
-
 ACCOUNT_SCHEMA_RAW = {
     "log": pa.schema(
         [
