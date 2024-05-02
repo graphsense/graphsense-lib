@@ -126,6 +126,7 @@ def export_delta(
     logger.info(f"Try acquiring lockfile {lockfile_name}")
     try:
         with FileLock(lockfile_name, timeout=1):
+            logger.info(f"Lockfile {lockfile_name} acquired.")
             runner.run(start_block, end_block)
     except LockFileTimeout:
         logger.error(

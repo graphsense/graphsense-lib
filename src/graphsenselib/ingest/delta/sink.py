@@ -125,6 +125,7 @@ class DeltaTableWriter:
                 schema_mode="overwrite",
                 partition_filters=partition_filters,
                 storage_options=storage_options,
+                large_dtypes=True,
             )
 
             logger.debug(
