@@ -16,6 +16,8 @@ from graphsenselib.ingest.transform import (
 )
 from graphsenselib.utils import first_or_default
 
+from ..config import get_reorg_backoff_blocks
+
 SUPPORTED = ["trx", "eth", "btc", "ltc", "bch", "zec"]
 
 # filesizes should be between 100 and 1000 MB and partitions > 1000MB
@@ -98,9 +100,20 @@ def export_delta(
     runner.addTransformer(transformer)
     runner.addSink(delta_sink)
 
+    backoff = get_reorg_backoff_blocks(currency)
+
     if write_mode == "append":
         highest_block = delta_sink.highest_block()
+        highest_block_node = source.get_last_synced_block_bo(backoff)
+
         if highest_block is not None:
+            if highest_block == highest_block_node:
+                logger.info(
+                    f"Data already present up to highest block {highest_block:,}, "
+                    f"no need to append."
+                )
+                sys.exit(0)
+
             if start_block is None:
                 start_block = highest_block + 1
             else:
@@ -115,7 +128,8 @@ def export_delta(
                 "yet."
             )
 
-    start_block, end_block = source.validate_blockrange(start_block, end_block)
+    start_block, end_block = source.validate_blockrange(start_block, end_block, backoff)
+
     logger.info(f"Writing data from {start_block} to {end_block} in mode {write_mode}")
     logger.info(
         f"Partition batch size: {partition_batch_size}, "
