@@ -7,6 +7,7 @@ import deltalake as dl
 import pyarrow as pa
 import pydantic
 from deltalake import DeltaTable
+from deltalake.exceptions import TableNotFoundError
 
 from ...schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
 from ...schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
@@ -22,7 +23,7 @@ def delta_table_exists(table_path, storage_options=None):
         DeltaTable(table_path, storage_options=storage_options)
 
         return True
-    except Exception as e:
+    except TableNotFoundError as e:
         # If an exception is raised, the Delta table does not exist
         print(f"Delta table does not exist. \n{e}")
         return False
