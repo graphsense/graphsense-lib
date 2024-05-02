@@ -124,10 +124,16 @@ class Source(ABC):
     def get_last_synced_block(self) -> int:
         pass
 
-    def validate_blockrange(self, start_block: int, end_block: int) -> Tuple[int, int]:
-        last_synced_block = self.get_last_synced_block()
+    def get_last_synced_block_bo(self, backoffblocks=0):
+        return self.get_last_synced_block() - backoffblocks
+
+    def validate_blockrange(
+        self, start_block: int, end_block: int, backoff: int
+    ) -> Tuple[int, int]:
+        last_ingestable_block = self.get_last_synced_block_bo(backoff)
+
         if end_block is None:
-            end_block = last_synced_block
+            end_block = last_ingestable_block
 
         assert start_block >= 0, "Start block must be greater or equal to 0"
 
@@ -135,19 +141,19 @@ class Source(ABC):
             start_block <= end_block
         ), "Start block must be less or equal to end block"
         assert start_block >= 0, "Start block must be greater or equal to 0"
-        assert start_block <= last_synced_block, (
+        assert start_block <= last_ingestable_block, (
             "Start block must be less or " "equal to last synced block"
         )
         logger.info(f"Last synced block: {end_block:,}")
 
         assert end_block >= 0, "End block must be greater or equal to 0"
 
-        if end_block > last_synced_block:
+        if end_block > last_ingestable_block:
             logger.warning(
-                f"End block {end_block:,} is greater than last synced block "
-                f"{last_synced_block:,}, setting end block to last synced block"
+                f"End block {end_block:,} is greater than last synced block (-backoff) "
+                f"{last_ingestable_block:,}, setting end block to this value"
             )
-            end_block = last_synced_block
+            end_block = last_ingestable_block
 
         logger.info(
             f"Validated block range "
