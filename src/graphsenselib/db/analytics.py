@@ -5,6 +5,7 @@ in the eth.py and btc.py files. Generic database functions belong in cassandra.p
 Attributes:
     DATE_FORMAT (str): Format string of date format used by the database (str)
 """
+
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -299,7 +300,6 @@ class DbReaderMixin:
 
 
 class DbWriterMixin:
-
     """
     This mixin requires the object to provide a CassandraDB instance at
     self._db and requires the object to provide the WithinKeyspace mixin
@@ -571,9 +571,11 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         parameters = [(b, [self.get_id_group(b, bucket_size), b]) for b in blocks]
         results = self._db.execute_batch(stmt, parameters)
         return {
-            a: (parse_timestamp(row.current_rows[0].timestamp))
-            if len(row.current_rows) > 0
-            else None
+            a: (
+                (parse_timestamp(row.current_rows[0].timestamp))
+                if len(row.current_rows) > 0
+                else None
+            )
             for (a, row) in results
         }
 
@@ -607,9 +609,11 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         ers = [
             (
                 b,
-                exchange_rate_to_date[block_to_ts[b].strftime(DATE_FORMAT)]
-                if block_to_ts[b] is not None
-                else None,
+                (
+                    exchange_rate_to_date[block_to_ts[b].strftime(DATE_FORMAT)]
+                    if block_to_ts[b] is not None
+                    else None
+                ),
             )
             for b in batch
         ]
@@ -1239,7 +1243,6 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
 
 class AnalyticsDb:
-
     """Unified analytics DB interface"""
 
     def __init__(

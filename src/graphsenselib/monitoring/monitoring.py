@@ -51,12 +51,12 @@ def get_db_summary_record(env: str, currency: str) -> DbSummaryRecord:
             transformed_keyspace=db.transformed.get_keyspace(),
             transformed_highest_block=db.transformed.get_highest_block(),
             transformed_no_blocks=t_stats.no_blocks if t_stats is not None else None,
-            transformed_no_address_relations=t_stats.no_address_relations
-            if t_stats is not None
-            else None,
-            transformed_no_addresses=t_stats.no_addresses
-            if t_stats is not None
-            else None,
+            transformed_no_address_relations=(
+                t_stats.no_address_relations if t_stats is not None else None
+            ),
+            transformed_no_addresses=(
+                t_stats.no_addresses if t_stats is not None else None
+            ),
             transformed_no_txs=t_stats.no_transactions if t_stats is not None else None,
             transformed_timestamp=t_stats.timestamp if t_stats is not None else None,
             transformed_no_clusters=getattr(t_stats, "no_clusters", None),

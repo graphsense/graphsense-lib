@@ -8,6 +8,7 @@ import pyarrow as pa
 import pydantic
 from deltalake import DeltaTable
 from deltalake.exceptions import TableNotFoundError
+from pyarrow.lib import ArrowInvalid
 
 from ...schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
 from ...schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
@@ -70,7 +71,7 @@ class DeltaTableWriter:
             Path(table_path).mkdir(parents=True, exist_ok=True)
 
         fields_in_data = [list(d.keys()) for d in data]
-        unique_fields = set([item for sublist in fields_in_data for item in sublist])
+        unique_fields = {item for sublist in fields_in_data for item in sublist}
         table = pa.Table.from_pylist(mapping=data, schema=self.schema)
 
         fields_not_covered = unique_fields - set(table.column_names)
@@ -118,16 +119,40 @@ class DeltaTableWriter:
                 partition_filters = None
                 partition_by = None
 
-            dl.write_deltalake(
-                table_path,
-                table,
-                partition_by=partition_by,
-                mode=delta_write_mode,
-                schema_mode="overwrite",
-                partition_filters=partition_filters,
-                storage_options=storage_options,
-                # large_dtypes=True,
-            )
+            not_written = True
+            options = {}
+            fraction = 0.5
+            while not_written:
+                try:
+                    dl.write_deltalake(
+                        table_path,
+                        table,
+                        partition_by=partition_by,
+                        mode=delta_write_mode,
+                        schema_mode="overwrite",
+                        partition_filters=partition_filters,
+                        storage_options=storage_options,
+                        **options,
+                    )
+                    not_written = False
+                except ArrowInvalid as e:
+                    ste = str(e)
+                    if "large_binary" in ste or "named input expected length":
+                        new_row_group_size = int(len(data) * fraction)
+                        if new_row_group_size < 100:
+                            raise e
+                        options = {
+                            "max_rows_per_group": new_row_group_size,
+                            "min_rows_per_group": new_row_group_size,
+                        }
+                        logger.warning(
+                            "Could not write delta-file binary input col because "
+                            "its too large (> 2GB uncompressed),"
+                            f"retry with smaller row group size {new_row_group_size}."
+                        )
+                        fraction = fraction / 2
+                    else:
+                        raise e
 
             logger.debug(
                 f"Writing {len(table)} records in mode {self.mode} "

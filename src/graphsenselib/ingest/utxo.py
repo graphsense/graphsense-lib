@@ -202,7 +202,6 @@ class LRUCache(OrderedDict):
 
 
 class CassandraOutputResolver(OutputResolverBase):
-
     """Output resolver that uses the gs-cassandra database to resolve
     spent inputs.
 
@@ -960,7 +959,7 @@ def prepare_transactions_inplace_parquet(txs, currency):
     for tx in txs:
         drop_columns(tx, ["block_hash"])
 
-        for input in tx["inputs"]:
+        for input in tx["inputs"]:  # noqa
             input["spent_transaction_hash"] = hex_to_bytes(
                 input["spent_transaction_hash"]
             )
