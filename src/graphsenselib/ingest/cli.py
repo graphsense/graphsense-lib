@@ -404,7 +404,7 @@ def dump_rawdata(
     if parquet_directory_config is None:
         logger.error(
             "Please provide an output directory in your "
-            "config (raw_keyspace_file_sinks.parquet.directory)"
+            "config (raw_keyspace_file_sinks.delta.directory)"
         )
         sys.exit(11)
 
