@@ -144,7 +144,6 @@ class SlackTopic(BaseModel):
 
 
 class AppConfig(GoodConf):
-
     """Graphsenselib config file"""
 
     environments: Dict[str, Environment] = Field(

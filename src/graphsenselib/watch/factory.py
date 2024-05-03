@@ -43,12 +43,14 @@ class FlowWatcherFactory:
         return FlowWatcher(
             state=JsonWatcherState(state_file),
             watchpoints=JsonWatchpointProvider(watchpoints_file),
-            flow_provider=EthereumEtlFlowProvider(node_ref)
-            if schema == "account"
-            else BitcoinEtlFlowProvider(
-                currency,
-                node_ref,
-                CassandraOutputResolver(DbFactory().from_config(env, currency)),
+            flow_provider=(
+                EthereumEtlFlowProvider(node_ref)
+                if schema == "account"
+                else BitcoinEtlFlowProvider(
+                    currency,
+                    node_ref,
+                    CassandraOutputResolver(DbFactory().from_config(env, currency)),
+                )
             ),
             notifiers=notifiers,
             new_block_backoff_sec=avg_blocktimes_by_currencies.get(currency, 600),
