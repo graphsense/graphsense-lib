@@ -96,10 +96,16 @@ class InputNotFoundException(Exception):
     pass
 
 
-def drop_columns(data, cols):
-    for col in cols:
-        data.pop(col, None)
+def drop_columns_from_list(data, cols):
+    for elem in data:
+        drop_columns(elem, cols)
     return data
+
+
+def drop_columns(elem, cols):
+    for col in cols:
+        elem.pop(col, None)
+    return elem
 
 
 def retry_if_connection_error(exception):

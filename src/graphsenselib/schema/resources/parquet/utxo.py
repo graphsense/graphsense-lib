@@ -15,7 +15,6 @@ UTXO_SCHEMA_RAW = {
             ("nonce", pa.string()),
             ("bits", pa.string()),
             ("coinbase_param", pa.string()),
-            ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
             ("timestamp", pa.int64()),
@@ -116,7 +115,6 @@ UTXO_SCHEMA_RAW = {
     "block_transactions": pa.schema(
         [
             ("partition", pa.int32()),
-            ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             (
                 "txs",
