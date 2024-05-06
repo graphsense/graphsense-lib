@@ -121,8 +121,15 @@ class DeltaTableWriter:
 
             not_written = True
             options = {}
+            max_attempts = 20
             fraction = 0.5
             while not_written:
+                max_attempts -= 1
+                if max_attempts < 0:
+                    raise ValueError(
+                        f"Could not write delta-file after " f"{max_attempts} attempts."
+                    )
+
                 try:
                     dl.write_deltalake(
                         table_path,
@@ -150,7 +157,7 @@ class DeltaTableWriter:
                             "its too large (> 2GB uncompressed),"
                             f"retry with smaller row group size {new_row_group_size}."
                         )
-                        fraction = fraction / 2
+                        fraction /= 2
                     else:
                         raise e
 

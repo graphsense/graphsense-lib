@@ -15,6 +15,8 @@ from blockchainetl.thread_local_proxy import ThreadLocalProxy
 from btcpy.structs.address import P2pkhAddress
 from btcpy.structs.script import ScriptBuilder
 from methodtools import lru_cache as mlru_cache
+from requests.exceptions import ConnectionError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..db import AnalyticsDb
@@ -100,6 +102,10 @@ def drop_columns(data, cols):
     return data
 
 
+def retry_if_connection_error(exception):
+    return isinstance(exception, ConnectionError)
+
+
 class BtcStreamerAdapter:
     def __init__(self, bitcoin_rpc, chain=Chain.BITCOIN, batch_size=2, max_workers=5):
         """Summary
@@ -122,6 +128,11 @@ class BtcStreamerAdapter:
     def get_current_block_number(self):
         return int(self.btc_service.get_latest_block().number)
 
+    @retry(
+        retry=retry_if_exception_type(ConnectionError),
+        stop=stop_after_attempt(10),
+        wait=wait_fixed(20),
+    )
     def export_transactions(self, start_block, end_block):
         transactions_item_exporter = InMemoryItemExporter(item_types=["transaction"])
 
@@ -142,6 +153,11 @@ class BtcStreamerAdapter:
 
         return transactions
 
+    @retry(
+        retry=retry_if_exception_type(ConnectionError),
+        stop=stop_after_attempt(10),
+        wait=wait_fixed(20),
+    )
     def export_blocks_and_transactions(self, start_block, end_block):
         blocks_and_transactions_item_exporter = InMemoryItemExporter(
             item_types=["block", "transaction"]
@@ -159,7 +175,6 @@ class BtcStreamerAdapter:
             export_transactions=True,
         )
         blocks_and_transactions_job.run()
-
         blocks = blocks_and_transactions_item_exporter.get_items("block")
         transactions = blocks_and_transactions_item_exporter.get_items("transaction")
 
