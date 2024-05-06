@@ -1,8 +1,10 @@
+from copy import deepcopy
+
 import pyarrow as pa
 
 from .account import ACCOUNT_SCHEMA_RAW
 
-ACCOUNT_TRX_SCHEMA_RAW = ACCOUNT_SCHEMA_RAW
+ACCOUNT_TRX_SCHEMA_RAW = deepcopy(ACCOUNT_SCHEMA_RAW)
 
 block_schema = ACCOUNT_TRX_SCHEMA_RAW["block"]
 
@@ -35,7 +37,7 @@ trace_schema = set_field_type(trace_schema, "note", pa.string())
 ACCOUNT_TRX_SCHEMA_RAW["trace"] = trace_schema
 
 
-ACCOUNT_SCHEMA_RAW.update(
+ACCOUNT_TRX_SCHEMA_RAW.update(
     {
         "trc10": pa.schema(
             [

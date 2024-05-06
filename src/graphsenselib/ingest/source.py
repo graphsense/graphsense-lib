@@ -73,9 +73,7 @@ class SourceTRX(Source):
 
     def read_blockindep(self):
         token_infos = self.adapter.get_trc10_token_infos()
-        return BlockRangeContent(
-            table_contents={"token_infos": token_infos}
-        )  # todo dirty, its not for a blockrange, but it also works
+        return BlockRangeContent(table_contents={"token_infos": token_infos})
 
     def get_last_synced_block(self):
         return get_last_synced_block(self.thread_proxy)
