@@ -28,6 +28,9 @@ from graphsenselib.schema.resources.parquet.account_trx import (
     BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
 )
 
+# drop block_id_group column
+from .utxo import drop_columns_from_list
+
 
 class TransformerUTXO(Transformer):
     def transform(self, block_range_content: BlockRangeContent) -> BlockRangeContent:
@@ -98,6 +101,11 @@ class TransformerTRX(Transformer):
         prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, self.partition_batch_size)
         prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, self.partition_batch_size)
 
+        blocks = drop_columns_from_list(blocks, ["block_id_group"])
+        txs = drop_columns_from_list(txs, ["block_id_group"])
+        traces = drop_columns_from_list(traces, ["block_id_group"])
+        logs = drop_columns_from_list(logs, ["block_id_group"])
+
         txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["transaction"])
         blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["block"])
         traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"])
@@ -137,6 +145,11 @@ class TransformerETH(Transformer):
         )
         prepare_traces_inplace_eth(traces, BLOCK_BUCKET_SIZE, self.partition_batch_size)
         prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+
+        blocks = drop_columns_from_list(blocks, ["block_id_group"])
+        txs = drop_columns_from_list(txs, ["block_id_group"])
+        traces = drop_columns_from_list(traces, ["block_id_group"])
+        logs = drop_columns_from_list(logs, ["block_id_group"])
 
         txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT["transaction"])
         blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT["block"])

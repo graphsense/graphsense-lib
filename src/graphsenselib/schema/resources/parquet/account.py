@@ -4,7 +4,6 @@ ACCOUNT_SCHEMA_RAW = {
     "log": pa.schema(
         [
             ("partition", pa.int32()),
-            ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
             ("address", pa.binary(20)),
@@ -19,7 +18,6 @@ ACCOUNT_SCHEMA_RAW = {
     "trace": pa.schema(
         [
             ("partition", pa.int32()),
-            ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("tx_hash", pa.binary(32)),
             ("transaction_index", pa.int32()),
@@ -44,7 +42,6 @@ ACCOUNT_SCHEMA_RAW = {
     "block": pa.schema(
         [
             ("partition", pa.int32()),
-            ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("block_hash", pa.binary(32)),
             ("parent_hash", pa.binary(32)),
@@ -90,7 +87,6 @@ ACCOUNT_SCHEMA_RAW = {
             ("tx_hash", pa.binary(32)),
             ("nonce", pa.int32()),
             ("block_hash", pa.binary(32)),
-            ("block_id_group", pa.int32()),
             ("block_id", pa.int32()),
             ("transaction_index", pa.int32()),
             ("from_address", pa.binary(20)),
