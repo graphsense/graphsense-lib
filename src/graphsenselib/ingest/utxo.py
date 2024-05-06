@@ -108,10 +108,6 @@ def drop_columns(elem, cols):
     return elem
 
 
-def retry_if_connection_error(exception):
-    return isinstance(exception, ConnectionError)
-
-
 class BtcStreamerAdapter:
     def __init__(self, bitcoin_rpc, chain=Chain.BITCOIN, batch_size=2, max_workers=5):
         """Summary
