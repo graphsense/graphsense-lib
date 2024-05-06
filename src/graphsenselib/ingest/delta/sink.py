@@ -122,10 +122,11 @@ class DeltaTableWriter:
             not_written = True
             options = {}
             max_attempts = 20
+            attempts = 0
             fraction = 0.5
             while not_written:
-                max_attempts -= 1
-                if max_attempts < 0:
+                attempts += 1
+                if attempts > max_attempts:
                     raise ValueError(
                         f"Could not write delta-file after " f"{max_attempts} attempts."
                     )
