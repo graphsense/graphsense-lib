@@ -87,7 +87,11 @@ def export_delta(
         transformer = TransformerETH(partition_batch_size, "eth")
 
     elif currency in ["btc", "ltc", "bch", "zec"]:
-        source = SourceUTXO(provider_uri=provider_uri, network=currency)
+        source = SourceUTXO(
+            provider_uri=provider_uri,
+            network=currency,
+            provider_timeout=provider_timeout,
+        )
         transformer = TransformerUTXO(partition_batch_size, currency)
     else:
         raise ValueError(f"{currency} not supported by ingest module")

@@ -73,9 +73,7 @@ def find_import_range(
     end_block = (
         db.raw.find_highest_block_with_exchange_rates()
         if not forward_fill_rates
-        else hb_raw
-        if end_block_overwrite is None
-        else end_block_overwrite
+        else hb_raw if end_block_overwrite is None else end_block_overwrite
     )
     logger.info(f"Last delta-transform: {(start_block -1):10}")
     logger.info(f"Last raw block:       {hb_raw:10}")

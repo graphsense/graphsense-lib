@@ -785,14 +785,16 @@ def ingest_configuration_cassandra(
     )
 
 
-def get_connection_from_url(provider_uri: str) -> ThreadLocalProxy:
-    return ThreadLocalProxy(lambda: BitcoinRpc(provider_uri))
+def get_connection_from_url(
+    provider_uri: str, provider_timeout: int
+) -> ThreadLocalProxy:
+    return ThreadLocalProxy(lambda: BitcoinRpc(provider_uri, timeout=provider_timeout))
 
 
 def get_stream_adapter(
-    currency: str, provider_uri: str, batch_size: int
+    currency: str, provider_uri: str, batch_size: int, provider_timeout: int
 ) -> BtcStreamerAdapter:
-    proxy = get_connection_from_url(provider_uri)
+    proxy = get_connection_from_url(provider_uri, provider_timeout)
     return BtcStreamerAdapter(
         proxy, chain=CHAIN_MAPPING.get(currency, None), batch_size=batch_size
     )
@@ -826,7 +828,9 @@ def ingest(
         f"Importing base data: {import_base_data}, import tx refs {import_refs}"
     )
 
-    btc_adapter = get_stream_adapter(currency, provider_uri, batch_size=batch_size)
+    btc_adapter = get_stream_adapter(
+        currency, provider_uri, batch_size=batch_size, provider_timeout=provider_timeout
+    )
 
     resolver = CassandraOutputResolver(
         db,
