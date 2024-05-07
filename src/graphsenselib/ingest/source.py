@@ -117,8 +117,10 @@ class SourceETH(Source):
 
 
 class SourceUTXO(Source):
-    def __init__(self, provider_uri, network):
-        self.adapter = get_stream_adapter(network, provider_uri, batch_size=30)
+    def __init__(self, provider_uri, network, provider_timeout):
+        self.adapter = get_stream_adapter(
+            network, provider_uri, batch_size=30, provider_timeout=provider_timeout
+        )
 
     def read_blockrange(self, start_block, end_block):
         blocks, txs = self.adapter.export_blocks_and_transactions(
