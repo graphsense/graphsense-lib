@@ -21,6 +21,7 @@ def set_field_type(schema, field_name, new_type):
 
 block_schema = set_field_type(block_schema, "state_root", pa.binary())
 block_schema = set_field_type(block_schema, "gas_limit", pa.int64())
+block_schema = set_field_type(block_schema, "gas_used", pa.int64())
 ACCOUNT_TRX_SCHEMA_RAW["block"] = block_schema
 
 trace_schema = ACCOUNT_TRX_SCHEMA_RAW["trace"]
