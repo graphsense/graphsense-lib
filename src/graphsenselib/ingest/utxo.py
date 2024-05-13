@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from json import JSONDecodeError
 from operator import itemgetter
 from typing import Dict, List, Optional, Tuple
 
@@ -15,7 +16,7 @@ from blockchainetl.thread_local_proxy import ThreadLocalProxy
 from btcpy.structs.address import P2pkhAddress
 from btcpy.structs.script import ScriptBuilder
 from methodtools import lru_cache as mlru_cache
-from requests.exceptions import ConnectionError
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
@@ -131,7 +132,8 @@ class BtcStreamerAdapter:
         return int(self.btc_service.get_latest_block().number)
 
     @retry(
-        retry=retry_if_exception_type(ConnectionError),
+        retry=retry_if_exception_type(RequestsConnectionError)
+        | retry_if_exception_type(JSONDecodeError),
         stop=stop_after_attempt(10),
         wait=wait_fixed(20),
     )
@@ -156,7 +158,8 @@ class BtcStreamerAdapter:
         return transactions
 
     @retry(
-        retry=retry_if_exception_type(ConnectionError),
+        retry=retry_if_exception_type(RequestsConnectionError)
+        | retry_if_exception_type(JSONDecodeError),
         stop=stop_after_attempt(10),
         wait=wait_fixed(20),
     )

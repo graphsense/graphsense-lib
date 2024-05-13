@@ -116,7 +116,7 @@ def export_delta(
                     f"Data already present up to highest block {highest_block:,}, "
                     f"no need to append."
                 )
-                sys.exit(0)
+                sys.exit(12)
 
             if start_block is None:
                 start_block = highest_block + 1

@@ -44,7 +44,7 @@ def get_db_summary_record(env: str, currency: str) -> DbSummaryRecord:
             query_timestamp=dt.now().strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT),
             currency=currency,
             raw_keyspace=db.raw.get_keyspace(),
-            raw_highest_block=db.raw.get_highest_block(),
+            raw_highest_block=db.raw.get_highest_block(sanity_check=False),
             raw_no_blocks=raw_stats.no_blocks if raw_stats is not None else None,
             raw_no_txs=raw_stats.no_txs if raw_stats is not None else None,
             raw_timestamp=raw_stats.timestamp if raw_stats is not None else None,
