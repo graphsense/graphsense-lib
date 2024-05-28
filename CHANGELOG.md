@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+
+## [24.02.8/2.2.8] 2024-05-28
+### fixed
+- fixed coingecko z-cash currency key to fetch exchange rates
+### added
+- coinmarketcap allow configuration of api key for pro api (free is not available anymore)
+
 ## [24.02.7/2.2.7] 2024-05-28
 ### added
 - graphsense-cli exchange-rates coingecko to allow fetching exchange rates via coingecko pro api

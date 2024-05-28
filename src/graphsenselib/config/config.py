@@ -186,6 +186,11 @@ class AppConfig(GoodConf):
         default_factory=lambda: "",
     )
 
+    coinmarketcap_api_key: str = Field(
+        initial=lambda: "",
+        default_factory=lambda: "",
+    )
+
     class Config:
         env_prefix = "GRAPHSENSE_"
         file_env_var = "GRAPHSENSE_CONFIG_YAML"
