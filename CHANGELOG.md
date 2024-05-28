@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.02.7/2.2.7] 2024-05-28
+### added
+- graphsense-cli exchange-rates coingecko to allow fetching exchange rates via coingecko pro api
+
 ## [24.02.6/2.2.6] 2024-04-10
 ### fixed
 - csv export with new version of ethereum etl 2.4

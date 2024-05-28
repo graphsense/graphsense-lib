@@ -3,15 +3,22 @@ from datetime import date, timedelta
 import click
 
 from ..cli.common import require_currency, require_environment
-from ..config import supported_fiat_currencies
+from ..config import config, supported_fiat_currencies
 from ..utils.console import console
 from .coindesk import MIN_START as MS_CD
 from .coindesk import fetch as fetchCD
 from .coindesk import ingest as ingestCD
+
+# from .coingecko import MIN_START as MS_CMK
+from .coingecko import fetch as fetchGecko
+from .coingecko import fetch_impl as fetchGeckoDump
+from .coingecko import ingest as ingestGecko
 from .coinmarketcap import MIN_START as MS_CMK
 from .coinmarketcap import fetch as fetchCMK
 from .coinmarketcap import fetch_impl as fetchCMKDump
 from .coinmarketcap import ingest as ingestCMK
+
+# from .coingecko import ingest as ingestGecko
 
 
 def shared_flags(coinmarketcap=True):
@@ -110,6 +117,12 @@ def coinmarketcap():
     pass
 
 
+@exchange_rates.group()
+def coingecko():
+    """From coingecko."""
+    pass
+
+
 @coinmarketcap.command("dump")
 @require_currency()
 @shared_flags()
@@ -153,6 +166,51 @@ def fetch_cmk_dump(
     df.to_csv(out_file)
 
 
+@coingecko.command("dump")
+@require_currency()
+@shared_flags()
+@click.option(
+    "--out-file",
+    default="rates.csv",
+    type=str,
+    help="file to dump into.",
+)
+def fetch_coingecko_dump(
+    currency: str,
+    fiat_currencies: list[str],
+    start_date: str,
+    end_date: str,
+    out_file: str,
+):
+    """Safe exchange rates to file.
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+    """
+    api_key = config.coingecko_api_key
+    df = fetchGeckoDump(
+        None,
+        None,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        None,
+        True,
+        False,
+        False,
+        api_key,
+    )
+    console.rule("Rates Coinmarketcap")
+    console.print(df)
+    console.rule(f"Writing to {out_file}")
+    df.to_csv(out_file)
+
+
 @coinmarketcap.command("fetch")
 @require_environment()
 @require_currency()
@@ -171,6 +229,28 @@ def fetch_cmk(
     """
     df = fetchCMK(env, currency, list(fiat_currencies), start_date, end_date)
     console.rule("Rates Coinmarketcap")
+    console.print(df)
+
+
+@coingecko.command("fetch")
+@require_environment()
+@require_currency()
+@shared_flags()
+def fetch_gecko(
+    env: str, currency: str, fiat_currencies: list[str], start_date: str, end_date: str
+):
+    """Only fetches the to be imported exchange rates.
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+    """
+    api_key = config.coingecko_api_key
+    df = fetchGecko(env, currency, list(fiat_currencies), start_date, end_date, api_key)
+    console.rule("Rates Coingecko")
     console.print(df)
 
 
@@ -234,6 +314,50 @@ def ingest_cmk(
         force,
         dry_run,
         abort_on_gaps,
+    )
+
+
+@coingecko.command("ingest")
+@require_environment()
+@require_currency()
+@shared_flags()
+@shared_ingest_flags()
+def ingest_gecko(
+    env: str,
+    currency: str,
+    fiat_currencies: list[str],
+    start_date: str,
+    end_date: str,
+    table: str,
+    force: bool,
+    dry_run: bool,
+    abort_on_gaps: bool,
+):
+    """Ingest exchange rates into Cassandra
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+        table (str): -
+        force (bool): -
+        dry_run (bool): -
+        abort_on_gaps (bool): -
+    """
+    api_key = config.coingecko_api_key
+    ingestGecko(
+        env,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        table,
+        force,
+        dry_run,
+        abort_on_gaps,
+        api_key,
     )
 
 
