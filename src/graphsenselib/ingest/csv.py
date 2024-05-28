@@ -186,19 +186,30 @@ def format_logs_csv(
 
 
 def write_csv(
-    filename: str, data: Iterable, header: Iterable, delimiter: str = ",", quoting=None
+    filename: str,
+    data: Iterable,
+    header: Iterable,
+    delimiter: str = ",",
+    quoting=None,
+    extrasaction="ignore",
 ) -> None:
     """Write list of dicts to compresses CSV file."""
 
     with gzip.open(filename, "wt") as csv_file:
         if quoting is None:
-            csv_writer = DictWriter(csv_file, delimiter=delimiter, fieldnames=header)
+            csv_writer = DictWriter(
+                csv_file,
+                delimiter=delimiter,
+                extrasaction=extrasaction,
+                fieldnames=header,
+            )
         else:
             csv_writer = DictWriter(
                 csv_file,
                 delimiter=delimiter,
                 fieldnames=header,
                 quoting=quoting,
+                extrasaction=extrasaction,
                 quotechar="",
             )
         csv_writer.writeheader()

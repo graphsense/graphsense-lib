@@ -3,7 +3,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [24.02.3/2.2.4] 2024-03-19
+## [24.02.7/2.2.7] 2024-05-28
+### added
+- graphsense-cli exchange-rates coingecko to allow fetching exchange rates via coingecko pro api
+
+## [24.02.6/2.2.6] 2024-04-10
+### fixed
+- csv export with new version of ethereum etl 2.4
+
+## [24.02.5/2.2.5] 2024-04-08
+### fixed
+- performance problem (timeouts) on fetching transactions per block for utxo currencies.
+
+## [24.02.4/2.2.4] 2024-03-19
 ### fixed
 - tron delta update: missing tx_hash for traces in deployment txs.
 

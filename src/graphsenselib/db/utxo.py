@@ -26,20 +26,30 @@ class RawDbUtxo(RawDb):
         return ids
 
     def get_transactions_in_block(self, block: int) -> Iterable:
-        tx_ids = self.get_transaction_ids_in_block(block)
         tx_bucket_size = self.get_tx_bucket_size()
-        stmt = self.select_stmt(
-            "transaction",
-            where={"tx_id_group": "?", "tx_id": "?"},
-            limit=1,
+        minb = self.get_latest_tx_id_before_block(block)
+        maxb = self.get_latest_tx_id_before_block(block + 1)
+
+        mbg = self.get_id_group(minb, tx_bucket_size)
+        mxbg = self.get_id_group(maxb, tx_bucket_size)
+
+        rg = list(range(mbg, mxbg + 1))
+
+        stmt = (
+            f"select * from {self.get_keyspace()}.transaction where "
+            "tx_id_group in :txidgroups and tx_id > :txid_lower "
+            "and tx_id <= :txid_upper"
         )
 
-        parameters = [
-            (tx_id, [self.get_id_group(tx_id, tx_bucket_size), tx_id])
-            for tx_id in tx_ids
-        ]
-        results = self._db.execute_batch_async(stmt, parameters)
-        return [tx.one() for tx_id, tx in self._db.await_batch(results)]
+        prepared_statement = self._db.get_prepared_statement(stmt)
+
+        bstmt = prepared_statement.bind(
+            {"txidgroups": rg, "txid_lower": minb, "txid_upper": maxb}
+        )
+
+        results = self._db.execute_statement(bstmt)
+
+        return list(results)
 
     def get_addresses_in_block(self, block: int) -> Iterable[SlimTx]:
         tx_ids = self.get_transaction_ids_in_block(block)

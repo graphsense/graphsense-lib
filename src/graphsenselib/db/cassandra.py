@@ -395,6 +395,10 @@ class CassandraDb:
         return self.session.execute(stmt)
 
     @needs_session
+    def execute_statement(self, stmt: BoundStatement, fetch_size=None) -> Iterable:
+        return self.session.execute(stmt)
+
+    @needs_session
     def execute_async(self, cql_query_str: str, fetch_size=None):
         # flat_stmt = cql_query_str.replace("\n", " ")
         # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
@@ -417,6 +421,7 @@ class CassandraDb:
 
         self.session.execute(batch)
 
+    @needs_session
     def execute_statements(self, statements: List[BoundStatement]):
         return execute_concurrent(
             self.session,
@@ -424,6 +429,7 @@ class CassandraDb:
             raise_on_first_error=True,
         )
 
+    @needs_session
     def execute_statements_async(
         self, statements: List[BoundStatement], concurrency=100
     ):
@@ -441,6 +447,12 @@ class CassandraDb:
 
     @needs_session
     def execute_batch_async(self, stmt, params):
+        if len(params) > 10000:
+            logger.warning(
+                "CAUTION: Running many (10k+) parallel queries against db "
+                "without concurrency control. "
+                "Might lead to timeouts. Consider using execute_statements_async."
+            )
         prp = self.get_prepared_statement(stmt)
         futures = [
             (identifier, self.execute_statement_async(prp, param_list))

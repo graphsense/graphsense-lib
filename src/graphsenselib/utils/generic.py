@@ -1,5 +1,6 @@
 import bisect
 import itertools
+from datetime import timedelta
 from typing import Iterable, Optional, Sequence
 
 import pandas as pd
@@ -149,3 +150,21 @@ def subkey_get(item, key_list) -> bool:
 
 def first_or_default(seq: Sequence[object], pred, default=None):
     return next(filter(pred, seq), default)
+
+
+def batch_date(da, db, **kwargs):
+    step = timedelta(**kwargs)
+    while da <= db:
+        start_old = da
+        da += step
+        if da > db:
+            da = db
+        yield (start_old, da)
+        da += timedelta(days=1)
+
+
+def generate_date_range_days(da, db):
+    return itertools.takewhile(
+        lambda x: x <= db,
+        (da + timedelta(days=delta) for delta in itertools.count(start=0, step=1)),
+    )

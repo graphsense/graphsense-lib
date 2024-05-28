@@ -176,6 +176,16 @@ class AppConfig(GoodConf):
         initial=lambda: {}, default_factory=lambda: {}
     )
 
+    cache_directory: str = Field(
+        initial=lambda: "~/.graphsense/cache",
+        default_factory=lambda: "~/.graphsense/cache",
+    )
+
+    coingecko_api_key: str = Field(
+        initial=lambda: "",
+        default_factory=lambda: "",
+    )
+
     s3_credentials: Optional[Dict[str, str]] = Field(
         initial=lambda: None, default_factory=lambda: None
     )

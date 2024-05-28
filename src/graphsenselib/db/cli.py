@@ -205,7 +205,7 @@ def get_logs(
         block (int): block
     """
     stype = currency_to_schema_type.get(currency, None)
-    if stype == "account":
+    if stype == "account" or stype == "account_trx":
         with DbFactory().from_config(env, currency) as db:
             if topic0 is not None and is_hex_string(topic0):
                 topic0 = hex_str_to_bytes(topic0)
@@ -223,5 +223,5 @@ def get_logs(
     else:
         print(
             f"Unsupported schema type {stype} for "
-            "currency {currency}. Only account is supported."
+            f"currency {currency}. Only account is supported."
         )

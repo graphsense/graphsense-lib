@@ -126,6 +126,37 @@ log_signatures = {
             ],
         }
     ],
+    "0x9cd6008e8d4ebd34fd9d022278fec7f95d133780ecc1a0dea459fae3e9675390": [
+        {
+            "name": "TokensSent",
+            "inputs": [
+                {"name": "amount", "type": "uint256", "indexed": False},
+                {"name": "recipient", "type": "bytes32", "indexed": False},
+                {"name": "destinationChainId", "type": "uint256", "indexed": False},
+                {"name": "receiveToken", "type": "bytes32", "indexed": False},
+                {"name": "nonce", "type": "uint256", "indexed": False},
+                {"name": "messenger", "type": "uint8", "indexed": False},
+            ],
+        }
+    ],
+    "0xe9d840d27ab4032a839c20760fb995af8e3ad1980b9428980ca1c7e072acd87a": [
+        {
+            "name": "TokensReceived",
+            "inputs": [
+                {"name": "amount", "type": "uint256", "indexed": False},
+                {"name": "recipient", "type": "bytes32", "indexed": False},
+                {"name": "nonce", "type": "uint256", "indexed": False},
+                {"name": "messenger", "type": "uint8", "indexed": False},
+                {"name": "message", "type": "bytes32", "indexed": False},
+            ],
+        }
+    ],
+    "0x54791b38f3859327992a1ca0590ad3c0f08feba98d1a4f56ab0dca74d203392a": [
+        {
+            "name": "MessageSent",
+            "inputs": [{"name": "index_topic_1", "type": "bytes32", "indexed": True}],
+        }
+    ],
 }
 
 
