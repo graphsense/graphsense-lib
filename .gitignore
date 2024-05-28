@@ -187,3 +187,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 tester.py
+
+local/
