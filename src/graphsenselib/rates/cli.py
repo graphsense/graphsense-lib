@@ -1,3 +1,5 @@
+import logging
+import sys
 from datetime import date, timedelta
 
 import click
@@ -8,8 +10,6 @@ from ..utils.console import console
 from .coindesk import MIN_START as MS_CD
 from .coindesk import fetch as fetchCD
 from .coindesk import ingest as ingestCD
-
-# from .coingecko import MIN_START as MS_CMK
 from .coingecko import fetch as fetchGecko
 from .coingecko import fetch_impl as fetchGeckoDump
 from .coingecko import ingest as ingestGecko
@@ -18,7 +18,16 @@ from .coinmarketcap import fetch as fetchCMK
 from .coinmarketcap import fetch_impl as fetchCMKDump
 from .coinmarketcap import ingest as ingestCMK
 
-# from .coingecko import ingest as ingestGecko
+logger = logging.getLogger(__name__)
+
+
+def get_api_key(key):
+    api_key_key = f"{key}_api_key"
+    api_key = getattr(config, api_key_key)
+    if not api_key.strip():
+        logger.error(f"Please provide an API key (graphsense.yaml -> {api_key_key})")
+        sys.exit(1)
+    return api_key
 
 
 def shared_flags(provider="cmc"):
@@ -153,7 +162,7 @@ def fetch_cmk_dump(
         start_date (str): -
         end_date (str): -
     """
-    api_key = config.coinmarketcap_api_key
+    api_key = get_api_key("coinmarketcap")
     df = fetchCMKDump(
         None,
         None,
@@ -198,7 +207,7 @@ def fetch_coingecko_dump(
         start_date (str): -
         end_date (str): -
     """
-    api_key = config.coingecko_api_key
+    api_key = get_api_key("coingecko")
     df = fetchGeckoDump(
         None,
         None,
@@ -234,7 +243,7 @@ def fetch_cmk(
         start_date (str): -
         end_date (str): -
     """
-    api_key = config.coinmarketcap_api_key
+    api_key = get_api_key("coinmarketcap")
     df = fetchCMK(env, currency, list(fiat_currencies), start_date, end_date, api_key)
     console.rule("Rates Coinmarketcap")
     console.print(df)
@@ -256,7 +265,7 @@ def fetch_gecko(
         start_date (str): -
         end_date (str): -
     """
-    api_key = config.coingecko_api_key
+    api_key = get_api_key("coingecko")
     df = fetchGecko(env, currency, list(fiat_currencies), start_date, end_date, api_key)
     console.rule("Rates Coingecko")
     console.print(df)
@@ -312,7 +321,7 @@ def ingest_cmk(
         dry_run (bool): -
         abort_on_gaps (bool): -
     """
-    api_key = config.coinmarketcap_api_key
+    api_key = get_api_key("coinmarketcap")
     ingestCMK(
         env,
         currency,
@@ -356,7 +365,7 @@ def ingest_gecko(
         dry_run (bool): -
         abort_on_gaps (bool): -
     """
-    api_key = config.coingecko_api_key
+    api_key = get_api_key("coingecko")
     ingestGecko(
         env,
         currency,
