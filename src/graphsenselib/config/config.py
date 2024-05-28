@@ -144,7 +144,6 @@ class SlackTopic(BaseModel):
 
 
 class AppConfig(GoodConf):
-
     """Graphsenselib config file"""
 
     environments: Dict[str, Environment] = Field(
@@ -175,6 +174,16 @@ class AppConfig(GoodConf):
 
     slack_topics: Dict[str, SlackTopic] = Field(
         initial=lambda: {}, default_factory=lambda: {}
+    )
+
+    cache_directory: str = Field(
+        initial=lambda: "~/.graphsense/cache",
+        default_factory=lambda: "~/.graphsense/cache",
+    )
+
+    coingecko_api_key: str = Field(
+        initial=lambda: "",
+        default_factory=lambda: "",
     )
 
     class Config:

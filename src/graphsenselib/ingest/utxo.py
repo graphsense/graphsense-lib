@@ -163,7 +163,6 @@ class LRUCache(OrderedDict):
 
 
 class CassandraOutputResolver(OutputResolverBase):
-
     """Output resolver that uses the gs-cassandra database to resolve
     spent inputs.
 

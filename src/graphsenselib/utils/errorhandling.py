@@ -19,7 +19,6 @@ def get_exception_digest(ex):
 
 
 class CrashRecoverer:
-
     """
     Class permanently stores (in a file) a crash hint if a program crashes in a critical
     If the class is reinstantiated with the same identifier and a crash hint is present

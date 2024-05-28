@@ -2,8 +2,10 @@ import os
 
 from graphsenselib.utils import (
     batch,
+    batch_date,
     bytes_to_hex,
     first_or_default,
+    generate_date_range_days,
     remove_prefix,
     strip_0x,
     subkey_exists,
@@ -122,3 +124,27 @@ def test_first_or_default():
 def test_remove_prefix():
     assert remove_prefix("0xa9059cbb", "0x") == "a9059cbb"
     assert remove_prefix("0xa9059cbb", "a0x") == "0xa9059cbb"
+
+
+def test_date_range_works():
+    from datetime import date
+
+    a = date.fromisoformat("2010-03-12")
+    b = date.fromisoformat("2024-05-19")
+
+    batches = list(batch_date(a, b, days=180))
+
+    deltas = [y - x for x, y in batches]
+
+    assert all(d.days == 180 for d in deltas[:-1])
+
+    assert batches[0][0] == a
+    assert batches[-1][1] == b
+    assert (sum(d.days for d in deltas) + len(deltas) - 1) == (b - a).days
+
+    gen_dates = list(generate_date_range_days(a, b))
+
+    assert gen_dates[0] == a
+    assert gen_dates[-1] == b
+
+    assert len(gen_dates) == (b - a).days + 1
