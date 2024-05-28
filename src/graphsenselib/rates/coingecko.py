@@ -19,7 +19,7 @@ coingecko_symbol_translation = {
     "btc": "bitcoin",
     "ltc": "litecoin",
     "trx": "tron",
-    "zec": "z-cash",
+    "zec": "zcash",
     "bch": "bitcoin-cash",
     "eth": "ethereum",
 }
