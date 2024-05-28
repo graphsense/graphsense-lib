@@ -32,7 +32,7 @@ def fetch_ecb_rates(symbol_list: List) -> pd.DataFrame:
 def cmc_historical_url(symbol: str, start: date, end: date) -> str:
     """Returns URL for CoinMarketCap API request."""
     return (
-        "https://web-api.coinmarketcap.com/v1/cryptocurrency/ohlcv/"
+        "https://pro-api.coinmarketcap.com/v1/cryptocurrency/ohlcv/"
         + f"historical?symbol={symbol}&convert=USD"
         + f"&time_start={start}&time_end={end}"
     )
@@ -44,6 +44,7 @@ def parse_cmc_historical_response(
     """Parse historical exchange rates (JSON) from CoinMarketCap."""
 
     json_data = json.loads(response.content)
+
     if "data" in json_data and "quotes" in json_data["data"]:
         json_data = [
             [elem["time_close"][:10], elem["quote"]["USD"]["close"]]
@@ -56,7 +57,9 @@ def parse_cmc_historical_response(
     return pd.DataFrame(json_data, columns=["date", "USD"])
 
 
-def fetch_cmc_rates(start: str, end: str, crypto_currency: str) -> pd.DataFrame:
+def fetch_cmc_rates(
+    start: str, end: str, crypto_currency: str, api_key: str
+) -> pd.DataFrame:
     """Fetch cryptocurrency exchange rates from CoinMarketCap."""
 
     user_agent = (
@@ -64,7 +67,7 @@ def fetch_cmc_rates(start: str, end: str, crypto_currency: str) -> pd.DataFrame:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/87.0.4280.88 Safari/537.36"
     )
-    headers = {"User-Agent": user_agent}
+    headers = {"User-Agent": user_agent, "X-CMC_PRO_API_KEY": api_key}
 
     start_date = date.fromisoformat(start) + timedelta(days=-1)
     end_date = date.fromisoformat(end)
@@ -84,7 +87,7 @@ def fetch_cmc_rates(start: str, end: str, crypto_currency: str) -> pd.DataFrame:
     return cmc_rates
 
 
-def fetch(env, currency, fiat_currencies, start_date, end_date):
+def fetch(env, currency, fiat_currencies, start_date, end_date, api_key):
     with DbFactory().from_config(env, currency) as db:
         return fetch_impl(
             db,
@@ -97,6 +100,7 @@ def fetch(env, currency, fiat_currencies, start_date, end_date):
             start_date != MIN_START,
             False,
             True,
+            api_key,
         )
 
 
@@ -111,6 +115,7 @@ def fetch_impl(
     force: bool,
     dry_run: bool,
     abort_on_gaps: bool,
+    api_key: str,
 ):
     if datetime.fromisoformat(start_date) < datetime.fromisoformat(MIN_START):
         start_date = MIN_START
@@ -132,7 +137,7 @@ def fetch_impl(
         raise SystemExit
 
     # fetch cryptocurrency exchange rates in USD
-    cmc_rates = fetch_cmc_rates(start_date, end_date, currency)
+    cmc_rates = fetch_cmc_rates(start_date, end_date, currency, api_key)
 
     ecb_rates = fetch_ecb_rates(fiat_currencies)
 
@@ -187,6 +192,7 @@ def ingest(
     force,
     dry_run,
     abort_on_gaps,
+    api_key,
 ):
     if dry_run:
         logger.warning("This is a Dry-Run. Nothing will be written to the database!")
@@ -202,6 +208,7 @@ def ingest(
             force,
             dry_run,
             abort_on_gaps,
+            api_key,
         )
 
         # insert final exchange rates into Cassandra
