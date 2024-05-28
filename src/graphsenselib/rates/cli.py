@@ -1,3 +1,5 @@
+import logging
+import sys
 from datetime import date, timedelta
 
 import click
@@ -8,8 +10,6 @@ from ..utils.console import console
 from .coindesk import MIN_START as MS_CD
 from .coindesk import fetch as fetchCD
 from .coindesk import ingest as ingestCD
-
-# from .coingecko import MIN_START as MS_CMK
 from .coingecko import fetch as fetchGecko
 from .coingecko import fetch_impl as fetchGeckoDump
 from .coingecko import ingest as ingestGecko
@@ -18,12 +18,26 @@ from .coinmarketcap import fetch as fetchCMK
 from .coinmarketcap import fetch_impl as fetchCMKDump
 from .coinmarketcap import ingest as ingestCMK
 
-# from .coingecko import ingest as ingestGecko
+logger = logging.getLogger(__name__)
 
 
-def shared_flags(coinmarketcap=True):
+def get_api_key(key):
+    api_key_key = f"{key}_api_key"
+    api_key = getattr(config, api_key_key)
+    if not api_key.strip():
+        logger.error(f"Please provide an API key (graphsense.yaml -> {api_key_key})")
+        sys.exit(1)
+    return api_key
+
+
+def shared_flags(provider="cmc"):
     def inner(function):
         prev_date = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        min_date = "2009-01-03"
+        if provider == "cmc":
+            min_date = MS_CMK
+        elif provider == "cdesk":
+            min_date = MS_CD
 
         function = click.option(
             "--fiat-currencies",
@@ -35,7 +49,7 @@ def shared_flags(coinmarketcap=True):
 
         function = click.option(
             "--start-date",
-            default=MS_CMK if coinmarketcap else MS_CD,
+            default=min_date,
             type=str,
             help="start date for fetching exchange rates",
         )(function)
@@ -148,6 +162,7 @@ def fetch_cmk_dump(
         start_date (str): -
         end_date (str): -
     """
+    api_key = get_api_key("coinmarketcap")
     df = fetchCMKDump(
         None,
         None,
@@ -159,6 +174,7 @@ def fetch_cmk_dump(
         True,
         False,
         False,
+        api_key,
     )
     console.rule("Rates Coinmarketcap")
     console.print(df)
@@ -191,7 +207,7 @@ def fetch_coingecko_dump(
         start_date (str): -
         end_date (str): -
     """
-    api_key = config.coingecko_api_key
+    api_key = get_api_key("coingecko")
     df = fetchGeckoDump(
         None,
         None,
@@ -205,7 +221,7 @@ def fetch_coingecko_dump(
         False,
         api_key,
     )
-    console.rule("Rates Coinmarketcap")
+    console.rule("Rates Coingecko")
     console.print(df)
     console.rule(f"Writing to {out_file}")
     df.to_csv(out_file)
@@ -227,7 +243,8 @@ def fetch_cmk(
         start_date (str): -
         end_date (str): -
     """
-    df = fetchCMK(env, currency, list(fiat_currencies), start_date, end_date)
+    api_key = get_api_key("coinmarketcap")
+    df = fetchCMK(env, currency, list(fiat_currencies), start_date, end_date, api_key)
     console.rule("Rates Coinmarketcap")
     console.print(df)
 
@@ -248,7 +265,7 @@ def fetch_gecko(
         start_date (str): -
         end_date (str): -
     """
-    api_key = config.coingecko_api_key
+    api_key = get_api_key("coingecko")
     df = fetchGecko(env, currency, list(fiat_currencies), start_date, end_date, api_key)
     console.rule("Rates Coingecko")
     console.print(df)
@@ -257,7 +274,7 @@ def fetch_gecko(
 @coindesk.command("fetch")
 @require_environment()
 @require_currency()
-@shared_flags(coinmarketcap=False)
+@shared_flags(provider="cdesk")
 def fetch_cd(
     env: str, currency: str, fiat_currencies: list[str], start_date: str, end_date: str
 ):
@@ -304,6 +321,7 @@ def ingest_cmk(
         dry_run (bool): -
         abort_on_gaps (bool): -
     """
+    api_key = get_api_key("coinmarketcap")
     ingestCMK(
         env,
         currency,
@@ -314,6 +332,7 @@ def ingest_cmk(
         force,
         dry_run,
         abort_on_gaps,
+        api_key,
     )
 
 
@@ -346,7 +365,7 @@ def ingest_gecko(
         dry_run (bool): -
         abort_on_gaps (bool): -
     """
-    api_key = config.coingecko_api_key
+    api_key = get_api_key("coingecko")
     ingestGecko(
         env,
         currency,
@@ -364,7 +383,7 @@ def ingest_gecko(
 @coindesk.command("ingest")
 @require_environment()
 @require_currency()
-@shared_flags(coinmarketcap=False)
+@shared_flags(provider="cdesk")
 @shared_ingest_flags()
 def ingest_cd(
     env,

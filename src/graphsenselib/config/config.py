@@ -186,6 +186,11 @@ class AppConfig(GoodConf):
         default_factory=lambda: "",
     )
 
+    coinmarketcap_api_key: str = Field(
+        initial=lambda: "",
+        default_factory=lambda: "",
+    )
+
     s3_credentials: Optional[Dict[str, str]] = Field(
         initial=lambda: None, default_factory=lambda: None
     )
