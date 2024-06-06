@@ -167,7 +167,7 @@ def is_supported_log(log) -> bool:
 def convert_db_log(db_log) -> dict:
     data_str = db_log.data.hex()
     return {
-        "topics": [f"0x{topic.hex()}" for topic in db_log.topics],
+        "topics": [f"0x{topic.hex()}" for topic in (db_log.topics or [])],
         "data": f"0x{data_str}",
         "address": f"0x{db_log.address.hex()}",
     }
@@ -196,7 +196,7 @@ def decode_log(log):
                 return eth_event.decode_log(log, VersionedDict(log_signatures, i))
             except eth_event.EventError as e:
                 if i == len(logdef) - 1:
-                    logger.info(f"Failed to decode supported log type. {e}. {log}")
+                    logger.warning(f"Failed to decode supported log type. {e}. {log}")
     else:
         logger.debug("Can't decode log, not supported yet")
     return None
