@@ -157,6 +157,165 @@ log_signatures = {
             "inputs": [{"name": "index_topic_1", "type": "bytes32", "indexed": True}],
         }
     ],
+    "0xfa628b578e095243f0544bfad9255f49d79d03a5bbf6c85875d05a215e247ad2": [
+        {
+            "name": "SwapReleased",
+            "inputs": [{"name": "encodedSwap", "type": "uint256", "indexed": True}],
+        }
+    ],
+    "0x8d92c805c252261fcfff21ee60740eb8a38922469a7e6ee396976d57c22fc1c9": [
+        {
+            "name": "SwapExecuted",
+            "inputs": [{"name": "encodedSwap", "type": "uint256", "indexed": True}],
+        },
+    ],
+    "0x5ce4019f772fda6cb703b26bce3ec3006eb36b73f1d3a0eb441213317d9f5e9d": [
+        {
+            "name": "SwapPosted",
+            "inputs": [{"name": "encodedSwap", "type": "uint256", "indexed": True}],
+        },
+    ],
+    "0x06724742ccc8c330a39a641ef02a0b419bd09248360680bb38159b0a8c2635d6": [
+        {
+            "name": "LogDeposit",
+            "inputs": [
+                {"name": "depositorEthKey", "type": "address", "indexed": False},
+                {"name": "starkKey", "type": "uint256", "indexed": False},
+                {"name": "vaultId", "type": "uint256", "indexed": False},
+                {"name": "assetType", "type": "uint256", "indexed": False},
+                {"name": "nonQuantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "quantizedAmount", "type": "uint256", "indexed": False},
+            ],
+        },
+    ],
+    "0x0fcf2162832b2d6033d4d34d2f45a28d9cfee523f1899945bbdd32529cfda67b": [
+        {
+            "name": "LogNftDeposit",
+            "inputs": [
+                {"name": "depositorEthKey", "type": "address", "indexed": False},
+                {"name": "starkKey", "type": "uint256", "indexed": False},
+                {"name": "vaultId", "type": "uint256", "indexed": False},
+                {"name": "assetType", "type": "uint256", "indexed": False},
+                {"name": "tokenId", "type": "uint256", "indexed": False},
+                {"name": "assetId", "type": "uint256", "indexed": False},
+            ],
+        },
+    ],
+    "0xed94dc026fa9364c53bc0af51cde7f54f3109b3f31fceb26d01396d80e20453b": [
+        {
+            "name": "LogDepositWithTokenId",
+            "inputs": [
+                {"name": "depositorEthKey", "type": "address", "indexed": False},
+                {"name": "starkKey", "type": "uint256", "indexed": False},
+                {"name": "vaultId", "type": "uint256", "indexed": False},
+                {"name": "assetType", "type": "uint256", "indexed": False},
+                {"name": "tokenId", "type": "uint256", "indexed": False},
+                {"name": "assetId", "type": "uint256", "indexed": False},
+                {"name": "nonQuantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "quantizedAmount", "type": "uint256", "indexed": False},
+            ],
+        },
+    ],
+    "0xb7477a7b93b2addc5272bbd7ad0986ef1c0d0bd265f26c3dc4bbe42727c2ac0c": [
+        {
+            "name": "LogWithdrawalPerformed",
+            "inputs": [
+                {"name": "ownerKey", "type": "uint256", "indexed": False},
+                {"name": "assetType", "type": "uint256", "indexed": False},
+                {"name": "nonQuantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "quantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "recipient", "type": "address", "indexed": False},
+            ],
+        },
+    ],
+    "0xa5cfa8e2199ec5b8ca319288bcab72734207d30569756ee594a74b4df7abbf41": [
+        {
+            "name": "LogNftWithdrawalPerformed",
+            "inputs": [
+                {"name": "ownerKey", "type": "uint256", "indexed": False},
+                {"name": "assetType", "type": "uint256", "indexed": False},
+                {"name": "tokenId", "type": "uint256", "indexed": False},
+                {"name": "assetId", "type": "uint256", "indexed": False},
+                {"name": "recipient", "type": "address", "indexed": False},
+            ],
+        },
+    ],
+    "0xc6ba68235f3229e53f3a95cda25543ad54c0f6df2493a06c05fb930bea7966fe": [
+        {
+            "name": "LogWithdrawalWithTokenIdPerformed",
+            "inputs": [
+                {"name": "ownerKey", "type": "uint256", "indexed": False},
+                {"name": "assetType", "type": "uint256", "indexed": False},
+                {"name": "tokenId", "type": "uint256", "indexed": False},
+                {"name": "assetId", "type": "uint256", "indexed": False},
+                {"name": "nonQuantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "quantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "recipient", "type": "address", "indexed": False},
+            ],
+        },
+    ],
+    "0x7e6e15df814c1a309a57686de672b2bedd128eacde35c5370c36d6840d4e9a92": [
+        {
+            "name": "LogMintWithdrawalPerformed",
+            "inputs": [
+                {"name": "ownerKey", "type": "uint256", "indexed": False},
+                {"name": "assetType", "type": "uint256", "indexed": False},
+                {"name": "nonQuantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "quantizedAmount", "type": "uint256", "indexed": False},
+                {"name": "assetId", "type": "uint256", "indexed": False},
+            ],
+        },
+    ],
+    "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9": [
+        {
+            "name": "PairCreated",
+            "inputs": [
+                {"name": "token0", "type": "address", "indexed": True},
+                {"name": "token1", "type": "address", "indexed": True},
+                {"name": "pair", "type": "address", "indexed": False},
+                {"name": "x", "type": "uint256", "indexed": False},
+            ],
+        },
+    ],
+    "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118": [
+        {
+            "name": "PoolCreated",
+            "inputs": [
+                {"name": "token0", "type": "address", "indexed": True},
+                {"name": "token1", "type": "address", "indexed": True},
+                {"name": "fee", "type": "uint24", "indexed": True},
+                {"name": "tickSpacing", "type": "int24", "indexed": False},
+                {"name": "pool", "type": "address", "indexed": False},
+            ],
+        },
+    ],
+    "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822": [
+        {
+            "name": "Swap",
+            "inputs": [
+                {"name": "sender", "type": "address", "indexed": True},
+                {"name": "amount0In", "type": "uint256", "indexed": False},
+                {"name": "amount1In", "type": "uint256", "indexed": False},
+                {"name": "amount0Out", "type": "uint256", "indexed": False},
+                {"name": "amount1Out", "type": "uint256", "indexed": False},
+                {"name": "to", "type": "address", "indexed": True},
+            ],
+        },
+    ],
+    "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67": [
+        {
+            "name": "Swap",
+            "inputs": [
+                {"name": "sender", "type": "address", "indexed": True},
+                {"name": "recipient", "type": "address", "indexed": True},
+                {"name": "amount0", "type": "int256", "indexed": False},
+                {"name": "amount1", "type": "int256", "indexed": False},
+                {"name": "sqrtPriceX96", "type": "uint160", "indexed": False},
+                {"name": "liquidity", "type": "uint128", "indexed": False},
+                {"name": "tick", "type": "int24", "indexed": False},
+            ],
+        },
+    ],
 }
 
 
@@ -196,7 +355,7 @@ def decode_log(log):
                 return eth_event.decode_log(log, VersionedDict(log_signatures, i))
             except eth_event.EventError as e:
                 if i == len(logdef) - 1:
-                    logger.warning(f"Failed to decode supported log type. {e}. {log}")
+                    logger.info(f"Failed to decode supported log type. {e}. {log}")
     else:
         logger.debug("Can't decode log, not supported yet")
     return None
