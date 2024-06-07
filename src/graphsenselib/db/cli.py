@@ -8,9 +8,10 @@ from eth_hash.auto import keccak
 from ..cli.common import require_currency, require_environment
 from ..config import currency_to_schema_type, supported_base_currencies
 from ..datatypes.abi import decode_db_logs, decoded_log_to_str
-from ..utils.accountmodel import hex_str_to_bytes, is_hex_string, strip_0x
+from ..utils.accountmodel import hex_str_to_bytes, hex_to_bytes, is_hex_string, strip_0x
 from ..utils.console import console
 from .factory import DbFactory
+from .trace import trace as trace_it
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,12 @@ def db_cli():
 @db_cli.group()
 def db():
     """Query related functions."""
+    pass
+
+
+@db_cli.group()
+def trace():
+    """trace related functions."""
     pass
 
 
@@ -220,6 +227,88 @@ def get_logs(
                 ):
                     dlog_str = decoded_log_to_str(dlog)
                     print(f"{b}|{log.log_index}|0x{log.tx_hash.hex()}|{dlog_str}")
+    else:
+        print(
+            f"Unsupported schema type {stype} for "
+            f"currency {currency}. Only account is supported."
+        )
+
+
+@trace.command("events")
+@require_environment()
+@require_currency()
+@click.option(
+    "--q",
+    type=str,
+    required=True,
+    help="Transaction hash or address",
+)
+@click.option(
+    "--contract",
+    type=str,
+    required=False,
+    help="Address of the contract to look at",
+)
+@click.option(
+    "--start",
+    type=str,
+    required=False,
+    help="Block or Date",
+)
+@click.option(
+    "--end",
+    type=str,
+    required=False,
+    help="Block or Date",
+)
+@click.option(
+    "--names-file",
+    type=str,
+    default="./names.csv",
+    help="File containing names for addresses and hashes etc.",
+)
+@click.option(
+    "--output-format",
+    type=str,
+    default="csv",
+    help="How to print results (csv, table etc.)",
+)
+def trace_transaction(
+    env: str,
+    currency: str,
+    q: str,
+    contract: str,
+    start: str,
+    end: str,
+    names_file: str,
+    output_format: str,
+):
+    """Print logs and filter
+    Args:
+        env (str): evironment
+        currency (str): currency
+        tx (str): tx
+    """
+    stype = currency_to_schema_type.get(currency, None)
+    if stype == "account":
+        with DbFactory().from_config(env, currency) as db:
+            import os.path
+
+            if os.path.isfile(names_file):
+                with open(names_file) as file:
+                    kvl = [line.split(":") for line in file.readlines()]
+                    names = {a.strip(): b.strip() for a, b, *rest in kvl}
+            else:
+                names = {}
+            trace_it(
+                db,
+                q.split(","),
+                hex_to_bytes(contract),
+                start,
+                end,
+                names,
+                output_format,
+            )
     else:
         print(
             f"Unsupported schema type {stype} for "
