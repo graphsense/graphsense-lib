@@ -162,7 +162,7 @@ def fetch_cmk_dump(
     end_date: str,
     out_file: str,
 ):
-    """Safe exchange rates to file.
+    """Save exchange rates to file.
     \f
     Args:
         env (str): -
@@ -207,7 +207,7 @@ def fetch_coingecko_dump(
     end_date: str,
     out_file: str,
 ):
-    """Safe exchange rates to file.
+    """Save exchange rates to file.
     \f
     Args:
         env (str): -
@@ -252,7 +252,7 @@ def fetch_cryptocompare_dump(
     end_date: str,
     out_file: str,
 ):
-    """Safe exchange rates to file.
+    """Save exchange rates to file.
     \f
     Args:
         currency (str): -
