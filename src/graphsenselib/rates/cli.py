@@ -17,6 +17,9 @@ from .coinmarketcap import MIN_START as MS_CMK
 from .coinmarketcap import fetch as fetchCMK
 from .coinmarketcap import fetch_impl as fetchCMKDump
 from .coinmarketcap import ingest as ingestCMK
+from .cryptocompare import fetch as fetchCC
+from .cryptocompare import fetch_impl as dumpCC
+from .cryptocompare import ingest as ingestCC
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +137,12 @@ def coinmarketcap():
 @exchange_rates.group()
 def coingecko():
     """From coingecko."""
+    pass
+
+
+@exchange_rates.group()
+def cryptocompare():
+    """From cryptocompare."""
     pass
 
 
@@ -292,6 +301,27 @@ def fetch_cd(
     console.print(df)
 
 
+@cryptocompare.command("fetch")
+@require_environment()
+@require_currency()
+@shared_flags(provider="cryptocompare")
+def fetch_cc(
+    env: str, currency: str, fiat_currencies: list[str], start_date: str, end_date: str
+):
+    """Fetches and prints exchange rates.
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+    """
+    df = fetchCC(env, currency, list(fiat_currencies), start_date, end_date)
+    console.rule("Rates cryptocompare")
+    console.print(df)
+
+
 @coinmarketcap.command("ingest")
 @require_environment()
 @require_currency()
@@ -410,6 +440,48 @@ def ingest_cd(
         abort_on_gaps (bool): -
     """
     ingestCD(
+        env,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        table,
+        force,
+        dry_run,
+        abort_on_gaps,
+    )
+
+
+@cryptocompare.command("ingest")
+@require_environment()
+@require_currency()
+@shared_flags(provider="cryptocompare")
+@shared_ingest_flags()
+def ingest_cc(
+    env,
+    currency,
+    fiat_currencies,
+    start_date,
+    end_date,
+    table,
+    force,
+    dry_run,
+    abort_on_gaps,
+):
+    """Ingests new exchange rates into cassandra raw keyspace.
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+        table (str): -
+        force (bool): -
+        dry_run (bool): -
+        abort_on_gaps (bool): -
+    """
+    ingestCC(
         env,
         currency,
         list(fiat_currencies),
