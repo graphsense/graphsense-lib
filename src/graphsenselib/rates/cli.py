@@ -236,6 +236,48 @@ def fetch_coingecko_dump(
     df.to_csv(out_file)
 
 
+@cryptocompare.command("dump")
+@require_currency()
+@shared_flags()
+@click.option(
+    "--out-file",
+    default="rates.csv",
+    type=str,
+    help="file to dump into.",
+)
+def fetch_cryptocompare_dump(
+    currency: str,
+    fiat_currencies: list[str],
+    start_date: str,
+    end_date: str,
+    out_file: str,
+):
+    """Safe exchange rates to file.
+    \f
+    Args:
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+        out_file (str): -
+    """
+    df = dumpCC(
+        None,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        None,
+        True,
+        True,
+        False
+    )
+    console.rule("Rates Coingecko")
+    console.print(df)
+    console.rule(f"Writing to {out_file}")
+    df.to_csv(out_file)
+
+
 @coinmarketcap.command("fetch")
 @require_environment()
 @require_currency()
