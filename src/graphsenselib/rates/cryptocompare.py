@@ -16,20 +16,33 @@ logger = logging.getLogger(__name__)
 MIN_START = "2010-07-17"
 
 
-def cryptocompare_historical_url(symbol: str, fiat: str):
+def cryptocompare_historical_url(start: str, end: str, symbol: str, fiat: str):
     # https://min-api.cryptocompare.com/documentation?key=Historical&cat=dataHistoday
-    return (
-        "https://min-api.cryptocompare.com/data/v2/histoday"
-        f"?fsym={symbol}&tsym={fiat}&allData=true"
-    )
+    toDt = datetime.fromisoformat(end)
+    sDt = datetime.fromisoformat(start)
+    limit = (toDt - sDt).days + 1
+    toTS = toDt.timestamp()
+    # Docs of cryptocompre say max record limit is 2k so if more just load
+    # the entire dataset
+    if limit < 2000:
+        return (
+            "https://min-api.cryptocompare.com/data/v2/histoday"
+            f"?fsym={symbol}&tsym={fiat}&toTS={toTS}&limit={limit}"
+        )
+    else:
+        return (
+            "https://min-api.cryptocompare.com/data/v2/histoday"
+            f"?fsym={symbol}&tsym={fiat}&allData=true"
+        )
 
 
-def fetch_cryptocompare_rates(symbol: str, fiat: str):
-    r1 = requests.get(cryptocompare_historical_url(symbol, fiat))
+def fetch_cryptocompare_rates(start: str, end: str, symbol: str, fiat: str):
+    print(cryptocompare_historical_url(start, end, symbol, fiat))
+    r1 = requests.get(cryptocompare_historical_url(start, end, symbol, fiat))
     rates = pd.DataFrame(json.loads(r1.content)["Data"]["Data"])
     rates["date"] = pd.to_datetime(rates["time"], unit="s").dt.floor("D")
 
-    assert rates.date[0] == pd.Timestamp(MIN_START)
+    # assert rates.date[0] == pd.Timestamp(MIN_START)
     assert len(rates.date) == len(set(rates.date))
     rates["date_check"] = rates.date.diff()
     diffs = rates.date_check.value_counts()
@@ -87,7 +100,7 @@ def fetch_impl(
         logger.error("Error: start date after end date.")
         raise SystemExit
 
-    usd_rates = fetch_cryptocompare_rates(currency, "USD")
+    usd_rates = fetch_cryptocompare_rates(start_date, end_date, currency, "USD")
 
     ecb_rates = fetch_ecb_rates(fiat_currencies)
 
