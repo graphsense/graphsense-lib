@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-from datetime import datetime, date
-from typing import Optional, List
+from datetime import date, datetime
+from typing import List, Optional
 
 import pandas as pd
 import requests
+
 from graphsenselib.db import DbFactory
 from graphsenselib.db.analytics import DATE_FORMAT
 from graphsenselib.rates.coingecko import fetch_ecb_rates
@@ -17,25 +18,28 @@ MIN_START = "2010-07-17"
 
 def cryptocompare_historical_url(symbol: str, fiat: str):
     # https://min-api.cryptocompare.com/documentation?key=Historical&cat=dataHistoday
-    return f"https://min-api.cryptocompare.com/data/v2/histoday?fsym={symbol}&tsym={fiat}&allData=true"
+    return (
+        "https://min-api.cryptocompare.com/data/v2/histoday"
+        f"?fsym={symbol}&tsym={fiat}&allData=true"
+    )
 
 
 def fetch_cryptocompare_rates(symbol: str, fiat: str):
     r1 = requests.get(cryptocompare_historical_url(symbol, fiat))
-    rates = pd.DataFrame(json.loads(r1.content)['Data']['Data'])
-    rates['date'] = pd.to_datetime(rates['time'], unit='s').dt.floor('D')
+    rates = pd.DataFrame(json.loads(r1.content)["Data"]["Data"])
+    rates["date"] = pd.to_datetime(rates["time"], unit="s").dt.floor("D")
 
     assert rates.date[0] == pd.Timestamp(MIN_START)
     assert len(rates.date) == len(set(rates.date))
-    rates['date_check'] = rates.date.diff()
+    rates["date_check"] = rates.date.diff()
     diffs = rates.date_check.value_counts()
     assert len(diffs) == 1
     assert diffs.keys().unique()[0] == pd.Timedelta("1 days")
 
     rates.date = rates.date.dt.strftime(DATE_FORMAT)
-    rates.rename(columns={'close': fiat}, inplace=True)
+    rates.rename(columns={"close": fiat}, inplace=True)
 
-    return rates[['date', fiat]]
+    return rates[["date", fiat]]
 
 
 def fetch(env, currency, fiat_currencies, start_date, end_date):
@@ -89,7 +93,9 @@ def fetch_impl(
 
     # query conversion rates and merge converted values in exchange rates
     exchange_rates = usd_rates
-    date_range = pd.date_range(date.fromisoformat(start_date), date.fromisoformat(end_date))
+    date_range = pd.date_range(
+        date.fromisoformat(start_date), date.fromisoformat(end_date)
+    )
     date_range = pd.DataFrame(date_range, columns=["date"])
     date_range = date_range["date"].dt.strftime("%Y-%m-%d")
 

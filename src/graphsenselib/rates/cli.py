@@ -17,6 +17,7 @@ from .coinmarketcap import MIN_START as MS_CMK
 from .coinmarketcap import fetch as fetchCMK
 from .coinmarketcap import fetch_impl as fetchCMKDump
 from .coinmarketcap import ingest as ingestCMK
+from .cryptocompare import MIN_START as MS_CC
 from .cryptocompare import fetch as fetchCC
 from .cryptocompare import fetch_impl as dumpCC
 from .cryptocompare import ingest as ingestCC
@@ -41,6 +42,8 @@ def shared_flags(provider="cmc"):
             min_date = MS_CMK
         elif provider == "cdesk":
             min_date = MS_CD
+        elif provider == "cryptocompare":
+            min_date = MS_CC
 
         function = click.option(
             "--fiat-currencies",
@@ -193,7 +196,7 @@ def fetch_cmk_dump(
 
 @coingecko.command("dump")
 @require_currency()
-@shared_flags()
+@shared_flags(provider="gecko")
 @click.option(
     "--out-file",
     default="rates.csv",
@@ -238,7 +241,7 @@ def fetch_coingecko_dump(
 
 @cryptocompare.command("dump")
 @require_currency()
-@shared_flags()
+@shared_flags(provider="cryptocompare")
 @click.option(
     "--out-file",
     default="rates.csv",
@@ -270,7 +273,7 @@ def fetch_cryptocompare_dump(
         None,
         True,
         True,
-        False
+        False,
     )
     console.rule("Rates Coingecko")
     console.print(df)
@@ -303,7 +306,7 @@ def fetch_cmk(
 @coingecko.command("fetch")
 @require_environment()
 @require_currency()
-@shared_flags()
+@shared_flags(provider="gecko")
 def fetch_gecko(
     env: str, currency: str, fiat_currencies: list[str], start_date: str, end_date: str
 ):
