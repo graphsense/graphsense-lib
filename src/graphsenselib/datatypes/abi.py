@@ -316,6 +316,15 @@ log_signatures = {
             ],
         },
     ],
+    "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65": [
+        {
+            "name": "Withdrawal",
+            "inputs": [
+                {"name": "src", "type": "address", "indexed": True},
+                {"name": "value", "type": "uint256", "indexed": False},
+            ],
+        },
+    ],
 }
 
 
