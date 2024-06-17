@@ -17,6 +17,10 @@ from .coinmarketcap import MIN_START as MS_CMK
 from .coinmarketcap import fetch as fetchCMK
 from .coinmarketcap import fetch_impl as fetchCMKDump
 from .coinmarketcap import ingest as ingestCMK
+from .cryptocompare import MIN_START as MS_CC
+from .cryptocompare import fetch as fetchCC
+from .cryptocompare import fetch_impl as dumpCC
+from .cryptocompare import ingest as ingestCC
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +42,8 @@ def shared_flags(provider="cmc"):
             min_date = MS_CMK
         elif provider == "cdesk":
             min_date = MS_CD
+        elif provider == "cryptocompare":
+            min_date = MS_CC
 
         function = click.option(
             "--fiat-currencies",
@@ -137,6 +143,12 @@ def coingecko():
     pass
 
 
+@exchange_rates.group()
+def cryptocompare():
+    """From cryptocompare."""
+    pass
+
+
 @coinmarketcap.command("dump")
 @require_currency()
 @shared_flags()
@@ -153,7 +165,7 @@ def fetch_cmk_dump(
     end_date: str,
     out_file: str,
 ):
-    """Safe exchange rates to file.
+    """Save exchange rates to file.
     \f
     Args:
         env (str): -
@@ -184,7 +196,7 @@ def fetch_cmk_dump(
 
 @coingecko.command("dump")
 @require_currency()
-@shared_flags()
+@shared_flags(provider="gecko")
 @click.option(
     "--out-file",
     default="rates.csv",
@@ -198,7 +210,7 @@ def fetch_coingecko_dump(
     end_date: str,
     out_file: str,
 ):
-    """Safe exchange rates to file.
+    """Save exchange rates to file.
     \f
     Args:
         env (str): -
@@ -220,6 +232,48 @@ def fetch_coingecko_dump(
         False,
         False,
         api_key,
+    )
+    console.rule("Rates Coingecko")
+    console.print(df)
+    console.rule(f"Writing to {out_file}")
+    df.to_csv(out_file)
+
+
+@cryptocompare.command("dump")
+@require_currency()
+@shared_flags(provider="cryptocompare")
+@click.option(
+    "--out-file",
+    default="rates.csv",
+    type=str,
+    help="file to dump into.",
+)
+def fetch_cryptocompare_dump(
+    currency: str,
+    fiat_currencies: list[str],
+    start_date: str,
+    end_date: str,
+    out_file: str,
+):
+    """Save exchange rates to file.
+    \f
+    Args:
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+        out_file (str): -
+    """
+    df = dumpCC(
+        None,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        None,
+        True,
+        True,
+        False,
     )
     console.rule("Rates Coingecko")
     console.print(df)
@@ -252,7 +306,7 @@ def fetch_cmk(
 @coingecko.command("fetch")
 @require_environment()
 @require_currency()
-@shared_flags()
+@shared_flags(provider="gecko")
 def fetch_gecko(
     env: str, currency: str, fiat_currencies: list[str], start_date: str, end_date: str
 ):
@@ -289,6 +343,27 @@ def fetch_cd(
     """
     df = fetchCD(env, currency, list(fiat_currencies), start_date, end_date)
     console.rule("Rates Coindesk")
+    console.print(df)
+
+
+@cryptocompare.command("fetch")
+@require_environment()
+@require_currency()
+@shared_flags(provider="cryptocompare")
+def fetch_cc(
+    env: str, currency: str, fiat_currencies: list[str], start_date: str, end_date: str
+):
+    """Fetches and prints exchange rates.
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+    """
+    df = fetchCC(env, currency, list(fiat_currencies), start_date, end_date)
+    console.rule("Rates cryptocompare")
     console.print(df)
 
 
@@ -410,6 +485,48 @@ def ingest_cd(
         abort_on_gaps (bool): -
     """
     ingestCD(
+        env,
+        currency,
+        list(fiat_currencies),
+        start_date,
+        end_date,
+        table,
+        force,
+        dry_run,
+        abort_on_gaps,
+    )
+
+
+@cryptocompare.command("ingest")
+@require_environment()
+@require_currency()
+@shared_flags(provider="cryptocompare")
+@shared_ingest_flags()
+def ingest_cc(
+    env,
+    currency,
+    fiat_currencies,
+    start_date,
+    end_date,
+    table,
+    force,
+    dry_run,
+    abort_on_gaps,
+):
+    """Ingests new exchange rates into cassandra raw keyspace.
+    \f
+    Args:
+        env (str): -
+        currency (str): -
+        fiat_currencies (list[str]): -
+        start_date (str): -
+        end_date (str): -
+        table (str): -
+        force (bool): -
+        dry_run (bool): -
+        abort_on_gaps (bool): -
+    """
+    ingestCC(
         env,
         currency,
         list(fiat_currencies),
