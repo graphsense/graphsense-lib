@@ -37,7 +37,6 @@ def cryptocompare_historical_url(start: str, end: str, symbol: str, fiat: str):
 
 
 def fetch_cryptocompare_rates(start: str, end: str, symbol: str, fiat: str):
-    print(cryptocompare_historical_url(start, end, symbol, fiat))
     r1 = requests.get(cryptocompare_historical_url(start, end, symbol, fiat))
     rates = pd.DataFrame(json.loads(r1.content)["Data"]["Data"])
     rates["date"] = pd.to_datetime(rates["time"], unit="s").dt.floor("D")
