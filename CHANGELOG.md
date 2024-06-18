@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.02.10/2.2.10] 2024-06-17
+### fixed
+- Fixing release tag issue
+
 ## [24.02.9/2.2.9] 2024-06-17
 ### fixed
 - numpy 2.0.0 problem (numpy.dtype size changed error)
