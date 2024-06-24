@@ -1,5 +1,6 @@
 from typing import Iterable, Optional
 
+from ..utils import hex_to_bytes, strip_0x
 from .analytics import RawDb, TransformedDb
 
 
@@ -65,6 +66,19 @@ class RawDbAccount(RawDb):
             columns=["from_address", "to_address", "block_id", "tx_hash"],
             where={"block_id_group": group, "block_id": block},
             fetch_size=10000,
+        )
+        return result
+
+    def get_tx(self, tx_hash: str) -> object:
+        tx_prefix_length = self.get_tx_prefix_length()
+        prfix = strip_0x(tx_hash)[:tx_prefix_length]
+
+        result = self.select_one_safe(
+            "transaction",
+            where={
+                "tx_hash_prefix": f"{prfix}",
+                "tx_hash": hex_to_bytes(tx_hash),
+            },
         )
         return result
 

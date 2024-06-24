@@ -3,6 +3,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.02.10/2.2.10] 2024-06-17
+### fixed
+- Fixing release tag issue
+
+## [24.02.9/2.2.9] 2024-06-17
+### fixed
+- numpy 2.0.0 problem (numpy.dtype size changed error)
+### added
+- cryptocompare exchange rates to have a free version again (graphsense-cli exchange-rates cryptocompare)
+- graphsense-cli trace event to print prettyfied event logs for tron and eth
 
 ## [24.02.8/2.2.8] 2024-05-28
 ### fixed

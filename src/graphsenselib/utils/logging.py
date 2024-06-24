@@ -66,7 +66,7 @@ def configure_logging(loglevel):
         logging.getLogger("ProgressLogger").setLevel(logging.ERROR)
         logging.getLogger("BatchWorkExecutor").setLevel(logging.ERROR)
     else:
-        logging.getLogger("cassandra").setLevel(logging.WARNING)
+        logging.getLogger("cassandra").setLevel(logging.ERROR)
         logging.getLogger("ethereumetl").setLevel(logging.WARNING)
         logging.getLogger("Cluster").setLevel(logging.ERROR)
         logging.getLogger("requests").setLevel(logging.WARNING)

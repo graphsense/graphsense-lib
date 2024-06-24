@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v24.05.0rc12'
-RELEASESEM := 'v2.3.0rc12'
+RELEASE := 'v24.05.0rc13'
+RELEASESEM := 'v2.3.0rc13'
 
 
 all: format lint test build
@@ -12,7 +12,7 @@ tag-version:
 	git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
 
 dev:
-	 pip install -e .[dev]
+	 pip install -e .[dev] --force-reinstall --upgrade
 	 pre-commit install
 
 test:
@@ -21,8 +21,8 @@ test:
 test-all:
 	pytest --cov=src
 
-install-dev: dev
-	pip install -e . --force-reinstall --upgrade
+install-dev:
+	pip install -e .[dev] --force-reinstall --upgrade
 
 install:
 	pip install .
