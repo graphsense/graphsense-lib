@@ -216,15 +216,16 @@ class UpdateStrategyAccount(UpdateStrategy):
                     )
                     log.error(msg)
 
-                    if block == batch[0]:
-                        log.warning("First block of batch not in cache.")
-                        return Action.BREAK, None
-                    else:
-                        log.warning(
-                            "Skipping block without data in cache."
-                            "Continuing with next block."
-                        )
-                        break
+                    return Action.DATA_TO_PROCESS_NOT_FOUND, None
+                    # if block == batch[0]:
+                    #     log.warning("First block of batch not in cache.")
+                    #     return Action.BREAK, None
+                    # else:
+                    #     log.warning(
+                    #         "Skipping block without data in cache."
+                    #         "Continuing with next block."
+                    #     )
+                    #     break
 
                 final_block = block
 
