@@ -146,11 +146,11 @@ def update_transformed(
                 f"Done with {min(b) - start_block}, {end_block - min(b) + 1} to go."
             )
             action = updater.process_batch(b)
-            if action == Action.BREAK:
+            if action == Action.DATA_TO_PROCESS_NOT_FOUND:
                 logger.warning(
                     f"First block in batch {min(b)} is empty." f" Finishing update."
                 )
-                break
+                raise Exception("Data to execute delta update not found. See log file.")
             updater.persist_updater_progress()
 
             blocks_processed = (updater.last_block_processed - start_block) + 1
@@ -162,7 +162,7 @@ def update_transformed(
                 f"{bps:.3f} blocks per second. Approx. {((to_go / bps) / 60):.3f} "
                 "minutes remaining."
             )
-            # updater.clear_cache_for_blocks(b)
+            updater.clear_cache_for_blocks(b)
 
             if shutdown_initialized():
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
@@ -173,9 +173,9 @@ def update_transformed(
     # highest block in the dataabse, we can assume that we are done and
     # can clear the entire cache. This would only delete relevant data if fs-cache
     # is ahead of the database.
-    if action == Action.CONTINUE:
-        logger.info("Finished all blocks.")
-        updater.clear_cache()
+    # if action == Action.CONTINUE:
+    #     logger.info("Finished all blocks.")
+    #     updater.clear_cache()
 
     return end_block
 

@@ -454,4 +454,4 @@ def prepare_relations_for_ingest(
 
 class Action(Enum):
     CONTINUE = 1
-    BREAK = 2
+    DATA_TO_PROCESS_NOT_FOUND = 2
