@@ -48,11 +48,15 @@ class SourceTRX(Source):
                 "Start was set to 1 since genesis blocks "
                 "don't have logs and cause issues."
             )
+        logger.debug("Reading blocks and transactions...")
         blocks, txs = self.adapter.export_blocks_and_transactions(
             start_block, end_block
         )
+        logger.debug("Reading receipts and logs...")
         receipts, logs = self.adapter.export_receipts_and_logs(txs)
+        logger.debug("Reading traces and fees...")
         traces, fees = self.adapter.export_traces_parallel(start_block, end_block)
+        logger.debug("Reading types...")
         hash_to_type = self.adapter.export_hash_to_type_mappings_parallel(
             txs, blocks, block_id_name="number"
         )
@@ -66,7 +70,7 @@ class SourceTRX(Source):
             "fees": fees,
             "hash_to_type": hash_to_type,
         }
-
+        logger.debug(f"Finished reading blockrange from {start_block} to {end_block}")
         return BlockRangeContent(
             table_contents=data, start_block=start_block, end_block=end_block
         )

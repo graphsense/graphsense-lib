@@ -1,4 +1,3 @@
-import logging
 import sys
 from typing import List, Optional
 
@@ -45,7 +44,6 @@ def export_delta(
     write_mode: str = "overwrite",
     ignore_overwrite_safechecks: bool = False,
 ):
-    logger.setLevel(logging.INFO)
 
     if currency not in SUPPORTED:
         raise ValueError(f"{currency} not supported by ingest module")
