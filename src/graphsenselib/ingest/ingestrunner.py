@@ -37,13 +37,18 @@ class IngestRunner:
 
     def ingest_range(self, start_block, end_block):
         source = self.source
+        logger.debug("Reading blockrange...")
         data = source.read_blockrange(start_block, end_block)
 
+        logger.debug("Applying transformations...")
         for transformer in self.transformers:
             data = transformer.transform(data)
+            logger.debug("Applied a transformation")
 
+        logger.debug("Writing to sinks...")
         for sink in self.sinks:
             sink.write(data)
+            logger.debug("Wrote to a sink")
 
         return data
 
