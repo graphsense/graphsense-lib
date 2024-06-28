@@ -3,7 +3,6 @@ import logging
 import sys
 from typing import Dict
 
-import __main__ as main
 import click
 from filelock import FileLock
 from filelock import Timeout as LockFileTimeout
@@ -17,7 +16,7 @@ from .common import INGEST_SINKS
 from .dump import export_delta
 from .factory import IngestFactory
 
-logger = logging.getLogger(main.__file__)
+logger = logging.getLogger(__name__)
 
 
 def create_sink_config(sink: str, network: str, ks_config: Dict):
@@ -376,11 +375,6 @@ def export_csv(
     help="Ignore check in the overwrite mode that only lets you start at the "
     "beginning of a partition",
 )
-@click.option(
-    "--debug",
-    is_flag=True,
-    help="Verbose logging",
-)
 def dump_rawdata(
     env,
     currency,
@@ -389,7 +383,6 @@ def dump_rawdata(
     timeout,
     write_mode,
     ignore_overwrite_safechecks,
-    debug,
 ):
     """Exports raw cryptocurrency data to gziped csv files.
     \f
@@ -397,8 +390,6 @@ def dump_rawdata(
         env (str): Environment to work on
         currency (str): currency to work on
     """
-    if debug:
-        logger.setLevel(logging.DEBUG)
 
     logger.info(f"Dumping raw data for {currency} in {env}")
 

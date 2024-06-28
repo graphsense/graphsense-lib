@@ -8,7 +8,6 @@ from csv import QUOTE_NONE
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import __main__ as main
 import grpc
 from diskcache import Cache
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
@@ -65,7 +64,7 @@ from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
 from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
 from .tron.txTypeTransformer import TxTypeTransformer
 
-logger = logging.getLogger(main.__file__)
+logger = logging.getLogger(__name__)
 
 BLOCK_BUCKET_SIZE = 1_000
 TX_HASH_PREFIX_LEN = 5
