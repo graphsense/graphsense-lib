@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import List
 
 import grpc
@@ -9,6 +10,7 @@ from .grpc.api.tron_api_pb2 import NumberMessage
 from .grpc.api.tron_api_pb2_grpc import WalletStub
 from .grpc.core.response_pb2 import TransactionInfoList
 
+logger = logging.getLogger(__name__)
 # todo check if traces are saved in correct order
 # / take note at the correct place that this is unchecked for now
 
@@ -155,25 +157,43 @@ class TronExportTracesJob:
 
         return traces, fees
 
-    async def fetch_and_process_block(self, i, wallet_stub):
-        block = await wallet_stub.GetTransactionInfoByBlockNum(NumberMessage(num=i))
-        traces_per_block = decode_block_to_traces(i, block)
-        fees_per_block = decode_fees(i, block)
-        return traces_per_block, fees_per_block
+    async def fetch_and_process_block(self, i, wallet_stub, retries=5, timeout=60):
+        attempt = 0
+
+        while attempt < retries:
+            try:
+                block = await asyncio.wait_for(
+                    wallet_stub.GetTransactionInfoByBlockNum(NumberMessage(num=i)),
+                    timeout=timeout,
+                )
+                traces_per_block = decode_block_to_traces(i, block)
+                fees_per_block = decode_fees(i, block)
+                return traces_per_block, fees_per_block
+
+            except (grpc.RpcError, asyncio.TimeoutError) as e:
+                logger.error(f"Error fetching block {i}, attempt {attempt + 1}: {e}")
+                attempt += 1
+                await asyncio.sleep(1)  # Backoff before retry
+
+        raise Exception(f"Failed to fetch block {i} after {retries} attempts")
 
     def run_parallel(self):
-        # Setup an asynchronous event loop
         loop = asyncio.get_event_loop()
 
         async def run_async():
             async with grpc.aio.insecure_channel(self.grpc_endpoint) as channel:
                 wallet_stub = WalletStub(channel)
+                semaphore = asyncio.Semaphore(30)
+
+                async def sem_fetch_and_process_block(i):
+                    async with semaphore:
+                        return await self.fetch_and_process_block(i, wallet_stub)
+
                 tasks = [
-                    self.fetch_and_process_block(i, wallet_stub)
+                    sem_fetch_and_process_block(i)
                     for i in range(self.start_block, self.end_block + 1)
                 ]
-                results = await asyncio.gather(*tasks)  # Gather all tasks concurrently
-
+                results = await asyncio.gather(*tasks)
                 traces = []
                 fees = []
 
