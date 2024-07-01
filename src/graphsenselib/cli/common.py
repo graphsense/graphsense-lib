@@ -1,3 +1,4 @@
+import hashlib
 import sys
 
 import click
@@ -76,7 +77,10 @@ def out_file(required=True, append=False):
 def try_load_config(filename: str):
     try:
         config.load(filename=filename)
-        return config
+
+        md5hash = hashlib.md5(open(config.underlying_file, "rb").read()).hexdigest()
+
+        return config, md5hash
     except Exception as e:
         console.print("There are errors in you graphsenselib config:")
         console.rule("Errors")

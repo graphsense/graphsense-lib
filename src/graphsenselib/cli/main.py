@@ -1,3 +1,5 @@
+import logging
+
 import click
 from rich.traceback import install
 
@@ -19,6 +21,8 @@ from .common import try_load_config
 __author__ = "iknaio"
 __copyright__ = "iknaio"
 __license__ = "MIT"
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -68,13 +72,16 @@ def cli(ctx, verbose: int, config_file: str):
     Args:
         verbose (int): One v stands for loglevel warning, two for info and so on...
     """
-    config = try_load_config(config_file)
+    config, h = try_load_config(config_file)
     ctx.with_resource(
         ClickSlackErrorNotificationContext(
             config.get_slack_exception_notification_hook_urls()
         )
     )
     configure_logging(verbose)
+    logger.info(
+        f"Running version {__version__} using config {config.underlying_file} @ md5 {h}"
+    )
 
 
 def main():
