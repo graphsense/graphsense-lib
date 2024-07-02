@@ -827,7 +827,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "address_ids_by_address_prefix",
             columns=["*"],
-            where={k: "?" for k in ["address_prefix", "address"]},
+            where=dict.fromkeys(["address_prefix", "address"], "?"),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -857,7 +857,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "address",
             columns=["*"],
-            where={k: "?" for k in ["address_id_group", "address_id"]},
+            where=dict.fromkeys(["address_id_group", "address_id"], "?"),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -893,10 +893,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "address_incoming_relations",
             columns=["*"],
-            where={
-                k: "?"
-                for k in ["dst_address_id_group", "dst_address_id", "src_address_id"]
-            },
+            where=dict.fromkeys(
+                ["dst_address_id_group", "dst_address_id", "src_address_id"], "?"
+            ),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -922,15 +921,15 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "address_incoming_relations",
             columns=["*"],
-            where={
-                k: "?"
-                for k in [
+            where=dict.fromkeys(
+                [
                     "dst_address_id_group",
                     "dst_address_id_secondary_group",
                     "dst_address_id",
                     "src_address_id",
-                ]
-            },
+                ],
+                "?",
+            ),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -980,12 +979,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             tablename,  # address_transactions_secondary_ids
             columns=["*"],
-            where={
-                k: "?"
-                for k in [
+            where=dict.fromkeys(
+                [
                     id_group_col,
-                ]
-            },
+                ],
+                "?",
+            ),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -1003,10 +1002,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "address_outgoing_relations",
             columns=["*"],
-            where={
-                k: "?"
-                for k in ["src_address_id_group", "src_address_id", "dst_address_id"]
-            },
+            where=dict.fromkeys(
+                ["src_address_id_group", "src_address_id", "dst_address_id"], "?"
+            ),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -1032,15 +1030,15 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "address_outgoing_relations",
             columns=["*"],
-            where={
-                k: "?"
-                for k in [
+            where=dict.fromkeys(
+                [
                     "src_address_id_group",
                     "src_address_id_secondary_group",
                     "src_address_id",
                     "dst_address_id",
-                ]
-            },
+                ],
+                "?",
+            ),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -1069,7 +1067,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "balance",
             columns=["*"],
-            where={k: "?" for k in ["address_id_group", "address_id"]},
+            where=dict.fromkeys(["address_id_group", "address_id"], "?"),
         )
         prep = self._db.get_prepared_statement(stmt)
 
@@ -1110,7 +1108,7 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "cluster",
             columns=["*"],
-            where={k: "?" for k in ["cluster_id_group", "cluster_id"]},
+            where=dict.fromkeys(["cluster_id_group", "cluster_id"], "?"),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -1146,10 +1144,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "cluster_incoming_relations",
             columns=["*"],
-            where={
-                k: "?"
-                for k in ["dst_cluster_id_group", "dst_cluster_id", "src_cluster_id"]
-            },
+            where=dict.fromkeys(
+                ["dst_cluster_id_group", "dst_cluster_id", "src_cluster_id"], "?"
+            ),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)
@@ -1193,10 +1190,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         stmt = self.select_stmt(
             "cluster_outgoing_relations",
             columns=["*"],
-            where={
-                k: "?"
-                for k in ["src_cluster_id_group", "src_cluster_id", "dst_cluster_id"]
-            },
+            where=dict.fromkeys(
+                ["src_cluster_id_group", "src_cluster_id", "dst_cluster_id"], "?"
+            ),
             limit=1,
         )
         prep = self._db.get_prepared_statement(stmt)

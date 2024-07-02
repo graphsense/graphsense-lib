@@ -33,7 +33,12 @@ def optimize_tables(
         storage_options = {}
 
     if directory.startswith("s3"):
-        s3 = boto3.client("s3")
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=s3_credentials["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=s3_credentials["AWS_SECRET_ACCESS_KEY"],
+            endpoint_url=s3_credentials["AWS_ENDPOINT_URL"],
+        )
         bucket = directory.split("/")[2]
         prefix = "/".join(directory.split("/")[3:])
         response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
