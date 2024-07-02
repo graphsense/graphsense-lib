@@ -4,7 +4,6 @@ import time
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
-import boto3
 import deltalake as dl
 import pyarrow as pa
 import pydantic
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def optimize_tables(
-    directory: str, s3_credentials: Optional[dict] = None, mode="both"
+    network: str, directory: str, s3_credentials: Optional[dict] = None, mode="both"
 ) -> None:
 
     if s3_credentials and directory.startswith("s3"):
@@ -33,21 +32,8 @@ def optimize_tables(
         storage_options = {}
 
     if directory.startswith("s3"):
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=s3_credentials["AWS_ACCESS_KEY_ID"],
-            aws_secret_access_key=s3_credentials["AWS_SECRET_ACCESS_KEY"],
-            endpoint_url=s3_credentials["AWS_ENDPOINT_URL"],
-        )
-        bucket = directory.split("/")[2]
-        prefix = "/".join(directory.split("/")[3:])
-        response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-        contents = response.get("Contents", [])
-        subdirs = [content["Key"] for content in contents]
-        subdirs = [subdir[len(prefix) + 1 :] for subdir in subdirs]
-        subdirs = [subdir.split("/")[0] for subdir in subdirs]
-        subdirs = list(set(subdirs))
-        subdirs = [f"{directory}/{subdir}" for subdir in subdirs]
+        tables = [n.table_name for n in CONFIG_MAP[network].table_configs]
+        subdirs = [f"{directory}/{t}" for t in tables]
     else:
         subdirs = [f.path for f in os.scandir(directory) if f.is_dir()]
 
@@ -348,17 +334,17 @@ UTXO_DBWRITE_CONFIG = DBWriteConfig(
             partition_cols=("partition",),
             primary_keys=["block_id", "index"],
         ),
-        TableWriteConfig(
-            table_name="transaction_spending",
-            table_schema=UTXO_SCHEMA_RAW["transaction_spending"],
-            partition_cols=("partition",),
-            primary_keys=[
-                "spending_tx_hash",
-                "spent_tx_hash",
-                "spending_input_index",
-                "spent_output_index",
-            ],
-        ),
+        # TableWriteConfig(
+        #     table_name="transaction_spending",
+        #     table_schema=UTXO_SCHEMA_RAW["transaction_spending"],
+        #     partition_cols=("partition",),
+        #     primary_keys=[
+        #         "spending_tx_hash",
+        #         "spent_tx_hash",
+        #         "spending_input_index",
+        #         "spent_output_index",
+        #     ],
+        # ),
     ]
 )
 
