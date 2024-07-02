@@ -1,13 +1,14 @@
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+import boto3
 import deltalake as dl
 import pyarrow as pa
 import pydantic
 from deltalake import DeltaTable
-from deltalake.exceptions import TableNotFoundError
 from pyarrow.lib import ArrowInvalid
 
 from ...schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
@@ -18,16 +19,49 @@ from ..common import BlockRangeContent, Sink
 logger = logging.getLogger(__name__)
 
 
-def delta_table_exists(table_path, storage_options=None):
-    try:
-        # Attempt to load the DeltaTable
-        DeltaTable(table_path, storage_options=storage_options)
+def optimize_tables(
+    directory: str, s3_credentials: Optional[dict] = None, mode="both"
+) -> None:
 
-        return True
-    except TableNotFoundError as e:
-        # If an exception is raised, the Delta table does not exist
-        print(f"Delta table does not exist. \n{e}")
-        return False
+    if s3_credentials and directory.startswith("s3"):
+        storage_options = {
+            "AWS_ALLOW_HTTP": "true",
+            "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+        }
+        storage_options.update(s3_credentials)
+    else:
+        storage_options = {}
+
+    if directory.startswith("s3"):
+        s3 = boto3.client("s3")
+        bucket = directory.split("/")[2]
+        prefix = "/".join(directory.split("/")[3:])
+        response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        contents = response.get("Contents", [])
+        subdirs = [content["Key"] for content in contents]
+        subdirs = [subdir[len(prefix) + 1 :] for subdir in subdirs]
+        subdirs = [subdir.split("/")[0] for subdir in subdirs]
+        subdirs = list(set(subdirs))
+        subdirs = [f"{directory}/{subdir}" for subdir in subdirs]
+    else:
+        subdirs = [f.path for f in os.scandir(directory) if f.is_dir()]
+
+    for path in subdirs:
+        optimize_table(path, storage_options=storage_options, mode=mode)
+
+
+def optimize_table(table_path, storage_options=None, mode="both"):
+    logger.debug(f"Optimizing table {table_path}...")
+    table = DeltaTable(table_path, storage_options=storage_options)
+    MB = 1024 * 1024
+    if mode in ["both", "compact"]:
+        logger.debug("Compact table...")
+        # some sources say 1GB, default in the lib is 256MB, we take 512MB
+        table.optimize.compact(target_size=512 * MB)
+    if mode in ["both", "vacuum"]:
+        logger.debug("Vacuum table...")
+        table.vacuum(retention_hours=0, enforce_retention_duration=False, dry_run=False)
+    logger.debug("Table optimized")
 
 
 class DeltaTableWriter:

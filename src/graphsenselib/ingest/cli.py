@@ -13,6 +13,7 @@ from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
 from .common import INGEST_SINKS
+from .delta.sink import optimize_tables
 from .dump import export_delta
 from .factory import IngestFactory
 
@@ -420,3 +421,48 @@ def dump_rawdata(
         write_mode=write_mode,
         ignore_overwrite_safechecks=ignore_overwrite_safechecks,
     )
+
+
+# optimize deltalake
+@ingesting.command("optimize-deltalake")
+@require_environment()
+@require_currency(required=True)
+@click.option(
+    "--mode",
+    type=click.Choice(
+        [
+            "both",
+            "compact",
+            "vacuum",
+        ],
+        case_sensitive=False,
+    ),
+    help="Optimization mode for the deltalake tables (default: both)",
+    default="both",
+    multiple=False,
+)
+def optimize_deltalake(env, currency, mode="both"):
+    """Optimize the deltalake tables
+    \f
+    Args:
+        env (str): Environment to work on
+        currency (str): currency to work on
+    """
+    ks_config = config.get_keyspace_config(env, currency)
+    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
+        "delta", None
+    )
+
+    if parquet_directory_config is None:
+        logger.error(
+            "Please provide an output directory in your "
+            "config (raw_keyspace_file_sinks.delta.directory)"
+        )
+        sys.exit(11)
+
+    logger.info(f"Optimizing deltalake tables in {parquet_directory_config.directory}")
+    parquet_directory = parquet_directory_config.directory
+    s3_credentials = config.get_s3_credentials()
+    optimize_tables(parquet_directory, s3_credentials, mode=mode)
+
+    logger.info(f"Optimized deltalake tables in {parquet_directory}")
