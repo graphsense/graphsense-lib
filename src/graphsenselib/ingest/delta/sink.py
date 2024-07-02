@@ -48,7 +48,9 @@ def optimize_table(table_path, storage_options=None, mode="both"):
     if mode in ["both", "compact"]:
         logger.debug("Compact table...")
         # some sources say 1GB, default in the lib is 256MB, we take 512MB
-        table.optimize.compact(target_size=512 * MB)
+        # we strive for a manageable amount of Memory consumption, so we limit
+        # the concurrency
+        table.optimize.compact(target_size=512 * MB, max_concurrent_tasks=20)
     if mode in ["both", "vacuum"]:
         logger.debug("Vacuum table...")
         table.vacuum(retention_hours=0, enforce_retention_duration=False, dry_run=False)
