@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.07.0/2.3.0] 2024-07-02
+### added
+- Write raw data to delta tables on s3 or local using graphsense-cli dump-rawdata
+- graphsense-cli optimize-deltalake to optimize tables of a currency (vacuum and/or compact)
+
 ## [24.02.10/2.2.10] 2024-06-17
 ### fixed
 - Fixing release tag issue
