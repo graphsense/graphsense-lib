@@ -3,10 +3,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.07.2/2.3.2] 2024-07-02
+### fixed
+- evaluating tables to fix in optimize deltalake step, remove direct boto3 dep.
+
 ## [24.07.1/2.3.1] 2024-07-02
 ### fixed
 - passing s3 credentials to boto3
-
 
 ## [24.07.0/2.3.0] 2024-07-02
 ### added

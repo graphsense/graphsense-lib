@@ -463,6 +463,6 @@ def optimize_deltalake(env, currency, mode="both"):
     logger.info(f"Optimizing deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
     s3_credentials = config.get_s3_credentials()
-    optimize_tables(parquet_directory, s3_credentials, mode=mode)
+    optimize_tables(currency, parquet_directory, s3_credentials, mode=mode)
 
     logger.info(f"Optimized deltalake tables in {parquet_directory}")
