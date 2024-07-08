@@ -13,7 +13,7 @@ from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
 from .common import INGEST_SINKS
-from .delta.sink import optimize_tables
+from .delta.sink import optimize_table, optimize_tables
 from .dump import export_delta
 from .factory import IngestFactory
 
@@ -441,7 +441,13 @@ def dump_rawdata(
     default="both",
     multiple=False,
 )
-def optimize_deltalake(env, currency, mode="both"):
+@click.option(
+    "--table",
+    type=str,
+    help="Specific table to optimize (default: all tables)",
+    required=False,
+)
+def optimize_deltalake(env, currency, mode="both", table=None):
     """Optimize the deltalake tables
     \f
     Args:
@@ -463,6 +469,9 @@ def optimize_deltalake(env, currency, mode="both"):
     logger.info(f"Optimizing deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
     s3_credentials = config.get_s3_credentials()
-    optimize_tables(currency, parquet_directory, s3_credentials, mode=mode)
-
-    logger.info(f"Optimized deltalake tables in {parquet_directory}")
+    if table is None:
+        optimize_tables(currency, parquet_directory, s3_credentials, mode=mode)
+        logger.info(f"Optimized deltalake tables in {parquet_directory}")
+    else:
+        optimize_table(parquet_directory, table, s3_credentials, mode=mode)
+        logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
