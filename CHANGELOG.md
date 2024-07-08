@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.07.5/2.3.5] 2024-07-08
+### fixed
+- increase timeout limit for s3 requests from the default 30s to 300s
+
 ## [24.07.4/2.3.4] 2024-07-08
 ### added
 - Allow optimizing single delta table
