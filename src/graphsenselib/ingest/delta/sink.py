@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 def optimize_tables(
     network: str, directory: str, s3_credentials: Optional[dict] = None, mode="both"
 ) -> None:
+    tables = [n.table_name for n in CONFIG_MAP[network].table_configs]
+
+    for table in tables:
+        optimize_table(directory, table, s3_credentials=s3_credentials, mode=mode)
+
+
+def optimize_table(
+    directory: str, table_name: str, s3_credentials: Optional[dict] = None, mode="both"
+):
+    logger.debug(f"Optimizing table {table_name} in directory {directory}...")
 
     if s3_credentials and directory.startswith("s3"):
         storage_options = {
@@ -28,31 +38,21 @@ def optimize_tables(
             "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
         }
         storage_options.update(s3_credentials)
+        table_path = f"{directory}/{table_name}"
     else:
         storage_options = {}
+        table_path = os.path.join(directory, table_name)
 
-    if directory.startswith("s3"):
-        tables = [n.table_name for n in CONFIG_MAP[network].table_configs]
-        subdirs = [f"{directory}/{t}" for t in tables]
-    else:
-        subdirs = [f.path for f in os.scandir(directory) if f.is_dir()]
-
-    for path in subdirs:
-        optimize_table(path, storage_options=storage_options, mode=mode)
-
-
-def optimize_table(table_path, storage_options=None, mode="both"):
-    logger.debug(f"Optimizing table {table_path}...")
     table = DeltaTable(table_path, storage_options=storage_options)
     MB = 1024 * 1024
     if mode in ["both", "compact"]:
-        logger.debug("Compact table...")
+        logger.debug("Compacting table...")
         # some sources say 1GB, default in the lib is 256MB, we take 512MB
         # we strive for a manageable amount of Memory consumption, so we limit
         # the concurrency
         table.optimize.compact(target_size=512 * MB, max_concurrent_tasks=15)
     if mode in ["both", "vacuum"]:
-        logger.debug("Vacuum table...")
+        logger.debug("Vacuuming table...")
         table.vacuum(retention_hours=0, enforce_retention_duration=False, dry_run=False)
     logger.debug("Table optimized")
 
