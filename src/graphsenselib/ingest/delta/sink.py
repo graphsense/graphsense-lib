@@ -36,6 +36,7 @@ def optimize_table(
         storage_options = {
             "AWS_ALLOW_HTTP": "true",
             "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+            "timeout": "300s",
         }
         storage_options.update(s3_credentials)
         table_path = f"{directory}/{table_name}"
@@ -50,10 +51,15 @@ def optimize_table(
         # some sources say 1GB, default in the lib is 256MB, we take 512MB
         # we strive for a manageable amount of Memory consumption, so we limit
         # the concurrency
-        table.optimize.compact(target_size=512 * MB, max_concurrent_tasks=15)
+        metrics = table.optimize.compact(target_size=512 * MB, max_concurrent_tasks=15)
+        logger.debug(f"Compaction metrics: {metrics}")
+
     if mode in ["both", "vacuum"]:
         logger.debug("Vacuuming table...")
-        table.vacuum(retention_hours=0, enforce_retention_duration=False, dry_run=False)
+        metrics = table.vacuum(
+            retention_hours=0, enforce_retention_duration=False, dry_run=False
+        )
+        logger.debug(f"Vacuum metrics: {metrics}")
     logger.debug("Table optimized")
 
 
