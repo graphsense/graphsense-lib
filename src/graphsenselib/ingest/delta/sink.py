@@ -59,7 +59,7 @@ def optimize_table(
         metrics = table.vacuum(
             retention_hours=0, enforce_retention_duration=False, dry_run=False
         )
-        logger.debug(f"Vacuum metrics: {metrics}")
+        logger.debug(f"Files vacuumed: {len(metrics)}")
     logger.debug("Table optimized")
 
 
