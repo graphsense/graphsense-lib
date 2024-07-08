@@ -163,7 +163,9 @@ class TronExportTracesJob:
         while attempt < retries:
             try:
                 block = await asyncio.wait_for(
-                    wallet_stub.GetTransactionInfoByBlockNum(NumberMessage(num=i)),
+                    wallet_stub.GetTransactionInfoByBlockNum(
+                        NumberMessage(num=i), timeout=timeout
+                    ),
                     timeout=timeout,
                 )
                 traces_per_block = decode_block_to_traces(i, block)
@@ -172,6 +174,8 @@ class TronExportTracesJob:
 
             except (grpc.RpcError, asyncio.TimeoutError) as e:
                 logger.error(f"Error fetching block {i}, attempt {attempt + 1}: {e}")
+                logger.error(e)
+                logger.error("Retrying...")
                 attempt += 1
                 await asyncio.sleep(1)  # Backoff before retry
 
@@ -182,6 +186,7 @@ class TronExportTracesJob:
 
         async def run_async():
             async with grpc.aio.insecure_channel(self.grpc_endpoint) as channel:
+                logger.debug("Connected to gRPC endpoint")
                 wallet_stub = WalletStub(channel)
                 semaphore = asyncio.Semaphore(30)
 
