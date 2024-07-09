@@ -193,6 +193,7 @@ class TronExportTracesJob:
                 async def sem_fetch_and_process_block(i):
                     logger.debug(f"Loading Block {i}")
                     async with semaphore:
+                        logger.debug(f"Loading enter sem Block {i}")
                         ret = await self.fetch_and_process_block(i, wallet_stub)
                         logger.debug(f"Loaded Block {i}")
                     return ret
