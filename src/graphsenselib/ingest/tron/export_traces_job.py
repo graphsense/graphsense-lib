@@ -191,8 +191,13 @@ class TronExportTracesJob:
                 semaphore = asyncio.Semaphore(30)
 
                 async def sem_fetch_and_process_block(i):
+                    global semc
+                    logger.debug(f"Loading Block {i} {semc}")
                     async with semaphore:
+                        semc -= 1
                         return await self.fetch_and_process_block(i, wallet_stub)
+                    semc += 1
+                    logger.debug(f"Loaded Block {i} {semc}")
 
                 tasks = [
                     sem_fetch_and_process_block(i)
@@ -211,3 +216,6 @@ class TronExportTracesJob:
 
         # Execute the asynchronous run inside a synchronous function
         return loop.run_until_complete(run_async())
+
+
+semc = 30
