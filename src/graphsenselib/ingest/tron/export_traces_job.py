@@ -157,16 +157,13 @@ class TronExportTracesJob:
 
         return traces, fees
 
-    async def fetch_and_process_block(self, i, wallet_stub, retries=5, timeout=60):
+    async def fetch_and_process_block(self, i, wallet_stub, retries=5, timeout=3 * 60):
         # attempt = 0
 
         # while attempt < retries:
         #     try:
-        block = await asyncio.wait_for(
-            wallet_stub.GetTransactionInfoByBlockNum(
-                NumberMessage(num=i), timeout=timeout
-            ),
-            timeout=timeout,
+        block = wallet_stub.GetTransactionInfoByBlockNum(
+            NumberMessage(num=i), timeout=timeout
         )
         traces_per_block = decode_block_to_traces(i, block)
         fees_per_block = decode_fees(i, block)
@@ -221,9 +218,9 @@ class TronExportTracesJob:
         while attempt < retries:
             try:
                 return loop.run_until_complete(
-                    asyncio.wait_for(run_async(), timeout=15 * 60)
+                    asyncio.wait_for(run_async(), timeout=timeout)
                 )
-            except (grpc.RpcError, asyncio.TimeoutError) as e:
+            except asyncio.TimeoutError as e:
                 logger.error(
                     f"Error fetching block range in {timeout}s "
                     f"{self.start_block} {self.end_block}, attempt {attempt + 1}: {e}"
