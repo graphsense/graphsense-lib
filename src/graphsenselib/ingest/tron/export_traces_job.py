@@ -162,7 +162,7 @@ class TronExportTracesJob:
 
         # while attempt < retries:
         #     try:
-        block = wallet_stub.GetTransactionInfoByBlockNum(
+        block = await wallet_stub.GetTransactionInfoByBlockNum(
             NumberMessage(num=i), timeout=timeout
         )
         traces_per_block = decode_block_to_traces(i, block)
