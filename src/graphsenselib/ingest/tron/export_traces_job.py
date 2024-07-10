@@ -185,6 +185,8 @@ class TronExportTracesJob:
         loop = asyncio.get_event_loop()
 
         async def run_async():
+            retries = 3
+            attempt = 0
             async with grpc.aio.insecure_channel(self.grpc_endpoint) as channel:
                 logger.debug("Connected to gRPC endpoint")
                 wallet_stub = WalletStub(channel)
@@ -202,7 +204,20 @@ class TronExportTracesJob:
                     sem_fetch_and_process_block(i)
                     for i in range(self.start_block, self.end_block + 1)
                 ]
-                results = await asyncio.gather(*tasks)
+                while attempt < retries:
+                    try:
+                        async with asyncio.timeout(60 * 15):
+                            results = await asyncio.gather(*tasks)
+                        attempt = 0
+                    except asyncio.TimeoutError as e:
+                        logger.error(
+                            f"Error fetching block range {self.start_block} "
+                            f"-- {self.end_block}, attempt {attempt + 1}: {e}"
+                        )
+                        logger.error(e)
+                        logger.error("Retrying...")
+                        attempt += 1
+
                 traces = []
                 fees = []
 
