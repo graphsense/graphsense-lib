@@ -70,7 +70,6 @@ class IngestRunner:
         )
         avg_blocktime = AVG_BLOCKTIME[self.transformers[0].network]
 
-        break_loop = False
         with graceful_ctlc_shutdown() as check_shutdown_initialized:
             for partition in partitions:
                 file_chunks = split_blockrange(partition, self.file_batch_size)
@@ -99,11 +98,7 @@ class IngestRunner:
                         f"network_s/s) "
                     )
 
-                    if check_shutdown_initialized():
-                        break_loop = True
-                        break
-
-                if break_loop:
+                if check_shutdown_initialized():
                     break
 
                 partition_start = (
