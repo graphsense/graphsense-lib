@@ -106,6 +106,18 @@ class TransformerTRX(Transformer):
         traces = drop_columns_from_list(traces, ["block_id_group"])
         logs = drop_columns_from_list(logs, ["block_id_group"])
 
+        def fix_transferToAddress(item):
+            if len(item["transferto_address"]) == 0:
+                # for some very rare txs
+                # e.g. f0b31777dcc58cbca074380ff6f25f8495898edba2da0c43b099b3f276ae3d74
+                # transferTo_address is empty which does not mach our schema.
+                # as a quick fix we set a dummy address for now.
+                dummy_address = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00ikna"  # noqa
+                item["transferto_address"] = dummy_address
+            return item
+
+        traces = [fix_transferToAddress(trace) for trace in traces]
+
         txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["transaction"])
         blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["block"])
         traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"])

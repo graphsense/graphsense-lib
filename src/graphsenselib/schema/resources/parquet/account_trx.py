@@ -24,19 +24,6 @@ block_schema = set_field_type(block_schema, "gas_limit", pa.int64())
 block_schema = set_field_type(block_schema, "gas_used", pa.int64())
 ACCOUNT_TRX_SCHEMA_RAW["block"] = block_schema
 
-# trace_schema = ACCOUNT_TRX_SCHEMA_RAW["trace"]
-# # internal_index', 'transferto_address', 'call_info_index',
-# # 'caller_address', 'call_value', 'rejected', 'call_token_id', 'note
-# trace_schema = set_field_type(trace_schema, "internal_index", pa.int16())
-# trace_schema = set_field_type(trace_schema, "transferto_address", pa.binary(20))
-# trace_schema = set_field_type(trace_schema, "call_info_index", pa.int16())
-# trace_schema = set_field_type(trace_schema, "caller_address", pa.binary(20))
-# trace_schema = set_field_type(trace_schema, "call_value", pa.binary())
-# trace_schema = set_field_type(trace_schema, "rejected", pa.bool_())
-# trace_schema = set_field_type(trace_schema, "call_token_id", pa.int32())
-# trace_schema = set_field_type(trace_schema, "note", pa.string())
-# ACCOUNT_TRX_SCHEMA_RAW["trace"] = trace_schema
-
 transaction_schema = ACCOUNT_TRX_SCHEMA_RAW["transaction"]
 transaction_schema = set_field_type(transaction_schema, "gas", pa.int64())
 ACCOUNT_TRX_SCHEMA_RAW["transaction"] = transaction_schema

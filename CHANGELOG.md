@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.07.7/2.3.7] 2024-07-16
+### fixed
+- tron delta-dump: fix missing transferto_address in some tron traces
+
 ## [24.07.6/2.3.6] 2024-07-15
 ### fixed
 - tron delta-dump freezes on grpc asyncio requests
