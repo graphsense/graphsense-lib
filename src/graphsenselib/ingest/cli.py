@@ -64,7 +64,7 @@ def ingesting():
     multiple=True,
     default=["cassandra"],
     help="Where the raw data is written to currently"
-    " either cassandra, fs-cache, or both (default: cassandra)",
+    " either cassandra, fs-cache, parquet, or multiple (default: cassandra)",
 )
 @click.option(
     "--start-block",
