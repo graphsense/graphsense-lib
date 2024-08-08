@@ -1,9 +1,8 @@
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import pandas as pd
-from diskcache import Cache
 
 from graphsenselib.config.config import DeltaUpdaterConfig
 from graphsenselib.db import DbChange
@@ -59,7 +58,7 @@ from graphsenselib.utils.account import (
     get_id_group_with_secondary_addresstransactions,
     get_id_group_with_secondary_relations,
 )
-from graphsenselib.utils.cache import TableBasedCache
+from graphsenselib.utils.cache import DeltaTableConnector
 from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.logging import LoggerScope
 
@@ -121,24 +120,6 @@ class UpdateStrategyAccount(UpdateStrategy):
     def consume_transaction_id_composite(self, block_id, transaction_index):
         return (block_id << 32) + transaction_index
 
-    def clear_cache(self):
-        cache = Cache(self.du_config.fs_cache.directory)
-        cache.clear()
-
-    def clear_cache_for_blocks(self, blocks: List[int]):
-        cache = TableBasedCache(Cache(self.du_config.fs_cache.directory))
-        for block in blocks:
-            cache.delete_item("block", block)
-            cache.delete_item("trace", block)
-            cache.delete_item("log", block)
-
-            if self.currency == "trx":
-                transactions = cache.get(("transaction", block), [])
-                for tx in transactions:
-                    cache.delete_item("fee", tx["tx_hash"])
-
-            cache.delete_item("transaction", block)
-
     def persist_updater_progress(self):
         if self.changes is not None:
             atomic = ApplicationStrategy.TX == self.application_strategy
@@ -163,22 +144,20 @@ class UpdateStrategyAccount(UpdateStrategy):
                 truncate=False,
             )
 
-    def get_block_data(self, cache, block):
-        blocks = cache.get(("block", block), [])
-        txs = cache.get(("transaction", block), [])
-        traces = cache.get(("trace", block), [])
-        logs = cache.get(("log", block), [])
+    from typing import List, Union  # todo look for word cache and replace
+
+    def get_block_data(self, cache: DeltaTableConnector, block_ids: List[int]):
+        blocks = cache.get(("block", block_ids), [])
+        txs = cache.get(("transaction", block_ids), [])
+        traces = cache.get(("trace", block_ids), [])
+        logs = cache.get(("log", block_ids), [])
         return txs, traces, logs, blocks
 
-    def get_fee_data(self, cache, tx):
-        return cache.get(("fee", tx), [{"fee": None}])[0]["fee"]
+    def get_fee_data(self, cache: DeltaTableConnector, transactions: pd.DataFrame):
+        return cache.get_items_fee(transactions, [])
 
     def process_batch_impl_hook(self, batch: List[int]) -> Tuple[Action, Optional[int]]:
         rates = {}
-        transactions = []
-        traces = []
-        logs = []
-        blocks = []
         bts = {}
         """
             Read transaction and exchange rates data
@@ -203,37 +182,25 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
             missing_rates_in_block = False
-            cache = TableBasedCache(Cache(self.du_config.fs_cache.directory))
-            for block in batch:
-                txs_new, traces_new, logs_new, blocks_new = self.get_block_data(
-                    cache, block
+            tableconnector = DeltaTableConnector(
+                self.du_config.fs_cache.directory, self.du_config.s3_credentials
+            )
+
+            transactions, traces, logs, blocks = self.get_block_data(
+                tableconnector, batch
+            )
+
+            block_ids_got = set(blocks["block_id"].unique())
+            block_ids_expected = set(batch)
+            if block_ids_got != block_ids_expected:
+                missing_blocks = block_ids_expected - block_ids_got
+                log.error(
+                    f"Blocks {missing_blocks} are not present in cache. "
+                    f"Please ingest more blocks with option --sinks fs-cache"
                 )
+                return Action.DATA_TO_PROCESS_NOT_FOUND, None
 
-                if len(blocks_new) == 0:  #
-                    msg = (
-                        f"Block {block} is not present in cache. Please ingest"
-                        f" more blocks with option --sinks fs-cache"
-                    )
-                    log.error(msg)
-
-                    return Action.DATA_TO_PROCESS_NOT_FOUND, None
-                    # if block == batch[0]:
-                    #     log.warning("First block of batch not in cache.")
-                    #     return Action.BREAK, None
-                    # else:
-                    #     log.warning(
-                    #         "Skipping block without data in cache."
-                    #         "Continuing with next block."
-                    #     )
-                    #     break
-
-                final_block = block
-
-                transactions.extend(txs_new)
-                traces.extend(traces_new)
-                logs.extend(logs_new)
-                blocks.extend(blocks_new)
-
+            for block in batch:
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
                 ).fiat_values
@@ -242,6 +209,8 @@ class UpdateStrategyAccount(UpdateStrategy):
                     fiat_values = [0, 0]
                 rates[block] = fiat_values
                 bts[block] = self._db.raw.get_block_timestamp(block)
+
+            final_block = max(batch)
 
             if missing_rates_in_block:
                 log.warning("Block Range has missing exchange rates. Using Zero.")
@@ -253,8 +222,19 @@ class UpdateStrategyAccount(UpdateStrategy):
             if self.currency == "trx":
                 trace_adapter = TrxTraceAdapter()
                 transaction_adapter = TrxTransactionAdapter()
-                for tx in transactions:
-                    tx["fee"] = self.get_fee_data(cache, tx["tx_hash"])
+
+                fees = self.get_fee_data(tableconnector, transactions)
+                # merge fees into transactions
+                # cast tx_hash of both to bytes so it can be hashed
+                transactions["tx_hash"] = transactions["tx_hash"].apply(
+                    lambda x: bytes(x)
+                )
+                fees["tx_hash"] = fees["tx_hash"].apply(lambda x: bytes(x))
+
+                transactions = pd.merge(
+                    transactions, fees, on="tx_hash", how="left", suffixes=("", "_y")
+                )
+                # todo are there transactions without fees?
 
             elif self.currency == "eth":
                 trace_adapter = EthTraceAdapter()
@@ -263,11 +243,14 @@ class UpdateStrategyAccount(UpdateStrategy):
             # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()
             block_adapter = AccountBlockAdapter()
-            traces = trace_adapter.dicts_to_renamed_dataclasses(traces)
+            traces = trace_adapter.df_to_renamed_dataclasses(traces)
             traces = trace_adapter.process_fields_in_list(traces)
-            transactions = transaction_adapter.dicts_to_dataclasses(transactions)
-            logs = log_adapter.dicts_to_dataclasses(logs)
-            blocks = block_adapter.dicts_to_dataclasses(blocks)
+            transactions = transaction_adapter.df_to_dataclasses(transactions)
+            logs["topics"] = logs["topics"].apply(
+                lambda x: list(x) if x is not None else []
+            )  # todo very unsure about this
+            logs = log_adapter.df_to_dataclasses(logs)
+            blocks = block_adapter.df_to_dataclasses(blocks)
             blocks = block_adapter.process_fields_in_list(blocks)
 
             changes = []

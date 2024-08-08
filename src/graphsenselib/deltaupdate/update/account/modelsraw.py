@@ -1,5 +1,6 @@
 from typing import Optional
 
+import pandas as pd
 from pydantic import BaseModel
 
 
@@ -37,8 +38,20 @@ class BlockchainAdapter:
     def dicts_to_dataclasses(self, data_dicts):
         return [self.dict_to_dataclass(data_dict) for data_dict in data_dicts]
 
+    def df_to_dataclasses(self, df: pd.DataFrame):
+        return [
+            self.dict_to_dataclass(data_dict)
+            for data_dict in df.to_dict(orient="records")
+        ]
+
     def dicts_to_renamed_dataclasses(self, data_dicts):
         return [self.dict_to_renamed_dataclass(data_dict) for data_dict in data_dicts]
+
+    def df_to_renamed_dataclasses(self, df: pd.DataFrame):
+        return [
+            self.dict_to_renamed_dataclass(data_dict)
+            for data_dict in df.to_dict(orient="records")
+        ]
 
     def process_fields_in_list(self, data_list):
         return [self.process_fields(data_object) for data_object in data_list]

@@ -126,14 +126,6 @@ class AbstractUpdateStrategy(ABC):
     def persist_updater_progress(self):
         pass
 
-    @abstractmethod
-    def clear_cache(self):
-        pass
-
-    @abstractmethod
-    def clear_cache_for_blocks(self, blocks):
-        pass
-
 
 class UpdateStrategy(AbstractUpdateStrategy):
     def __init__(

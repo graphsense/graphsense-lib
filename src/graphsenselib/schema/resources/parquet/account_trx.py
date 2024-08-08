@@ -123,4 +123,5 @@ BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX = {
     "trace": ["call_value"],
     "block": ["difficulty", "total_difficulty"],
     "log": [],
+    "fee": [],
 }

@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import grpc
-from diskcache import Cache
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
 from ethereumetl.jobs.export_traces_job import (
@@ -37,7 +36,6 @@ from ..utils import (
     remove_prefix,
 )
 from ..utils.account import get_id_group
-from ..utils.cache import TableBasedCache
 from ..utils.logging import configure_logging, suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from ..utils.tron import evm_to_bytes, strip_tron_prefix
@@ -1201,11 +1199,6 @@ def ingest_async(
         new_db_conn.open()
         thrd_ctx.db = new_db_conn
 
-        if "fs-cache" in sink_config:
-            odirectory = sink_config["fs-cache"]["output_directory"]
-            sink_config["fs-cache"]["cache"] = TableBasedCache(
-                Cache(odirectory, eviction_policy="none")
-            )
         thrd_ctx.adapter = strategy.get_source_adapter()
         thrd_ctx.strategy = strategy
         thrd_ctx.sink_config = sink_config
@@ -1523,6 +1516,20 @@ def to_bytes(data, cols):
             if d[col] is not None:
                 d[col] = single_int_to_bytes(d[col])
     return data
+
+
+def from_bytes(data, cols):
+    for d in data:
+        for col in cols:
+            if d[col] is not None:
+                d[col] = int.from_bytes(d[col], byteorder="big")
+    return data
+
+
+def from_bytes_df(df, cols):
+    for col in cols:
+        df[col] = df[col].apply(lambda x: int.from_bytes(x, byteorder="big"))
+    return df
 
 
 def enrich_transactions_with_type(enriched_txs, hash_to_type):
