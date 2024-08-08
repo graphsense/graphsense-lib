@@ -162,7 +162,6 @@ def update_transformed(
                 f"{bps:.3f} blocks per second. Approx. {((to_go / bps) / 60):.3f} "
                 "minutes remaining."
             )
-            updater.clear_cache_for_blocks(b)
 
             if shutdown_initialized():
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")

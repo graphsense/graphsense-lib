@@ -240,15 +240,20 @@ class UpdateStrategyAccount(UpdateStrategy):
                 trace_adapter = EthTraceAdapter()
                 transaction_adapter = AccountTransactionAdapter()
 
+            # preprocess
+            logs["topics"] = logs["topics"].apply(
+                lambda x: list(x) if x is not None else []
+            )  # todo very unsure about this
+            # replace np.nan with None
+            transactions.replace({pd.NA: None}, inplace=True)
+
             # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()
             block_adapter = AccountBlockAdapter()
             traces = trace_adapter.df_to_renamed_dataclasses(traces)
             traces = trace_adapter.process_fields_in_list(traces)
             transactions = transaction_adapter.df_to_dataclasses(transactions)
-            logs["topics"] = logs["topics"].apply(
-                lambda x: list(x) if x is not None else []
-            )  # todo very unsure about this
+
             logs = log_adapter.df_to_dataclasses(logs)
             blocks = block_adapter.df_to_dataclasses(blocks)
             blocks = block_adapter.process_fields_in_list(blocks)
