@@ -82,7 +82,7 @@ class KeyspaceSetupConfig(BaseModel):
 
 
 class DeltaUpdaterConfig(BaseModel):
-    fs_cache: Optional[FileSink]
+    delta_sink: Optional[FileSink]
     currency: str
     s3_credentials: Optional[Dict[str, str]]
 
@@ -266,15 +266,15 @@ class AppConfig(GoodConf):
         return self.get_environment(env).get_keyspace(currency)
 
     def get_deltaupdater_config(self, env: str, currency: str) -> DeltaUpdaterConfig:
-        fs_cache = (
+        delta_sink = (
             self.get_environment(env)
             .keyspaces[currency]
             .ingest_config.raw_keyspace_file_sinks.get("delta")
         )
-        if fs_cache is None:
-            logging.debug(f"fs-cache not configured for {currency} in {env}")
+        if delta_sink is None:
+            logging.debug(f"Delta sink not configured for {currency} in {env}")
         return DeltaUpdaterConfig(
-            fs_cache=fs_cache,
+            delta_sink=delta_sink,
             currency=currency,
             s3_credentials=self.get_s3_credentials(),
         )

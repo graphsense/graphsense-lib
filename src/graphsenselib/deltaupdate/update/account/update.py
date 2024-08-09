@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -58,7 +58,7 @@ from graphsenselib.utils.account import (
     get_id_group_with_secondary_addresstransactions,
     get_id_group_with_secondary_relations,
 )
-from graphsenselib.utils.cache import DeltaTableConnector
+from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
 from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.logging import LoggerScope
 
@@ -144,17 +144,30 @@ class UpdateStrategyAccount(UpdateStrategy):
                 truncate=False,
             )
 
-    from typing import List, Union  # todo look for word cache and replace
-
-    def get_block_data(self, cache: DeltaTableConnector, block_ids: List[int]):
-        blocks = cache.get(("block", block_ids), [])
-        txs = cache.get(("transaction", block_ids), [])
-        traces = cache.get(("trace", block_ids), [])
-        logs = cache.get(("log", block_ids), [])
+    def get_block_data(self, dt_connector: DeltaTableConnector, block_ids: List[int]):
+        time_start = time.time()
+        blocks = dt_connector.get(("block", block_ids), pd.DataFrame())
+        logger.debug(f"Got {len(blocks)} blocks in {time.time() - time_start} seconds.")
+        time_start = time.time()
+        txs = dt_connector.get(("transaction", block_ids), pd.DataFrame())
+        logger.debug(
+            f"Got {len(txs)} transactions in {time.time() - time_start} seconds."
+        )
+        time_start = time.time()
+        traces = dt_connector.get(("trace", block_ids), pd.DataFrame())
+        logger.debug(f"Got {len(traces)} traces in {time.time() - time_start} seconds.")
+        time_start = time.time()
+        logs = dt_connector.get(("log", block_ids), pd.DataFrame())
+        logger.debug(f"Got {len(logs)} logs in {time.time() - time_start} seconds.")
         return txs, traces, logs, blocks
 
-    def get_fee_data(self, cache: DeltaTableConnector, transactions: pd.DataFrame):
-        return cache.get_items_fee(transactions, [])
+    def get_fee_data(
+        self, dt_connector: DeltaTableConnector, transactions: pd.DataFrame
+    ):
+        time_start = time.time()
+        fees = dt_connector.get_items_fee(transactions, pd.DataFrame())
+        logger.debug(f"Got {len(fees)} fees in {time.time() - time_start} seconds.")
+        return fees
 
     def process_batch_impl_hook(self, batch: List[int]) -> Tuple[Action, Optional[int]]:
         rates = {}
@@ -183,7 +196,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
             missing_rates_in_block = False
             tableconnector = DeltaTableConnector(
-                self.du_config.fs_cache.directory, self.du_config.s3_credentials
+                self.du_config.delta_sink.directory, self.du_config.s3_credentials
             )
 
             transactions, traces, logs, blocks = self.get_block_data(
@@ -195,8 +208,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             if block_ids_got != block_ids_expected:
                 missing_blocks = block_ids_expected - block_ids_got
                 log.error(
-                    f"Blocks {missing_blocks} are not present in cache. "
-                    f"Please ingest more blocks with option --sinks fs-cache"
+                    f"Blocks {missing_blocks} are not present in the delta lake."
+                    f"Please ingest more blocks into the delta lake before running the"
+                    f"Delta updater."
                 )
                 return Action.DATA_TO_PROCESS_NOT_FOUND, None
 
@@ -246,6 +260,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             )  # todo very unsure about this
             # replace np.nan with None
             transactions.replace({pd.NA: None}, inplace=True)
+            traces.replace({pd.NA: None}, inplace=True)
 
             # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()

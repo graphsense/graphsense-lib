@@ -6,6 +6,9 @@ import pandas as pd
 
 # todo might be good to move this to utils
 from graphsenselib.ingest.account import from_bytes_df
+from graphsenselib.schema.resources.parquet.account import (
+    BINARY_COL_CONVERSION_MAP_ACCOUNT,
+)
 from graphsenselib.schema.resources.parquet.account_trx import (
     BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
 )
@@ -27,6 +30,8 @@ class BinaryInterpreter:
             self.binary_col_conversion_map = (
                 BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX  # todo adapt to eth too
             )
+        elif self.network == "eth":
+            self.binary_col_conversion_map = BINARY_COL_CONVERSION_MAP_ACCOUNT
         else:
             raise NotImplementedError(f"Network {self.network} not supported")
 
@@ -100,7 +105,7 @@ class DeltaTableConnector:
 
         return res
 
-    def get_items_fee(self, transactions: pd.DataFrame, default=pd.DataFrame()) -> Any:
+    def get_items_fee(self, transactions: pd.DataFrame, default=None) -> Any:
         # have to do this since our fees table doesnt save the block_id
 
         partitions = transactions["partition"].unique()
@@ -143,7 +148,10 @@ class DeltaTableConnector:
 
         con.execute(query)
         data = con.fetchdf()
-        return self.interpreter.interpret(data, "fee")
+        if not data.empty:
+            return self.interpreter.interpret(data, "fee")
+        else:
+            return default
 
     def get_items(self, table: str, block_ids: List[int]) -> Any:
         table_path = self.get_table_path(table)

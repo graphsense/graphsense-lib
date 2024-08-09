@@ -73,8 +73,9 @@ def find_import_range(
     end_block = (
         db.raw.find_highest_block_with_exchange_rates()
         if not forward_fill_rates
-        else hb_raw if end_block_overwrite is None else end_block_overwrite
+        else hb_raw
     )
+    end_block = end_block if end_block_overwrite is None else end_block_overwrite
     logger.info(f"Last delta-transform: {(start_block -1):10}")
     logger.info(f"Last raw block:       {hb_raw:10}")
     logger.info(f"Last raw block:       {end_block:10} (with exchanges rates).")
@@ -265,6 +266,7 @@ def update(
                 elif end_block == start_block or start_block - 1 == end_block:
                     logger.info("Nothing to do. Data is up to date.")
                 else:
+                    print(end_block, start_block)
                     raise Exception(
                         "Transformed space is ahead of raw keyspace. "
                         "This should not happen. Call 911."
