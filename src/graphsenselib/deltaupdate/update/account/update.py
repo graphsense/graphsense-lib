@@ -164,8 +164,10 @@ class UpdateStrategyAccount(UpdateStrategy):
     def get_fee_data(
         self, dt_connector: DeltaTableConnector, transactions: pd.DataFrame
     ):
+        partitions = transactions["partition"].unique()
+        tx_hashes = list(transactions["tx_hash"].values)
         time_start = time.time()
-        fees = dt_connector.get_items_fee(transactions, pd.DataFrame())
+        fees = dt_connector.get_items_fee(partitions, tx_hashes, pd.DataFrame())
         logger.debug(f"Got {len(fees)} fees in {time.time() - time_start} seconds.")
         return fees
 
@@ -202,7 +204,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             transactions, traces, logs, blocks = self.get_block_data(
                 tableconnector, batch
             )
-
+            print("got that data")
             block_ids_got = set(blocks["block_id"].unique())
             block_ids_expected = set(batch)
             if block_ids_got != block_ids_expected:
