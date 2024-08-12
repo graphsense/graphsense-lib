@@ -90,7 +90,8 @@ class TransformerTRX(Transformer):
         txs = enrich_transactions_with_type(txs, hash_to_type)
         # todo this can be a problem if the there are multiple partitions
         partition = blocks[0]["block_id"] // self.partition_batch_size
-        prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN, partition)
+        prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN, partition, keep_block_ids=True)
+
         prepare_transactions_inplace = prepare_transactions_inplace_trx
         prepare_traces_inplace = prepare_traces_inplace_trx
 

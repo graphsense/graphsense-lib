@@ -1,4 +1,3 @@
-import asyncio
 import concurrent
 import logging
 import time
@@ -112,8 +111,9 @@ def decode_fees(block_number: int, block: TransactionInfoList) -> List:
 
     return [
         {
+            "block_id": block_number,
             "fee": tx.fee,
-            "tx_hash": tx.id.hex(),
+            "tx_hash": "0x" + tx.id.hex(),
             "energy_usage": tx.receipt.energy_usage,
             "energy_fee": tx.receipt.energy_fee,
             "origin_energy_usage": tx.receipt.origin_energy_usage,
@@ -158,85 +158,6 @@ class TronExportTracesJob:
             fees.extend(fees_per_block)
 
         return traces, fees
-
-    async def fetch_and_process_block_old(
-        self, i, wallet_stub, retries=5, timeout=3 * 60
-    ):
-        # attempt = 0
-
-        # while attempt < retries:
-        #     try:
-        block = await wallet_stub.GetTransactionInfoByBlockNum(
-            NumberMessage(num=i), timeout=timeout
-        )
-        traces_per_block = decode_block_to_traces(i, block)
-        fees_per_block = decode_fees(i, block)
-        return traces_per_block, fees_per_block
-
-        #     except (grpc.RpcError, asyncio.TimeoutError) as e:
-        #         logger.error(f"Error fetching block {i}, attempt {attempt + 1}: {e}")
-        #         logger.error(e)
-        #         logger.error("Retrying...")
-        #         attempt += 1
-        #         await asyncio.sleep(1)  # Backoff before retry
-
-        # raise Exception(f"Failed to fetch block {i} after {retries} attempts")
-
-    def run_parallel_old(self):
-        async def run_async():
-            async with grpc.aio.insecure_channel(self.grpc_endpoint) as channel:
-                logger.debug("Connected to gRPC endpoint")
-                wallet_stub = WalletStub(channel)
-                semaphore = asyncio.Semaphore(30)
-
-                async def sem_fetch_and_process_block(i):
-                    async with semaphore:
-                        ret = await self.fetch_and_process_block_old(i, wallet_stub)
-                        if i % 1000 == 0:
-                            logger.debug(f"Loaded Block {i}")
-                    return ret
-
-                tasks = [
-                    sem_fetch_and_process_block(i)
-                    for i in range(self.start_block, self.end_block + 1)
-                ]
-                results = await asyncio.gather(*tasks)
-                traces = []
-                fees = []
-
-                logger.debug(f"Got traces for {self.start_block} - {self.end_block}.")
-
-                # Unpacking results
-                for traces_per_block, fees_per_block in results:
-                    traces.extend(traces_per_block)
-                    fees.extend(fees_per_block)
-
-                return traces, fees
-
-        loop = asyncio.get_event_loop()
-
-        attempt = 0
-        retries = 5
-        timeout = 15 * 60
-
-        while attempt < retries:
-            try:
-                return loop.run_until_complete(
-                    asyncio.wait_for(run_async(), timeout=timeout)
-                )
-            except asyncio.TimeoutError as e:
-                logger.error(
-                    f"Error fetching block range in {timeout}s "
-                    f"{self.start_block} {self.end_block}, attempt {attempt + 1}: {e}"
-                )
-                logger.error(e)
-                logger.error("Retrying...")
-                attempt += 1
-
-        raise Exception(
-            "Failed to fetch block range "
-            f" {self.start_block} {self.end_block} after {retries} attempts"
-        )
 
     def fetch_and_process_block(self, i, wallet_stub, retries=5, timeout=3 * 60):
         attempt = 0
