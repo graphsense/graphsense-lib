@@ -5,6 +5,7 @@ import duckdb
 import pandas as pd
 
 from graphsenselib.ingest.account import from_bytes_df
+from graphsenselib.ingest.dump import PARTITIONSIZES
 from graphsenselib.schema.resources.parquet.account import (
     BINARY_COL_CONVERSION_MAP_ACCOUNT,
 )
@@ -23,7 +24,6 @@ class BinaryInterpreter:
 
     def __init__(self, network: str):
         self.network = network
-        print(self.network, "AAAAAAAAAAAAAAAaa")
         if self.network == "trx":
             self.binary_col_conversion_map = BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX
         elif self.network == "eth":
@@ -172,6 +172,9 @@ class DeltaTableConnector:
         list_str = self.iterable_to_str(block_ids)
         table_files = self.get_table_files(table_path, self.get_storage_options())
         auth_query = self.get_auth_query()
+        partitionsize = PARTITIONSIZES[self.network]
+        partitions = [block_id // partitionsize for block_id in block_ids]
+        partition_str = self.iterable_to_str(partitions)
 
         # todo use scan_delta as soon as we get it to run
         # get all active delta_table_files
@@ -181,7 +184,8 @@ class DeltaTableConnector:
         content_query = f"""
         SELECT *
         from     parquet_scan({table_files},HIVE_PARTITIONING=1)
-        WHERE block_id IN {list_str};
+        WHERE partition IN {partition_str}
+        AND block_id IN {list_str};
         """
 
         query = auth_query + content_query

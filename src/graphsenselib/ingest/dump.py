@@ -32,6 +32,15 @@ FILESIZES = {
     "bch": 1000,
 }
 
+PARTITIONSIZES = {
+    "zec": 100000,
+    "trx": 100000,
+    "ltc": 10000,
+    "eth": 10000,
+    "btc": 10000,
+    "bch": 10000,
+}
+
 
 def export_delta(
     currency: str,
@@ -49,7 +58,7 @@ def export_delta(
         raise ValueError(f"{currency} not supported by ingest module")
 
     file_batch_size = FILESIZES[currency]
-    partition_batch_size = 10 * file_batch_size
+    partition_batch_size = PARTITIONSIZES[currency]
 
     if (write_mode == "overwrite") and not ignore_overwrite_safechecks:
         is_start_of_partition = start_block % partition_batch_size == 0

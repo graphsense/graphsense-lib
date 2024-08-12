@@ -542,7 +542,7 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
     data = dtc.make_displayable(data)
     logger.debug(
         f"Queried deltalake table {table} in {parquet_directory} in"
-        f"{time.time()-time_start} seconds"
+        f" {time.time()-time_start} seconds"
     )
 
     print(data)
