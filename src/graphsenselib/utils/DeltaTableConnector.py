@@ -1,4 +1,4 @@
-from typing import Any, Iterable, List, Tuple
+from typing import Iterable, List, Tuple
 
 import deltalake
 import duckdb
@@ -121,7 +121,17 @@ class DeltaTableConnector:
 
         return data
 
-    def get_items_fee(self, partitions: list, tx_hashes: list, default=None) -> Any:
+    def get_items_fee_from_block_id(
+        self, block_ids: List[int], default=None
+    ) -> pd.DataFrame:
+        transactions = self.get_items("transaction", block_ids)
+        tx_hashes = transactions["tx_hash"].tolist()
+        partitions = transactions["partition"].tolist()
+        return self.get_items_fee(partitions, tx_hashes, default)
+
+    def get_items_fee(
+        self, partitions: list, tx_hashes: list, default=None
+    ) -> pd.DataFrame:
         """
         have to do this since our fees table doesnt save the block_id
         """

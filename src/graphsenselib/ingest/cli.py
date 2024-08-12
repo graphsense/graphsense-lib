@@ -538,7 +538,11 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
 
     dtc = DeltaTableConnector(parquet_directory, s3_credentials)
     time_start = time.time()
-    data = dtc.get_items(table, block_ids)
+    if currency == "trx" and table == "fee":
+        data = dtc.get_items_fee_from_block_id(block_ids)
+    else:
+        data = dtc.get_items(table, block_ids)
+
     data = dtc.make_displayable(data)
     logger.debug(
         f"Queried deltalake table {table} in {parquet_directory} in"
