@@ -4,7 +4,6 @@ import deltalake
 import duckdb
 import pandas as pd
 
-# todo might be good to move this to utils
 from graphsenselib.ingest.account import from_bytes_df
 from graphsenselib.schema.resources.parquet.account import (
     BINARY_COL_CONVERSION_MAP_ACCOUNT,
@@ -19,24 +18,26 @@ DEFAULT_KEY_ENCODERS = {
     str: lambda x: x,
 }
 
-# todo search repo for fs-cache and delete everything related
-
 
 class BinaryInterpreter:
 
     def __init__(self, network: str):
         self.network = network
+        print(self.network, "AAAAAAAAAAAAAAAaa")
         if self.network == "trx":
-            self.binary_col_conversion_map = (
-                BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX  # todo adapt to eth too
-            )
+            self.binary_col_conversion_map = BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX
         elif self.network == "eth":
             self.binary_col_conversion_map = BINARY_COL_CONVERSION_MAP_ACCOUNT
+        elif self.network == "btc":
+            self.binary_col_conversion_map = {}
         else:
             raise NotImplementedError(f"Network {self.network} not supported")
 
-    def interpret(self, df, tablename) -> Any:
-        return from_bytes_df(df, self.binary_col_conversion_map[tablename])
+    def interpret(self, df, tablename) -> pd.DataFrame:
+        conversion_map_table = self.binary_col_conversion_map.get(tablename)
+        if not conversion_map_table:
+            return df
+        return from_bytes_df(df, conversion_map_table)
 
 
 class DeltaTableConnector:
@@ -51,6 +52,7 @@ class DeltaTableConnector:
         return f"{self.base_directory}/{table}"
 
     def get_table_files(self, table_path: str, storage_options: dict) -> List[str]:
+        # takes about 1s locally accessing MINIO on cluster
         delta_table = deltalake.DeltaTable(table_path, storage_options=storage_options)
         files = delta_table.files()
         files = [f"{table_path}/{file}" for file in files]
@@ -105,14 +107,26 @@ class DeltaTableConnector:
 
         return res
 
-    def get_items_fee(self, transactions: pd.DataFrame, default=None) -> Any:
-        # have to do this since our fees table doesnt save the block_id
+    def make_displayable(self, data: pd.DataFrame):
+        # iterate through all fields and convert bytes to hex
 
-        partitions = transactions["partition"].unique()
-        # tx_hash_prefixes = transactions["tx_hash_prefix"].unique()
-        tx_hashes = transactions["tx_hash"].values
+        def converter(x):
+            if isinstance(x, bytearray):
+                return x.hex()
+            else:
+                return x
 
-        def transform_to_blob_data(bytearr):
+        for col in data.columns:
+            data[col] = data[col].apply(converter)
+
+        return data
+
+    def get_items_fee(self, partitions: list, tx_hashes: list, default=None) -> Any:
+        """
+        have to do this since our fees table doesnt save the block_id
+        """
+
+        def transform_to_blob_data(bytearr: bytearray):
             byte_string = bytes(bytearr)
             escaped_string = "".join(f"\\x{byte:02x}" for byte in byte_string)
             blob_data = f"'{escaped_string}'::BLOB"
@@ -153,7 +167,7 @@ class DeltaTableConnector:
         else:
             return default
 
-    def get_items(self, table: str, block_ids: List[int]) -> Any:
+    def get_items(self, table: str, block_ids: List[int]) -> pd.DataFrame:
         table_path = self.get_table_path(table)
         list_str = self.iterable_to_str(block_ids)
         table_files = self.get_table_files(table_path, self.get_storage_options())
@@ -176,7 +190,6 @@ class DeltaTableConnector:
             con = duckdb.connect()
             con.execute(query)
             data = con.fetchdf()
-
             if not data.empty:
                 return self.interpreter.interpret(data, table)
             else:

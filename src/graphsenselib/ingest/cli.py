@@ -1,11 +1,14 @@
 import contextlib
 import logging
 import sys
+import time
 from typing import Dict
 
 import click
 from filelock import FileLock
 from filelock import Timeout as LockFileTimeout
+
+from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
 
 from ..cli.common import require_currency, require_environment
 from ..config import config
@@ -475,3 +478,74 @@ def optimize_deltalake(env, currency, mode="both", table=None):
     else:
         optimize_table(parquet_directory, table, s3_credentials, mode=mode)
         logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
+
+
+# show data from the delta lake
+
+
+# optimize deltalake
+@ingesting.command("query-deltalake")
+@require_environment()
+@require_currency(required=True)
+@click.option(
+    "--table",
+    type=str,
+    help="Specific table to optimize (default: all tables). Only the fee and trc10 "
+    "tables of trx cant be queried since they do not have a block_id",
+    required=False,
+)
+@click.option(
+    "--start-block",
+    type=int,
+    required=False,
+    help="start block (default: 0)",
+)
+@click.option(
+    "--end-block",
+    type=int,
+    required=False,
+    help="end block (default: last available block)",
+)
+@click.option(
+    "--outfile",
+    type=str,
+    help="Specify where to save the file, if not specified, it will be printed",
+)
+def query_deltalake(env, currency, table, start_block, end_block, outfile):
+    """Query the deltalake tables
+    \f
+    Args:
+        env (str): Environment to work on
+        currency (str): currency to work on
+    """
+    ks_config = config.get_keyspace_config(env, currency)
+    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
+        "delta", None
+    )
+
+    if parquet_directory_config is None:
+        logger.error(
+            "Please provide an output directory in your "
+            "config (raw_keyspace_file_sinks.delta.directory)"
+        )
+        sys.exit(11)
+
+    logger.info(f"Querying deltalake tables in {parquet_directory_config.directory}")
+    parquet_directory = parquet_directory_config.directory
+    s3_credentials = config.get_s3_credentials()
+
+    block_ids = list(range(start_block, end_block + 1))
+
+    dtc = DeltaTableConnector(parquet_directory, s3_credentials)
+    time_start = time.time()
+    data = dtc.get_items(table, block_ids)
+    data = dtc.make_displayable(data)
+    logger.debug(
+        f"Queried deltalake table {table} in {parquet_directory} in"
+        f"{time.time()-time_start} seconds"
+    )
+
+    print(data)
+
+    if outfile:
+        data.to_csv(outfile, index=False)
