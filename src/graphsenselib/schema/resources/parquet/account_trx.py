@@ -102,6 +102,7 @@ ACCOUNT_TRX_SCHEMA_RAW.update(
         "fee": pa.schema(
             [
                 ("partition", pa.int32()),
+                ("block_id", pa.int32()),
                 ("tx_hash_prefix", pa.string()),
                 ("tx_hash", pa.binary(32)),
                 ("fee", pa.int64()),

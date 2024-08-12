@@ -627,7 +627,7 @@ def prepare_traces_inplace_trx(
 
 
 def prepare_fees_inplace(
-    fees: Iterable, tx_hash_prefix_len: int, partition=None
+    fees: Iterable, tx_hash_prefix_len: int, partition=None, keep_block_ids=False
 ) -> None:
     blob_colums = ["tx_hash"]
     for item in fees:
@@ -639,6 +639,10 @@ def prepare_fees_inplace(
 
         for elem in blob_colums:
             item[elem] = evm_to_bytes(item[elem])
+
+    if not keep_block_ids:
+        for item in fees:
+            item.pop("block_id")
 
 
 def prepare_trc10_tokens_inplace(items: Iterable):
