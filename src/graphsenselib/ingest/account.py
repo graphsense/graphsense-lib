@@ -34,6 +34,7 @@ from ..utils import (
     hex_to_bytes,
     parse_timestamp,
     remove_prefix,
+    strip_0x,
 )
 from ..utils.account import get_id_group
 from ..utils.logging import configure_logging, suppress_log_level
@@ -627,12 +628,17 @@ def prepare_traces_inplace_trx(
 
 
 def prepare_fees_inplace(
-    fees: Iterable, tx_hash_prefix_len: int, partition=None, keep_block_ids=False
+    fees: Iterable,
+    tx_hash_prefix_len: int,
+    partition=None,
+    keep_block_ids=False,
+    drop_tx_hash_prefix=False,
 ) -> None:
     blob_colums = ["tx_hash"]
     for item in fees:
-        hash_slice = slice(2, 2 + tx_hash_prefix_len)
-        item["tx_hash_prefix"] = item["tx_hash"][hash_slice]
+        if not drop_tx_hash_prefix:
+            prefix = strip_0x(item["tx_hash"])[:tx_hash_prefix_len]
+            item["tx_hash_prefix"] = prefix
 
         if partition is not None:
             item["partition"] = partition

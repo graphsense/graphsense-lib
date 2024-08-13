@@ -538,10 +538,8 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
 
     dtc = DeltaTableConnector(parquet_directory, s3_credentials)
     time_start = time.time()
-    if currency == "trx" and table == "fee":
-        data = dtc.get_items_fee_from_block_id(block_ids)
-    else:
-        data = dtc.get_items(table, block_ids)
+
+    data = dtc.get_items(table, block_ids)
 
     data = dtc.make_displayable(data)
     logger.debug(
@@ -593,7 +591,6 @@ def fix_fees(env):
     # do that partition-wise in append mode
 
     import duckdb
-    import pyarrow as pa
     from deltalake import write_deltalake
 
     from graphsenselib.schema.resources.parquet.account_trx import (
@@ -610,13 +607,11 @@ def fix_fees(env):
 
     con = duckdb.connect()
     con.execute(auth_query)
-
-    # create delta table
+    join_key = "tx_hash"
 
     for partition in partitions:
         logger.info(f"Processing partition {partition}")
         time_start = time.time()
-        join_key = "tx_hash"
         partition_filters = [("partition", "=", str(partition))]
 
         left_table_path = dtc.get_table_path(left_table)
@@ -641,20 +636,21 @@ def fix_fees(env):
         """
         df = con.query(query).df()
 
-        fee = ACCOUNT_TRX_SCHEMA_RAW["fee"]
+        logger.info(
+            f"Process partition {partition} in {time.time()-time_start} seconds"
+        )
+        time_start = time.time()
 
-        table = pa.Table.from_pylist(mapping=df.to_dict(orient="records"), schema=fee)
+        fee_schema = ACCOUNT_TRX_SCHEMA_RAW[left_table]
 
         write_deltalake(
             target_table_path,
-            table,
+            df,
+            schema=fee_schema,
             partition_by=partition_by,
             mode="overwrite",
-            schema_mode="overwrite",
             partition_filters=partition_filters,
             storage_options=storage_options,
         )
-        logger.info(
-            f"Processed partition {partition} in {time.time()-time_start} seconds"
-        )
+        logger.info(f"Write partition {partition} in {time.time()-time_start} seconds")
     con.close()
