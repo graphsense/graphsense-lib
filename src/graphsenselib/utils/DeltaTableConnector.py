@@ -51,12 +51,23 @@ class DeltaTableConnector:
     def get_table_path(self, table: str) -> str:
         return f"{self.base_directory}/{table}"
 
-    def get_table_files(self, table_path: str, storage_options: dict) -> List[str]:
+    def get_table_files(self, table_path: str) -> List[str]:
         # takes about 1s locally accessing MINIO on cluster
+        storage_options = self.get_storage_options()
         delta_table = deltalake.DeltaTable(table_path, storage_options=storage_options)
         files = delta_table.files()
         files = [f"{table_path}/{file}" for file in files]
         return files
+
+    def list_partitions(self, table: str) -> List[int]:
+        table_path = self.get_table_path(table)
+        storage_options = self.get_storage_options()
+        delta_table = deltalake.DeltaTable(table_path, storage_options=storage_options)
+        partitions = delta_table._table.get_active_partitions()
+        partitions = list([int(list(p)[0][1]) for p in partitions])
+        partitions.sort()
+
+        return partitions
 
     def get_auth_query(self):
         if self.s3_credentials:
@@ -146,7 +157,7 @@ class DeltaTableConnector:
         tx_hashes_str = self.iterable_to_str(tx_hashes_blobstr, True)
 
         table_path = self.get_table_path("fee")
-        table_files = self.get_table_files(table_path, self.get_storage_options())
+        table_files = self.get_table_files(table_path)
         auth_query = self.get_auth_query()
 
         partitions_str = self.iterable_to_str(partitions)
@@ -180,7 +191,7 @@ class DeltaTableConnector:
     def get_items(self, table: str, block_ids: List[int]) -> pd.DataFrame:
         table_path = self.get_table_path(table)
         list_str = self.iterable_to_str(block_ids)
-        table_files = self.get_table_files(table_path, self.get_storage_options())
+        table_files = self.get_table_files(table_path)
         auth_query = self.get_auth_query()
         partitionsize = PARTITIONSIZES[self.network]
         partitions = [block_id // partitionsize for block_id in block_ids]
