@@ -71,12 +71,12 @@ class RawDbAccount(RawDb):
 
     def get_tx(self, tx_hash: str) -> object:
         tx_prefix_length = self.get_tx_prefix_length()
-        prfix = strip_0x(tx_hash)[:tx_prefix_length]
+        prefix = strip_0x(tx_hash)[:tx_prefix_length]
 
         result = self.select_one_safe(
             "transaction",
             where={
-                "tx_hash_prefix": f"{prfix}",
+                "tx_hash_prefix": f"{prefix}",
                 "tx_hash": hex_to_bytes(tx_hash),
             },
         )
