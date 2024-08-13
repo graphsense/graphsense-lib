@@ -553,3 +553,108 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
 
     if outfile:
         data.to_csv(outfile, index=False)
+
+
+# optimize deltalake
+@ingesting.command("fix-fees")
+@require_environment()
+def fix_fees(env):
+    """Query the deltalake tables
+    \f
+    Args:
+        env (str): Environment to work on
+        currency (str): currency to work on
+    """
+    currency = "trx"
+    right_table = "transaction"
+    left_table = "fee"
+    target_table = "fee_new"
+
+    ks_config = config.get_keyspace_config(env, currency)
+    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
+        "delta", None
+    )
+
+    if parquet_directory_config is None:
+        logger.error(
+            "Please provide an output directory in your "
+            "config (raw_keyspace_file_sinks.delta.directory)"
+        )
+        sys.exit(11)
+
+    logger.info(f"Querying deltalake tables in {parquet_directory_config.directory}")
+    parquet_directory = parquet_directory_config.directory
+    s3_credentials = config.get_s3_credentials()
+
+    # We want to create a new table for the fees. This new table should contain the
+    # everything from the old table. Except for two columns.
+    # 1. a new column block_id should be taken from transactions joined on the tx_hash
+    # 2. calculate tx_hash_prefix (str) again from the tx_hash (blob)
+    # do that partition-wise in append mode
+
+    import duckdb
+    import pyarrow as pa
+    from deltalake import write_deltalake
+
+    from graphsenselib.schema.resources.parquet.account_trx import (
+        ACCOUNT_TRX_SCHEMA_RAW,
+    )
+
+    dtc = DeltaTableConnector(parquet_directory, s3_credentials)
+    auth_query = dtc.get_auth_query()
+    partitions = dtc.list_partitions(left_table)
+
+    target_table_path = dtc.get_table_path(target_table)
+    partition_by = ["partition"]
+    storage_options = dtc.get_storage_options()
+
+    con = duckdb.connect()
+    con.execute(auth_query)
+
+    # create delta table
+
+    for partition in partitions:
+        logger.info(f"Processing partition {partition}")
+        time_start = time.time()
+        join_key = "tx_hash"
+        partition_filters = [("partition", "=", str(partition))]
+
+        left_table_path = dtc.get_table_path(left_table)
+        right_table_path = dtc.get_table_path(right_table)
+        left_table_parquet_files = dtc.get_table_files(left_table_path)
+        right_table_parquet_files = dtc.get_table_files(right_table_path)
+
+        query = f"""
+        WITH left_data AS (
+        SELECT * EXCLUDE (tx_hash_prefix)
+        FROM parquet_scan({left_table_parquet_files})
+        WHERE partition = {partition}
+        ),
+        right_data AS (
+        SELECT tx_hash, block_id, tx_hash_prefix
+        FROM parquet_scan({right_table_parquet_files})
+        WHERE partition = {partition}
+        )
+        SELECT * FROM left_data
+        LEFT JOIN right_data
+        ON left_data.{join_key} = right_data.{join_key}
+        """
+        df = con.query(query).df()
+
+        fee = ACCOUNT_TRX_SCHEMA_RAW["fee"]
+
+        table = pa.Table.from_pylist(mapping=df.to_dict(orient="records"), schema=fee)
+
+        write_deltalake(
+            target_table_path,
+            table,
+            partition_by=partition_by,
+            mode="overwrite",
+            schema_mode="overwrite",
+            partition_filters=partition_filters,
+            storage_options=storage_options,
+        )
+        logger.info(
+            f"Processed partition {partition} in {time.time()-time_start} seconds"
+        )
+    con.close()
