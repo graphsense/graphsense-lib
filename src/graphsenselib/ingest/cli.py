@@ -591,6 +591,7 @@ def fix_fees(env):
     # do that partition-wise in append mode
 
     import duckdb
+    import pyarrow as pa
     from deltalake import write_deltalake
 
     from graphsenselib.schema.resources.parquet.account_trx import (
@@ -634,7 +635,6 @@ def fix_fees(env):
         LEFT JOIN right_data
         ON left_data.{join_key} = right_data.{join_key}
         """
-        df = con.query(query).df()
 
         logger.info(
             f"Process partition {partition} in {time.time()-time_start} seconds"
@@ -643,12 +643,15 @@ def fix_fees(env):
 
         fee_schema = ACCOUNT_TRX_SCHEMA_RAW[left_table]
 
+        table = pa.table(con.query(query).df(), schema=fee_schema)
+
         write_deltalake(
             target_table_path,
-            df,
+            table,
             schema=fee_schema,
             partition_by=partition_by,
             mode="overwrite",
+            schema_mode="overwrite",
             partition_filters=partition_filters,
             storage_options=storage_options,
         )
