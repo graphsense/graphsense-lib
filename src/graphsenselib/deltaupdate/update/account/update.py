@@ -161,14 +161,10 @@ class UpdateStrategyAccount(UpdateStrategy):
         logger.debug(f"Got {len(logs)} logs in {time.time() - time_start} seconds.")
         return txs, traces, logs, blocks
 
-    def get_fee_data(
-        self, dt_connector: DeltaTableConnector, transactions: pd.DataFrame
-    ):
-        partitions = transactions["partition"].unique()
-        tx_hashes = list(transactions["tx_hash"].values)
+    def get_fee_data(self, dt_connector: DeltaTableConnector, block_ids: List[int]):
         time_start = time.time()
-        fees = dt_connector.get_items_fee(partitions, tx_hashes, pd.DataFrame())
-        logger.debug(f"Got {len(fees)} fees in {time.time() - time_start} seconds.")
+        fees = dt_connector.get(("fee", block_ids), pd.DataFrame())
+        logger.debug(f"Got {len(fees)} traces in {time.time() - time_start} seconds.")
         return fees
 
     def process_batch_impl_hook(self, batch: List[int]) -> Tuple[Action, Optional[int]]:
@@ -239,7 +235,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 trace_adapter = TrxTraceAdapter()
                 transaction_adapter = TrxTransactionAdapter()
 
-                fees = self.get_fee_data(tableconnector, transactions)
+                fees = self.get_fee_data(tableconnector, batch)
                 # merge fees into transactions
                 # cast tx_hash of both to bytes so it can be hashed
                 transactions["tx_hash"] = transactions["tx_hash"].apply(

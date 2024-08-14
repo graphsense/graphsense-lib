@@ -132,54 +132,6 @@ class DeltaTableConnector:
 
         return data
 
-    def get_items_fee(
-        self, partitions: list, tx_hashes: list, default=None
-    ) -> pd.DataFrame:
-        """
-        have to do this since our fees table doesnt save the block_id
-        """
-
-        def transform_to_blob_data(bytearr: bytearray):
-            byte_string = bytes(bytearr)
-            escaped_string = "".join(f"\\x{byte:02x}" for byte in byte_string)
-            blob_data = f"'{escaped_string}'::BLOB"
-            return blob_data
-
-        tx_hashes_blobstr = [transform_to_blob_data(tx_hash) for tx_hash in tx_hashes]
-        tx_hashes_str = self.iterable_to_str(tx_hashes_blobstr, True)
-
-        table_path = self.get_table_path("fee")
-        table_files = self.get_table_files(table_path)
-        auth_query = self.get_auth_query()
-
-        partitions_str = self.iterable_to_str(partitions)
-
-        # this query should take like 10s for a single block on server,
-        # according to superset. surely averages down with multiple blocks
-        content_query = f"""
-        SELECT *
-        from     parquet_scan({table_files},HIVE_PARTITIONING=1) WHERE
-        partition IN {partitions_str}
-        AND tx_hash in {tx_hashes_str}
-        """
-
-        # todo prefixes are wrong for fees
-        # bytearray to str
-        # tx_hashes2 = [tx_hash.hex() for tx_hash in tx_hashes]
-        # AND tx_hash_prefix IN {tx_hash_prefixes_str}
-        # ;
-
-        query = auth_query + content_query
-
-        con = duckdb.connect()
-
-        con.execute(query)
-        data = con.fetchdf()
-        if not data.empty:
-            return self.interpreter.interpret(data, "fee")
-        else:
-            return default
-
     def get_items(self, table: str, block_ids: List[int]) -> pd.DataFrame:
         table_path = self.get_table_path(table)
         list_str = self.iterable_to_str(block_ids)
