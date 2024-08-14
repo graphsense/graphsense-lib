@@ -241,7 +241,8 @@ class UpdateStrategyAccount(UpdateStrategy):
                 transactions["tx_hash"] = transactions["tx_hash"].apply(
                     lambda x: bytes(x)
                 )
-                fees["tx_hash"] = fees["tx_hash"].apply(lambda x: bytes(x))
+                if not fees.empty:
+                    fees["tx_hash"] = fees["tx_hash"].apply(lambda x: bytes(x))
 
                 transactions = pd.merge(
                     transactions, fees, on="tx_hash", how="left", suffixes=("", "_y")
@@ -253,13 +254,22 @@ class UpdateStrategyAccount(UpdateStrategy):
                 transaction_adapter = AccountTransactionAdapter()
 
             # preprocess
-            logs["topics"] = logs["topics"].apply(
-                lambda x: list(x) if x is not None else []
-            )  # todo very unsure about this
+            if not logs.empty:
+                logs["topics"] = logs["topics"].apply(
+                    lambda x: list(x) if x is not None else []
+                )
             # replace np.nan with None
             transactions.replace({pd.NA: None}, inplace=True)
             traces.replace({pd.NA: None}, inplace=True)
 
+            import numpy as np
+
+            # i havent found out why in some cases pd.NA doesnt work
+            blocks[["base_fee_per_gas"]] = blocks[["base_fee_per_gas"]].replace(
+                {np.nan: None}
+            )
+
+            print(blocks)
             # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()
             block_adapter = AccountBlockAdapter()
