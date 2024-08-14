@@ -2,6 +2,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from graphsenselib.config.config import DeltaUpdaterConfig
@@ -238,16 +239,23 @@ class UpdateStrategyAccount(UpdateStrategy):
                 fees = self.get_fee_data(tableconnector, batch)
                 # merge fees into transactions
                 # cast tx_hash of both to bytes so it can be hashed
-                transactions["tx_hash"] = transactions["tx_hash"].apply(
-                    lambda x: bytes(x)
-                )
-                if not fees.empty:
-                    fees["tx_hash"] = fees["tx_hash"].apply(lambda x: bytes(x))
+                assert fees.empty == transactions.empty
+                # to be 100% clean would have to add empty fee fields in the case where
+                # there are transactions but no fees
 
-                transactions = pd.merge(
-                    transactions, fees, on="tx_hash", how="left", suffixes=("", "_y")
-                )
-                # todo are there transactions without fees?
+                if not transactions.empty:
+                    transactions["tx_hash"] = transactions["tx_hash"].apply(
+                        lambda x: bytes(x)
+                    )
+                    fees["tx_hash"] = fees["tx_hash"].apply(lambda x: bytes(x))
+                    # assuming no fees -> no transactions
+                    transactions = pd.merge(
+                        transactions,
+                        fees,
+                        on="tx_hash",
+                        how="left",
+                        suffixes=("", "_y"),
+                    )
 
             elif self.currency == "eth":
                 trace_adapter = EthTraceAdapter()
@@ -261,8 +269,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             # replace np.nan with None
             transactions.replace({pd.NA: None}, inplace=True)
             traces.replace({pd.NA: None}, inplace=True)
-
-            import numpy as np
 
             # i havent found out why in some cases pd.NA doesnt work
             blocks[["base_fee_per_gas"]] = blocks[["base_fee_per_gas"]].replace(
