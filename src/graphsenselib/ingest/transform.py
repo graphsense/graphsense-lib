@@ -130,6 +130,15 @@ class TransformerTRX(Transformer):
         traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"])
         logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["log"])
 
+        txs = sorted(txs, key=lambda x: (x["block_id"], x["transaction_index"]))
+        blocks = sorted(blocks, key=lambda x: x["block_id"])
+        traces = sorted(traces, key=lambda x: (x["block_id"], x["trace_index"]))
+        logs = sorted(logs, key=lambda x: (x["block_id"], x["log_index"]))
+
+        # fees should already be ordered coming out of the function called
+        # export_hash_to_type_mappings_parallel
+        # and would need the tx_hash from the transaction table for ordering
+
         block_range_content.table_contents = {
             "block": blocks,
             "transaction": txs,
@@ -137,6 +146,7 @@ class TransformerTRX(Transformer):
             "trace": traces,
             "fee": fees,
         }
+
         return block_range_content
 
     def transform_blockindep(
@@ -174,6 +184,11 @@ class TransformerETH(Transformer):
         blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT["block"])
         traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT["trace"])
         logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT["log"])
+
+        txs = sorted(txs, key=lambda x: (x["block_id"], x["transaction_index"]))
+        blocks = sorted(blocks, key=lambda x: x["block_id"])
+        traces = sorted(traces, key=lambda x: (x["block_id"], x["trace_index"]))
+        logs = sorted(logs, key=lambda x: (x["block_id"], x["log_index"]))
 
         block_range_content.table_contents = {
             "block": blocks,

@@ -58,7 +58,7 @@ class SourceTRX(Source):
         traces, fees = self.adapter.export_traces_parallel(start_block, end_block)
         logger.debug("Reading types...")
         hash_to_type = self.adapter.export_hash_to_type_mappings_parallel(
-            txs, blocks, block_id_name="number"
+            blocks, block_id_name="number"
         )
 
         data = {
