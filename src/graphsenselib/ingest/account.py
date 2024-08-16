@@ -312,20 +312,25 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         return hash_to_type
 
     def export_hash_to_type_mappings_parallel(
-        self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
+        self, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
+
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
         channel = grpc.insecure_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
         def get_type(tx):
-            type_container = tx.raw_data.contract
+            type_container = tx.transaction.raw_data.contract
             assert len(type_container) == 1
             return type_container[0].type
 
+        def get_tx_hash(tx):
+            tx_hash = tx.txid
+            return "0x" + tx_hash.hex()
+
         def get_block(i):  # contains type
             msg = NumberMessage(num=i)
-            info = wallet_stub.GetBlockByNum(msg)
+            info = wallet_stub.GetBlockByNum2(msg)
             return info
 
         block_ids = [b[block_id_name] for b in blocks]
@@ -336,7 +341,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
 
         txs_grpc = [tx for block in blocks_data for tx in block.transactions]
         types = [get_type(tx) for tx in txs_grpc]
-        tx_hashes = [tx["hash"] for tx in transactions]
+        tx_hashes = [get_tx_hash(tx) for tx in txs_grpc]
         hash_to_type = dict(zip(tx_hashes, types))
 
         return hash_to_type
