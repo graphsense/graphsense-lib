@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v24.07.8dev4'
-RELEASESEM := 'v2.3.8dev4'
+RELEASE := 'v24.07.8dev5'
+RELEASESEM := 'v2.3.8dev5'
 
 
 all: format lint test build
