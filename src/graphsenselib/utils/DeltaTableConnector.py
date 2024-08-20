@@ -64,7 +64,7 @@ class DeltaTableConnector:
         storage_options = self.get_storage_options()
         delta_table = deltalake.DeltaTable(table_path, storage_options=storage_options)
         partitions = delta_table._table.get_active_partitions()
-        partitions = list([int(list(p)[0][1]) for p in partitions])
+        partitions = [int(list(p)[0][1]) for p in partitions]
         partitions.sort()
 
         return partitions

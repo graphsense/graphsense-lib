@@ -214,124 +214,6 @@ def ingest(
             sys.exit(911)
 
 
-@ingesting.command("to-csv")
-@require_environment()
-@require_currency(required=True)
-@click.option(
-    "--start-block",
-    type=int,
-    required=False,
-    help="start block (default: 0)",
-)
-@click.option(
-    "--end-block",
-    type=int,
-    required=False,
-    help="end block (default: last available block)",
-)
-@click.option(
-    "--continue",
-    "continue_export",
-    is_flag=True,
-    help="continue from export from position",
-)
-@click.option(
-    "--batch-size",
-    type=int,
-    default=10,
-    help="number of blocks to export (write) at a time (default: 10)",
-)
-@click.option(
-    "--file-batch-size",
-    type=int,
-    default=1000,
-    help="number of blocks to export to a CSV file (default: 1000)",
-)
-@click.option(
-    "--partition-batch-size",
-    type=int,
-    default=1_000_000,
-    help="number of blocks to export in partition (default: 1_000_000)",
-)
-@click.option(
-    "-p",
-    "--previous_day",
-    is_flag=True,
-    help="only ingest blocks up to the previous day, "
-    "since currency exchange rates might not be "
-    "available for the current day",
-)
-@click.option(
-    "--info",
-    is_flag=True,
-    help="display block information and exit",
-)
-@click.option(
-    "--timeout",
-    type=int,
-    required=False,
-    default=3600,
-    help="Web3 API timeout in seconds (default: 3600s)",
-)
-def export_csv(
-    env,
-    currency,
-    start_block,
-    end_block,
-    continue_export,
-    batch_size,
-    file_batch_size,
-    partition_batch_size,
-    previous_day,
-    info,
-    timeout,
-):
-    """Exports raw cryptocurrency data to gziped csv files.
-    \f
-    Args:
-        env (str): Environment to work on
-        currency (str): currency to work on
-    """
-
-    if currency != "eth" and currency != "trx":
-        logger.error("Csv export is only supported for eth/trx at the moment.")
-        sys.exit(11)
-
-    ks_config = config.get_keyspace_config(env, currency)
-    source_node_uri = ks_config.ingest_config.get_first_node_reference()
-    csv_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "csv", None
-    )
-
-    if csv_directory_config is None:
-        logger.error(
-            "Please provide an output directory in your "
-            "config (raw_keyspace_file_sinks.csv.directory)"
-        )
-        sys.exit(11)
-
-    csv_directory = csv_directory_config.directory
-
-    from .account import export_csv
-
-    with DbFactory().from_config(env, currency) as db:
-        export_csv(
-            db=db,
-            currency=currency,
-            provider_uri=source_node_uri,
-            directory=csv_directory,
-            user_start_block=start_block,
-            user_end_block=end_block,
-            continue_export=continue_export,
-            batch_size=batch_size,
-            file_batch_size=file_batch_size,
-            partition_batch_size=partition_batch_size,
-            info=info,
-            previous_day=previous_day,
-            provider_timeout=timeout,
-        )
-
-
 @ingesting.command("dump-rawdata")
 @require_environment()
 @require_currency(required=True)
@@ -383,7 +265,8 @@ def dump_rawdata(
     write_mode,
     ignore_overwrite_safechecks,
 ):
-    """Exports raw cryptocurrency data to gziped csv files.
+    """Exports raw cryptocurrency data to parquet files either to s3
+    or a local directory.
     \f
     Args:
         env (str): Environment to work on
