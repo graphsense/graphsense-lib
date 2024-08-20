@@ -6,7 +6,7 @@ import pydantic
 
 from ..db import AnalyticsDb
 
-INGEST_SINKS = ["parquet", "cassandra", "fs-cache"]
+INGEST_SINKS = ["parquet", "cassandra"]
 
 CASSANDRA_INGEST_DEFAULT_CONCURRENCY = 100
 
@@ -23,18 +23,6 @@ def write_to_sinks(
     for sink, config in sink_config.items():
         if sink == "cassandra":
             cassandra_ingest(db, table_name, parameters, concurrency=concurrency)
-        elif sink == "fs-cache":
-            c = config.get("cache", None)
-            kc = config.get("key_by", {"default": "block_id"})
-            key = kc.get(table_name, None) or kc["default"]
-            ignore_tables = config.get("ignore_tables", [])
-            if table_name in ignore_tables:
-                return
-
-            if c is None:
-                raise Exception("Cache not set. Error.")
-
-            c.put_items_keyed_by(table_name, parameters, key=key)
         else:
             logger.warning(f"Encountered unknown sink type {sink}, ignoring.")
 

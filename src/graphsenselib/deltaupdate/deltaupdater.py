@@ -168,15 +168,6 @@ def update_transformed(
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
                 return b[-1]
 
-    # if the last action was Action.CONTINUE, we must have processed some blocks
-    # since we can only pick up where we left off the last time and go until the
-    # highest block in the dataabse, we can assume that we are done and
-    # can clear the entire cache. This would only delete relevant data if fs-cache
-    # is ahead of the database.
-    # if action == Action.CONTINUE:
-    #     logger.info("Finished all blocks.")
-    #     updater.clear_cache()
-
     return end_block
 
 

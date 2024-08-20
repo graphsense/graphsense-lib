@@ -1121,7 +1121,7 @@ def ingest_async(
     )
 
     # make sure that only supported sinks are selected.
-    if not all((x in ["cassandra", "parquet", "fs-cache"]) for x in sink_config.keys()):
+    if not all((x in ["cassandra", "parquet"]) for x in sink_config.keys()):
         raise BadUserInputError(
             "Unsupported sink selected, supported: cassandra,"
             f" parquet; got {list(sink_config.keys())}"
