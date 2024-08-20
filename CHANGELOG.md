@@ -4,9 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [24.07.7/2.4.0] 2024-07-16
+## [24.08.0/2.4.0] 2024-08-20
 ### changed
 - removed ingest to-csv, replacement is export to delta lake, which is more efficient
+- renamed delta lake-commands ingest dump-rawdata -> ingest delta-lake ingest; ingest optimize deltalake -> ingest delta-lake optimize
+- removed fs-cache helper for trx and eth delta-update, now uses delta lake directly
+- removed typechecked dependency, removed disk-cache dependency
 
 ## [24.07.7/2.3.7] 2024-07-16
 ### fixed
