@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+
+## [24.07.7/2.4.0] 2024-07-16
+### changed
+- removed ingest to-csv, replacement is export to delta lake, which is more efficient
+
 ## [24.07.7/2.3.7] 2024-07-16
 ### fixed
 - tron delta-dump: fix missing transferto_address in some tron traces
