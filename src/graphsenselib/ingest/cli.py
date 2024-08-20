@@ -214,7 +214,7 @@ def ingest(
             sys.exit(911)
 
 
-@ingest_cli.group("delta-lake")
+@ingesting.group("delta-lake")
 def deltalake():
     """Ingesting raw cryptocurrency data from nodes into the graphsense deltalake"""
     pass

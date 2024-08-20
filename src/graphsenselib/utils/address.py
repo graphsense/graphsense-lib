@@ -12,8 +12,6 @@ from .accountmodel import hex_to_bytes, strip_0x
 from .bch import bch_address_to_legacy
 from .tron import evm_to_tron_address_string, tron_address_to_evm_string
 
-# from typeguard import typechecked
-
 
 class InvalidAddress(Exception):
     pass
@@ -267,7 +265,6 @@ converters = {
 }
 
 
-# @typechecked
 def address_to_bytes(network: str, address: str) -> bytes:
     c = converters.get(network.lower(), None)
     if c is not None:
@@ -276,7 +273,6 @@ def address_to_bytes(network: str, address: str) -> bytes:
         raise ValueError("No address converter configured for network {network}")
 
 
-# @typechecked
 def address_to_str(network: str, address: bytes) -> str:
     c = converters.get(network.lower(), None)
     if c is not None:
