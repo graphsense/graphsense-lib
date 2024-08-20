@@ -214,7 +214,13 @@ def ingest(
             sys.exit(911)
 
 
-@ingesting.command("dump-rawdata")
+@ingest_cli.group("delta-lake")
+def deltalake():
+    """Ingesting raw cryptocurrency data from nodes into the graphsense deltalake"""
+    pass
+
+
+@deltalake.command("ingest")
 @require_environment()
 @require_currency(required=True)
 @click.option(
@@ -305,7 +311,7 @@ def dump_rawdata(
 
 
 # optimize deltalake
-@ingesting.command("optimize-deltalake")
+@deltalake.command("optimize")
 @require_environment()
 @require_currency(required=True)
 @click.option(
@@ -362,7 +368,7 @@ def optimize_deltalake(env, currency, mode="both", table=None):
 
 
 # optimize deltalake
-@ingesting.command("query-deltalake")
+@deltalake.command("query")
 @require_environment()
 @require_currency(required=True)
 @click.option(
