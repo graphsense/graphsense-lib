@@ -138,7 +138,7 @@ def update_transformed(
     batch_size=10,
 ):
     updater.prepare_database()
-    action = None
+
     with graceful_ctlc_shutdown() as shutdown_initialized:
         for b in batch(range(start_block, end_block + 1), n=batch_size):
             logger.info(
@@ -157,10 +157,12 @@ def update_transformed(
             blocks_processed = (updater.last_block_processed - start_block) + 1
             to_go = end_block - max(b)
             bps = blocks_processed / updater.elapsed_seconds_global
+            bps_batch = len(b) / updater.elapsed_seconds_last_batch
+
             logger.info(
                 f"Batch of {len(b)} blocks took "
                 f"{updater.elapsed_seconds_last_batch:.3f} s that's "
-                f"{bps:.3f} blocks per second. Approx. {((to_go / bps) / 60):.3f} "
+                f"{bps_batch:.1f} blks/s. Approx. {((to_go / bps) / 60):.3f} "
                 "minutes remaining."
             )
 
