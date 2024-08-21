@@ -292,7 +292,6 @@ class Process:
     def __call__(self, source, sinks, panic_signal):
         if self.init_func:
             self.init_func(self.context, *self.init_args)
-        # print(self.name, "ready")
         try:
             while True:
                 try:
@@ -315,7 +314,6 @@ class Process:
                         ),
                     )
         finally:
-            # print(self.name, "i am out")
             if self.teardown_func:
                 self.teardown_func(self.context)
 
