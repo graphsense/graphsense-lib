@@ -401,7 +401,7 @@ class DeltaDumpWriter(Sink):
             self.write_table(table_content)
 
     def highest_block(self):
-        logger.info("Getting highest block")
+        logger.debug("Getting highest block")
         if self.s3_credentials:
             storage_options = {
                 "AWS_ALLOW_HTTP": "true",

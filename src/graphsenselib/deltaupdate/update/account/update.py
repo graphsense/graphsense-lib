@@ -201,7 +201,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             transactions, traces, logs, blocks = self.get_block_data(
                 tableconnector, batch
             )
-            print("got that data")
             block_ids_got = set(blocks["block_id"].unique())
             block_ids_expected = set(batch)
             if block_ids_got != block_ids_expected:
@@ -275,7 +274,6 @@ class UpdateStrategyAccount(UpdateStrategy):
                 {np.nan: None}
             )
 
-            print(blocks)
             # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()
             block_adapter = AccountBlockAdapter()

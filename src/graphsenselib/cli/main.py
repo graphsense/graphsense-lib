@@ -1,4 +1,5 @@
 import logging
+import sys
 
 import click
 from rich.traceback import install
@@ -82,6 +83,7 @@ def cli(ctx, verbose: int, config_file: str):
     logger.info(
         f"Running version {__version__} using config {config.underlying_file} @ md5 {h}"
     )
+    logger.info("Running with parameters: " + (" ".join(sys.argv)))
 
 
 def main():
