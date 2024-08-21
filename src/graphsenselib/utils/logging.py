@@ -23,7 +23,15 @@ def suppress_log_level(loglevel: int):
 
 
 def configure_logging(loglevel):
-    log_format = " | %(message)s"
+    log_format = "| %(subsystem)s | %(message)s"
+
+    def addSubsys(record: logging.LogRecord):
+        try:
+            subsys = record.name.split(".")
+            record.subsystem = (subsys[1:2] or ("",))[0]
+        except Exception:
+            record.subsystem = "?"
+        return record
 
     if loglevel < 10:
         # this means the value passed is
@@ -48,6 +56,9 @@ def configure_logging(loglevel):
             console=c,
             show_path=False,
         )
+
+    rh.addFilter(addSubsys)
+
     logging.basicConfig(
         format=log_format,
         level=loglevel,
