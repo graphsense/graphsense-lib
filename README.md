@@ -288,7 +288,7 @@ Some slow tests are excluded when running make test. Occasionally, one should ru
 
 to run the entire test-suite.
 
-Linting and formatting should be automatically executed on every git commit, using pre-commit.
+Linting and formatting should be automatically executed on every git commit using pre-commit.
 
 To create the documentation please run:
 ```bash
