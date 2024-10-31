@@ -20,6 +20,10 @@ DEFAULT_KEY_ENCODERS = {
 }
 
 
+class EmptyDeltaTableException(Exception):
+    pass
+
+
 class BinaryInterpreter:
 
     def __init__(self, network: str):
@@ -35,6 +39,7 @@ class BinaryInterpreter:
 
     def interpret(self, df, tablename) -> pd.DataFrame:
         conversion_map_table = self.binary_col_conversion_map.get(tablename)
+
         if not conversion_map_table:
             return df
         return from_bytes_df(df, conversion_map_table)
@@ -155,17 +160,15 @@ class DeltaTableConnector:
 
         query = auth_query + content_query
 
-        try:
-            con = duckdb.connect()
-            con.execute(query)
-            data = con.fetchdf()
-            if not data.empty:
-                return self.interpreter.interpret(data, table)
-            else:
-                raise KeyError(f"block_ids {block_ids} not found in table {table}")
-        except Exception as e:
-            raise KeyError(
-                f"Error retrieving block_ids {block_ids} from table {table}: {e}"
+        con = duckdb.connect()
+        con.execute(query)
+        data = con.fetchdf()
+
+        if not data.empty:
+            return self.interpreter.interpret(data, table)
+        else:
+            raise EmptyDeltaTableException(
+                f"block_ids {block_ids} not " f"found in table {table}"
             )
 
     def __getitem__(self, kv: Tuple[str, List[int]]):
@@ -175,5 +178,6 @@ class DeltaTableConnector:
     def get(self, kv: Tuple[str, List[int]], default=None):
         try:
             return self[kv]
-        except KeyError:
+        except EmptyDeltaTableException:
+
             return default

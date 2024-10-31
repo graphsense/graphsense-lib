@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import grpc
+import pandas as pd
 from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
 from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
 from ethereumetl.jobs.export_traces_job import (
@@ -1333,7 +1334,9 @@ def from_bytes(data, cols):
 
 def from_bytes_df(df, cols):
     for col in cols:
-        df[col] = df[col].apply(lambda x: int.from_bytes(x, byteorder="big"))
+        df[col] = df[col].apply(
+            lambda x: int.from_bytes(x, byteorder="big") if not pd.isnull(x) else x
+        )
     return df
 
 
