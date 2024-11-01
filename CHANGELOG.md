@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [24.08.3/2.4.3] 2024-11-1
+### fixed
+- handle no tx > int32 max for trx (truncate)
+
+## [24.08.2/2.4.2] 2024-10-31
+### fixed
+- allow null values in binary columns for delta tables
+
 ## [24.08.1/2.4.1] 2024-08-22
 ### fixed
 - cleanup of print and log statements

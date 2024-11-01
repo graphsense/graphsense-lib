@@ -168,3 +168,10 @@ def generate_date_range_days(da, db):
         lambda x: x <= db,
         (da + timedelta(days=delta) for delta in itertools.count(start=0, step=1)),
     )
+
+
+def truncateI32(number):
+    result = number & 0xFFFFFFFF
+    if result & (1 << 31):  # negative value
+        result -= 1 << 32
+    return result

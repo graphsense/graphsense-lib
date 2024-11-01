@@ -11,6 +11,7 @@ from graphsenselib.utils import (
     subkey_exists,
     subkey_get,
     to_int,
+    truncateI32,
 )
 from graphsenselib.utils.errorhandling import CrashRecoverer
 
@@ -148,3 +149,12 @@ def test_date_range_works():
     assert gen_dates[-1] == b
 
     assert len(gen_dates) == (b - a).days + 1
+
+
+def testTruncateI32():
+    for i in range(0, 2147483647, 1000):
+        assert truncateI32(i) == i
+
+    assert truncateI32(2147483647) == 2147483647
+
+    assert truncateI32(2147483648) == -2147483648
