@@ -13,7 +13,8 @@ from graphsenselib.deltaupdate.update.account.modelsdelta import (
 )
 from graphsenselib.deltaupdate.update.generic import DeltaValue, Tx
 from graphsenselib.utils import DataObject as MutableNamedTuple
-from graphsenselib.utils import truncateI32
+
+# from graphsenselib.utils import truncateI32
 from graphsenselib.utils.account import (
     get_id_group,
     get_id_group_with_secondary_addresstransactions,
@@ -265,6 +266,7 @@ def prepare_entities_for_ingest(
     get_address_prefix: Callable[[str], Tuple[str, str]],
 ) -> Tuple[List[DbChange], int]:
     changes = []
+    int_signed_32_max = 2147483647
     nr_new_entities = 0
     for update in delta:
         int_ident, entity = (
@@ -273,9 +275,9 @@ def prepare_entities_for_ingest(
         )
 
         group = get_id_group(int_ident, id_bucket_size)
+
         if entity is not None:
             """old Address"""
-
             assert getattr(entity, "address_id") == int_ident
 
             # recast so we can calculate without handling None all the time
@@ -287,14 +289,15 @@ def prepare_entities_for_ingest(
 
             # Nr. of addresses (no_addresses) is currently not updated for clusters
             # Since no merges happen there should not be a difference
+
             generic_data = {
-                "no_incoming_txs": truncateI32(new_value.no_incoming_txs),
-                "no_outgoing_txs": truncateI32(new_value.no_outgoing_txs),
-                "no_incoming_txs_zero_value": truncateI32(
-                    new_value.no_incoming_txs_zero_value
+                "no_incoming_txs": min(new_value.no_incoming_txs, int_signed_32_max),
+                "no_outgoing_txs": min(new_value.no_outgoing_txs, int_signed_32_max),
+                "no_incoming_txs_zero_value": min(
+                    new_value.no_incoming_txs_zero_value, int_signed_32_max
                 ),
-                "no_outgoing_txs_zero_value": truncateI32(
-                    new_value.no_outgoing_txs_zero_value
+                "no_outgoing_txs_zero_value": min(
+                    new_value.no_outgoing_txs_zero_value, int_signed_32_max
                 ),
                 "first_tx_id": new_value.first_tx_id,
                 "last_tx_id": new_value.last_tx_id,
@@ -322,13 +325,13 @@ def prepare_entities_for_ingest(
             nr_new_entities += 1
 
             data = {
-                "no_incoming_txs": truncateI32(update.no_incoming_txs),
-                "no_outgoing_txs": truncateI32(update.no_outgoing_txs),
-                "no_incoming_txs_zero_value": truncateI32(
-                    update.no_incoming_txs_zero_value
+                "no_incoming_txs": min(update.no_incoming_txs, int_signed_32_max),
+                "no_outgoing_txs": min(update.no_outgoing_txs, int_signed_32_max),
+                "no_incoming_txs_zero_value": min(
+                    update.no_incoming_txs_zero_value, int_signed_32_max
                 ),
-                "no_outgoing_txs_zero_value": truncateI32(
-                    update.no_outgoing_txs_zero_value
+                "no_outgoing_txs_zero_value": min(
+                    update.no_outgoing_txs_zero_value, int_signed_32_max
                 ),
                 "first_tx_id": update.first_tx_id,
                 "last_tx_id": update.last_tx_id,
