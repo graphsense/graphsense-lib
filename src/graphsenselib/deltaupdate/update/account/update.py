@@ -201,6 +201,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             transactions, traces, logs, blocks = self.get_block_data(
                 tableconnector, batch
             )
+
             block_ids_got = set(blocks["block_id"].unique())
             block_ids_expected = set(batch)
             if block_ids_got != block_ids_expected:

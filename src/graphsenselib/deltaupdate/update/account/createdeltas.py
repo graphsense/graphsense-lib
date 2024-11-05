@@ -238,6 +238,7 @@ def get_entitydelta_from_trace(
     no_zerovalue = int((trace.value == 0))  # and trace.call_type == "call")
     no_incoming_txs_zero_value = 0 if is_outgoing else no_zerovalue
     no_outgoing_txs_zero_value = no_zerovalue if is_outgoing else 0
+    is_contract = is_contract_trace(trace=trace, currency=currency) and not is_outgoing
 
     eda = EntityDeltaAccount(
         identifier=identifier,
@@ -251,6 +252,7 @@ def get_entitydelta_from_trace(
         no_outgoing_txs=no_outgoing_txs,
         no_incoming_txs_zero_value=no_incoming_txs_zero_value,
         no_outgoing_txs_zero_value=no_outgoing_txs_zero_value,
+        is_contract=is_contract,
     )
     return eda
 
@@ -295,8 +297,27 @@ def get_entitydelta_from_tokentransfer(
         no_outgoing_txs=no_outgoing_txs,
         no_incoming_txs_zero_value=no_incoming_txs_zero_value,
         no_outgoing_txs_zero_value=no_outgoing_txs_zero_value,
+        is_contract=False,
     )
     return eda
+
+
+def is_contract_transaction(tx: Transaction, currency: str) -> bool:
+    if currency == "ETH":
+        return False
+    elif currency == "TRX":  # could improve this with the specific type of transaction
+        return tx.to_address == tx.receipt_contract_address
+    else:
+        raise ValueError(f"Unknown currency {currency}")
+
+
+def is_contract_trace(trace: Trace, currency: str) -> bool:
+    if currency == "ETH":  # could improve this with the specific type of transaction
+        return trace.trace_type == "create"
+    elif currency == "TRX":
+        return False
+    else:
+        raise ValueError(f"Unknown currency {currency}")
 
 
 def get_entitydelta_from_transaction(
@@ -328,6 +349,7 @@ def get_entitydelta_from_transaction(
     no_outgoing_txs = int(is_outgoing)
     no_incoming_txs_zero_value = 0 if is_outgoing else int(tx.value == 0)
     no_outgoing_txs_zero_value = int(tx.value == 0) if is_outgoing else 0
+    is_contract = is_contract_transaction(tx=tx, currency=currency) and not is_outgoing
 
     eda = EntityDeltaAccount(
         identifier=identifier,
@@ -341,6 +363,7 @@ def get_entitydelta_from_transaction(
         no_outgoing_txs=no_outgoing_txs,
         no_incoming_txs_zero_value=no_incoming_txs_zero_value,
         no_outgoing_txs_zero_value=no_outgoing_txs_zero_value,
+        is_contract=is_contract,
     )
     return eda
 

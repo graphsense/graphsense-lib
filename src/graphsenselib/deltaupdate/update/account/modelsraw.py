@@ -83,6 +83,13 @@ class Transaction(BaseModel):
 
 class TronTransaction(Transaction):
     fee: Optional[int]
+    receipt_contract_address: Optional[bytes]
+
+    # ugly hack because annotations are not inherited
+    __annotations__ = {
+        **Transaction.__annotations__,
+        **{"fee": Optional[int], "receipt_contract_address": Optional[bytes]},
+    }
 
 
 class Log(BaseModel):
@@ -101,8 +108,15 @@ class Block(BaseModel):
     gas_used: int
 
 
-class AccountTraceAdapter(BlockchainAdapter):
-    datamodel = Trace
+class EthTrace(Trace):
+    trace_type: str
+
+    # ugly hack because annotations are not inherited
+    __annotations__ = {**Trace.__annotations__, **{"trace_type": str}}
+
+
+class EthTraceAdapter(BlockchainAdapter):
+    datamodel = EthTrace
 
 
 class AccountTransactionAdapter(BlockchainAdapter):
@@ -117,7 +131,9 @@ class AccountLogAdapter(BlockchainAdapter):
     datamodel = Log
 
 
-class TrxTraceAdapter(AccountTraceAdapter):
+class TrxTraceAdapter(BlockchainAdapter):
+    datamodel = Trace
+
     def __init__(self):
         self.name_remapping = {
             "caller_address": "from_address",
@@ -127,10 +143,6 @@ class TrxTraceAdapter(AccountTraceAdapter):
             "call_value": "value",
         }
         self.field_processing = {"status": lambda x: int(not x)}  # cast boolean to int
-
-
-class EthTraceAdapter(AccountTraceAdapter):
-    pass
 
 
 def zero_if_none(x):

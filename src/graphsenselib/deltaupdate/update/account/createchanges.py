@@ -311,6 +311,7 @@ def prepare_entities_for_ingest(
                 "out_degree_zero_value": entity.out_degree_zero_value,  # too broad
                 "address_id": int_ident,
                 "address_id_group": group,
+                "is_contract": new_value.is_contract,
             }
 
             chng = DbChange.update(
@@ -347,7 +348,7 @@ def prepare_entities_for_ingest(
                 # update.no_incoming_txs_zero_value, # too broad
                 "out_degree_zero_value": 0,
                 # update.no_outgoing_txs_zero_value, #  too broad
-                "is_contract": False,
+                "is_contract": update.is_contract,
             }
             data["address"] = update.identifier
             chng = DbChange.new(table="address", data=data)
