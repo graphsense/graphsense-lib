@@ -29,6 +29,7 @@ class EntityDeltaAccount(DeltaUpdate):
     no_outgoing_txs: int
     no_incoming_txs_zero_value: int
     no_outgoing_txs_zero_value: int
+    is_contract: bool
 
     @classmethod
     def from_db(Cls, db_row):
@@ -65,6 +66,7 @@ class EntityDeltaAccount(DeltaUpdate):
             no_outgoing_txs=db_row.no_outgoing_txs,
             no_incoming_txs_zero_value=db_row.no_incoming_txs_zero_value,
             no_outgoing_txs_zero_value=db_row.no_outgoing_txs_zero_value,
+            is_contract=db_row.is_contract,
         )
 
     def merge(self, other_delta):
@@ -98,6 +100,7 @@ class EntityDeltaAccount(DeltaUpdate):
             + other_delta.no_incoming_txs_zero_value,
             no_outgoing_txs_zero_value=self.no_outgoing_txs_zero_value
             + other_delta.no_outgoing_txs_zero_value,
+            is_contract=self.is_contract or other_delta.is_contract,
         )
 
 
