@@ -143,9 +143,7 @@ class TxTypeTransformer:
             Might be worth it to check that in productive system aswell.
         fine
         """
-        x["to_address"] = x[
-            "receipt_contract_address"
-        ]  # todo should to_address be none?
+
         return x
 
     def TriggerSmartContract(self, x):
