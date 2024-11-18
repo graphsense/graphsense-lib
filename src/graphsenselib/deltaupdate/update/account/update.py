@@ -26,6 +26,7 @@ from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_entity_updates_trace_token,
     get_entity_updates_tx,
     get_sorted_unique_addresses,
+    is_contract_transaction,
     only_call_traces,
     relationdelta_from_tokentransfer,
     relationdelta_from_trace,
@@ -368,7 +369,18 @@ class UpdateStrategyAccount(UpdateStrategy):
         }
 
         if currency == "TRX":
-            transactions = [tx for tx in transactions if tx.to_address is not None]
+            transactions = [
+                tx
+                for tx in transactions
+                if (tx.to_address is not None)
+                or is_contract_transaction(tx, currency=currency)
+            ]
+            # set the target address to the contract address if
+            # it is a contract creation to match ethereum
+            for tx in transactions:
+                if is_contract_transaction(tx, currency=currency):
+                    tx.to_address = tx.receipt_contract_address
+
             transactions = [tx for tx in transactions if tx.receipt_status == 1]
 
         elif currency == "ETH":

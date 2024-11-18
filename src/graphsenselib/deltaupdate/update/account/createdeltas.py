@@ -303,10 +303,12 @@ def get_entitydelta_from_tokentransfer(
 
 
 def is_contract_transaction(tx: Transaction, currency: str) -> bool:
-    if currency == "ETH":
+    if (
+        currency == "ETH"
+    ):  # transactions dont create contracts, only traces do (in data)
         return False
     elif currency == "TRX":  # could improve this with the specific type of transaction
-        return tx.to_address == tx.receipt_contract_address
+        return tx.receipt_contract_address is not None
     else:
         raise ValueError(f"Unknown currency {currency}")
 
@@ -314,7 +316,7 @@ def is_contract_transaction(tx: Transaction, currency: str) -> bool:
 def is_contract_trace(trace: Trace, currency: str) -> bool:
     if currency == "ETH":  # could improve this with the specific type of transaction
         return trace.trace_type == "create"
-    elif currency == "TRX":
+    elif currency == "TRX":  # traces dont create contracts transactions do (in data)
         return False
     else:
         raise ValueError(f"Unknown currency {currency}")
