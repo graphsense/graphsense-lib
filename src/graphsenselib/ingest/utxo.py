@@ -392,6 +392,7 @@ _address_types = {  # based on BlockSci values (type 0 .. 10)
     "witness_unknown": 10,
     "witness_v1_taproot": 11,
     "shielded": 12,
+    "anchor": 13,
 }
 
 
@@ -417,7 +418,14 @@ def addresstype_to_int(addr_type: str) -> int:
 
 
 def address_as_string(x):
-    if x["type"] in ["null", "nulldata", "nonstandard", "witness_unknown", "shielded"]:
+    if x["type"] in [
+        "null",
+        "nulldata",
+        "nonstandard",
+        "witness_unknown",
+        "shielded",
+        "anchor",
+    ]:
         return None
     return x["addresses"]
 

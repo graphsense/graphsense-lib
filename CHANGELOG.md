@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [24.08.5/2.4.5] 2024-12-11
+### fixed
+- allow anchor script type in btc-like currencies
+
 ## [24.08.4/2.4.4] 2024-11-11
 ### fixed
 - delta update failed after erigon 3 update, missing reward traces
