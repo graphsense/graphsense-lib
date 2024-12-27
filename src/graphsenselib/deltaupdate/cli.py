@@ -67,6 +67,11 @@ def delta():
         "since it does not have to wait for current exchange rates."
     ),
 )
+@click.option(
+    "--disable-safety-checks",
+    is_flag=True,
+    help="Disables safety checks for the delta update.",
+)
 def deltaupdate(
     env,
     currency,
@@ -79,6 +84,7 @@ def deltaupdate(
     pedantic,
     create_schema,
     forward_fill_rates,
+    disable_safety_checks,
 ):
     """Updates the transformend keyspace for new data in raw, if possible.
     \f
@@ -106,6 +112,7 @@ def deltaupdate(
         updater_version,
         pedantic,
         forward_fill_rates,
+        disable_safety_checks,
     )
 
 

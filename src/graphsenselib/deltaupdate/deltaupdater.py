@@ -25,7 +25,11 @@ def adjust_start_block(db, start_block) -> int:
 
 
 def find_import_range(
-    db, start_block_overwrite, end_block_overwrite, forward_fill_rates=False
+    db,
+    start_block_overwrite,
+    end_block_overwrite,
+    forward_fill_rates=False,
+    disable_safety_checks=False,
 ):
     hb_ft = db.transformed.get_highest_block_fulltransform()
     hb_raw = db.raw.get_highest_block()
@@ -44,7 +48,7 @@ def find_import_range(
                 f" This would corrupt the state of balances. "
                 f"Also make sure the transformations starts at block 0. Exiting."
             )
-        if start_block_overwrite > last_block + 1:
+        if (start_block_overwrite > last_block + 1) and not disable_safety_checks:
             raise Exception(
                 f"Start block {start_block_overwrite} is in the future."
                 f" It looks like blocks are left out in the transformation."
@@ -184,6 +188,7 @@ def update(
     updater_version: int,
     pedantic: bool,
     forward_fill_rates: bool,
+    disable_safety_checks: bool = False,
 ):
     try:
         with DbFactory().from_config(env, currency) as db:
@@ -200,7 +205,11 @@ def update(
             logger.info(f"Try acquiring lockfile {lockfile_name}")
             with FileLock(lockfile_name, timeout=1):
                 start_block, end_block, patch_mode = find_import_range(
-                    db, start_block, end_block, forward_fill_rates=forward_fill_rates
+                    db,
+                    start_block,
+                    end_block,
+                    forward_fill_rates=forward_fill_rates,
+                    disable_safety_checks=disable_safety_checks,
                 )
                 if end_block >= start_block:
                     is_first_delta_run = db.transformed.is_first_delta_update_run()

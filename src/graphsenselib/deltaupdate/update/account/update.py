@@ -383,6 +383,16 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             transactions = [tx for tx in transactions if tx.receipt_status == 1]
 
+            # todo fix in spark
+            # until then, we need to uncomment the following when testing vs spark
+            # remove transactions with transactionType=30, contract creations to
+            # remain consistent with spark (but wrong)
+            # transactions = [
+            #    x
+            #    for x in transactions
+            #    if not is_contract_transaction(x, currency=currency)
+            # ]
+
         elif currency == "ETH":
             pass
         else:
@@ -407,6 +417,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         with LoggerScope.debug(logger, "Compute unique addresses in correct order"):
             if currency == "TRX":
                 transactions_for_addresses = transactions
+
             elif currency == "ETH":
                 transactions_for_addresses = []
             else:
