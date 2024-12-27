@@ -441,6 +441,7 @@ def get_sorted_unique_addresses(
     reward_traces: List[Trace],
     token_transfers: List[TokenTransfer],
     transactions: List[Transaction],
+    blocks: List[Block],
 ) -> pd.Series:
     addresses_sorting_df_to_tokens = [
         {
@@ -510,6 +511,18 @@ def get_sorted_unique_addresses(
         for obj in transactions
     ]
 
+    address_sorting_df_miner = [
+        {
+            "address": block.miner,
+            "block_id": block.block_id,
+            "is_log": False,
+            # this is a hack to imitate spark; we assume there a max 1M tx per block
+            "index": 1_000_000_000,
+            "is_from_address": False,
+        }
+        for block in blocks
+    ]
+
     addresses_sorting_df_data = (
         addresses_sorting_df_from_traces
         + addresses_sorting_df_to_traces
@@ -517,6 +530,7 @@ def get_sorted_unique_addresses(
         + addresses_sorting_df_to_txs
         + addresses_sorting_df_from_tokens
         + addresses_sorting_df_to_tokens
+        + address_sorting_df_miner
     )
 
     addresses_sorting_df = pd.DataFrame(addresses_sorting_df_data)

@@ -338,7 +338,7 @@ def test_address_sorting():
 
     result_addresses = list(
         get_sorted_unique_addresses(
-            traces_s, reward_traces, token_transfers, transactions
+            traces_s, reward_traces, token_transfers, transactions, []
         )
     )
 

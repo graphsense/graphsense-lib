@@ -392,6 +392,7 @@ _address_types = {  # based on BlockSci values (type 0 .. 10)
     "witness_unknown": 10,
     "witness_v1_taproot": 11,
     "shielded": 12,
+    "anchor": 13,
 }
 
 
