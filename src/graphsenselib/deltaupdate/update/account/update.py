@@ -413,7 +413,11 @@ class UpdateStrategyAccount(UpdateStrategy):
                 raise ValueError(f"Unknown currency {currency}")
 
             addresses = get_sorted_unique_addresses(
-                traces_s, reward_traces, token_transfers, transactions_for_addresses
+                traces_s,
+                reward_traces,
+                token_transfers,
+                transactions_for_addresses,
+                blocks,
             )
             len_addr = len(addresses)
 
