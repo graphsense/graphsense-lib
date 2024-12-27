@@ -146,10 +146,14 @@ class DeltaTableWriter:
                 delta_write_mode = "append"
 
             if self.partition_cols:
-                partition_filters = [("partition", "=", str(partition))]
+                predicate = ""
+                for col in self.partition_cols:
+                    predicate += f" AND {col} = '{partition}'"
+
+                predicate = predicate[5:]
                 partition_by = list(self.partition_cols)
             else:
-                partition_filters = None
+                predicate = None
                 partition_by = None
 
             not_written = True
@@ -165,13 +169,16 @@ class DeltaTableWriter:
                     )
 
                 try:
+                    print(table_path)
                     dl.write_deltalake(
                         table_path,
                         table,
                         partition_by=partition_by,
                         mode=delta_write_mode,
-                        schema_mode="overwrite",
-                        partition_filters=partition_filters,
+                        # schema_mode="overwrite", # todo maybe make this dependent
+                        # on delta_write mode?
+                        engine="rust",
+                        predicate=predicate,
                         storage_options=storage_options,
                         **options,
                     )
@@ -207,7 +214,9 @@ class DeltaTableWriter:
             time_ = time.time()
 
             target = DeltaTable(table_path, storage_options=storage_options)
-            # can either use overwrite with partition_filters; or try to merge
+            # can either use overwrite with predicate; or try to merge,
+            # as of 0.19 merge is faster and doesnt read the entire partition
+            # todo viability in graphsense not yet tested
             predicate_cols = (
                 ["partition"] + self.primary_keys
                 if self.primary_keys
