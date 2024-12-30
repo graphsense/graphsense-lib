@@ -368,6 +368,4 @@ def test_utxo_schema_data_coverage():
     df_original = df_original.sort_values(by=["tx_hash"]).reset_index(drop=True)
     df_read = df_read.sort_values(by=["tx_hash"]).reset_index(drop=True)
 
-    # cast the read dtypes to the original dtypes
-    df_read = df_read.astype(df_original.dtypes)
     check_dataframe_equality(df_read, df_original)
