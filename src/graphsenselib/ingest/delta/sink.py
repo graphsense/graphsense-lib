@@ -118,8 +118,10 @@ class DeltaTableWriter:
             storage_options = {
                 "AWS_ALLOW_HTTP": "true",
                 "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
-                "AWS_EC2_METADATA_DISABLED": "true",  # right now only works as env var
+                # right now only works as env var
+                # "AWS_EC2_METADATA_DISABLED": "true",
             }
+            os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
             storage_options.update(self.s3_credentials)
         else:
             storage_options = {}
