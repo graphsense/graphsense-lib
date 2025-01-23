@@ -169,7 +169,6 @@ class DeltaTableWriter:
                     )
 
                 try:
-                    print(table_path)
                     dl.write_deltalake(
                         table_path,
                         table,
