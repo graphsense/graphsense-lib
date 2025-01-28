@@ -1,6 +1,6 @@
 from collections import namedtuple
 
-from ..config import config, schema_types
+from ..config import get_config, schema_types
 from ..datatypes import (
     AddressAccount,
     AddressUtxo,
@@ -44,6 +44,7 @@ def get_db_types_by_schema_type(schema_type) -> DbTypeStrategy:
 
 class DbFactory:
     def from_config(self, env, currency) -> AnalyticsDb:
+        config = get_config()
         e = config.get_environment(env)
         ks = e.get_keyspace(currency)
         return self.from_name(

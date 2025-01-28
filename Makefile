@@ -4,7 +4,7 @@ VENV := venv
 RELEASE := 'v25.01.0'
 RELEASESEM := 'v2.4.7'
 
-
+-include .env
 
 all: format lint test build
 
@@ -29,11 +29,11 @@ install:
 	pip install .
 
 lint:
-	flake8 tests src
+	ruff check tests src
 
 format:
-	isort --profile black src
-	black tests src
+	ruff check --select I --fix .
+	ruff format .
 
 docs:
 	tox -e docs

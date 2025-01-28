@@ -2,7 +2,7 @@ import click
 
 from ..utils import subkey_get
 from ..utils.console import console
-from .config import config as cfg
+from .config import get_config
 
 
 @click.group()
@@ -19,9 +19,10 @@ def config():
 @config.command("show")
 @click.option("--json/--text", default=False)
 def show(json):
+    cfg = get_config()
     """Prints the configuration used in the environment."""
     if json:
-        console.print_json(cfg.json())
+        console.print_json(cfg.model_dump_json())
     else:
         console.print(cfg.text())
 
@@ -36,16 +37,19 @@ def show(json):
 )
 def get(path):
     """Prints the configuration used in the environment."""
-    console.print(subkey_get(cfg.dict(), path.split(".")))
+    cfg = get_config()
+    console.print(subkey_get(cfg.model_dump(), path.split(".")))
 
 
 @config.command("path")
 def path():
     """Prints the path where the config is loaded from."""
+    cfg = get_config()
     console.print(cfg.path())
 
 
 @config.command("template")
 def default():
     """Generates a configuration template."""
+    cfg = get_config()
     console.print(cfg.generate_yaml(DEBUG=False))

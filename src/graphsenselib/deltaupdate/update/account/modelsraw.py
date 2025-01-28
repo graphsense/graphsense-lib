@@ -11,7 +11,7 @@ class BlockchainAdapter:
     dataclass_name = ""
 
     def dict_to_dataclass(self, data_dict):
-        return self.datamodel.parse_obj(data_dict)
+        return self.datamodel.model_validate(data_dict)
 
     def process_fields(self, data_object):
         # Check if the object is an instance of a dataclass

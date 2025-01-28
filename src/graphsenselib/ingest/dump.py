@@ -53,7 +53,6 @@ def export_delta(
     write_mode: str = "overwrite",
     ignore_overwrite_safechecks: bool = False,
 ):
-
     if currency not in SUPPORTED:
         raise ValueError(f"{currency} not supported by ingest module")
 

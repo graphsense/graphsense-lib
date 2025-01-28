@@ -3,7 +3,7 @@ import os
 from typing import Dict, List, Optional
 
 from goodconf import Field, GoodConf
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 
 from ..utils import first_or_default, flatten
 
@@ -62,7 +62,6 @@ class IngestConfig(BaseModel):
     node_reference: str = Field(default_factory=lambda: "")
     secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
-    # raw_keyspace_file_sink_directory: str = Field(default_factory=lambda: None)
 
     @property
     def all_node_references(self) -> List[str]:
@@ -97,25 +96,25 @@ class KeyspaceConfig(BaseModel):
         default_factory=lambda: {kst: KeyspaceSetupConfig() for kst in keyspace_types}
     )
 
-    @validator("schema_type", allow_reuse=True)
+    @field_validator("schema_type")
     def schema_type_in_range(cls, v):
-        assert (
-            v.lower() in schema_types
-        ), f'Schema must be either {", ".join(schema_types)}'
+        assert v.lower() in schema_types, (
+            f"Schema must be either {', '.join(schema_types)}"
+        )
         return v.lower()
 
-    @validator("transformed_keyspace_name", allow_reuse=True)
-    def keyspace_prefix_match(cls, v, values, **kwargs):
-        raw = values["raw_keyspace_name"]
+    @field_validator("transformed_keyspace_name")
+    def keyspace_prefix_match(cls, v, info):
+        raw = info.data["raw_keyspace_name"]
 
         if v[:3] != raw[:3]:
             raise ValueError(f"Keyspace prefix do not match {raw} and {v}")
 
         return v
 
-    @validator("schema_type", allow_reuse=True)
-    def keyspace_prefix_matches_schema(cls, v, values, **kwargs):
-        raw = values["raw_keyspace_name"]
+    @field_validator("schema_type")
+    def keyspace_prefix_matches_schema(cls, v, info):
+        raw = info.data["raw_keyspace_name"]
         key = raw[:3].lower()
         if key in currency_to_schema_type:
             schema = currency_to_schema_type[key]
@@ -201,15 +200,33 @@ class AppConfig(GoodConf):
         file_env_var = "GRAPHSENSE_CONFIG_YAML"
         default_files = [".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")]
 
+    def __init__(
+        self, load: bool = False, config_file: str | None = None, **kwargs
+    ) -> None:
+        super().__init__(load, config_file, **kwargs)
+        self.model_config["explicit_config_file"] = config_file
+
     def is_loaded(self) -> bool:
         return hasattr(self, "environments")
 
     @property
     def underlying_file(self) -> Optional[str]:
-        if hasattr(self.__config__, "_config_file"):
-            return self.__config__._config_file
+        env_overwrite_file_env = self.model_config.get("file_env_var")
+        env_overwrite_file = (
+            os.environ.get(env_overwrite_file_env) if env_overwrite_file_env else None
+        )
+        explicit_config_file = self.model_config.get("explicit_config_file")
+
+        if explicit_config_file is not None:
+            return explicit_config_file
+        elif env_overwrite_file_env and env_overwrite_file:
+            return env_overwrite_file
         else:
-            return None
+            default_files = self.model_config.get("default_files", [])
+            for f in default_files:
+                if os.path.exists(f):
+                    return f
+        return None
 
     def text(self) -> str:
         if self.underlying_file:
@@ -280,4 +297,13 @@ class AppConfig(GoodConf):
         )
 
 
-config = AppConfig(load=False)
+def get_config() -> AppConfig:
+    return _app_config
+
+
+def set_config(cfg: AppConfig):
+    global _app_config
+    _app_config = cfg
+
+
+_app_config = AppConfig(load=False)

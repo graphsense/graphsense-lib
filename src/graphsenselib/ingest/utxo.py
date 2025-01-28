@@ -566,7 +566,7 @@ def enrich_txs(
                                 continue
                             elif resolved is None:
                                 raise InputNotFoundException(
-                                    f"Spent Tx ({ref}) outputs " " not found"
+                                    f"Spent Tx ({ref}) outputs  not found"
                                 )
 
                             i["addresses"] = resolved["addresses"]
@@ -861,14 +861,14 @@ def ingest(
         end_block = get_last_block_yesterday(btc_adapter, last_synced_block)
 
     if start_block > end_block:
-        print("No blocks to ingest")
+        logger.warning("No blocks to ingest")
         return
 
     # if info then only print block info and exit
     if info:
         logger.info(
             f"Would ingest block range "
-            f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+            f"{start_block:,} - {end_block:,} ({end_block - start_block:,} blks) "
             f"into {list(sink_config.keys())} "
         )
         return
@@ -878,7 +878,7 @@ def ingest(
 
     logger.info(
         f"Ingesting block range "
-        f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+        f"{start_block:,} - {end_block:,} ({end_block - start_block:,} blks) "
         f"into {list(sink_config.keys())} "
     )
 
@@ -943,7 +943,7 @@ def ingest(
                 logger.info(
                     f"Last processed block: {current_end_block:,} "
                     f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                    f"({count/time_delta:.1f} blocks/s)"
+                    f"({count / time_delta:.1f} blocks/s)"
                 )
                 logger.debug(resolver.get_cache_stats())
                 time1 = time2

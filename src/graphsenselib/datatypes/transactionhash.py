@@ -25,11 +25,11 @@ class TransactionHashAccount:
             ValueError: Description
         """
         self.prefix_length = int(config.tx_prefix_length)
-        if type(txhash) == str:
+        if isinstance(txhash, str):
             self.tx_hash_bytes = hex_to_bytes(txhash)
-        elif type(txhash) == bytearray:
+        elif isinstance(txhash, bytearray):
             self.tx_hash_bytes = txhash
-        elif type(txhash) == bytes:
+        elif isinstance(txhash, bytes):
             self.tx_hash_bytes = bytearray(txhash)
         else:
             raise Exception(f"Unknown type for txhash type: {type(txhash)}")
