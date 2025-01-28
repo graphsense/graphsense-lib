@@ -4,8 +4,8 @@ import sys
 import click
 
 from ..config import (
-    config,
     default_environments,
+    get_config,
     schema_types,
     supported_base_currencies,
 )
@@ -76,22 +76,25 @@ def out_file(required=True, append=False):
 
 def try_load_config(filename: str):
     try:
-        config.load(filename=filename)
+        app_config = get_config()
+        app_config.load(filename=filename)
 
-        md5hash = hashlib.md5(open(config.underlying_file, "rb").read()).hexdigest()
+        f = filename or app_config.underlying_file
 
-        return config, md5hash
+        md5hash = hashlib.md5(open(f, "rb").read()).hexdigest()
+
+        return app_config, md5hash
     except Exception as e:
         console.print("There are errors in you graphsenselib config:")
         console.rule("Errors")
         console.print(e)
         console.rule("Suggestions")
-        file_loc = " or ".join(config.Config.default_files)
+        file_loc = " or ".join(app_config.Config.default_files)
         console.print(
             "Maybe there is no config file specified. "
             f"Please create one in {file_loc} or specify a custom config path"
-            f" in the environment variable {config.Config.file_env_var}."
+            f" in the environment variable {app_config.Config.file_env_var}."
         )
         console.rule("Template")
-        console.print(config.generate_yaml(DEBUG=False))
+        console.print(app_config.generate_yaml(DEBUG=False))
         sys.exit(10)

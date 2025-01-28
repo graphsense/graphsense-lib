@@ -91,9 +91,9 @@ class IngestRunner:
 
                     logger.info(
                         f"Written blocks: {file_chunk[0]:,} - {file_chunk[1]:,} "
-                        f"""[{last_block_date.strftime(
-                            GRAPHSENSE_DEFAULT_DATETIME_FORMAT
-                        )}] """
+                        f"""[{
+                            last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)
+                        }] """
                         f"({speed:.1f} blks/s) ({network_s_per_ingest_s:.1f} "
                         f"network_s/s) "
                     )

@@ -21,11 +21,7 @@ class BlockNotFoundException(NotFoundException):
 class TransactionNotFoundException(NotFoundException):
     def __init__(self, network, tx_hash, token_id=None):
         msg = (
-            (
-                f"Token transaction {tx_hash}:{token_id} "
-                f"in network {network} not "
-                "found"
-            )
+            (f"Token transaction {tx_hash}:{token_id} in network {network} not found")
             if token_id
             else f"Transaction {tx_hash} not found in network {network}"
         )

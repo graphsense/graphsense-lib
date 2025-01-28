@@ -56,6 +56,7 @@ def parse_coingecko_historical_response(
     response: requests.Response,
 ) -> pd.DataFrame:
     """Parse historical exchange rates (JSON) from coingecko."""
+    # flake8: noqa: E741
     json_data = [
         [date.fromtimestamp(d // 1000).strftime(DATE_FORMAT), c]
         for d, o, h, l, c in json.loads(response.content)

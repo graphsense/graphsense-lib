@@ -4,7 +4,7 @@ from io import StringIO
 import click
 
 from ..cli.common import out_file, require_currency, require_environment
-from ..config import config
+from ..config import get_config
 from ..utils.console import console
 from .monitoring import DbSummaryRecord, get_db_summary_record
 from .notifications import send_msg_to_topic
@@ -37,7 +37,7 @@ def summary(env, currency, out_file, no_header):
         env (str): Env to work on
         currency (str): currency to work on (optional)
     """
-
+    config = get_config()
     if currency is None:
         # create rows for all configured currencies
         records = [

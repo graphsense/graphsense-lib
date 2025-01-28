@@ -21,7 +21,7 @@ def strip_0x(string: Optional[str]) -> Optional[str]:
 
 
 def to_int(string: Union[str, int]) -> int:
-    if type(string) == int:
+    if isinstance(string, int):
         return string
 
     if is_hex_string(string):

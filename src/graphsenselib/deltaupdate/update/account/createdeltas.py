@@ -221,9 +221,7 @@ def get_entitydelta_from_trace(
         total_spent_value,
         get_prices_coin(total_spent_value, currency, rates[trace.block_id]),
     )
-    total_tokens_received = (
-        {}
-    )  # for now we dont support TRC10, so an empty dict is fine
+    total_tokens_received = {}  # for now we dont support TRC10, so an empty dict is fine
     total_tokens_spent = {}  # for now we dont support TRC10, so an empty dict is fine
     if trace.tx_hash is None:
         first_tx_id = -1

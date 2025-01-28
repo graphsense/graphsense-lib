@@ -456,9 +456,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                     if addr_id is None
                     else (
                         addr_id.address_id,
-                        addresses_resolved[
-                            addr_id.address_id
-                        ].result_or_exc.one(),  # noqa
+                        addresses_resolved[addr_id.address_id].result_or_exc.one(),  # noqa
                     )
                 )
 
@@ -543,8 +541,7 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         with LoggerScope.debug(
             logger,
-            "Get entity and entity transaction "
-            "updates from tranasactions (only tron)",
+            "Get entity and entity transaction updates from tranasactions (only tron)",
         ):
             # in eth we disregard the eth values because they are already in the traces
             # in tron only traces that are not the initial transaction have values,

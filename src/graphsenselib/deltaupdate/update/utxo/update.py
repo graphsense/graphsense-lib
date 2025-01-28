@@ -329,8 +329,7 @@ def get_transaction_changes(
                 cluster id and create the address in turn
                 """
                 lg.warning(
-                    f"Address {out_addr} has address "
-                    f"id {addr_id} but no address entry"
+                    f"Address {out_addr} has address id {addr_id} but no address entry"
                 )
                 new_cluster_ids[addr_id] = get_next_cluster_id()
 
@@ -998,14 +997,14 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 change.action == DbChangeType.NEW
                 and change.table == "address_ids_by_address_prefix"
             ):
-                if not (
+                if (
                     tdb.get_address_id_async(change.data["address"]).result().one()
-                    is None
+                    is not None
                 ):
                     raise ValueError(f"New address already in db: {change}")
-                if not (
+                if (
                     tdb.get_address_async(change.data["address_id"]).result().one()
-                    is None
+                    is not None
                 ):
                     raise ValueError(f"New address_id already in db: {change}")
             elif (
@@ -1126,7 +1125,7 @@ def apply_changes(
                 t,
                 "; ".join(
                     [
-                        f"{a[0].replace('n', '+').replace('d','-')}{len(chngs)}"
+                        f"{a[0].replace('n', '+').replace('d', '-')}{len(chngs)}"
                         for a, chngs in actions.items()
                     ]
                 ),

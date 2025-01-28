@@ -1,6 +1,5 @@
-from graphsenselib.utils.pipeline import Pipeline
+from graphsenselib.utils.pipeline import Pipeline, StopPipeline, set_context
 from graphsenselib.utils.pipeline import Process as P
-from graphsenselib.utils.pipeline import StopPipeline, set_context
 
 
 def inc(ctx, item):
@@ -81,7 +80,7 @@ def test_simple_pipeline_with_exeption1():
 
     assert len(res) == 1
     assert str(res[0].exc) == "ohhh noooo"
-    assert type(res[0].exc) == ValueError
+    assert isinstance(res[0].exc, ValueError)
 
 
 def test_simple_pipeline_with_exeption2():
@@ -103,7 +102,7 @@ def test_simple_pipeline_with_exeption2():
 
     assert len(res) == 1
     assert str(res[0].exc) == "ohhh noooo"
-    assert type(res[0].exc) == ValueError
+    assert isinstance(res[0].exc, ValueError)
 
 
 def test_pipeline_with_downstream_exeption_and_no_stop():
@@ -122,7 +121,7 @@ def test_pipeline_with_downstream_exeption_and_no_stop():
 
     assert len(res) == 1
     assert str(res[0].exc) == "ohhh noooo"
-    assert type(res[0].exc) == ValueError
+    assert isinstance(res[0].exc, ValueError)
 
 
 # def test_pipeline_with_downstream_exeption_and_no_stop():

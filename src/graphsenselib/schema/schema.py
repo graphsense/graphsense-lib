@@ -6,7 +6,7 @@ from typing import Iterable, List, Optional
 
 from parsy import forward_declaration, seq, string
 
-from ..config import config, currency_to_schema_type, keyspace_types
+from ..config import currency_to_schema_type, get_config, keyspace_types
 from ..datatypes import BadUserInputError
 from ..db import DbFactory
 from ..db.cassandra import (
@@ -140,7 +140,7 @@ class CreateTableStatement:
     def __repr__(self):
         return build_create_stmt(
             [f"{n} {t}" for n, t in self.columns.items()],
-            [f"({','.join(pk)})" if type(pk) == list else pk for pk in self.pk],
+            [f"({','.join(pk)})" if isinstance(pk, list) else pk for pk in self.pk],
             self.table,
             not self.if_not_exists,
             self.keyspace,
@@ -220,6 +220,7 @@ class GraphsenseSchemas:
             self.create_keyspace_if_not_exist(env, currency, kstype)
 
     def create_keyspace_if_not_exist(self, env, currency, keyspace_type):
+        config = get_config()
         with DbFactory().from_config(env, currency) as db:
             schema = self.get_by_currency(
                 currency, keyspace_type=keyspace_type, no_extensions=True
@@ -269,6 +270,7 @@ class GraphsenseSchemas:
     def create_new_transformed_ks_if_not_exist(
         self, env, currency, suffix=None, no_date=False
     ) -> Optional[str]:
+        config = get_config()
         keyspace_type = "transformed"
         with DbFactory().from_config(env, currency) as db:
             schema = self.get_by_currency(

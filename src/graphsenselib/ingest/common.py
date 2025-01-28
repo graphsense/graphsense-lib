@@ -125,12 +125,12 @@ class Source(ABC):
 
         assert start_block >= 0, "Start block must be greater or equal to 0"
 
-        assert (
-            start_block <= end_block
-        ), "Start block must be less or equal to end block"
+        assert start_block <= end_block, (
+            "Start block must be less or equal to end block"
+        )
         assert start_block >= 0, "Start block must be greater or equal to 0"
         assert start_block <= last_ingestable_block, (
-            "Start block must be less or " "equal to last synced block"
+            "Start block must be less or equal to last synced block"
         )
         logger.info(f"Last synced block: {end_block:,}")
 
