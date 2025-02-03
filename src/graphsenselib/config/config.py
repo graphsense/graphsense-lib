@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import logging
 import os
 from typing import Dict, List, Optional
 
-from goodconf import Field, GoodConf
+from goodconf import Field, GoodConf, GoodConfConfigDict
 from pydantic import BaseModel, field_validator
 
 from ..utils import first_or_default, flatten
@@ -146,6 +148,17 @@ class SlackTopic(BaseModel):
 class AppConfig(GoodConf):
     """Graphsenselib config file"""
 
+    # class Config:
+    #   env_prefix = "GRAPHSENSE_"
+    #   file_env_var = "GRAPHSENSE_CONFIG_YAML"
+    #   default_files = [".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")]
+
+    model_config = GoodConfConfigDict(
+        env_prefix="GRAPHSENSE_",
+        file_env_var="GRAPHSENSE_CONFIG_YAML",
+        default_files=[".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")],
+    )
+
     environments: Dict[str, Environment] = Field(
         initial=lambda: {
             env: {
@@ -194,11 +207,6 @@ class AppConfig(GoodConf):
     s3_credentials: Optional[Dict[str, str]] = Field(
         initial=lambda: None, default_factory=lambda: None
     )
-
-    class Config:
-        env_prefix = "GRAPHSENSE_"
-        file_env_var = "GRAPHSENSE_CONFIG_YAML"
-        default_files = [".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")]
 
     def __init__(
         self, load: bool = False, config_file: str | None = None, **kwargs
