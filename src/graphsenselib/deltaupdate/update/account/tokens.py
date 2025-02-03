@@ -61,14 +61,14 @@ class ERC20Decoder:
 
             try:
                 sender = bytes.fromhex(
-                    self.w3.toChecksumAddress(decode_single("address", log.topics[1]))[
-                        2:
-                    ]
+                    self.w3.to_checksum_address(
+                        decode_single("address", log.topics[1])
+                    )[2:]
                 )
                 recipient = bytes.fromhex(
-                    self.w3.toChecksumAddress(decode_single("address", log.topics[2]))[
-                        2:
-                    ]
+                    self.w3.to_checksum_address(
+                        decode_single("address", log.topics[2])
+                    )[2:]
                 )
                 value = decode_single("uint256", log.data)
                 mask = (
