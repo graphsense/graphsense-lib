@@ -252,14 +252,13 @@ def read_table(path: str, table_name: str):
 
 
 class TableWriteConfig(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
     table_name: str
     table_schema: pa.Schema
     partition_cols: Optional[tuple] = None
     primary_keys: Optional[List[str]] = None
     blockindep: Optional[bool] = False
-
-    class Config:
-        arbitrary_types_allowed = True
 
 
 class DBWriteConfig(pydantic.BaseModel):

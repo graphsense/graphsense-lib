@@ -160,7 +160,7 @@ class AppConfig(GoodConf):
     )
 
     environments: Dict[str, Environment] = Field(
-        initial=lambda: {
+        default_factory=lambda: {
             env: {
                 "cassandra_nodes": ["enter your cassandra hosts here."],
                 "keyspaces": {
@@ -185,28 +185,24 @@ class AppConfig(GoodConf):
         description="Config per environment",
     )
 
-    slack_topics: Dict[str, SlackTopic] = Field(
-        initial=lambda: {}, default_factory=lambda: {}
-    )
+    slack_topics: Dict[str, SlackTopic] = Field(default_factory=lambda: {})
 
     cache_directory: str = Field(
-        initial=lambda: "~/.graphsense/cache",
+        # initial=lambda: "~/.graphsense/cache",
         default_factory=lambda: "~/.graphsense/cache",
     )
 
     coingecko_api_key: str = Field(
-        initial=lambda: "",
+        # initial=lambda: "",
         default_factory=lambda: "",
     )
 
     coinmarketcap_api_key: str = Field(
-        initial=lambda: "",
+        # initial=lambda: "",
         default_factory=lambda: "",
     )
 
-    s3_credentials: Optional[Dict[str, str]] = Field(
-        initial=lambda: None, default_factory=lambda: None
-    )
+    s3_credentials: Optional[Dict[str, str]] = Field(default_factory=lambda: None)
 
     def __init__(
         self, load: bool = False, config_file: str | None = None, **kwargs
