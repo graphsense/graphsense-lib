@@ -78,10 +78,13 @@ trace_schema = {
 def load_data():
     # load txs, traces, logs, and blocks
     # read the jsons
+    def loadFile(f, c, ft):
+        with open(f"{f}/{c}/{ft}.pkl", "rb") as f:
+            return pickle.load(f)
+
     data = {
         currency: {
-            filetype: pickle.load(open(f"{folder}/{currency}/{filetype}.pkl", "rb"))
-            for filetype in filetypes
+            filetype: loadFile(folder, currency, filetype) for filetype in filetypes
         }
         for currency in currencies
     }

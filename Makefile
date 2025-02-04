@@ -17,10 +17,10 @@ dev:
 	 pre-commit install
 
 test:
-	pytest -v -m "not slow" --cov=src
+	pytest -v -m "not slow" --cov=src -W error
 
 test-all:
-	pytest --cov=src
+	pytest --cov=src -W error
 
 install-dev:
 	pip install -e .[dev] --force-reinstall --upgrade
