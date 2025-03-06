@@ -64,8 +64,8 @@ class StoreTask(AbstractTask):
 
 class BlockRangeContent(pydantic.BaseModel):
     table_contents: Dict[str, Union[List[dict], dict]]
-    start_block: Optional[int]  # None in the blockindependent case
-    end_block: Optional[int]  # None in the blockindependent case
+    start_block: Optional[int] = None  # None in the blockindependent case
+    end_block: Optional[int] = None  # None in the blockindependent case
 
     @staticmethod
     def merge(block_range_contents: List["BlockRangeContent"]) -> "BlockRangeContent":
