@@ -189,3 +189,5 @@ dmypy.json
 tester.py
 
 local/
+
+venv*/

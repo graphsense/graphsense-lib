@@ -110,7 +110,6 @@ def trace(db, query_terms, contract, start, end, names, output_format):
                     lambda _, _1, _2, dlog_str, _3: printRich(dlog_str),
                 )
     else:
-
         tx_mode_rows = []
 
         def append_row(dlog, log, dlog_str_original, dlog_str, dlog_str_rep):

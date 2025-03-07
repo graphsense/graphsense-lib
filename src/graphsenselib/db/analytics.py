@@ -283,7 +283,7 @@ class DbReaderMixin:
                 (
                     f"Something went wrong {query_id} "
                     " is not the highest_id"
-                    f" {query_id+1} exist in {table}.{id_col}"
+                    f" {query_id + 1} exist in {table}.{id_col}"
                 )
             )
 
@@ -335,7 +335,7 @@ class DbWriterMixin:
                 if attempts_made > 1:
                     logger.warning(
                         "Applying changes ran into a write timeout. "
-                        f"Retrying {(nr_retries  - attempts_made) +1} more times."
+                        f"Retrying {(nr_retries - attempts_made) + 1} more times."
                     )
                 if atomic:
                     self._db.execute_statements_atomic(change_stmts)

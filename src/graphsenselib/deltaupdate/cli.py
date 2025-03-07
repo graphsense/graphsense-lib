@@ -38,8 +38,7 @@ def delta():
     "--end-block",
     type=int,
     default=None,
-    help="Block at which to end the update (inclusive). "
-    "(default: until raw data ends)",
+    help="Block at which to end the update (inclusive). (default: until raw data ends)",
 )
 @click.option(
     "--updater-version",

@@ -53,8 +53,7 @@ class UpdateStrategyUtxoLegacy(LegacyUpdateStrategy):
 
         if self._write_new:
             logger.info(
-                "Checking existence for "
-                f"{self._nr_queryied_addresses_batch} addresses"
+                f"Checking existence for {self._nr_queryied_addresses_batch} addresses"
             )
 
             ret = self._db.transformed.known_addresses_batch(
@@ -70,7 +69,7 @@ class UpdateStrategyUtxoLegacy(LegacyUpdateStrategy):
 
             logger.info(
                 f"Found {self._nr_new_addresses} new addresses so "
-                f"far {(self._nr_new_addresses/self._nr_queried_addresses):.3f} "
+                f"far {(self._nr_new_addresses / self._nr_queried_addresses):.3f} "
                 "are new."
             )
             # logging.info(self._db.transformed.knows_address.cache_info())

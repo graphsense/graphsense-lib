@@ -20,7 +20,8 @@ def test_c1():
         resources,
         "ab188e2ae90a6e54dad6200f0d2ef188b723d2b393bbd01e65d753058afcba62.json",
     ) as path:
-        tx = json.loads(open(path).read())
+        with open(path) as f:
+            tx = json.load(f)
 
         converted = mapper.transaction_to_dict(
             mapper.json_dict_to_transaction(tx, block, 0)
@@ -38,7 +39,8 @@ def test_c2():
         resources,
         "59d2780701c8352ad77c026652d67ea596fe4e9316580f02c171e2137fa91578.json",
     ) as path:
-        tx = json.loads(open(path).read())
+        with open(path) as f:
+            tx = json.load(f)
 
         converted = mapper.transaction_to_dict(
             mapper.json_dict_to_transaction(tx, block, 0)

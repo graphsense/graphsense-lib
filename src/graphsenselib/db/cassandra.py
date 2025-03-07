@@ -101,11 +101,11 @@ def none_to_unset(items: Union[dict, tuple, list]):
     Raises:
         Exception: If datatype of items is not supported (list,tuple,dict)
     """
-    if type(items) == dict:
+    if isinstance(items, dict):
         return {k: (UNSET_VALUE if v is None else v) for k, v in items.items()}
-    elif type(items) == tuple:
+    elif isinstance(items, tuple):
         return tuple([UNSET_VALUE if v is None else v for v in list(items)])
-    elif type(items) == list:
+    elif isinstance(items, list):
         return [(UNSET_VALUE if v is None else v) for v in items]
     else:
         raise Exception(
@@ -115,7 +115,7 @@ def none_to_unset(items: Union[dict, tuple, list]):
 
 
 def get_select_rep(data):
-    if type(data) == str or type(data) == int or type(data) == float:
+    if isinstance(data, str) or isinstance(data, int) or isinstance(data, float):
         return str(data)
     else:
         raise Exception(f"No conversion for type {type(data)} to cql select known.")
@@ -201,7 +201,7 @@ def build_delete_stmt(
 
     return (
         f"DELETE FROM {get_table_name(table, keyspace)} "
-        f"WHERE {' AND '.join([ f'{x}=?' for x in key_columns ])}"
+        f"WHERE {' AND '.join([f'{x}=?' for x in key_columns])}"
         ";"
     )
 
@@ -306,7 +306,10 @@ class CassandraDb:
         return x
 
     def __init__(self, db_nodes: Iterable, default_timeout=DEFAULT_TIMEOUT) -> None:
-        self.db_nodes = db_nodes
+        ports = {int(x.split(":")[1]) for x in db_nodes if ":" in x}
+        nodes = [x.split(":")[0] for x in db_nodes]
+        self.db_nodes = nodes
+        self.db_port = list(ports)[0] if len(ports) == 1 else 9042
         self.cluster = None
         self.session = None
         self.prep_stmts = {}
@@ -329,6 +332,7 @@ class CassandraDb:
         )
         self.cluster = Cluster(
             self.db_nodes,
+            port=self.db_port,
             execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
             connect_timeout=self._default_timeout,
             protocol_version=5,

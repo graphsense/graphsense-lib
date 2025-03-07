@@ -1,4 +1,6 @@
+from graphsenselib.db import DbFactory
 from graphsenselib.db.cassandra import build_delete_stmt, build_select_stmt
+from graphsenselib.schema.schema import GraphsenseSchemas
 
 
 def test_build_select_stmt_limit():
@@ -44,3 +46,26 @@ def test_build_delete_stmt():
         )
         == "DELETE FROM test_transformed.summary_statistics WHERE no_blocks=?;"
     )
+
+
+def test_patched_config():
+    from graphsenselib.config import get_config
+
+    assert list(get_config().environments.keys()) == ["pytest"]
+
+    from graphsenselib.config.config import get_config
+
+    assert list(get_config().environments.keys()) == ["pytest"]
+
+    config = get_config()
+    config.model_validate(config)
+
+
+def test_cassandra_create_schema():
+    # create BTC schema
+    GraphsenseSchemas().create_keyspaces_if_not_exist("pytest", "btc")
+
+    # query data in config table
+    with DbFactory().from_config("pytest", "btc") as db:
+        c = db.raw.get_configuration()
+        assert c.id == "pytest_btc_raw"

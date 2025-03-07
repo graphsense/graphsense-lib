@@ -1,3 +1,4 @@
+# flake8: noqa: T201
 import contextlib
 import logging
 import sys
@@ -11,7 +12,7 @@ from filelock import Timeout as LockFileTimeout
 from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
 
 from ..cli.common import require_currency, require_environment
-from ..config import config
+from ..config import get_config
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
@@ -157,6 +158,7 @@ def ingest(
         env (str): Environment to work on
         currency (str): currency to work on
     """
+    config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
 
@@ -278,7 +280,7 @@ def dump_rawdata(
         env (str): Environment to work on
         currency (str): currency to work on
     """
-
+    config = get_config()
     logger.info(f"Dumping raw data for {currency} in {env}")
 
     ks_config = config.get_keyspace_config(env, currency)
@@ -341,6 +343,7 @@ def optimize_deltalake(env, currency, mode="both", table=None):
         env (str): Environment to work on
         currency (str): currency to work on
     """
+    config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
     parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "delta", None
@@ -402,6 +405,7 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
         env (str): Environment to work on
         currency (str): currency to work on
     """
+    config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
     parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "delta", None
@@ -428,7 +432,7 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
     data = dtc.make_displayable(data)
     logger.debug(
         f"Queried deltalake table {table} in {parquet_directory} in"
-        f" {time.time()-time_start} seconds"
+        f" {time.time() - time_start} seconds"
     )
 
     print(data)

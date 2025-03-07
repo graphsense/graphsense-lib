@@ -32,9 +32,7 @@ class JsonWatchpointProvider(WatchpointProvider):
 class JsonWatcherState(WatcherState):
     def __init__(self, filename: str):
         if not os.path.isfile(filename):
-            logging.info(
-                "Watcher state file not found. " f"Creating new file {filename}"
-            )
+            logging.info(f"Watcher state file not found. Creating new file {filename}")
             with open(filename, "w") as f:
                 json.dump({"block": 0}, f)
 

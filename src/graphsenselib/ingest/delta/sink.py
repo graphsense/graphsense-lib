@@ -165,7 +165,7 @@ class DeltaTableWriter:
                 attempts += 1
                 if attempts > max_attempts:
                     raise ValueError(
-                        f"Could not write delta-file after " f"{max_attempts} attempts."
+                        f"Could not write delta-file after {max_attempts} attempts."
                     )
 
                 try:
@@ -232,7 +232,8 @@ class DeltaTableWriter:
                 )  # would require a predicate (primary key) to merge
                 # .when_matched_update_all() # we dont need this; can
                 # simply overwrite instead
-                .when_not_matched_insert_all().execute()
+                .when_not_matched_insert_all()
+                .execute()
             )
             logger.warning(
                 f"Delta merge of length {len(table)} on {self.table_name} "
@@ -251,14 +252,13 @@ def read_table(path: str, table_name: str):
 
 
 class TableWriteConfig(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
+
     table_name: str
     table_schema: pa.Schema
     partition_cols: Optional[tuple] = None
     primary_keys: Optional[List[str]] = None
     blockindep: Optional[bool] = False
-
-    class Config:
-        arbitrary_types_allowed = True
 
 
 class DBWriteConfig(pydantic.BaseModel):

@@ -5,7 +5,7 @@ from typing import Optional
 from filelock import FileLock
 from filelock import Timeout as LockFileTimeout
 
-from ..config import config
+from ..config import get_config
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.console import console
@@ -52,7 +52,7 @@ def find_import_range(
             raise Exception(
                 f"Start block {start_block_overwrite} is in the future."
                 f" It looks like blocks are left out in the transformation."
-                f" Start block should be {last_block+1}"
+                f" Start block should be {last_block + 1}"
                 f" Tried starting at {start_block_overwrite}. "
                 f"Also make sure the transformations starts at block 0. Exiting."
             )
@@ -80,7 +80,7 @@ def find_import_range(
         else hb_raw
     )
     end_block = end_block if end_block_overwrite is None else end_block_overwrite
-    logger.info(f"Last delta-transform: {(start_block -1):10}")
+    logger.info(f"Last delta-transform: {(start_block - 1):10}")
     logger.info(f"Last raw block:       {hb_raw:10}")
     logger.info(f"Last raw block:       {end_block:10} (with exchanges rates).")
     logger.info(
@@ -153,7 +153,7 @@ def update_transformed(
             action = updater.process_batch(b)
             if action == Action.DATA_TO_PROCESS_NOT_FOUND:
                 logger.warning(
-                    f"First block in batch {min(b)} is empty." f" Finishing update."
+                    f"First block in batch {min(b)} is empty. Finishing update."
                 )
                 raise Exception("Data to execute delta update not found. See log file.")
             updater.persist_updater_progress()
@@ -192,6 +192,7 @@ def update(
 ):
     try:
         with DbFactory().from_config(env, currency) as db:
+            config = get_config()
             if config.get_keyspace_config(env, currency).disable_delta_updates:
                 logger.error(
                     f"Delta updates are disabled for {env} - {currency} in the "
@@ -268,10 +269,10 @@ def update(
                 elif end_block == start_block or start_block - 1 == end_block:
                     logger.info("Nothing to do. Data is up to date.")
                 else:
-                    print(end_block, start_block)
                     raise Exception(
                         "Transformed space is ahead of raw keyspace. "
                         "This should not happen. Call 911."
+                        f"start {start_block}, end {end_block}"
                     )
 
     except LockFileTimeout:
@@ -286,7 +287,7 @@ def patch_exchange_rates(env: str, currency: str, block: int):
     with DbFactory().from_config(env, currency) as db:
         ers = db.raw.get_exchange_rates_for_block_batch([block])
         logger.info(
-            f"Overwriting transformed exchange_rate for block {block} " f"with {ers}"
+            f"Overwriting transformed exchange_rate for block {block} with {ers}"
         )
 
         db.transformed.ingest("exchange_rates", ers)

@@ -275,7 +275,7 @@ def test_address_converter_inject_nonencodable_char():
     for n, a, ra, ob in testset_correct:
         ac = reduce(lambda a, kv: a.replace(*kv), rpmts, a)
         with pytest.raises(InvalidAddress):
-            b = address_to_bytes(n, ac)
+            address_to_bytes(n, ac)
 
 
 @pytest.mark.slow

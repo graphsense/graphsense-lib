@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import click
 
 from ..cli.common import require_currency, require_environment
-from ..config import config, supported_fiat_currencies
+from ..config import get_config, supported_fiat_currencies
 from ..utils.console import console
 from .coindesk import MIN_START as MS_CD
 from .coindesk import fetch as fetchCD
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_api_key(key):
+    config = get_config()
     api_key_key = f"{key}_api_key"
     api_key = getattr(config, api_key_key)
     if not api_key.strip():

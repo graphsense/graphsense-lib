@@ -179,7 +179,6 @@ class TronExportTracesJob:
         raise Exception(f"Failed to fetch block {i} after {retries} attempts")
 
     def run_parallel(self):
-
         def run_parallel():
             def fetch_and_process_block_wrapper(i):
                 return self.fetch_and_process_block(i, wallet_stub)

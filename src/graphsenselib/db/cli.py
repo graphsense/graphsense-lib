@@ -1,3 +1,4 @@
+# flake8: noqa: T201
 import logging
 from datetime import datetime
 from typing import Optional
@@ -67,7 +68,7 @@ def state(env, currency):
                 )
             end_block = db.raw.find_highest_block_with_exchange_rates()
             console.print(
-                f"Last delta-transform: {(start_block -1):10}"
+                f"Last delta-transform: {(start_block - 1):10}"
                 f" ({db.raw.get_block_timestamp(start_block - 1)})"
             )
             console.print(
