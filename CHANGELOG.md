@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [25.03.0/2.4.8] 2025-03-07
+### changed
+- updated dependencies, goodconf, pydantic etc.
+### added
+- database tests via testcontainer
+- testing of exchange rates import
+- vcr for tests with web dependencies
+- ruff instead of flake8, black and isort
+
 ## [25.01.0/2.4.7] 2025-01-02
 ### fixed
 - Delta updater now marks contract addresses for eth and tron
