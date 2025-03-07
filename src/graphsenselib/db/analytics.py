@@ -1260,7 +1260,7 @@ class AnalyticsDb:
     def db(self) -> CassandraDb:
         return self._db
 
-    def open(self):  # noqa:
+    def open(self):
         self._db.connect()
 
     def close(self):
