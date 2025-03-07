@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-from datetime import date, datetime
+from datetime import datetime
 from typing import List, Optional
 
 import pandas as pd
@@ -13,7 +13,7 @@ from graphsenselib.rates.coingecko import fetch_ecb_rates
 
 logger = logging.getLogger(__name__)
 
-MIN_START = "2010-07-17"
+MIN_START = "2010-07-17T00:00:00.000000+00:00"
 
 
 def cryptocompare_historical_url(start: str, end: str, symbol: str, fiat: str):
@@ -106,7 +106,7 @@ def fetch_impl(
     # query conversion rates and merge converted values in exchange rates
     exchange_rates = usd_rates
     date_range = pd.date_range(
-        date.fromisoformat(start_date), date.fromisoformat(end_date)
+        datetime.fromisoformat(start_date), datetime.fromisoformat(end_date)
     )
     date_range = pd.DataFrame(date_range, columns=["date"])
     date_range = date_range["date"].dt.strftime("%Y-%m-%d")
