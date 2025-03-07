@@ -300,7 +300,6 @@ class TronStreamerAdapter(AccountStreamerAdapter):
     def export_hash_to_type_mappings_parallel(
         self, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
-
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
         channel = grpc.insecure_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
@@ -791,7 +790,7 @@ def ingest(
         end_block = get_last_block_yesterday(thread_proxy)
 
     if start_block > end_block:
-        print("No blocks to ingest")
+        logger.warning("No blocks to ingest")
         return
 
     time1 = datetime.now()
@@ -801,7 +800,7 @@ def ingest(
     if info:
         logger.info(
             f"Would ingest block range "
-            f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+            f"{start_block:,} - {end_block:,} ({end_block - start_block:,} blks) "
             f"into {list(sink_config.keys())} "
         )
 
@@ -809,7 +808,7 @@ def ingest(
 
     logger.info(
         f"Ingesting block range "
-        f"{start_block:,} - {end_block:,} ({end_block-start_block:,} blks) "
+        f"{start_block:,} - {end_block:,} ({end_block - start_block:,} blks) "
         f"into {list(sink_config.keys())} "
     )
 
@@ -855,7 +854,7 @@ def ingest(
             logger.info(
                 f"Last processed block: {current_end_block:,} "
                 f"[{last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)}] "
-                f"({count/time_delta:.1f} blks/s)"
+                f"({count / time_delta:.1f} blks/s)"
             )
             time1 = time2
             count = 0
@@ -1173,14 +1172,14 @@ def ingest_async(
         end_block = get_last_block_yesterday(thread_proxy)
 
     if start_block > end_block:
-        print("No blocks to ingest")
+        logger.warning("No blocks to ingest")
         return
 
     # if info then only print block info and exit
     if info:
         logger.info(
             f"Would ingest block range "
-            f"{start_block:,} - {end_block:,} ({end_block - start_block +1:,} blks) "
+            f"{start_block:,} - {end_block:,} ({end_block - start_block + 1:,} blks) "
             f"into {list(sink_config.keys())} "
         )
 
@@ -1188,7 +1187,7 @@ def ingest_async(
 
     logger.info(
         f"Ingesting block range "
-        f"{start_block:,} - {end_block:,} ({end_block - start_block +1:,} blks) "
+        f"{start_block:,} - {end_block:,} ({end_block - start_block + 1:,} blks) "
         f"into {list(sink_config.keys())} "
     )
 
@@ -1288,7 +1287,7 @@ def ingest_async(
                 logger.info(
                     f"Last processed block: {current_end_block:,} "
                     f"[{last_block_date_str}] "  # noqa
-                    f"({count/time_delta:.1f} blks/s)"
+                    f"({count / time_delta:.1f} blks/s)"
                 )
                 # logging.disable(logging.INFO)
                 time1 = time2

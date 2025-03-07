@@ -3,8 +3,8 @@ import os
 from ..config import (
     ConfigError,
     avg_blocktimes_by_currencies,
-    config,
     currency_to_schema_type,
+    get_config,
 )
 from ..db import DbFactory
 from ..ingest.utxo import CassandraOutputResolver
@@ -20,6 +20,7 @@ class FlowWatcherFactory:
     def file_based_from_config(
         self, env, currency, state_file, watchpoints_file
     ) -> FlowWatcher:
+        config = get_config()
         if not os.path.isfile(watchpoints_file):
             raise ValueError(f"Watchpoints file ({watchpoints_file}) not found.")
         schema = currency_to_schema_type[currency]

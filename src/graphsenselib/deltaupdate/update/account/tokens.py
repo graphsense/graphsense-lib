@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import pandas as pd
-from eth_abi import decode_single
+from eth_abi import decode
 from eth_utils import function_abi_to_4byte_selector, to_hex
 from web3 import Web3
 
@@ -61,16 +61,16 @@ class ERC20Decoder:
 
             try:
                 sender = bytes.fromhex(
-                    self.w3.toChecksumAddress(decode_single("address", log.topics[1]))[
+                    self.w3.to_checksum_address(decode(["address"], log.topics[1])[0])[
                         2:
                     ]
                 )
                 recipient = bytes.fromhex(
-                    self.w3.toChecksumAddress(decode_single("address", log.topics[2]))[
+                    self.w3.to_checksum_address(decode(["address"], log.topics[2])[0])[
                         2:
                     ]
                 )
-                value = decode_single("uint256", log.data)
+                value = decode(["uint256"], log.data)[0]
                 mask = (
                     self.supported_tokens["token_address"] == "0x" + log.address.hex()
                 )
@@ -92,7 +92,7 @@ class ERC20Decoder:
                     tx_hash=log.tx_hash,
                     log_index=log.log_index,
                 )
-            except Exception:
+            except Exception:  # TODO this is not good!
                 return None  # cant be decoded
         else:
             return None  # not a transfer event

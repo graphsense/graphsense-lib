@@ -1,10 +1,10 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v25.01.0'
-RELEASESEM := 'v2.4.7'
+RELEASE := 'v25.01.8rc4'
+RELEASESEM := 'v2.4.8rc4'
 
-
+-include .env
 
 all: format lint test build
 
@@ -17,10 +17,10 @@ dev:
 	 pre-commit install
 
 test:
-	pytest -v -m "not slow" --cov=src
+	pytest -v -m "not slow" --cov=src -W error
 
 test-all:
-	pytest --cov=src
+	pytest --cov=src -W error
 
 install-dev:
 	pip install -e .[dev] --force-reinstall --upgrade
@@ -29,11 +29,11 @@ install:
 	pip install .
 
 lint:
-	flake8 tests src
+	ruff check tests src
 
 format:
-	isort --profile black src
-	black tests src
+	ruff check --select I --fix .
+	ruff format .
 
 docs:
 	tox -e docs

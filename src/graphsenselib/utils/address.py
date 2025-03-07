@@ -19,9 +19,9 @@ class InvalidAddress(Exception):
 
 class BitCoder:
     def __init__(self, alpha: str, bit_width: int):
-        assert (
-            Counter(alpha).most_common(1)[0][1] == 1
-        ), f"Alphabet has duplicate {Counter(alpha).most_common(1)}"
+        assert Counter(alpha).most_common(1)[0][1] == 1, (
+            f"Alphabet has duplicate {Counter(alpha).most_common(1)}"
+        )
         bits = math.ceil(math.log(len(alpha) + 1, 2))
         assert bit_width == bits, "CAUTION: Bit width change, this breaks decoding"
 
@@ -80,7 +80,7 @@ class Bech32BitCoder(BitCoder):
 class Base62BitCoder(BitCoder):
     def __init__(self):
         super().__init__(
-            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcde" "fghijklmnopqrstuvwxyz",
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
             bit_width=6,
         )
 

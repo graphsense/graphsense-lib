@@ -17,7 +17,7 @@ class AddressUtxo:
         """
         self.prefix_length = int(config.address_prefix_length)
         self.bech32_prefix = config.bech_32_prefix
-        if type(adr) == str:
+        if isinstance(adr, str):
             self.address = adr
         else:
             raise Exception("Unknown address format")
@@ -60,11 +60,11 @@ class AddressAccount:
             ValueError: Description
         """
         self.prefix_length = int(config.address_prefix_length)
-        if type(adr) == str:
+        if isinstance(adr, str):
             self.address_bytes = hex_to_bytes(adr)
-        elif type(adr) == bytearray:
+        elif isinstance(adr, bytearray):
             self.address_bytes = adr
-        elif type(adr) == bytes:
+        elif isinstance(adr, bytes):
             self.address_bytes = bytearray(adr)
         else:
             raise Exception("Unknown address type")

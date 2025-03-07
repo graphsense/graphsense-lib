@@ -64,8 +64,8 @@ class StoreTask(AbstractTask):
 
 class BlockRangeContent(pydantic.BaseModel):
     table_contents: Dict[str, Union[List[dict], dict]]
-    start_block: Optional[int]  # None in the blockindependent case
-    end_block: Optional[int]  # None in the blockindependent case
+    start_block: Optional[int] = None  # None in the blockindependent case
+    end_block: Optional[int] = None  # None in the blockindependent case
 
     @staticmethod
     def merge(block_range_contents: List["BlockRangeContent"]) -> "BlockRangeContent":
@@ -125,12 +125,12 @@ class Source(ABC):
 
         assert start_block >= 0, "Start block must be greater or equal to 0"
 
-        assert (
-            start_block <= end_block
-        ), "Start block must be less or equal to end block"
+        assert start_block <= end_block, (
+            "Start block must be less or equal to end block"
+        )
         assert start_block >= 0, "Start block must be greater or equal to 0"
         assert start_block <= last_ingestable_block, (
-            "Start block must be less or " "equal to last synced block"
+            "Start block must be less or equal to last synced block"
         )
         logger.info(f"Last synced block: {end_block:,}")
 

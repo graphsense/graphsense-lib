@@ -23,12 +23,12 @@ class DataObject:
 
 
 def dict_to_dataobject(d: dict) -> DataObject:
-    if type(d) == dict:
+    if isinstance(d, dict):
         obj = DataObject(**d)
         for k, v in obj.__dict__.items():
             obj.__dict__[k] = dict_to_dataobject(v)
         return obj
-    if type(d) == list:
+    if isinstance(d, list):
         return [dict_to_dataobject(x) for x in d]
     else:
         return d
@@ -73,7 +73,7 @@ def camel_to_snake_case(camel_str: str) -> str:
 
 
 def dict_with_snake_keys(d) -> dict:
-    if type(d) != dict:
+    if not isinstance(d, dict):
         return d
     return {camel_to_snake_case(k): dict_with_snake_keys(v) for k, v in d.items()}
 

@@ -1,5 +1,4 @@
-"""Summary
-"""
+"""Summary"""
 
 import sys
 
@@ -142,6 +141,8 @@ def create_new_tf(env, currency, suffix, no_date):
         currency (str): currency to work on
         suffix (str): suffix for the new keyspace
     """
+
+    # flake8: noqa: T201
     print(
         GraphsenseSchemas().create_new_transformed_ks_if_not_exist(
             env, currency, suffix, no_date

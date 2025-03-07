@@ -25,7 +25,6 @@ class EmptyDeltaTableException(Exception):
 
 
 class BinaryInterpreter:
-
     def __init__(self, network: str):
         self.network = network
         if self.network == "trx":
@@ -76,7 +75,6 @@ class DeltaTableConnector:
 
     def get_auth_query(self):
         if self.s3_credentials:
-
             endpoint_URL = self.s3_credentials.get("AWS_ENDPOINT_URL").replace(
                 "http://", ""
             )
@@ -111,7 +109,6 @@ class DeltaTableConnector:
         return storage_options
 
     def iterable_to_str(self, it: Iterable, no_ticks=False) -> str:
-
         s = ""
         for i in it:
             if not no_ticks:
@@ -168,7 +165,7 @@ class DeltaTableConnector:
             return self.interpreter.interpret(data, table)
         else:
             raise EmptyDeltaTableException(
-                f"block_ids {block_ids} not " f"found in table {table}"
+                f"block_ids {block_ids} not found in table {table}"
             )
 
     def __getitem__(self, kv: Tuple[str, List[int]]):
@@ -179,5 +176,4 @@ class DeltaTableConnector:
         try:
             return self[kv]
         except EmptyDeltaTableException:
-
             return default

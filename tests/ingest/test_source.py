@@ -1,3 +1,4 @@
+from graphsenselib.ingest.common import BlockRangeContent
 from graphsenselib.ingest.source import split_blockrange
 
 
@@ -27,3 +28,7 @@ def test_split_blockrange_single2():
     size = 10_000
     result = list(split_blockrange(blockrange, size))
     assert result == [(9999, 9999)]
+
+
+def test_block_range():
+    BlockRangeContent(table_contents={})
