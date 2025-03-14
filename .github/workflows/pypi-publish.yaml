@@ -8,7 +8,12 @@
 
 name: Upload Python Package
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - v[0-9]+.[0-9]+.[0-9]+
+
 # on:
 #   # release:
 #   #   types: [published]
