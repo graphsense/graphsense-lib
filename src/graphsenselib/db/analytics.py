@@ -325,7 +325,7 @@ class DbWriterMixin:
 
         attempts_made = 0
         for attempt in Retrying(
-            retry=retry_if_exception_type(WriteTimeout, OperationTimedOut),
+            retry=retry_if_exception_type((WriteTimeout, OperationTimedOut)),
             reraise=True,
             stop=stop_after_attempt(nr_retries),
         ):
