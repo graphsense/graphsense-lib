@@ -15,7 +15,7 @@ from functools import lru_cache, partial
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
-from cassandra import WriteTimeout
+from cassandra import WriteTimeout, OperationTimedOut
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 
 from ..config import keyspace_types
@@ -305,7 +305,7 @@ class DbWriterMixin:
     self._db and requires the object to provide the WithinKeyspace mixin
     """
 
-    def apply_changes(self, changes: List[DbChange], atomic=True, nr_retries=5):
+    def apply_changes(self, changes: List[DbChange], atomic=True, nr_retries=10):
         statements = [
             (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
             for chng in changes
@@ -325,7 +325,7 @@ class DbWriterMixin:
 
         attempts_made = 0
         for attempt in Retrying(
-            retry=retry_if_exception_type(WriteTimeout),
+            retry=retry_if_exception_type(WriteTimeout, OperationTimedOut),
             reraise=True,
             stop=stop_after_attempt(nr_retries),
         ):
