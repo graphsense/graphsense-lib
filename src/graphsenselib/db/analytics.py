@@ -15,7 +15,7 @@ from functools import lru_cache, partial
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
-from cassandra import WriteTimeout, OperationTimedOut
+from cassandra import OperationTimedOut, WriteTimeout
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 
 from ..config import keyspace_types

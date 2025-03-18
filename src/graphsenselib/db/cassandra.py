@@ -33,21 +33,30 @@ logger = logging.getLogger(__name__)
 # taken from https://github.com/apache/cassandra-dtest/blob/0085d21bc687995478e338302e619e82ad4a4644/dtest.py#L88C5-L88C5 # noqa
 class GraphsenseRetryPolicy(RetryPolicy):
     """
-    A retry policy that retries 5 times by default, but can be configured to
+    A retry policy that retries 10 times by default, but can be configured to
     retry more times.
     """
 
-    def __init__(self, max_retries=5):
+    def __init__(self, max_retries=10, base_delay=0.5, max_delay=10):
         self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
 
     def on_read_timeout(self, *args, **kwargs):
         if kwargs["retry_num"] < self.max_retries:
             logger.warning(
                 "Retrying read after timeout. Attempt #" + str(kwargs["retry_num"])
             )
+            self.__backoff(kwargs["retry_num"])
             return (self.RETRY, None)
         else:
             return (self.RETHROW, None)
+
+    def __backoff(self, retry_num):
+        # exponential backoff delay
+        delay = min(self.base_delay * (2 ** (retry_num + 1)), self.max_delay)
+        logger.warning(f"Backing off for {delay} seconds (retry number {retry_num})")
+        time.sleep(delay)
 
     def on_write_timeout(self, *args, **kwargs):
         logger.warning("write timeout; propagate error to application")
