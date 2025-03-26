@@ -24,7 +24,7 @@ from cassandra.query import (
 
 from ..utils import remove_multi_whitespace
 
-DEFAULT_TIMEOUT = 60
+DEFAULT_TIMEOUT = 120
 
 # create logger
 logger = logging.getLogger(__name__)
