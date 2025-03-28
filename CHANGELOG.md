@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.03.2/2.4.10] 2025-03-28
+### changed
+- higher default timeout to avoid errors on big inserts
+
 ## [25.03.1/2.4.9] 2025-03-14
 ### changed
 - better retry handling on big inserts
