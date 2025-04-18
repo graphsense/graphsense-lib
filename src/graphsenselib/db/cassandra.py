@@ -344,6 +344,7 @@ class CassandraDb:
             port=self.db_port,
             execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
             connect_timeout=self._default_timeout,
+            idle_heartbeat_timeout=self._default_timeout,
             # protocol_version=6,
             compression="lz4",
         )
