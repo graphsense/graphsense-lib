@@ -26,7 +26,8 @@ with DbFactory().from_name(
         raw_keyspace_name="eth_raw",
         transformed_keyspace_name="eth_transformed",
         schema_type="account",
-        cassandra_nodes = ["test.cassandra1", "test.cassandra2"]
+        cassandra_nodes = ["test.cassandra1", "test.cassandra2"],
+        currency = "eth"
     ) as db:
     print(db.transformed.get_highest_block())
 ```
