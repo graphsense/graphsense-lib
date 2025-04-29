@@ -35,28 +35,35 @@ def only_call_traces(traces: List) -> List:
 
 
 def get_prices(
-    value, decimals, block_rates, usd_equivalent, coin_equivalent
+    value, decimals, block_rates, usd_equivalent, eur_equivalent, coin_equivalent
 ) -> List[int]:
     euro_per_eth = block_rates[0]
     dollar_per_eth = block_rates[1]
     dollar_per_euro = dollar_per_eth / euro_per_eth
 
-    if usd_equivalent == 1:
+    # enforce mutal exclusion
+    assert sum(int(x) for x in [usd_equivalent, eur_equivalent, coin_equivalent]) <= 1
+
+    if usd_equivalent:
         dollar_value = value / 10**decimals
-    elif coin_equivalent == 1:
+        euro_value = dollar_value / dollar_per_euro
+    elif eur_equivalent:
+        euro_value = value / 10**decimals
+        dollar_value = euro_value / dollar_per_euro
+    elif coin_equivalent:
         dollar_value = value / 10**decimals * dollar_per_eth
+        euro_value = dollar_value / dollar_per_euro
     else:
         raise Exception(
             "Unknown price type. only native coin and dollar equivalent supported atm"
         )
 
-    euro_value = dollar_value / dollar_per_euro
     return [euro_value, dollar_value]
 
 
 def get_prices_coin(value, currency, block_rates):
     coin_decimals = currency_to_decimals[currency]
-    return get_prices(value, coin_decimals, block_rates, 0, 1)
+    return get_prices(value, coin_decimals, block_rates, False, True, False)
 
 
 def get_entitytx_from_tokentransfer(
@@ -76,6 +83,7 @@ def get_entitytx_from_tokentransfer(
             tokentransfer.decimals,
             rates[tokentransfer.block_id],
             tokentransfer.usd_equivalent,
+            tokentransfer.eur_equivalent,
             tokentransfer.coin_equivalent,
         ),
     )
@@ -268,6 +276,7 @@ def get_entitydelta_from_tokentransfer(
         tokentransfer.decimals,
         rates[tokentransfer.block_id],
         tokentransfer.usd_equivalent,
+        tokentransfer.eur_equivalent,
         tokentransfer.coin_equivalent,
     )
     dv = DeltaValue(tokentransfer.value, fiat_values)
@@ -418,6 +427,7 @@ def relationdelta_from_tokentransfer(
         tokentransfer.decimals,
         rates[tokentransfer.block_id],
         tokentransfer.usd_equivalent,
+        tokentransfer.eur_equivalent,
         tokentransfer.coin_equivalent,
     )
     value = DeltaValue(value, [dollar_value, euro_value])
