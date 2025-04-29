@@ -13,8 +13,9 @@ class TokenTransfer:
     value: int
     asset: str
     decimals: int
-    coin_equivalent: int
-    usd_equivalent: float
+    coin_equivalent: bool
+    usd_equivalent: bool
+    eur_equivalent: bool
     block_id: int
     tx_hash: bytes
     log_index: int
@@ -75,9 +76,10 @@ class ERC20Decoder:
                     self.supported_tokens["token_address"] == "0x" + log.address.hex()
                 )
                 asset = self.supported_tokens[mask]["currency_ticker"].values[0]
-                peg = self.supported_tokens[mask]["peg_currency"].values[0]
+                peg = self.supported_tokens[mask]["peg_currency"].values[0].upper()
                 coin_equivalent = peg == self.currency
                 usd_equivalent = peg == "USD"
+                eur_equivalent = peg == "EUR"
                 decimals = self.supported_tokens[mask]["decimals"].values[0]
 
                 return TokenTransfer(
@@ -88,6 +90,7 @@ class ERC20Decoder:
                     decimals=decimals,
                     coin_equivalent=coin_equivalent,
                     usd_equivalent=usd_equivalent,
+                    eur_equivalent=eur_equivalent,
                     block_id=log.block_id,
                     tx_hash=log.tx_hash,
                     log_index=log.log_index,

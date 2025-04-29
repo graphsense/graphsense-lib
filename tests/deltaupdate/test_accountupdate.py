@@ -6,6 +6,7 @@ import pandas as pd
 
 from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_sorted_unique_addresses,
+    get_prices,
 )
 from graphsenselib.deltaupdate.update.account.modelsraw import (
     AccountBlockAdapter,
@@ -22,6 +23,7 @@ currency_ticker,assettype,decimals,token_address,peg_currency
 USDT,ERC20,6,0xdac17f958d2ee523a2206206994597c13d831ec7,USD
 USDC,ERC20,6,0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48,USD
 WETH,ERC20,18,0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2,ETH
+DEUR,ERC20,6,0xba3f535bbcccca2a154b573ca6c5a49baae0a3ea,EUR
 """
 
 data_trx = """currency_ticker,assettype,decimals,token_address,coin_equivalent,peg_currency
@@ -278,12 +280,24 @@ def test_token_decoding():
         asset="USDT",
         coin_equivalent=0,
         usd_equivalent=1,
+        eur_equivalent=0,
         block_id=50000101,
         tx_hash=b"\xe0}\xe10\xe5\xc2\xb1\xde\x13\xcd\x88\xee!\xfa\x1e\xca]e\xba\xbb"
         b"\xecVG\xd3\x1c\xb7\x90\x1f\xc92wo",
         log_index=0,
         decimals=6,
     )
+
+    euro_value, dollar_value = get_prices(
+        decoded_transfer.value,
+        decoded_transfer.decimals,
+        [1, 2],
+        decoded_transfer.usd_equivalent,
+        decoded_transfer.eur_equivalent,
+        decoded_transfer.coin_equivalent,
+    )
+    assert float(dollar_value) == 29.0
+    assert float(euro_value) == 14.5
 
     assert decoded_transfer == check
 
@@ -346,3 +360,66 @@ def test_address_sorting():
     )
 
     assert result_addresses == expected_addresses
+
+
+def test_token_with_eur_peg():
+    adapter = AccountLogAdapter()
+    SUPPORTED_TOKENS = pd.read_csv(StringIO(data_eth))
+    example_log = {
+        "log_index": 0,
+        "transaction_index": 1,
+        "block_hash": b"\x00\x00\x00\x00\x02\xfa\xf0\xe5A\xeab\x1d\xed\xc7%\x00\x074^"
+        b"\x10\xaa5\xe7\xbd\xb7\xa9\x1c\xee\x99\x0f96",
+        "address": bytes.fromhex("bA3f535bbCcCcA2A154b573Ca6c5A49BAAE0a3ea"),
+        "data": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xba\x81@",
+        "topics": [
+            b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h"
+            b"\xfc7\x8d\xaa\x95+\xa7\xf1c\xc4\xa1"
+            b"\x16(\xf5ZM\xf5#\xb3\xef",
+            b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb3\xa8"da\xf0\xe6\xa9'
+            b"\xa1\x06?\xeb\xea\x88\xc6\xf6\xa5\xa0\x85~",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0LT\xf6\xb6\xa2\x9a"
+            b'\xf0ZT\x95\x8cIt\xc3\x83\xb4\xd9"\xac',
+        ],
+        "tx_hash": b"\xe0}\xe10\xe5\xc2\xb1\xde\x13\xcd\x88\xee!\xfa\x1e\xca]e\xba\xbb"
+        b"\xecVG\xd3\x1c\xb7\x90\x1f\xc92wo",
+        "block_id": 50000101,
+        "block_id_group": 50000,
+        "partition": 500,
+        "topic0": b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h\xfc7\x8d\xaa\x95+\xa7\xf1c"
+        b"\xc4\xa1\x16(\xf5ZM\xf5#\xb3\xef",
+    }
+
+    example_log = adapter.dict_to_dataclass(example_log)
+    decoder = ERC20Decoder("eth", SUPPORTED_TOKENS)
+
+    decoded_transfer = decoder.log_to_transfer(example_log)
+    check = TokenTransfer(
+        from_address=bytes.fromhex("B3a8226461F0e6A9a1063fEBeA88C6f6A5a0857E"),
+        to_address=bytes.fromhex("F04C54F6b6A29aF05A54958c4974C383B4D922ac"),
+        value=29000000,
+        asset="DEUR",
+        coin_equivalent=0,
+        usd_equivalent=0,
+        eur_equivalent=1,
+        block_id=50000101,
+        tx_hash=b"\xe0}\xe10\xe5\xc2\xb1\xde\x13\xcd\x88\xee!\xfa\x1e\xca]e\xba\xbb"
+        b"\xecVG\xd3\x1c\xb7\x90\x1f\xc92wo",
+        log_index=0,
+        decimals=6,
+    )
+
+    euro_value, dollar_value = get_prices(
+        decoded_transfer.value,
+        decoded_transfer.decimals,
+        [1, 2],
+        decoded_transfer.usd_equivalent,
+        decoded_transfer.eur_equivalent,
+        decoded_transfer.coin_equivalent,
+    )
+
+    assert float(dollar_value) == 14.5
+    assert float(euro_value) == 29.0
+
+    assert decoded_transfer == check
