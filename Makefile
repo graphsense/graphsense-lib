@@ -13,57 +13,57 @@ tag-version:
 	git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
 
 dev:
-	 pip install -e .[dev] --force-reinstall --upgrade
-	 pre-commit install
+	 uv sync -e .[dev] --force-reinstall --upgrade
+	 uv run pre-commit install
 
 test:
-	pytest -v -m "not slow" --cov=src -W error
+	uv run pytest -x -rx -vv -m "not slow" --cov=src --capture=no -W error
 
 test-all:
-	pytest --cov=src -W error
+	uv run pytest --cov=src -W error
 
 install-dev:
-	pip install -e .[dev] --force-reinstall --upgrade
+	uv sync -e .[dev] --force-reinstall --upgrade
 
 install:
-	pip install .
+	uv sync
 
 lint:
-	ruff check tests src
+	uv run ruff check tests src
 
 format:
-	ruff check --select I --fix .
-	ruff format .
+	uv run ruff check --select I --fix .
+	uv run ruff format .
 
 docs:
-	tox -e docs
+	uv run tox -e docs
 
 docs-latex:
-	tox -e docs-latex
+	uv run tox -e docs-latex
 
 pre-commit:
-	pre-commit run --all-files
+	uv run pre-commit run --all-files
 
 build:
-	tox -e clean
-	tox -e build
+	uv run tox -e clean
+	uv run tox -e build
 
 tpublish: build version
-	tox -e publish
+	uv run tox -e publish
 
 publish: build version
-	tox -e publish -- --repository pypi
+	uv run tox -e publish -- --repository pypi
 
 version:
-	python -m setuptools_scm
+	uv run python -m setuptools_scm
 
 generate-tron-grpc-code:
-	python -m grpc_tools.protoc\
+	uv run python -m grpc_tools.protoc\
 		--python_out=./src/\
 		--grpc_python_out=./src/\
 		--proto_path=./src/\
 		./src/graphsenselib/ingest/tron/grpc/api/tron_api.proto
-	python -m grpc_tools.protoc\
+	uv run python -m grpc_tools.protoc\
 		--python_out=./src/\
 		--proto_path=./src/\
 		./src/graphsenselib/ingest/tron/grpc/core/*.proto
