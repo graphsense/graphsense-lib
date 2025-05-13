@@ -35,12 +35,6 @@ format:
 	uv run ruff check --select I --fix .
 	uv run ruff format .
 
-docs:
-	uv run tox -e docs
-
-docs-latex:
-	uv run tox -e docs-latex
-
 pre-commit:
 	uv run pre-commit run --all-files
 
