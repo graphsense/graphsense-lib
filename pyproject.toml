@@ -78,7 +78,6 @@ dev = [
     "setuptools",
     "pytest",
     "pytest-cov",
-    "tox",
     "ruff>=0.9.2",
     "pre-commit",
     "setuptools_scm",
@@ -134,7 +133,6 @@ addopts = """
 norecursedirs = [
     "dist",
     "build",
-    ".tox",
 ]
 testpaths = ["tests"]
 # Use pytest markers to select/deselect specific tests
@@ -157,7 +155,6 @@ extend_ignore = "E203, W503, E721, A005"
 # ^  Black-compatible
 # E203 and W503 have edge cases handled by black
 exclude = """
-.tox
 build
 dist
 .eggs
@@ -192,7 +189,6 @@ exclude = [
     ".pytype",
     ".ruff_cache",
     ".svn",
-    ".tox",
     ".venv",
     ".vscode",
     "__pypackages__",
@@ -214,48 +210,3 @@ extend-select = ["T201"]
 
 [tool.uv]
 prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
-
-
-[tool.tox]
-legacy_tox_ini = """
-[tox]
-skipsdist=False
-envlist = py39,py310
-;requires=tox-venv
-
-[gh-actions]
-python =
-    3.9: py39
-    3.10: py310
-    3.11: py311
-    3.12: py312
-
-[testenv]
-runner = uv-venv-lock-runner
-uv_sync_flags=
-with_dev=True
-passenv=*
-commands=
-    pytest -x -rx -vv --cov=src --vcr-record=none {posargs}
-
-[testenv:{lint}]
-ignore =
-deps = .[dev]
-commands = ruff check tests src
-
-[testenv:{build,clean}]
-description =
-    build: Build the package in isolation according to PEP517, see https://github.com/pypa/build
-    clean: Remove old distribution files and temporary build artifacts (./build and ./dist)
-# https://setuptools.pypa.io/en/stable/build_meta.html#how-to-use-it
-skip_install = True
-changedir = {toxinidir}
-deps =
-    build: build[virtualenv]
-passenv =
-    SETUPTOOLS_*
-commands =
-    clean: python -c 'import shutil; [shutil.rmtree(p, True) for p in ("build", "dist", "docs/_build")]'
-    clean: python -c 'import pathlib, shutil; [shutil.rmtree(p, True) for p in pathlib.Path("src").glob("*.egg-info")]'
-    build: python -m build {posargs}
-"""

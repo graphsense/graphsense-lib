@@ -45,14 +45,7 @@ pre-commit:
 	uv run pre-commit run --all-files
 
 build:
-	uv run tox -e clean
-	uv run tox -e build
-
-tpublish: build version
-	uv run tox -e publish
-
-publish: build version
-	uv run tox -e publish -- --repository pypi
+	uv build
 
 version:
 	uv run python -m setuptools_scm

@@ -45,16 +45,7 @@ jobs:
     #   run: sudo sed -i '/^default = default_sect/a legacy = legacy_sect' /etc/ssl/openssl.cnf &&  sudo sed -i 's/#openssl_conf/openssl_conf/g' /etc/ssl/openssl.cnf && sudo sed -i '/^\[default_sect\]/a activate = 1\n\[legacy_sect\]\nactivate = 1' /etc/ssl/openssl.cnf
     - name: Install requirements
       run: uv sync python=${{ matrix.python }}
-    # - name: Run Unit Test via tox
-    #   # Run tox using the version of Python in `PATH`
-    #   run: tox -e py
-    # - name: Run Lint via tox
-    #   run: tox -e lint
     - name: Build wheel
-      # Run tox using the version of Python in `PATH`
-      run: uv run tox -e build
+      run: make build
     - name: Publish package
-      uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
-      with:
-        user: __token__
-        password: ${{ secrets.PYPI_API_TOKEN }}
+      run: uv publish --token ${{ secrets.PYPI_API_TOKEN }}
