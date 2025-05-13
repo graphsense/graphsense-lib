@@ -26,11 +26,9 @@ jobs:
           version: "latest"
       - name: Install requirements
         run: uv sync --python=${{ matrix.python }}
-      - name: Run Unit Test via tox
-        # Run tox using the version of Python in `PATH`
-        run: uv run tox -e py
-      - name: Run Lint via tox
-        run: uv run tox -e lint
+      - name: Run Unit Tests
+        run: make test
+      - name: Run Lint
+        run: make lint
       - name: Build wheel
-        # Run tox using the version of Python in `PATH`
-        run: uv run tox -e build
+        run: make build
