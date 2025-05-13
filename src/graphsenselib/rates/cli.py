@@ -37,7 +37,12 @@ def get_api_key(key):
 
 def shared_flags(provider="cmc"):
     def inner(function):
-        prev_date = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if provider == "cryptocompare":
+            # needs to be offset-aware because
+            prev_date = date.today() - timedelta(days=1)
+            prev_date = prev_date.strftime("%Y-%m-%dT00:00:00.000000+00:00")
+        else:
+            prev_date = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
         min_date = "2009-01-03"
         if provider == "cmc":
             min_date = MS_CMK

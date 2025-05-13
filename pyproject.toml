@@ -1,12 +1,178 @@
 [build-system]
-# AVOID CHANGING REQUIRES: IT WILL BE UPDATED BY PYSCAFFOLD!
-requires = ["setuptools>=46.1.0", "setuptools_scm[toml]>=5", "wheel"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphsense-lib"
+description = "Graphsense backend lib and automation cli"
+authors = [{name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@ikna.io"}]
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Intended Audience :: Developers",
+    "Topic :: Utilities",
+]
+requires-python = ">=3.9, <3.11"
+dependencies = [
+    'importlib-metadata; python_version<"3.8"',
+    "cassandra-driver>=3.27.0",
+    "lz4>=4.3.2",
+    "filelock>=3.8.0",
+    "click>=8.0.3",
+    "pandas>=1.4.1",
+    "methodtools>=0.4",
+    "simplejson>=3.17.6",
+    "goodconf[yaml]>=3.0.0",
+    "pydantic>=2.0.0",
+    "requests>=2.27.1",
+    "parsy>=2.0, <3.0",
+    "rich>=12.6.0, <13.0",
+    "eth-event>=1.2.3, <2.0",
+    "eth-hash~=0.3.0",
+    "ethereum-etl~=2.4.1",
+    "pyarrow>=16.0.0, <17.0.0",
+    "chainside-btcpy~=0.6",
+    "cashaddress>=1.0.6, < 1.1",
+    "tenacity>=8.2.3",
+    "graphsense-bitcoin-etl==1.5.4",
+    "base58>=2.1",
+    "bitarray>=2.9",
+    "grpcio>=1.48.2",
+    "deltalake~=0.22.3",
+    "duckdb>=1.0.0",
+]
+dynamic = ["version"]
+keywords=["graphsense"]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown; charset=UTF-8; variant=GFM"
+# Add here related links, for example:
+
+[project.urls]
+Homepage = "https://graphsense.github.io/"
+"#    Documentation" = "https://graphsense.github.io/graphsense-lib"
+Source = "https://github.com/graphsense/graphsense-lib"
+Changelog = "https://github.com/graphsense/graphsense-lib/blob/master/CHANGELOG.md"
+Tracker = "https://github.com/graphsense/graphsense-lib/issues"
+"#    Conda-Forge" = "https://anaconda.org/conda-forge/pyscaffold"
+Download = "https://github.com/graphsense"
+# Twitter = https://twitter.com/graphsense
+# Change if running only on Windows, Mac or Linux (comma-separated)
+# Add here all kinds of additional classifiers as defined under
+# https://pypi.org/classifiers/
+
+[dependency-groups]
+testing = [
+    "setuptools",
+    "pytest",
+    "pytest-cov",
+    "testcontainers[cassandra]>=4.9.1",
+    "pytest-vcr",
+    "vcrpy",
+]
+dev = [
+    "setuptools",
+    "pytest",
+    "pytest-cov",
+    "tox",
+    "ruff>=0.9.2",
+    "pre-commit",
+    "setuptools_scm",
+    "pdbpp",
+    "grpcio-tools",
+    "testcontainers[cassandra]>=4.9.1",
+    "pytest-vcr",
+    "vcrpy",
+]
+
+[project.scripts]
+graphsense-cli = "graphsenselib.cli:main"
+
+[tool.setuptools]
+zip-safe = true
+include-package-data = true
+package-dir = {"" = "src"}
+# Require a min/specific Python version (comma-separated conditions)
+# Add here dependencies of your project (line-separated), e.g. requests>=2.2,<3.0.
+# Version specifiers like >=2.2,<3.0 avoid problems due to API changes in
+# new major versions. This works if the required packages follow Semantic Versioning.
+# For more information, check out https://semver.org/.
+platforms = ["any"]
+
 
 [tool.setuptools_scm]
 # For smarter version schemes and other configuration options,
 # check out https://github.com/pypa/setuptools_scm
 version_scheme = "no-guess-dev"
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = [
+    "tests",
+    "src/grapsenselib/ingest/tron/protos",
+]
+namespaces = true
+
+[options.packages.find]
+where = "src"
+exclude = "tests"
+
+[tool.pytest.ini_options]
+# Specify command line options as you would do when invoking pytest directly.
+# e.g. --cov-report html (or xml) for html/xml output or --junitxml junit.xml
+# in order to write a coverage file that can be read by Jenkins.
+# CAUTION: --cov flags may prohibit setting breakpoints while debugging.
+# Comment those flags to avoid this pytest issue.
+addopts = """
+--cov graphsenselib --cov-report term-missing
+--verbose"""
+norecursedirs = [
+    "dist",
+    "build",
+    ".tox",
+]
+testpaths = ["tests"]
+# Use pytest markers to select/deselect specific tests
+markers = [
+    "slow: mark tests as slow (deselect with '-m \"not slow\"')",
+    "vcr:",
+]
+# system: mark end-to-end system tests
+
+[tool.devpi.upload]
+# Options for the devpi: PyPI server and packaging tool
+# VCS export must be deactivated since we are using setuptools-scm
+no_vcs = "1"
+formats = "bdist_wheel"
+
+[tool.flake8]
+# Some sane defaults for the code style checker flake8
+max_line_length = "88"
+extend_ignore = "E203, W503, E721, A005"
+# ^  Black-compatible
+# E203 and W503 have edge cases handled by black
+exclude = """
+.tox
+build
+dist
+.eggs
+*pb2.py
+*pb2_grpc.py"""
+
+[tool.isort]
+profile = "black"
+src_paths = ["src", "tests"]
+skip_glob = [
+    "*pb2_grpc.py",
+    "*pb2.py",
+]
+
+
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -45,3 +211,51 @@ exclude = [
 
 [tool.ruff.lint]
 extend-select = ["T201"]
+
+[tool.uv]
+prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
+
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+skipsdist=False
+envlist = py39,py310
+;requires=tox-venv
+
+[gh-actions]
+python =
+    3.9: py39
+    3.10: py310
+    3.11: py311
+    3.12: py312
+
+[testenv]
+runner = uv-venv-lock-runner
+uv_sync_flags=
+with_dev=True
+passenv=*
+commands=
+    pytest -x -rx -vv --cov=src --vcr-record=none {posargs}
+
+[testenv:{lint}]
+ignore =
+deps = .[dev]
+commands = ruff check tests src
+
+[testenv:{build,clean}]
+description =
+    build: Build the package in isolation according to PEP517, see https://github.com/pypa/build
+    clean: Remove old distribution files and temporary build artifacts (./build and ./dist)
+# https://setuptools.pypa.io/en/stable/build_meta.html#how-to-use-it
+skip_install = True
+changedir = {toxinidir}
+deps =
+    build: build[virtualenv]
+passenv =
+    SETUPTOOLS_*
+commands =
+    clean: python -c 'import shutil; [shutil.rmtree(p, True) for p in ("build", "dist", "docs/_build")]'
+    clean: python -c 'import pathlib, shutil; [shutil.rmtree(p, True) for p in pathlib.Path("src").glob("*.egg-info")]'
+    build: python -m build {posargs}
+"""
