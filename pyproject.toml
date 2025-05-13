@@ -140,36 +140,6 @@ markers = [
     "slow: mark tests as slow (deselect with '-m \"not slow\"')",
     "vcr:",
 ]
-# system: mark end-to-end system tests
-
-[tool.devpi.upload]
-# Options for the devpi: PyPI server and packaging tool
-# VCS export must be deactivated since we are using setuptools-scm
-no_vcs = "1"
-formats = "bdist_wheel"
-
-[tool.flake8]
-# Some sane defaults for the code style checker flake8
-max_line_length = "88"
-extend_ignore = "E203, W503, E721, A005"
-# ^  Black-compatible
-# E203 and W503 have edge cases handled by black
-exclude = """
-build
-dist
-.eggs
-*pb2.py
-*pb2_grpc.py"""
-
-[tool.isort]
-profile = "black"
-src_paths = ["src", "tests"]
-skip_glob = [
-    "*pb2_grpc.py",
-    "*pb2.py",
-]
-
-
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
