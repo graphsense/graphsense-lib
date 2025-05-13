@@ -63,7 +63,7 @@ def get_prices(
 
 def get_prices_coin(value, currency, block_rates):
     coin_decimals = currency_to_decimals[currency]
-    return get_prices(value, coin_decimals, block_rates, False, True, False)
+    return get_prices(value, coin_decimals, block_rates, False, False, True)
 
 
 def get_entitytx_from_tokentransfer(
