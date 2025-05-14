@@ -1,5 +1,6 @@
 # flake8: noqa: T201
 import logging
+import shelve
 from datetime import datetime
 from typing import Optional
 
@@ -7,10 +8,16 @@ import click
 from eth_hash.auto import keccak
 
 from ..cli.common import require_currency, require_environment
-from ..config import currency_to_schema_type, supported_base_currencies
-from ..datatypes.abi import decode_db_logs, decoded_log_to_str
+from ..config import currency_to_schema_type, get_config, supported_base_currencies
+from ..datatypes.abi import (
+    decode_db_logs,
+    decoded_log_to_str,
+    get_filtered_log_signatures,
+)
 from ..utils.accountmodel import hex_str_to_bytes, hex_to_bytes, is_hex_string, strip_0x
 from ..utils.console import console
+from ..utils.defi import get_pair_from_decoded_log, get_token_details
+from ..utils.generic import batch
 from .factory import DbFactory
 from .trace import trace as trace_it
 
@@ -171,6 +178,75 @@ def logs():
     pass
 
 
+@logs.command("get-dex-pairs")
+@require_environment()
+@require_currency()
+@click.option(
+    "--start-block",
+    type=int,
+    required=True,
+    help="Block to start fetching the decodable logs.",
+)
+@click.option(
+    "--end-block",
+    type=int,
+    required=True,
+    help="Block to stop fetching the decodable logs.",
+)
+def get_dex(env: str, currency: str, start_block: int, end_block: int):
+    stype = currency_to_schema_type.get(currency, None)
+    if stype == "account" or stype == "account_trx":
+        with DbFactory().from_config(env, currency) as db:
+            signatureDb = get_filtered_log_signatures("dex-pair-created")
+            config = get_config()
+            ks_config = config.get_keyspace_config(env, currency)
+            rpc = ks_config.ingest_config.get_first_node_reference()
+
+            with shelve.open("dex_tokens") as dex_db:
+                for btch in batch(range(start_block, end_block + 1), n=1000):
+                    tokens = set()
+                    pairs = set()
+
+                    logger.info(f"Working on batch {btch[0]}")
+                    for block in btch:
+                        if f"blk_{block}" in dex_db:
+                            # logger.info("Skip block; already in db")
+                            continue
+
+                        for dlog, log in decode_db_logs(
+                            db.raw.get_logs_in_block(block),
+                            log_signatures_local=signatureDb,
+                        ):
+                            pair = get_pair_from_decoded_log(dlog, log)
+
+                            dex_db[f"p_{pair.get_id()}"] = (block, pair)
+
+                            tokens.add(pair.t0)
+                            tokens.add(pair.t1)
+                            pairs.add(pair)
+
+                    logger.info(f"Added {len(pairs)} new pairs.")
+
+                    tokens_to_fetch = [t for t in tokens if f"t_{t}" not in dex_db]
+
+                    logger.info(
+                        f"Fetching details for {len(tokens_to_fetch)} new tokens."
+                    )
+
+                    for t in tokens_to_fetch:
+                        dex_db[f"t_{t}"] = get_token_details(rpc, t)
+
+                    logger.info("Marking batch blocks as done")
+                    for block in btch:
+                        dex_db[f"blk_{block}"] = True
+
+    else:
+        print(
+            f"Unsupported schema type {stype} for "
+            f"currency {currency}. Only account is supported."
+        )
+
+
 @logs.command("get-decodeable-logs")
 @require_environment()
 @require_currency()
@@ -198,6 +274,12 @@ def logs():
     required=None,
     help="Filter for Contract that produced the log.",
 )
+@click.option(
+    "--signature-filter",
+    type=str,
+    required=None,
+    help="Filters the supported signatures (according to the tags assigned to the signature) based on the regex provided.",
+)
 def get_logs(
     env: str,
     currency: str,
@@ -205,6 +287,7 @@ def get_logs(
     end_block: int,
     topic0: Optional[str],
     contract: Optional[str],
+    signature_filter: Optional[str],
 ):
     """Print all decodable logs for a given block
     Args:
@@ -222,9 +305,16 @@ def get_logs(
 
             if contract is not None:
                 contract = hex_str_to_bytes(strip_0x(contract))
+
+            if signature_filter is not None:
+                signatureDb = get_filtered_log_signatures(signature_filter)
+            else:
+                signatureDb = get_filtered_log_signatures(".*")
+
             for b in range(start_block, end_block):
                 for dlog, log in decode_db_logs(
-                    db.raw.get_logs_in_block(b, topic0=topic0, contract=contract)
+                    db.raw.get_logs_in_block(b, topic0=topic0, contract=contract),
+                    log_signatures_local=signatureDb,
                 ):
                     dlog_str = decoded_log_to_str(dlog)
                     print(f"{b}|{log.log_index}|0x{log.tx_hash.hex()}|{dlog_str}")
