@@ -1,4 +1,5 @@
 import logging
+import re
 
 import eth_event
 
@@ -24,6 +25,7 @@ log_signatures = {
                 {"name": "to", "type": "address", "indexed": True},
                 {"name": "value", "type": "uint256", "indexed": False},
             ],
+            "tags": ["token", "erc20"],
         },
         {
             "name": "Transfer",
@@ -32,12 +34,14 @@ log_signatures = {
                 {"name": "to", "type": "address", "indexed": True},
                 {"name": "value", "type": "uint256", "indexed": True},
             ],
+            "tags": ["token", "erc20"],
         },
     ],
     "0xf285329298fd841af46eb83bbe90d1ebe2951c975a65b19a02f965f842ee69c5": [
         {
             "name": "ChangeOwner",
             "inputs": [{"name": "new_owner", "type": "address", "indexed": True}],
+            "tags": ["ownership"],
         }
     ],
     "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925": [
@@ -48,6 +52,7 @@ log_signatures = {
                 {"name": "spender", "type": "address", "indexed": True},
                 {"name": "value", "type": "uint256", "indexed": False},
             ],
+            "tags": ["token", "erc20"],
         },
         {
             "name": "Approval",
@@ -56,56 +61,67 @@ log_signatures = {
                 {"name": "spender", "type": "address", "indexed": True},
                 {"name": "value", "type": "uint256", "indexed": True},
             ],
+            "tags": ["token", "erc20"],
         },
     ],
     "0x42e160154868087d6bfdc0ca23d96a1c1cfa32f1b72ba9ba27b69b98a0d819dc": [
         {
             "name": "AddedBlackList",
             "inputs": [{"name": "user", "type": "address", "indexed": False}],
+            "tags": ["blacklist"],
         },
         {
             "name": "AddedBlackList",
             "inputs": [{"name": "user", "type": "address", "indexed": True}],
+            "tags": ["blacklist"],
         },
     ],
     "0xd7e9ec6e6ecd65492dce6bf513cd6867560d49544421d0783ddf06e76c24470c": [
         {
             "name": "RemovedBlackList",
             "inputs": [{"name": "user", "type": "address", "indexed": False}],
+            "tags": ["blacklist"],
         },
         {
             "name": "RemovedBlackList",
             "inputs": [{"name": "user", "type": "address", "indexed": True}],
+            "tags": ["blacklist"],
         },
     ],
     "0xcb8241adb0c3fdb35b70c24ce35c5eb0c17af7431c99f827d44a445ca624176a": [
         {
             "name": "Issue",
             "inputs": [{"name": "amount", "type": "uint256", "indexed": False}],
+            "tags": ["supply-management"],
         },
         {
             "name": "Issue",
             "inputs": [{"name": "amount", "type": "uint256", "indexed": True}],
+            "tags": ["supply-management"],
         },
     ],
     "0x702d5967f45f6513a38ffc42d6ba9bf230bd40e8f53b16363c7eb4fd2deb9a44": [
         {
             "name": "Redeem",
             "inputs": [{"name": "amount", "type": "uint256", "indexed": False}],
+            "tags": ["supply-management"],
         },
         {
             "name": "Redeem",
             "inputs": [{"name": "amount", "type": "uint256", "indexed": True}],
+            "tags": ["supply-management"],
         },
     ],
     "0xcc358699805e9a8b7f77b522628c7cb9abd07d9efb86b6fb616af1609036a99e": [
         {
             "name": "Deprecate",
             "inputs": [{"name": "newAddress", "type": "address", "indexed": False}],
+            "tags": ["version-management"],
         },
         {
             "name": "Deprecate",
             "inputs": [{"name": "newAddress", "type": "address", "indexed": True}],
+            "tags": ["version-management"],
         },
     ],
     "0xb044a1e409eac5c48e5af22d4af52670dd1a99059537a78b31b48c6500a6354e": [
@@ -124,6 +140,7 @@ log_signatures = {
                 {"name": "blackListedUser", "type": "address", "indexed": False},
                 {"name": "balance", "type": "uint256", "indexed": False},
             ],
+            "tags": ["supply-management"],
         }
     ],
     "0x9cd6008e8d4ebd34fd9d022278fec7f95d133780ecc1a0dea459fae3e9675390": [
@@ -137,6 +154,7 @@ log_signatures = {
                 {"name": "nonce", "type": "uint256", "indexed": False},
                 {"name": "messenger", "type": "uint8", "indexed": False},
             ],
+            "tags": ["bridging"],
         }
     ],
     "0xe9d840d27ab4032a839c20760fb995af8e3ad1980b9428980ca1c7e072acd87a": [
@@ -149,30 +167,35 @@ log_signatures = {
                 {"name": "messenger", "type": "uint8", "indexed": False},
                 {"name": "message", "type": "bytes32", "indexed": False},
             ],
+            "tags": ["bridging"],
         }
     ],
     "0x54791b38f3859327992a1ca0590ad3c0f08feba98d1a4f56ab0dca74d203392a": [
         {
             "name": "MessageSent",
             "inputs": [{"name": "index_topic_1", "type": "bytes32", "indexed": True}],
+            "tags": ["bridging"],
         }
     ],
     "0xfa628b578e095243f0544bfad9255f49d79d03a5bbf6c85875d05a215e247ad2": [
         {
             "name": "SwapReleased",
             "inputs": [{"name": "encodedSwap", "type": "uint256", "indexed": True}],
+            "tags": ["bridging"],
         }
     ],
     "0x8d92c805c252261fcfff21ee60740eb8a38922469a7e6ee396976d57c22fc1c9": [
         {
             "name": "SwapExecuted",
             "inputs": [{"name": "encodedSwap", "type": "uint256", "indexed": True}],
+            "tags": ["bridging"],
         },
     ],
     "0x5ce4019f772fda6cb703b26bce3ec3006eb36b73f1d3a0eb441213317d9f5e9d": [
         {
             "name": "SwapPosted",
             "inputs": [{"name": "encodedSwap", "type": "uint256", "indexed": True}],
+            "tags": ["bridging"],
         },
     ],
     "0x06724742ccc8c330a39a641ef02a0b419bd09248360680bb38159b0a8c2635d6": [
@@ -186,6 +209,7 @@ log_signatures = {
                 {"name": "nonQuantizedAmount", "type": "uint256", "indexed": False},
                 {"name": "quantizedAmount", "type": "uint256", "indexed": False},
             ],
+            "tags": ["bridging"],
         },
     ],
     "0x0fcf2162832b2d6033d4d34d2f45a28d9cfee523f1899945bbdd32529cfda67b": [
@@ -199,6 +223,7 @@ log_signatures = {
                 {"name": "tokenId", "type": "uint256", "indexed": False},
                 {"name": "assetId", "type": "uint256", "indexed": False},
             ],
+            "tags": ["bridging"],
         },
     ],
     "0xed94dc026fa9364c53bc0af51cde7f54f3109b3f31fceb26d01396d80e20453b": [
@@ -214,6 +239,7 @@ log_signatures = {
                 {"name": "nonQuantizedAmount", "type": "uint256", "indexed": False},
                 {"name": "quantizedAmount", "type": "uint256", "indexed": False},
             ],
+            "tags": ["bridging"],
         },
     ],
     "0xb7477a7b93b2addc5272bbd7ad0986ef1c0d0bd265f26c3dc4bbe42727c2ac0c": [
@@ -226,6 +252,7 @@ log_signatures = {
                 {"name": "quantizedAmount", "type": "uint256", "indexed": False},
                 {"name": "recipient", "type": "address", "indexed": False},
             ],
+            "tags": ["bridging"],
         },
     ],
     "0xa5cfa8e2199ec5b8ca319288bcab72734207d30569756ee594a74b4df7abbf41": [
@@ -238,6 +265,7 @@ log_signatures = {
                 {"name": "assetId", "type": "uint256", "indexed": False},
                 {"name": "recipient", "type": "address", "indexed": False},
             ],
+            "tags": ["bridging"],
         },
     ],
     "0xc6ba68235f3229e53f3a95cda25543ad54c0f6df2493a06c05fb930bea7966fe": [
@@ -252,6 +280,7 @@ log_signatures = {
                 {"name": "quantizedAmount", "type": "uint256", "indexed": False},
                 {"name": "recipient", "type": "address", "indexed": False},
             ],
+            "tags": ["bridging"],
         },
     ],
     "0x7e6e15df814c1a309a57686de672b2bedd128eacde35c5370c36d6840d4e9a92": [
@@ -264,6 +293,17 @@ log_signatures = {
                 {"name": "quantizedAmount", "type": "uint256", "indexed": False},
                 {"name": "assetId", "type": "uint256", "indexed": False},
             ],
+            "tags": ["bridging"],
+        },
+    ],
+    "0x9d42cb017eb05bd8944ab536a8b35bc68085931dd5f4356489801453923953f9": [
+        {
+            "name": "NewExchange",
+            "inputs": [
+                {"name": "token", "type": "address", "indexed": True},
+                {"name": "exchange", "type": "address", "indexed": True},
+            ],
+            "tags": ["uniswap_v1", "dex-pair-created"],
         },
     ],
     "0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9": [
@@ -275,6 +315,7 @@ log_signatures = {
                 {"name": "pair", "type": "address", "indexed": False},
                 {"name": "x", "type": "uint256", "indexed": False},
             ],
+            "tags": ["uniswap_v2", "dex-pair-created"],
         },
     ],
     "0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118": [
@@ -287,6 +328,45 @@ log_signatures = {
                 {"name": "tickSpacing", "type": "int24", "indexed": False},
                 {"name": "pool", "type": "address", "indexed": False},
             ],
+            "tags": ["uniswap_v3", "dex-pair-created"],
+        },
+    ],
+    "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438": [
+        {
+            "name": "Initialize",
+            "inputs": [
+                {"name": "id", "type": "bytes32", "indexed": True},
+                {"name": "currency0", "type": "address", "indexed": True},
+                {"name": "currency1", "type": "address", "indexed": True},
+                {"name": "fee", "type": "uint24", "indexed": False},
+                {"name": "tickSpacing", "type": "int24", "indexed": False},
+                {"name": "hooks", "type": "address", "indexed": False},
+                {"name": "sqrtPriceX96", "type": "uint160", "indexed": False},
+                {"name": "tick", "type": "int24", "indexed": False},
+            ],
+            "tags": ["uniswap_v4", "dex-pair-created"],
+        },
+    ],
+    "0xcd60aa75dea3072fbc07ae6d7d856b5dc5f4eee88854f5b4abf7b680ef8bc50f": [
+        {
+            "name": "TokenPurchase",
+            "inputs": [
+                {"name": "buyer", "type": "address", "indexed": True},
+                {"name": "eth_sold", "type": "uint256", "indexed": True},
+                {"name": "tokens_bought", "type": "uint256", "indexed": True},
+            ],
+            "tags": ["uniswap_v1"],
+        },
+    ],
+    "0x7f4091b46c33e918a0f3aa42307641d17bb67029427a5369e54b353984238705": [
+        {
+            "name": "EthPurchase",
+            "inputs": [
+                {"name": "buyer", "type": "address", "indexed": True},
+                {"name": "eth_sold", "type": "uint256", "indexed": True},
+                {"name": "eth_bought", "type": "uint256", "indexed": True},
+            ],
+            "tags": ["uniswap_v1"],
         },
     ],
     "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822": [
@@ -300,6 +380,7 @@ log_signatures = {
                 {"name": "amount1Out", "type": "uint256", "indexed": False},
                 {"name": "to", "type": "address", "indexed": True},
             ],
+            "tags": ["uniswap_v2"],
         },
     ],
     "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67": [
@@ -314,6 +395,23 @@ log_signatures = {
                 {"name": "liquidity", "type": "uint128", "indexed": False},
                 {"name": "tick", "type": "int24", "indexed": False},
             ],
+            "tags": ["uniswap_v3"],
+        },
+    ],
+    "0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f": [
+        {
+            "name": "Swap",
+            "inputs": [
+                {"name": "id", "type": "bytes32", "indexed": True},
+                {"name": "sender", "type": "address", "indexed": True},
+                {"name": "amount0", "type": "int128", "indexed": False},
+                {"name": "amount1", "type": "int128", "indexed": False},
+                {"name": "sqrtPriceX96", "type": "uint160", "indexed": False},
+                {"name": "liquidity", "type": "uint128", "indexed": False},
+                {"name": "tick", "type": "int24", "indexed": False},
+                {"name": "fee", "type": "uint24", "indexed": False},
+            ],
+            "tags": ["uniswap_v4"],
         },
     ],
     "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65": [
@@ -323,13 +421,26 @@ log_signatures = {
                 {"name": "src", "type": "address", "indexed": True},
                 {"name": "value", "type": "uint256", "indexed": False},
             ],
+            "tags": ["bridging"],
         },
     ],
 }
 
 
-def is_supported_log(log) -> bool:
-    return len(log["topics"]) > 0 and log["topics"][0] in log_signatures
+def get_filtered_log_signatures(filter: str, log_signatures_local=log_signatures):
+    pattern = re.compile(filter)
+
+    result = {}
+    for k, v in log_signatures_local.items():
+        vnew = [x for x in v if any(pattern.match(y) for y in x.get("tags", []))]
+
+        if len(vnew) > 0:
+            result[k] = v
+    return result
+
+
+def is_supported_log(log, log_signatures_local=log_signatures) -> bool:
+    return len(log["topics"]) > 0 and log["topics"][0] in log_signatures_local
 
 
 def convert_db_log(db_log) -> dict:
@@ -348,20 +459,36 @@ def decoded_log_to_str(decoded_log) -> str:
     return f"{addr}|{name}({params})".replace("\n", "")
 
 
-def decode_db_logs(db_logs):
+def decode_db_logs(db_logs, log_signatures_local=log_signatures):
     return [
         x
-        for x in [(decode_log(convert_db_log(log)), log) for log in db_logs]
+        for x in [
+            (
+                decode_log(
+                    convert_db_log(log), log_signatures_local=log_signatures_local
+                ),
+                log,
+            )
+            for log in db_logs
+        ]
         if x[0] is not None
     ]
 
 
-def decode_log(log):
-    if is_supported_log(log):
-        logdef = log_signatures[log["topics"][0]]
+def decode_log(log, log_signatures_local=log_signatures):
+    if is_supported_log(log, log_signatures_local=log_signatures_local):
+        logdef = log_signatures_local[log["topics"][0]]
         for i in range(0, len(logdef)):
             try:
-                return eth_event.decode_log(log, VersionedDict(log_signatures, i))
+                decoded_log = eth_event.decode_log(
+                    log, VersionedDict(log_signatures_local, i)
+                )
+                ld = VersionedDict(log_signatures_local, i)
+                decoded_log["log_def"] = ld
+                decoded_log["parameters"] = {
+                    d["name"]: d["value"] for d in decoded_log.get("data", [])
+                }
+                return decoded_log
             except eth_event.EventError as e:
                 if i == len(logdef) - 1:
                     logger.info(f"Failed to decode supported log type. {e}. {log}")
