@@ -1,7 +1,6 @@
 # flake8: noqa: T201
 import logging
 import shelve
-from dataclasses import asdict
 from datetime import datetime
 from multiprocessing import Process, Queue
 from typing import Optional
@@ -258,7 +257,7 @@ def get_dex(
 
                                 tokens.add(pair.t0)
                                 tokens.add(pair.t1)
-                                pairs.add((block, asdict(pair)))
+                                pairs.add((block, pair))
 
                         logger.info(
                             f"Found {len(pairs)} new pairs in range {blockrange[0]}"
