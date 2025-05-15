@@ -1,7 +1,9 @@
 # flake8: noqa: T201
 import logging
 import shelve
+from dataclasses import asdict
 from datetime import datetime
+from multiprocessing import Process, Queue
 from typing import Optional
 
 import click
@@ -193,52 +195,126 @@ def logs():
     required=True,
     help="Block to stop fetching the decodable logs.",
 )
-def get_dex(env: str, currency: str, start_block: int, end_block: int):
+@click.option(
+    "--output-file",
+    type=str,
+    required=True,
+    help="Name of the shelve db to crate",
+)
+@click.option(
+    "--n-workers",
+    type=int,
+    required=False,
+    default=10,
+    help="Number of readers.",
+)
+def get_dex(
+    env: str,
+    currency: str,
+    start_block: int,
+    end_block: int,
+    output_file: str,
+    n_workers: int,
+):
     stype = currency_to_schema_type.get(currency, None)
     if stype == "account" or stype == "account_trx":
-        with DbFactory().from_config(env, currency) as db:
-            signatureDb = get_filtered_log_signatures("dex-pair-created")
-            config = get_config()
-            ks_config = config.get_keyspace_config(env, currency)
-            rpc = ks_config.ingest_config.get_first_node_reference()
+        signatureDb = get_filtered_log_signatures("dex-pair-created")
+        config = get_config()
+        ks_config = config.get_keyspace_config(env, currency)
+        rpc = ks_config.ingest_config.get_first_node_reference()
 
-            with shelve.open("dex_tokens") as dex_db:
-                for btch in batch(range(start_block, end_block + 1), n=1000):
+        existing_blocks = set()
+        nblks, npairs, ntokens = (0, 0, 0)
+        with shelve.open(output_file) as dex_db:
+            for k, _ in dex_db.items():
+                if k.startswith("p_"):
+                    npairs += 1
+                elif k.startswith("blk_"):
+                    nblks += 1
+                    existing_blocks.add(int(k.split("_")[1]))
+                elif k.startswith("t_"):
+                    ntokens += 1
+
+        logger.info(
+            f"The database already holds {nblks} blocks, {npairs} pairs, and {ntokens} tokens"
+        )
+
+        def reader(task_queue, result_queue):
+            with DbFactory().from_config(env, currency) as db:
+                while True:
+                    blockrange = task_queue.get()
                     tokens = set()
                     pairs = set()
+                    if blockrange is None:  # Sentinel value to stop the worker
+                        result_queue.put(None)
+                        break
+                    try:
+                        for block in blockrange:
+                            for dlog, log in decode_db_logs(
+                                db.raw.get_logs_in_block(block),
+                                log_signatures_local=signatureDb,
+                            ):
+                                pair = get_pair_from_decoded_log(dlog, log)
 
-                    logger.info(f"Working on batch {btch[0]}")
-                    for block in btch:
-                        if f"blk_{block}" in dex_db:
-                            # logger.info("Skip block; already in db")
-                            continue
+                                tokens.add(pair.t0)
+                                tokens.add(pair.t1)
+                                pairs.add((block, asdict(pair)))
 
-                        for dlog, log in decode_db_logs(
-                            db.raw.get_logs_in_block(block),
-                            log_signatures_local=signatureDb,
-                        ):
-                            pair = get_pair_from_decoded_log(dlog, log)
+                        logger.info(
+                            f"Found {len(pairs)} new pairs in range {blockrange[0]}"
+                        )
 
+                        result_queue.put((blockrange, pairs, tokens))
+
+                    except Exception as e:
+                        logger.error(str(e))
+                        result_queue.put(str(e))
+
+        def writer(results_queue, output_name):
+            with shelve.open(output_name) as dex_db:
+                while True:
+                    data = results_queue.get()
+                    if data is None:
+                        break
+                    else:
+                        btch, pairs, tokens = data
+
+                        for block, pair in pairs:
                             dex_db[f"p_{pair.get_id()}"] = (block, pair)
 
-                            tokens.add(pair.t0)
-                            tokens.add(pair.t1)
-                            pairs.add(pair)
+                        tokens_to_fetch = [t for t in tokens if f"t_{t}" not in dex_db]
 
-                    logger.info(f"Added {len(pairs)} new pairs.")
+                        logger.info(
+                            f"Fetching details for {len(tokens_to_fetch)} new tokens."
+                        )
 
-                    tokens_to_fetch = [t for t in tokens if f"t_{t}" not in dex_db]
+                        for t in tokens_to_fetch:
+                            dex_db[f"t_{t}"] = get_token_details(rpc, t)
 
-                    logger.info(
-                        f"Fetching details for {len(tokens_to_fetch)} new tokens."
-                    )
+                        logger.info("Marking batch blocks as done")
+                        for block in btch:
+                            dex_db[f"blk_{block}"] = True
 
-                    for t in tokens_to_fetch:
-                        dex_db[f"t_{t}"] = get_token_details(rpc, t)
+        task_queue = Queue()
+        result_queue = Queue()
+        readers = []
+        for _ in range(n_workers):
+            worker_process = Process(target=reader, args=(task_queue, result_queue))
+            worker_process.start()
+            readers.append(worker_process)
 
-                    logger.info("Marking batch blocks as done")
-                    for block in btch:
-                        dex_db[f"blk_{block}"] = True
+        writer = Process(target=writer, args=(result_queue, output_file))
+        writer.start()
+
+        for btch in batch(range(start_block, end_block + 1), n=1000):
+            fbtch = [b for b in btch if b not in existing_blocks]
+            if len(fbtch) > 0:
+                task_queue.put(fbtch)
+
+        for worker_process in readers:
+            worker_process.join()
+
+        writer.join()
 
     else:
         print(

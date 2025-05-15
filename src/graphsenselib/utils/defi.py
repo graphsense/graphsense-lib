@@ -4,6 +4,7 @@ from typing import Optional
 
 import requests
 from eth_abi import decode
+from eth_abi.exceptions import InsufficientDataBytes
 from eth_hash.auto import keccak
 
 from .accountmodel import strip_0x
@@ -100,17 +101,22 @@ def decode_uint8_result(result):
 
 
 def decode_text_result(data):
-    if "result" in data:
-        bytes_text = bytes.fromhex(strip_0x(data["result"]))
-        if len(bytes_text) == 0:
-            text = None
+    try:
+        if "result" in data:
+            bytes_text = bytes.fromhex(strip_0x(data["result"]))
+            if len(bytes_text) == 0:
+                text = None
+            else:
+                try:
+                    text = decode_string_result(bytes_text)
+                except OverflowError:
+                    # might be byte32 encoded e.g. like 0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2
+                    text = (
+                        decode_bytes32_result(bytes_text).decode("utf-8").rstrip("\x00")
+                    )
         else:
-            try:
-                text = decode_string_result(bytes_text)
-            except OverflowError:
-                # might be byte32 encoded e.g. like 0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2
-                text = decode_bytes32_result(bytes_text).decode("utf-8").rstrip("\x00")
-    else:
+            text = None
+    except InsufficientDataBytes:
         text = None
 
     return text
