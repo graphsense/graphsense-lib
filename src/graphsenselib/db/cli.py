@@ -249,7 +249,7 @@ def get_dex(
                     if blockrange is None:  # Sentinel value to stop the worker
                         rc.decrement()
                         if rc.value() == 0:
-                            logger.log("Last reader down sending None to writer.")
+                            logger.info("Last reader down sending None to writer.")
                             result_queue.put(None)
                         break
                     try:
@@ -276,6 +276,7 @@ def get_dex(
                         rc.decrement()
                         if rc.value() == 0:
                             result_queue.put(None)
+                        break
 
         def writer(results_queue, output_name):
             with shelve.open(output_name) as dex_db:
