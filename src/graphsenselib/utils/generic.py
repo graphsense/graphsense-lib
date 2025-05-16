@@ -175,3 +175,100 @@ def truncateI32(number):
     if result & (1 << 31):  # negative value
         result -= 1 << 32
     return result
+
+
+class RangeManager:
+    def __init__(self):
+        self.ranges = []
+
+    def add_index(self, index):
+        """Add an index to the manager and merge with existing ranges if possible."""
+        new_range = [index, index]
+        merged = []
+        i = 0
+        n = len(self.ranges)
+
+        while i < n:
+            current_start, current_end = self.ranges[i]
+
+            if new_range[0] <= current_end + 1 and current_start <= new_range[1] + 1:
+                new_range[0] = min(new_range[0], current_start)
+                new_range[1] = max(new_range[1], current_end)
+            else:
+                merged.append(self.ranges[i])
+            i += 1
+
+        merged.append(new_range)
+        merged.sort()
+        self.ranges = merged
+
+    def add_range(self, start, end):
+        """Add a range of indices to the manager and merge with existing ranges if possible."""
+        new_range = [start, end]
+        merged = []
+        i = 0
+        n = len(self.ranges)
+
+        while i < n:
+            current_start, current_end = self.ranges[i]
+
+            if new_range[0] <= current_end + 1 and current_start <= new_range[1] + 1:
+                new_range[0] = min(new_range[0], current_start)
+                new_range[1] = max(new_range[1], current_end)
+            else:
+                merged.append(self.ranges[i])
+            i += 1
+
+        merged.append(new_range)
+        merged.sort()
+        self.ranges = merged
+
+    def is_processed(self, index):
+        """Check if an index is covered by any of the ranges."""
+        for start, end in self.ranges:
+            if start <= index <= end:
+                return True
+        return False
+
+    def get_ranges(self):
+        """Return the current list of ranges."""
+        return self.ranges
+
+    def find_smallest_unprocessed(self):
+        """Find the smallest integer not yet processed."""
+        smallest_unprocessed = 0
+        for start, end in self.ranges:
+            if start > smallest_unprocessed:
+                return smallest_unprocessed
+            smallest_unprocessed = end + 1
+        return smallest_unprocessed
+
+    def serialize(self):
+        """Serialize the RangeManager object to bytes."""
+        flat_list = []
+        for start, end in self.ranges:
+            flat_list.append(start)
+            flat_list.append(end)
+
+        byte_data = bytearray()
+        for num in flat_list:
+            byte_data.extend(num.to_bytes(4, byteorder="big"))
+
+        return bytes(byte_data)
+
+    @classmethod
+    def deserialize(cls, data):
+        """Deserialize bytes back to a RangeManager object."""
+        range_manager = cls()
+
+        flat_list = []
+        for i in range(0, len(data), 4):
+            num = int.from_bytes(data[i : i + 4], byteorder="big")
+            flat_list.append(num)
+
+        ranges = []
+        for i in range(0, len(flat_list), 2):
+            ranges.append([flat_list[i], flat_list[i + 1]])
+
+        range_manager.ranges = ranges
+        return range_manager

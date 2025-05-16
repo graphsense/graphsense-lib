@@ -19,6 +19,7 @@ from ..utils.accountmodel import hex_str_to_bytes, hex_to_bytes, is_hex_string, 
 from ..utils.console import console
 from ..utils.defi import get_pair_from_decoded_log, get_token_details
 from ..utils.generic import batch
+from ..utils.multiprocessing import MPCounter
 from .factory import DbFactory
 from .trace import trace as trace_it
 
@@ -238,14 +239,18 @@ def get_dex(
             f"The database already holds {nblks} blocks, {npairs} pairs, and {ntokens} tokens"
         )
 
-        def reader(task_queue, result_queue):
+        def reader(task_queue, result_queue, rc):
+            rc.increment()
             with DbFactory().from_config(env, currency) as db:
                 while True:
                     blockrange = task_queue.get()
                     tokens = set()
                     pairs = set()
                     if blockrange is None:  # Sentinel value to stop the worker
-                        result_queue.put(None)
+                        rc.decrement()
+                        if rc.value() == 0:
+                            logger.log("Last reader down sending None to writer.")
+                            result_queue.put(None)
                         break
                     try:
                         for block in blockrange:
@@ -267,38 +272,51 @@ def get_dex(
 
                     except Exception as e:
                         logger.error(str(e))
-                        result_queue.put(str(e))
+                        # result_queue.put(str(e))
+                        rc.decrement()
+                        if rc.value() == 0:
+                            result_queue.put(None)
 
         def writer(results_queue, output_name):
             with shelve.open(output_name) as dex_db:
                 while True:
                     data = results_queue.get()
                     if data is None:
+                        logger.log("Got None, writer out.")
                         break
                     else:
-                        btch, pairs, tokens = data
+                        try:
+                            btch, pairs, tokens = data
 
-                        for block, pair in pairs:
-                            dex_db[f"p_{pair.get_id()}"] = (block, pair)
+                            for block, pair in pairs:
+                                dex_db[f"p_{pair.get_id()}"] = (block, pair)
 
-                        tokens_to_fetch = [t for t in tokens if f"t_{t}" not in dex_db]
+                            tokens_to_fetch = [
+                                t for t in tokens if f"t_{t}" not in dex_db
+                            ]
 
-                        logger.info(
-                            f"Fetching details for {len(tokens_to_fetch)} new tokens."
-                        )
+                            logger.info(
+                                f"Fetching details for {len(tokens_to_fetch)} new tokens."
+                            )
 
-                        for t in tokens_to_fetch:
-                            dex_db[f"t_{t}"] = get_token_details(rpc, t)
+                            for t in tokens_to_fetch:
+                                dex_db[f"t_{t}"] = get_token_details(rpc, t)
 
-                        logger.info("Marking batch blocks as done")
-                        for block in btch:
-                            dex_db[f"blk_{block}"] = True
+                            logger.info("Marking batch blocks as done")
+                            for block in btch:
+                                dex_db[f"blk_{block}"] = True
+                        except Exception as e:
+                            logger.error(str(e))
 
         task_queue = Queue()
         result_queue = Queue()
+        reader_count = MPCounter()
         readers = []
+
         for _ in range(n_workers):
-            worker_process = Process(target=reader, args=(task_queue, result_queue))
+            worker_process = Process(
+                target=reader, args=(task_queue, result_queue, reader_count)
+            )
             worker_process.start()
             readers.append(worker_process)
 

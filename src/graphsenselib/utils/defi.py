@@ -4,7 +4,11 @@ from typing import Optional
 
 import requests
 from eth_abi import decode
-from eth_abi.exceptions import InsufficientDataBytes
+from eth_abi.exceptions import (
+    DecodingError,
+    InsufficientDataBytes,
+    NonEmptyPaddingBytes,
+)
 from eth_hash.auto import keccak
 
 from .accountmodel import strip_0x
@@ -97,7 +101,10 @@ def decode_bytes32_result(result):
 
 
 def decode_uint8_result(result):
-    return decode(["uint8"], result)[0]
+    try:
+        return decode(["uint8"], result)[0]
+    except NonEmptyPaddingBytes:
+        return None
 
 
 def decode_text_result(data):
@@ -116,7 +123,12 @@ def decode_text_result(data):
                     )
         else:
             text = None
-    except InsufficientDataBytes:
+    except (
+        InsufficientDataBytes,
+        NonEmptyPaddingBytes,
+        DecodingError,
+        UnicodeDecodeError,
+    ):
         text = None
 
     return text
