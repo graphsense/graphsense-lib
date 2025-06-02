@@ -29,6 +29,16 @@ class DexPair:
 
 
 @dataclass(frozen=True)
+class Swap:
+    fromAmount: str
+    toAmount: str
+    fromToken: str
+    toToken: Optional[str]
+    version: str
+    swap_log: str
+
+
+@dataclass(frozen=True)
 class TokenMetadata:
     adr: str
     name: Optional[str]
@@ -67,9 +77,59 @@ def get_pair_from_decoded_log(dlog, log_raw):
         v = "uni1"
         pair_id = None
     else:
-        raise ValueError("Trading pair of type {name} not supported")
+        raise ValueError(f"Trading pair of type {name} not supported")
 
     return DexPair(t0, t1, v, pool_address, pair_id, issuer, creation_log)
+
+
+def get_strategy_from_decoded_logs(dlogs: list) -> str:
+    names = [dlog["name"] for dlog in dlogs]
+    if "OrderRecord" in names:
+        return "OrderRecord"
+    else:
+        raise ValueError("No supported strategy found in decoded logs")
+
+
+def get_swap_from_decoded_logs(dlogs: list, logs_raw: list) -> Optional[Swap]:
+    # Note token 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee is a placeholder for ETH
+    # Probably have to check traces to handle that
+
+    # logic to decide which handling function to use.
+    strategy = get_strategy_from_decoded_logs(dlogs)
+
+    if strategy == "OrderRecord":
+        relevant_logs = [dlog for dlog in dlogs if dlog["name"] == "OrderRecord"]
+        relevant_logs_i = [
+            i for i, dlog in enumerate(dlogs) if dlog["name"] == "OrderRecord"
+        ]
+        assert len(relevant_logs) == 1, "Expected exactly one OrderRecord log"
+        dlog = relevant_logs[0]
+        log_raw = logs_raw[relevant_logs_i[0]]
+
+        swap_log = f"0x{log_raw.tx_hash.hex()}_S{log_raw.log_index}"
+
+        data = dlog["data"]
+
+        def get_field(data, fieldname):
+            for item in data:
+                if item["name"] == fieldname:
+                    return item["value"]
+            return None
+
+        fromAmount = get_field(data, "fromAmount")
+        toAmount = get_field(data, "toAmount")
+        fromToken = get_field(data, "fromToken")
+        toToken = get_field(data, "toToken")
+        version = "okx-router"
+
+    return Swap(
+        fromAmount=fromAmount,
+        toAmount=toAmount,
+        fromToken=fromToken,
+        toToken=toToken,
+        version=version,
+        swap_log=swap_log,
+    )
 
 
 def get_topic(signature: str) -> bytes:
