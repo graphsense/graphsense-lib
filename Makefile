@@ -23,7 +23,7 @@ test-all:
 	uv run pytest --cov=src -W error
 
 install-dev:
-	uv sync -e .[dev] --force-reinstall --upgrade
+	uv sync -e --all-groups --force-reinstall --upgrade
 
 install:
 	uv sync

@@ -398,6 +398,19 @@ log_signatures = {
             "tags": ["uniswap_v3"],
         },
     ],
+    "0x1bb43f2da90e35f7b0cf38521ca95a49e68eb42fac49924930a5bd73cdf7576c": [
+        {
+            "name": "OrderRecord",
+            "inputs": [
+                {"name": "fromToken", "type": "address", "indexed": False},
+                {"name": "toToken", "type": "address", "indexed": False},
+                {"name": "sender", "type": "address", "indexed": False},
+                {"name": "fromAmount", "type": "uint256", "indexed": False},
+                {"name": "toAmount", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["okx", "order-record"],
+        }
+    ],
     "0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f": [
         {
             "name": "Swap",
