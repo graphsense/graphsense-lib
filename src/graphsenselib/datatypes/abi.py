@@ -380,7 +380,7 @@ log_signatures = {
                 {"name": "amount1Out", "type": "uint256", "indexed": False},
                 {"name": "to", "type": "address", "indexed": True},
             ],
-            "tags": ["uniswap_v2"],
+            "tags": ["uniswap_v2", "swap"],
         },
     ],
     "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67": [
@@ -395,7 +395,7 @@ log_signatures = {
                 {"name": "liquidity", "type": "uint128", "indexed": False},
                 {"name": "tick", "type": "int24", "indexed": False},
             ],
-            "tags": ["uniswap_v3"],
+            "tags": ["uniswap_v3", "swap"],
         },
     ],
     "0x1bb43f2da90e35f7b0cf38521ca95a49e68eb42fac49924930a5bd73cdf7576c": [
@@ -408,7 +408,7 @@ log_signatures = {
                 {"name": "fromAmount", "type": "uint256", "indexed": False},
                 {"name": "toAmount", "type": "uint256", "indexed": False},
             ],
-            "tags": ["okx", "order-record"],
+            "tags": ["okx", "order-record", "swap"],
         }
     ],
     "0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f": [
@@ -424,7 +424,7 @@ log_signatures = {
                 {"name": "tick", "type": "int24", "indexed": False},
                 {"name": "fee", "type": "uint24", "indexed": False},
             ],
-            "tags": ["uniswap_v4"],
+            "tags": ["uniswap_v4", "swap"],
         },
     ],
     "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65": [
@@ -435,6 +435,63 @@ log_signatures = {
                 {"name": "value", "type": "uint256", "indexed": False},
             ],
             "tags": ["bridging"],
+        },
+        {
+            "name": "Withdrawal",
+            "inputs": [
+                {"name": "src", "type": "address", "indexed": True},
+                {"name": "wad", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["weth", "unwrap", "token"],
+        },
+    ],
+    "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c": [
+        {
+            "name": "Deposit",
+            "inputs": [
+                {"name": "dst", "type": "address", "indexed": True},
+                {"name": "wad", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["weth", "wrap", "token"],
+        },
+    ],
+    "0xa07a543ab8a018198e99ca0184c93fe9050a79400a0a723441f84de1d972cc17": [
+        {
+            "name": "Trade",
+            "inputs": [
+                {"name": "owner", "type": "address", "indexed": True},
+                {"name": "sellToken", "type": "address", "indexed": False},
+                {"name": "buyToken", "type": "address", "indexed": False},
+                {"name": "sellAmount", "type": "uint256", "indexed": False},
+                {"name": "buyAmount", "type": "uint256", "indexed": False},
+                {"name": "feeAmount", "type": "uint256", "indexed": False},
+                {"name": "orderUid", "type": "bytes", "indexed": False},
+            ],
+            "tags": ["cow-protocol", "trade", "swap", "dex"],
+        },
+    ],
+    "0x40338ce1a7c49204f0099533b1e9a7ee0a3d261f84974ab7af36105b8c4e9db4": [
+        {
+            "name": "Settlement",
+            "inputs": [
+                {"name": "solver", "type": "address", "indexed": True},
+            ],
+            "tags": ["cow-protocol", "settlement"],
+        },
+    ],
+    "0x5844b8bbe3fd2b0354e73f27bfde28d2e6d991f14139c382876ec4360391a47b": [
+        {
+            "name": "ExpressExecutedWithToken",
+            "inputs": [
+                {"name": "commandId", "type": "bytes32", "indexed": True},
+                {"name": "sourceChain", "type": "string", "indexed": False},
+                {"name": "sourceAddress", "type": "string", "indexed": False},
+                {"name": "payloadHash", "type": "bytes32", "indexed": False},
+                {"name": "symbol", "type": "string", "indexed": False},
+                {"name": "amount", "type": "uint256", "indexed": True},
+                {"name": "expressExecutor", "type": "address", "indexed": True},
+            ],
+            "tags": ["squid", "bridging", "cross-chain", "express-execution"],
         },
     ],
 }
@@ -493,11 +550,10 @@ def decode_log(log, log_signatures_local=log_signatures):
         logdef = log_signatures_local[log["topics"][0]]
         for i in range(0, len(logdef)):
             try:
-                decoded_log = eth_event.decode_log(
-                    log, VersionedDict(log_signatures_local, i)
-                )
-                ld = VersionedDict(log_signatures_local, i)
-                decoded_log["log_def"] = ld
+                versioned_dict = VersionedDict(log_signatures_local, i)
+                decoded_log = eth_event.decode_log(log, versioned_dict)
+                ld = versioned_dict
+                decoded_log["log_def"] = ld[log["topics"][0]]
                 decoded_log["parameters"] = {
                     d["name"]: d["value"] for d in decoded_log.get("data", [])
                 }
