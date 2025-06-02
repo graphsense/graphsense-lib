@@ -189,3 +189,6 @@ tester.py
 local/
 
 venv*/
+
+# Implementation summary file (private tracking)
+.implementation_summary.md
