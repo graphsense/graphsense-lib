@@ -11,7 +11,7 @@ from eth_hash.auto import keccak
 from ..cli.common import require_currency, require_environment
 from ..config import currency_to_schema_type, get_config, supported_base_currencies
 from ..datatypes.abi import (
-    decode_db_logs,
+    decode_logs_db,
     decoded_log_to_str,
     get_filtered_log_signatures,
 )
@@ -254,7 +254,7 @@ def get_dex(
                         break
                     try:
                         for block in blockrange:
-                            for dlog, log in decode_db_logs(
+                            for dlog, log in decode_logs_db(
                                 db.raw.get_logs_in_block(block),
                                 log_signatures_local=signatureDb,
                             ):
@@ -406,7 +406,7 @@ def get_logs(
                 signatureDb = get_filtered_log_signatures(".*")
 
             for b in range(start_block, end_block):
-                for dlog, log in decode_db_logs(
+                for dlog, log in decode_logs_db(
                     db.raw.get_logs_in_block(b, topic0=topic0, contract=contract),
                     log_signatures_local=signatureDb,
                 ):

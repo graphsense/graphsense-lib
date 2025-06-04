@@ -3,7 +3,7 @@ from datetime import datetime
 
 from rich import print as printRich
 
-from ..datatypes.abi import decode_db_logs
+from ..datatypes.abi import decode_logs_db
 
 
 def log_sort_key(dlog, log):
@@ -47,7 +47,7 @@ def fetch_data(db, b, bts, contract, replace_names, query_terms, rowfn):
         bts[b] = db.raw.get_block_timestamp(b)
 
     dtstring = bts[b].isoformat()
-    decode_logs = decode_db_logs(db.raw.get_logs_in_block(b, contract=contract))
+    decode_logs = decode_logs_db(db.raw.get_logs_in_block(b, contract=contract))
 
     decode_logs = sorted(
         [(dlog, log) for dlog, log in decode_logs],
