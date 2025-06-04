@@ -1,8 +1,6 @@
 # from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Optional
-import networkx as nx
-import matplotlib.pyplot as plt
 
 import requests
 from eth_abi import decode
@@ -12,6 +10,7 @@ from eth_abi.exceptions import (
     NonEmptyPaddingBytes,
 )
 from eth_hash.auto import keccak
+import networkx as nx
 
 from .accountmodel import strip_0x
 
@@ -48,6 +47,9 @@ class ExternalSwap:
     version: str
     swap_log: str
 
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass(frozen=True)
 class TokenMetadata:
@@ -61,7 +63,7 @@ def get_pair_from_decoded_log(dlog, log_raw):
     name = dlog["name"]
     issuer = dlog["address"]
 
-    creation_log = "0x" + log_raw.tx_hash.hex() + "_L" + str(log_raw.log_index)
+    creation_log = "0x" + log_raw["tx_hash"].hex() + "_L" + str(log_raw["log_index"])
 
     if name == "PairCreated":
         t0 = dlog["parameters"]["token0"]
@@ -126,6 +128,8 @@ def visualize_graph(
     transfer_edges: list = None,
     tx_sender: str = None,
 ):
+    import matplotlib.pyplot as plt
+
     plt.figure(figsize=(10, 8))
     pos = nx.spring_layout(G)
     plt.title(f"Transaction {tx_hash}")
@@ -189,15 +193,24 @@ def visualize_graph(
 
 
 def get_swap_from_decoded_logs(
-    dlogs: list, logs_raw: list, traces: list
+    dlogs: list, logs_raw: list, traces: list, visualize: bool = False
 ) -> Optional[ExternalSwap]:
     # Note token 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee is a placeholder for ETH
 
     # Probably have to check traces to handle that
 
-    # log_indices = [log.log_index for log in logs_raw]
+    # log_indices = [log['log_index'] for log in logs_raw]
     # sort dlogs and raw logs
-    dlogs, logs_raw = zip(*sorted(zip(dlogs, logs_raw), key=lambda x: x[1].log_index))
+
+    # todo could be removed later if we just allow dicts in the first place
+    if len(logs_raw) > 0 and not isinstance(logs_raw[0], dict):
+        logs_raw = [log_raw._asdict() for log_raw in logs_raw]
+    if len(traces) > 0 and not isinstance(traces[0], dict):
+        traces = [trace._asdict() for trace in traces]
+
+    dlogs, logs_raw = zip(
+        *sorted(zip(dlogs, logs_raw), key=lambda x: x[1]["log_index"])
+    )
     # logic to decide which handling function to use.
     strategy = get_strategy_from_decoded_logs(dlogs)
 
@@ -211,7 +224,7 @@ def get_swap_from_decoded_logs(
         assert len(relevant_logs) == 1, "Expected exactly one OrderRecord log"
         dlog = relevant_logs[0]
         log_raw = logs_raw[relevant_logs_i[0]]
-        swap_log = f"0x{log_raw.tx_hash.hex()}_S{log_raw.log_index}"
+        swap_log = f"0x{log_raw['tx_hash'].hex()}_S{log_raw['log_index']}"
 
         params = dlog["parameters"]
 
@@ -235,7 +248,7 @@ def get_swap_from_decoded_logs(
         )
 
     elif strategy == "Swap":
-        tx_hash = logs_raw[0].tx_hash.hex()
+        tx_hash = logs_raw[0]["tx_hash"].hex()
 
         # if tx_hash.startswith("76f42"):
         #    print("asd")
@@ -267,22 +280,24 @@ def get_swap_from_decoded_logs(
 
         if len(transfers) < 2:
             raise ValueError(  # noqa
-                f"Not enough transfers to detect a general swap , {logs_raw[0].tx_hash.hex()}"
+                f"Not enough transfers to detect a general swap , {logs_raw[0]['tx_hash'].hex()}"
             )
             return
 
         relevant_traces = [
-            trace for trace in traces if trace.call_type == "call" and trace.value != 0
+            trace
+            for trace in traces
+            if trace["call_type"] == "call" and trace["value"] != 0
         ]
 
         # (from, to, asset, amt)
 
         traces_asset_flows = [
             (
-                "0x" + trace.from_address.hex(),
-                "0x" + trace.to_address.hex(),
+                "0x" + trace["from_address"].hex(),
+                "0x" + trace["to_address"].hex(),
                 "0x" + 40 * "e",
-                trace.value,
+                trace["value"],
             )
             for trace in relevant_traces
         ]
@@ -328,20 +343,21 @@ def get_swap_from_decoded_logs(
         )
         all_from_tos = [(x[0], x[1]) for x in all_asset_flows]
 
-        G = nx.DiGraph()
-        G.add_edges_from(all_from_tos)
-
-        assert nx.is_weakly_connected(G), "Graph is not weakly connected"
-
         # Extract transaction sender from traces
         tx_sender = None
         if traces:
             trace0 = traces[0]
-            if trace0.trace_address == "":
-                tx_sender = "0x" + trace0.from_address.hex()
+            if trace0["trace_address"] == "":
+                tx_sender = "0x" + trace0["from_address"].hex()
 
         transfer_edges = [(x[0], x[1]) for x in transfer_asset_flows]
-        visualize_graph(G, tx_hash, swap_from_tos, transfer_edges, tx_sender)
+
+        G = nx.DiGraph()
+        G.add_edges_from(all_from_tos)
+        assert nx.is_weakly_connected(G), "Graph is not weakly connected"
+
+        if visualize:
+            visualize_graph(G, tx_hash, swap_from_tos, transfer_edges, tx_sender)
 
         def get_asset_flows_of_address(address, all_asset_flows):
             outgoing_amounts = [
@@ -362,8 +378,8 @@ def get_swap_from_decoded_logs(
         ):
             # 0x62e3c242b5e903071458ad90a160493d84911c77 is a pair
             trace0 = traces[0]
-            assert trace0.trace_address == ""
-            sender = "0x" + trace0.from_address.hex()
+            assert trace0["trace_address"] == ""
+            sender = "0x" + trace0["from_address"].hex()
             # get all the amounts outgoing from the sender
             outgoing_amounts, incoming_amounts = get_asset_flows_of_address(
                 sender, all_asset_flows
@@ -392,7 +408,7 @@ def get_swap_from_decoded_logs(
             fromToken = outgoing_amounts[0][0]
             toToken = incoming_amounts[0][0]
 
-            swap_log = f"0x{logs_raw[0].tx_hash.hex()}_S{logs_raw[0].log_index}"
+            swap_log = f"0x{logs_raw[0]['tx_hash'].hex()}_S{logs_raw[0]['log_index']}"
 
             return ExternalSwap(
                 swapper=sender,

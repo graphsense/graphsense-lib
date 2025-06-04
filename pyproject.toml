@@ -18,8 +18,6 @@ classifiers = [
 requires-python = ">=3.9, <3.11"
 dependencies = [
     'importlib-metadata; python_version<"3.8"',
-    "cassandra-driver>=3.27.0",
-    "lz4>=4.3.2",
     "filelock>=3.8.0",
     "click>=8.0.3",
     "pandas>=1.4.1",
@@ -30,19 +28,13 @@ dependencies = [
     "requests>=2.27.1",
     "parsy>=2.0, <3.0",
     "rich>=12.6.0, <13.0",
-    "eth-event>=1.2.3, <2.0",
-    "eth-hash~=0.3.0",
-    "ethereum-etl~=2.4.1",
-    "pyarrow>=16.0.0, <17.0.0",
-    "chainside-btcpy~=0.6",
     "cashaddress>=1.0.6, < 1.1",
-    "tenacity>=8.2.3",
-    "graphsense-bitcoin-etl==1.5.4",
     "base58>=2.1",
     "bitarray>=2.9",
-    "grpcio>=1.48.2",
-    "deltalake~=0.22.3",
-    "duckdb>=1.0.0",
+    "eth-event>=1.2.3, <2.0",
+    "eth-hash~=0.3.0",
+    "cassandra-driver>=3.27.0",
+    "tenacity>=8.2.3",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -65,7 +57,12 @@ Download = "https://github.com/graphsense"
 # Add here all kinds of additional classifiers as defined under
 # https://pypi.org/classifiers/
 
+[tool.uv]
+prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
+
+
 [dependency-groups]
+# Core testing dependencies
 testing = [
     "setuptools",
     "pytest",
@@ -74,6 +71,8 @@ testing = [
     "pytest-vcr",
     "vcrpy",
 ]
+
+# Development dependencies
 dev = [
     "setuptools",
     "pytest",
@@ -86,6 +85,22 @@ dev = [
     "testcontainers[cassandra]>=4.9.1",
     "pytest-vcr",
     "vcrpy",
+]
+[project.optional-dependencies]
+# Core ingest infrastructure dependencies
+ingest = [
+    "ethereum-etl~=2.4.1",
+    "chainside-btcpy~=0.6",
+    "graphsense-bitcoin-etl==1.5.4",
+    "lz4>=4.3.2",
+    "pyarrow>=16.0.0, <17.0.0",
+    "deltalake~=0.22.3",
+    "duckdb>=1.0.0",
+    "grpcio>=1.48.2",
+]
+swaps = [ # Might be able to remove this group later, but keep for now
+    "networkx>=3.2.1",
+    "matplotlib"
 ]
 
 [project.scripts]
@@ -177,6 +192,3 @@ exclude = [
 
 [tool.ruff.lint]
 extend-select = ["T201"]
-
-[tool.uv]
-prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
