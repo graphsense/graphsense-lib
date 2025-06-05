@@ -1,6 +1,6 @@
 # from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Optional, List, Dict
 
 import requests
 from eth_abi import decode
@@ -16,11 +16,6 @@ from .accountmodel import strip_0x
 
 # todo What doesnt work yet:
 # Swaps that have a specified to address https://etherscan.io/tx/0x1f76090132cd8b58f7a4f8724141ca500ca65ed84d646aa200bb0dd6ec45503f
-# standardize 0x000 to 0xeee or other way around
-
-
-# should be ETH not WETH back:
-# 2025-06-03 17:40:17,808 - __main__ - INFO - Found swap: ExternalSwap(swapper='0x4acb6c4321253548a7d4bb9c84032cc4ee04bfd7', fromAmount=266694890725, toAmount=361721269610745, fromToken='0x8390a1da07e376ef7add4be859ba74fb83aa02d5', toToken='0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', version='swap', swap_log='0x37bb440595bcf32d8506212b799f06424a41cb7aa21e653846f4d3da1bb36c9d_S28')
 
 
 @dataclass(frozen=True)
@@ -38,14 +33,31 @@ class DexPair:
 
 
 @dataclass(frozen=True)
-class ExternalSwap:
-    swapper: str
+class InternalSwap:
+    fromAddress: str
+    toAddress: str
+    fromAsset: str
+    toAsset: str
     fromAmount: str
     toAmount: str
-    fromToken: str
-    toToken: Optional[str]
-    version: str
-    swap_log: str
+    fromPayment: str
+    toPayment: str
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ExternalSwap:
+    fromAddress: str
+    toAddress: str
+    fromAsset: str
+    toAsset: str
+    fromAmount: str
+    toAmount: str
+    fromPayment: str  # log {tx_hash}_L{log_index} or {tx_hash}_I{trace_index}
+    toPayment: str
+    # swap_composition: Optional[List[InternalSwap]] = None  # individual swaps that make up this aggregated swap
 
     def to_dict(self):
         return asdict(self)
@@ -192,8 +204,17 @@ def visualize_graph(
     plt.show()
 
 
+def normalize_asset(asset: str) -> str:
+    if asset.lower() == "0x" + "e" * 40:
+        return "native"
+    elif asset.lower() == "0x" + "0" * 40:
+        return "native"
+    else:
+        return asset.lower()
+
+
 def get_swap_from_decoded_logs(
-    dlogs: list, logs_raw: list, traces: list, visualize: bool = False
+    dlogs: List[Dict], logs_raw: List[Dict], traces: List[Dict], visualize: bool = False
 ) -> Optional[ExternalSwap]:
     # Note token 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee is a placeholder for ETH
 
@@ -201,12 +222,6 @@ def get_swap_from_decoded_logs(
 
     # log_indices = [log['log_index'] for log in logs_raw]
     # sort dlogs and raw logs
-
-    # todo could be removed later if we just allow dicts in the first place
-    if len(logs_raw) > 0 and not isinstance(logs_raw[0], dict):
-        logs_raw = [log_raw._asdict() for log_raw in logs_raw]
-    if len(traces) > 0 and not isinstance(traces[0], dict):
-        traces = [trace._asdict() for trace in traces]
 
     dlogs, logs_raw = zip(
         *sorted(zip(dlogs, logs_raw), key=lambda x: x[1]["log_index"])
@@ -224,27 +239,28 @@ def get_swap_from_decoded_logs(
         assert len(relevant_logs) == 1, "Expected exactly one OrderRecord log"
         dlog = relevant_logs[0]
         log_raw = logs_raw[relevant_logs_i[0]]
-        swap_log = f"0x{log_raw['tx_hash'].hex()}_S{log_raw['log_index']}"
+
+        # todo maybe not optimal - this is now just the log of the OrderRecord
+        # and not of the transfers
+        fromPayment = f"0x{log_raw['tx_hash'].hex()}_L{log_raw['log_index']}"
 
         params = dlog["parameters"]
 
         fromAmount = params["fromAmount"]
         toAmount = params["toAmount"]
-        fromToken = params["fromToken"]
-        toToken = params["toToken"]
+        fromAsset = params["fromToken"]
+        toAsset = params["toToken"]
         sender = params["sender"]
 
-        # log sender?
-        version = "okx-router"
-
         return ExternalSwap(
-            swapper=sender,
+            fromAddress=sender,
+            toAddress=sender,
+            fromAsset=normalize_asset(fromAsset),
+            toAsset=normalize_asset(toAsset),
             fromAmount=fromAmount,
             toAmount=toAmount,
-            fromToken=fromToken,
-            toToken=toToken,
-            version=version,
-            swap_log=swap_log,
+            fromPayment=fromPayment,
+            toPayment=fromPayment,
         )
 
     elif strategy == "Swap":
@@ -256,7 +272,7 @@ def get_swap_from_decoded_logs(
         # make sure the sender of the first transfer is the receiver of the last one
         # if there are not enough transfers or this condition is not met, return
 
-        swaps = [dlog for dlog in dlogs if dlog["name"] == "Swap"]  # noqa
+        swaps = [dlog for dlog in dlogs if dlog["name"] == "Swap"]
 
         swap_froms = [
             dlog["parameters"]["sender"]
@@ -279,7 +295,7 @@ def get_swap_from_decoded_logs(
         transfers = [dlog for dlog in dlogs if dlog["name"] == "Transfer"]
 
         if len(transfers) < 2:
-            raise ValueError(  # noqa
+            raise ValueError(
                 f"Not enough transfers to detect a general swap , {logs_raw[0]['tx_hash'].hex()}"
             )
             return
@@ -290,7 +306,7 @@ def get_swap_from_decoded_logs(
             if trace["call_type"] == "call" and trace["value"] != 0
         ]
 
-        # (from, to, asset, amt)
+        # (from, to, asset, amt, source_type, source_index)
 
         traces_asset_flows = [
             (
@@ -298,6 +314,8 @@ def get_swap_from_decoded_logs(
                 "0x" + trace["to_address"].hex(),
                 "0x" + 40 * "e",
                 trace["value"],
+                "trace",
+                trace["trace_index"],
             )
             for trace in relevant_traces
         ]
@@ -308,8 +326,10 @@ def get_swap_from_decoded_logs(
                 dlog["parameters"]["to"],
                 dlog["address"].lower(),
                 dlog["parameters"]["value"],
+                "log",
+                logs_raw[i]["log_index"],
             )
-            for dlog in transfers
+            for i, dlog in enumerate(transfers)
         ]
 
         withdrawals = [dlog for dlog in dlogs if dlog["name"] == "Withdrawal"]
@@ -319,6 +339,10 @@ def get_swap_from_decoded_logs(
                 dlog["address"].lower(),
                 dlog["address"].lower(),
                 dlog["parameters"]["value"],
+                "log",
+                logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
+                    "log_index"
+                ],
             )
             for dlog in withdrawals  # WETH to WETH contract
         ]
@@ -331,6 +355,10 @@ def get_swap_from_decoded_logs(
                 dlog["parameters"]["dst"],
                 dlog["address"].lower(),
                 dlog["parameters"]["wad"],
+                "log",
+                logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
+                    "log_index"
+                ],
             )
             for dlog in deposits
         ]
@@ -361,12 +389,12 @@ def get_swap_from_decoded_logs(
 
         def get_asset_flows_of_address(address, all_asset_flows):
             outgoing_amounts = [
-                (x[2], x[3])  # (asset, amount)
+                (x[2], x[3], x[4], x[5])  # (asset, amount, source_type, source_index)
                 for x in all_asset_flows
                 if x[0].lower() == address.lower()
             ]
             incoming_amounts = [
-                (x[2], x[3])  # (amount, asset)
+                (x[2], x[3], x[4], x[5])  # (asset, amount, source_type, source_index)
                 for x in all_asset_flows
                 if x[1].lower() == address.lower()
             ]
@@ -403,21 +431,37 @@ def get_swap_from_decoded_logs(
                     f"Expected exactly one incoming amount, got {len(incoming_amounts)}, {tx_hash}"
                 )
 
+            fromAsset = outgoing_amounts[0][0]
             fromAmount = outgoing_amounts[0][1]
-            toAmount = incoming_amounts[0][1]
-            fromToken = outgoing_amounts[0][0]
-            toToken = incoming_amounts[0][0]
+            from_source_type = outgoing_amounts[0][2]
+            from_source_index = outgoing_amounts[0][3]
 
-            swap_log = f"0x{logs_raw[0]['tx_hash'].hex()}_S{logs_raw[0]['log_index']}"
+            toAsset = incoming_amounts[0][0]
+            toAmount = incoming_amounts[0][1]
+            to_source_type = incoming_amounts[0][2]
+            to_source_index = incoming_amounts[0][3]
+
+            tx_hash_hex = logs_raw[0]["tx_hash"].hex()
+
+            if from_source_type == "log":
+                fromPayment = f"0x{tx_hash_hex}_L{from_source_index}"
+            else:  # trace
+                fromPayment = f"0x{tx_hash_hex}_I{from_source_index}"
+
+            if to_source_type == "log":
+                toPayment = f"0x{tx_hash_hex}_L{to_source_index}"
+            else:  # trace
+                toPayment = f"0x{tx_hash_hex}_I{to_source_index}"
 
             return ExternalSwap(
-                swapper=sender,
+                fromAddress=sender,
+                toAddress=sender,
+                fromAsset=normalize_asset(fromAsset),
+                toAsset=normalize_asset(toAsset),
                 fromAmount=fromAmount,
                 toAmount=toAmount,
-                fromToken=fromToken,
-                toToken=toToken,
-                version=version,
-                swap_log=swap_log,
+                fromPayment=fromPayment,
+                toPayment=toPayment,
             )
 
         # check if we can find a eulerian path
