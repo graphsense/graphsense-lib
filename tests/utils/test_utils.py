@@ -15,6 +15,22 @@ from graphsenselib.utils import (
 )
 from graphsenselib.utils.errorhandling import CrashRecoverer
 
+from graphsenselib.utils.generic import dict_to_dataobject
+
+
+def test_dict_to_dataobject():
+    d = {"a": 1}
+
+    class Mock:
+        a = 1
+
+    obj2 = Mock()
+    obj = dict_to_dataobject(d)
+
+    assert obj.a == 1
+    assert obj2.a == 1
+    assert dict_to_dataobject(obj2).a == 1
+
 
 def test_btoh_works(capsys):
     assert bytes_to_hex(b"") is None
