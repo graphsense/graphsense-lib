@@ -1,0 +1,78 @@
+header:
+  title:
+    type: text
+    mandatory: true
+  creator:
+    type: text
+    mandatory: true
+  description:
+    type: text
+    mandatory: false
+  is_public:
+    type: boolean
+    mandatory: false
+  actors:
+    type: list
+    mandatory: true
+actor:
+  id:
+    type: text
+    mandatory: true
+  uri:
+    type: text
+    mandatory: true
+  label:
+    type: text
+    mandatory: true
+  lastmod:
+    type: datetime
+    mandatory: true
+  categories:
+    type: list
+    item_type: text
+    mandatory: true
+    taxonomy:
+      - concept
+  jurisdictions:
+    type: list
+    item_type: text
+    mandatory: false
+    taxonomy: country
+  context:
+    type: json_text
+    item_type: '@context'
+    mandatory: false
+  aliases:
+    type: list
+    item_type: text
+    mandatory: false
+context:
+  uris:
+    type: list
+    item_type: text
+    mandatory: false
+  refs:
+    type: list
+    item_type: text
+    mandatory: false
+  images:
+    type: list
+    item_type: text
+    mandatory: false
+  coingecko_ids:
+    type: list
+    item_type: text
+    mandatory: false
+  defilama_ids:
+    type: list
+    item_type: text
+    mandatory: false
+  twitter_handle:
+    type: text
+    mandatory: false
+  github_organisation:
+    type: text
+    mandatory: false
+  legal_name:
+    type: text
+    mandatory: false

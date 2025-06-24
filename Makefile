@@ -58,4 +58,9 @@ generate-tron-grpc-code:
 click-bash-completion:
 	_GRAPHSENSE_CLI_COMPLETE=bash_source graphsense-cli
 
-.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code
+package-ui:
+	- rm -rf ui/tagstore/admin-ui/dist
+	cd ui/tagstore/admin-ui; npx elm-land build && cp  dist/assets/index-*.js ../../../src/tagstore/web/statics/assets/index.js
+
+
+.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code package-ui

@@ -1,0 +1,5 @@
+header: !include header.yaml
+lastmod: 2020-01-03
+tags:
+- address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
+  context: '{"validated": true}'
