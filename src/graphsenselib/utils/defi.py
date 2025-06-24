@@ -11,7 +11,7 @@ from eth_abi.exceptions import (
 )
 from eth_hash.auto import keccak
 
-from .accountmodel import strip_0x
+from .accountmodel import ensure_0x_prefix, strip_0x
 from .transactions import SubTransactionIdentifier, SubTransactionType
 
 # todo What doesnt work yet:
@@ -75,7 +75,11 @@ def get_pair_from_decoded_log(dlog, log_raw):
     name = dlog["name"]
     issuer = dlog["address"]
 
-    creation_log = "0x" + log_raw["tx_hash"].hex() + "_L" + str(log_raw["log_index"])
+    creation_log = SubTransactionIdentifier(
+        tx_hash=ensure_0x_prefix(log_raw["tx_hash"].hex()),
+        tx_type=SubTransactionType.GenericLog,
+        sub_index=log_raw["log_index"],
+    ).to_string()
 
     if name == "PairCreated":
         t0 = dlog["parameters"]["token0"]
@@ -250,7 +254,11 @@ def get_swap_from_decoded_logs(
 
         # todo maybe not optimal - this is now just the log of the OrderRecord
         # and not of the transfers
-        fromPayment = f"0x{log_raw['tx_hash'].hex()}_L{log_raw['log_index']}"
+        fromPayment = SubTransactionIdentifier(
+            tx_hash=ensure_0x_prefix(log_raw["tx_hash"].hex()),
+            tx_type=SubTransactionType.ERC20,
+            sub_index=int(log_raw["log_index"]),
+        ).to_string()
 
         params = dlog["parameters"]
 
@@ -384,7 +392,7 @@ def get_swap_from_decoded_logs(
         if traces:
             trace0 = traces[0]
             if trace0["trace_address"] == "":
-                tx_sender = "0x" + trace0["from_address"].hex()
+                tx_sender = ensure_0x_prefix(trace0["from_address"].hex())
 
         transfer_edges = [(x[0], x[1]) for x in transfer_asset_flows]
 
@@ -415,7 +423,7 @@ def get_swap_from_decoded_logs(
             # 0x62e3c242b5e903071458ad90a160493d84911c77 is a pair
             trace0 = traces[0]
             assert trace0["trace_address"] == ""
-            sender = "0x" + trace0["from_address"].hex()
+            sender = ensure_0x_prefix(trace0["from_address"].hex())
             # get all the amounts outgoing from the sender
             outgoing_amounts, incoming_amounts = get_asset_flows_of_address(
                 sender, all_asset_flows
@@ -450,32 +458,33 @@ def get_swap_from_decoded_logs(
             to_source_index = incoming_amounts[0][3]
 
             tx_hash_hex = logs_raw[0]["tx_hash"].hex()
+            txh0x = ensure_0x_prefix(tx_hash_hex)
 
             if from_source_type == "log":
                 fromPayment = SubTransactionIdentifier(
-                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_hash=txh0x,
                     tx_type=SubTransactionType.GenericLog,
                     sub_index=from_source_index,
-                ).toString()
+                ).to_string()
             else:  # trace
                 fromPayment = SubTransactionIdentifier(
-                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_hash=txh0x,
                     tx_type=SubTransactionType.InternalTx,
                     sub_index=from_source_index,
-                ).toString()
+                ).to_string()
 
             if to_source_type == "log":
                 toPayment = SubTransactionIdentifier(
-                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_hash=txh0x,
                     tx_type=SubTransactionType.GenericLog,
                     sub_index=to_source_index,
-                ).toString()
+                ).to_string()
             else:  # trace
                 toPayment = SubTransactionIdentifier(
-                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_hash=txh0x,
                     tx_type=SubTransactionType.InternalTx,
                     sub_index=to_source_index,
-                ).toString()
+                ).to_string()
 
             return ExternalSwap(
                 fromAddress=sender,
@@ -558,7 +567,7 @@ def get_topic(signature: str) -> bytes:
 
 
 def get_function_selector(function_signature: str) -> str:
-    return f"0x{get_topic(function_signature)[:4].hex()}"
+    return ensure_0x_prefix(get_topic(function_signature)[:4].hex())
 
 
 def create_token_balance_request_payload(

@@ -3,7 +3,7 @@ from typing import Optional, Union
 from .generic import remove_prefix
 
 
-def ensure0xPrefix(istr: str) -> str:
+def ensure_0x_prefix(istr: str) -> str:
     if istr.lower().startswith("0x"):
         return istr
     else:
