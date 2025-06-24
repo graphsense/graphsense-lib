@@ -43,7 +43,9 @@ class SubTransactionIdentifier(BaseModel):
             raise Exception(f"Unknown transaction type {stringRep}")
 
         else:
-            return cls(tx_hash=stringRep, tx_type=SubTransactionType.ExternalTx)
+            return cls(
+                tx_hash=stringRep, tx_type=SubTransactionType.ExternalTx, sub_index=None
+            )
 
     def to_string(self, type_overwrite: Optional[SubTransactionType] = None) -> str:
         h = self.tx_hash
