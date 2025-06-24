@@ -544,6 +544,32 @@ def get_function_selector(function_signature: str) -> str:
     return f"0x{get_topic(function_signature)[:4].hex()}"
 
 
+def create_token_balance_request(
+    contract_address: str, account: str, block: str = "latest"
+):
+    return {
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [
+            {
+                "to": contract_address,
+                "data": f"0x70a08231000000000000000000000000{strip_0x(account)}",
+            },
+            block,
+        ],
+        "id": 1,
+    }
+
+
+def create_base_balance_request(contract_address: str, block: str = "latest"):
+    return {
+        "method": "eth_getBalance",
+        "params": [contract_address, block],
+        "id": 1,
+        "jsonrpc": "2.0",
+    }
+
+
 def get_call_payload(to: str, payload: str, for_block: str):
     return {
         "jsonrpc": "2.0",
