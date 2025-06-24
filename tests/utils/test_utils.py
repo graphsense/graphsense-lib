@@ -14,7 +14,6 @@ from graphsenselib.utils import (
     truncateI32,
 )
 from graphsenselib.utils.errorhandling import CrashRecoverer
-
 from graphsenselib.utils.generic import dict_to_dataobject
 
 
