@@ -3,6 +3,13 @@ from typing import Optional, Union
 from .generic import remove_prefix
 
 
+def ensure0xPrefix(istr: str) -> str:
+    if istr.lower().startswith("0x"):
+        return istr
+    else:
+        return f"0x{istr}"
+
+
 def eth_address_to_hex(address):
     if not isinstance(address, bytes):
         return address
