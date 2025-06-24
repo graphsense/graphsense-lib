@@ -45,7 +45,7 @@ class SubTransactionIdentifier(BaseModel):
         else:
             return cls(tx_hash=stringRep, tx_type=SubTransactionType.ExternalTx)
 
-    def toString(self, type_overwrite: Optional[SubTransactionType] = None) -> str:
+    def to_string(self, type_overwrite: Optional[SubTransactionType] = None) -> str:
         h = self.tx_hash
         endType = type_overwrite or self.tx_type
         prefix = SUBTX_TYPE_TO_PREFIX[endType]
