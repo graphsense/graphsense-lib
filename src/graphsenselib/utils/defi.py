@@ -1,6 +1,6 @@
 # from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, asdict
-from typing import Optional, List, Dict
+from dataclasses import asdict, dataclass
+from typing import Dict, List, Optional
 
 import requests
 from eth_abi import decode
@@ -10,7 +10,6 @@ from eth_abi.exceptions import (
     NonEmptyPaddingBytes,
 )
 from eth_hash.auto import keccak
-
 
 from .accountmodel import strip_0x
 

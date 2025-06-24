@@ -1,7 +1,9 @@
 import logging
 import re
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 import eth_event
+
 from ..utils.generic import dict_to_dataobject
 
 logger = logging.getLogger(__name__)
@@ -522,15 +524,6 @@ def convert_log_generic(db_log) -> dict:
         "data": f"0x{data_str}",
         "address": f"0x{db_log.address.hex()}",
     }
-
-
-# def convert_log_dict(log: Dict[str, Any]) -> Dict[str, Any]:
-#     data_str = log["data"].hex()
-#     return {
-#         "topics": [f"0x{topic.hex()}" for topic in (log["topics"] or [])],
-#         "data": f"0x{data_str}",
-#         "address": f"0x{log['address'].hex()}",
-#     }
 
 
 def decoded_log_to_str(decoded_log) -> str:
