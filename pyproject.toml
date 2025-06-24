@@ -102,7 +102,7 @@ swaps = [ # Might be able to remove this group later, but keep for now
     "networkx>=3.2.1",
     "matplotlib"
 ]
-all = ["graphsense-lib[ingest]"]
+all = ["graphsense-lib[ingest]", "graphsense-lib[swaps]"]
 
 [project.scripts]
 graphsense-cli = "graphsenselib.cli:main"
