@@ -2,6 +2,7 @@ import logging
 import re
 from typing import List, Dict, Any
 import eth_event
+from ..utils.generic import dict_to_dataobject
 
 logger = logging.getLogger(__name__)
 
@@ -513,7 +514,8 @@ def is_supported_log(log, log_signatures_local=log_signatures) -> bool:
     return len(log["topics"]) > 0 and log["topics"][0] in log_signatures_local
 
 
-def convert_log_db(db_log) -> dict:
+def convert_log_generic(db_log) -> dict:
+    db_log = dict_to_dataobject(db_log)
     data_str = db_log.data.hex()
     return {
         "topics": [f"0x{topic.hex()}" for topic in (db_log.topics or [])],
@@ -522,13 +524,13 @@ def convert_log_db(db_log) -> dict:
     }
 
 
-def convert_log_dict(log: Dict[str, Any]) -> Dict[str, Any]:
-    data_str = log["data"].hex()
-    return {
-        "topics": [f"0x{topic.hex()}" for topic in (log["topics"] or [])],
-        "data": f"0x{data_str}",
-        "address": f"0x{log['address'].hex()}",
-    }
+# def convert_log_dict(log: Dict[str, Any]) -> Dict[str, Any]:
+#     data_str = log["data"].hex()
+#     return {
+#         "topics": [f"0x{topic.hex()}" for topic in (log["topics"] or [])],
+#         "data": f"0x{data_str}",
+#         "address": f"0x{log['address'].hex()}",
+#     }
 
 
 def decoded_log_to_str(decoded_log) -> str:
@@ -539,19 +541,7 @@ def decoded_log_to_str(decoded_log) -> str:
 
 
 def decode_logs_db(db_logs, log_signatures_local=log_signatures):
-    return [
-        x
-        for x in [
-            (
-                decode_log(
-                    convert_log_db(log), log_signatures_local=log_signatures_local
-                ),
-                log,
-            )
-            for log in db_logs
-        ]
-        if x[0] is not None
-    ]
+    return decode_logs_dict(db_logs, log_signatures_local=log_signatures_local)
 
 
 def decode_logs_dict(
@@ -562,7 +552,7 @@ def decode_logs_dict(
         for x in [
             (
                 decode_log(
-                    convert_log_dict(log), log_signatures_local=log_signatures_local
+                    convert_log_generic(log), log_signatures_local=log_signatures_local
                 ),
                 log,
             )
