@@ -12,6 +12,7 @@ from eth_abi.exceptions import (
 from eth_hash.auto import keccak
 
 from .accountmodel import strip_0x
+from .transactions import SubTransactionIdentifier, SubTransactionType
 
 # todo What doesnt work yet:
 # Swaps that have a specified to address https://etherscan.io/tx/0x1f76090132cd8b58f7a4f8724141ca500ca65ed84d646aa200bb0dd6ec45503f
@@ -451,14 +452,30 @@ def get_swap_from_decoded_logs(
             tx_hash_hex = logs_raw[0]["tx_hash"].hex()
 
             if from_source_type == "log":
-                fromPayment = f"0x{tx_hash_hex}_L{from_source_index}"
+                fromPayment = SubTransactionIdentifier(
+                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_type=SubTransactionType.GenericLog,
+                    sub_index=from_source_index,
+                ).toString()
             else:  # trace
-                fromPayment = f"0x{tx_hash_hex}_I{from_source_index}"
+                fromPayment = SubTransactionIdentifier(
+                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_type=SubTransactionType.InternalTx,
+                    sub_index=from_source_index,
+                ).toString()
 
             if to_source_type == "log":
-                toPayment = f"0x{tx_hash_hex}_L{to_source_index}"
+                toPayment = SubTransactionIdentifier(
+                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_type=SubTransactionType.GenericLog,
+                    sub_index=to_source_index,
+                ).toString()
             else:  # trace
-                toPayment = f"0x{tx_hash_hex}_I{to_source_index}"
+                toPayment = SubTransactionIdentifier(
+                    tx_hash=f"0x{tx_hash_hex}",
+                    tx_type=SubTransactionType.InternalTx,
+                    sub_index=to_source_index,
+                ).toString()
 
             return ExternalSwap(
                 fromAddress=sender,
