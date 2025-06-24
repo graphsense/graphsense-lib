@@ -10,7 +10,7 @@ from eth_abi.exceptions import (
     NonEmptyPaddingBytes,
 )
 from eth_hash.auto import keccak
-import networkx as nx
+
 
 from .accountmodel import strip_0x
 
@@ -141,6 +141,7 @@ def visualize_graph(
     tx_sender: str = None,
 ):
     import matplotlib.pyplot as plt
+    import networkx as nx
 
     plt.figure(figsize=(10, 8))
     pos = nx.spring_layout(G)
@@ -222,6 +223,13 @@ def get_swap_from_decoded_logs(
 
     # log_indices = [log['log_index'] for log in logs_raw]
     # sort dlogs and raw logs
+
+    try:
+        import networkx as nx
+    except ImportError:
+        raise Exception(
+            "Please install graphsense-lib with swap optional dependencies."
+        )
 
     dlogs, logs_raw = zip(
         *sorted(zip(dlogs, logs_raw), key=lambda x: x[1]["log_index"])
