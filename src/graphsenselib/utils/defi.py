@@ -544,7 +544,7 @@ def get_function_selector(function_signature: str) -> str:
     return f"0x{get_topic(function_signature)[:4].hex()}"
 
 
-def create_token_balance_request(
+def create_token_balance_request_payload(
     contract_address: str, account: str, block: str = "latest"
 ):
     return {
@@ -561,7 +561,7 @@ def create_token_balance_request(
     }
 
 
-def create_base_balance_request(contract_address: str, block: str = "latest"):
+def create_base_balance_request_payload(contract_address: str, block: str = "latest"):
     return {
         "method": "eth_getBalance",
         "params": [contract_address, block],
