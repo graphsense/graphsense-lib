@@ -3,7 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [25.06.0/2.4.11] 2025-03-28
+## [25.07.0/2.5.0] 2025-06-25
+### added
+- some utility functions to harmonize with gs-rest
+### changed
+- improved algo for
+- added optional dependencies swaps, ingest, all
+
+## [25.06.0/2.4.11] 2025-06-02
 ### added
 - event signatures/decoding for swaps and trading pair creation
 ### changed
