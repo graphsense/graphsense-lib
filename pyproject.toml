@@ -17,6 +17,7 @@ classifiers = [
 ]
 requires-python = ">=3.9, <3.11"
 dependencies = [
+    'Setuptools<81',
     'importlib-metadata; python_version<"3.8"',
     "filelock>=3.8.0",
     "click>=8.0.3",
