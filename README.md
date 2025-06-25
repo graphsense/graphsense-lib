@@ -4,6 +4,9 @@
 
 A central repository for python utility functions and everything that deals with the graphsense backend. Its CLI interface can be used to control important graphsense maintainance tasks.
 
+
+Note: this library uses optional dependencies. Use all to install all features.
+
 ## Use
 
 ### As a library
@@ -229,7 +232,7 @@ Commands:
 
 To install the package from the python package index run.
 ```bash
-  > pip install graphsense-lib
+  > pip install graphsense-lib[all]
 ```
 
 If you want to install it from source run
