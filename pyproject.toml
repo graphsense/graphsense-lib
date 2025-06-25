@@ -102,7 +102,18 @@ swaps = [ # Might be able to remove this group later, but keep for now
     "networkx>=3.2.1",
     "matplotlib"
 ]
-all = ["graphsense-lib[ingest]", "graphsense-lib[swaps]"]
+all = [
+    "ethereum-etl~=2.4.1",
+    "chainside-btcpy~=0.6",
+    "graphsense-bitcoin-etl==1.5.4",
+    "lz4>=4.3.2",
+    "pyarrow>=16.0.0, <17.0.0",
+    "deltalake~=0.22.3",
+    "duckdb>=1.0.0",
+    "grpcio>=1.48.2",
+    "networkx>=3.2.1",
+    "matplotlib"
+]
 
 [project.scripts]
 graphsense-cli = "graphsenselib.cli:main"
