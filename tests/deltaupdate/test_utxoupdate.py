@@ -8,6 +8,7 @@ from .test_data import (
     get_arel,
     get_atxs,
     get_exchange_rates_per_block,
+    get_flow_test_tx,
     get_txs,
     preprocess_inputs,
 )
@@ -92,6 +93,13 @@ def test_address_updates_order():
     for cng in changes.entity_updates:
         assert last_tx_id <= (cng.first_tx_id, cng.last_tx_id)
         last_tx_id = (cng.first_tx_id, cng.last_tx_id)
+
+
+def test_reg_io_outlier():
+    tx = get_flow_test_tx()[0]
+    rates = get_exchange_rates_per_block()
+    res = dbdelta_from_utxo_transaction(tx, rates[tx.block_id])
+    assert len(res.new_entity_txs) == 3
 
 
 def test_address_addresses_unique():

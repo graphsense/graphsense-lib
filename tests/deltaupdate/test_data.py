@@ -42,6 +42,7 @@ exchange_rates = preprocess_inputs(
 {"date": "2009-01-09", "fiatValues": {"EUR": 300, "USD": 302.67}, "blockId": 2}
 {"date": "2009-01-10", "fiatValues": {"EUR": 600, "USD": 598.23}, "blockId": 3}
 {"date": "2009-01-11", "fiatValues": {"EUR": 500, "USD": 498.18}, "blockId": 4}
+{"date": "2015-05-22", "fiatValues": {"EUR": 500, "USD": 498.18}, "blockId": 357512}
 """
 )
 
@@ -145,6 +146,15 @@ def rename_address_to_identifier(d):
 
 def get_txs():
     return [dict_to_dataobject(tx) for tx in txs]
+
+
+def get_flow_test_tx():
+    x = preprocess_inputs(
+        """
+            {"tx_id_group": 2777, "tx_id": 69431178, "block_id": 357512, "coinbase": false, "coinjoin": false, "inputs": [{"address": ["19doKeV52qcoR881Wk7AxZdjXXA5sSrPkf"], "value": 579551, "address_type": 3}, {"address": ["1KhgLiQCnaobb5Q5Ly9PKjagSc7hx48hhY"], "value": 17245552064, "address_type": 3}], "outputs": [{"address": ["17Buk9zw9TjzxFhrWpMEvLBbN6iiNMkwmd"], "value": 7330000, "address_type": 3}, {"address": ["1KhgLiQCnaobb5Q5Ly9PKjagSc7hx48hhY"], "value": 17238791615, "address_type": 3}], "timestamp": 1432266361, "total_input": 17246131615, "total_output": 17246121615, "tx_hash": "0xd88be10da34a270ff3c6362a9022eeafec30675a65cccb4a8f95d1caad9efac7"}
+        """
+    )
+    return dict_to_dataobject(x)
 
 
 def get_atxs():
