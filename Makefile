@@ -17,10 +17,10 @@ dev:
 	 uv run pre-commit install
 
 test:
-	uv run pytest -x -rx -vv -m "not slow" --cov=src --capture=no -W error
+	uv run --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
 
 test-all:
-	uv run pytest --cov=src -W error
+	uv run --all-extras  pytest --cov=src -W error
 
 install-dev:
 	uv sync -e --all-groups --force-reinstall --upgrade
@@ -36,7 +36,7 @@ format:
 	uv run ruff format .
 
 pre-commit:
-	uv run pre-commit run --all-files
+	uv run --all-extras pre-commit run --all-files
 
 build:
 	uv build
