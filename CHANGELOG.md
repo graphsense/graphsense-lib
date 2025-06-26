@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - some utility functions to harmonize with gs-rest
 - added support for cassandra user and password authentication
 ### changed
-- improved algo for
+- improved algo for swap detection and analysis
 - added optional dependencies swaps, ingest, all
 
 ## [25.06.0/2.4.11] 2025-06-02
