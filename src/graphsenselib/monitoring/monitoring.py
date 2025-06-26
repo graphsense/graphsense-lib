@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime as dt
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 from ..db import DbFactory
@@ -70,3 +70,20 @@ def get_db_summary_record(env: str, currency: str) -> DbSummaryRecord:
                 t_stats, "timestamp_transform", None
             ),
         )
+
+
+def is_raw_behind_schedule(
+    env: str, network: str, threshold_in_hours: int
+) -> Tuple[bool, int, str]:
+    with DbFactory().from_config(env, network) as db:
+        hb = db.raw.get_highest_block()
+        hb_ts = db.raw.get_block_timestamp(hb)
+
+        last_ts = hb_ts  # dt.fromtimestamp(hb_ts)
+        last_ts_str = last_ts.strftime("%F %H:%M:%S")
+        diff_hours = (dt.now() - last_ts).total_seconds() / 3600
+
+        # print(type(dt.datetime.now() - last_ts))
+        # print(rs, last_ts_str, diff_hours)
+
+        return (diff_hours > threshold_in_hours, hb, last_ts_str)
