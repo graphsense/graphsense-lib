@@ -7,14 +7,35 @@ from json import JSONDecodeError
 from operator import itemgetter
 from typing import Dict, List, Optional, Tuple
 
-from bitcoinetl.enumeration.chain import Chain
-from bitcoinetl.jobs.export_blocks_job import ExportBlocksJob
-from bitcoinetl.rpc.bitcoin_rpc import BitcoinRpc
-from bitcoinetl.service.btc_service import BtcService
-from blockchainetl.jobs.exporters.in_memory_item_exporter import InMemoryItemExporter
-from blockchainetl.thread_local_proxy import ThreadLocalProxy
-from btcpy.structs.address import P2pkhAddress
-from btcpy.structs.script import ScriptBuilder
+try:
+    from bitcoinetl.enumeration.chain import Chain
+    from bitcoinetl.jobs.export_blocks_job import ExportBlocksJob
+    from bitcoinetl.rpc.bitcoin_rpc import BitcoinRpc
+    from bitcoinetl.service.btc_service import BtcService
+    from blockchainetl.jobs.exporters.in_memory_item_exporter import (
+        InMemoryItemExporter,
+    )
+    from blockchainetl.thread_local_proxy import ThreadLocalProxy
+    from btcpy.structs.address import P2pkhAddress
+    from btcpy.structs.script import ScriptBuilder
+
+    CHAIN_MAPPING = {
+        "btc": Chain.BITCOIN,
+        "ltc": Chain.LITECOIN,
+        # Use the new api for btc (in btc etl jargon), this is
+        # required for bitcoin cash, otherwise the index field in the transactions
+        # is not filled correctly.
+        "bch": Chain.BITCOIN,
+        "zec": Chain.ZCASH,
+    }
+
+
+except ImportError:
+    _has_ingest_dependencies = False
+    CHAIN_MAPPING = {}
+else:
+    _has_ingest_dependencies = True
+
 from methodtools import lru_cache as mlru_cache
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -37,15 +58,6 @@ OUTPUTS_CACHE_ITEMS = 2**24  # approx 16 mio.
 
 logger = logging.getLogger(__name__)
 
-CHAIN_MAPPING = {
-    "btc": Chain.BITCOIN,
-    "ltc": Chain.LITECOIN,
-    # Use the new api for btc (in btc etl jargon), this is
-    # required for bitcoin cash, otherwise the index field in the transactions
-    # is not filled correctly.
-    "bch": Chain.BITCOIN,
-    "zec": Chain.ZCASH,
-}
 
 POP_COLUMNS_TX = []
 
@@ -110,7 +122,7 @@ def drop_columns(elem, cols):
 
 
 class BtcStreamerAdapter:
-    def __init__(self, bitcoin_rpc, chain=Chain.BITCOIN, batch_size=2, max_workers=5):
+    def __init__(self, bitcoin_rpc, chain=None, batch_size=2, max_workers=5):
         """Summary
 
         Args:
@@ -119,6 +131,14 @@ class BtcStreamerAdapter:
             batch_size (int, optional): Description
             max_workers (int, optional): Description
         """
+        if not _has_ingest_dependencies:
+            raise ImportError(
+                "The ingest.utxo needs bitcoinetl installed. Please install gslib with ingest dependencies."
+            )
+
+        if chain is None:
+            chain = Chain.BITCOIN
+
         self.bitcoin_rpc = bitcoin_rpc
         self.chain = chain
         self.btc_service = BtcService(bitcoin_rpc, chain)
@@ -458,6 +478,11 @@ def parse_script(s: str) -> Tuple[List[str], str]:
         P2pkParserException: if P2PK script can't be parsed
         UnknownScriptType: On unknown script type
     """
+    if not _has_ingest_dependencies:
+        raise ImportError(
+            "The ingest.utxo needs bitcoinetl installed. Please install gslib with ingest dependencies."
+        )
+
     script = ScriptBuilder.identify(s)
 
     if script.type == "p2pk":
@@ -791,7 +816,7 @@ def ingest_configuration_cassandra(
 
 def get_connection_from_url(
     provider_uri: str, provider_timeout: int
-) -> ThreadLocalProxy:
+) -> "ThreadLocalProxy":
     return ThreadLocalProxy(lambda: BitcoinRpc(provider_uri, timeout=provider_timeout))
 
 

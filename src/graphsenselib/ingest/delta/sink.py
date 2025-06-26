@@ -4,11 +4,17 @@ import time
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
-import deltalake as dl
-import pyarrow as pa
+try:
+    import deltalake as dl
+    import pyarrow as pa
+    from deltalake import DeltaTable
+    from pyarrow.lib import ArrowInvalid
+except ImportError:
+    _has_ingest_dependencies = False
+else:
+    _has_ingest_dependencies = True
+
 import pydantic
-from deltalake import DeltaTable
-from pyarrow.lib import ArrowInvalid
 
 from ...schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
 from ...schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
@@ -30,6 +36,10 @@ def optimize_tables(
 def optimize_table(
     directory: str, table_name: str, s3_credentials: Optional[dict] = None, mode="both"
 ):
+    if not _has_ingest_dependencies:
+        raise ImportError(
+            "Need deltalake and pyarrow installed. Please install gslib with ingest dependencies."
+        )
     logger.debug(f"Optimizing table {table_name} in directory {directory}...")
 
     if s3_credentials and directory.startswith("s3"):
@@ -68,12 +78,16 @@ class DeltaTableWriter:
         self,
         path: str,
         table_name: str,
-        schema: pa.Schema,
+        schema: "pa.Schema",
         partition_cols: Optional[tuple] = None,
         mode: str = "append",
         primary_keys: Optional[List[str]] = None,
         s3_credentials: Optional[dict] = None,
     ) -> None:
+        if not _has_ingest_dependencies:
+            raise ImportError(
+                "Need deltalake and pyarrow installed. Please install gslib with ingest dependencies."
+            )
         self.path = path
         self.table_name = table_name
         self.schema = schema
@@ -255,7 +269,7 @@ class TableWriteConfig(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
 
     table_name: str
-    table_schema: pa.Schema
+    table_schema: object
     partition_cols: Optional[tuple] = None
     primary_keys: Optional[List[str]] = None
     blockindep: Optional[bool] = False
@@ -269,37 +283,37 @@ TRX_DBWRITE_CONFIG = DBWriteConfig(
     table_configs=[
         TableWriteConfig(
             table_name="block",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["block"],
+            table_schema=ACCOUNT_TRX_SCHEMA_RAW.get("block"),
             partition_cols=("partition",),
             primary_keys=["block_id"],
         ),
         TableWriteConfig(
             table_name="transaction",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["transaction"],
+            table_schema=ACCOUNT_TRX_SCHEMA_RAW.get("transaction"),
             partition_cols=("partition",),
             primary_keys=["block_id", "tx_hash"],
         ),
         TableWriteConfig(
             table_name="trace",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["trace"],
+            table_schema=ACCOUNT_TRX_SCHEMA_RAW.get("trace"),
             partition_cols=("partition",),
             primary_keys=["block_id", "trace_index"],
         ),
         TableWriteConfig(
             table_name="log",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["log"],
+            table_schema=ACCOUNT_TRX_SCHEMA_RAW.get("log"),
             partition_cols=("partition",),
             primary_keys=["block_id", "log_index"],
         ),
         TableWriteConfig(
             table_name="trc10",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["trc10"],
+            table_schema=ACCOUNT_TRX_SCHEMA_RAW.get("trc10"),
             primary_keys=["contract_address"],
             blockindep=True,
         ),
         TableWriteConfig(
             table_name="fee",
-            table_schema=ACCOUNT_TRX_SCHEMA_RAW["fee"],
+            table_schema=ACCOUNT_TRX_SCHEMA_RAW.get("fee"),
             partition_cols=("partition",),
             primary_keys=["tx_hash"],
         ),
@@ -311,25 +325,25 @@ ETH_DBWRITE_CONFIG = DBWriteConfig(
     table_configs=[
         TableWriteConfig(
             table_name="block",
-            table_schema=ACCOUNT_SCHEMA_RAW["block"],
+            table_schema=ACCOUNT_SCHEMA_RAW.get("block"),
             partition_cols=("partition",),
             primary_keys=["block_id"],
         ),
         TableWriteConfig(
             table_name="transaction",
-            table_schema=ACCOUNT_SCHEMA_RAW["transaction"],
+            table_schema=ACCOUNT_SCHEMA_RAW.get("transaction"),
             partition_cols=("partition",),
             primary_keys=["block_id", "tx_hash"],
         ),
         TableWriteConfig(
             table_name="trace",
-            table_schema=ACCOUNT_SCHEMA_RAW["trace"],
+            table_schema=ACCOUNT_SCHEMA_RAW.get("trace"),
             partition_cols=("partition",),
             primary_keys=["block_id", "trace_index"],
         ),
         TableWriteConfig(
             table_name="log",
-            table_schema=ACCOUNT_SCHEMA_RAW["log"],
+            table_schema=ACCOUNT_SCHEMA_RAW.get("log"),
             partition_cols=("partition",),
             primary_keys=["block_id", "log_index"],
         ),
@@ -340,13 +354,13 @@ UTXO_DBWRITE_CONFIG = DBWriteConfig(
     table_configs=[
         TableWriteConfig(
             table_name="block",
-            table_schema=UTXO_SCHEMA_RAW["block"],
+            table_schema=UTXO_SCHEMA_RAW.get("block"),
             partition_cols=("partition",),
             primary_keys=["block_id"],
         ),
         TableWriteConfig(
             table_name="transaction",
-            table_schema=UTXO_SCHEMA_RAW["transaction"],
+            table_schema=UTXO_SCHEMA_RAW.get("transaction"),
             partition_cols=("partition",),
             primary_keys=["block_id", "index"],
         ),
@@ -373,6 +387,10 @@ class DeltaDumpWriter(Sink):
         s3_credentials: Optional[dict] = None,
         write_mode: str = "overwrite",
     ) -> None:
+        if not _has_ingest_dependencies:
+            raise ImportError(
+                "Need deltalake and pyarrow installed. Please install gslib with ingest dependencies."
+            )
         self.directory = directory
         self.db_write_config = db_write_config
         self.s3_credentials = s3_credentials

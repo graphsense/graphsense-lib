@@ -2,6 +2,10 @@
 import shutil
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("pyarrow")
+
 import pandas as pd
 import pyarrow as pa
 
