@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [25.07.0/2.5.0] 2025-06-25
 ### added
 - some utility functions to harmonize with gs-rest
+- added support for cassandra user and password authentication
 ### changed
 - improved algo for
 - added optional dependencies swaps, ingest, all

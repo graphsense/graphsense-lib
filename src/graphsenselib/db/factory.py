@@ -1,4 +1,5 @@
 from collections import namedtuple
+from typing import Optional
 
 from ..config import get_config, schema_types
 from ..datatypes import (
@@ -43,16 +44,26 @@ def get_db_types_by_schema_type(schema_type) -> DbTypeStrategy:
 
 
 class DbFactory:
-    def from_config(self, env, currency) -> AnalyticsDb:
+    def from_config(self, env, currency, readonly: bool = False) -> AnalyticsDb:
         config = get_config()
         e = config.get_environment(env)
         ks = e.get_keyspace(currency)
+
+        user = e.username
+        pw = e.password
+
+        if readonly:
+            user = e.readonly_username
+            pw = e.readonly_password
+
         return self.from_name(
             ks.raw_keyspace_name,
             ks.transformed_keyspace_name,
             ks.schema_type,
             e.cassandra_nodes,
             currency,
+            username=user,
+            password=pw,
         )
 
     def from_name(
@@ -62,6 +73,8 @@ class DbFactory:
         schema_type,
         cassandra_nodes,
         currency,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ) -> AnalyticsDb:
         db_types = get_db_types_by_schema_type(schema_type)
         return AnalyticsDb(
@@ -79,5 +92,5 @@ class DbFactory:
                 db_types.transaction_type,
                 currency,
             ),
-            db=CassandraDb(cassandra_nodes),
+            db=CassandraDb(cassandra_nodes, username=username, password=password),
         )

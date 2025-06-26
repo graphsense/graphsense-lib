@@ -132,6 +132,10 @@ class KeyspaceConfig(BaseModel):
 
 class Environment(BaseModel):
     cassandra_nodes: List[str]
+    username: Optional[str] = Field(default_factory=lambda: None)
+    password: Optional[str] = Field(default_factory=lambda: None)
+    readonly_username: Optional[str] = Field(default_factory=lambda: None)
+    readonly_password: Optional[str] = Field(default_factory=lambda: None)
     keyspaces: Dict[str, KeyspaceConfig]
 
     def get_configured_currencies(self) -> List[str]:
@@ -147,11 +151,6 @@ class SlackTopic(BaseModel):
 
 class AppConfig(GoodConf):
     """Graphsenselib config file"""
-
-    # class Config:
-    #   env_prefix = "GRAPHSENSE_"
-    #   file_env_var = "GRAPHSENSE_CONFIG_YAML"
-    #   default_files = [".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")]
 
     model_config = GoodConfConfigDict(
         env_prefix="GRAPHSENSE_",

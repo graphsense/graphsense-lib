@@ -56,7 +56,10 @@ def patch_config(gs_db_setup, monkeypatch):
     pytest_keyspaces = {"btc": pytest_ks_btc}
 
     pytest_env = Environment(
-        cassandra_nodes=[f"{cas_host}:{cas_port}"], keyspaces=pytest_keyspaces
+        cassandra_nodes=[f"{cas_host}:{cas_port}"],
+        keyspaces=pytest_keyspaces,
+        username="test_user",
+        password="test_password",
     )
 
     # make sure none of the configured files are loaded.
