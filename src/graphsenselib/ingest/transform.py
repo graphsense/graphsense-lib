@@ -1,4 +1,9 @@
-from ethereumetl.streaming.enrich import enrich_transactions
+try:
+    from ethereumetl.streaming.enrich import enrich_transactions
+except ImportError:
+    _has_ingest_dependencies = False
+else:
+    _has_ingest_dependencies = True
 
 from graphsenselib.ingest.account import (
     BLOCK_BUCKET_SIZE,
@@ -75,6 +80,11 @@ class TransformerUTXO(Transformer):
 
 class TransformerTRX(Transformer):
     def transform(self, block_range_content: BlockRangeContent) -> BlockRangeContent:
+        if not _has_ingest_dependencies:
+            raise ImportError(
+                "Transform function needs ethereumetl installed. Please install gslib with ingest dependencies."
+            )
+
         data = block_range_content.table_contents
 
         blocks = data["blocks"]

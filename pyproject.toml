@@ -15,7 +15,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Topic :: Utilities",
 ]
-requires-python = ">=3.9, <3.11"
+requires-python = ">=3.9, <3.12"
 dependencies = [
     'setuptools<80.9',
     'importlib-metadata; python_version<"3.8"',

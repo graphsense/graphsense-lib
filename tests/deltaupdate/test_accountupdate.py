@@ -1,7 +1,7 @@
 # flake8: noqa
 import pickle
 from io import StringIO
-
+import pytest
 import pandas as pd
 
 from graphsenselib.deltaupdate.update.account.createdeltas import (
@@ -197,6 +197,8 @@ def test_adapters_regression():
 def test_tokens_detected():
     SUPPORTED_TOKENS = pd.read_csv(StringIO(data_eth))
 
+    pytest.importorskip("web3")
+
     tokendecoder = ERC20Decoder("eth", SUPPORTED_TOKENS)
     data = load_data()
     eth_data = data["eth"]
@@ -211,6 +213,9 @@ def test_tokens_detected():
 
 def test_token_decoding():
     adapter = AccountLogAdapter()
+
+    pytest.importorskip("web3")
+
     # todo move to tests
     example_log = {
         "log_index": 0,
@@ -363,6 +368,7 @@ def test_address_sorting():
 
 
 def test_token_with_eur_peg():
+    pytest.importorskip("web3")
     adapter = AccountLogAdapter()
     SUPPORTED_TOKENS = pd.read_csv(StringIO(data_eth))
     example_log = {

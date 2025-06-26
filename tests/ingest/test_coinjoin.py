@@ -1,6 +1,10 @@
 import importlib
 import json
 
+import pytest
+
+pytest.importorskip("bitcoinetl")
+
 from bitcoinetl.domain.block import BtcBlock
 from bitcoinetl.mappers.transaction_mapper import BtcTransactionMapper
 

@@ -4,22 +4,34 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
-import grpc
 import pandas as pd
-from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
-from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
-from ethereumetl.jobs.export_traces_job import (
-    ExportTracesJob as EthereumExportTracesJob,
-)
-from ethereumetl.providers.auto import get_provider_from_uri
-from ethereumetl.service.eth_service import EthService
-from ethereumetl.streaming.enrich import enrich_transactions
-from ethereumetl.streaming.eth_item_id_calculator import EthItemIdCalculator
-from ethereumetl.streaming.eth_item_timestamp_calculator import (
-    EthItemTimestampCalculator,
-)
-from ethereumetl.thread_local_proxy import ThreadLocalProxy
-from web3 import Web3
+
+try:
+    import grpc
+    from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
+    from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
+    from ethereumetl.jobs.export_traces_job import (
+        ExportTracesJob as EthereumExportTracesJob,
+    )
+    from ethereumetl.providers.auto import get_provider_from_uri
+    from ethereumetl.service.eth_service import EthService
+    from ethereumetl.streaming.enrich import enrich_transactions
+    from ethereumetl.streaming.eth_item_id_calculator import EthItemIdCalculator
+    from ethereumetl.streaming.eth_item_timestamp_calculator import (
+        EthItemTimestampCalculator,
+    )
+    from ethereumetl.thread_local_proxy import ThreadLocalProxy
+    from web3 import Web3
+
+    from .tron.export_traces_job import TronExportTracesJob
+    from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
+    from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
+    from .tron.txTypeTransformer import TxTypeTransformer
+except ImportError:
+    _has_ingest_dependencies = False
+else:
+    _has_ingest_dependencies = True
+
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
@@ -44,10 +56,6 @@ from .common import (
     cassandra_ingest,
     write_to_sinks,
 )
-from .tron.export_traces_job import TronExportTracesJob
-from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
-from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
-from .tron.txTypeTransformer import TxTypeTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +107,7 @@ class AccountStreamerAdapter:
 
     def __init__(
         self,
-        batch_web3_provider: ThreadLocalProxy,
+        batch_web3_provider: "ThreadLocalProxy",
         batch_size: int = None,
         max_workers: int = None,
         batch_size_blockstransactions: int = None,
@@ -107,6 +115,10 @@ class AccountStreamerAdapter:
         batch_size_receiptslogs: int = None,
         max_workers_receiptslogs: int = None,
     ) -> None:
+        if not _has_ingest_dependencies:
+            raise ImportError(
+                "The AccountStreamerAdapter needs ethereumetl installed. Please install gslib with ingest dependencies."
+            )
         self.batch_web3_provider = batch_web3_provider
         self.batch_size = batch_size
         self.max_workers = max_workers
@@ -215,7 +227,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
 
     def __init__(
         self,
-        batch_web3_provider: ThreadLocalProxy,
+        batch_web3_provider: "ThreadLocalProxy",
         grpc_endpoint: str,
         batch_size: int = None,
         max_workers: int = None,
@@ -352,7 +364,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         return list_of_dicts
 
 
-def get_last_block_yesterday(batch_web3_provider: ThreadLocalProxy) -> int:
+def get_last_block_yesterday(batch_web3_provider: "ThreadLocalProxy") -> int:
     """Return last block number of previous day from Ethereum client."""
 
     web3 = Web3(batch_web3_provider)
@@ -366,7 +378,7 @@ def get_last_block_yesterday(batch_web3_provider: ThreadLocalProxy) -> int:
     return end_block
 
 
-def get_last_synced_block(batch_web3_provider: ThreadLocalProxy) -> int:
+def get_last_synced_block(batch_web3_provider: "ThreadLocalProxy") -> int:
     """Return last synchronized block number from Ethereum client."""
 
     return int(Web3(batch_web3_provider).eth.getBlock("latest").number)

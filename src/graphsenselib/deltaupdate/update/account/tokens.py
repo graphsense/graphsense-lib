@@ -3,7 +3,6 @@ from dataclasses import dataclass
 import pandas as pd
 from eth_abi import decode
 from eth_utils import function_abi_to_4byte_selector, to_hex
-from web3 import Web3
 
 
 @dataclass
@@ -23,6 +22,8 @@ class TokenTransfer:
 
 class ERC20Decoder:
     def __init__(self, currency: str, supported_tokens: pd.DataFrame):
+        from web3 import Web3
+
         self.w3 = Web3()
 
         self.token_transfer_event_abi = {

@@ -3,20 +3,26 @@ import logging
 import time
 from typing import List
 
-import grpc
-import grpc.aio  # Import asynchronous gRPC module
+try:
+    import grpc
+    import grpc.aio  # Import asynchronous gRPC module
+
+    from .grpc.api.tron_api_pb2 import NumberMessage
+    from .grpc.api.tron_api_pb2_grpc import WalletStub
+    from .grpc.core.response_pb2 import TransactionInfoList
+except ImportError:
+    _has_ingest_dependencies = False
+else:
+    _has_ingest_dependencies = True
 
 from ...utils import remove_prefix
-from .grpc.api.tron_api_pb2 import NumberMessage
-from .grpc.api.tron_api_pb2_grpc import WalletStub
-from .grpc.core.response_pb2 import TransactionInfoList
 
 logger = logging.getLogger(__name__)
 # todo check if traces are saved in correct order
 # / take note at the correct place that this is unchecked for now
 
 
-def decode_block_to_traces(block_number: int, block: TransactionInfoList) -> List:
+def decode_block_to_traces(block_number: int, block: "TransactionInfoList") -> List:
     """decode block of TransactionInfoList protobuf object to get a list of traces
 
     Args:
@@ -106,7 +112,7 @@ def decode_block_to_traces(block_number: int, block: TransactionInfoList) -> Lis
     return traces_per_block
 
 
-def decode_fees(block_number: int, block: TransactionInfoList) -> List:
+def decode_fees(block_number: int, block: "TransactionInfoList") -> List:
     transactionInfo = block.transactionInfo
 
     return [
@@ -136,6 +142,10 @@ class TronExportTracesJob:
         grpc_endpoint: str,
         max_workers: int,
     ):
+        if not _has_ingest_dependencies:
+            raise ImportError(
+                "The TronExportTracesJob needs grpc installed. Please install gslib with ingest dependencies."
+            )
         self.start_block = start_block
         self.end_block = end_block
         self.batch_size = batch_size

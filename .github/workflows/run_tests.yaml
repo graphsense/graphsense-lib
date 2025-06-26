@@ -27,7 +27,9 @@ jobs:
       - name: Install requirements
         run: uv sync --python=${{ matrix.python }}
       - name: Run Unit Tests
-        run: make test
+        run: make test-ci
+      - name: Run Unit Tests with base dependencies
+        run: make test-with-base-dependencies-ci
       - name: Run Lint
         run: make lint
       - name: Build wheel

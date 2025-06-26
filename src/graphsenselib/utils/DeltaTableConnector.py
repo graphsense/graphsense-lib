@@ -1,7 +1,14 @@
 from typing import Iterable, List, Tuple
 
-import deltalake
-import duckdb
+try:
+    import deltalake
+    import duckdb
+except ImportError:
+    _has_delta_dependencies = False
+else:
+    _has_delta_dependencies = True
+
+
 import pandas as pd
 
 from graphsenselib.ingest.account import from_bytes_df
@@ -46,6 +53,10 @@ class BinaryInterpreter:
 
 class DeltaTableConnector:
     def __init__(self, base_directory: str, s3_credentials: str):
+        if not _has_delta_dependencies:
+            raise ImportError(
+                "The Connector needs duckdb and deltalake installed. Please install gslib with ingest dependencies."
+            )
         self.base_directory = base_directory
         self.s3_credentials = s3_credentials
         # get network from last part of base_directory

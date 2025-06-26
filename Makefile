@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v25.07.0rc7'
-RELEASESEM := 'v2.5.0rc7'
+RELEASE := 'v25.07.0rc8'
+RELEASESEM := 'v2.5.0rc8'
 
 -include .env
 
@@ -17,7 +17,14 @@ dev:
 	 uv run pre-commit install
 
 test:
-	uv run --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
+	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
+
+test-ci:
+	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
+
+test-with-base-dependencies-ci:
+	uv run --exact --no-dev --group testing --extra swaps pytest  -x -rx -vv -m "not slow" --cov=src --capture=no
+
 
 test-all:
 	uv run --all-extras  pytest --cov=src -W error
@@ -58,4 +65,4 @@ generate-tron-grpc-code:
 click-bash-completion:
 	_GRAPHSENSE_CLI_COMPLETE=bash_source graphsense-cli
 
-.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code
+.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci
