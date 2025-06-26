@@ -4,6 +4,7 @@ import time
 from functools import wraps
 from typing import Iterable, List, Optional, Sequence, Union
 
+from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import (
     EXEC_PROFILE_DEFAULT,
     Cluster,
@@ -271,8 +272,14 @@ class StorageError(Exception):
 
 
 class CassandraScope:
-    def __init__(self, db_nodes, default_timeout=DEFAULT_TIMEOUT):
-        self._db = CassandraDb(db_nodes, default_timeout)
+    def __init__(
+        self,
+        db_nodes,
+        default_timeout=DEFAULT_TIMEOUT,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ):
+        self._db = CassandraDb(db_nodes, default_timeout, username, password)
 
     def __enter__(self):
         self._db.connect()
@@ -314,18 +321,28 @@ class CassandraDb:
 
         return x
 
-    def __init__(self, db_nodes: Iterable, default_timeout=DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self,
+        db_nodes: Iterable,
+        default_timeout=DEFAULT_TIMEOUT,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> None:
         ports = {int(x.split(":")[1]) for x in db_nodes if ":" in x}
         nodes = [x.split(":")[0] for x in db_nodes]
         self.db_nodes = nodes
         self.db_port = list(ports)[0] if len(ports) == 1 else 9042
+        self.db_username = username
+        self.db_password = password
         self.cluster = None
         self.session = None
         self.prep_stmts = {}
         self._default_timeout = default_timeout
 
     def clone(self) -> "CassandraDb":
-        return CassandraDb(self.db_nodes, self._default_timeout)
+        return CassandraDb(
+            self.db_nodes, self._default_timeout, self.db_username, self.db_password
+        )
 
     def __repr__(self):
         return f"{', '.join(self.db_nodes)}"
@@ -339,6 +356,12 @@ class CassandraDb:
             request_timeout=self._default_timeout,
             load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
         )
+        auth_provider = None
+        if self.db_username is not None:
+            auth_provider = PlainTextAuthProvider(
+                username=self.db_username, password=self.db_password
+            )
+
         self.cluster = Cluster(
             self.db_nodes,
             port=self.db_port,
@@ -347,6 +370,7 @@ class CassandraDb:
             idle_heartbeat_timeout=self._default_timeout,
             # protocol_version=6,
             compression="lz4",
+            auth_provider=auth_provider,
         )
         try:
             self.session = self.cluster.connect()
