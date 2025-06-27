@@ -12,8 +12,8 @@ tag-version:
 	-git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASESEM) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
 	git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
 
-dev:
-	 uv sync -e .[dev] --force-reinstall --upgrade
+dev: install-dev
+	 uv sync -e .[dev] --force-reinstall --all-extras
 	 uv run pre-commit install
 
 test:
@@ -27,10 +27,10 @@ test-with-base-dependencies-ci:
 
 
 test-all:
-	uv run --all-extras  pytest --cov=src -W error
+	uv run --all-groups  pytest --cov=src -W error
 
 install-dev:
-	uv sync -e --all-groups --force-reinstall --upgrade
+	uv sync --all-packages --force-reinstall --all-extras
 
 install:
 	uv sync

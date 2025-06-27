@@ -343,7 +343,9 @@ def get_swap_from_decoded_logs(
                 dlog["address"].lower(),
                 dlog["parameters"]["value"],
                 "log",
-                logs_raw[i]["log_index"],
+                logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
+                    "log_index"
+                ],
             )
             for i, dlog in enumerate(transfers)
         ]
@@ -431,7 +433,7 @@ def get_swap_from_decoded_logs(
 
             # CASE WHERE THE SENDER OF THE TX IS NOT THE SWAPPER
             if len(outgoing_amounts) == 0 and len(incoming_amounts) == 0:
-                # todo this might not work true if the first transfer is ETH
+                # todo this might not be true if the first transfer is ETH
                 sender = transfer_asset_flows[0][0]
                 outgoing_amounts, incoming_amounts = get_asset_flows_of_address(
                     sender, all_asset_flows
