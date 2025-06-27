@@ -342,7 +342,7 @@ def get_swap_from_decoded_logs(
                 dlog["parameters"]["to"],
                 dlog["address"].lower(),
                 dlog["parameters"]["value"],
-                "log",
+                "erc20",
                 logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
                     "log_index"
                 ],
@@ -357,7 +357,7 @@ def get_swap_from_decoded_logs(
                 dlog["address"].lower(),
                 dlog["address"].lower(),
                 dlog["parameters"]["value"],
-                "log",
+                "erc20",
                 logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
                     "log_index"
                 ],
@@ -373,7 +373,7 @@ def get_swap_from_decoded_logs(
                 dlog["parameters"]["dst"],
                 dlog["address"].lower(),
                 dlog["parameters"]["wad"],
-                "log",
+                "erc20",
                 logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
                     "log_index"
                 ],
@@ -462,10 +462,10 @@ def get_swap_from_decoded_logs(
             tx_hash_hex = logs_raw[0]["tx_hash"].hex()
             txh0x = ensure_0x_prefix(tx_hash_hex)
 
-            if from_source_type == "log":
+            if from_source_type == "erc20":
                 fromPayment = SubTransactionIdentifier(
                     tx_hash=txh0x,
-                    tx_type=SubTransactionType.GenericLog,
+                    tx_type=SubTransactionType.ERC20,
                     sub_index=from_source_index,
                 ).to_string()
             else:  # trace
@@ -475,10 +475,10 @@ def get_swap_from_decoded_logs(
                     sub_index=from_source_index,
                 ).to_string()
 
-            if to_source_type == "log":
+            if to_source_type == "erc20":
                 toPayment = SubTransactionIdentifier(
                     tx_hash=txh0x,
-                    tx_type=SubTransactionType.GenericLog,
+                    tx_type=SubTransactionType.ERC20,
                     sub_index=to_source_index,
                 ).to_string()
             else:  # trace
