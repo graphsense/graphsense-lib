@@ -12,6 +12,7 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Intended Audience :: Developers",
     "Topic :: Utilities",
 ]
@@ -36,6 +37,7 @@ dependencies = [
     "eth-hash>=0.3.0",
     "cassandra-driver>=3.27.0",
     "tenacity>=8.2.3",
+    "ethereum-etl",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -61,6 +63,9 @@ Download = "https://github.com/graphsense"
 [tool.uv]
 prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
 
+[tool.uv.sources]
+ethereum-etl = { path = "../../ethereum-etl" }
+
 
 [dependency-groups]
 # Core testing dependencies
@@ -82,7 +87,7 @@ dev = [
     "pre-commit",
     "setuptools_scm",
     "pdbpp",
-    "grpcio-tools",
+    "grpcio-tools>= 1.49.0",
     "testcontainers[cassandra]>=4.9.1",
     "pytest-vcr",
     "vcrpy",
@@ -97,7 +102,7 @@ ingest = [
     "pyarrow>=16.0.0, <17.0.0",
     "deltalake~=0.22.3",
     "duckdb>=1.0.0",
-    "grpcio>=1.48.2",
+    "grpcio>=1.49.0",
 ]
 swaps = [ # Might be able to remove this group later, but keep for now
     "networkx>=3.2.1",
@@ -111,9 +116,10 @@ all = [
     "pyarrow>=16.0.0, <17.0.0",
     "deltalake~=0.22.3",
     "duckdb>=1.0.0",
-    "grpcio>=1.48.2",
+    "grpcio>=1.49.0",
     "networkx>=3.2.1",
-    "matplotlib"
+    "matplotlib",
+    "web3>=6.20.2" # eth-typing issue fixed in 6.20.2
 ]
 
 [project.scripts]
