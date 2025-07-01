@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime
-from importlib.resources import files, read_text
+from importlib.resources import files
 from typing import Iterable, List, Optional
 
 from parsy import forward_declaration, seq, string
@@ -195,7 +195,7 @@ class GraphsenseSchemas:
         return list(files(self.RESOUCE_PATH).iterdir())
 
     def load_schema_text(self, filename):
-        return read_text(self.RESOUCE_PATH, filename)
+        return files(self.RESOUCE_PATH).joinpath(filename).read_text()
 
     def get_by_currency(
         self, currency, keyspace_type=None, no_extensions=False
