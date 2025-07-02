@@ -64,7 +64,7 @@ Download = "https://github.com/graphsense"
 prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
 
 [tool.uv.sources]
-ethereum-etl = { path = "../../ethereum-etl" }
+ethereum-etl = { git = "https://github.com/graphsense/ethereum-etl", rev = "279d9e5e192ce2a95b104c6344103cc95120beba"}
 
 
 [dependency-groups]
