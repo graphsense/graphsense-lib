@@ -13,7 +13,6 @@ tag-version:
 	git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
 
 dev: install-dev
-	 uv sync -e .[dev] --force-reinstall --all-extras
 	 uv run pre-commit install
 
 test:
@@ -39,7 +38,7 @@ lint:
 	uv run ruff check tests src
 
 format:
-	uv run ruff check --select I --fix .
+	uv run ruff check --fix .
 	uv run ruff format .
 
 pre-commit:
