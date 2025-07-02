@@ -798,16 +798,17 @@ pycryptodome = [
 
 [[package]]
 name = "eth-keyfile"
-version = "0.8.1"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "eth-keys" },
     { name = "eth-utils" },
+    { name = "py-ecc" },
     { name = "pycryptodome" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/35/66/dd823b1537befefbbff602e2ada88f1477c5b40ec3731e3d9bc676c5f716/eth_keyfile-0.8.1.tar.gz", hash = "sha256:9708bc31f386b52cca0969238ff35b1ac72bd7a7186f2a84b86110d3c973bec1", size = 12267, upload-time = "2024-04-23T20:28:53.862Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/e4/3f0c20b020786e1fa6e1ecd81806c54167fa2b0839e0020086b95a6e8faf/eth_keyfile-0.9.1.tar.gz", hash = "sha256:c7a8bc6af4527d1ab2eb1d1b949d59925252e17663eaf90087da121327b51df6", size = 19787, upload-time = "2025-02-10T18:01:01.703Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/fc/48a586175f847dd9e05e5b8994d2fe8336098781ec2e9836a2ad94280281/eth_keyfile-0.8.1-py3-none-any.whl", hash = "sha256:65387378b82fe7e86d7cb9f8d98e6d639142661b2f6f490629da09fddbef6d64", size = 7510, upload-time = "2024-04-23T20:28:51.063Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/08/9c8bf617b39e1dd56303593292e8b4eb66497a5f0f5b997a4b291e5343c0/eth_keyfile-0.9.1-py3-none-any.whl", hash = "sha256:9789c3b4fa0bb6e2616cdc2bdd71b8755b42947d78ef1e900a0149480fabb5c2", size = 9866, upload-time = "2025-02-10T18:00:59.695Z" },
 ]
 
 [[package]]
@@ -883,7 +884,7 @@ wheels = [
 [[package]]
 name = "ethereum-etl"
 version = "2.4.2"
-source = { directory = "../../ethereum-etl" }
+source = { git = "https://github.com/graphsense/ethereum-etl?rev=279d9e5e192ce2a95b104c6344103cc95120beba#279d9e5e192ce2a95b104c6344103cc95120beba" }
 dependencies = [
     { name = "base58" },
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -896,31 +897,6 @@ dependencies = [
     { name = "urllib3" },
     { name = "web3" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "base58" },
-    { name = "boto3", marker = "extra == 'streaming-kinesis'", specifier = "==1.24.11" },
-    { name = "botocore", marker = "extra == 'streaming-kinesis'", specifier = "==1.27.11" },
-    { name = "click", specifier = ">=8.0.4,<9" },
-    { name = "eth-abi", specifier = ">=3.0.0" },
-    { name = "eth-utils", specifier = ">=1.10" },
-    { name = "ethereum-dasm", specifier = "==0.1.4" },
-    { name = "google-cloud-pubsub", marker = "extra == 'streaming'", specifier = ">=2.13.0" },
-    { name = "google-cloud-storage", marker = "extra == 'streaming'", specifier = ">=1.33.0" },
-    { name = "grpcio", marker = "extra == 'streaming'", specifier = ">=1.49.0" },
-    { name = "kafka-python", marker = "extra == 'streaming'", specifier = "==2.0.2" },
-    { name = "libcst", marker = "extra == 'streaming'", specifier = "==0.3.21" },
-    { name = "pg8000", marker = "extra == 'streaming'", specifier = "==1.16.6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "python-dateutil", specifier = ">=2.8.0,<3" },
-    { name = "requests" },
-    { name = "sqlalchemy", marker = "extra == 'streaming'", specifier = "==1.4" },
-    { name = "timeout-decorator", marker = "extra == 'streaming'", specifier = "==0.4.1" },
-    { name = "urllib3", specifier = "<2" },
-    { name = "web3", specifier = ">=6,<7" },
-]
-provides-extras = ["streaming", "streaming-kinesis", "dev"]
 
 [[package]]
 name = "evmdasm"
@@ -1202,9 +1178,9 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'ingest'", specifier = ">=1.0.0" },
     { name = "eth-event", specifier = ">=1.2.3" },
     { name = "eth-hash", specifier = ">=0.3.0" },
-    { name = "ethereum-etl", directory = "../../ethereum-etl" },
-    { name = "ethereum-etl", marker = "extra == 'all'", directory = "../../ethereum-etl" },
-    { name = "ethereum-etl", marker = "extra == 'ingest'", directory = "../../ethereum-etl" },
+    { name = "ethereum-etl", git = "https://github.com/graphsense/ethereum-etl?rev=279d9e5e192ce2a95b104c6344103cc95120beba" },
+    { name = "ethereum-etl", marker = "extra == 'all'", git = "https://github.com/graphsense/ethereum-etl?rev=279d9e5e192ce2a95b104c6344103cc95120beba" },
+    { name = "ethereum-etl", marker = "extra == 'ingest'", git = "https://github.com/graphsense/ethereum-etl?rev=279d9e5e192ce2a95b104c6344103cc95120beba" },
     { name = "filelock", specifier = ">=3.8.0" },
     { name = "goodconf", extras = ["yaml"], specifier = ">=3.0.0" },
     { name = "graphsense-bitcoin-etl", marker = "extra == 'all'", specifier = "==1.5.4" },
@@ -2142,6 +2118,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b1/f0/4160dbd205eee8fdf8647d154e7ceaa9d25b3a877b6311274eb6dc896b75/protobuf-6.31.1-cp39-cp39-win32.whl", hash = "sha256:0414e3aa5a5f3ff423828e1e6a6e907d6c65c1d5b7e6e975793d5590bdeecc16", size = 423626, upload-time = "2025-05-28T19:25:51.355Z" },
     { url = "https://files.pythonhosted.org/packages/09/34/13989eb9f482409ed821bfa3e34e6a3878b42607c38e7f7572b4cc825091/protobuf-6.31.1-cp39-cp39-win_amd64.whl", hash = "sha256:8764cf4587791e7564051b35524b72844f845ad0bb011704c3736cce762d8fe9", size = 435347, upload-time = "2025-05-28T19:25:52.932Z" },
     { url = "https://files.pythonhosted.org/packages/f7/af/ab3c51ab7507a7325e98ffe691d9495ee3d3aa5f589afad65ec920d39821/protobuf-6.31.1-py3-none-any.whl", hash = "sha256:720a6c7e6b77288b85063569baae8536671b39f15cc22037ec7045658d80489e", size = 168724, upload-time = "2025-05-28T19:25:53.926Z" },
+]
+
+[[package]]
+name = "py-ecc"
+version = "8.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "eth-typing" },
+    { name = "eth-utils" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/96/e73075d5c885274efada2fbc5db6377022036c2f5b4b470dbcf4106e07d5/py_ecc-8.0.0.tar.gz", hash = "sha256:56aca19e5dc37294f60c1cc76666c03c2276e7666412b9a559fa0145d099933d", size = 51193, upload-time = "2025-04-14T16:14:03.29Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/58/383335eac96d2f1aba78741c6ce128c54e7eba2ea1dc47408257d751d35c/py_ecc-8.0.0-py3-none-any.whl", hash = "sha256:c0b2dfc4bde67a55122a392591a10e851a986d5128f680628c80b405f7663e13", size = 47814, upload-time = "2025-04-14T16:14:01.827Z" },
 ]
 
 [[package]]
