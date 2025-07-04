@@ -13,6 +13,19 @@ from .errorhandling import get_exception_digest
 logger = logging.getLogger(__name__)
 
 
+class SlackLogHandler(logging.Handler):
+    def __init__(self, webhook_url):
+        super().__init__()
+        self.webhook_url = webhook_url
+
+    def emit(self, record):
+        log_entry = self.format(record)
+        payload = {
+            "text": log_entry,
+        }
+        requests.post(self.webhook_url, data=json.dumps(payload))
+
+
 class ClickSlackErrorNotificationContext:
     def __init__(self, webhooks: List[str]):
         self.hooks = webhooks
