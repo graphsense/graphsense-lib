@@ -152,6 +152,8 @@ class SlackTopic(BaseModel):
 class AppConfig(GoodConf):
     """Graphsenselib config file"""
 
+    default_environment: Optional[str] = None
+
     model_config = GoodConfConfigDict(
         env_prefix="GRAPHSENSE_",
         file_env_var="GRAPHSENSE_CONFIG_YAML",

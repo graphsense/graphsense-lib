@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [25.07.3/2.5.3] 2025-07-08
+### added
+- add optional environment to slack logging handler
+- add default_environment to gs_config
+
 ## [25.07.2/2.5.2] 2025-07-04
 ### added
 - Slack logging handler
