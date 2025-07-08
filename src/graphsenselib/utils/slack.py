@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 from contextlib import contextmanager
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import click
 import requests
@@ -14,14 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 class SlackLogHandler(logging.Handler):
-    def __init__(self, webhook_url):
+    def __init__(self, webhook_url, environment: Optional[str] = None):
         super().__init__()
         self.webhook_url = webhook_url
+        self.environment = environment
 
     def emit(self, record):
         log_entry = self.format(record)
+        prefix = (
+            f"Message from environment: {self.environment}\n"
+            if self.environment
+            else ""
+        )
         payload = {
-            "text": log_entry,
+            "text": f"{prefix}{log_entry}",
         }
         requests.post(self.webhook_url, data=json.dumps(payload))
 
