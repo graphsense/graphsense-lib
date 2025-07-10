@@ -37,7 +37,7 @@ dependencies = [
     "eth-hash>=0.3.0",
     "cassandra-driver>=3.27.0",
     "tenacity>=8.2.3",
-    "ethereum-etl",
+    "graphsense-ethereum-etl",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -62,10 +62,6 @@ Download = "https://github.com/graphsense"
 
 [tool.uv]
 prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
-
-[tool.uv.sources]
-ethereum-etl = { git = "https://github.com/graphsense/ethereum-etl", rev = "279d9e5e192ce2a95b104c6344103cc95120beba"}
-
 
 [dependency-groups]
 # Core testing dependencies
@@ -95,7 +91,7 @@ dev = [
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies
 ingest = [
-    "ethereum-etl>=2.4.1",
+    "graphsense-ethereum-etl>=2.4.4",
     "chainside-btcpy>=0.6",
     "graphsense-bitcoin-etl==1.5.4",
     "lz4>=4.3.2",
@@ -109,7 +105,7 @@ swaps = [ # Might be able to remove this group later, but keep for now
     "matplotlib"
 ]
 all = [
-    "ethereum-etl>=2.4.1",
+    "graphsense-ethereum-etl>=2.4.4",
     "chainside-btcpy>=0.6",
     "graphsense-bitcoin-etl==1.5.4",
     "lz4>=4.3.2",
