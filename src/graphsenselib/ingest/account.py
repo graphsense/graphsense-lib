@@ -381,7 +381,7 @@ def get_last_block_yesterday(batch_web3_provider: "ThreadLocalProxy") -> int:
 def get_last_synced_block(batch_web3_provider: "ThreadLocalProxy") -> int:
     """Return last synchronized block number from Ethereum client."""
 
-    return int(Web3(batch_web3_provider).eth.getBlock("latest").number)
+    return int(Web3(batch_web3_provider).eth.get_block("latest").number)
 
 
 def ingest_configuration_cassandra(
