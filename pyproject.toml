@@ -105,17 +105,8 @@ swaps = [ # Might be able to remove this group later, but keep for now
     "matplotlib"
 ]
 all = [
-    "graphsense-ethereum-etl>=2.4.4",
-    "chainside-btcpy>=0.6",
-    "graphsense-bitcoin-etl==1.5.4",
-    "lz4>=4.3.2",
-    "pyarrow>=16.0.0, <17.0.0",
-    "deltalake~=0.22.3",
-    "duckdb>=1.0.0",
-    "grpcio>=1.49.0",
-    "networkx>=3.2.1",
-    "matplotlib",
-    "web3>=6.20.2" # eth-typing issue fixed in 6.20.2
+    "graphsense-lib[ingest]",
+    "graphsense-lib[swaps]",
 ]
 
 [project.scripts]
