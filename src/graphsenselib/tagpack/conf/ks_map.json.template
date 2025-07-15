@@ -1,0 +1,22 @@
+{
+    "BTC": {
+        "raw": "btc_raw",
+        "transformed": "btc_transformed"
+    },
+    "LTC": {
+        "raw": "ltc_raw",
+        "transformed": "ltc_transformed"
+    },
+    "BCH": {
+        "raw": "bch_raw",
+        "transformed": "bch_transformed"
+    },
+    "ZEC": {
+        "raw": "zec_raw",
+        "transformed": "zec_transformed"
+    },
+    "ETH": {
+        "raw": "eth_raw",
+        "transformed": "eth_transformed"
+    }
+}

@@ -1,0 +1,845 @@
+scheme:
+  baseurl: /taxonomies/concepts
+  type: conceptScheme
+  version: 0.1.0
+  lastmod: 2023-01-27
+  title: Concepts Taxonomy
+  creator: Iknaio Standardisation Working Group (derived from the INTERPOL Darknet and Cryptocurrencies Working Group taxonomy)
+  description: >
+   This concepts abuses, usage and behaviour patterns or entity types that are useful to categorize actors
+   and service that are part of a larger Darknet- and Cryptoasset Ecosystems.
+  default_language: en
+
+# Top concept
+
+concept:
+  id: concept
+  type: concept
+  prefLabel: Concept
+  description: >
+    Anything that describes an actor in the Darknet- or Cryptoasset Ecosystems.
+  narrower: [entity, behaviour]
+
+unknown:
+  id: unknown
+  type: concept
+  prefLabel: Unknown
+  description: >
+    Special category representing a tag with unknown categorization
+  broader: concept
+
+behaviour:
+  id: behaviour
+  type: concept
+  prefLabel: Behaviour
+  description: >
+    A way something functions or behaves or operates
+  seeAlso: https://www.merriam-webster.com/dictionary/behavior
+  broader: concept
+
+source:
+  id: source
+  type: concept
+  prefLabel: Source
+  description: >
+    Attributes about the source of the information
+  broader: concept
+
+mention:
+  id: mention
+  type: concept
+  prefLabel: Mention
+  description: >
+    Tag originates from an mention
+  broader: source
+
+website_mention:
+  id: website_mention
+  type: concept
+  prefLabel: Website Mention
+  description: >
+    Tag originating from a website mention
+  broader: mention
+
+forum_mention:
+  id: forum_mention
+  type: concept
+  prefLabel: Forum Mention
+  description: >
+    Tag originating from a forum mention
+  broader: website_mention
+
+abuse:
+  id: abuse
+  type: concept
+  prefLabel: Abuse
+  description: >
+    Some not further specified type of abuse
+  seeAlso: https://www.merriam-webster.com/dictionary/abuse
+  broader: behaviour
+  narrower: [scam]
+
+gray_usage:
+    id: gray_usage
+    type: concept
+    prefLabel: Gray usage patterns
+    description: >
+      Usage patterns that can be of concerning depending on the context
+    broader: behaviour
+    narrower: [mixing]
+
+mixing:
+    id: mixing
+    type: concept
+    prefLabel: Mixing
+    description: >
+      An activity to conceal the source or destination of a payment flow
+    broader: gray_usage
+    narrower: [coinjoin]
+
+white_usage:
+  id: white_usage
+  type: concept
+  prefLabel: White (benin) usage patterns
+  description: >
+    Usage patterns that are tipically not concerning
+  broader: behaviour
+  narrower: [cold_wallet]
+
+
+# High-level concepts Abuse
+
+sexual_abuse:
+  id: sexual_abuse
+  type: concept
+  prefLabel: Sexual Abuse
+  description: >
+    Abuseive secual behavior.
+  seeAlso: https://en.wikipedia.org/wiki/Sexual_abuse
+  broader: abuse
+
+child_sexual_abuse:
+  id: child_sexual_abuse
+  type: concept
+  prefLabel: Child Sexual Abuse
+  description: >
+    Abuseive secual behavior towards minors.
+  seeAlso: https://en.wikipedia.org/wiki/Child_sexual_abuse
+  broader: sexual_abuse
+
+
+violence:
+  id: violence
+  type: concept
+  prefLabel: Violence
+  description: >
+    Anything involving Violent behaviour
+  seeAlso: https://www.merriam-webster.com/dictionary/violence
+  broader: abuse
+
+human_trafficking:
+  id: human_trafficking
+  type: concept
+  prefLabel: Human Trafficking
+  description: >
+    Human trafficking is the trade of humans for the purpose of forced labour, sexual slavery, or commercial sexual exploitation.
+  seeAlso: https://en.wikipedia.org/wiki/Human_trafficking
+  broader: abuse
+
+murder:
+  id: murder
+  type: concept
+  prefLabel: Murder
+  description: >
+    Unlawful killing of another human
+  seeAlso: https://en.wikipedia.org/wiki/Murder
+  broader: violence
+
+torture:
+  id: torture
+  type: concept
+  prefLabel: Torture
+  description: >
+    Anything involving Violent behaviour
+  seeAlso: https://www.merriam-webster.com/dictionary/torture
+  broader: violence
+
+scam:
+  id: scam
+  type: concept
+  prefLabel: Scam
+  description: >
+    Scam denotes a fraudulent or deceptive act or operation.
+  seeAlso: https://www.merriam-webster.com/dictionary/scam
+  broader: abuse
+
+
+financial_crime:
+  id: financial_crime
+  type: concept
+  prefLabel: Financial Crime
+  description: >
+    Financial crime is a broad term used to describe criminal activities that involve money or other financial resources.
+  seeAlso: https://www.interpol.int/Crimes/Financial-crime
+  broader: abuse
+  narrower: investment_fraud
+
+investment_fraud:
+  id: investment_fraud
+  type: concept
+  prefLabel: Investment Fraud
+  description: >
+      Investment fraud involves the illegal sale or purported sale of financial instruments.
+      The typical investment fraud schemes are characterized by offers of low- or no-risk
+      investments, guaranteed returns, overly-consistent returns, complex strategies, or
+      unregistered securities.
+  seeAlso: https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/investment-fraud
+  narrower: ponzi_scheme
+  broader: financial_crime
+
+ponzi_scheme:
+  id: ponzi_scheme
+  type: concept
+  prefLabel: Ponzi Scheme
+  description: >
+      Ponzi schemes promise high financial returns or dividends not available through traditional
+      investments. Instead of investing the funds of victims, however, the con artist pays
+      dividends to initial investors using the funds of subsequent investors. The scheme generally
+      falls apart when the operator flees with all of the proceeds or when a sufficient number of
+      new investors cannot be found to allow the continued payment of dividends.
+  seeAlso: https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/ponzi-schemes
+  narrower: pyramid_scheme
+  broader: investment_fraud
+
+pyramid_scheme:
+  id: pyramid_scheme
+  type: concept
+  prefLabel: Pyramid Scheme
+  description: >
+      As in Ponzi schemes, the money collected from newer victims of pyramid schemes is paid to
+      earlier victims to provide a veneer of legitimacy. In pyramid schemes, however, the victims
+      themselves are induced to recruit further victims through the payment of recruitment commissions.
+  seeAlso: https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/pyramid-schemes
+  broader: ponzi_scheme
+
+money_laundering:
+  id: money_laundering
+  type: concept
+  prefLabel: Money Laundering
+  description: >
+    Money laundering is concealing or disguising the origins of illegally obtained proceeds so that they appear to have originated from legitimate sources.
+  seeAlso: https://www.interpol.int/Crimes/Financial-crime/Money-laundering
+  broader: financial_crime
+
+extortion:
+  id: extortion
+  type: concept
+  prefLabel: Extortion
+  description: >
+    Extortion denotes the act or practice of extorting especially money or other property.
+  seeAlso: https://www.merriam-webster.com/dictionary/extortion
+  narrower: sextortion
+  broader: abuse
+
+sextortion:
+  id: sextortion
+  type: concept
+  prefLabel: Sextortion
+  description: >
+    Sextortion refers to the broad category of sexual exploitation in which
+    abuse of power is the means of coercion, as well as to the category of sexual
+    exploitation in which threatened release of sexual images or information is
+    the means of coercion.
+  seeAlso: https://en.wikipedia.org/wiki/Sextortion
+  broader: extortion
+
+phishing:
+  id: phishing
+  type: concept
+  prefLabel: Phishing
+  description: >
+    Phishing is the fraudulent attempt to obtain sensitive information such as usernames,
+    passwords and credit card details by disguising oneself as a trustworthy entity in an
+    electronic communication.
+  seeAlso: https://en.wikipedia.org/wiki/Phishing
+  broader: abuse
+
+hacking:
+  id: hacking
+  type: concept
+  prefLabel: Hacking
+  description: >
+    Related to hacking activity
+  seeAlso: https://en.wikipedia.org/wiki/Hacker
+  broader: abuse
+
+service_hack:
+  id: service_hack
+  type: concept
+  prefLabel: Service Hack
+  description: >
+    A service hack denotes the digital intrusion into a service with the goal to steal
+    funds.
+  broader: hacking
+
+account_hack:
+  id: account_hack
+  type: concept
+  prefLabel: Account Hack
+  description: >
+    A hacked account either to exploit finanically or via impersonation
+  broader: hacking
+
+exploit:
+  id: exploit
+  type: concept
+  prefLabel: Exploit
+  description: >
+    An exploit is a method or piece of code that takes advantage of vulnerabilities in software
+  seeAlso: https://en.wikipedia.org/wiki/Exploit_(computer_security)
+  broader: hacking
+
+data_breach:
+  id: data_breach
+  type: concept
+  prefLabel: Data Breach
+  description: >
+    A data breach, also known as data leakage, is "the unauthorized exposure, disclosure, or loss of personal information".
+  seeAlso: https://en.wikipedia.org/wiki/Data_breach
+  broader: hacking
+
+social_engineering:
+  id: social_engineering
+  type: concept
+  prefLabel: Social Engineering
+  description: >
+    In the context of information security, social engineering is the psychological manipulation of people into performing actions or divulging confidential information.
+  seeAlso: https://en.wikipedia.org/wiki/Social_engineering_(security)
+  broader: hacking
+
+malware:
+  id: malware
+  type: concept
+  prefLabel: Malware
+  description: >
+    Malware is any software intentionally designed to cause disruption to a computer, server, client, or computer network, leak private information, gain unauthorized access to information or systems, deprive access to information, or which unknowingly interferes with the user's computer security and privacy.
+  seeAlso: https://en.wikipedia.org/wiki/Malware
+  broader: hacking
+
+drugs:
+  id: drugs
+  type: concept
+  prefLabel: Drugs
+  description: >
+    Related to (illegal) drugs.
+  seeAlso: https://en.wikipedia.org/wiki/Drug
+  broader: abuse
+
+weapons:
+  id: weapons
+  type: concept
+  prefLabel: Weapons
+  description: >
+    A weapon, arm, or armament is any implement or device that is used to deter, threaten, inflict physical damage, harm, or kill.
+  seeAlso: https://en.wikipedia.org/wiki/Weapon
+  broader: abuse
+
+payment_card_fraud:
+  id: payment_card_fraud
+  type: concept
+  prefLabel: Payment Card Fraud
+  description: >
+    Criminal activity revolving around payment cards.
+  seeAlso: https://www.interpol.int/Crimes/Financial-crime/Payment-card-fraud
+  broader: financial_crime
+
+ransomware:
+  id: ransomware
+  type: concept
+  prefLabel: Ransomware
+  description: >
+    Ransomware is a type of malware from cryptovirology that threatens to publish the
+    victim's data or perpetually block access to it unless a ransom is paid.
+  seeAlso: https://en.wikipedia.org/wiki/Ransomware
+  broader: extortion
+
+sanction:
+  id: sanction
+  type: concept
+  prefLabel: Sanction List
+  description: >
+      An entry appears on a sanction list published by governments and international
+      authorities to combat illegal activities.
+  broader: abuse
+
+counterfeit:
+  id: counterfeit
+  type: concept
+  prefLabel: Counterfeit
+  description: >
+      A counterfeit is a fake or unauthorized replica of a genuine product-
+  seeAlso: https://en.wikipedia.org/wiki/Counterfeit
+  broader: abuse
+
+extremism:
+  id: extremism
+  type: concept
+  prefLabel: Extremism
+  description: >
+    Serially or systematically dehumanize others, frequently express hate speech towards opponents,
+    perform selective/ individual acts of violence, actively separate targets from society, active
+    discrimination.
+  seeAlso: https://gifct.org/wp-content/uploads/2021/07/GIFCT-TaxonomyReport-2021.pdf
+  broader: abuse
+
+terrorism:
+  id: terrorism
+  type: concept
+  prefLabel: Terrorism
+  description: >
+    Endorse, promote, or enact physical violence towards out-, in-group or infrastructure.
+  seeAlso: https://gifct.org/wp-content/uploads/2021/07/GIFCT-TaxonomyReport-2021.pdf
+  broader: extremism
+
+terrorism_financing:
+  id: terrorism_financing
+  type: concept
+  prefLabel: Terrorism Financing
+  description: >
+    Financial support to terrorism related entities
+  seeAlso: https://gifct.org/wp-content/uploads/2021/07/GIFCT-TaxonomyReport-2021.pdf
+  broader: extremism
+
+dark_web:
+  id: dark_web
+  type: concept
+  prefLabel: Dark web
+  description: >
+    Web content or service offerings exposed via darknets overlay networks, which
+    are only through networks such as Tor.
+  seeAlso: https://en.wikipedia.org/wiki/Dark_web
+  broader: source
+
+
+# High-level concepts Entities
+
+entity:
+  id: entity
+  type: concept
+  prefLabel: Entity
+  description: >
+    An actor is anything playing an active role in Darknets or Cryptoasset
+    ecosystems. This subsumes individuals and organizations as well as automated
+    services fulfilling a certain function in such environments.
+  narrower: [organization, user, service, item]
+  broader: concept
+
+organization:
+  id: organization
+  type: concept
+  prefLabel: Organization
+  description: >
+    An organization represents some social institution, such as public services
+    or companies.
+  broader: entity
+
+user:
+  id: user
+  type: concept
+  prefLabel: User
+  description: >
+    A user is a person who utilizes Darknet or Cryptoasset infrastructures
+    and / or offered services.
+  broader: entity
+  narrower: [user, perpetrator, donation]
+
+service:
+  id: service
+  type: concept
+  prefLabel: Service
+  description: >
+    A service refers to some software functionality or a set of software functionalities
+    that can be used by different actors for difffent purposes.
+  broader: entity
+  narrower: [exchange, filesharing, index, market, messaging_service, mixing_service, search_engine, shop]
+
+# Specific concepts: user
+
+victim:
+  id: victim
+  type: concept
+  prefLabel: Victim
+  description: >
+    Someone or something that has been hurt, damaged, or killed or has suffered,
+    either because of the actions of someone or something else, or because of illness
+    or chance.
+  seeAlso: https://dictionary.cambridge.org/dictionary/english/victim
+  broader: user
+
+perpetrator:
+  id: perpetrator
+  type: concept
+  prefLabel: Perpetrator
+  description: >
+    Someone who has committed a crime or a violent or harmful act.
+  seeAlso: https://dictionary.cambridge.org/dictionary/english/perpetrator
+  broader: user
+
+donation:
+  id: donation
+  type: concept
+  prefLabel: Donation
+  description: >
+    Someone or something receiving donations in cryptoassets.
+  broader: user
+
+# Specific concepts: services
+
+exchange:
+  id: exchange
+  type: concept
+  prefLabel: Exchange
+  description: >
+    A centralized cryptocurrency exchange (CEX) is a business that allows customers
+    to trade cryptocurrencies or digital currencies for other assets, such as
+    conventional fiat money or other digital currencies.
+  seeAlso: https://en.wikipedia.org/wiki/Cryptocurrency_exchange
+  broader: service
+
+wallet_service:
+  id: wallet_service
+  type: concept
+  prefLabel: Wallet Service
+  description: >
+    A wallet service is a software or web service that custodizes and utilizes cryptoasset
+    keys on behalf of their users.
+  broader: service
+
+escrow_wallet:
+  id: escrow_wallet
+  type: concept
+  prefLabel: Escrow Wallet
+  description: >
+    An escrow service is a mediator service that keeps the money for a transaction in
+    safekeeping until the coins are handed over.
+  broader: wallet_service
+  seeAlso: https://99bitcoins.com/bitcoin/escrow/
+
+ico_wallet:
+  id: ico_wallet
+  type: concept
+  prefLabel: ICO Wallet
+  description: >
+    A wallet that has been used for Initial Coin Offerings (ICOs).
+  broader: wallet_service
+
+cold_wallet:
+  id: cold_wallet
+  type: concept
+  prefLabel: Cold Wallet
+  description: >
+    A wallet that is not connected to the Internet and controlled by some user.
+  broader: white_usage
+
+hot_wallet:
+  id: hot_wallet
+  type: concept
+  prefLabel: Hot Wallet
+  description: >
+    A hot wallet is a wallet used frequently, typically keys are used in an automated fashion without a user in the loop
+  broader: white_usage
+
+warm_wallet:
+  id: warm_wallet
+  type: concept
+  prefLabel: Warm Wallet
+  description: >
+    A warm wallet is a similar to a hot wallet but with a user in the loop (no automated usage of keys)
+  broader: white_usage
+
+filesharing:
+  id: filesharing
+  type: concept
+  prefLabel: File Sharing
+  description: >
+    A file sharing service provides access to digital media, such as computer programs,
+    multimedia (audio, images and video), documents or electronic books.
+  seeAlso: https://en.wikipedia.org/wiki/File_sharing
+  broader: service
+
+index:
+  id: index
+  type: concept
+  prefLabel: Index
+  description: >
+    An index refers the contents of other websites in the Dark- or Clearnet.
+  seeAlso: https://en.wikipedia.org/wiki/Web_indexing
+  broader: service
+
+market:
+  id: market
+  type: concept
+  prefLabel: Market
+  description: >
+     A market, or marketplace, is an online location where users purchase and sale
+     legitimate or illegitimate goods and services.
+  seeAlso: https://en.wikipedia.org/wiki/Marketplace
+  broader: service
+
+messaging_service:
+  id: messaging_service
+  type: concept
+  prefLabel: Messaging Service
+  description: >
+    A messaging service is a type of online chat that offers real-time transmission
+    of messages over the Internet.
+  seeAlso: https://en.wikipedia.org/wiki/Instant_messaging
+  broader: service
+
+mixing_service:
+  id: mixing_service
+  type: concept
+  prefLabel: Mixing as a Service
+  description: >
+    A tumbler or mixing service is a service offered to mix potentially identifiable
+    or 'tainted' cryptoasset funds with others, so as to obscure the trail back to the
+    fund's original source. Tumblers have arisen to improve the anonymity of cryptocurrencies,
+    usually bitcoin (hence Bitcoin mixer), since the currencies provide a public ledger of all transactions.
+  seeAlso: https://en.wikipedia.org/wiki/Cryptocurrency_tumbler
+  broader: service
+
+coinjoin:
+  id: coinjoin
+  type: concept
+  prefLabel: CoinJoin
+  description: >
+    CoinJoin is an anonymization strategy that protects the privacy of Bitcoin users when they
+    conduct transactions with each other, obscuring the sources and destinations of BTC used in
+    transactions.
+  seeAlso: https://www.investopedia.com/terms/c/coinjoin.asp
+  broader: mixing
+
+
+miner:
+  id: miner
+  type: concept
+  prefLabel: Miner
+  description: >
+    A service or individual that processes and verifies transactions for various forms of cryptoassets and
+    creates blocks to be added to the blockchain digital ledger.
+  broader: user
+
+mining_service:
+  id: mining_service
+  type: concept
+  prefLabel: Mining as a Service
+  description: >
+    A software and computing infrastructure that allows mining of cryptoassets in the cloud
+  broader: service
+
+gambling:
+  id: gambling
+  type: concept
+  prefLabel: Gambling Service
+  description: >
+     A gambling service support the wagering of money or something of value (e.g., tokens) on an event
+     with an uncertain outcome, with the primary intent of winning money or material goods.
+  broader: service
+  seeAlso: https://en.wikipedia.org/wiki/Gambling
+
+search_engine:
+  id: search_engine
+  type: concept
+  prefLabel: Search Engine
+  description: >
+    A web search engine or Internet search engine is a software system that is designed to
+    carry out web search (Internet search), which means to search the World Wide Web in a
+    systematic way for particular information specified in a textual web search query.
+    The search results are generally presented in a line of results, often referred to as
+    search engine results pages (SERPs). The information may be a mix of links to web pages,
+    images, videos, infographics, articles, research papers, and other types of files.
+  seeAlso: https://en.wikipedia.org/wiki/Web_search_engine
+  broader: service
+
+shop:
+  id: shop
+  type: concept
+  prefLabel: Shop
+  description: >
+     A shop allows consumers to directly buy goods or services from a seller over the
+     Internet using a web browser.
+  seeAlso: https://en.wikipedia.org/wiki/Online_shopping
+  broader: service
+
+faucet:
+  id: faucet
+  type: concept
+  prefLabel: Faucet
+  description: >
+    A faucet can be defined as a reward system from which small amounts of coins
+    can be rewarded
+  seeAlso: https://coinmarketcap.com/alexandria/article/what-is-a-crypto-faucet
+  broader: service
+
+payment_processor:
+  id: payment_processor
+  type: concept
+  prefLabel: Payment Processor
+  description: >
+    A platform for online transactions that serves as a gateway and helps companies
+    accept payments in cryptocurrencies
+  broader: service
+
+atm:
+  id: atm
+  type: concept
+  prefLabel: Cryptoasset ATM
+  description: >
+    A physical kiosk that allows users to exchange cryptoassets and fiat currencies.
+  broader: service
+
+hosting:
+  id: hosting
+  type: concept
+  prefLabel: Hosting Service Provider
+  description: >
+    A hosting service provider (HSP) is an IT service company or partner that provides
+    remote IT resources and/or services
+  broader: service
+
+vpn:
+  id: vpn
+  type: concept
+  prefLabel: VPN Service Provider
+  description: >
+    A virtual private network (VPN) service provides a proxy server to help users
+    bypass Internet censorship such as geoblocking and users who want to protect
+    their communications against data profiling or MitM attacks on hostile networks.
+  seeAlso: https://en.wikipedia.org/wiki/VPN_service
+  broader: service
+
+nameservice:
+  id: nameservice
+  type: concept
+  prefLabel: Name Service
+  description: >
+    A blockchain-based service that maps human-readable identifiers (such as domain names or usernames)
+    to machine-readable blockchain addresses, simplifying interaction with decentralized services.
+  broader: service
+  example: [ens.domains, unstoppabledomains.com]
+
+defi:
+  id: defi
+  type: concept
+  prefLabel: DeFi Protocol
+  description: >
+    A program offering financial services in the form of smart contracts.
+  broader: service
+
+defi_token:
+  id: defi_token
+  type: concept
+  prefLabel: Token
+  description: >
+    A Token lets users create assets that enable safe exchange within the ecosystem and beyond.
+    Examples are ERC20, BRC20, BTC20, TRC20 tokens implemented as smart contracts or TRC10 implemented as protocol extensions.
+  broader: defi
+  example: [USDT, USDC, WETH]
+
+defi_lending:
+  id: defi_lending
+  type: concept
+  prefLabel: Lending Protocol
+  description: >
+    A DeFi protocol that lets users lend and borrow cryptoassets without having to go
+    through a centralized intermediary
+  broader: defi
+  example: [compound.finance, aave.com, makerdao.com]
+
+defi_dex:
+  id: defi_dex
+  type: concept
+  prefLabel: Decentralized Exchange (DEX)
+  description: >
+    A type of cryptocurrency exchange which allows for direct peer-to-peer cryptocurrency
+    transactions to take place online securely and without the need for an intermediary.
+  broader: defi
+  example: [curve.fi, uniswap.org]
+
+defi_dex_pair:
+    id: defi_dex_pair
+    type: concept
+    prefLabel: DEX Pair
+    description: >
+        A trading pair on a decentralized exchange (DEX) that allows users to trade one cryptoasset for another.
+        It is typically represented as two tokens, such as ETH/USDC or BTC/ETH.
+    broader: defi_dex
+    example: [uniswap.org ETH/USDC]
+
+defi_derivatives:
+  id: defi_derivative
+  type: concept
+  prefLabel: Derivative
+  description: >
+    A contract between two or more parties whose value is based on an agreed-upon
+    underlying financial (crypto)asset.
+  broader: defi
+
+defi_bridge:
+  id: defi_bridge
+  type: concept
+  prefLabel:  Bridge
+  description: >
+    A cryptocurreny service that allows to move assets to another distributed ledger in a (semi-) automated fashion, without losing custody of the asset.
+  broader: defi
+  example: [renproject.org]
+
+defi_dao:
+  id: defi_dao
+  type: concept
+  prefLabel: DAO
+  description: >
+    A decentralized autonomous organization (DAO) is a collectively-owned, blockchain-governed entity with no central leadership, used to coordinate decisions and resources.
+  broader: defi
+  example: [makerdao.com]
+
+defi_staking:
+  id: defi_staking
+  type: concept
+  prefLabel: Staking
+  description: >
+    A DeFi service that allows users to lock up assets in a smart contract to support network operations,
+    such as consensus or governance, in return for rewards.
+  broader: defi
+  example: [lido.fi, rocketpool.net]
+
+defi_custody:
+  id: defi_custody
+  type: concept
+  prefLabel: Custody
+  description: >
+    A DeFi mechanism or service that enables secure management and storage of digital assets,
+    typically through smart contracts that preserve user control or use of multi-signature wallets.
+  broader: defi
+  example: [gnosis-safe.io]
+
+# Specific concepts: items
+
+item:
+  id: item
+  type: concept
+  prefLabel: Digital Item
+  description: >
+    An intangible asset or piece of media that doesn't have physical form
+    or substance and can be sold or shared online.
+  narrower: [collectible]
+  broader: concept
+
+collectible:
+  id: collectible
+  type: concept
+  prefLabel: Collectible
+  description: >
+    A collectible refers to an item that is worth far more than it was originally sold for
+    because of its rarity and/or popularity.
+  broader: item
