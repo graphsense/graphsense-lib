@@ -1,0 +1,8 @@
+title: Test Address TagPack
+creator: GraphSense Team
+source: http://example.com/my_addresses
+confidence: web_crawl
+is_cluster_definer: true
+currency: BTC
+lastmod: 2021-04-21
+tags:  []

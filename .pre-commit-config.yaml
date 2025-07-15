@@ -10,13 +10,19 @@ repos:
     # Run the formatter.
     - id: ruff-format
 -   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v5.0.0
     hooks:
     -   id: trailing-whitespace
     -   id: end-of-file-fixer
-    -   id: check-yaml
+    -
+        id: check-yaml
+        exclude: tests/testfiles
     -   id: check-added-large-files
         args: ['--maxkb=4096']
+        exclude: |
+            (?x)^(
+                uv.lock
+            )$
     -
         id: name-tests-test
         args: [--pytest-test-first]
@@ -30,6 +36,12 @@ repos:
     -   id: pytest-check
         name: pytest-check
         entry: uv run pytest -v -m "not slow"
+        language: system
+        pass_filenames: false
+        always_run: true
+    -   id: package-ui
+        name: Build & Package Admin UI
+        entry: make package-ui
         language: system
         pass_filenames: false
         always_run: true

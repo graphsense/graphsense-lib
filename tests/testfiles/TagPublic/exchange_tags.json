@@ -1,0 +1,48 @@
+[
+    {
+        "identifier": "Abc",
+        "label": "SomeExchange.com",
+        "source": "Manually executed transactions",
+        "creator": "GraphSense Core Team",
+        "confidence": "ownership",
+        "confidence_level": 100,
+        "tag_subject": "address",
+        "tag_type": "actor",
+        "actor": "someexchange",
+        "primary_concept": "exchange",
+        "additional_concepts": [],
+        "is_cluster_definer": true,
+        "network": "BTC",
+        "lastmod": 1642118400,
+        "group": "private",
+        "inherited_from": null,
+        "tagpack_title": "Some Tagpack",
+        "tagpack_uri": "https://github.com/graphsense/graphsense-tagpacks/tree/master/packs/some_tagpack.yaml",
+        "concepts": [
+            "exchange"
+        ]
+    },
+    {
+        "identifier": "Abc",
+        "label": "SomeExchange",
+        "source": "Found somewhere",
+        "creator": "GraphSense Core Team",
+        "confidence": "manual_transaction",
+        "confidence_level": 90,
+        "tag_subject": "address",
+        "tag_type": "actor",
+        "actor": "someexchange",
+        "primary_concept": "exchange",
+        "additional_concepts": [],
+        "is_cluster_definer": true,
+        "network": "BTC",
+        "lastmod": 1649635200,
+        "group": "private",
+        "inherited_from": null,
+        "tagpack_title": "Some Tagpack",
+        "tagpack_uri": "https://github.com/iknaio/iknaio-tagpacks/tree/main/packs/vasps/somepack.yaml",
+        "concepts": [
+            "exchange"
+        ]
+    }
+]
