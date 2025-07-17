@@ -2,6 +2,11 @@ from typing import Optional, Union
 
 from .generic import remove_prefix
 
+# Constants for native asset placeholders
+ETH_PLACEHOLDER_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+NULL_ADDRESS = "0x0000000000000000000000000000000000000000"
+NATIVE_ASSET = "native"
+
 
 def ensure_0x_prefix(istr: str) -> str:
     if istr.lower().startswith("0x"):
@@ -54,3 +59,26 @@ def to_int(string: Union[str, int]) -> int:
 def hex_to_bytes(hex_str: Optional[str]) -> Optional[bytes]:
     """Convert hexstring (starting with 0x) to bytearray."""
     return bytes.fromhex(strip_0x(hex_str)) if hex_str is not None else None
+
+
+def is_native_placeholder(asset: str) -> bool:
+    """
+    Check if an asset address represents a native token placeholder.
+
+    Args:
+        asset: Asset address to check
+
+    Returns:
+        True if the asset is a native token placeholder (0xeeee... or 0x0000...)
+    """
+    asset_lower = asset.lower()
+    return (
+        asset_lower == ETH_PLACEHOLDER_ADDRESS.lower()
+        or asset_lower == NULL_ADDRESS.lower()
+    )
+
+def normalize_asset(asset: str) -> str:
+    if is_native_placeholder(asset):
+        return NATIVE_ASSET
+    else:
+        return asset.lower()
