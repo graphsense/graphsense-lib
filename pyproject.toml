@@ -63,6 +63,9 @@ Download = "https://github.com/graphsense"
 [tool.uv]
 prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
 
+[tool.uv.sources]
+graphsense-ethereum-etl = {path = "../../ethereum-etl"}
+
 [dependency-groups]
 # Core testing dependencies
 testing = [
@@ -91,7 +94,7 @@ dev = [
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies
 ingest = [
-    "graphsense-ethereum-etl>=2.4.4",
+    "graphsense-ethereum-etl>=2.4.5",
     "chainside-btcpy>=0.6",
     "graphsense-bitcoin-etl==1.5.4",
     "lz4>=4.3.2",
@@ -100,9 +103,10 @@ ingest = [
     "duckdb>=1.0.0",
     "grpcio>=1.49.0",
 ]
-swaps = [ # Might be able to remove this group later, but keep for now
+swaps = [ # TODO Should call this defi maybe?
     "networkx>=3.2.1",
-    "matplotlib"
+    "matplotlib",
+    "graphsense-python",
 ]
 all = [
     "graphsense-lib[ingest]",
