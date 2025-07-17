@@ -352,9 +352,6 @@ The code in this repos will be autoformated via black and linted via a pre-commi
 
     make format && make pre-commit
 
-Or linting via tox
-
-    tox -l lint
 
 ### Build for Publishing
 
@@ -369,10 +366,6 @@ Or linting via tox
 Run tests
 
     make test
-
-Or via tox
-
-    uv run tox
 
 Check test coverage (optional)
 
