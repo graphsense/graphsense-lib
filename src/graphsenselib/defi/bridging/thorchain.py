@@ -1,13 +1,7 @@
 # flake8: noqa: T201
 
 from typing import Dict, Optional, Any, Tuple, List, Iterable
-import os
-
-from graphsense import ApiClient, Configuration
-from graphsense.api import addresses_api, general_api
 import requests
-from graphsenselib.datatypes.abi import decode_logs_db
-from graphsenselib.db.factory import DbFactory
 from graphsenselib.utils import strip_0x
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
@@ -22,12 +16,12 @@ from graphsenselib.defi.bridging.models import (
 )
 from graphsenselib.utils.logging import logger
 from graphsenselib.utils.accountmodel import is_native_placeholder
+from graphsenselib.datatypes.abi import decode_logs_db, log_signatures
+from graphsenselib.db.asynchronous.cassandra import Cassandra
 
 UTXO_NETWORKS = ["btc", "bch", "ltc", "zec"]
 ACCOUNT_NETWORKS = ["eth", "trx"]
 THOR_TO_GRAPHSENSE_NETWORK = {"BTC": "btc", "ETH": "eth"}
-
-env = "standalone_source_prod"  # TODO
 
 
 class SwapDecoder:
@@ -186,46 +180,37 @@ def decode_withdrawal(memo: str) -> Dict[str, Any]:
     return decoder.decode(memo)
 
 
-def get_bridges_from_thorchain_send_from_tx_hash_account(
+async def get_bridges_from_thorchain_send_from_tx_hash_account(
     network: str,
+    db: Cassandra,
     tx_hash: str,
 ) -> Optional[Iterable[BridgeSendTransfer]]:
-    with DbFactory().from_config(env, network) as db:
-        if network in ACCOUNT_NETWORKS:
-            tx = db.raw.get_tx(tx_hash)._asdict()
+    if network in ACCOUNT_NETWORKS:
+        tx_hash_bytes = bytes.fromhex(strip_0x(tx_hash))
+        tx = await db.get_tx_by_hash(network, tx_hash_bytes)
 
-            if tx is None:
-                raise ValueError(f"Transaction {tx_hash} not found in DB")
+        if tx is None:
+            raise ValueError(f"Transaction {tx_hash} not found in DB")
 
-            block_number = tx["block_id"]
-            # Get all logs and traces in the block
-            # todo wasteful
-            logs_set = db.raw.get_logs_in_block(block_number)
-            traces_set = db.raw.get_traces_in_block(block_number)
+        block_number = tx["block_id"]
+        # Get all logs and traces in the block
+        # todo wasteful
+        logs_set = await db.get_logs_in_block_eth(
+            network, block_number, tx_hash=tx_hash_bytes
+        )
+        traces_set = await db.get_traces_in_block(
+            network, block_number, tx_hash=tx_hash_bytes
+        )
 
-            logs_set = [log._asdict() for log in logs_set]
-            traces_set = [trace._asdict() for trace in traces_set]
+        dlogs_logs = decode_logs_db(logs_set, log_signatures_local=log_signatures)
+        dlogs_filtered = [dlog for dlog, _ in dlogs_logs]
+        logs_raw_filtered = [log for _, log in dlogs_logs]
+        traces_filtered = [trace for trace in traces_set]
 
-            # Filter logs and traces for this tx_hash
-            tx_hash_bytes = bytes.fromhex(tx_hash.replace("0x", ""))
-            logs_filtered = [log for log in logs_set if log["tx_hash"] == tx_hash_bytes]
-            traces_filtered = [
-                trace for trace in traces_set if trace["tx_hash"] == tx_hash_bytes
-            ]
-
-            from graphsenselib.datatypes.abi import decode_logs_db, log_signatures
-
-            dlogs_logs = decode_logs_db(
-                logs_filtered, log_signatures_local=log_signatures
-            )
-            dlogs_filtered = [dlog for dlog, _ in dlogs_logs]
-            logs_raw_filtered = [log for _, log in dlogs_logs]
-            traces_filtered = [trace for trace in traces_filtered]
-
-            for bridge_send, _ in get_bridges_from_thorchain_send(
-                network, tx, dlogs_filtered, logs_raw_filtered, traces_filtered
-            ):
-                yield bridge_send
+        for bridge_send, _ in get_bridges_from_thorchain_send(
+            network, tx, dlogs_filtered, logs_raw_filtered, traces_filtered
+        ):
+            yield bridge_send
 
 
 def get_bridges_from_thorchain_send(
@@ -346,7 +331,7 @@ def get_bridges_from_thorchain_send(
     )
 
 
-def get_bridges_from_thorchain_receive(
+async def get_bridges_from_thorchain_receive(
     network: str,
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
@@ -356,7 +341,7 @@ def get_bridges_from_thorchain_receive(
     """
     TODO: This doesnt work yet for BTC. Would need OP_RETURN data.
     """
-    hash_field_name = "hash" if network in ACCOUNT_NETWORKS else "tx_hash"
+    hash_field_name = "tx_hash" if network in ACCOUNT_NETWORKS else "tx_hash"
     tx_hash = tx[hash_field_name].hex()
 
     def from_hex(address):
@@ -462,8 +447,9 @@ def combine_bridge_transfers(
     )
 
 
-def get_full_bridges_from_thorchain_send(
+async def get_full_bridges_from_thorchain_send(
     network: str,
+    db: Cassandra,
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
@@ -476,24 +462,27 @@ def get_full_bridges_from_thorchain_send(
 
     result = list(get_bridges_from_thorchain_send(network, tx, dlogs, logs_raw, traces))
     if len(result) == 0:
-        return None
+        return
 
     send_transfers, receive_references = zip(*list(result))
 
-    matcher = ThorchainTransactionMatcher()
+    matcher = ThorchainTransactionMatcher(network, db)
 
     for send_transfer, receive_reference in zip(send_transfers, receive_references):
-        receive_transfers = matcher.match_receiving_transactions(receive_reference)
+        receive_transfers = await matcher.match_receiving_transactions(
+            receive_reference
+        )
         if receive_transfers is None:
             continue
         for receive_transfer in receive_transfers:
             yield combine_bridge_transfers(send_transfer, receive_transfer)
 
-    return None
+    return
 
 
-def get_full_bridges_from_thorchain_receive(
+async def get_full_bridges_from_thorchain_receive(
     network: str,
+    db: Cassandra,
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
@@ -504,26 +493,29 @@ def get_full_bridges_from_thorchain_receive(
     For now, this returns incomplete bridges as finding the original send transaction
     requires more complex cross-chain lookups.
     """
-    result = list(
-        get_bridges_from_thorchain_receive(network, tx, dlogs, logs_raw, traces)
-    )
+    result = []
+    async for item in get_bridges_from_thorchain_receive(
+        network, tx, dlogs, logs_raw, traces
+    ):
+        result.append(item)
+
     if len(result) == 0:
         logger.warning(f"No receive transfers found for {tx['tx_hash'].hex()}")
-        return None
+        return
 
     receive_transfers, send_references = zip(*list(result))
 
-    matcher = ThorchainTransactionMatcher()
+    matcher = ThorchainTransactionMatcher(network, db)
 
     for receive_transfer, send_reference in zip(receive_transfers, send_references):
-        send_transfers = matcher.match_sending_transactions(send_reference)
+        send_transfers = await matcher.match_sending_transactions(send_reference)
         if send_transfers is None:
             continue
 
         for send_transfer in send_transfers:
             yield combine_bridge_transfers(send_transfer, receive_transfer)
 
-    return None
+    return
 
 
 def preliminary_utxo_handling_receive(
@@ -609,10 +601,11 @@ def preliminary_utxo_handling_send(
 
 
 class ThorchainTransactionMatcher:
-    def __init__(self):
-        pass
+    def __init__(self, network: str, db: Cassandra):
+        self.network = network  # base network
+        self.db = db
 
-    def match_receiving_transactions(
+    async def match_receiving_transactions(
         self,
         receive_reference: BridgeReceiveReference,
         min_height: int = 0,
@@ -634,164 +627,154 @@ class ThorchainTransactionMatcher:
 
         elif receive_reference.toNetwork == "eth":
             matched = []
+            address = receive_reference.toAddress
+            address_bytes = bytes.fromhex(address[2:])
+            txs = await self.db.list_address_txs(
+                receive_reference.toNetwork,
+                address_bytes,
+                direction="in",
+                min_height=min_height,
+                order="asc",
+            )
+            txs = txs[0]
 
-            api_key = os.environ.get("GS_API_KEY")  # todo rest in lib not optimal
-            api_host = os.environ.get("GS_API_HOST")
-            # 1. Get the incoming txs of the address
-            configuration = Configuration()
-            configuration.api_key["api_key"] = api_key
-            configuration.host = api_host
-            with ApiClient(configuration) as api_client:
-                addresses_api_ = addresses_api.AddressesApi(api_client)
-                txs = addresses_api_.list_address_txs(
-                    receive_reference.toNetwork,
-                    receive_reference.toAddress,
-                    direction="in",
-                    min_height=min_height,
-                    order="asc",
-                ).to_dict()  # todo paginate
-                for tx in txs["address_txs"]:
-                    tx_hash = tx[
-                        "tx_hash"
-                    ]  # 18afc09b68ffd6797d8c89cca38fde2ad8e0319f46c38c0b00cc16a98d16521c
-                    block_of_tx = tx["height"]
-                    # get the logs, decode, check
-                    with DbFactory().from_config(
-                        env, receive_reference.toNetwork
-                    ) as db:
-                        logs = list(db.raw.get_logs_in_block(block_of_tx))
+            for tx in txs:
+                tx_hash = (
+                    tx["tx_hash"].hex()
+                )  # 18afc09b68ffd6797d8c89cca38fde2ad8e0319f46c38c0b00cc16a98d16521c
+                block_of_tx = tx["height"]
+                # get the logs, decode, check
 
-                    relevant_logs = [
-                        log for log in logs if log.tx_hash.hex() == tx_hash
-                    ]
-                    decoded_logs = decode_logs_db(relevant_logs)
+                logs = await self.db.get_logs_in_block_eth(self.network, block_of_tx)
+                logs = logs.current_rows  # todo paginate?
 
-                    for dlog, log in decoded_logs:
-                        if dlog["name"] == "TransferOut" and "thorchain" in get_tags(
-                            dlog
-                        ):  # todo combine with the strategy in defi.py?
-                            params = dlog["parameters"]
-                            value_thorchain_log = params["amount"]
-                            asset_thorchain_log = params["asset"]
-                            memo = params["memo"]
+                relevant_logs = [log for log in logs if log["tx_hash"].hex() == tx_hash]
+                decoded_logs = decode_logs_db(relevant_logs)
 
-                            decoded_memo = decode_withdrawal(memo)
-                            if (
-                                decoded_memo["is_withdrawal"]
-                                and decoded_memo["tx_id"].lower()
-                                == strip_0x(receive_reference.fromTxHash).lower()
-                            ):
-                                pass
-                            else:
-                                continue
+                for dlog, log in decoded_logs:
+                    if dlog["name"] == "TransferOut" and "thorchain" in get_tags(dlog):
+                        params = dlog["parameters"]
+                        value_thorchain_log = params["amount"]
+                        asset_thorchain_log = params["asset"]
+                        memo = params["memo"]
+
+                        decoded_memo = decode_withdrawal(memo)
+                        if (
+                            decoded_memo["is_withdrawal"]
+                            and decoded_memo["tx_id"].lower()
+                            == strip_0x(receive_reference.fromTxHash).lower()
+                        ):
+                            pass
                         else:
                             continue
+                    else:
+                        continue
 
-                        # todo to verify maybe we should load traces here but for now we assume no fees are paid or other deductions
-                        if is_native_placeholder(asset_thorchain_log):
-                            asset = "native"
-                            transfer = tx_hash  # tx hash itself without an _I
-                            matched.append(
-                                BridgeReceiveTransfer(
-                                    toAddress=receive_reference.toAddress,
-                                    toAsset=asset,
-                                    toAmount=value_thorchain_log,
-                                    toPayment=transfer,
-                                    toNetwork=receive_reference.toNetwork,
-                                )
-                            )
-                            break
-
-                        # todo note that assets that we dont natively support wont show up here because there are no tx links
-                        transfers = [
-                            dlog
-                            for dlog in decoded_logs
-                            if dlog[0]["name"] == "Transfer"
-                        ]
-
-                        assert len(transfers) == 1, (
-                            f"Expected 1 transfer, got {len(transfers)}"
-                        )
-                        transfer = transfers[0]
-
-                        value_transfer_log = transfer["parameters"]["value"]
-                        assert value_thorchain_log == value_transfer_log, (
-                            f"Value mismatch: {value_thorchain_log} != {value_transfer_log}"
-                        )
-
-                        toPayment = SubTransactionIdentifier(
-                            tx_hash=transfer["tx_hash"].lower(),
-                            tx_type=SubTransactionType.ERC20,
-                            sub_index=transfer["log_index"],
-                        ).to_string()
+                    if is_native_placeholder(asset_thorchain_log):
+                        asset = "native"
+                        transfer = tx_hash  # tx hash itself without an _I
                         matched.append(
                             BridgeReceiveTransfer(
                                 toAddress=receive_reference.toAddress,
-                                toAsset="native",
-                                toAmount=int(value_transfer_log),
-                                toPayment=toPayment,
+                                toAsset=asset,
+                                toAmount=value_thorchain_log,
+                                toPayment=transfer,
                                 toNetwork=receive_reference.toNetwork,
                             )
                         )
+                        break
+
+                    # note that assets that we dont natively support wont show up here because there are no tx links
+                    transfers = [
+                        dlog for dlog in decoded_logs if dlog[0]["name"] == "Transfer"
+                    ]
+
+                    assert len(transfers) == 1, (
+                        f"Expected 1 transfer, got {len(transfers)}"
+                    )
+                    transfer = transfers[0]
+
+                    value_transfer_log = transfer["parameters"]["value"]
+                    assert value_thorchain_log == value_transfer_log, (
+                        f"Value mismatch: {value_thorchain_log} != {value_transfer_log}"
+                    )
+
+                    toPayment = SubTransactionIdentifier(
+                        tx_hash=transfer["tx_hash"].lower(),
+                        tx_type=SubTransactionType.ERC20,
+                        sub_index=transfer["log_index"],
+                    ).to_string()
+                    matched.append(
+                        BridgeReceiveTransfer(
+                            toAddress=receive_reference.toAddress,
+                            toAsset="native",
+                            toAmount=int(value_transfer_log),
+                            toPayment=toPayment,
+                            toNetwork=receive_reference.toNetwork,
+                        )
+                    )
 
             return matched
 
-    def match_sending_transactions(
+    async def match_sending_transactions(
         self, send_reference: BridgeSendReference
     ) -> Optional[List[BridgeSendTransfer]]:
-        api_key = os.environ.get("GS_API_KEY")  # todo rest in lib not optimal
-        api_host = os.environ.get("GS_API_HOST")
-        configuration = Configuration()
-        configuration.api_key["api_key"] = api_key
-        configuration.host = api_host
-        with ApiClient(configuration) as api_client:
-            general_api_ = general_api.GeneralApi(api_client)
-            search_results = general_api_.search(send_reference.fromTxHash)
+        # todo dont use api client, use the self.db and try to get the tx from the db
+        currencies_supported = self.db.config["currencies"]
+        hits = []
+        for n in currencies_supported:
+            try:
+                tx_hash_bytes = bytes.fromhex(send_reference.fromTxHash)
+                hit = await self.db.get_tx_by_hash(n, tx_hash_bytes)
+                hits.append({"currency": n, "tx": hit})
+            except Exception as _:
+                pass
 
-            # Get all networks that have matches
-            networks_with_matches = []
-            for currency in search_results["currencies"]:
-                if len(currency["txs"]) > 0:
-                    networks_with_matches.append(currency["currency"])
+        # Get all networks that have matches
+        networks_with_matches = []
+        for hit in hits:
+            if hit["tx"] is not None:
+                networks_with_matches.append(hit["currency"])
 
-            if len(networks_with_matches) == 0:
-                logger.warning(
-                    f"No txs found for sender tx {send_reference.fromTxHash} on any network"
-                )
-                return None
+        if len(networks_with_matches) == 0:
+            logger.warning(
+                f"No txs found for sender tx {send_reference.fromTxHash} on any network"
+            )
+            return None
 
-            if len(networks_with_matches) > 1:
-                logger.warning(
-                    f"Found matches on multiple networks for tx {send_reference.fromTxHash}: {networks_with_matches}"
-                )
-                return None
+        if len(networks_with_matches) > 1:
+            logger.warning(
+                f"Found matches on multiple networks for tx {send_reference.fromTxHash}: {networks_with_matches}"
+            )
+            return None
 
-            fromNetwork = networks_with_matches[0]
+        fromNetwork = networks_with_matches[0]
 
-            # Get transactions for the matching network
-            txs = [
-                x["txs"]
-                for x in search_results["currencies"]
-                if x["currency"] == fromNetwork
-            ][0]
-            # remove postfixes _ if exists and get the prefix
-            txs = [tx.split("_")[0] if "_" in tx else tx for tx in txs]
-            # get unique
-            txs = list(set(txs))
+        # Get transactions for the matching network
+        txs = [
+            x["tx"]["tx_hash"].hex()
+            for x in hits
+            if x["currency"] == fromNetwork and x["tx"] is not None
+        ]
+        # remove postfixes _ if exists and get the prefix
+        txs = [tx.split("_")[0] if "_" in tx else tx for tx in txs]
+        # get unique
+        txs = list(set(txs))
 
-            if len(txs) != 1:
-                logger.warning(
-                    f"Expected exactly one tx, got {len(txs)} for {send_reference.fromTxHash}"
-                )
-                return None
+        if len(txs) != 1:
+            logger.warning(
+                f"Expected exactly one tx, got {len(txs)} for {send_reference.fromTxHash}"
+            )
+            return None
 
         if fromNetwork in UTXO_NETWORKS:
             return preliminary_utxo_handling_send(fromNetwork, send_reference)
 
         elif fromNetwork in ACCOUNT_NETWORKS:
-            return get_bridges_from_thorchain_send_from_tx_hash_account(
-                fromNetwork, send_reference.fromTxHash
+            bridges = get_bridges_from_thorchain_send_from_tx_hash_account(
+                fromNetwork, self.db, send_reference.fromTxHash
             )
+            return [bridge async for bridge in bridges]
 
         else:
             raise ValueError(f"Unsupported network: {fromNetwork}")

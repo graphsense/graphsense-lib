@@ -565,9 +565,9 @@ log_signatures = {
                 {"name": "takerFeePaid", "type": "uint256", "indexed": False},
                 {"name": "orderHash", "type": "bytes32", "indexed": True},
                 {"name": "makerAssetData", "type": "bytes", "indexed": False},
-                {"name": "takerAssetData", "type": "bytes", "indexed": False}
+                {"name": "takerAssetData", "type": "bytes", "indexed": False},
             ],
-            "tags": ["0x", "exchange", "fill", "swap"]
+            "tags": ["0x", "exchange", "fill", "swap"],
         }
     ],
 }
