@@ -36,8 +36,11 @@ dependencies = [
     "eth-event>=1.2.3",
     "eth-hash>=0.3.0",
     "cassandra-driver>=3.27.0",
+    "async-lru>=2.0.4",
+    "aiohttp>=3.8.0",
     "tenacity>=8.2.3",
     "graphsense-ethereum-etl",
+    "tagpack-tool>=25.7.8",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -90,6 +93,7 @@ dev = [
     "testcontainers[cassandra]>=4.9.1",
     "pytest-vcr",
     "vcrpy",
+    "httpx<1.0.0" # dependency only for restriction for vcrpy
 ]
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies

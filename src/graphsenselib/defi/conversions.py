@@ -4,10 +4,12 @@ from graphsenselib.defi.bridging.thorchain import (
     get_full_bridges_from_thorchain_send,
     get_full_bridges_from_thorchain_receive,
 )
+from graphsenselib.datatypes.abi import decode_logs_dict
 from ..defi.swaps import get_swap_from_decoded_logs
 from graphsenselib.utils.logging import logger
 from graphsenselib.defi.bridging.models import Bridge, BridgeStrategy
 from graphsenselib.defi.swapping.models import ExternalSwap
+from graphsenselib.db.asynchronous.cassandra import Cassandra
 
 # todo What doesnt work yet:
 # Swaps that have a specified to address https://etherscan.io/tx/0x1f76090132cd8b58f7a4f8724141ca500ca65ed84d646aa200bb0dd6ec45503f
@@ -48,12 +50,10 @@ def get_bridge_strategy_from_decoded_logs(dlogs: list) -> BridgeStrategy:
     return BridgeStrategy.UNKNOWN
 
 
-def get_conversions_from_decoded_logs(
+async def get_conversions_from_db(
     network: str,
+    db: Cassandra,
     tx: Dict[str, Any],
-    dlogs: List[Dict[str, Any]],
-    logs_raw: List[Dict[str, Any]],
-    traces: List[Dict[str, Any]],
     visualize: bool = False,
 ) -> List[Union[ExternalSwap, Bridge]]:
     """
@@ -64,15 +64,28 @@ def get_conversions_from_decoded_logs(
         the conversion information. Empty list if no conversions detected.
     """
 
+    tx_logs_raw = await db.fetch_transaction_logs(network, tx)
+    tx_traces = await db.fetch_transaction_traces(network, tx)
+
+    if not tx_logs_raw:
+        logger.info(f"No logs found for transaction {tx['tx_hash']}")
+        return []
+
+    decoded_logs_and_logs = decode_logs_dict(tx_logs_raw)
+
+    decoded_log_data, tx_logs_raw_filtered = zip(*decoded_logs_and_logs)
+
     conversions = []
 
-    swap_results = get_swap_from_decoded_logs(dlogs, logs_raw, traces, visualize)
+    swap_results = get_swap_from_decoded_logs(
+        decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
+    )
     conversions += swap_results
 
-    bridge_result = get_bridges_from_decoded_logs(network, tx, dlogs, logs_raw, traces)
+    bridge_result = await get_bridges_from_decoded_logs(
+        network, db, tx, decoded_log_data, tx_logs_raw_filtered, tx_traces
+    )
     conversions += bridge_result
-
-    # if the tx is a
 
     return conversions
 
@@ -124,8 +137,9 @@ def get_bridges_from_stargate(
     return None
 
 
-def get_bridges_from_decoded_logs(
+async def get_bridges_from_decoded_logs(
     network: str,
+    db: Cassandra,
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
@@ -160,16 +174,26 @@ def get_bridges_from_decoded_logs(
         bridges = get_bridges_from_stargate(dlogs, logs_raw)
 
     elif strategy == BridgeStrategy.THORCHAIN_SEND:
-        bridges = list(
-            get_full_bridges_from_thorchain_send(network, tx, dlogs, logs_raw, traces)
+        bridge_generator = get_full_bridges_from_thorchain_send(
+            network, db, tx, dlogs, logs_raw, traces
         )
+        if bridge_generator is not None:
+            bridges = []
+            async for bridge in bridge_generator:
+                bridges.append(bridge)
+        else:
+            bridges = []
 
     elif strategy == BridgeStrategy.THORCHAIN_RECEIVE:
-        bridges = list(
-            get_full_bridges_from_thorchain_receive(
-                network, tx, dlogs, logs_raw, traces
-            )
+        bridge_generator = get_full_bridges_from_thorchain_receive(
+            network, db, tx, dlogs, logs_raw, traces
         )
+        if bridge_generator is not None:
+            bridges = []
+            async for bridge in bridge_generator:
+                bridges.append(bridge)
+        else:
+            bridges = []
 
     if bridges is None:
         return []

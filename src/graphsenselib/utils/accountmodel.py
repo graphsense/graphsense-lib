@@ -77,6 +77,7 @@ def is_native_placeholder(asset: str) -> bool:
         or asset_lower == NULL_ADDRESS.lower()
     )
 
+
 def normalize_asset(asset: str) -> str:
     if is_native_placeholder(asset):
         return NATIVE_ASSET
