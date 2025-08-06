@@ -7,8 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [25.08.0/2.6.0] 2025-07-08
 ### added
 - bridging support to conversions endpoint
+- moved database access to gslib from gs-rest
+
 ### changed
 - renamed swap extra dependencies to conversions
+- support for python 3.11
 
 ## [25.07.3/2.5.3] 2025-07-08
 ### added
