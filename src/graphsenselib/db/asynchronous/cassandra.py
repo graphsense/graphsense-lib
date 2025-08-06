@@ -474,9 +474,9 @@ class Cassandra:
         # Convert back to dict for backward compatibility with existing code
         config = self.config.model_dump()
 
-        if "currencies" not in config:
+        if "currencies" not in config or config["currencies"] is None:
             raise BadConfigError("Missing config property: currencies")
-        if "nodes" not in config:
+        if "nodes" not in config or config["nodes"] is None:
             raise BadConfigError("Missing config property: nodes")
         self.config = config
         self.prepared_statements = {}
@@ -488,10 +488,16 @@ class Cassandra:
                 config["currencies"][currency] = {}
 
             # automatically find latest active keyspace if not configured
-            if "raw" not in config["currencies"][currency]:
+            if (
+                "raw" not in config["currencies"][currency]
+                or config["currencies"][currency]["raw"] is None
+            ):
                 config["currencies"][currency]["raw"] = f"{currency}_raw"
 
-            if "transformed" not in config["currencies"][currency]:
+            if (
+                "transformed" not in config["currencies"][currency]
+                or config["currencies"][currency]["transformed"] is None
+            ):
                 config["currencies"][currency]["transformed"] = (
                     self.find_latest_transformed_keyspace(currency)
                 )
