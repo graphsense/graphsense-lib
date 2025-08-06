@@ -22,7 +22,7 @@ test-ci:
 	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
 
 test-with-base-dependencies-ci:
-	uv run --exact --no-dev --group testing --extra swaps pytest  -x -rx -vv -m "not slow" --cov=src --capture=no
+	uv run --exact --no-dev --group testing --extra conversions pytest  -x -rx -vv -m "not slow" --cov=src --capture=no
 
 
 test-all:

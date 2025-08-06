@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [25.08.0/2.6.0] 2025-07-08
+### added
+- bridging support to conversions endpoint
+### changed
+- renamed swap extra dependencies to conversions
+
 ## [25.07.3/2.5.3] 2025-07-08
 ### added
 - add optional environment to slack logging handler
