@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 class CurrencyConfig(BaseModel):
@@ -39,7 +39,8 @@ class CassandraConfig(BaseModel):
         default=False, description="Use legacy address transaction ordering"
     )
 
-    @validator("currencies", pre=True)
+    @field_validator("currencies", mode="before")
+    @classmethod
     def validate_currencies(cls, v):
         """Convert None values to empty CurrencyConfig objects."""
         if not isinstance(v, dict):
@@ -58,14 +59,16 @@ class CassandraConfig(BaseModel):
 
         return result
 
-    @validator("nodes")
+    @field_validator("nodes")
+    @classmethod
     def validate_nodes_not_empty(cls, v):
         """Ensure nodes list is not empty."""
         if not v:
             raise ValueError("nodes list cannot be empty")
         return v
 
-    @validator("consistency_level")
+    @field_validator("consistency_level")
+    @classmethod
     def validate_consistency_level(cls, v):
         """Validate consistency level is a known Cassandra consistency level."""
         valid_levels = {
@@ -85,5 +88,6 @@ class CassandraConfig(BaseModel):
             raise ValueError(f"consistency_level must be one of {valid_levels}")
         return v
 
-    class Config:
-        extra = "allow"  # Allow additional fields for extensibility
+    model_config = ConfigDict(
+        extra="allow"
+    )  # Allow additional fields for extensibility
