@@ -93,7 +93,6 @@ class DeltaTableConnector:
             access_key = self.s3_credentials.get("AWS_ACCESS_KEY_ID")
 
             auth_query = f"""
-            INSTALL httpfs;
             LOAD httpfs;
             SET s3_url_style='path';
             SET s3_use_ssl=0;
