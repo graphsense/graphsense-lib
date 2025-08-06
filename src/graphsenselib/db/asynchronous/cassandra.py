@@ -8,7 +8,7 @@ from functools import partial
 from itertools import product
 from math import floor
 from pprint import PrettyPrinter
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Union, Dict, Any
 
 from async_lru import alru_cache
 from cassandra import ConsistencyLevel, InvalidRequest
@@ -22,6 +22,7 @@ from cassandra.cluster import (
 from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
 from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
+from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
@@ -46,8 +47,6 @@ from graphsenselib.errors import (
 )
 from graphsenselib.utils.rest_utils import is_eth_like
 
-# from gsrest.util.eth_logs import decode_db_logs
-from graphsenselib.db.asynchronous.node_balances import get_balances
 
 SMALL_PAGE_SIZE = 1000
 BIG_PAGE_SIZE = 5000
@@ -456,8 +455,25 @@ class Cassandra:
 
         return check
 
-    def __init__(self, config, logger):
+    def __init__(self, config: Union[Dict[str, Any], CassandraConfig], logger):
         self.logger = logger
+
+        # Convert dict config to CassandraConfig if needed
+        if isinstance(config, dict):
+            try:
+                self.config = CassandraConfig(**config)
+            except Exception as e:
+                raise BadConfigError(f"Invalid configuration: {e}")
+        elif isinstance(config, CassandraConfig):
+            self.config = config
+        else:
+            raise BadConfigError(
+                "Config must be a dictionary or CassandraConfig instance"
+            )
+
+        # Convert back to dict for backward compatibility with existing code
+        config = self.config.dict()
+
         if "currencies" not in config:
             raise BadConfigError("Missing config property: currencies")
         if "nodes" not in config:
@@ -668,7 +684,9 @@ class Cassandra:
 
     def get_balance_provider(self, currency):
         provider = self.config["currencies"][currency].get("balance_provider", None)
-        if provider is not None:
+        if provider is not None and provider == "node":
+            from graphsenselib.utils.node_balances import get_balances
+
             return partial(get_balances, provider)
         else:
             return None
@@ -2769,8 +2787,7 @@ class Cassandra:
                 fetch only incoming, if None fetch both directions
             include_assets (Sequence[Tuple[str, bool]]): a list of tuples with
                 assets to include
-            page (Optional[str]): a page id in format tx_id:secondary_id:offset for eth-like networks
-                or tx_id:offset for others
+            page (Optional[int]): a page id (tx id bound)
             fetch_size (int): how much to fetch per page
             cols (Optional[Sequence[str]], optional): which columns to select
                 None means *
