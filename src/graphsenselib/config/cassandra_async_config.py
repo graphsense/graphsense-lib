@@ -89,5 +89,6 @@ class CassandraConfig(BaseModel):
         return v
 
     model_config = ConfigDict(
-        extra="allow"
+        extra="allow",
+        env_prefix="GRAPHSENSE_CASSANDRA_ASYNC_",
     )  # Allow additional fields for extensibility
