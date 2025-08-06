@@ -13,6 +13,8 @@ from eth_hash.auto import keccak
 
 from .accountmodel import ensure_0x_prefix, strip_0x
 from .transactions import SubTransactionIdentifier, SubTransactionType
+
+
 @dataclass(frozen=True)
 class DexPair:
     t0: str
@@ -73,8 +75,6 @@ def get_pair_from_decoded_log(dlog, log_raw):
         raise ValueError(f"Trading pair of type {name} not supported")
 
     return DexPair(t0, t1, v, pool_address, pair_id, issuer, creation_log)
-
-
 
 
 def get_topic(signature: str) -> bytes:
