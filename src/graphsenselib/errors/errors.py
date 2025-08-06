@@ -72,4 +72,4 @@ class BadUserInputException(UserFacingExceptions):
 
 
 class FeatureNotAvailableException(UserFacingExceptions):
-    """this exception should be used if a requested feature is not available in the current instance.""" 
+    """this exception should be used if a requested feature is not available in the current instance."""
