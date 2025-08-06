@@ -55,6 +55,7 @@ async def get_conversions_from_db(
     db: Cassandra,
     tx: Dict[str, Any],
     visualize: bool = False,
+    include_bridging_actions: bool = False,
 ) -> List[Union[ExternalSwap, Bridge]]:
     """
     Extract all conversion information (swaps and bridges) from decoded logs.
@@ -82,10 +83,11 @@ async def get_conversions_from_db(
     )
     conversions += swap_results
 
-    bridge_result = await get_bridges_from_decoded_logs(
-        network, db, tx, decoded_log_data, tx_logs_raw_filtered, tx_traces
-    )
-    conversions += bridge_result
+    if include_bridging_actions:
+        bridge_result = await get_bridges_from_decoded_logs(
+            network, db, tx, decoded_log_data, tx_logs_raw_filtered, tx_traces
+        )
+        conversions += bridge_result
 
     return conversions
 
