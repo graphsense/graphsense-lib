@@ -63,11 +63,6 @@ Download = "https://github.com/graphsense"
 # Add here all kinds of additional classifiers as defined under
 # https://pypi.org/classifiers/
 
-[tool.uv]
-prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
-
-[tool.uv.sources]
-graphsense-ethereum-etl = {path = "../../ethereum-etl"}
 
 [dependency-groups]
 # Core testing dependencies
@@ -107,14 +102,13 @@ ingest = [
     "duckdb>=1.0.0",
     "grpcio>=1.49.0",
 ]
-swaps = [ # TODO Should call this defi maybe?
+conversions = [
     "networkx>=3.2.1",
     "matplotlib",
-    "graphsense-python",
 ]
 all = [
     "graphsense-lib[ingest]",
-    "graphsense-lib[swaps]",
+    "graphsense-lib[conversions]",
 ]
 
 [project.scripts]
