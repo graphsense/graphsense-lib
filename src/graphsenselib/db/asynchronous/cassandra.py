@@ -472,7 +472,7 @@ class Cassandra:
             )
 
         # Convert back to dict for backward compatibility with existing code
-        config = self.config.model_dump_json()
+        config = self.config.model_dump()
 
         if "currencies" not in config:
             raise BadConfigError("Missing config property: currencies")
