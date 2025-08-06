@@ -515,7 +515,7 @@ class Cassandra:
             )
 
             auth_provider = None
-            if "username" in self.config:
+            if "username" in self.config and self.config["username"] is not None:
                 auth_provider = PlainTextAuthProvider(
                     username=self.config["username"],
                     password=self.config.get("password", ""),
