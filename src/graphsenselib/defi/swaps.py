@@ -8,7 +8,7 @@ try:
     from matplotlib.patches import Patch
 except ImportError:
     raise Exception(
-        "Please install graphsense-lib with swap optional dependencies."  # todo change to "swap" to "defi"
+        "Please install graphsense-lib with conversions optional dependencies."
     )
 from graphsenselib.utils.logging import logger
 
