@@ -787,7 +787,14 @@ class Cassandra:
 
             def on_done(result):
                 if future.cancelled():
-                    loop.call_soon_threadsafe(future.set_result, None)
+
+                    def set_result():
+                        try:
+                            future.set_result(None)
+                        except asyncio.exceptions.InvalidStateError:
+                            pass
+
+                    loop.call_soon_threadsafe(set_result)
                     return
                 result = Result(
                     current_rows=result,
