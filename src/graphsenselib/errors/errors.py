@@ -22,6 +22,12 @@ class UserFacingExceptions(Exception):
         return self.user_msg
 
 
+class GsTimeoutException(UserFacingExceptions):
+    """Raise this exception if a request times out."""
+
+    pass
+
+
 class NotFoundException(UserFacingExceptions):
     """this exception should be used if some
     item is not found e.g. the database."""
