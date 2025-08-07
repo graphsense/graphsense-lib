@@ -242,7 +242,7 @@ def wc(cl, cond):
     return f"AND {cl} " if cond else ""
 
 
-def get_tx_identifier(row, type_overwrite=None) -> str:
+def get_tx_identifier(row, currency, type_overwrite=None) -> str:
     # trace_tx = row.get("is_tx_trace", False)
     h = row["tx_hash"].hex()
 
@@ -253,8 +253,12 @@ def get_tx_identifier(row, type_overwrite=None) -> str:
         t_type = SubTransactionType.ERC20
         sub_tx = row["token_tx_id"]
     elif type_overwrite == "external" or row["type"] == "external":
-        t_type = SubTransactionType.ExternalTx
-        sub_tx = None
+        if currency == "eth" and row.get("trace_index", None) is not None:
+            t_type = SubTransactionType.InternalTx
+            sub_tx = row["trace_index"]
+        else:
+            t_type = SubTransactionType.ExternalTx
+            sub_tx = None
     else:
         raise Exception(f"Unknown transaction type {row}")
 
@@ -1672,15 +1676,18 @@ class Cassandra:
         expression_orginal = expression
 
         postprocess_address = identity1
+        currency_for_prefixscrub = currency
         if currency == "trx":
             postprocess_address = try_partial_tron_to_partial_evm
+            currency_for_prefixscrub = "eth"
 
         expression = postprocess_address(expression)
 
         if len(expression) < prefix_lengths["address"]:
             return []
         norm = identity2
-        prefix = self.scrub_prefix(currency, expression)
+
+        prefix = self.scrub_prefix(currency_for_prefixscrub, expression)
         prefix = prefix[: prefix_lengths["address"]]
 
         if is_eth_like(currency):
@@ -2060,15 +2067,27 @@ class Cassandra:
             for (token_tx, log) in decoded_token_txs
         ]
 
-    async def fetch_transaction_trace(self, currency, tx, trace_index):
+    async def fetch_transaction_trace(
+        self, currency, tx, trace_index, get_first_trace=False
+    ):
         r = await self.get_traces_in_block(
             currency, tx["block_id"], trace_index, tx_hash=tx["tx_hash"]
         )
         result = r.current_rows
-        if len(result) != 1:
+
+        if len(result) == 0:
             raise NotFoundException(
                 f"Found {len(result)} trace in tx {tx['tx_hash']}:{trace_index}"
             )
+
+        if get_first_trace:
+            return result[0]
+
+        if len(result) > 1:
+            raise NotFoundException(
+                f"Found {len(result)} trace in tx {tx['tx_hash']}:{trace_index}"
+            )
+
         return result[0]
 
     async def fetch_transaction_traces(self, currency, tx):
@@ -2197,8 +2216,11 @@ class Cassandra:
             # smallest trace is equivalent to tx itself so filter
             traces = (await self.fetch_transaction_traces(currency, tx))[1:]
             ids = list(
-                {get_tx_identifier(x) for x in token_txs}.union(
-                    {get_tx_identifier(x, type_overwrite="internal") for x in traces}
+                {get_tx_identifier(x, currency) for x in token_txs}.union(
+                    {
+                        get_tx_identifier(x, currency, type_overwrite="internal")
+                        for x in traces
+                    }
                 )
             )
             rows.extend(ids)
