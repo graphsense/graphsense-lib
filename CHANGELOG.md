@@ -4,7 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
-## [25.08.0/2.6.0] 2025-07-08
+## [25.08.1/2.6.1] 2025-08-08
+### added
+- added services layer form gs-rest
+
+
+## [25.08.0/2.6.0] 2025-08-07
 ### added
 - bridging support to conversions endpoint
 - moved database access to gslib from gs-rest
