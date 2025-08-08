@@ -12,7 +12,7 @@ from graphsenselib.errors import (
 )
 from graphsenselib.utils.address import address_to_user_format
 
-from gsrest.services.models import (
+from .models import (
     Address,
     AddressTxUtxo,
     FiatValue,

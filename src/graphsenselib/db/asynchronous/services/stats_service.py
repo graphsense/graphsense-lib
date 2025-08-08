@@ -1,8 +1,6 @@
 from typing import Any, Dict, Optional, Protocol
 
-from tagstore.db import NetworkStatisticsPublic
-
-from gsrest.services.models import CurrencyStats
+from .models import CurrencyStats
 
 
 class DatabaseProtocol(Protocol):
@@ -22,6 +20,8 @@ class StatsService:
         self.logger = logger
 
     async def get_currency_statistics(self, currency: str) -> CurrencyStats:
+        from tagstore.db import NetworkStatisticsPublic
+
         tag_stats = await self.tagstore.get_network_statistics_cached()
 
         result = await self.db.get_currency_statistics(currency)

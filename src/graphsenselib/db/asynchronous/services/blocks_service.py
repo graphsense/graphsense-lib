@@ -5,8 +5,8 @@ from async_lru import alru_cache
 from graphsenselib.errors import BadUserInputException, BlockNotFoundException
 
 from gsrest.config import GSRestConfig
-from gsrest.services.common import is_eth_like, std_tx_from_row
-from gsrest.services.models import Block, BlockAtDate
+from .common import is_eth_like, std_tx_from_row
+from .models import Block, BlockAtDate
 
 
 class DatabaseProtocol(Protocol):

@@ -2,8 +2,8 @@ import asyncio
 from datetime import datetime
 from typing import Any, List, Optional, Protocol
 
-from gsrest.services.common import alphanumeric_lower
-from gsrest.services.models import (
+from .common import alphanumeric_lower
+from .models import (
     GeneralStats,
     LabeledItemRef,
     SearchResult,
