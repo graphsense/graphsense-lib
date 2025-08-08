@@ -9,8 +9,8 @@ from graphsenselib.errors import (
 )
 from graphsenselib.utils.address import address_to_user_format
 
-from gsrest.services.blocks_service import BlocksService
-from gsrest.services.common import (
+from .blocks_service import BlocksService
+from .common import (
     cannonicalize_address,
     get_address,
     links_response,
@@ -18,8 +18,8 @@ from gsrest.services.common import (
     try_get_cluster_id,
     txs_from_rows,
 )
-from gsrest.services.entities_service import EntitiesService
-from gsrest.services.models import (
+from .entities_service import EntitiesService
+from .models import (
     Address,
     AddressTagResult,
     AddressTxs,
@@ -29,8 +29,8 @@ from gsrest.services.models import (
     NeighborAddresses,
     TagSummary,
 )
-from gsrest.services.rates_service import RatesService
-from gsrest.services.tags_service import TagsService
+from .rates_service import RatesService
+from .tags_service import TagsService
 
 
 class DatabaseProtocol(Protocol):

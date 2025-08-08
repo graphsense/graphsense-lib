@@ -13,15 +13,15 @@ from graphsenselib.utils.transactions import (
     SubTransactionType,
 )
 
-from gsrest.services.common import is_eth_like, std_tx_from_row
-from gsrest.services.models import (
+from .common import is_eth_like, std_tx_from_row
+from .models import (
     ExternalConversions,
     TxAccount,
     TxRef,
     TxUtxo,
     TxValue,
 )
-from gsrest.services.rates_service import RatesService
+from .rates_service import RatesService
 
 
 class DatabaseProtocol(Protocol):

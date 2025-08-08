@@ -2,8 +2,8 @@ from typing import Any, Dict, Protocol
 
 from graphsenselib.utils.address import address_to_user_format
 
-from gsrest.services.common import is_eth_like
-from gsrest.services.models import TokenConfig, TokenConfigs
+from .common import is_eth_like
+from .models import TokenConfig, TokenConfigs
 
 
 class DatabaseProtocol(Protocol):

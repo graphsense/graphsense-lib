@@ -7,12 +7,12 @@ from graphsenselib.errors import FeatureNotAvailableException, NotFoundException
 from graphsenselib.utils.address import address_to_user_format
 from graphsenselib.utils.slack import send_message_to_slack
 
-from gsrest.services.common import (
+from .common import (
     cannonicalize_address,
     is_eth_like,
     try_get_cluster_id,
 )
-from gsrest.services.models import (
+from .models import (
     Actor,
     ActorContext,
     AddressTag,

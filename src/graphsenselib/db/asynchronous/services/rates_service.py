@@ -2,8 +2,8 @@ from typing import Any, Dict, List, Optional, Protocol
 
 from graphsenselib.errors import BlockNotFoundException
 
-from gsrest.services.common import map_rates_for_peged_tokens
-from gsrest.services.models import RatesResponse
+from .common import map_rates_for_peged_tokens
+from .models import RatesResponse
 
 
 class DatabaseProtocol(Protocol):

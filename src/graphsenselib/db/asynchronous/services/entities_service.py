@@ -5,8 +5,8 @@ from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import ClusterNotFoundException
 from graphsenselib.utils.address import address_to_user_format
 
-from gsrest.services.blocks_service import BlocksService
-from gsrest.services.common import (
+from .blocks_service import BlocksService
+from .common import (
     address_from_row,
     convert_token_values_map,
     convert_value,
@@ -16,7 +16,7 @@ from gsrest.services.common import (
     to_values_tokens,
     txs_from_rows,
 )
-from gsrest.services.models import (
+from .models import (
     AddressTagResult,
     AddressTxs,
     Entity,
@@ -27,8 +27,8 @@ from gsrest.services.models import (
     NeighborEntity,
     TxSummary,
 )
-from gsrest.services.rates_service import RatesService
-from gsrest.services.tags_service import TagsService
+from .rates_service import RatesService
+from .tags_service import TagsService
 
 
 class DatabaseProtocol(Protocol):
