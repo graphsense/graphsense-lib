@@ -239,16 +239,18 @@ class TxsService:
                 result["value"] = result["call_value"]
             else:
                 result["contract_creation"] = result["trace_type"] == "create"
-                # traces have the field "contract_creation", should we use that?
+
                 if trace_index is None or get_first_trace:
                     result["type"] = "external"
                 else:
                     if trace_index is not None:
-                        first_trace = await self.db.fetch_transaction_trace(
-                            currency, tx, 0, get_first_trace=True
+                        is_external = (
+                            result["trace_address"] is None
+                            or result["trace_address"].strip() == ""
                         )
+
                         # if they are the same, then we know it is external
-                        if first_trace and first_trace["trace_index"] == trace_index:
+                        if is_external:
                             result["type"] = "external"
 
             rates = await self.rates_service.get_rates(currency, result["block_id"])
