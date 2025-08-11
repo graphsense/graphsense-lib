@@ -2,7 +2,7 @@ from typing import Any, Dict, Protocol
 
 from graphsenselib.utils.address import address_to_user_format
 
-from .common import is_eth_like
+from ....utils.rest_utils import is_eth_like
 from .models import TokenConfig, TokenConfigs
 
 

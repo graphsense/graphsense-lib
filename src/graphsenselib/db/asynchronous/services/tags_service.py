@@ -9,9 +9,9 @@ from graphsenselib.utils.slack import send_message_to_slack
 
 from .common import (
     cannonicalize_address,
-    is_eth_like,
     try_get_cluster_id,
 )
+from ....utils.rest_utils import is_eth_like
 from .models import (
     Actor,
     ActorContext,
