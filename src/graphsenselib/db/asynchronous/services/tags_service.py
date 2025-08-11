@@ -7,6 +7,8 @@ from graphsenselib.errors import FeatureNotAvailableException, NotFoundException
 from graphsenselib.utils.address import address_to_user_format
 from graphsenselib.utils.slack import send_message_to_slack
 
+# TODO : add proper type hints for the tagstore once tagstore is migrated to gslib
+
 from .common import (
     cannonicalize_address,
     try_get_cluster_id,
@@ -436,7 +438,7 @@ class TagsService:
 
     async def report_tag(
         self, data: Any, config: TagInsertConfigProtocol, tag_acl_group: str
-    ) -> None:
+    ) -> str:
         try:
             from tagstore.db import TagAlreadyExistsException
         except ImportError as e:
@@ -451,7 +453,9 @@ class TagsService:
             nt = data
 
             try:
-                await self.tagstore.add_user_reported_tag(nt, acl_group=tag_acl_group)
+                insert_id = await self.tagstore.add_user_reported_tag(
+                    nt, acl_group=tag_acl_group
+                )
             except TagAlreadyExistsException:
                 logger.info("Tag already exists, ignoring insert.")
 
@@ -466,6 +470,8 @@ class TagsService:
                         )
                     except Exception as e:
                         logger.error(f"Failed to send tag reported slack info: {e}")
+
+            return insert_id
 
         else:
             raise FeatureNotAvailableException(
