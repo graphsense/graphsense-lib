@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, List, Optional, Protocol
 
-from .common import alphanumeric_lower
+from ....utils.rest_utils import alphanumeric_lower
 from .models import (
     GeneralStats,
     LabeledItemRef,

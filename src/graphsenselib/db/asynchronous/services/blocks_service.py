@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 from async_lru import alru_cache
 from graphsenselib.errors import BadUserInputException, BlockNotFoundException
 
-from .common import is_eth_like, std_tx_from_row
+from .common import std_tx_from_row
+from ....utils.rest_utils import is_eth_like
 from .models import Block, BlockAtDate
 
 
