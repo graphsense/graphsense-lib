@@ -228,6 +228,10 @@ Commands:
 
 ```
 
+### Tagpack-tool
+
+This used to be a standalone repository containing the tagpack-tool and gs-tagstore-cli which was then merged into graphsense-lib. A seperate readme can be found here: [README](docs/tagpacks/README.md). A separate changelog can be found here [CHANGELOG](docs/tagpacks/CHANGELOG.md)
+
 ## Install
 
 To install the package from the python package index run.
@@ -246,7 +250,7 @@ or
 
 ## Development
 
-Caution: python 3.11 is currently not supported. Please use ```python3.10```.
+Caution: python 3.12 is currently not supported. Please use ```python3.11```.
 
 it is advised to use a virtual environment (venv) for development. Run the following command to initialize one
 ```bash
