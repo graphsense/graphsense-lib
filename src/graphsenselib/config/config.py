@@ -10,7 +10,7 @@ from pydantic import BaseModel, field_validator
 from ..utils import first_or_default, flatten
 
 supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec", "trx"]
-default_environments = ["prod", "test", "dev", "exp1", "exp2", "exp3"]
+default_environments = ["prod", "test", "dev", "exp1", "exp2", "exp3", "pytest"]
 schema_types = ["utxo", "account", "account_trx"]
 keyspace_types = ["raw", "transformed"]
 currency_to_schema_type = {

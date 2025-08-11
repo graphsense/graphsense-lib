@@ -216,7 +216,6 @@ def test_token_decoding():
 
     pytest.importorskip("web3")
 
-    # todo move to tests
     example_log = {
         "log_index": 0,
         "transaction_index": 1,

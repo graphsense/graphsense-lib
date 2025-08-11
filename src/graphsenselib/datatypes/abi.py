@@ -494,8 +494,81 @@ log_signatures = {
                 {"name": "amount", "type": "uint256", "indexed": True},
                 {"name": "expressExecutor", "type": "address", "indexed": True},
             ],
-            "tags": ["squid", "bridging", "cross-chain", "express-execution"],
+            "tags": ["squid", "bridging", "express-execution"],
         },
+    ],
+    "0x6eb224fb001ed210e379b335e35efe88672a8ce935d981a6896b27ffdf52a3b2": [
+        {
+            "name": "LogMessagePublished",
+            "inputs": [
+                {"name": "sender", "type": "address", "indexed": True},
+                {"name": "sequence", "type": "uint64", "indexed": False},
+                {"name": "nonce", "type": "uint32", "indexed": False},
+                {"name": "payload", "type": "bytes", "indexed": False},
+                {"name": "consistencyLevel", "type": "uint8", "indexed": False},
+            ],
+            "tags": ["wormhole", "bridging"],
+        }
+    ],
+    "0x34660fc8af304464529f48a778e03d03e4d34bcd5f9b6f0cfbf3cd238c642f7f": [
+        {
+            "name": "Swap",
+            "inputs": [
+                {"name": "chainId", "type": "uint16", "indexed": False},
+                {"name": "dstPoolId", "type": "uint256", "indexed": False},
+                {"name": "from", "type": "address", "indexed": False},
+                {"name": "amountSD", "type": "uint256", "indexed": False},
+                {"name": "eqReward", "type": "uint256", "indexed": False},
+                {"name": "eqFee", "type": "uint256", "indexed": False},
+                {"name": "protocolFee", "type": "uint256", "indexed": False},
+                {"name": "lpFee", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["stargate", "swap", "bridging"],
+        }
+    ],
+    "0xef519b7eb82aaf6ac376a6df2d793843ebfd593de5f1a0601d3cc6ab49ebb395": [
+        {
+            "name": "Deposit",
+            "inputs": [
+                {"name": "to", "type": "address", "indexed": True},
+                {"name": "asset", "type": "address", "indexed": True},
+                {"name": "amount", "type": "uint256", "indexed": False},
+                {"name": "memo", "type": "string", "indexed": False},
+            ],
+            "tags": ["thorchain", "deposit", "bridging"],
+        }
+    ],
+    "0xa9cd03aa3c1b4515114539cd53d22085129d495cb9e9f9af77864526240f1bf7": [
+        {
+            "name": "TransferOut",
+            "inputs": [
+                {"name": "vault", "type": "address", "indexed": True},
+                {"name": "to", "type": "address", "indexed": True},
+                {"name": "asset", "type": "address", "indexed": False},
+                {"name": "amount", "type": "uint256", "indexed": False},
+                {"name": "memo", "type": "string", "indexed": False},
+            ],
+            "tags": ["thorchain", "withdrawal", "bridging"],
+        }
+    ],
+    "0x0bcc4c97732e47d9946f229edb95f5b6323f601300e4690de719993f3c371129": [
+        {
+            "name": "Fill",
+            "inputs": [
+                {"name": "makerAddress", "type": "address", "indexed": True},
+                {"name": "feeRecipientAddress", "type": "address", "indexed": True},
+                {"name": "takerAddress", "type": "address", "indexed": False},
+                {"name": "senderAddress", "type": "address", "indexed": False},
+                {"name": "makerAssetFilledAmount", "type": "uint256", "indexed": False},
+                {"name": "takerAssetFilledAmount", "type": "uint256", "indexed": False},
+                {"name": "makerFeePaid", "type": "uint256", "indexed": False},
+                {"name": "takerFeePaid", "type": "uint256", "indexed": False},
+                {"name": "orderHash", "type": "bytes32", "indexed": True},
+                {"name": "makerAssetData", "type": "bytes", "indexed": False},
+                {"name": "takerAssetData", "type": "bytes", "indexed": False},
+            ],
+            "tags": ["0x", "exchange", "fill", "swap"],
+        }
     ],
 }
 

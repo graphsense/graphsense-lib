@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 def create_sink_config(sink: str, network: str, ks_config: Dict):
-    sink_config = ks_config.ingest_config.dict().get("raw_keyspace_file_sinks", None)
+    sink_config = ks_config.ingest_config.model_dump().get(
+        "raw_keyspace_file_sinks", None
+    )
     if sink == "parquet":
         file_sink_dir = subkey_get(sink_config, f"{sink}.directory".split("."))
         if file_sink_dir is None:
