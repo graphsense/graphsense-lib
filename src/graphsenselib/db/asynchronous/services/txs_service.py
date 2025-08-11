@@ -116,6 +116,10 @@ class TxsService:
         else:
             result = await self.db.get_tx(currency, tx_hash)
             rates = await self.rates_service.get_rates(currency, result["block_id"])
+            if currency == "eth":
+                return await self._get_trace_txs(
+                    currency, result, None, get_first_trace=True
+                )
 
             if result:
                 result["type"] = "external"
@@ -213,14 +217,20 @@ class TxsService:
         return [tx for tx in txs if tx.startswith(expression)]
 
     async def _get_trace_txs(
-        self, currency: str, tx: Dict[str, Any], trace_index: Optional[int]
+        self,
+        currency: str,
+        tx: Dict[str, Any],
+        trace_index: Optional[int],
+        get_first_trace: bool = False,
     ) -> Optional[Union[TxAccount, TxUtxo]]:
-        result = await self.db.fetch_transaction_trace(currency, tx, trace_index)
+        result = await self.db.fetch_transaction_trace(
+            currency, tx, trace_index, get_first_trace=get_first_trace
+        )
 
         if result and result["tx_hash"] == tx["tx_hash"]:
             result["type"] = "internal"
             result["timestamp"] = tx["block_timestamp"]
-            result["is_tx_trace"] = False
+            # result["is_tx_trace"] = False
 
             if currency == "trx":
                 result["from_address"] = result["caller_address"]
@@ -228,6 +238,17 @@ class TxsService:
                 result["value"] = result["call_value"]
             else:
                 result["contract_creation"] = result["trace_type"] == "create"
+                # traces have the field "contract_creation", should we use that?
+                if trace_index is None or get_first_trace:
+                    result["type"] = "external"
+                else:
+                    if trace_index is not None:
+                        first_trace = await self.db.fetch_transaction_trace(
+                            currency, tx, 0, get_first_trace=True
+                        )
+                        # if they are the same, then we know it is external
+                        if first_trace and first_trace["trace_index"] == trace_index:
+                            result["type"] = "external"
 
             rates = await self.rates_service.get_rates(currency, result["block_id"])
             return await std_tx_from_row(

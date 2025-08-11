@@ -367,12 +367,15 @@ async def _tx_account_from_row(
     height = get_first_key_present(row, height_keys)
 
     r = rates[height] if isinstance(rates, dict) else rates
+    is_external = row["type"] == "external"
+    if row["type"] == "erc20":
+        is_external = None
 
     return TxAccount(
         currency=currency if "token_tx_id" not in row else row["currency"].lower(),
         network=currency,
         tx_type=_get_type_account(row),
-        identifier=get_tx_identifier(row),
+        identifier=get_tx_identifier(row, currency),
         tx_hash=row["tx_hash"].hex(),
         timestamp=get_first_key_present(row, timestamp_keys),
         height=height,
@@ -383,6 +386,7 @@ async def _tx_account_from_row(
         value=convert_value(currency, row["value"], r)
         if "token_tx_id" not in row
         else convert_token_value(row["value"], r, token_config[row["currency"]]),
+        is_external=is_external,
     )
 
 
