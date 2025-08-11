@@ -438,7 +438,7 @@ class TagsService:
 
     async def report_tag(
         self, data: Any, config: TagInsertConfigProtocol, tag_acl_group: str
-    ) -> str:
+    ) -> Optional[str]:
         try:
             from tagstore.db import TagAlreadyExistsException
         except ImportError as e:
@@ -449,6 +449,7 @@ class TagsService:
 
         reporting_enabled = config.enable_user_tag_reporting
 
+        insert_id = None
         if reporting_enabled:
             nt = data
 
