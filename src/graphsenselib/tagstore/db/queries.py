@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from datetime import timezone
 from enum import IntEnum
 from functools import wraps
@@ -247,6 +248,7 @@ class UserReportedAddressTag(BaseModel):
     actor: Optional[str]
     label: str
     description: str
+    user: Optional[str] = None
 
 
 # Statements
@@ -804,7 +806,7 @@ class TagstoreDbAsync:
 
     @_inject_session
     async def get_best_cluster_tag(
-        self, cluster_id: int, network: str, groups: List[str], session=False
+        self, cluster_id: int, network: str, groups: List[str], session=None
     ) -> Optional[TagPublic]:
         result = (
             await session.exec(_get_best_cluster_tag_stmt(cluster_id, network, groups))
@@ -940,7 +942,7 @@ class TagstoreDbAsync:
     @_inject_session
     async def add_user_reported_tag(
         self, tag: UserReportedAddressTag, acl_group: str = "public", session=None
-    ):
+    ) -> str:
         IDUserReportedTagpack = f"manual-user-reported-tagpack-{acl_group}"
         q = select(TagPack).where(TagPack.id == IDUserReportedTagpack)
         tp = (await session.exec(q)).one_or_none()
@@ -959,6 +961,10 @@ class TagstoreDbAsync:
 
         actor = await self.get_actor_by_id(tag.actor, False)
 
+        unique_id = str(uuid.uuid4())
+
+        context = {"user": tag.user, "uuid": unique_id}
+
         tagN = Tag(
             label=tag.label,
             identifier=tag.address,
@@ -969,6 +975,7 @@ class TagstoreDbAsync:
             source=tag.description,
             tagpack_id=IDUserReportedTagpack,
             concepts=[],
+            context=json.dumps(context),
         )
 
         if actor is not None:
@@ -990,3 +997,5 @@ class TagstoreDbAsync:
                 raise TagAlreadyExistsException()
             else:
                 raise e
+
+        return unique_id
