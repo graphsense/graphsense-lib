@@ -54,6 +54,7 @@ BIG_PAGE_SIZE = 5000
 SEARCH_PAGE_SIZE = 100
 
 MAX_HEX_STRING_LENGTH = 64
+FETCH_SIZE_MIN = 100
 
 
 def try_partial_tron_to_partial_evm(addr_prefix):
@@ -1538,7 +1539,7 @@ class Cassandra:
                 include_assets=include_assets,
                 ascending=ascending,
                 page=page,
-                fetch_size=fs_it,
+                fetch_size=max(FETCH_SIZE_MIN, fs_it),
             )
 
             self.logger.debug(f"results1 {len(results1)} {new_page}")
@@ -2956,7 +2957,7 @@ class Cassandra:
             has_upper_bound = this_tx_id_upper_bound is not None
             has_lower_bound = this_tx_id_lower_bound is not None
 
-            fs_chunk = (offset or 0) + fetch_size
+            fs_chunk = max(FETCH_SIZE_MIN, (offset or 0) + fetch_size)
 
             cql_stmt = build_select_address_txs_statement(
                 network,
