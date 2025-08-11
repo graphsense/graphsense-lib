@@ -1695,7 +1695,6 @@ dependencies = [
     { name = "rich" },
     { name = "setuptools" },
     { name = "simplejson" },
-    { name = "tagpack-tool" },
     { name = "tenacity" },
 ]
 
@@ -1747,7 +1746,7 @@ ingest = [
     { name = "lz4" },
     { name = "pyarrow" },
 ]
-tagpack-tool = [
+tagpacks = [
     { name = "anytree", version = "2.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.2'" },
     { name = "anytree", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.2'" },
     { name = "asyncpg" },
@@ -1796,25 +1795,25 @@ testing = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.0" },
-    { name = "anytree", marker = "extra == 'tagpack-tool'", specifier = ">=2.9.0" },
+    { name = "anytree", marker = "extra == 'tagpacks'", specifier = ">=2.9.0" },
     { name = "async-lru", specifier = ">=2.0.4" },
-    { name = "asyncpg", marker = "extra == 'tagpack-tool'", specifier = ">=0.30.0" },
+    { name = "asyncpg", marker = "extra == 'tagpacks'", specifier = ">=0.30.0" },
     { name = "base58", specifier = ">=2.1" },
     { name = "bitarray", specifier = ">=2.9" },
     { name = "cashaddress", specifier = ">=1.0.6" },
     { name = "cassandra-driver", specifier = ">=3.27.0" },
     { name = "chainside-btcpy", marker = "extra == 'ingest'", specifier = ">=0.6" },
     { name = "click", specifier = ">=8.0.3" },
-    { name = "coinaddrvalidator", marker = "extra == 'tagpack-tool'", specifier = ">=1.2.3" },
-    { name = "colorama", marker = "extra == 'tagpack-tool'", specifier = ">=0.4.6" },
+    { name = "coinaddrvalidator", marker = "extra == 'tagpacks'", specifier = ">=1.2.3" },
+    { name = "colorama", marker = "extra == 'tagpacks'", specifier = ">=0.4.6" },
     { name = "deltalake", marker = "extra == 'ingest'", specifier = "~=0.22.3" },
     { name = "duckdb", marker = "extra == 'ingest'", specifier = ">=1.0.0" },
     { name = "eth-event", specifier = ">=1.2.3" },
     { name = "eth-hash", specifier = ">=0.3.0" },
-    { name = "fastapi", extras = ["all"], marker = "extra == 'tagpack-tool'", specifier = ">=0.115.0" },
+    { name = "fastapi", extras = ["all"], marker = "extra == 'tagpacks'", specifier = ">=0.115.0" },
     { name = "filelock", specifier = ">=3.8.0" },
-    { name = "gitpython", marker = "extra == 'tagpack-tool'", specifier = ">=3.1" },
-    { name = "giturlparse", marker = "extra == 'tagpack-tool'", specifier = ">=0.10" },
+    { name = "gitpython", marker = "extra == 'tagpacks'", specifier = ">=3.1" },
+    { name = "giturlparse", marker = "extra == 'tagpacks'", specifier = ">=0.10" },
     { name = "goodconf", extras = ["yaml"], specifier = ">=3.0.0" },
     { name = "graphsense-bitcoin-etl", marker = "extra == 'ingest'", specifier = "==1.5.4" },
     { name = "graphsense-ethereum-etl" },
@@ -1822,33 +1821,32 @@ requires-dist = [
     { name = "graphsense-lib", extras = ["conversions"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["swaps"], marker = "extra == 'all'" },
-    { name = "graphsense-lib", extras = ["tagpack-tool"], marker = "extra == 'all'" },
+    { name = "graphsense-lib", extras = ["tagpacks"], marker = "extra == 'all'" },
     { name = "grpcio", marker = "extra == 'ingest'", specifier = ">=1.49.0" },
-    { name = "httpx", marker = "extra == 'tagpack-tool'", specifier = "<1.0.0" },
+    { name = "httpx", marker = "extra == 'tagpacks'", specifier = "<1.0.0" },
     { name = "importlib-metadata", marker = "python_full_version < '3.8'" },
     { name = "lz4", marker = "extra == 'ingest'", specifier = ">=4.3.2" },
-    { name = "lz4", marker = "extra == 'tagpack-tool'", specifier = ">=4.3.2" },
+    { name = "lz4", marker = "extra == 'tagpacks'", specifier = ">=4.3.2" },
     { name = "matplotlib", marker = "extra == 'conversions'" },
     { name = "methodtools", specifier = ">=0.4" },
     { name = "networkx", marker = "extra == 'conversions'", specifier = ">=3.2.1" },
     { name = "pandas", specifier = ">=1.4.1" },
     { name = "parsy", specifier = ">=2.0,<3.0" },
-    { name = "psycopg2-binary", marker = "extra == 'tagpack-tool'", specifier = ">=2.9.3" },
+    { name = "psycopg2-binary", marker = "extra == 'tagpacks'", specifier = ">=2.9.3" },
     { name = "pyarrow", marker = "extra == 'ingest'", specifier = ">=16.0.0,<17.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "python-dotenv", marker = "extra == 'tagpack-tool'", specifier = ">=1.0.1" },
-    { name = "pyyaml", marker = "extra == 'tagpack-tool'", specifier = ">=6.0" },
-    { name = "pyyaml-include", marker = "extra == 'tagpack-tool'", specifier = "~=1.3" },
+    { name = "python-dotenv", marker = "extra == 'tagpacks'", specifier = ">=1.0.1" },
+    { name = "pyyaml", marker = "extra == 'tagpacks'", specifier = ">=6.0" },
+    { name = "pyyaml-include", marker = "extra == 'tagpacks'", specifier = "~=1.3" },
     { name = "requests", specifier = ">=2.28.1" },
     { name = "rich", specifier = ">=12.6.0,<13.0" },
     { name = "setuptools", specifier = ">=80.8.0,<81" },
     { name = "simplejson", specifier = ">=3.17.6" },
-    { name = "sqlmodel", marker = "extra == 'tagpack-tool'", specifier = ">=0.0.22" },
-    { name = "tabulate", marker = "extra == 'tagpack-tool'", specifier = ">=0.9.0" },
-    { name = "tagpack-tool", specifier = ">=25.7.8" },
+    { name = "sqlmodel", marker = "extra == 'tagpacks'", specifier = ">=0.0.22" },
+    { name = "tabulate", marker = "extra == 'tagpacks'", specifier = ">=0.9.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
 ]
-provides-extras = ["ingest", "conversions", "tagpack-tool", "all"]
+provides-extras = ["ingest", "conversions", "tagpacks", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4085,38 +4083,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ec/fe/802052aecb21e3797b8f7902564ab6ea0d60ff8ca23952079064155d1ae1/tabulate-0.9.0.tar.gz", hash = "sha256:0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c", size = 81090, upload-time = "2022-10-06T17:21:48.54Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/44/4a5f08c96eb108af5cb50b41f76142f0afa346dfa99d5296fe7202a11854/tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f", size = 35252, upload-time = "2022-10-06T17:21:44.262Z" },
-]
-
-[[package]]
-name = "tagpack-tool"
-version = "25.7.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anytree", version = "2.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.2'" },
-    { name = "anytree", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.2'" },
-    { name = "asyncpg" },
-    { name = "base58" },
-    { name = "cashaddress" },
-    { name = "cassandra-driver" },
-    { name = "coinaddrvalidator" },
-    { name = "colorama" },
-    { name = "fastapi", extra = ["all"] },
-    { name = "gitpython" },
-    { name = "giturlparse" },
-    { name = "lz4" },
-    { name = "pandas" },
-    { name = "psycopg2-binary" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "pyyaml-include" },
-    { name = "requests" },
-    { name = "sqlmodel" },
-    { name = "tabulate" },
-    { name = "typer" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/b0/84623609eca10106ec0108119f45678d447f0d81dc43d8def03533559a48/tagpack_tool-25.7.8.tar.gz", hash = "sha256:551d9ccd334b7ca9efee7b3fcbe9fdc4ae36311cba9cb34a3912b5ac2c36bf83", size = 333663, upload-time = "2025-06-27T07:52:14.285Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/96/52f900305c9b633d5f21bfe6bc1d5dce1c8715c4711ff00f7de1273e56a3/tagpack_tool-25.7.8-py3-none-any.whl", hash = "sha256:bb45ecfb3e52aebb973c032607b8947d933cf06721d220305ba7caa110cde68f", size = 108185, upload-time = "2025-06-27T07:52:13.253Z" },
 ]
 
 [[package]]

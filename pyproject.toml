@@ -40,7 +40,6 @@ dependencies = [
     "aiohttp>=3.8.0",
     "tenacity>=8.2.3",
     "graphsense-ethereum-etl",
-    "tagpack-tool>=25.7.8",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -112,7 +111,7 @@ conversions = [
     "matplotlib",
 ]
 
-tagpack-tool = [
+tagpacks = [
     "anytree>=2.9.0",
     "asyncpg>=0.30.0",
     "coinaddrvalidator>=1.2.3",
@@ -133,12 +132,14 @@ tagpack-tool = [
 all = [
     "graphsense-lib[ingest]",
     "graphsense-lib[swaps]",
-    "graphsense-lib[tagpack-tool]",
+    "graphsense-lib[tagpacks]",
     "graphsense-lib[conversions]",
 ]
 
 [project.scripts]
 graphsense-cli = "graphsenselib.cli:main.main"
+tagpack-tool = "tagpack.cli:main"
+gs-tagstore-cli = "tagstore.cli.main:main"
 
 [tool.setuptools]
 zip-safe = true
@@ -221,7 +222,9 @@ exclude = [
     "openapi_server",
     "tests/test_*.py",
     "setup.py",
-    "src/graphsenselib/ingest/tron/grpc*"
+    "src/graphsenselib/ingest/tron/grpc*",
+    "src/tagpack",
+    "src/tagstore"
 ]
 
 [tool.ruff.lint]
