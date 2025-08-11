@@ -1057,6 +1057,11 @@ def main():
     if sys.version_info < (3, 7):
         sys.exit("This program requires python version 3.7 or later")
 
+    # Deprecation warning
+    print_warn("DEPRECATION WARNING: 'tagpack-tool' is deprecated and will be removed in a future version.")
+    print_warn("Please use 'graphsense-cli tagpack-tool' instead.")
+    print()
+
     parser = ArgumentParser(
         description="GraphSense TagPack validation and insert tool",
         epilog="GraphSense TagPack Tool v{} - https://graphsense.info".format(
