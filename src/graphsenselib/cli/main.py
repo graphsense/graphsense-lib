@@ -20,9 +20,6 @@ from ..watch.cli import watch_cli
 from ..tagpack.cli import tagpacktool_cli
 from ..tagstore.cli import tagstore_cli
 
-# from ..tagstore.cli_click import tagstore_cli, quality_cli
-from .common import try_load_config
-
 __author__ = "iknaio"
 __copyright__ = "iknaio"
 __license__ = "MIT"
@@ -79,6 +76,8 @@ def cli(ctx, verbose: int, config_file: str):
     Args:
         verbose (int): One v stands for loglevel warning, two for info and so on...
     """
+    from .common import try_load_config
+
     config, h = try_load_config(config_file)
     ctx.with_resource(
         ClickSlackErrorNotificationContext(

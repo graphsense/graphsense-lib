@@ -36,8 +36,11 @@ dependencies = [
     "eth-event>=1.2.3",
     "eth-hash>=0.3.0",
     "cassandra-driver>=3.27.0",
+    "async-lru>=2.0.4",
+    "aiohttp>=3.8.0",
     "tenacity>=8.2.3",
     "graphsense-ethereum-etl",
+    "tagpack-tool>=25.7.8",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -60,8 +63,6 @@ Download = "https://github.com/graphsense"
 # Add here all kinds of additional classifiers as defined under
 # https://pypi.org/classifiers/
 
-[tool.uv]
-prerelease="allow" # ethereumetl depends on a web3 version that depends on a prerelease version.
 
 [dependency-groups]
 # Core testing dependencies
@@ -92,11 +93,12 @@ dev = [
     "vcrpy",
     "pytest-asyncio>=0.26.0",
     "build>=1.2.2.post1",
+    "httpx<1.0.0" # dependency only for restriction for vcrpy
 ]
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies
 ingest = [
-    "graphsense-ethereum-etl>=2.4.4",
+    "graphsense-ethereum-etl>=2.4.5",
     "chainside-btcpy>=0.6",
     "graphsense-bitcoin-etl==1.5.4",
     "lz4>=4.3.2",
@@ -105,9 +107,9 @@ ingest = [
     "duckdb>=1.0.0",
     "grpcio>=1.49.0",
 ]
-swaps = [ # Might be able to remove this group later, but keep for now
+conversions = [
     "networkx>=3.2.1",
-    "matplotlib"
+    "matplotlib",
 ]
 
 tagpack-tool = [
@@ -132,10 +134,11 @@ all = [
     "graphsense-lib[ingest]",
     "graphsense-lib[swaps]",
     "graphsense-lib[tagpack-tool]",
+    "graphsense-lib[conversions]",
 ]
 
 [project.scripts]
-graphsense-cli = "graphsenselib.cli:main"
+graphsense-cli = "graphsenselib.cli:main.main"
 
 [tool.setuptools]
 zip-safe = true
