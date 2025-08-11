@@ -2,7 +2,7 @@ import pytest
 from goodconf import GoodConfConfigDict
 from testcontainers.cassandra import CassandraContainer
 
-from graphsenselib.config import AppConfig, Environment, KeyspaceConfig
+from graphsenselib.config import AppConfig, Environment, KeyspaceConfig, IngestConfig
 from graphsenselib.config.config import KeyspaceSetupConfig, set_config
 
 cassandra = CassandraContainer("cassandra:4.1.4")
@@ -26,11 +26,20 @@ def gs_db_setup(request):
 @pytest.fixture(autouse=True)
 def patch_config(gs_db_setup, monkeypatch):
     cas_host, cas_port = gs_db_setup
+
+    # to load more data for testing replace with a real node URL
+    # afterwards replace the real node url in the casset files.
+    node_url_btc = "http://test-data-btc"
+
     pytest_ks_btc = KeyspaceConfig(
         raw_keyspace_name="pytest_btc_raw",
         transformed_keyspace_name="pytest_btc_transformed",
         schema_type="utxo",
-        ingest_config=None,
+        ingest_config=IngestConfig(
+            node_reference=node_url_btc,
+            secondary_node_references=[],
+            raw_keyspace_file_sinks={},
+        ),
         keyspace_setup_config={
             "raw": KeyspaceSetupConfig(
                 data_configuration={

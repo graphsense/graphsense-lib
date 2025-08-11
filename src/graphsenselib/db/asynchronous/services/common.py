@@ -1,5 +1,4 @@
 import asyncio
-import re
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 import graphsenselib.utils.address
@@ -11,6 +10,7 @@ from graphsenselib.errors import (
     NetworkNotFoundException,
 )
 from graphsenselib.utils.address import address_to_user_format
+from graphsenselib.utils.rest_utils import get_first_key_present, is_eth_like
 
 from .models import (
     Address,
@@ -193,28 +193,6 @@ class DatabaseProtocol(Protocol):
         pagesize: Optional[int],
     ) -> tuple: ...
     def get_token_configuration(self, currency: str) -> Dict[str, Any]: ...
-
-
-pattern = re.compile(r"[\W_]+", re.UNICODE)  # alphanumeric chars for label
-
-
-def alphanumeric_lower(expression):
-    return pattern.sub("", expression).lower()
-
-
-def get_first_key_present(target_dict, keylist):
-    for k in keylist:
-        if k in target_dict:
-            return target_dict[k]
-    raise KeyError(f"Non of the keys {keylist} is present in {target_dict}.")
-
-
-def is_eth_like(network: str) -> bool:
-    return network == "eth" or network == "trx"
-
-
-def omit(d, keys):
-    return {x: d[x] for x in d if x not in keys}
 
 
 def tx_summary_from_row(row: Dict[str, Any]) -> TxSummary:

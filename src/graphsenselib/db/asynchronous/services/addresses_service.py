@@ -9,6 +9,7 @@ from graphsenselib.errors import (
 )
 from graphsenselib.utils.address import address_to_user_format
 
+
 from .blocks_service import BlocksService
 from .common import (
     cannonicalize_address,

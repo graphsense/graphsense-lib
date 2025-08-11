@@ -112,7 +112,7 @@ all = [
 ]
 
 [project.scripts]
-graphsense-cli = "graphsenselib.cli:main"
+graphsense-cli = "graphsenselib.cli:main.main"
 
 [tool.setuptools]
 zip-safe = true

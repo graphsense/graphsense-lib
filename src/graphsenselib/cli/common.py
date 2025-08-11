@@ -81,7 +81,8 @@ def try_load_config(filename: str):
 
         f = filename or app_config.underlying_file
 
-        md5hash = hashlib.md5(open(f, "rb").read()).hexdigest()
+        with open(f, "rb") as f:
+            md5hash = hashlib.md5(f.read()).hexdigest()
 
         return app_config, md5hash
     except Exception as e:
@@ -89,11 +90,11 @@ def try_load_config(filename: str):
         console.rule("Errors")
         console.print(e)
         console.rule("Suggestions")
-        file_loc = " or ".join(app_config.Config.default_files)
+        file_loc = " or ".join(app_config.model_config["default_files"])
         console.print(
             "Maybe there is no config file specified. "
             f"Please create one in {file_loc} or specify a custom config path"
-            f" in the environment variable {app_config.Config.file_env_var}."
+            f" in the environment variable {app_config.model_config['file_env_var']}."
         )
         console.rule("Template")
         console.print(app_config.generate_yaml(DEBUG=False))
