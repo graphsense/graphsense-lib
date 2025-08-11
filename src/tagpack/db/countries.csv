@@ -1,0 +1,250 @@
+label,id,description
+Afghanistan,AF,ISO-3166_AF
+Åland Islands,AX,ISO-3166_AX
+Albania,AL,ISO-3166_AL
+Algeria,DZ,ISO-3166_DZ
+American Samoa,AS,ISO-3166_AS
+Andorra,AD,ISO-3166_AD
+Angola,AO,ISO-3166_AO
+Anguilla,AI,ISO-3166_AI
+Antarctica,AQ,ISO-3166_AQ
+Antigua and Barbuda,AG,ISO-3166_AG
+Argentina,AR,ISO-3166_AR
+Armenia,AM,ISO-3166_AM
+Aruba,AW,ISO-3166_AW
+Australia,AU,ISO-3166_AU
+Austria,AT,ISO-3166_AT
+Azerbaijan,AZ,ISO-3166_AZ
+Bahamas,BS,ISO-3166_BS
+Bahrain,BH,ISO-3166_BH
+Bangladesh,BD,ISO-3166_BD
+Barbados,BB,ISO-3166_BB
+Belarus,BY,ISO-3166_BY
+Belgium,BE,ISO-3166_BE
+Belize,BZ,ISO-3166_BZ
+Benin,BJ,ISO-3166_BJ
+Bermuda,BM,ISO-3166_BM
+Bhutan,BT,ISO-3166_BT
+"Bolivia, Plurinational State of",BO,ISO-3166_BO
+"Bonaire, Sint Eustatius and Saba",BQ,ISO-3166_BQ
+Bosnia and Herzegovina,BA,ISO-3166_BA
+Botswana,BW,ISO-3166_BW
+Bouvet Island,BV,ISO-3166_BV
+Brazil,BR,ISO-3166_BR
+British Indian Ocean Territory,IO,ISO-3166_IO
+Brunei Darussalam,BN,ISO-3166_BN
+Bulgaria,BG,ISO-3166_BG
+Burkina Faso,BF,ISO-3166_BF
+Burundi,BI,ISO-3166_BI
+Cambodia,KH,ISO-3166_KH
+Cameroon,CM,ISO-3166_CM
+Canada,CA,ISO-3166_CA
+Cape Verde,CV,ISO-3166_CV
+Cayman Islands,KY,ISO-3166_KY
+Central African Republic,CF,ISO-3166_CF
+Chad,TD,ISO-3166_TD
+Chile,CL,ISO-3166_CL
+China,CN,ISO-3166_CN
+Christmas Island,CX,ISO-3166_CX
+Cocos (Keeling) Islands,CC,ISO-3166_CC
+Colombia,CO,ISO-3166_CO
+Comoros,KM,ISO-3166_KM
+Congo,CG,ISO-3166_CG
+"Congo, the Democratic Republic of the",CD,ISO-3166_CD
+Cook Islands,CK,ISO-3166_CK
+Costa Rica,CR,ISO-3166_CR
+Côte d'Ivoire,CI,ISO-3166_CI
+Croatia,HR,ISO-3166_HR
+Cuba,CU,ISO-3166_CU
+Curaçao,CW,ISO-3166_CW
+Cyprus,CY,ISO-3166_CY
+Czech Republic,CZ,ISO-3166_CZ
+Denmark,DK,ISO-3166_DK
+Djibouti,DJ,ISO-3166_DJ
+Dominica,DM,ISO-3166_DM
+Dominican Republic,DO,ISO-3166_DO
+Ecuador,EC,ISO-3166_EC
+Egypt,EG,ISO-3166_EG
+El Salvador,SV,ISO-3166_SV
+Equatorial Guinea,GQ,ISO-3166_GQ
+Eritrea,ER,ISO-3166_ER
+Estonia,EE,ISO-3166_EE
+Ethiopia,ET,ISO-3166_ET
+Falkland Islands (Malvinas),FK,ISO-3166_FK
+Faroe Islands,FO,ISO-3166_FO
+Fiji,FJ,ISO-3166_FJ
+Finland,FI,ISO-3166_FI
+France,FR,ISO-3166_FR
+French Guiana,GF,ISO-3166_GF
+French Polynesia,PF,ISO-3166_PF
+French Southern Territories,TF,ISO-3166_TF
+Gabon,GA,ISO-3166_GA
+Gambia,GM,ISO-3166_GM
+Georgia,GE,ISO-3166_GE
+Germany,DE,ISO-3166_DE
+Ghana,GH,ISO-3166_GH
+Gibraltar,GI,ISO-3166_GI
+Greece,GR,ISO-3166_GR
+Greenland,GL,ISO-3166_GL
+Grenada,GD,ISO-3166_GD
+Guadeloupe,GP,ISO-3166_GP
+Guam,GU,ISO-3166_GU
+Guatemala,GT,ISO-3166_GT
+Guernsey,GG,ISO-3166_GG
+Guinea,GN,ISO-3166_GN
+Guinea-Bissau,GW,ISO-3166_GW
+Guyana,GY,ISO-3166_GY
+Haiti,HT,ISO-3166_HT
+Heard Island and McDonald Islands,HM,ISO-3166_HM
+Holy See (Vatican City State),VA,ISO-3166_VA
+Honduras,HN,ISO-3166_HN
+Hong Kong,HK,ISO-3166_HK
+Hungary,HU,ISO-3166_HU
+Iceland,IS,ISO-3166_IS
+India,IN,ISO-3166_IN
+Indonesia,ID,ISO-3166_ID
+"Iran, Islamic Republic of",IR,ISO-3166_IR
+Iraq,IQ,ISO-3166_IQ
+Ireland,IE,ISO-3166_IE
+Isle of Man,IM,ISO-3166_IM
+Israel,IL,ISO-3166_IL
+Italy,IT,ISO-3166_IT
+Jamaica,JM,ISO-3166_JM
+Japan,JP,ISO-3166_JP
+Jersey,JE,ISO-3166_JE
+Jordan,JO,ISO-3166_JO
+Kazakhstan,KZ,ISO-3166_KZ
+Kenya,KE,ISO-3166_KE
+Kiribati,KI,ISO-3166_KI
+"Korea, Democratic People's Republic of",KP,ISO-3166_KP
+"Korea, Republic of",KR,ISO-3166_KR
+Kuwait,KW,ISO-3166_KW
+Kyrgyzstan,KG,ISO-3166_KG
+Lao People's Democratic Republic,LA,ISO-3166_LA
+Latvia,LV,ISO-3166_LV
+Lebanon,LB,ISO-3166_LB
+Lesotho,LS,ISO-3166_LS
+Liberia,LR,ISO-3166_LR
+Libya,LY,ISO-3166_LY
+Liechtenstein,LI,ISO-3166_LI
+Lithuania,LT,ISO-3166_LT
+Luxembourg,LU,ISO-3166_LU
+Macao,MO,ISO-3166_MO
+"Macedonia, the Former Yugoslav Republic of",MK,ISO-3166_MK
+Madagascar,MG,ISO-3166_MG
+Malawi,MW,ISO-3166_MW
+Malaysia,MY,ISO-3166_MY
+Maldives,MV,ISO-3166_MV
+Mali,ML,ISO-3166_ML
+Malta,MT,ISO-3166_MT
+Marshall Islands,MH,ISO-3166_MH
+Martinique,MQ,ISO-3166_MQ
+Mauritania,MR,ISO-3166_MR
+Mauritius,MU,ISO-3166_MU
+Mayotte,YT,ISO-3166_YT
+Mexico,MX,ISO-3166_MX
+"Micronesia, Federated States of",FM,ISO-3166_FM
+"Moldova, Republic of",MD,ISO-3166_MD
+Monaco,MC,ISO-3166_MC
+Mongolia,MN,ISO-3166_MN
+Montenegro,ME,ISO-3166_ME
+Montserrat,MS,ISO-3166_MS
+Morocco,MA,ISO-3166_MA
+Mozambique,MZ,ISO-3166_MZ
+Myanmar,MM,ISO-3166_MM
+Namibia,NA,ISO-3166_NA
+Nauru,NR,ISO-3166_NR
+Nepal,NP,ISO-3166_NP
+Netherlands,NL,ISO-3166_NL
+New Caledonia,NC,ISO-3166_NC
+New Zealand,NZ,ISO-3166_NZ
+Nicaragua,NI,ISO-3166_NI
+Niger,NE,ISO-3166_NE
+Nigeria,NG,ISO-3166_NG
+Niue,NU,ISO-3166_NU
+Norfolk Island,NF,ISO-3166_NF
+Northern Mariana Islands,MP,ISO-3166_MP
+Norway,NO,ISO-3166_NO
+Oman,OM,ISO-3166_OM
+Pakistan,PK,ISO-3166_PK
+Palau,PW,ISO-3166_PW
+"Palestine, State of",PS,ISO-3166_PS
+Panama,PA,ISO-3166_PA
+Papua New Guinea,PG,ISO-3166_PG
+Paraguay,PY,ISO-3166_PY
+Peru,PE,ISO-3166_PE
+Philippines,PH,ISO-3166_PH
+Pitcairn,PN,ISO-3166_PN
+Poland,PL,ISO-3166_PL
+Portugal,PT,ISO-3166_PT
+Puerto Rico,PR,ISO-3166_PR
+Qatar,QA,ISO-3166_QA
+Réunion,RE,ISO-3166_RE
+Romania,RO,ISO-3166_RO
+Russian Federation,RU,ISO-3166_RU
+Rwanda,RW,ISO-3166_RW
+Saint Barthélemy,BL,ISO-3166_BL
+"Saint Helena, Ascension and Tristan da Cunha",SH,ISO-3166_SH
+Saint Kitts and Nevis,KN,ISO-3166_KN
+Saint Lucia,LC,ISO-3166_LC
+Saint Martin (French part),MF,ISO-3166_MF
+Saint Pierre and Miquelon,PM,ISO-3166_PM
+Saint Vincent and the Grenadines,VC,ISO-3166_VC
+Samoa,WS,ISO-3166_WS
+San Marino,SM,ISO-3166_SM
+Sao Tome and Principe,ST,ISO-3166_ST
+Saudi Arabia,SA,ISO-3166_SA
+Senegal,SN,ISO-3166_SN
+Serbia,RS,ISO-3166_RS
+Seychelles,SC,ISO-3166_SC
+Sierra Leone,SL,ISO-3166_SL
+Singapore,SG,ISO-3166_SG
+Sint Maarten (Dutch part),SX,ISO-3166_SX
+Slovakia,SK,ISO-3166_SK
+Slovenia,SI,ISO-3166_SI
+Solomon Islands,SB,ISO-3166_SB
+Somalia,SO,ISO-3166_SO
+South Africa,ZA,ISO-3166_ZA
+South Georgia and the South Sandwich Islands,GS,ISO-3166_GS
+South Sudan,SS,ISO-3166_SS
+Spain,ES,ISO-3166_ES
+Sri Lanka,LK,ISO-3166_LK
+Sudan,SD,ISO-3166_SD
+Suriname,SR,ISO-3166_SR
+Svalbard and Jan Mayen,SJ,ISO-3166_SJ
+Swaziland,SZ,ISO-3166_SZ
+Sweden,SE,ISO-3166_SE
+Switzerland,CH,ISO-3166_CH
+Syrian Arab Republic,SY,ISO-3166_SY
+"Taiwan, Province of China",TW,ISO-3166_TW
+Tajikistan,TJ,ISO-3166_TJ
+"Tanzania, United Republic of",TZ,ISO-3166_TZ
+Thailand,TH,ISO-3166_TH
+Timor-Leste,TL,ISO-3166_TL
+Togo,TG,ISO-3166_TG
+Tokelau,TK,ISO-3166_TK
+Tonga,TO,ISO-3166_TO
+Trinidad and Tobago,TT,ISO-3166_TT
+Tunisia,TN,ISO-3166_TN
+Turkey,TR,ISO-3166_TR
+Turkmenistan,TM,ISO-3166_TM
+Turks and Caicos Islands,TC,ISO-3166_TC
+Tuvalu,TV,ISO-3166_TV
+Uganda,UG,ISO-3166_UG
+Ukraine,UA,ISO-3166_UA
+United Arab Emirates,AE,ISO-3166_AE
+United Kingdom,GB,ISO-3166_GB
+United States,US,ISO-3166_US
+United States Minor Outlying Islands,UM,ISO-3166_UM
+Uruguay,UY,ISO-3166_UY
+Uzbekistan,UZ,ISO-3166_UZ
+Vanuatu,VU,ISO-3166_VU
+"Venezuela, Bolivarian Republic of",VE,ISO-3166_VE
+Viet Nam,VN,ISO-3166_VN
+"Virgin Islands, British",VG,ISO-3166_VG
+"Virgin Islands, U.S.",VI,ISO-3166_VI
+Wallis and Futuna,WF,ISO-3166_WF
+Western Sahara,EH,ISO-3166_EH
+Yemen,YE,ISO-3166_YE
+Zambia,ZM,ISO-3166_ZM
+Zimbabwe,ZW,ISO-3166_ZW

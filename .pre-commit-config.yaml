@@ -7,8 +7,10 @@ repos:
   hooks:
     # Run the linter.
     - id: ruff
+      exclude: ^(src/tagpack/|src/tagstore/)
     # Run the formatter.
     - id: ruff-format
+      exclude: ^(src/tagpack/|src/tagstore/)
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:

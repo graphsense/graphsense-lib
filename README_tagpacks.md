@@ -38,7 +38,7 @@ Then run
 
 to populate the TagStore with Actors and TagPacks.
 
-Re-run the command to add newly added tagpack files from the repositories.
+Re-run the command to add newly aundded tagpack files from the repositories.
 
 Add the `--force` option to re-insert TagPacks.
 
@@ -314,7 +314,7 @@ To list all tagpack creators and their contributions to a tagstore's content use
 To provide REST endpoints for accessing tags, start the service
 
 ```
-make run
+make serve
 ```
 
 and check out http://localhost:8000/docs
