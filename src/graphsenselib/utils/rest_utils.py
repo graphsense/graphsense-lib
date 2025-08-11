@@ -1,3 +1,6 @@
+import re
+
+
 def get_first_key_present(target_dict, keylist):
     for k in keylist:
         if k in target_dict:
@@ -11,3 +14,10 @@ def is_eth_like(network: str) -> bool:
 
 def omit(d, keys):
     return {x: d[x] for x in d if x not in keys}
+
+
+pattern = re.compile(r"[\W_]+", re.UNICODE)  # alphanumeric chars for label
+
+
+def alphanumeric_lower(expression):
+    return pattern.sub("", expression).lower()

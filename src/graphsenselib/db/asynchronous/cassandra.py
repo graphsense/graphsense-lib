@@ -22,6 +22,7 @@ from cassandra.cluster import (
 from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
 from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
+from build.lib.graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
@@ -115,9 +116,10 @@ def to_hex(paging_state):
 
 
 def bytes_from_hex(h_str: str) -> bytes:
-    if isinstance(h_str, str) and h_str.startswith("0x"):
-        h_str = h_str[2:]
-    return bytes.fromhex(h_str) if h_str else None
+    return hex_to_bytes(h_str)
+    # if isinstance(h_str, str) and h_str.startswith("0x"):
+    #     h_str = h_str[2:]
+    # return bytes.fromhex(h_str) if h_str else None
 
 
 def tx_hash_from_hex(tx_hash_str: str) -> bytes:

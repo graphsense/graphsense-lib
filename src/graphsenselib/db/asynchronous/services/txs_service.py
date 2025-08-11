@@ -12,8 +12,9 @@ from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
 )
+from graphsenselib.utils.rest_utils import is_eth_like
 
-from .common import is_eth_like, std_tx_from_row
+from .common import std_tx_from_row
 from .models import (
     ExternalConversions,
     TxAccount,

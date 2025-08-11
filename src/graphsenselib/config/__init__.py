@@ -4,6 +4,7 @@ from .config import (
     AppConfig,
     Environment,
     KeyspaceConfig,
+    IngestConfig,
     avg_blocktimes_by_currencies,
     currency_to_schema_type,
     default_environments,
