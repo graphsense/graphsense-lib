@@ -12,6 +12,9 @@ from click.testing import CliRunner
 from graphsenselib.ingest.cli import ingest
 
 
+pytest.importorskip("bitcoinetl")
+
+
 class MockLogger:
     level = 0
 
