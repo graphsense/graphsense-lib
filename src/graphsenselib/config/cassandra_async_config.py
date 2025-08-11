@@ -39,6 +39,10 @@ class CassandraConfig(BaseModel):
         default=False, description="Use legacy address transaction ordering"
     )
 
+    cross_chain_pubkey_mapping_keyspace: Optional[str] = Field(
+        default=None, description="Keyspace for cross-chain public key mapping"
+    )
+
     @field_validator("currencies", mode="before")
     @classmethod
     def validate_currencies(cls, v):

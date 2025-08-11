@@ -56,7 +56,7 @@ class TestPrepareTxsForIngest(unittest.TestCase):
             self.block_bucket_size,
             self.mock_get_transaction_prefix,
         )
-        print(changes)
+        # print(changes)
 
         n_changes_transaction_ids_by_transaction_id_group = len(
             [x for x in changes if x.table == "transaction_ids_by_transaction_id_group"]
@@ -102,7 +102,7 @@ class TestPrepareBalancesForIngest(unittest.TestCase):
             self.mock_delta, self.id_bucket_size, self.addr_balances
         )
 
-        print(changes)
+        # print(changes)
         # Check the total number of DbChange instances created
         self.assertEqual(
             len(changes), 4, "Incorrect number of DbChange instances created"
@@ -157,6 +157,6 @@ class TestPrepareEntityTxsForIngest(unittest.TestCase):
             self.block_bucket_size_address_txs,
         )
 
-        print(changes)
+        # print(changes)
 
         self.assertEqual(len(changes), self.expected_changes_count)

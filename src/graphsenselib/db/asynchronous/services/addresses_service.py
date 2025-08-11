@@ -28,6 +28,7 @@ from .models import (
     Links,
     NeighborAddress,
     NeighborAddresses,
+    CrossChainPubkeyRelatedAddress,
     TagSummary,
 )
 from .rates_service import RatesService
@@ -83,6 +84,14 @@ class AddressesService:
         self.blocks_service = blocks_service
         self.rates_service = rates_service
         self.logger = logger
+
+    async def get_cross_chain_pubkey_related_addresses(
+        self, address: str
+    ) -> List[CrossChainPubkeyRelatedAddress]:
+        return [
+            CrossChainPubkeyRelatedAddress.model_validate(addr)
+            for addr in await self.db.get_cross_chain_pubkey_related_addresses(address)
+        ]
 
     async def get_address(
         self,
