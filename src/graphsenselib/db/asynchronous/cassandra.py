@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -8,7 +9,7 @@ from functools import partial
 from itertools import product
 from math import floor
 from pprint import PrettyPrinter
-from typing import Optional, Sequence, Tuple, Union, Dict, Any
+from typing import Callable, List, Optional, Sequence, Tuple, Union, Dict, Any
 
 from async_lru import alru_cache
 from cassandra import ConsistencyLevel, InvalidRequest
@@ -465,27 +466,29 @@ class Cassandra:
     def __init__(self, config: Union[Dict[str, Any], CassandraConfig], logger):
         self.logger = logger
 
+        tconfig = None
         # Convert dict config to CassandraConfig if needed
         if isinstance(config, dict):
             try:
-                self.config = CassandraConfig(**config)
+                tconfig = CassandraConfig(**config)
             except Exception as e:
                 raise BadConfigError(f"Invalid configuration: {e}")
         elif isinstance(config, CassandraConfig):
-            self.config = config
+            tconfig = config
         else:
             raise BadConfigError(
                 "Config must be a dictionary or CassandraConfig instance"
             )
 
         # Convert back to dict for backward compatibility with existing code
-        config = self.config.model_dump()
+        config = tconfig.model_dump()
 
         if "currencies" not in config or config["currencies"] is None:
             raise BadConfigError("Missing config property: currencies")
         if "nodes" not in config or config["nodes"] is None:
             raise BadConfigError("Missing config property: nodes")
         self.config = config
+        self.tconfig = tconfig
         self.prepared_statements = {}
         self.connect()
         self.parameters = NetworkParameters()
@@ -790,6 +793,57 @@ class Cassandra:
             result.current_rows.append(row)
         return result
 
+    def get_prepared_statement(self, query):
+        hash_object = hashlib.sha256(query.encode("utf-8"))
+        hex_dig = hash_object.hexdigest()
+        if hex_dig not in self.prepared_statements:
+            self.prepared_statements[hex_dig] = self.session.prepare(query)
+        return self.prepared_statements[hex_dig]
+
+    def execute_async_core(
+        self,
+        query: str,
+        params: Dict[str, Any] = None,
+        paging_state=None,
+        fetch_size: Optional[int] = None,
+        success_callback: Optional[Callable[Result, None]] = None,
+    ):
+        prep = self.get_prepared_statement(query)
+
+        prep.fetch_size = int(fetch_size) if fetch_size else None
+        # self.session.default_timeout = 60
+
+        response_future = self.session.execute_async(
+            prep, params, timeout=60, paging_state=paging_state
+        )
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        def safe_set_result():
+            try:
+                future.set_result(None)
+            except asyncio.exceptions.InvalidStateError:
+                pass
+
+        def on_done(result):
+            if future.cancelled():
+                loop.call_soon_threadsafe(safe_set_result)
+                return
+            result = Result(
+                current_rows=result,
+                params=params,
+                paging_state=response_future._paging_state,
+            )
+            if success_callback is not None:
+                success_callback(result)
+            loop.call_soon_threadsafe(future.set_result, result)
+
+        def on_err(result):
+            loop.call_soon_threadsafe(future.set_exception, result)
+
+        response_future.add_callbacks(on_done, on_err)
+        return future
+
     def execute_async_lowlevel(
         self,
         currency,
@@ -804,53 +858,28 @@ class Cassandra:
         query = replaceFrom(keyspace, query)
         q = replacePerc(query, named=named_params)
 
-        prep = self.prepared_statements.get(q, None)
-        if prep is None:
-            self.prepared_statements[q] = prep = self.session.prepare(q)
+        def callback(result):
+            if self.logger.level == logging.DEBUG:
+                if named_params:
+                    formatted = query
+                    for k, v in params.items():
+                        formatted = formatted.replace("%(" + k + ")s", fmt(v))
+                else:
+                    formatted = query % tuple([fmt(v) for v in params])
+                if len(result.current_rows) > 0:
+                    self.logger.debug(formatted)
+                    # pp = BytesPrettyPrinter()
+                    # self.logger.debug(pp.pformat(result.current_rows))
+                    self.logger.debug(f"result size {len(result.current_rows)}")
+
         try:
-            prep.fetch_size = int(fetch_size) if fetch_size else None
-            # self.session.default_timeout = 60
-            response_future = self.session.execute_async(
-                prep, params, timeout=60, paging_state=paging_state
+            return self.execute_async_core(
+                q,
+                params=params,
+                fetch_size=fetch_size,
+                paging_state=paging_state,
+                success_callback=callback,
             )
-            loop = asyncio.get_event_loop()
-            future = loop.create_future()
-
-            def on_done(result):
-                if future.cancelled():
-
-                    def set_result():
-                        try:
-                            future.set_result(None)
-                        except asyncio.exceptions.InvalidStateError:
-                            pass
-
-                    loop.call_soon_threadsafe(set_result)
-                    return
-                result = Result(
-                    current_rows=result,
-                    params=params,
-                    paging_state=response_future._paging_state,
-                )
-                if self.logger.level == logging.DEBUG:
-                    if named_params:
-                        formatted = query
-                        for k, v in params.items():
-                            formatted = formatted.replace("%(" + k + ")s", fmt(v))
-                    else:
-                        formatted = query % tuple([fmt(v) for v in params])
-                    if len(result.current_rows) > 0:
-                        self.logger.debug(formatted)
-                        # pp = BytesPrettyPrinter()
-                        # self.logger.debug(pp.pformat(result.current_rows))
-                        self.logger.debug(f"result size {len(result.current_rows)}")
-                loop.call_soon_threadsafe(future.set_result, result)
-
-            def on_err(result):
-                loop.call_soon_threadsafe(future.set_exception, result)
-
-            response_future.add_callbacks(on_done, on_err)
-            return future
         except NoHostAvailable:
             self.connect()
             return self.execute_async_lowlevel(
@@ -3350,6 +3379,29 @@ class Cassandra:
     ):
         addresses = await self.get_addresses_by_ids(currency, [entity])
         return await self.finish_addresses(currency, addresses), None
+
+    async def get_cross_chain_pubkey_related_addresses(self, address) -> List[Any]:
+        keyspace = self.tconfig.cross_chain_pubkey_mapping_keyspace
+
+        if keyspace is not None:
+            pubkey = one(
+                await self.execute_async_core(
+                    f"SELECT pubkey FROM {keyspace}.pubkey_by_address WHERE address = ?",
+                    {"address": address},
+                )
+            )
+
+            if pubkey is not None:
+                key = pubkey["pubkey"]
+
+                result = await self.execute_async_core(
+                    f"SELECT * FROM {keyspace}.address_by_pubkey WHERE pubkey = ?",
+                    {"pubkey": key},
+                )
+
+                return result
+
+        return []
 
     def markup_values(self, currency, fiat_values):
         values = []

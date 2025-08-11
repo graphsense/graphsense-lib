@@ -373,5 +373,12 @@ class LabelSummary(BaseModel):
     inherited_from: Optional[str] = None
 
 
+class CrossChainPubkeyRelatedAddress(BaseModel):
+    network: str = Field(alias="currency")
+    type: str
+    address: str
+    pubkey: bytes
+
+
 # Update forward references
 Values.model_rebuild()
