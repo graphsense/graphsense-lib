@@ -201,6 +201,7 @@ class TxAccount(BaseModel):
     token_tx_id: Optional[int] = None
     contract_creation: Optional[bool] = None
     value: Values
+    is_external: Optional[bool] = None
 
 
 class TxUtxo(BaseModel):
