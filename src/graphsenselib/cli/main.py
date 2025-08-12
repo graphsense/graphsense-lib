@@ -78,6 +78,14 @@ def cli(ctx, verbose: int, config_file: str):
     """
     from .common import try_load_config
 
+    if len(sys.argv) > 1 and sys.argv[1] in ["tagpack-tool", "tagstore"]:
+        configure_logging(verbose)
+        logger.info(
+            f"Running version {__version__} (config loading skipped for {sys.argv[1]})"
+        )
+        logger.info("Running with parameters: " + (" ".join(sys.argv)))
+        return
+
     config, h = try_load_config(config_file)
     ctx.with_resource(
         ClickSlackErrorNotificationContext(
