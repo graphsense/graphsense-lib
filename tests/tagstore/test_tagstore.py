@@ -2,7 +2,6 @@
 import pytest
 from graphsenselib.tagpack.tagstore import _perform_address_modifications, TagStore
 
-from graphsenselib.tagstore.db import TagstoreDbAsync
 from graphsenselib.tagstore.db.queries import UserReportedAddressTag
 from graphsenselib.tagstore.db import TagAlreadyExistsException
 
@@ -96,8 +95,8 @@ def test_db_consistency(db_setup):
 
 
 @pytest.mark.asyncio
-async def test_db_url(db_setup):
-    db = TagstoreDbAsync.from_url(db_setup["db_connection_string_async"])
+async def test_db_url(async_tagstore_db):
+    db = async_tagstore_db
     assert list(await db.get_acl_groups()) == ["private", "public"]
 
     tags = await db.get_tags_by_subjectid(
@@ -133,8 +132,8 @@ async def test_db_url(db_setup):
 
 
 @pytest.mark.asyncio
-async def test_insert_user_tag(db_setup):
-    db = TagstoreDbAsync.from_url(db_setup["db_connection_string_async"])
+async def test_insert_user_tag(async_tagstore_db):
+    db = async_tagstore_db
     address = "ABC-insert-user-test"
 
     tagsBefore = await db.get_tags_by_subjectid(

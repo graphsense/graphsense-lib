@@ -1,9 +1,11 @@
 import pytest
+import pytest_asyncio
 from goodconf import GoodConfConfigDict
 from testcontainers.cassandra import CassandraContainer
 from testcontainers.postgres import PostgresContainer
 from pathlib import Path
 from click.testing import CliRunner
+from graphsenselib.tagstore.db import TagstoreDbAsync
 
 from graphsenselib.config import AppConfig, Environment, KeyspaceConfig, IngestConfig
 from graphsenselib.config.config import KeyspaceSetupConfig, set_config
@@ -121,6 +123,20 @@ def db_setup(request):
     insert_test_data(setup)
 
     return setup
+
+
+@pytest_asyncio.fixture
+async def async_tagstore_db(db_setup):
+    """Async database fixture that properly manages connection lifecycle"""
+    if not TAGSTORE_AVAILABLE:
+        pytest.skip("Tagstore dependencies not available")
+
+    db = TagstoreDbAsync.from_url(db_setup["db_connection_string_async"])
+    try:
+        yield db
+    finally:
+        # Properly dispose of the async engine to close all connections
+        await db.engine.dispose()
 
 
 @pytest.fixture(autouse=True)
