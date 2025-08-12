@@ -49,6 +49,9 @@ pre-commit:
 build:
 	uv build
 
+build-docker:
+	docker build -t graphsense-lib .
+
 version:
 	uv run python -m setuptools_scm
 
