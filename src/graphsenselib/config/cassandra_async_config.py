@@ -40,7 +40,7 @@ class CassandraConfig(BaseModel):
     )
 
     cross_chain_pubkey_mapping_keyspace: Optional[str] = Field(
-        default=None, description="Keyspace for cross-chain public key mapping"
+        default="pubkey", description="Keyspace for cross-chain public key mapping"
     )
 
     @field_validator("currencies", mode="before")

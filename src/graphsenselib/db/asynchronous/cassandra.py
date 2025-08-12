@@ -492,6 +492,7 @@ class Cassandra:
         self.prepared_statements = {}
         self.connect()
         self.parameters = NetworkParameters()
+        self.get_cross_chain_pubkey_related_addresses_available = False
 
         for currency in config["currencies"]:
             if config["currencies"][currency] is None:
@@ -684,6 +685,20 @@ class Cassandra:
         self.parameters[currency]["tx_graph_available"] = "transaction_spending" in [
             x["table_name"] for x in result
         ]
+
+        pubkeyks = self.tconfig.cross_chain_pubkey_mapping_keyspace
+
+        if pubkeyks is None:
+            self.get_cross_chain_pubkey_related_addresses_available = False
+        else:
+            query = (
+                "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s ;"
+            )
+            result = self.session.execute(query, (pubkeyks,))
+            tblnames = [x["table_name"] for x in result]
+            self.get_cross_chain_pubkey_related_addresses_available = (
+                "pubkey_by_address" in tblnames and "address_by_pubkey" in tblnames
+            )
 
     def get_prefix_lengths(self, currency):
         if currency not in self.parameters:
@@ -3385,7 +3400,10 @@ class Cassandra:
     ) -> List[Any]:
         keyspace = self.tconfig.cross_chain_pubkey_mapping_keyspace
 
-        if keyspace is not None:
+        if (
+            keyspace is not None
+            and self.get_cross_chain_pubkey_related_addresses_available
+        ):
             pubkey = one(
                 await self.execute_async_core(
                     f"SELECT pubkey FROM {keyspace}.pubkey_by_address WHERE address = ?",
