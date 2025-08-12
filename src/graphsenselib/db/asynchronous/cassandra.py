@@ -29,6 +29,7 @@ from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
 from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
+from graphsenselib.utils.pubkey_to_address import convert_pubkey_to_addresses
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
@@ -697,7 +698,7 @@ class Cassandra:
             result = self.session.execute(query, (pubkeyks,))
             tblnames = [x["table_name"] for x in result]
             self.get_cross_chain_pubkey_related_addresses_available = (
-                "pubkey_by_address" in tblnames and "address_by_pubkey" in tblnames
+                "pubkey_by_address" in tblnames
             )
 
     def get_prefix_lengths(self, currency):
@@ -3400,6 +3401,8 @@ class Cassandra:
     ) -> List[Any]:
         keyspace = self.tconfig.cross_chain_pubkey_mapping_keyspace
 
+        active_networks = self.parameters.keys()
+
         if (
             keyspace is not None
             and self.get_cross_chain_pubkey_related_addresses_available
@@ -3414,10 +3417,21 @@ class Cassandra:
             if pubkey is not None:
                 key = pubkey["pubkey"]
 
-                result = await self.execute_async_core(
-                    f"SELECT * FROM {keyspace}.address_by_pubkey WHERE pubkey = ?",
-                    {"pubkey": key},
+                addresses = convert_pubkey_to_addresses(
+                    key.hex(), currencies=active_networks
                 )
+
+                result = []
+                for currency, addressesInC in addresses.items():
+                    for type, address in addressesInC.items():
+                        result.append(
+                            {
+                                "address": address,
+                                "type": type,
+                                "currency": currency,
+                                "pubkey": key,
+                            }
+                        )
 
                 async def try_get_address(currency, address):
                     try:

@@ -380,5 +380,10 @@ class CrossChainPubkeyRelatedAddress(BaseModel):
     pubkey: bytes
 
 
+class CrossChainPubkeyRelatedAddresses(BaseModel):
+    addresses: List[CrossChainPubkeyRelatedAddress] = Field(default_factory=list)
+    next_page: Optional[int] = None
+
+
 # Update forward references
 Values.model_rebuild()

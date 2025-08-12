@@ -41,6 +41,7 @@ dependencies = [
     "tenacity>=8.2.3",
     "graphsense-ethereum-etl",
     "tagpack-tool>=25.7.8",
+    "coincurve>=21.0.0",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
