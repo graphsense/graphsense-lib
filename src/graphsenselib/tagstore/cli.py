@@ -19,7 +19,7 @@ def tagstore_cli():
     pass
 
 
-@tagstore_cli.group("gs-tagstore-cli")
+@tagstore_cli.group("tagstore")
 def tagstore():
     """Tagstore CLI - GraphSense tag store management tool."""
     pass

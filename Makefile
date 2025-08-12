@@ -70,7 +70,7 @@ serve-tagstore:
 	@gs_tagstore_db_url=${gs_tagstore_db_url} uv run uvicorn --reload --log-level debug src.graphsenselib.tagstore.web.main:app
 
 package-ui:
-	- rm -rf admin-ui/dist
-	cd admin-ui; npx elm-land build && cp dist/assets/index-*.js ../src/graphsenselib/tagstore/web/statics/assets/index.js
+	- rm -rf tagpack/admin-ui/dist
+	cd tagpack/admin-ui; npx elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
 
 .PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui

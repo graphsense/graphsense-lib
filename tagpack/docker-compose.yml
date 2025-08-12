@@ -1,0 +1,24 @@
+version: "3.5"
+
+services:
+
+  db:
+    image: postgres:17.0-alpine
+    restart: always
+    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c pg_stat_statements.max=10000 -c max_connections=200
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - "$LOCAL_DATA_DIR:/var/lib/postgresql/data:Z"
+      - ./postgres-conf.sql:/tmp/postgres-conf.sql:Z
+      - ./docker/init.sh:/docker-entrypoint-initdb.d/init.sh:Z
+    ports:
+      - 5432:5432
+    shm_size: "2048mb"
+
+networks:
+  default:
+    name: tagpack
+    external: true

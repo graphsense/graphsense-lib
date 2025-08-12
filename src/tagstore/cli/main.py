@@ -37,7 +37,7 @@ def main():
     import sys
     # Deprecation warning
     print("DEPRECATION WARNING: 'gs-tagstore-cli' is deprecated and will be removed in a future version.", file=sys.stderr)
-    print("Please use 'graphsense-cli gs-tagstore-cli' instead.", file=sys.stderr)
+    print("Please use 'graphsense-cli tagstore' instead.", file=sys.stderr)
     print(file=sys.stderr)
 
     app()

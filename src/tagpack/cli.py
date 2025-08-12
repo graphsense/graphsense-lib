@@ -886,7 +886,7 @@ def sync_repos(args):
             repos = [x.strip() for x in f.readlines() if not x.startswith("#")]
 
         print_line("Init db and add taxonomies ...")
-        subprocess.call(["gs-tagstore-cli", "init", "--db-url", args.url])
+        subprocess.call(["tagstore", "init", "--db-url", args.url])
 
         extra_option = "--force" if args.force else None
         extra_option = "--add_new" if extra_option is None else extra_option
