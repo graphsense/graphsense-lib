@@ -86,7 +86,7 @@ class AddressesService:
         self.logger = logger
 
     async def get_cross_chain_pubkey_related_addresses(
-        self, network: str, address: str
+        self, address: str, network: Optional[str] = None
     ) -> List[CrossChainPubkeyRelatedAddress]:
         return [
             CrossChainPubkeyRelatedAddress.model_validate(addr)
