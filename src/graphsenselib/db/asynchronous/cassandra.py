@@ -3397,9 +3397,12 @@ class Cassandra:
         return await self.finish_addresses(currency, addresses), None
 
     async def get_cross_chain_pubkey_related_addresses(
-        self, address, only_existing: bool = True
+        self, address: str, currency: Optional[str] = None, only_existing: bool = True
     ) -> List[Any]:
         keyspace = self.tconfig.cross_chain_pubkey_mapping_keyspace
+
+        if currency is not None and currency not in self.parameters:
+            raise NetworkNotFoundException(currency)
 
         active_networks = self.parameters.keys()
 
