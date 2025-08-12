@@ -3336,7 +3336,7 @@ class Cassandra:
         params = [[hash.hex()[: prefix["tx"]], hash] for hash in hashes]
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address from "
+            "from_address, to_address, receipt_contract_address, input from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
         result = await self.concurrent_with_args(currency, "raw", statement, params)
@@ -3379,7 +3379,7 @@ class Cassandra:
             )
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address from "
+            "from_address, to_address, receipt_contract_address, input from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
 
