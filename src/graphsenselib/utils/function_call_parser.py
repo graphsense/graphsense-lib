@@ -171,4 +171,15 @@ function_signatures = {
             "tags": ["erc20", "token", "approval"],
         }
     ],
+    "0xff190b9f": [  # swapEthForTokens(address token, uint256 amountOutMin, uint256 deadline)
+        {
+            "name": "swapEthForTokens",
+            "inputs": [
+                {"name": "token", "type": "address"},
+                {"name": "amountOutMin", "type": "uint256"},
+                {"name": "deadline", "type": "uint256"},
+            ],
+            "tags": ["swap", "weth"],
+        }
+    ],
 }
