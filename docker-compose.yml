@@ -1,5 +1,3 @@
-version: "3.5"
-
 services:
 
   db:
@@ -17,8 +15,10 @@ services:
     ports:
       - 5432:5432
     shm_size: "2048mb"
+    networks:
+      - default
 
 networks:
   default:
-    name: tagpack
+    name: graphsense
     external: true
