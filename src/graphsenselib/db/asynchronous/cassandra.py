@@ -28,7 +28,7 @@ from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
-from graphsenselib.utils.address import address_to_user_format
+from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
@@ -3380,7 +3380,9 @@ class Cassandra:
         addresses = await self.get_addresses_by_ids(currency, [entity])
         return await self.finish_addresses(currency, addresses), None
 
-    async def get_cross_chain_pubkey_related_addresses(self, address) -> List[Any]:
+    async def get_cross_chain_pubkey_related_addresses(
+        self, address, only_existing: bool = True
+    ) -> List[Any]:
         keyspace = self.tconfig.cross_chain_pubkey_mapping_keyspace
 
         if keyspace is not None:
@@ -3399,7 +3401,29 @@ class Cassandra:
                     {"pubkey": key},
                 )
 
-                return result
+                async def try_get_address(currency, address):
+                    try:
+                        return await self.get_address(currency, address)
+                    except AddressNotFoundException:
+                        return None
+
+                if only_existing:
+                    requests = [
+                        try_get_address(
+                            x["currency"],
+                            cannonicalize_address(x["currency"], x["address"]),
+                        )
+                        for x in result
+                    ]
+                    addresses = await asyncio.gather(*requests)
+
+                    return [
+                        address
+                        for address, req in zip(result, addresses)
+                        if req is not None
+                    ]
+                else:
+                    return result
 
         return []
 
