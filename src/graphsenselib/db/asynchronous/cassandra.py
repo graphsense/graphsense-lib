@@ -29,6 +29,10 @@ from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
 from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
+from graphsenselib.utils.function_call_parser import (
+    parse_function_call,
+    function_signatures as function_call_signatures,
+)
 from graphsenselib.utils.pubkey_to_address import convert_pubkey_to_addresses
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
@@ -3265,12 +3269,20 @@ class Cassandra:
                 addr_tx["to_address"] = trace["to_address"]
                 addr_tx["type"] = "internal"
                 addr_tx["contract_creation"] = trace["trace_type"] == "create"
+                addr_tx["input"] = trace["input"]
+                addr_tx["input_parsed"] = parse_function_call(
+                    trace["input"], function_call_signatures
+                )
                 value = trace["value"]
             else:
                 addr_tx["to_address"] = full_tx["to_address"]
                 addr_tx["from_address"] = full_tx["from_address"]
                 addr_tx["currency"] = currency
                 addr_tx["type"] = "external"
+                addr_tx["input"] = trace["input"]
+                addr_tx["input_parsed"] = parse_function_call(
+                    trace["input"], function_call_signatures
+                )
                 value = full_tx["value"]
 
             addr_tx["tx_hash"] = full_tx["tx_hash"]
@@ -3344,6 +3356,10 @@ class Cassandra:
                 row["to_address"] = to_address
                 # result['contract_creation'] = False
 
+            row["input_parsed"] = parse_function_call(
+                row["input"], function_call_signatures
+            )
+
             result_with_tokens.append(row)
             if include_token_txs:
                 token_txs = await self.fetch_token_transactions(currency, row)
@@ -3385,6 +3401,11 @@ class Cassandra:
             # normal transaction
             result["to_address"] = to_address
             # result['contract_creation'] = False
+
+        result["input_parsed"] = parse_function_call(
+            result["input"], function_call_signatures
+        )
+
         return result
 
     def get_tx_eth(self, currency, tx_hash: str):
