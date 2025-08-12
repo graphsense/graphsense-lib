@@ -98,7 +98,13 @@ class AddressesService:
 
         data = [
             CrossChainPubkeyRelatedAddress.model_validate(addr)
-            for addr in await self.db.get_cross_chain_pubkey_related_addresses(address)
+            for addr in await self.db.get_cross_chain_pubkey_related_addresses(
+                address, network
+            )
+            if addr["address"] != address
+            or (
+                network is None or (network is not None and addr["currency"] != network)
+            )
         ]
 
         next_page = None
