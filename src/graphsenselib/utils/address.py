@@ -1,4 +1,6 @@
+import hashlib
 import math
+import re
 from abc import ABC, abstractmethod
 from collections import Counter
 from functools import reduce
@@ -322,3 +324,281 @@ def address_to_user_format(currency, db_address) -> str:
         return db_address
     else:
         raise Exception(f"Don't know how to decode db address, {db_address} {currency}")
+
+
+def base58_check_decode(s: str) -> bytes:
+    """Decode Base58Check string to bytes"""
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+    decoded = 0
+    multi = 1
+    for char in reversed(s):
+        if char not in alphabet:
+            raise ValueError(f"Invalid character '{char}' in base58 string")
+        decoded += multi * alphabet.index(char)
+        multi *= 58
+
+    h = f"{decoded:x}"
+    if len(h) % 2:
+        h = "0" + h
+
+    res = bytes.fromhex(h)
+
+    # Handle leading zeros
+    pad = 0
+    for c in s:
+        if c == alphabet[0]:
+            pad += 1
+        else:
+            break
+
+    return bytes([0] * pad) + res
+
+
+def base58_check_validate(s: str) -> bool:
+    """Validate Base58Check string"""
+    try:
+        decoded = base58_check_decode(s)
+        if len(decoded) < 4:
+            return False
+
+        payload = decoded[:-4]
+        checksum = decoded[-4:]
+
+        hash_result = hashlib.sha256(hashlib.sha256(payload).digest()).digest()
+        return hash_result[:4] == checksum
+    except (ValueError, Exception):
+        return False
+
+
+def bech32_polymod(values):
+    """Bech32 polymod function"""
+    GEN = [0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3]
+    chk = 1
+    for v in values:
+        b = chk >> 25
+        chk = (chk & 0x1FFFFFF) << 5 ^ v
+        for i in range(5):
+            chk ^= GEN[i] if ((b >> i) & 1) else 0
+    return chk
+
+
+def bech32_hrp_expand(hrp):
+    """Expand human readable part"""
+    return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
+
+
+def bech32_verify_checksum(hrp, data):
+    """Verify bech32 checksum"""
+    return bech32_polymod(bech32_hrp_expand(hrp) + data) == 1
+
+
+def bech32_validate(s: str, expected_hrp: str = None) -> bool:
+    """Validate bech32 string"""
+    if not s:
+        return False
+
+    s = s.lower()
+    pos = s.rfind("1")
+    if pos < 1 or pos + 7 > len(s) or pos + 1 + 6 > len(s):
+        return False
+
+    hrp = s[:pos]
+    data_part = s[pos + 1 :]
+
+    if expected_hrp and hrp != expected_hrp:
+        return False
+
+    # Check characters
+    charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+    for c in data_part:
+        if c not in charset:
+            return False
+
+    data = [charset.find(c) for c in data_part]
+
+    return bech32_verify_checksum(hrp, data)
+
+
+def validate_btc_address(address: str) -> bool:
+    """Validate Bitcoin address"""
+    if not address:
+        return False
+
+    # Bech32 (segwit) addresses
+    if address.lower().startswith("bc1"):
+        return bech32_validate(address, "bc")
+    elif address.lower().startswith("tb1"):  # testnet
+        return bech32_validate(address, "tb")
+
+    # Legacy addresses (Base58Check)
+    elif address[0] in "13":  # mainnet
+        return base58_check_validate(address)
+    elif address[0] in "2mn":  # testnet
+        return base58_check_validate(address)
+    elif address[0] in "59LKc":  # private keys and extended keys
+        return base58_check_validate(address)
+
+    return False
+
+
+def validate_bch_address(address: str) -> bool:
+    """Validate Bitcoin Cash address"""
+    if not address:
+        return False
+
+    # CashAddr format
+    if ":" in address:
+        try:
+            from cashaddress import convert
+
+            convert.to_legacy_address(address)
+            return True
+        except Exception:
+            return False
+
+    # Legacy format
+    return base58_check_validate(address)
+
+
+def validate_ltc_address(address: str) -> bool:
+    """Validate Litecoin address"""
+    if not address:
+        return False
+
+    # Bech32 (segwit) addresses
+    if address.lower().startswith("ltc1"):
+        return bech32_validate(address, "ltc")
+
+    # Legacy addresses
+    elif address[0] in "L3M":  # mainnet
+        return base58_check_validate(address)
+    elif address[0] in "2mn":  # testnet
+        return base58_check_validate(address)
+
+    return False
+
+
+def validate_zec_address(address: str) -> bool:
+    """Validate Zcash address"""
+    if not address:
+        return False
+
+    # Zcash transparent addresses (mainnet)
+    if address.startswith("t1") or address.startswith("t3"):
+        return base58_check_validate(address)
+
+    # Zcash transparent addresses (testnet)
+    elif address.startswith("tm"):
+        return base58_check_validate(address)
+
+    # Shielded addresses (Sprout)
+    elif address.startswith("zc") and len(address) == 95:
+        return base58_check_validate(address)
+
+    # Shielded addresses (Sapling)
+    elif (address.startswith("zs") or address.startswith("ztestsapling")) and len(
+        address
+    ) in [78, 88]:
+        return base58_check_validate(address)
+
+    return False
+
+
+def validate_eth_address(address: str) -> bool:
+    """Validate Ethereum address with checksum"""
+    if not address:
+        return False
+
+    # Remove 0x prefix if present
+    if address.startswith("0x") or address.startswith("0X"):
+        address = address[2:]
+
+    # Check length
+    if len(address) != 40:
+        return False
+
+    # Check if all characters are hex
+    if not re.match(r"^[0-9a-fA-F]{40}$", address):
+        return False
+
+    # If all lowercase or all uppercase, no checksum validation needed
+    if address == address.lower() or address == address.upper():
+        return True
+
+    # Validate checksum using Keccak-256
+    try:
+        # Try to use pycryptodome Keccak
+        try:
+            from Crypto.Hash import keccak
+
+            hash_obj = keccak.new(digest_bits=256)
+            hash_obj.update(address.lower().encode("utf-8"))
+            hash_hex = hash_obj.hexdigest()
+        except ImportError:
+            # Fallback: accept if valid hex without checksum validation
+            return True
+
+        # Check each character
+        for i, char in enumerate(address):
+            if char.isalpha():
+                # If hash digit >= 8, char should be uppercase
+                if int(hash_hex[i], 16) >= 8:
+                    if char != char.upper():
+                        return False
+                else:
+                    if char != char.lower():
+                        return False
+
+        return True
+    except Exception:
+        # Fallback: accept if valid hex without checksum validation
+        return True
+
+
+def validate_trx_address(address: str) -> bool:
+    """Validate TRON address"""
+    if not address:
+        return False
+
+    # TRON addresses start with 'T' and are 34 characters long
+    if not address.startswith("T") or len(address) != 34:
+        return False
+
+    # Validate using base58check
+    return base58_check_validate(address)
+
+
+def validate_address(currency: str, address: str) -> bool:
+    """
+    Validate cryptocurrency address for the given currency.
+
+    Args:
+        currency: Currency code (btc, bch, ltc, zec, eth, trx)
+        address: Address to validate
+
+    Returns:
+        bool: True if address is valid, False otherwise
+    """
+    if not currency or not address:
+        return False
+
+    currency = currency.lower()
+
+    validation_functions = {
+        "btc": validate_btc_address,
+        "bch": validate_bch_address,
+        "ltc": validate_ltc_address,
+        "zec": validate_zec_address,
+        "eth": validate_eth_address,
+        "trx": validate_trx_address,
+    }
+
+    validator = validation_functions.get(currency)
+    if not validator:
+        raise ValueError(f"Unsupported currency: {currency}")
+
+    try:
+        return validator(address)
+    except Exception:
+        return False

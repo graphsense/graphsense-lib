@@ -114,7 +114,6 @@ conversions = [
 tagpacks = [
     "anytree>=2.9.0",
     "asyncpg>=0.30.0",
-    "coinaddrvalidator>=1.2.3",
     "colorama>=0.4.6",
     "fastapi[all]>=0.115.0",
     "httpx<1.0.0",

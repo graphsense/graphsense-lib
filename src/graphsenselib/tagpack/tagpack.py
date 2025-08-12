@@ -10,7 +10,7 @@ import sys
 from collections import UserDict, defaultdict
 from datetime import date
 
-import coinaddrvalidator
+from graphsenselib.config import supported_base_currencies
 import giturlparse as gup
 import yaml
 from git import Repo
@@ -30,6 +30,7 @@ from graphsenselib.tagpack.constants import (
     suggest_networks_from_currency,
 )
 from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
+from graphsenselib.utils.address import validate_address
 
 
 class InconsistencyChecker:
@@ -319,9 +320,7 @@ class TagPack(object):
         # so '2022-10-1' is not interpreted as a date. This line fixes this.
         apply_to_dict_field(self.contents, "lastmod", try_parse_date, fail=False)
 
-    verifiable_currencies = [
-        a.ticker for a in coinaddrvalidator.currency.Currencies.instances.values()
-    ]
+    verifiable_currencies = supported_base_currencies
 
     def load_from_file(uri, pathname, schema, taxonomies, header_dir=None):
         YamlIncludeConstructor.add_to_loader_class(
@@ -543,7 +542,7 @@ class TagPack(object):
 
     def verify_addresses(self):
         """
-        Verify valid blockchain addresses using coinaddrvalidator library. In
+        Verify valid blockchain addresses. In
         general, this is done by decoding the address (e.g. to base58) and
         calculating a checksum using the first bytes of the decoded value,
         which should match with the last bytes of the decoded value.
@@ -559,8 +558,8 @@ class TagPack(object):
                 if len(address) != len(address.strip()):
                     print_warn(f"Address contains whitespace: {repr(address)}")
                 elif currency in self.verifiable_currencies:
-                    v = coinaddrvalidator.validate(currency, address)
-                    if not v.valid:
+                    v = validate_address(currency, address)
+                    if not v:
                         print_warn(msg.format(cupper, address))
                 else:
                     unsupported[cupper].add(address)
