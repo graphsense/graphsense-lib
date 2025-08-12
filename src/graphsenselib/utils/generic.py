@@ -69,7 +69,30 @@ def groupby_property(
 
 
 def camel_to_snake_case(camel_str: str) -> str:
-    return "".join([f"_{c.lower()}" if c.isupper() else c for c in camel_str])
+    if not camel_str:
+        return camel_str
+
+    result = []
+    for i, c in enumerate(camel_str):
+        # Add underscore before uppercase letter if:
+        # 1. Not the first character AND
+        # 2. Previous character was lowercase OR
+        # 3. Previous character was a digit OR
+        # 4. Next character is lowercase (handles acronyms like "XMLHttp")
+        if c.isupper() and i > 0:
+            prev_char = camel_str[i - 1]
+            next_char = camel_str[i + 1] if i + 1 < len(camel_str) else ""
+
+            if (
+                prev_char.islower()
+                or prev_char.isdigit()
+                or (next_char and next_char.islower())
+            ):
+                result.append("_")
+
+        result.append(c.lower())
+
+    return "".join(result)
 
 
 def dict_with_snake_keys(d) -> dict:
