@@ -24,6 +24,7 @@ from .models import (
     Address,
     AddressTagResult,
     AddressTxs,
+    CrossChainPubkeyRelatedAddresses,
     Entity,
     Links,
     NeighborAddress,
@@ -86,12 +87,30 @@ class AddressesService:
         self.logger = logger
 
     async def get_cross_chain_pubkey_related_addresses(
-        self, address: str, network: Optional[str] = None
-    ) -> List[CrossChainPubkeyRelatedAddress]:
-        return [
+        self,
+        address: str,
+        network: Optional[str] = None,
+        page: Optional[int] = None,
+        pagesize: Optional[int] = None,
+    ) -> CrossChainPubkeyRelatedAddresses:
+        if page is not None and page < 1:
+            raise ValueError("Page number must be at least 1")
+
+        data = [
             CrossChainPubkeyRelatedAddress.model_validate(addr)
             for addr in await self.db.get_cross_chain_pubkey_related_addresses(address)
         ]
+
+        next_page = None
+        if page is not None and pagesize is not None:
+            page = page - 1
+            start = page * pagesize
+            end = start + pagesize
+            if end < len(data):
+                next_page = page + 2
+            data = data[start:end]
+
+        return CrossChainPubkeyRelatedAddresses(addresses=data, next_page=next_page)
 
     async def get_address(
         self,
