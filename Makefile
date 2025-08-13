@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v25.08.1rc11'
-RELEASESEM := 'v2.6.1rc11'
+RELEASE := 'v25.08.1rc21'
+RELEASESEM := 'v2.6.1rc21'
 
 -include .env
 
@@ -74,6 +74,6 @@ serve-tagstore:
 
 package-ui:
 	- rm -rf tagpack/admin-ui/dist
-	cd tagpack/admin-ui; npx elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
+	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
 
 .PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui
