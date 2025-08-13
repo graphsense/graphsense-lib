@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -8,7 +9,7 @@ from functools import partial
 from itertools import product
 from math import floor
 from pprint import PrettyPrinter
-from typing import Optional, Sequence, Tuple, Union, Dict, Any
+from typing import Callable, List, Optional, Sequence, Tuple, Union, Dict, Any
 
 from async_lru import alru_cache
 from cassandra import ConsistencyLevel, InvalidRequest
@@ -27,7 +28,12 @@ from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
-from graphsenselib.utils.address import address_to_user_format
+from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
+from graphsenselib.utils.function_call_parser import (
+    parse_function_call,
+    function_signatures as function_call_signatures,
+)
+from graphsenselib.utils.pubkey_to_address import convert_pubkey_to_addresses
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
@@ -465,30 +471,33 @@ class Cassandra:
     def __init__(self, config: Union[Dict[str, Any], CassandraConfig], logger):
         self.logger = logger
 
+        tconfig = None
         # Convert dict config to CassandraConfig if needed
         if isinstance(config, dict):
             try:
-                self.config = CassandraConfig(**config)
+                tconfig = CassandraConfig(**config)
             except Exception as e:
                 raise BadConfigError(f"Invalid configuration: {e}")
         elif isinstance(config, CassandraConfig):
-            self.config = config
+            tconfig = config
         else:
             raise BadConfigError(
                 "Config must be a dictionary or CassandraConfig instance"
             )
 
         # Convert back to dict for backward compatibility with existing code
-        config = self.config.model_dump()
+        config = tconfig.model_dump()
 
         if "currencies" not in config or config["currencies"] is None:
             raise BadConfigError("Missing config property: currencies")
         if "nodes" not in config or config["nodes"] is None:
             raise BadConfigError("Missing config property: nodes")
         self.config = config
+        self.tconfig = tconfig
         self.prepared_statements = {}
         self.connect()
         self.parameters = NetworkParameters()
+        self.get_cross_chain_pubkey_related_addresses_available = False
 
         for currency in config["currencies"]:
             if config["currencies"][currency] is None:
@@ -682,6 +691,20 @@ class Cassandra:
             x["table_name"] for x in result
         ]
 
+        pubkeyks = self.tconfig.cross_chain_pubkey_mapping_keyspace
+
+        if pubkeyks is None:
+            self.get_cross_chain_pubkey_related_addresses_available = False
+        else:
+            query = (
+                "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s ;"
+            )
+            result = self.session.execute(query, (pubkeyks,))
+            tblnames = [x["table_name"] for x in result]
+            self.get_cross_chain_pubkey_related_addresses_available = (
+                "pubkey_by_address" in tblnames
+            )
+
     def get_prefix_lengths(self, currency):
         if currency not in self.parameters:
             raise NetworkNotFoundException(currency)
@@ -790,6 +813,57 @@ class Cassandra:
             result.current_rows.append(row)
         return result
 
+    def get_prepared_statement(self, query):
+        hash_object = hashlib.sha256(query.encode("utf-8"))
+        hex_dig = hash_object.hexdigest()
+        if hex_dig not in self.prepared_statements:
+            self.prepared_statements[hex_dig] = self.session.prepare(query)
+        return self.prepared_statements[hex_dig]
+
+    def execute_async_core(
+        self,
+        query: str,
+        params: Dict[str, Any] = None,
+        paging_state=None,
+        fetch_size: Optional[int] = None,
+        success_callback: Optional[Callable[Result, None]] = None,
+    ):
+        prep = self.get_prepared_statement(query)
+
+        prep.fetch_size = int(fetch_size) if fetch_size else None
+        # self.session.default_timeout = 60
+
+        response_future = self.session.execute_async(
+            prep, params, timeout=60, paging_state=paging_state
+        )
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        def safe_set_result():
+            try:
+                future.set_result(None)
+            except asyncio.exceptions.InvalidStateError:
+                pass
+
+        def on_done(result):
+            if future.cancelled():
+                loop.call_soon_threadsafe(safe_set_result)
+                return
+            result = Result(
+                current_rows=result,
+                params=params,
+                paging_state=response_future._paging_state,
+            )
+            if success_callback is not None:
+                success_callback(result)
+            loop.call_soon_threadsafe(future.set_result, result)
+
+        def on_err(result):
+            loop.call_soon_threadsafe(future.set_exception, result)
+
+        response_future.add_callbacks(on_done, on_err)
+        return future
+
     def execute_async_lowlevel(
         self,
         currency,
@@ -804,53 +878,28 @@ class Cassandra:
         query = replaceFrom(keyspace, query)
         q = replacePerc(query, named=named_params)
 
-        prep = self.prepared_statements.get(q, None)
-        if prep is None:
-            self.prepared_statements[q] = prep = self.session.prepare(q)
+        def callback(result):
+            if self.logger.level == logging.DEBUG:
+                if named_params:
+                    formatted = query
+                    for k, v in params.items():
+                        formatted = formatted.replace("%(" + k + ")s", fmt(v))
+                else:
+                    formatted = query % tuple([fmt(v) for v in params])
+                if len(result.current_rows) > 0:
+                    self.logger.debug(formatted)
+                    # pp = BytesPrettyPrinter()
+                    # self.logger.debug(pp.pformat(result.current_rows))
+                    self.logger.debug(f"result size {len(result.current_rows)}")
+
         try:
-            prep.fetch_size = int(fetch_size) if fetch_size else None
-            # self.session.default_timeout = 60
-            response_future = self.session.execute_async(
-                prep, params, timeout=60, paging_state=paging_state
+            return self.execute_async_core(
+                q,
+                params=params,
+                fetch_size=fetch_size,
+                paging_state=paging_state,
+                success_callback=callback,
             )
-            loop = asyncio.get_event_loop()
-            future = loop.create_future()
-
-            def on_done(result):
-                if future.cancelled():
-
-                    def set_result():
-                        try:
-                            future.set_result(None)
-                        except asyncio.exceptions.InvalidStateError:
-                            pass
-
-                    loop.call_soon_threadsafe(set_result)
-                    return
-                result = Result(
-                    current_rows=result,
-                    params=params,
-                    paging_state=response_future._paging_state,
-                )
-                if self.logger.level == logging.DEBUG:
-                    if named_params:
-                        formatted = query
-                        for k, v in params.items():
-                            formatted = formatted.replace("%(" + k + ")s", fmt(v))
-                    else:
-                        formatted = query % tuple([fmt(v) for v in params])
-                    if len(result.current_rows) > 0:
-                        self.logger.debug(formatted)
-                        # pp = BytesPrettyPrinter()
-                        # self.logger.debug(pp.pformat(result.current_rows))
-                        self.logger.debug(f"result size {len(result.current_rows)}")
-                loop.call_soon_threadsafe(future.set_result, result)
-
-            def on_err(result):
-                loop.call_soon_threadsafe(future.set_exception, result)
-
-            response_future.add_callbacks(on_done, on_err)
-            return future
         except NoHostAvailable:
             self.connect()
             return self.execute_async_lowlevel(
@@ -3220,12 +3269,20 @@ class Cassandra:
                 addr_tx["to_address"] = trace["to_address"]
                 addr_tx["type"] = "internal"
                 addr_tx["contract_creation"] = trace["trace_type"] == "create"
+                addr_tx["input"] = trace["input"]
+                addr_tx["input_parsed"] = parse_function_call(
+                    trace["input"], function_call_signatures
+                )
                 value = trace["value"]
             else:
                 addr_tx["to_address"] = full_tx["to_address"]
                 addr_tx["from_address"] = full_tx["from_address"]
                 addr_tx["currency"] = currency
                 addr_tx["type"] = "external"
+                addr_tx["input"] = full_tx["input"]
+                addr_tx["input_parsed"] = parse_function_call(
+                    full_tx["input"], function_call_signatures
+                )
                 value = full_tx["value"]
 
             addr_tx["tx_hash"] = full_tx["tx_hash"]
@@ -3279,7 +3336,7 @@ class Cassandra:
         params = [[hash.hex()[: prefix["tx"]], hash] for hash in hashes]
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address from "
+            "from_address, to_address, receipt_contract_address, input from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
         result = await self.concurrent_with_args(currency, "raw", statement, params)
@@ -3298,6 +3355,10 @@ class Cassandra:
                 # normal transaction
                 row["to_address"] = to_address
                 # result['contract_creation'] = False
+
+            row["input_parsed"] = parse_function_call(
+                row["input"], function_call_signatures
+            )
 
             result_with_tokens.append(row)
             if include_token_txs:
@@ -3318,7 +3379,7 @@ class Cassandra:
             )
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address from "
+            "from_address, to_address, receipt_contract_address, input from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
 
@@ -3340,6 +3401,11 @@ class Cassandra:
             # normal transaction
             result["to_address"] = to_address
             # result['contract_creation'] = False
+
+        result["input_parsed"] = parse_function_call(
+            result["input"], function_call_signatures
+        )
+
         return result
 
     def get_tx_eth(self, currency, tx_hash: str):
@@ -3350,6 +3416,72 @@ class Cassandra:
     ):
         addresses = await self.get_addresses_by_ids(currency, [entity])
         return await self.finish_addresses(currency, addresses), None
+
+    async def get_cross_chain_pubkey_related_addresses(
+        self, address: str, currency: Optional[str] = None, only_existing: bool = True
+    ) -> List[Any]:
+        keyspace = self.tconfig.cross_chain_pubkey_mapping_keyspace
+
+        if currency is not None and currency not in self.parameters:
+            raise NetworkNotFoundException(currency)
+
+        active_networks = self.parameters.keys()
+
+        if (
+            keyspace is not None
+            and self.get_cross_chain_pubkey_related_addresses_available
+        ):
+            pubkey = one(
+                await self.execute_async_core(
+                    f"SELECT pubkey FROM {keyspace}.pubkey_by_address WHERE address = ?",
+                    {"address": address},
+                )
+            )
+
+            if pubkey is not None:
+                key = pubkey["pubkey"]
+
+                addresses = convert_pubkey_to_addresses(
+                    key.hex(), currencies=active_networks
+                )
+
+                result = []
+                for currency, addressesInC in addresses.items():
+                    for type, address in addressesInC.items():
+                        result.append(
+                            {
+                                "address": address,
+                                "type": type,
+                                "currency": currency,
+                                "pubkey": key,
+                            }
+                        )
+
+                async def try_get_address(currency, address):
+                    try:
+                        return await self.get_address(currency, address)
+                    except AddressNotFoundException:
+                        return None
+
+                if only_existing:
+                    requests = [
+                        try_get_address(
+                            x["currency"],
+                            cannonicalize_address(x["currency"], x["address"]),
+                        )
+                        for x in result
+                    ]
+                    addresses = await asyncio.gather(*requests)
+
+                    return [
+                        address
+                        for address, req in zip(result, addresses)
+                        if req is not None
+                    ]
+                else:
+                    return result
+
+        return []
 
     def markup_values(self, currency, fiat_values):
         values = []

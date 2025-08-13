@@ -1,4 +1,5 @@
 import os
+import pytest
 
 from graphsenselib.utils import (
     batch,
@@ -14,7 +15,7 @@ from graphsenselib.utils import (
     truncateI32,
 )
 from graphsenselib.utils.errorhandling import CrashRecoverer
-from graphsenselib.utils.generic import dict_to_dataobject
+from graphsenselib.utils.generic import camel_to_snake_case, dict_to_dataobject
 
 
 def test_dict_to_dataobject():
@@ -173,3 +174,142 @@ def testTruncateI32():
     assert truncateI32(2147483647) == 2147483647
 
     assert truncateI32(2147483648) == -2147483648
+
+
+def test_simple_camel_case():
+    """Test basic camelCase conversion."""
+    assert camel_to_snake_case("camelCase") == "camel_case"
+    assert camel_to_snake_case("firstName") == "first_name"
+    assert camel_to_snake_case("lastName") == "last_name"
+
+
+def test_pascal_case():
+    """Test PascalCase conversion."""
+    assert camel_to_snake_case("PascalCase") == "pascal_case"
+    assert camel_to_snake_case("FirstName") == "first_name"
+    assert camel_to_snake_case("XMLParser") == "xml_parser"
+
+
+def test_multiple_uppercase_letters():
+    """Test strings with consecutive uppercase letters."""
+    assert camel_to_snake_case("XMLHttpRequest") == "xml_http_request"
+    assert camel_to_snake_case("URLPath") == "url_path"
+    assert camel_to_snake_case("HTTPSConnection") == "https_connection"
+    assert camel_to_snake_case("HTMLElement") == "html_element"
+
+
+def test_single_words():
+    """Test single word strings."""
+    assert camel_to_snake_case("word") == "word"
+    assert camel_to_snake_case("Word") == "word"
+    assert camel_to_snake_case("WORD") == "word"
+
+
+def test_empty_and_edge_cases():
+    """Test empty strings and edge cases."""
+    assert camel_to_snake_case("") == ""
+    assert camel_to_snake_case("a") == "a"
+    assert camel_to_snake_case("A") == "a"
+
+
+def test_already_snake_case():
+    """Test strings that are already in snake_case."""
+    assert camel_to_snake_case("snake_case") == "snake_case"
+    assert camel_to_snake_case("already_snake") == "already_snake"
+    assert camel_to_snake_case("_private_var") == "_private_var"
+
+
+def test_mixed_formats():
+    """Test strings with mixed formatting."""
+    assert camel_to_snake_case("camelCase_mixed") == "camel_case_mixed"
+    assert camel_to_snake_case("Mixed_camelCase") == "mixed_camel_case"
+    assert camel_to_snake_case("someVarWith_underscores") == "some_var_with_underscores"
+
+
+def test_numbers_in_strings():
+    """Test strings containing numbers."""
+    assert camel_to_snake_case("version2") == "version2"
+    assert camel_to_snake_case("Version2") == "version2"
+    assert camel_to_snake_case("html5Parser") == "html5_parser"
+    assert camel_to_snake_case("get2FACode") == "get2_fa_code"
+
+
+def test_special_characters():
+    """Test strings with special characters."""
+    assert camel_to_snake_case("camelCase@test") == "camel_case@test"
+    assert camel_to_snake_case("someVar-withDash") == "some_var-with_dash"
+    assert camel_to_snake_case("testVar.property") == "test_var.property"
+
+
+def test_long_camel_case_strings():
+    """Test longer, more complex camelCase strings."""
+    assert (
+        camel_to_snake_case("thisIsAVeryLongCamelCaseString")
+        == "this_is_a_very_long_camel_case_string"
+    )
+    assert (
+        camel_to_snake_case("getAddressTransactionsByNodeType")
+        == "get_address_transactions_by_node_type"
+    )
+    assert (
+        camel_to_snake_case("crossChainPubkeyRelatedAddress")
+        == "cross_chain_pubkey_related_address"
+    )
+
+
+def test_common_programming_terms():
+    """Test common programming terms and identifiers."""
+    assert camel_to_snake_case("userId") == "user_id"
+    assert camel_to_snake_case("sessionToken") == "session_token"
+    assert camel_to_snake_case("apiEndpoint") == "api_endpoint"
+    assert camel_to_snake_case("databaseConnection") == "database_connection"
+    assert camel_to_snake_case("responseData") == "response_data"
+
+
+def test_abbreviations():
+    """Test handling of abbreviations and acronyms."""
+    assert camel_to_snake_case("httpURL") == "http_url"
+    assert camel_to_snake_case("jsonAPI") == "json_api"
+    assert camel_to_snake_case("sqlDB") == "sql_db"
+    assert camel_to_snake_case("cssStyle") == "css_style"
+
+
+def test_single_uppercase_letters():
+    """Test strings with single uppercase letters."""
+    assert camel_to_snake_case("getA") == "get_a"
+    assert camel_to_snake_case("setX") == "set_x"
+    assert camel_to_snake_case("parseJSON") == "parse_json"
+
+
+@pytest.mark.parametrize(
+    "input_str,expected",
+    [
+        ("camelCase", "camel_case"),
+        ("PascalCase", "pascal_case"),
+        ("simple", "simple"),
+        ("Simple", "simple"),
+        ("XMLHttpRequest", "xml_http_request"),
+        ("getHTTPSProxy", "get_https_proxy"),
+        ("", ""),
+        ("A", "a"),
+        ("AB", "ab"),
+        ("ABC", "abc"),
+        ("someVariableName", "some_variable_name"),
+        ("SomeClassName", "some_class_name"),
+        ("version1Point2", "version1_point2"),
+        ("HTML5Parser", "html5_parser"),
+    ],
+)
+def test_parametrized_cases(input_str, expected):
+    """Parametrized test cases for various input/output combinations."""
+    assert camel_to_snake_case(input_str) == expected
+
+
+def test_graphsense_specific_terms():
+    """Test GraphSense-specific terminology conversions."""
+    assert camel_to_snake_case("blockHeight") == "block_height"
+    assert camel_to_snake_case("txHash") == "tx_hash"
+    assert camel_to_snake_case("addressBalance") == "address_balance"
+    assert camel_to_snake_case("crossChainMapping") == "cross_chain_mapping"
+    assert camel_to_snake_case("tagstoreConfig") == "tagstore_config"
+    assert camel_to_snake_case("cassandraConnection") == "cassandra_connection"

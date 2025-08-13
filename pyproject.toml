@@ -40,6 +40,8 @@ dependencies = [
     "aiohttp>=3.8.0",
     "tenacity>=8.2.3",
     "graphsense-ethereum-etl",
+    "coincurve>=21.0.0",
+    "bech32>=1.2.0",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
