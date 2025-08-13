@@ -3279,9 +3279,9 @@ class Cassandra:
                 addr_tx["from_address"] = full_tx["from_address"]
                 addr_tx["currency"] = currency
                 addr_tx["type"] = "external"
-                addr_tx["input"] = trace["input"]
+                addr_tx["input"] = full_tx["input"]
                 addr_tx["input_parsed"] = parse_function_call(
-                    trace["input"], function_call_signatures
+                    full_tx["input"], function_call_signatures
                 )
                 value = full_tx["value"]
 
