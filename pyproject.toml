@@ -137,8 +137,6 @@ all = [
 
 [project.scripts]
 graphsense-cli = "graphsenselib.cli:main.main"
-tagpack-tool = "tagpack.cli:main"
-gs-tagstore-cli = "tagstore.cli.main:main"
 
 [tool.setuptools]
 zip-safe = true
