@@ -6,6 +6,8 @@ RELEASESEM := 'v2.6.1rc21'
 
 -include .env
 
+gs_tagstore_db_url ?= 'postgresql+asyncpg://${POSTGRES_USER_TAGSTORE}:${POSTGRES_PASSWORD_TAGSTORE}@localhost:5432/tagstore'
+
 all: format lint test build
 
 tag-version:
@@ -15,7 +17,7 @@ tag-version:
 dev: install-dev
 	 uv run pre-commit install
 
-test:
+test: install-dev
 	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
 
 test-ci:
@@ -47,6 +49,9 @@ pre-commit:
 build:
 	uv build
 
+build-docker:
+	docker build -t graphsense-lib .
+
 version:
 	uv run python -m setuptools_scm
 
@@ -64,4 +69,11 @@ generate-tron-grpc-code:
 click-bash-completion:
 	_GRAPHSENSE_CLI_COMPLETE=bash_source graphsense-cli
 
-.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci
+serve-tagstore:
+	@gs_tagstore_db_url=${gs_tagstore_db_url} uv run uvicorn --reload --log-level debug src.graphsenselib.tagstore.web.main:app
+
+package-ui:
+	- rm -rf tagpack/admin-ui/dist
+	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
+
+.PHONY: all test install lint format build pre-commit docs test-all docs-latex publish tpublish tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui

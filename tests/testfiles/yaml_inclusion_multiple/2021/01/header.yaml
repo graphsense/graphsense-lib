@@ -1,0 +1,8 @@
+title: BadHack TagPack
+creator: GraphSense Team
+description: Header file for special yaml file
+confidence: forensic
+abuse: scam
+currency: BTC
+label: Special_BadHack
+source: https://cryptosec.org

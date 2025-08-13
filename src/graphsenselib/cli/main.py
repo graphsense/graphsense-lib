@@ -17,7 +17,8 @@ from ..utils.console import console
 from ..utils.logging import configure_logging
 from ..utils.slack import ClickSlackErrorNotificationContext
 from ..watch.cli import watch_cli
-
+from ..tagpack.cli import tagpacktool_cli
+from ..tagstore.cli import tagstore_cli
 
 __author__ = "iknaio"
 __copyright__ = "iknaio"
@@ -50,6 +51,8 @@ def version_cmd():
         convert_cli,
         monitoring_cli,
         watch_cli,
+        tagpacktool_cli,
+        tagstore_cli,
         version,
     ],
     epilog="GraphSense - https://graphsense.github.io/",
@@ -74,6 +77,14 @@ def cli(ctx, verbose: int, config_file: str):
         verbose (int): One v stands for loglevel warning, two for info and so on...
     """
     from .common import try_load_config
+
+    if len(sys.argv) > 1 and sys.argv[1] in ["tagpack-tool", "tagstore"]:
+        configure_logging(verbose)
+        logger.info(
+            f"Running version {__version__} (config loading skipped for {sys.argv[1]})"
+        )
+        logger.info("Running with parameters: " + (" ".join(sys.argv)))
+        return
 
     config, h = try_load_config(config_file)
     ctx.with_resource(

@@ -11,6 +11,13 @@ from graphsenselib.utils.address import (
     address_to_str,
     address_to_user_format,
     cannonicalize_address,
+    validate_address,
+    validate_btc_address,
+    validate_bch_address,
+    validate_ltc_address,
+    validate_zec_address,
+    validate_eth_address,
+    validate_trx_address,
 )
 
 from . import resources
@@ -333,3 +340,238 @@ def test_address_conversions():
 
     with pytest.raises(ValueError):
         cannonicalize_address("eth", addr).hex()
+
+
+class TestAddressValidation:
+    """Test cryptocurrency address validation functions"""
+
+    def test_validate_btc_addresses(self):
+        """Test Bitcoin address validation"""
+        # Valid Bitcoin addresses
+        valid_btc = [
+            "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w",
+            "18mBbKWTGAbdbP2h24Nbx5AtjWLxScJP94",
+            "bc1ql8dxppm0ge7g3nx4x9l4lssazf9j2wxzxq8xcx",
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            "36TcL12bmahTRrd3dDLRRLQBHYp64xUdng",
+            "3GCsjdaiebDCBFAoiVv4odtP1dmruRBJCy",
+        ]
+
+        for addr in valid_btc:
+            assert validate_btc_address(addr), (
+                f"Valid BTC address {addr} should pass validation"
+            )
+            assert validate_address("btc", addr), (
+                f"Valid BTC address {addr} should pass validation"
+            )
+
+        # Invalid Bitcoin addresses
+        invalid_btc = [
+            "",
+            "invalid",
+            "1InvalidAddress",
+            "bc1invalid",
+            "0x1234567890abcdef1234567890abcdef12345678",
+        ]
+
+        for addr in invalid_btc:
+            assert not validate_btc_address(addr), (
+                f"Invalid BTC address {addr} should fail validation"
+            )
+            assert not validate_address("btc", addr), (
+                f"Invalid BTC address {addr} should fail validation"
+            )
+
+    def test_validate_bch_addresses(self):
+        """Test Bitcoin Cash address validation"""
+        # Valid BCH addresses
+        valid_bch = [
+            "bitcoincash:pvhfadjrmc4adxl8payajshf34wauh4jlrfnpuyetfnzh5llrnh9w3q8y9qcp",
+            "B5Fj9EniQGXUKCCx1dfm7XXARMf38wBgtjPTQv9uaR24eTrj3T",
+            "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w",  # Legacy format
+        ]
+
+        for addr in valid_bch:
+            assert validate_bch_address(addr), (
+                f"Valid BCH address {addr} should pass validation"
+            )
+            assert validate_address("bch", addr), (
+                f"Valid BCH address {addr} should pass validation"
+            )
+
+        # Invalid BCH addresses
+        invalid_bch = [
+            "",
+            "invalid",
+            "bitcoincash:invalid",
+            "0x1234567890abcdef1234567890abcdef12345678",
+        ]
+
+        for addr in invalid_bch:
+            assert not validate_bch_address(addr), (
+                f"Invalid BCH address {addr} should fail validation"
+            )
+            assert not validate_address("bch", addr), (
+                f"Invalid BCH address {addr} should fail validation"
+            )
+
+    def test_validate_ltc_addresses(self):
+        """Test Litecoin address validation"""
+        # Valid LTC addresses
+        valid_ltc = [
+            "LiM295pXpydyt4ahLxEYJeevpLtm2e6LSv",
+            "ltc1qq4zfq0p9s5e69y4vp0kx5gvjvpku8zz7c6q9ga",
+            "ltc1qmrf5gsptkp2xsunvxc57txjhr53w4d5003smpe",
+            "3GCsjdaiebDCBFAoiVv4odtP1dmruRBJCy",
+        ]
+
+        for addr in valid_ltc:
+            assert validate_ltc_address(addr), (
+                f"Valid LTC address {addr} should pass validation"
+            )
+            assert validate_address("ltc", addr), (
+                f"Valid LTC address {addr} should pass validation"
+            )
+
+        # Invalid LTC addresses
+        invalid_ltc = [
+            "",
+            "invalid",
+            "ltc1invalid",
+            "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w",  # BTC address
+            "0x1234567890abcdef1234567890abcdef12345678",
+        ]
+
+        for addr in invalid_ltc:
+            assert not validate_ltc_address(addr), (
+                f"Invalid LTC address {addr} should fail validation"
+            )
+            assert not validate_address("ltc", addr), (
+                f"Invalid LTC address {addr} should fail validation"
+            )
+
+    def test_validate_zec_addresses(self):
+        """Test Zcash address validation"""
+        # Valid ZEC addresses (transparent)
+        valid_zec = [
+            "t1LEhsLv5W5USqfzyvJrAiRFV9qbehtBYKP",
+            "t1UCM8GLR6ysUsgG2SbWR1on1kyHYAy71Eb",
+            "t3UeqMiZA7z1BdQNsKNWh1iUgSa2KmoceJA",
+        ]
+
+        for addr in valid_zec:
+            assert validate_zec_address(addr), (
+                f"Valid ZEC address {addr} should pass validation"
+            )
+            assert validate_address("zec", addr), (
+                f"Valid ZEC address {addr} should pass validation"
+            )
+
+        # Invalid ZEC addresses
+        invalid_zec = [
+            "",
+            "invalid",
+            "z1invalid",
+            "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w",  # BTC address
+            "0x1234567890abcdef1234567890abcdef12345678",
+        ]
+
+        for addr in invalid_zec:
+            assert not validate_zec_address(addr), (
+                f"Invalid ZEC address {addr} should fail validation"
+            )
+            assert not validate_address("zec", addr), (
+                f"Invalid ZEC address {addr} should fail validation"
+            )
+
+    def test_validate_eth_addresses(self):
+        """Test Ethereum address validation"""
+        # Valid ETH addresses
+        valid_eth = [
+            "0x4450cf8c8b6a8229b7f628e36b3a658e84441b6f",
+            "4450cf8c8b6a8229b7f628e36b3a658e84441b6f",
+            "0xFF4c1897369C0DFa37e3442BB08c810A33214349",
+            "0xff4c1897369c0dfa37e3442bb08c810a33214349",
+            "0XFF4C1897369C0DFA37E3442BB08C810A33214349",
+        ]
+
+        for addr in valid_eth:
+            assert validate_eth_address(addr), (
+                f"Valid ETH address {addr} should pass validation"
+            )
+            assert validate_address("eth", addr), (
+                f"Valid ETH address {addr} should pass validation"
+            )
+
+        # Invalid ETH addresses
+        invalid_eth = [
+            "",
+            "invalid",
+            "0x123",  # Too short
+            "0x4450cf8c8b6a8229b7f628e36b3a658e84441b6f1",  # Too long
+            "0x4450cf8c8b6a8229b7f628e36b3a658e84441b6g",  # Invalid hex
+            "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w",  # BTC address
+        ]
+
+        for addr in invalid_eth:
+            assert not validate_eth_address(addr), (
+                f"Invalid ETH address {addr} should fail validation"
+            )
+            assert not validate_address("eth", addr), (
+                f"Invalid ETH address {addr} should fail validation"
+            )
+
+    def test_validate_trx_addresses(self):
+        """Test TRON address validation"""
+        # Valid TRX addresses
+        valid_trx = [
+            "TGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu",
+            "TWsm8HtU2A5eEzoT8ev8yaoFjHsXLLrckb",
+            "THKJYuUmMKKARNf7s2VT51g5uPY6KEqnat",
+            "TAzsQ9Gx8eqFNFSKbeXrbi45CuVPHzA8wr",
+        ]
+
+        for addr in valid_trx:
+            assert validate_trx_address(addr), (
+                f"Valid TRX address {addr} should pass validation"
+            )
+            assert validate_address("trx", addr), (
+                f"Valid TRX address {addr} should pass validation"
+            )
+
+        # Invalid TRX addresses
+        invalid_trx = [
+            "",
+            "invalid",
+            "T123",  # Too short
+            "TGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu1",  # Too long
+            "AGCRkw1Vq759FBCrwxkZGgqZbRX1WkBHSu",  # Wrong prefix
+            "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w",  # BTC address
+            "0x4450cf8c8b6a8229b7f628e36b3a658e84441b6f",  # ETH address
+        ]
+
+        for addr in invalid_trx:
+            assert not validate_trx_address(addr), (
+                f"Invalid TRX address {addr} should fail validation"
+            )
+            assert not validate_address("trx", addr), (
+                f"Invalid TRX address {addr} should fail validation"
+            )
+
+    def test_validate_address_unsupported_currency(self):
+        """Test validation with unsupported currency"""
+        with pytest.raises(ValueError, match="Unsupported currency"):
+            validate_address("unsupported", "some_address")
+
+    def test_validate_address_empty_inputs(self):
+        """Test validation with empty inputs"""
+        assert not validate_address("", "some_address")
+        assert not validate_address("btc", "")
+        assert not validate_address("", "")
+
+    def test_validate_address_case_insensitive_currency(self):
+        """Test validation with different currency case"""
+        address = "1ND5TQ2AnQatxqmHrdMT8utb3aWgLKsc9w"
+        assert validate_address("BTC", address)
+        assert validate_address("btc", address)
+        assert validate_address("Btc", address)
