@@ -8,6 +8,7 @@ from graphsenselib.errors import (
     DBInconsistencyException,
 )
 from graphsenselib.utils.address import address_to_user_format
+from graphsenselib.utils.tron import tron_address_to_evm_string
 
 
 from .blocks_service import BlocksService
@@ -106,6 +107,26 @@ class AddressesService:
                 network is None or (network is not None and addr["currency"] != network)
             )
         ]
+
+        if network is not None and network == "trx" and len(data) == 0:
+            # Special case for TRX, if trx is not found in the address_to_pubkey table, retry with
+            # the EVM equivalent address
+            # This is because TRX addresses can be derived from EVM addresses
+            # and we want to ensure we find related addresses even if the TRX address is not
+            # directly in the address_to_pubkey table.
+            evm_address = tron_address_to_evm_string(address)
+
+            data = [
+                CrossChainPubkeyRelatedAddress.model_validate(addr)
+                for addr in await self.db.get_cross_chain_pubkey_related_addresses(
+                    evm_address, "eth"
+                )
+                if addr["address"] != address
+                or (
+                    network is None
+                    or (network is not None and addr["currency"] != network)
+                )
+            ]
 
         next_page = None
         if page is not None and pagesize is not None:
