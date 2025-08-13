@@ -2,6 +2,8 @@ import json
 
 import pytest
 
+pytest.importorskip("pyyaml", reason="PyYAML is required for tagpack tests")
+
 from graphsenselib.tagstore.algorithms.tag_digest import compute_tag_digest
 from graphsenselib.tagstore.db.queries import TagPublic
 

@@ -5,15 +5,15 @@ from testcontainers.cassandra import CassandraContainer
 from testcontainers.postgres import PostgresContainer
 from pathlib import Path
 from click.testing import CliRunner
-from graphsenselib.tagstore.db import TagstoreDbAsync
-
 from graphsenselib.config import AppConfig, Environment, KeyspaceConfig, IngestConfig
 from graphsenselib.config.config import KeyspaceSetupConfig, set_config
-from graphsenselib.tagpack.cli import cli as tagpacktool_cli
+
 
 # Import tagstore dependencies for test setup
 try:
     from graphsenselib.tagstore.db.database import get_db_engine, init_database
+    from graphsenselib.tagpack.cli import cli as tagpacktool_cli
+    from graphsenselib.tagstore.db import TagstoreDbAsync
 
     TAGSTORE_AVAILABLE = True
 except ImportError:

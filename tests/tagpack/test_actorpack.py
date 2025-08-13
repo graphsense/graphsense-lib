@@ -2,6 +2,8 @@ from datetime import date
 
 import pytest
 
+pytest.importorskip("pyyaml", reason="PyYAML is required for tagpack tests")
+
 from graphsenselib.tagpack import ValidationError
 from graphsenselib.tagpack.actorpack import ActorPack
 from graphsenselib.tagpack.actorpack_schema import ActorPackSchema
