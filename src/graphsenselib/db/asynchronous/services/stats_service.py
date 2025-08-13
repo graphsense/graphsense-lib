@@ -20,7 +20,7 @@ class StatsService:
         self.logger = logger
 
     async def get_currency_statistics(self, currency: str) -> CurrencyStats:
-        from tagstore.db import NetworkStatisticsPublic
+        from graphsenselib.tagstore.db import NetworkStatisticsPublic
 
         tag_stats = await self.tagstore.get_network_statistics_cached()
 

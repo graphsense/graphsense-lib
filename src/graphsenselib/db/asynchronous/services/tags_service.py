@@ -181,7 +181,7 @@ class TagsService:
         include_best_cluster_tag: bool = False,
     ) -> TagSummary:
         try:
-            from tagstore.algorithms.tag_digest import compute_tag_digest
+            from graphsenselib.tagstore.algorithms.tag_digest import compute_tag_digest
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for tag digest computation. "
@@ -244,7 +244,7 @@ class TagsService:
 
     def _actor_from_actor_public(self, ap: "ActorPublic") -> Actor:  # noqa: F821
         try:
-            from tagstore.db import Taxonomies
+            from graphsenselib.tagstore.db import Taxonomies
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for actor operations. "
@@ -378,7 +378,7 @@ class TagsService:
 
     async def list_concepts(self, taxonomy: str) -> List[Concept]:
         try:
-            from tagstore.db import Taxonomies
+            from graphsenselib.tagstore.db import Taxonomies
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for taxonomy operations. "
@@ -440,7 +440,7 @@ class TagsService:
         self, data: Any, config: TagInsertConfigProtocol, tag_acl_group: str
     ) -> Optional[str]:
         try:
-            from tagstore.db import TagAlreadyExistsException
+            from graphsenselib.tagstore.db import TagAlreadyExistsException
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for tag reporting. "
