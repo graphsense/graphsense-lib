@@ -1,0 +1,3 @@
+-- ALTER SYSTEM SET shared_buffers = '2GB';
+-- ALTER SYSTEM SET wal_buffers = '16MB';
+-- ALTER SYSTEM SET max_parallel_workers = 20;

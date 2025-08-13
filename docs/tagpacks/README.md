@@ -34,7 +34,7 @@ If you want to import a certain branch add the branch name separated by a white-
 
 Then run
 
-    tagpack-tool sync -r ./tagpack-repos.config
+    graphsense-cli tagpack-tool sync -r ./tagpack-repos.config
 
 to populate the TagStore with Actors and TagPacks.
 
@@ -48,11 +48,11 @@ Add the `--force` option to re-insert TagPacks.
 
 Validate a single TagPack file
 
-    tagpack-tool tagpack validate tests/testfiles/simple/ex_addr_tagpack.yaml
+    graphsense-cli tagpack-tool tagpack validate tests/testfiles/simple/ex_addr_tagpack.yaml
 
 Recursively validate all TagPacks in (a) given folder(s).
 
-    tagpack-tool tagpack validate tests/testfiles/
+    graphsense-cli tagpack-tool tagpack validate tests/testfiles/
 
 TagPacks are validated against the [tagpack schema](src/tagpack/conf/tagpack_schema.yaml).
 
@@ -69,21 +69,21 @@ and the tagpack-tool offers support for doing so.
 
 For a specific tag string, actor suggestions can be listed by calling
 
-    tagpack-tool tagpack suggest_actors <my_tag>
+    graphsense-cli tagpack-tool tagpack suggest-actors <my_tag>
 
 and if desired, the number of results can be restricted by adding the ``--max`` parameter
 
-    tagpack-tool tagpack suggest_actors --max 1 <my_tag>
+    tagpack-tool tagpack suggest-actors --max 1 <my_tag>
 
 ### Interactive TagPack update
 
 It is also possible to interactively **update** an existing TagPack file with actors:
 
-    tagpack-tool tagpack add_actors path/to/tagpack.yaml
+    graphsense-cli tagpack-tool tagpack add-actors path/to/tagpack.yaml
 
 or go through entire directories of TagPack files:
 
-    tagpack-tool tagpack add_actors path/to/tagpacks
+    graphsense-cli tagpack-tool tagpack add-actors path/to/tagpacks
 
 File by file, for each label, the tagpack-tool will suggest suitable actors if any are found:
 
@@ -106,11 +106,11 @@ If any actors have been selected, an updated TagPack is written that contains th
 
 Validate a single ActorPack file
 
-    tagpack-tool actorpack validate tests/testfiles/actors/ex_actorpack.yaml
+    graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/ex_actorpack.yaml
 
 Recursively validate all TagPacks in (a) given folder(s).
 
-    tagpack-tool actorpack validate tests/testfiles/actors/
+    graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/
 
 Actorpacks are validated against the [actorpack schema](src/tagpack/conf/actorpack_schema.yaml).
 
@@ -120,11 +120,11 @@ Values in the field jurisdictions are validated against a set of [country codes]
 
 List configured taxonomy keys and URIs
 
-    tagpack-tool taxonomy list
+    graphsense-cli tagpack-tool taxonomy list
 
 Fetch and show concepts of a specific remote/local taxonomy (referenced by key: concept, confidence, country)
 
-    tagpack-tool taxonomy show concept
+    graphsense-cli tagpack-tool taxonomy show concept
 
 ## Ingest TagPacks and related data into a TagStore <a name="tagstore"></a>
 
@@ -135,12 +135,12 @@ Fetch and show concepts of a specific remote/local taxonomy (referenced by key: 
 - [Docker][docker], see e.g. https://docs.docker.com/engine/install/
 - Docker Compose: https://docs.docker.com/compose/install/
 
-First, copy `docker/env.template`
+First, copy `tagpack/env.template`
 to `.env` and fill the fields `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_TAGSTORE`.
 
 Run
 
-    cp docker/postgres-conf.sql.template postgres-conf.sql
+    cp tagpack/postgres-conf.sql.template postgres-conf.sql
 
 and modify the configuration parameters to your requirements. If no special config is needed an emtpy file is also valid.
 
@@ -163,7 +163,7 @@ Create the schema and tables in a PostgreSQL instance of your choice also use `t
 
 ### Export .env variables
 
-tagpack-tool is able to use the variables configured in the `.env` file to avoid specifying the parameter `--url` each time it connects to the database. The `--url` parameter will override the environment values if needed. To export the environment variables in `.env` from a linux shell (e.g. bash), first use:
+graphsense-cli tagpack-tool is able to use the variables configured in the `.env` file to avoid specifying the parameter `--url` each time it connects to the database. The `--url` parameter will override the environment values if needed. To export the environment variables in `.env` from a linux shell (e.g. bash), first use:
 
     source .env
     export $(grep --regexp ^[A-Z] .env | cut -d= -f1)
@@ -183,23 +183,23 @@ Then call tagpack-tool.
 
 To create a default configuration `config.yaml` file from scratch - i.e. when config.yaml does not exist - use:
 
-    tagpack-tool config
+    graphsense-cli tagpack-tool config
 
 If a config.yaml already exists, it will not be replaced.
 
 Show the contents of the config file:
 
-    tagpack-tool config -v
+   graphsense-cli  tagpack-tool config -v
 
 To use a specific config file pass the file's location:
 
-    tagpack-tool --config  path/to/config.yaml config
+    graphsense-cli tagpack-tool --config  path/to/config.yaml config
 
 ### Initialize the tagstore database
 
 To initialize the database with all the taxonomies needed for ingesting the tagpacks, use:
 
-    tagpack-tool tagstore init
+    graphsense-cli tagpack-tool tagstore init
 
 set the db to connect to via the environment variable
 
@@ -208,7 +208,7 @@ set the db to connect to via the environment variable
 ### Ingest taxonomies and confidence scores
 To insert all configured taxonomies at once, simply omit taxonomy name
 
-    tagpack-tool taxonomy insert
+    graphsense-cli tagpack-tool taxonomy insert
 
 Not tagpack-tool sync inserts taxonomies automatically
 
@@ -216,41 +216,41 @@ Not tagpack-tool sync inserts taxonomies automatically
 
 Insert a single TagPack file or all TagPacks from a given folder
 
-    tagpack-tool tagpack insert tests/testfiles/simple/ex_addr_tagpack.yaml
-    tagpack-tool tagpack insert tests/testfiles/simple/multiple_tags_for_address.yaml
-    tagpack-tool tagpack insert tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert tests/testfiles/simple/ex_addr_tagpack.yaml
+    graphsense-cli tagpack-tool tagpack insert tests/testfiles/simple/multiple_tags_for_address.yaml
+    graphsense-cli tagpack-tool tagpack insert tests/testfiles/
 
 By default, TagPacks are declared as non-public in the database.
 For public TagPacks, add the `--public` flag to your arguments:
 
-    tagpack-tool tagpack insert --public tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --public tests/testfiles/
 
 If you try to insert tagpacks that already exist in the database, the ingestion process will be stopped.
 
 To force **re-insertion** (if tagpack file contents have been modified), add the `--force` flag to your arguments:
 
-    tagpack-tool tagpack insert --force tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --force tests/testfiles/
 
 To ingest **new** tagpacks and **skip** over already ingested tagpacks, add the `--add_new` flag to  your arguments:
 
-    tagpack-tool tagpack insert --add_new tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --add_new tests/testfiles/
 
 By default, trying to insert tagpacks from a repository with **local** modifications will **fail**.
 To force insertion despite local modifications, add the ``--no_strict_check`` command-line parameter
 
-    tagpack-tool tagpack insert --no_strict_check tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --no_strict_check tests/testfiles/
 
 By default, tagpacks in the TagStore provide a backlink to the original tagpack file in their remote git repository.
 To write local file paths instead, add the ``--no_git`` command-line parameter
 
-    tagpack-tool tagpack insert --no_git --add_new tests/testfiles/
+    graphsense-cli tagpack-tool tagpack insert --no_git --add_new tests/testfiles/
 
 ### Ingest ActorPacks
 
 Insert a single ActorPack file or all ActorPacks from a given folder:
 
-    tagpack-tool actorpack insert tests/testfiles/simple/ex_addr_actorpack.yaml
-    tagpack-tool actorpack insert tests/testfiles/
+    graphsense-cli tagpack-tool actorpack insert tests/testfiles/simple/ex_addr_actorpack.yaml
+    graphsense-cli tagpack-tool actorpack insert tests/testfiles/
 
 You can use the parameters `--force`, `--add_new`, `--no_strict_check` and `--no_git` options in the same way as with the `tagpack` command.
 
@@ -265,24 +265,24 @@ suit your Graphsense setup.
 Then fetch the cluster mappings from your Graphsense instance and insert them
 into the tagstore database:
 
-    tagpack-tool tagstore insert_cluster_mappings -d $CASSANDRA_HOST -f ks_map.json
+    graphsense-cli tagpack-tool tagstore insert-cluster-mappings -d $CASSANDRA_HOST -f ks_map.json
 
 To update ALL cluster-mappings in your tagstore, add the `--update` flag:
 
-    tagpack-tool tagstore insert_cluster_mappings --update -d $CASSANDRA_HOST -f ks_map.json
+    graphsense-cli tagpack-tool tagstore insert-cluster-mappings --update -d $CASSANDRA_HOST -f ks_map.json
 
 ### Remove duplicate tags
 
 Different tagpacks may contain identical tags - the same label and source for a particular address.
 To remove such redundant information, run
 
-    tagpack-tool tagstore remove_duplicates
+    graphsense-cli tagpack-tool tagstore remove-duplicates
 
 ### IMPORTANT: Keeping data consistency after tagpack insertion
 
 After all required tagpacks have been ingested, run
 
-    tagpack-tool tagstore refresh_views
+    graphsense-cli tagpack-tool tagstore refresh-views
 
 to update all materialized views.
 Depending on the amount of tags contained in the tagstore, this may take a while.
@@ -297,17 +297,17 @@ An address with a unique tag has a quality equal to 1, while an address with sev
 
 To calculate the quality measure for all the tags in the database, run:
 
-    tagpack-tool quality calculate
+    graphsense-cli tagpack-tool quality calculate
 
 To show the quality measures of all the tags in the database, or those of a specific crypto-currency, run:
 
-    tagpack-tool quality show [--network [BCH|BTC|ETH|LTC|ZEC|...]]
+    graphsense-cli tagpack-tool quality show [--network [BCH|BTC|ETH|LTC|ZEC|...]]
 
 ## Show tagstore contents/contributions
 
 To list all tagpack creators and their contributions to a tagstore's content use:
 
-    tagpack-tool tagstore show_composition
+    graphsense-cli tagpack-tool tagstore show_composition
 
 # REST API
 
@@ -323,27 +323,13 @@ and check out http://localhost:8000/docs
 
 ## Working in development / testing mode
 
-    git clone https://github.com/graphsense/graphsense-tagpack-tool.git
-    cd graphsense-tagpack-tool
+    git clone https://github.com/graphsense/graphsense-lib.git
+    cd graphsense-lib
 
 ### Using Pip locally
 
 Create and activate a python environment for required dependencies and activate it
 
-#### Venv
-
-    python3 -m venv venv
-    source venv/bin/activate
-
-#### Conda
-
-    conda create -n tagpack-tool
-    conda activate tagpack-tool
-
-
-Install package and dependencies in local environment
-
-    conda install pip
     make install-dev
 
 ### Linting and Formatting
@@ -357,10 +343,6 @@ The code in this repos will be autoformated via black and linted via a pre-commi
 
     make build
 
-### Create Html Docs
-
-    make docs
-
 ### Testing
 
 Run tests
@@ -372,8 +354,4 @@ Check test coverage (optional)
     make test
     coverage report
 
-Use [act][act] to check if test via [Github action](https://github.com/features/actions) pass.
-
-[act]: https://github.com/nektos/act
 [docker]: https://www.docker.com
-[graphsense-transformation]: https://github.com/graphsense/graphsense-transformation

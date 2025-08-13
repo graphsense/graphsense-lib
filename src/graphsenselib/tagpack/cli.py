@@ -532,7 +532,7 @@ def insert_tagpack(
     duration = round(time.time() - t0, 2)
     msg = "Processed {}/{} TagPacks with {} Tags in {}s. "
     print_line(msg.format(no_passed, n_ppacks, no_tags, duration), status)
-    msg = "Don't forget to run 'tagstore refresh_views' soon to keep the database"
+    msg = "Don't forget to run 'graphsense-cli tagstore refresh-views' soon to keep the database"
     msg += " consistent!"
     print_info(msg)
 
