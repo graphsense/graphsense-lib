@@ -130,9 +130,8 @@ tagpacks = [
 
 all = [
     "graphsense-lib[ingest]",
-    "graphsense-lib[swaps]",
-    "graphsense-lib[tagpacks]",
     "graphsense-lib[conversions]",
+    "graphsense-lib[tagpacks]",
 ]
 
 [project.scripts]
