@@ -1523,7 +1523,6 @@ requires-dist = [
     { name = "graphsense-ethereum-etl", marker = "extra == 'ingest'", specifier = ">=2.4.5" },
     { name = "graphsense-lib", extras = ["conversions"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
-    { name = "graphsense-lib", extras = ["swaps"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["tagpacks"], marker = "extra == 'all'" },
     { name = "grpcio", marker = "extra == 'ingest'", specifier = ">=1.49.0" },
     { name = "httpx", marker = "extra == 'tagpacks'", specifier = "<1.0.0" },
