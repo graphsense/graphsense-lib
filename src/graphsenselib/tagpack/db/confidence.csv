@@ -1,0 +1,15 @@
+id,label,description,level
+override,Manual cluster tag,Creator knows that a tag is representative for an entire cluster and overrides all other tags,100
+ownership,Proven address ownership,Creator controls the private key the address associated with a tag,100
+ledger_immanent,Data directly read from the transaction ledger,The data is extracted directly from ledger data with a reliable extraction procedure,100
+manual_transaction,Trusted transaction,Creator transferred funds from known service x to known service y,90
+service_api,Service API,Creator retrieves addresses from a known and trusted service provider API (e.g. VASP API),70
+forensic_investigation,Forensic Investigation,Creator retrieved address as part of a forensic investigation (e.g. known victim or perpetrator address; address retrieved from service provider),70
+authority_data,Authority data,Creator retrieves attribution tags from public authorities (e.g. OFAC),60
+trusted_provider,Trusted data providers,Creator retrieved attribution tags from trusted third parties (e.g. spam trap),50
+service_data,Service data,Creator retrieved attribution tag from a known service (e.g. CSV file received from exchange),50
+forensic,Forensic reports,Creator retrieved data attribution data from somehow trusted reports (e.g. academic papers),50
+untrusted_transaction,Untrusted transaction,A third party transferred funds from known service x to known service y,40
+web_crawl,Web crawls,Attribution tags were retrieved from crawling the web or other data dumps,20
+heuristic,Any Source,Attribution tags are created with methods where the reliablility of the method is hard to quantify. Tags have to be considered best effort,10
+unknown,Unknown,Source and reliability of the tags are unknown. Use these tags with care, 5

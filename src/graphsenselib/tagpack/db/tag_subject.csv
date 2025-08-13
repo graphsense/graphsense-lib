@@ -1,0 +1,3 @@
+label,id,description
+Address,address,Specifies a tag on an address
+Transaction,tx,Specifies a tag on a transaction

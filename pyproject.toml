@@ -18,7 +18,7 @@ classifiers = [
 ]
 requires-python = ">=3.9, <3.12"
 dependencies = [
-    'setuptools<80.9',
+    'setuptools>=80.8.0, <81',
     'importlib-metadata; python_version<"3.8"',
     "filelock>=3.8.0",
     "click>=8.0.3",
@@ -27,7 +27,7 @@ dependencies = [
     "simplejson>=3.17.6",
     "goodconf[yaml]>=3.0.0",
     "pydantic>=2.0.0",
-    "requests>=2.27.1",
+    "requests>=2.28.1",
     "parsy>=2.0, <3.0",
     "rich>=12.6.0, <13.0",
     "cashaddress>=1.0.6",
@@ -40,8 +40,8 @@ dependencies = [
     "aiohttp>=3.8.0",
     "tenacity>=8.2.3",
     "graphsense-ethereum-etl",
-    "tagpack-tool>=25.7.8",
     "coincurve>=21.0.0",
+    "bech32>=1.2.0",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -68,27 +68,32 @@ Download = "https://github.com/graphsense"
 [dependency-groups]
 # Core testing dependencies
 testing = [
-    "setuptools<80.9",
-    "pytest",
-    "pytest-cov",
+    "setuptools>=80.8.0, <81",
+    "pytest>=8.3.4",
+    "pytest-cov>=6.0.0",
     "testcontainers[cassandra]>=4.9.1",
+    "testcontainers[postgres]>=4.9.1",
     "pytest-vcr",
     "vcrpy",
+    "pytest-asyncio>=0.26.0",
 ]
 
 # Development dependencies
 dev = [
-    "setuptools<80.9",
-    "pytest",
-    "pytest-cov",
+    "setuptools>=80.8.0, <81",
+    "pytest>=8.3.4",
+    "pytest-cov>=6.0.0",
     "ruff>=0.9.2",
-    "pre-commit",
-    "setuptools_scm",
-    "pdbpp",
+    "pre-commit>=4.1.0",
+    "setuptools_scm>=8.1.0",
+    "pdbpp>=0.10.3",
     "grpcio-tools>= 1.49.0",
     "testcontainers[cassandra]>=4.9.1",
+    "testcontainers[postgres]>=4.9.1",
     "pytest-vcr",
     "vcrpy",
+    "pytest-asyncio>=0.26.0",
+    "build>=1.2.2.post1",
     "httpx<1.0.0" # dependency only for restriction for vcrpy
 ]
 [project.optional-dependencies]
@@ -107,9 +112,28 @@ conversions = [
     "networkx>=3.2.1",
     "matplotlib",
 ]
+
+tagpacks = [
+    "anytree>=2.9.0",
+    "asyncpg>=0.30.0",
+    "colorama>=0.4.6",
+    "fastapi[all]>=0.115.0",
+    "httpx<1.0.0",
+    "gitpython>=3.1",
+    "giturlparse>=0.10",
+    "lz4>=4.3.2",
+    "psycopg2-binary>=2.9.3",
+    "python-dotenv>=1.0.1",
+    "pyyaml-include~=1.3",
+    "pyyaml>=6.0",
+    "sqlmodel>=0.0.22",
+    "tabulate>=0.9.0",
+]
+
 all = [
     "graphsense-lib[ingest]",
     "graphsense-lib[conversions]",
+    "graphsense-lib[tagpacks]",
 ]
 
 [project.scripts]
@@ -196,7 +220,9 @@ exclude = [
     "openapi_server",
     "tests/test_*.py",
     "setup.py",
-    "src/graphsenselib/ingest/tron/grpc*"
+    "src/graphsenselib/ingest/tron/grpc*",
+    "src/tagpack",
+    "src/tagstore"
 ]
 
 [tool.ruff.lint]

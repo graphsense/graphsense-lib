@@ -1,11 +1,82 @@
 import pytest
+import pytest_asyncio
 from goodconf import GoodConfConfigDict
 from testcontainers.cassandra import CassandraContainer
+from testcontainers.postgres import PostgresContainer
+from pathlib import Path
+from click.testing import CliRunner
+from graphsenselib.tagstore.db import TagstoreDbAsync
 
 from graphsenselib.config import AppConfig, Environment, KeyspaceConfig, IngestConfig
 from graphsenselib.config.config import KeyspaceSetupConfig, set_config
+from graphsenselib.tagpack.cli import cli as tagpacktool_cli
+
+# Import tagstore dependencies for test setup
+try:
+    from graphsenselib.tagstore.db.database import get_db_engine, init_database
+
+    TAGSTORE_AVAILABLE = True
+except ImportError:
+    TAGSTORE_AVAILABLE = False
 
 cassandra = CassandraContainer("cassandra:4.1.4")
+postgres = PostgresContainer("postgres:16-alpine")
+
+# Test data directories for tagpack tests
+DATA_DIR_TP = Path(__file__).parent.resolve() / "testfiles" / "simple"
+DATA_DIR_A = Path(__file__).parent.resolve() / "testfiles" / "actors"
+
+
+def insert_test_data(db_setup):
+    """Insert test data for tagstore tests"""
+    if not TAGSTORE_AVAILABLE:
+        return
+
+    db_url = db_setup["db_connection_string"]
+    engine = None
+    try:
+        engine = get_db_engine(db_url)
+        init_database(engine)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            tagpacktool_cli,
+            ["actorpack", "insert", str(DATA_DIR_A), "-u", db_url, "--no-strict-check"],
+        )
+        assert result.exit_code == 0
+
+        tps = [
+            (True, "config.yaml"),
+            (False, "duplicate_tag.yaml"),
+            (False, "empty_tag_list.yaml"),
+            (True, "ex_addr_tagpack.yaml"),
+            (True, "multiple_tags_for_address.yaml"),
+            (True, "with_concepts.yaml"),
+        ]
+        for public, tpf in tps:
+            result = runner.invoke(
+                tagpacktool_cli,
+                [
+                    "tagpack",
+                    "insert",
+                    str(DATA_DIR_TP / tpf),
+                    "-u",
+                    db_url,
+                    "--no-strict-check",
+                    "--no-git",
+                ]
+                + (["--public"] if public else []),
+            )
+
+        result = runner.invoke(
+            tagpacktool_cli, ["tagstore", "refresh-views", "-u", db_url]
+        )
+        assert result.exit_code == 0
+
+    finally:
+        # Properly dispose of the SQLAlchemy engine to close all connections
+        if engine is not None:
+            engine.dispose()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -21,6 +92,51 @@ def gs_db_setup(request):
     cas_port = cassandra.get_exposed_port(9042)
 
     return (cas_host, cas_port)
+
+
+@pytest.fixture(scope="session")
+def db_setup(request):
+    """PostgreSQL database setup for tagstore tests"""
+    if not TAGSTORE_AVAILABLE:
+        pytest.skip("Tagstore dependencies not available")
+
+    postgres.start()
+
+    def remove_container():
+        try:
+            postgres.stop()
+        except Exception:
+            # Ignore errors during container cleanup
+            pass
+
+    request.addfinalizer(remove_container)
+
+    postgres_sync_url = postgres.get_connection_url()
+    portgres_async_url = postgres_sync_url.replace("psycopg2", "asyncpg")
+
+    setup = {
+        "db_connection_string": postgres_sync_url.replace("+psycopg2", ""),
+        "db_connection_string_psycopg2": postgres_sync_url,
+        "db_connection_string_async": portgres_async_url,
+    }
+
+    insert_test_data(setup)
+
+    return setup
+
+
+@pytest_asyncio.fixture
+async def async_tagstore_db(db_setup):
+    """Async database fixture that properly manages connection lifecycle"""
+    if not TAGSTORE_AVAILABLE:
+        pytest.skip("Tagstore dependencies not available")
+
+    db = TagstoreDbAsync.from_url(db_setup["db_connection_string_async"])
+    try:
+        yield db
+    finally:
+        # Properly dispose of the async engine to close all connections
+        await db.engine.dispose()
 
 
 @pytest.fixture(autouse=True)
