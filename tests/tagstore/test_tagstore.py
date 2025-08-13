@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 import pytest
+
+pytest.importorskip("pyyaml", reason="PyYAML is required for tagpack tests")
+
 from graphsenselib.tagpack.tagstore import _perform_address_modifications, TagStore
 
 from graphsenselib.tagstore.db.queries import UserReportedAddressTag

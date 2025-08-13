@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("pyyaml", reason="PyYAML is required for tagpack tests")
+
 from graphsenselib.tagpack.cli import _load_taxonomies
 
 TAXONOMY_URL = "https://graphsense.github.io"
