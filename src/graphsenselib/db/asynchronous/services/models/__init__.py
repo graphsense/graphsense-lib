@@ -188,6 +188,32 @@ class TxRef(BaseModel):
     tx_hash: str
 
 
+class Parameter(BaseModel):
+    name: str
+    type: str
+
+
+class ParameterDetails(Parameter):
+    name: str
+    type: str
+    value: Union[str, int, float, bool]
+
+
+class FunctionDefinition(BaseModel):
+    name: str
+    selector: str
+    arguments: List[Parameter] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+
+
+class FunctionCall(BaseModel):
+    parameter_details: List[ParameterDetails]
+    parameter_values: Dict[str, Union[str, int, float, bool]] = Field(
+        default_factory=dict
+    )
+    function_definition: FunctionDefinition
+
+
 class TxAccount(BaseModel):
     currency: str
     network: str
@@ -202,6 +228,8 @@ class TxAccount(BaseModel):
     contract_creation: Optional[bool] = None
     value: Values
     is_external: Optional[bool] = None
+    input: Optional[bytes] = None
+    parsed_input: Optional[FunctionCall] = None
 
 
 class TxUtxo(BaseModel):

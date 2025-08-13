@@ -16,9 +16,13 @@ from .models import (
     Address,
     AddressTxUtxo,
     FiatValue,
+    FunctionCall,
+    FunctionDefinition,
     LabeledItemRef,
     Links,
     LinkUtxo,
+    Parameter,
+    ParameterDetails,
     RatesResponse,
     TxAccount,
     TxSummary,
@@ -334,6 +338,29 @@ def _get_type_account(row: Dict[str, Any]) -> str:
         raise Exception(f"Unknown transaction type {row}")
 
 
+def function_call_from_row(
+    parsed_input: Optional[Dict[str, Any]],
+) -> Optional[FunctionCall]:
+    if parsed_input is None:
+        return None
+    return FunctionCall(
+        parameter_details=[
+            ParameterDetails(name=v["name"], type=v["type"], value=v["value"])
+            for v in parsed_input.get("inputs", [])
+        ],
+        parameter_values=parsed_input.get("parameters", {}),
+        function_definition=FunctionDefinition(
+            name=parsed_input.get("function_def", {}).get("name", "unknown"),
+            selector=parsed_input.get("selector", "unknown"),
+            arguments=[
+                Parameter(name=i["name"], type=i["type"])
+                for i in parsed_input.get("function_def", {}).get("inputs", [])
+            ],
+            tags=parsed_input.get("function_def", {}).get("tags", []),
+        ),
+    )
+
+
 async def _tx_account_from_row(
     currency: str,
     row: Dict[str, Any],
@@ -348,6 +375,8 @@ async def _tx_account_from_row(
     is_external = row["type"] == "external"
     if row["type"] == "erc20":
         is_external = None
+
+    input = row.get("input", None)
 
     return TxAccount(
         currency=currency if "token_tx_id" not in row else row["currency"].lower(),
@@ -365,6 +394,8 @@ async def _tx_account_from_row(
         if "token_tx_id" not in row
         else convert_token_value(row["value"], r, token_config[row["currency"]]),
         is_external=is_external,
+        input=input,
+        parsed_input=function_call_from_row(row.get("parsed_input", None)),
     )
 
 
