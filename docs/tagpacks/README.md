@@ -73,7 +73,7 @@ For a specific tag string, actor suggestions can be listed by calling
 
 and if desired, the number of results can be restricted by adding the ``--max`` parameter
 
-    tagpack-tool tagpack suggest-actors --max 1 <my_tag>
+    graphsense-cli tagpack-tool tagpack suggest-actors --max 1 <my_tag>
 
 ### Interactive TagPack update
 
@@ -95,7 +95,7 @@ File by file, for each label, the tagpack-tool will suggest suitable actors if a
 
 The ``--max`` option is available again to limit the number of candidate suggestions:
 
-    tagpack-tool tagpack add_actors --max 1 path/to/tagpacks
+    graphsense-cli tagpack-tool tagpack add_actors --max 1 path/to/tagpacks
 
 If any actors have been selected, an updated TagPack is written that contains the users' selected actors:
 
@@ -189,7 +189,7 @@ If a config.yaml already exists, it will not be replaced.
 
 Show the contents of the config file:
 
-   graphsense-cli  tagpack-tool config -v
+   graphsense-cli tagpack-tool config -v
 
 To use a specific config file pass the file's location:
 
