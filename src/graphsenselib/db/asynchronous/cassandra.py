@@ -3267,7 +3267,17 @@ class Cassandra:
 
                 addr_tx["from_address"] = trace["from_address"]
                 addr_tx["to_address"] = trace["to_address"]
-                addr_tx["type"] = "internal"
+                is_external = (
+                    trace["trace_address"] is None
+                    or trace["trace_address"].strip() == ""
+                )
+
+                # if they are the same, then we know it is external
+                if is_external:
+                    trace["type"] = "external"
+                else:
+                    trace["type"] = "internal"
+
                 addr_tx["contract_creation"] = trace["trace_type"] == "create"
                 addr_tx["input"] = trace["input"]
                 addr_tx["input_parsed"] = parse_function_call(
