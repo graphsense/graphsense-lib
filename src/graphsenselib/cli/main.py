@@ -17,14 +17,22 @@ from ..utils.console import console
 from ..utils.logging import configure_logging
 from ..utils.slack import ClickSlackErrorNotificationContext
 from ..watch.cli import watch_cli
-from ..tagpack.cli import tagpacktool_cli
-from ..tagstore.cli import tagstore_cli
+
+logger = logging.getLogger(__name__)
+
+try:
+    from ..tagpack.cli import tagpacktool_cli
+    from ..tagstore.cli import tagstore_cli
+
+    tagpacktool_cli_available = True
+
+except ImportError:
+    logger.debug("Tagpack tool or tagstore CLI not available.")
+    tagpacktool_cli_available = False
 
 __author__ = "iknaio"
 __copyright__ = "iknaio"
 __license__ = "MIT"
-
-logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -41,20 +49,21 @@ def version_cmd():
 
 @click.command(
     cls=click.CommandCollection,
-    sources=[
-        rates_cli,
-        schema_cli,
-        ingest_cli,
-        db_cli,
-        deltaupdate_cli,
-        config_cli,
-        convert_cli,
-        monitoring_cli,
-        watch_cli,
-        tagpacktool_cli,
-        tagstore_cli,
-        version,
-    ],
+    sources=(
+        [
+            rates_cli,
+            schema_cli,
+            ingest_cli,
+            db_cli,
+            deltaupdate_cli,
+            config_cli,
+            convert_cli,
+            monitoring_cli,
+            watch_cli,
+            version,
+        ]
+        + ([tagpacktool_cli, tagstore_cli] if tagpacktool_cli_available else [])
+    ),
     epilog="GraphSense - https://graphsense.github.io/",
 )
 @click.option(

@@ -9,7 +9,6 @@ from multiprocessing import Pool, cpu_count
 import click
 import pandas as pd
 import yaml
-from anytree import RenderTree
 from colorama import init
 from git import Repo
 from tabulate import tabulate
@@ -1004,6 +1003,8 @@ def list_taxonomies(config):
 
 
 def show_taxonomy_concepts(config, taxonomy, tree, verbose):
+    from anytree import RenderTree
+
     if "taxonomies" not in config:
         print_line("No taxonomies configured", "fail")
         return
