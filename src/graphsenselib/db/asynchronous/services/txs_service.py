@@ -16,13 +16,24 @@ from graphsenselib.utils.rest_utils import is_eth_like
 
 from .common import std_tx_from_row
 from .models import (
-    ExternalConversions,
+    ExternalConversion,
     TxAccount,
     TxRef,
     TxUtxo,
     TxValue,
 )
 from .rates_service import RatesService
+
+
+def is_supported_asset(asset_address: str, token_config: Dict[str, Any]) -> bool:
+    """
+    Check if the asset address is supported based on the token configuration.
+    """
+    supported_tokens = {x["token_address"].hex() for x in token_config.values()}
+
+    return (
+        strip_0x(asset_address.lower()) in supported_tokens or asset_address == "native"
+    )
 
 
 class DatabaseProtocol(Protocol):
@@ -265,8 +276,10 @@ class TxsService:
 
     def _conversion_from_external_swap(
         self, network: str, swap: ExternalSwap
-    ) -> ExternalConversions:
-        return ExternalConversions(
+    ) -> ExternalConversion:
+        token_config = self.db.get_token_configuration(network)
+
+        return ExternalConversion(
             conversion_type="dex_swap",
             from_address=swap.fromAddress,
             to_address=swap.toAddress,
@@ -278,10 +291,15 @@ class TxsService:
             to_asset_transfer=swap.toPayment,
             from_network=network,
             to_network=network,
+            from_is_supported_asset=is_supported_asset(swap.fromAsset, token_config),
+            to_is_supported_asset=is_supported_asset(swap.toAsset, token_config),
         )
 
-    def _conversion_from_bridge(self, bridge: Bridge) -> ExternalConversions:
-        return ExternalConversions(
+    def _conversion_from_bridge(self, bridge: Bridge) -> ExternalConversion:
+        token_config_from = self.db.get_token_configuration(bridge.fromNetwork)
+        token_config_to = self.db.get_token_configuration(bridge.toNetwork)
+
+        return ExternalConversion(
             conversion_type="bridge",
             from_address=bridge.fromAddress,
             to_address=bridge.toAddress,
@@ -293,11 +311,15 @@ class TxsService:
             to_asset_transfer=bridge.toPayment,
             from_network=bridge.fromNetwork,
             to_network=bridge.toNetwork,
+            from_is_supported_asset=is_supported_asset(
+                bridge.fromAsset, token_config_from
+            ),
+            to_is_supported_asset=is_supported_asset(bridge.toAsset, token_config_to),
         )
 
     async def get_conversions(
         self, currency: str, identifier: str, include_bridging_actions: bool = False
-    ) -> List[ExternalConversions]:
+    ) -> List[ExternalConversion]:
         """Extract swap information from a single transaction hash."""
         if not is_eth_like(currency):
             raise BadUserInputException(
