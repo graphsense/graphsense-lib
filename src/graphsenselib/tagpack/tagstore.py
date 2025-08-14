@@ -106,10 +106,6 @@ def auto_commit(function):
     return wrapper
 
 
-def _private_condition(show_private: bool, table: str):
-    return f"and {table}.acl_group='public'" if not show_private else ""
-
-
 def retry_on_deadlock(times=1):
     def innerfun(function):
         @wraps(function)
