@@ -342,6 +342,8 @@ class ExternalConversions(BaseModel):
     to_asset_transfer: str
     from_network: str
     to_network: str
+    from_is_supported_asset: bool
+    to_is_supported_asset: bool
 
 
 class LinkUtxo(BaseModel):
