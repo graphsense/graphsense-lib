@@ -700,7 +700,7 @@ class ThorchainTransactionMatcher:
                     assert value_thorchain_log == value_transfer_log, (
                         f"Value mismatch: {value_thorchain_log} != {value_transfer_log}"
                     )
-
+                    asset = transfer["address"].lower()
                     toPayment = SubTransactionIdentifier(
                         tx_hash=transfer_tx["tx_hash"].hex().lower(),
                         tx_type=SubTransactionType.ERC20,
@@ -709,7 +709,7 @@ class ThorchainTransactionMatcher:
                     matched.append(
                         BridgeReceiveTransfer(
                             toAddress=receive_reference.toAddress,
-                            toAsset="native",
+                            toAsset=asset,
                             toAmount=int(value_transfer_log),
                             toPayment=toPayment,
                             toNetwork=receive_reference.toNetwork,
