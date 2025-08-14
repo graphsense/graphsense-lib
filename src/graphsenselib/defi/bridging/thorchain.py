@@ -692,17 +692,19 @@ class ThorchainTransactionMatcher:
                     assert len(transfers) == 1, (
                         f"Expected 1 transfer, got {len(transfers)}"
                     )
-                    transfer = transfers[0]
+                    transfer = transfers[0][0]
+                    transfer_tx = transfers[0][1]
 
                     value_transfer_log = transfer["parameters"]["value"]
+
                     assert value_thorchain_log == value_transfer_log, (
                         f"Value mismatch: {value_thorchain_log} != {value_transfer_log}"
                     )
 
                     toPayment = SubTransactionIdentifier(
-                        tx_hash=transfer["tx_hash"].lower(),
+                        tx_hash=transfer_tx["tx_hash"].hex().lower(),
                         tx_type=SubTransactionType.ERC20,
-                        sub_index=transfer["log_index"],
+                        sub_index=transfer_tx["log_index"],
                     ).to_string()
                     matched.append(
                         BridgeReceiveTransfer(
