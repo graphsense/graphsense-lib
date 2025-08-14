@@ -16,7 +16,7 @@ from graphsenselib.utils.rest_utils import is_eth_like
 
 from .common import std_tx_from_row
 from .models import (
-    ExternalConversions,
+    ExternalConversion,
     TxAccount,
     TxRef,
     TxUtxo,
@@ -276,10 +276,10 @@ class TxsService:
 
     def _conversion_from_external_swap(
         self, network: str, swap: ExternalSwap
-    ) -> ExternalConversions:
+    ) -> ExternalConversion:
         token_config = self.db.get_token_configuration(network)
 
-        return ExternalConversions(
+        return ExternalConversion(
             conversion_type="dex_swap",
             from_address=swap.fromAddress,
             to_address=swap.toAddress,
@@ -295,11 +295,11 @@ class TxsService:
             to_is_supported_asset=is_supported_asset(swap.toAsset, token_config),
         )
 
-    def _conversion_from_bridge(self, bridge: Bridge) -> ExternalConversions:
+    def _conversion_from_bridge(self, bridge: Bridge) -> ExternalConversion:
         token_config_from = self.db.get_token_configuration(bridge.fromNetwork)
         token_config_to = self.db.get_token_configuration(bridge.toNetwork)
 
-        return ExternalConversions(
+        return ExternalConversion(
             conversion_type="bridge",
             from_address=bridge.fromAddress,
             to_address=bridge.toAddress,
@@ -319,7 +319,7 @@ class TxsService:
 
     async def get_conversions(
         self, currency: str, identifier: str, include_bridging_actions: bool = False
-    ) -> List[ExternalConversions]:
+    ) -> List[ExternalConversion]:
         """Extract swap information from a single transaction hash."""
         if not is_eth_like(currency):
             raise BadUserInputException(
