@@ -549,7 +549,7 @@ class Cassandra:
             )
 
             exec_prof = ExecutionProfile(
-                request_timeout=60000,
+                request_timeout=60,
                 row_factory=dict_factory,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 consistency_level=cl,
@@ -566,7 +566,7 @@ class Cassandra:
                 self.config["nodes"],
                 port=int(self.config.get("port", 9042)),
                 protocol_version=5,
-                connect_timeout=600000,
+                connect_timeout=60,
                 execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
                 auth_provider=auth_provider,
             )
