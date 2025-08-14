@@ -296,7 +296,7 @@ class TxsService:
         )
 
     async def get_conversions(
-        self, currency: str, identifier: str
+        self, currency: str, identifier: str, include_bridging_actions: bool = False
     ) -> List[ExternalConversions]:
         """Extract swap information from a single transaction hash."""
         if not is_eth_like(currency):
@@ -320,7 +320,7 @@ class TxsService:
             raise TransactionNotFoundException(currency, tx_hash)
 
         conversions_gslib = await get_conversions_from_db(
-            currency, self.db, tx, include_bridging_actions=False
+            currency, self.db, tx, include_bridging_actions=include_bridging_actions
         )
 
         # if it is a raw tx hash without a subtx, dont filter, otherwise
