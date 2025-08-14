@@ -9,7 +9,7 @@ from multiprocessing import Pool, cpu_count
 import click
 import pandas as pd
 import yaml
-from colorama import init
+from colorama import init as colorama_init
 from git import Repo
 from tabulate import tabulate
 from yaml.parser import ParserError, ScannerError
@@ -40,15 +40,14 @@ from graphsenselib.tagpack.constants import (
     DEFAULT_CONFIG,
     DEFAULT_SCHEMA,
 )
-from click.testing import CliRunner
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
 
-init()
+colorama_init()
 
 
 def _load_config(cfile):
-    if not os.path.isfile(cfile):
+    if cfile is None or not os.path.isfile(cfile):
         return DEFAULT_CONFIG
     return yaml.safe_load(open(cfile, "r"))
 
@@ -185,8 +184,26 @@ def sync(
 
         print_line("Init db and add taxonomies ...")
 
-        runner = CliRunner()
-        runner.invoke(tagstore, ["init", "--db-url", url], catch_exceptions=False)
+        from graphsenselib.tagstore.cli import (
+            tagstore as tagstore_tool,
+            init as init_tagstore_tool,
+        )
+
+        click_ctx_tagstore = click.Context(tagstore_tool)
+
+        click_ctx_actorpack = click.Context(actorpack)
+        click_ctx_actorpack.ensure_object(dict)
+
+        click_ctx_tagpack = click.Context(tagpack)
+        click_ctx_tagpack.ensure_object(dict)
+
+        click_ctx_tagpacktool_tagstore = click.Context(tagstore)
+        click_ctx_tagpacktool_tagstore.ensure_object(dict)
+
+        click_ctx_tagpacktool_quality = click.Context(quality)
+        click_ctx_tagpacktool_quality.ensure_object(dict)
+
+        click_ctx_tagstore.invoke(init_tagstore_tool, db_url=url)
 
         extra_option = "--force" if force else None
         extra_option = "--add-new" if extra_option is None else extra_option
@@ -205,10 +222,8 @@ def sync(
 
                 print("Inserting actorpacks ...")
 
-                runner.invoke(
-                    cli,
-                    ["actorpack", "insert", temp_dir_tt, "-u", url],
-                    catch_exceptions=False,
+                click_ctx_actorpack.invoke(
+                    insert_actorpack_cli, path=temp_dir_tt, url=url
                 )
 
                 print("Inserting tagpacks ...")
@@ -221,60 +236,47 @@ def sync(
                 if public:
                     print("Caution: This repo is imported as public.")
 
-                args = strip_empty(
-                    [
-                        "tagpack",
-                        "insert",
-                        extra_option,
-                        "--public" if public else None,
-                        temp_dir_tt,
-                        "-u",
-                        url,
-                        "--n-workers",
-                        str(n_workers),
-                        "--no-validation" if no_validation else None,
-                        (
-                            f"--tag-type-default={tag_type_default}"
-                            if tag_type_default
-                            else None
-                        ),
-                    ]
-                )
-                runner.invoke(cli, args, catch_exceptions=False)
+                args = {
+                    "path": temp_dir_tt,
+                    "url": url,
+                    "public": public,
+                    "force": force,
+                    "n_workers": n_workers,
+                    "no_validation": no_validation,
+                    "add_new": not force,
+                    "tag_type_default": tag_type_default,
+                }
+
+                if tag_type_default is None:
+                    args.pop("tag_type_default")
+
+                click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
 
         print("Removing duplicates ...")
-        runner.invoke(
-            tagstore, ["remove-duplicates", "-u", url], catch_exceptions=False
-        )
+        click_ctx_tagstore.invoke(remove_duplicates, url=url)
 
         print("Refreshing db views ...")
-        runner.invoke(tagstore, ["refresh-views", "-u", url], catch_exceptions=False)
+        click_ctx_tagstore.invoke(refresh_views, url=url)
 
         if not dont_update_quality_metrics:
             print("Calc Quality metrics ...")
-            runner.invoke(
-                cli, ["quality", "calculate", "-u", url], catch_exceptions=False
-            )
+            calc_quality_measures(url, DEFAULT_SCHEMA)
+            # click_ctx_tagpacktool_quality.invoke(calculate_quality, url=url)
 
         if run_cluster_mapping_with_env or rerun_cluster_mapping_with_env:
             print("Import cluster mappings ...")
-            runner.invoke(
-                tagstore,
-                [
-                    "insert_cluster_mappings",
-                    "-u",
-                    url,
-                    "--use-gs-lib-config-env",
-                    run_cluster_mapping_with_env or rerun_cluster_mapping_with_env,
-                    "--update" if rerun_cluster_mapping_with_env else "",
-                ],
-                catch_exceptions=False,
+
+            click_ctx_tagpacktool_tagstore.invoke(
+                insert_cluster_mappings,
+                url=url,
+                use_gs_lib_config_env=(
+                    run_cluster_mapping_with_env or rerun_cluster_mapping_with_env
+                ),
+                update=rerun_cluster_mapping_with_env,
             )
 
             print("Refreshing db views ...")
-            runner.invoke(
-                tagstore, ["refresh-views", "-u", url], catch_exceptions=False
-            )
+            click_ctx_tagstore.invoke(refresh_views, url=url)
 
         print_success("Your tagstore is now up-to-date again.")
 
@@ -542,7 +544,7 @@ def tagpack():
     pass
 
 
-@tagpack.command()
+@tagpack.command("validate")
 @click.argument("path", default=os.getcwd())
 @click.option(
     "--no-address-validation",
@@ -550,13 +552,13 @@ def tagpack():
     help="Disables checksum validation of addresses",
 )
 @click.pass_context
-def validate(ctx, path, no_address_validation):
+def validate_tagpack_cli(ctx, path, no_address_validation):
     """validate TagPacks"""
-    config = _load_config(ctx.obj["config"])
+    config = _load_config(ctx.obj.get("config"))
     validate_tagpack(config, path, no_address_validation)
 
 
-@tagpack.command()
+@tagpack.command("list")
 @click.option(
     "--schema", default=DEFAULT_SCHEMA, help="PostgreSQL schema for tagpack tables"
 )
@@ -567,7 +569,7 @@ def validate(ctx, path, no_address_validation):
     "--network", default="", help="List Tags of a specific crypto-currency network"
 )
 @click.option("--csv", is_flag=True, help="Show csv output.")
-def list(schema, url, unique, category, network, csv):
+def list_tagpack_cli(schema, url, unique, category, network, csv):
     """list Tags"""
     def_url, url_msg = read_url_from_env()
     if not url:
@@ -579,7 +581,7 @@ def list(schema, url, unique, category, network, csv):
     list_tags(url, schema, unique, category, network, csv)
 
 
-@tagpack.command()
+@tagpack.command("insert")
 @click.argument("path", default=os.getcwd())
 @click.option(
     "--schema", default=DEFAULT_SCHEMA, help="PostgreSQL schema for tagpack tables"
@@ -627,7 +629,7 @@ def list(schema, url, unique, category, network, csv):
     help="Default value for tag-type if missing in the tagpack. Default is legacy value actor.",
 )
 @click.pass_context
-def insert(
+def insert_tagpack_cli(
     ctx,
     path,
     schema,
@@ -650,6 +652,7 @@ def insert(
         print_warn(url_msg)
         click.echo("No postgresql URL connection was provided. Exiting.")
         sys.exit(1)
+
     insert_tagpack(
         url,
         schema,
@@ -663,7 +666,7 @@ def insert(
         n_workers,
         no_validation,
         tag_type_default,
-        ctx.obj["config"],
+        ctx.obj.get("config"),
     )
 
 
@@ -893,16 +896,16 @@ def actorpack():
     pass
 
 
-@actorpack.command()
+@actorpack.command("validate")
 @click.argument("path", default=os.getcwd())
 @click.pass_context
-def validate(ctx, path):  # noqa: F811
+def validate_actorpack_cli(ctx, path):  # noqa: F811
     """validate ActorPacks"""
-    config = _load_config(ctx.obj["config"])
+    config = _load_config(ctx.obj.get("config"))
     validate_actorpack(config, path)
 
 
-@actorpack.command()
+@actorpack.command("insert")
 @click.argument("path", default=os.getcwd())
 @click.option(
     "--schema", default=DEFAULT_SCHEMA, help="PostgreSQL schema for actorpack tables"
@@ -928,7 +931,9 @@ def validate(ctx, path):  # noqa: F811
 )
 @click.option("--no-git", is_flag=True, help="Disables check for local git repository")
 @click.pass_context
-def insert(ctx, path, schema, url, batch_size, force, add_new, no_strict_check, no_git):  # noqa: F811
+def insert_actorpack_cli(
+    ctx, path, schema, url, batch_size, force, add_new, no_strict_check, no_git
+):  # noqa: F811
     """insert ActorPacks"""
     def_url, url_msg = read_url_from_env()
     if not url:
@@ -946,18 +951,18 @@ def insert(ctx, path, schema, url, batch_size, force, add_new, no_strict_check, 
         add_new,
         no_strict_check,
         no_git,
-        ctx.obj["config"],
+        ctx.obj.get("config"),
     )
 
 
-@actorpack.command()
+@actorpack.command("list")
 @click.option(
     "--schema", default=DEFAULT_SCHEMA, help="PostgreSQL schema for tagpack tables"
 )
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
 @click.option("--category", default="", help="List Actors of a specific category")
 @click.option("--csv", is_flag=True, help="Show csv output.")
-def list(schema, url, category, csv):  # noqa: F811
+def list_actorpack_cli(schema, url, category, csv):  # noqa: F811
     """list Actors"""
     def_url, url_msg = read_url_from_env()
     if not url:
@@ -1049,15 +1054,15 @@ def taxonomy(ctx):
     """taxonomy commands"""
     # Default behavior when no subcommand is provided
     if ctx.invoked_subcommand is None:
-        config = _load_config(ctx.obj["config"])
+        config = _load_config(ctx.obj.get("config"))
         list_taxonomies(config)
 
 
-@taxonomy.command()
+@taxonomy.command("list")
 @click.pass_context
-def list(ctx):  # noqa: F811
+def list_taxonomies_cli(ctx):  # noqa: F811
     """list taxonomy concepts"""
-    config = _load_config(ctx.obj["config"])
+    config = _load_config(ctx.obj.get("config"))
     list_taxonomies(config)
 
 
@@ -1071,11 +1076,11 @@ def list(ctx):  # noqa: F811
 @click.pass_context
 def show(ctx, taxonomy_key, verbose, tree):
     """show taxonomy concepts"""
-    config = _load_config(ctx.obj["config"])
+    config = _load_config(ctx.obj.get("config"))
     show_taxonomy_concepts(config, taxonomy_key, tree, verbose)
 
 
-@taxonomy.command()
+@taxonomy.command("insert")
 @click.argument(
     "taxonomy_key",
     type=click.Choice(["abuse", "entity", "confidence", "country", "concept"]),
@@ -1085,7 +1090,7 @@ def show(ctx, taxonomy_key, verbose, tree):
     "--schema", default=DEFAULT_SCHEMA, help="PostgreSQL schema for taxonomy tables"
 )
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
-def insert(taxonomy_key, schema, url):  # noqa: F811
+def insert_taxonomy_cli(taxonomy_key, schema, url):  # noqa: F811
     """insert taxonomy into GraphSense"""
     insert_taxonomy()
 
@@ -1647,9 +1652,9 @@ def quality(ctx, schema, url, network):
         show_quality_measures(url, schema, network)
 
 
-@quality.command()
+@quality.command("calculate")
 @click.pass_context
-def calculate(ctx):
+def calculate_quality(ctx):
     """calculate quality measures for all tags in the DB"""
     calc_quality_measures(ctx.obj["url"], ctx.obj["schema"])
 
