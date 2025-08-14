@@ -3274,9 +3274,9 @@ class Cassandra:
 
                 # if they are the same, then we know it is external
                 if is_external:
-                    trace["type"] = "external"
+                    addr_tx["type"] = "external"
                 else:
-                    trace["type"] = "internal"
+                    addr_tx["type"] = "internal"
 
                 addr_tx["contract_creation"] = trace["trace_type"] == "create"
                 addr_tx["input"] = trace["input"]
