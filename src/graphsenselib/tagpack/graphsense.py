@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa: T201
-import hashlib
 from typing import Optional
 
-import base58
 import numpy as np
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
@@ -14,7 +12,8 @@ from pandas import pandas as pd
 
 from graphsenselib.tagpack.cmd_utils import print_warn
 
-TRON_ADDRESS_PREFIX = b"\x41"
+from graphsenselib.utils.tron import tron_address_to_evm, evm_to_tron_address_string
+from graphsenselib.utils.rest_utils import is_eth_like
 
 
 def try_convert_tron_to_eth(x):
@@ -56,71 +55,6 @@ def eth_address_from_hex(address):
         print_warn(f"can't convert to hex {address}; {e}")
         return None
     return b
-
-
-def sha256(bts):
-    m = hashlib.sha256()
-    m.update(bts)
-    return m.digest()
-
-
-def get_tron_address_checksum(addr_bytes_with_prefix: bytes):
-    h0 = sha256(addr_bytes_with_prefix)
-    h1 = sha256(h0)
-    checkSum = h1[0:4]
-    return checkSum
-
-
-def is_eth_like(network: str) -> bool:
-    return network.upper() == "ETH" or network.upper() == "TRX"
-
-
-def add_tron_prefix(address_bytes, prefix: bytes = TRON_ADDRESS_PREFIX):
-    if len(address_bytes) == 20:
-        return prefix + address_bytes
-    return address_bytes
-
-
-def evm_to_tron_address(
-    evm_address_hex: str, prefix: bytes = TRON_ADDRESS_PREFIX
-) -> bytes:
-    # inspired by
-    # https://github.com/tronprotocol/tronweb
-    # /blob/d8c0d48847c0a2dd1c92f4a93f1e01b31c33dc94/src/utils/crypto.js#L14
-    a = add_tron_prefix(eth_address_from_hex(evm_address_hex), prefix)
-    checkSum = get_tron_address_checksum(a)
-    taddress = a + checkSum
-    return base58.b58encode(taddress)
-
-
-def evm_to_tron_address_string(
-    evm_address_hex: str, prefix: bytes = TRON_ADDRESS_PREFIX
-) -> str:
-    return evm_to_tron_address(evm_address_hex, prefix).decode("utf-8")
-
-
-def strip_tron_prefix(address_bytes, prefix: bytes = TRON_ADDRESS_PREFIX):
-    if len(address_bytes) > len(prefix) and address_bytes.startswith(prefix):
-        return address_bytes[len(prefix) :]
-    return address_bytes
-
-
-def tron_address_to_evm(taddress_str: str, validate: bool = True) -> bytes:
-    ab = base58.b58decode(taddress_str)
-    checkSum = ab[-4:]
-    a = ab[:-4]
-
-    # recompute checksum
-    if validate:
-        checkSumComputed = get_tron_address_checksum(a) if validate else None
-
-    if not validate or all(a == b for a, b in zip(checkSum, checkSumComputed)):
-        if not validate and len(ab) < 21:
-            return strip_tron_prefix(ab)
-        else:
-            return strip_tron_prefix(a)
-    else:
-        raise ValueError(f"Invalid checksum on address {taddress_str}")
 
 
 _CONCURRENCY = 100
