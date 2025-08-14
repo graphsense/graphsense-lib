@@ -330,7 +330,7 @@ class Taxonomy(BaseModel):
     uri: str
 
 
-class ExternalConversions(BaseModel):
+class ExternalConversion(BaseModel):
     conversion_type: str
     from_address: str
     to_address: str
