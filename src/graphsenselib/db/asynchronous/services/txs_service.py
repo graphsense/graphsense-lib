@@ -7,7 +7,7 @@ from graphsenselib.errors import (
     NotFoundException,
     TransactionNotFoundException,
 )
-from graphsenselib.utils.accountmodel import hex_to_bytes
+from graphsenselib.utils.accountmodel import hex_to_bytes, strip_0x
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
@@ -331,8 +331,9 @@ class TxsService:
             filtered_conversions = [
                 c
                 for c in conversions_gslib
-                if c.fromPayment.lower() == tx_obj.to_string().lower()
-                or c.toPayment.lower() == tx_obj.to_string().lower()
+                if strip_0x(c.fromPayment.lower())
+                == strip_0x(tx_obj.to_string()).lower()
+                or strip_0x(c.toPayment.lower()) == strip_0x(tx_obj.to_string()).lower()
             ]
 
         conversions = []
