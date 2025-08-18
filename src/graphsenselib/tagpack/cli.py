@@ -272,7 +272,7 @@ def sync(
                 use_gs_lib_config_env=(
                     run_cluster_mapping_with_env or rerun_cluster_mapping_with_env
                 ),
-                update=rerun_cluster_mapping_with_env,
+                update=rerun_cluster_mapping_with_env is not None,
             )
 
             print("Refreshing db views ...")
@@ -1202,10 +1202,10 @@ def insert_cluster_mapping(
     print("Importing with mapping config: ", ks_mapping)
     networks = ks_mapping.keys()
     gs = GraphSense(
-        db_nodes,
+        args.db_nodes,
         ks_mapping,
-        username=cassandra_username,
-        password=cassandra_password,
+        username=args.cassandra_username,
+        password=args.cassandra_password,
     )
 
     workpackages = []
