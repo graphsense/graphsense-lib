@@ -18,17 +18,17 @@ dev: install-dev
 	 uv run pre-commit install
 
 test: install-dev
-	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
+	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
 
 test-ci:
-	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error
+	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
 
 test-with-base-dependencies-ci:
-	uv run --exact --no-dev --group testing --extra conversions pytest  -x -rx -vv -m "not slow" --cov=src --capture=no
+	uv run --exact --no-dev --group testing --extra conversions pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
 
 
 test-all:
-	uv run --all-groups  pytest --cov=src -W error
+	uv run --all-groups  pytest --cov=src -W error --cov-report term-missing
 
 install-dev:
 	uv sync --all-packages --force-reinstall --all-extras
