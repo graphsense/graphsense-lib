@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("pyyaml", reason="PyYAML is required for tagpack tests")
+pytest.importorskip("yaml", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack.cli import _load_taxonomies
 
@@ -45,3 +45,24 @@ def test_load_offline_taxonomies_yaml(all_offline_tax_config):
     # assert len(data["abuse"].concept_ids) == 13
     assert len(data["confidence"].concept_ids) == 14
     assert len(data["country"].concept_ids) == 249
+
+
+def test_mockargs_are_pickelable():
+    """Test that mockargs are picklable."""
+    from graphsenselib.tagpack.cli import ClusterMappingArgs
+    import pickle
+
+    instance = ClusterMappingArgs(
+        url="test",
+        schema="test",
+        db_nodes="test",
+        cassandra_username="test",
+        cassandra_password="test",
+        ks_file="test",
+        use_gs_lib_config_env="test",
+        update="test",
+    )
+
+    pickled_instance = pickle.dumps(instance)
+
+    assert isinstance(pickled_instance, bytes)

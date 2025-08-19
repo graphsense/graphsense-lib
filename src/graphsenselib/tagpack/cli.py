@@ -890,6 +890,29 @@ def list_address_actors(url, schema, network, csv):
         print_line("Operation failed", "fail")
 
 
+# Move this to the top level of the module
+class ClusterMappingArgs:
+    def __init__(
+        self,
+        url,
+        schema,
+        db_nodes,
+        cassandra_username,
+        cassandra_password,
+        ks_file,
+        use_gs_lib_config_env,
+        update,
+    ):
+        self.url = url
+        self.schema = schema
+        self.db_nodes = db_nodes
+        self.cassandra_username = cassandra_username
+        self.cassandra_password = cassandra_password
+        self.ks_file = ks_file
+        self.use_gs_lib_config_env = use_gs_lib_config_env
+        self.update = update
+
+
 @cli.group("actorpack")
 def actorpack():
     """commands regarding actor information"""
@@ -1181,19 +1204,17 @@ def insert_cluster_mapping(
     update,
     batch_size=5_000,
 ):
-    # Create a mock args object for compatibility with existing functions
-    class MockArgs:
-        def __init__(self):
-            self.url = url
-            self.schema = schema
-            self.db_nodes = db_nodes
-            self.cassandra_username = cassandra_username
-            self.cassandra_password = cassandra_password
-            self.ks_file = ks_file
-            self.use_gs_lib_config_env = use_gs_lib_config_env
-            self.update = update
-
-    args = MockArgs()
+    # Use the module-level class instead
+    args = ClusterMappingArgs(
+        url,
+        schema,
+        db_nodes,
+        cassandra_username,
+        cassandra_password,
+        ks_file,
+        use_gs_lib_config_env,
+        update,
+    )
 
     t0 = time.time()
     tagstore = TagStore(url, schema)
