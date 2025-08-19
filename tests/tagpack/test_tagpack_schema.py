@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-pytest.importorskip("pyyaml", reason="PyYAML is required for tagpack tests")
+pytest.importorskip("yaml", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack.tagpack_schema import TagPackSchema, ValidationError
 from graphsenselib.tagpack.taxonomy import Taxonomy
