@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import pytest
 
-pytest.importorskip("yaml", reason="PyYAML is required for tagpack tests")
+pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack.tagstore import _perform_address_modifications, TagStore
 

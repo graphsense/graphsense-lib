@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("yaml", reason="PyYAML is required for tagpack tests")
+pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack.cli import _load_taxonomies
 
