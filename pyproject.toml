@@ -68,7 +68,7 @@ Download = "https://github.com/graphsense"
 [dependency-groups]
 # Core testing dependencies
 testing = [
-    "setuptools>=80.8.0, <81",
+    "setuptools>=80.0.0, <80.9",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "testcontainers[cassandra]>=4.9.1",
@@ -80,7 +80,7 @@ testing = [
 
 # Development dependencies
 dev = [
-    "setuptools>=80.8.0, <81",
+    "setuptools>=80.0.0, <80.9",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "ruff>=0.9.2",
