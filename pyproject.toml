@@ -165,9 +165,6 @@ exclude = [
 ]
 namespaces = true
 
-[options.packages.find]
-where = "src"
-exclude = "tests"
 
 [tool.pytest.ini_options]
 # Specify command line options as you would do when invoking pytest directly.
