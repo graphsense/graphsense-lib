@@ -172,9 +172,6 @@ namespaces = true
 # in order to write a coverage file that can be read by Jenkins.
 # CAUTION: --cov flags may prohibit setting breakpoints while debugging.
 # Comment those flags to avoid this pytest issue.
-addopts = """
---cov graphsenselib --cov-report term-missing
---verbose"""
 norecursedirs = [
     "dist",
     "build",
