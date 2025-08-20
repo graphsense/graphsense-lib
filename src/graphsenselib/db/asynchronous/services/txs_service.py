@@ -25,11 +25,16 @@ from .models import (
 from .rates_service import RatesService
 
 
-def is_supported_asset(asset_address: str, token_config: Dict[str, Any]) -> bool:
+def is_supported_asset(
+    asset_address: str, token_config: Optional[Dict[str, Any]]
+) -> bool:
     """
     Check if the asset address is supported based on the token configuration.
     """
-    supported_tokens = {x["token_address"].hex() for x in token_config.values()}
+    if token_config is None:
+        supported_tokens = set()
+    else:
+        supported_tokens = {x["token_address"].hex() for x in token_config.values()}
 
     return (
         strip_0x(asset_address.lower()) in supported_tokens or asset_address == "native"

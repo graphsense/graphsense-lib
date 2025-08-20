@@ -19,6 +19,7 @@ from ..config import get_reorg_backoff_blocks
 
 SUPPORTED = ["trx", "eth", "btc", "ltc", "bch", "zec"]
 
+
 # filesizes should be between 100 and 1000 MB and partitions > 1000MB
 # therefore we try to write files that are between 100 and 1000 MB and
 # partitions that are between 1000 and 10000 MB

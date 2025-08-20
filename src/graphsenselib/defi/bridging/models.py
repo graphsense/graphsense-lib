@@ -10,6 +10,7 @@ class BridgeStrategy(str, Enum):
     STARGATE = "stargate"
     THORCHAIN_SEND = "thorchain_send"
     THORCHAIN_RECEIVE = "thorchain_receive"
+    SYMBIOSIS = "symbiosis"
     UNKNOWN = "unknown"
 
 
