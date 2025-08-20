@@ -4,12 +4,17 @@ from graphsenselib.defi.bridging.thorchain import (
     get_full_bridges_from_thorchain_send,
     get_full_bridges_from_thorchain_receive,
 )
+from graphsenselib.defi.bridging.symbiosis import (
+    get_bridges_from_symbiosis_tx_hash,
+    get_bridges_from_symbiosis_decoded_logs,
+)
 from graphsenselib.datatypes.abi import decode_logs_dict
 from ..defi.swaps import get_swap_from_decoded_logs
 from graphsenselib.utils.logging import logger
 from graphsenselib.defi.bridging.models import Bridge, BridgeStrategy
 from graphsenselib.defi.swapping.models import ExternalSwap
 from graphsenselib.db.asynchronous.cassandra import Cassandra
+from graphsenselib.defi.models import Trace
 
 # todo What doesnt work yet:
 # Swaps that have a specified to address https://etherscan.io/tx/0x1f76090132cd8b58f7a4f8724141ca500ca65ed84d646aa200bb0dd6ec45503f
@@ -46,6 +51,8 @@ def get_bridge_strategy_from_decoded_logs(dlogs: list) -> BridgeStrategy:
                 return BridgeStrategy.THORCHAIN_SEND
             elif "TransferOut" in names:
                 return BridgeStrategy.THORCHAIN_RECEIVE
+        elif "symbiosis" in tags:
+            return BridgeStrategy.SYMBIOSIS
 
     return BridgeStrategy.UNKNOWN
 
@@ -78,16 +85,18 @@ async def get_conversions_from_db(
 
     conversions = []
 
-    swap_results = get_swap_from_decoded_logs(
-        decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
-    )
-    conversions += swap_results
+    tx_traces = Trace.dicts_to_normalized(network, tx_traces, tx)
 
     if include_bridging_actions:
         bridge_result = await get_bridges_from_decoded_logs(
             network, db, tx, decoded_log_data, tx_logs_raw_filtered, tx_traces
         )
         conversions += bridge_result
+
+    swap_results = get_swap_from_decoded_logs(
+        decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
+    )
+    conversions += swap_results
 
     return conversions
 
@@ -145,7 +154,7 @@ async def get_bridges_from_decoded_logs(
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
-    traces: List[Dict[str, Any]],
+    traces: List[Trace],
 ) -> List[Bridge]:
     """
     Extract bridging information from decoded logs.
@@ -196,6 +205,23 @@ async def get_bridges_from_decoded_logs(
                 bridges.append(bridge)
         else:
             bridges = []
+
+    elif strategy == BridgeStrategy.SYMBIOSIS:
+        bridges = await get_bridges_from_symbiosis_decoded_logs(
+            network, db, tx, dlogs, logs_raw, traces
+        )
+
+    # Try Symbiosis API as fallback even if no specific strategy detected
+    if bridges is None or len(bridges) == 0:
+        tx_hash = tx.get("tx_hash")
+        if tx_hash:
+            if isinstance(tx_hash, bytes):
+                tx_hash = tx_hash.hex()
+            symbiosis_bridges = await get_bridges_from_symbiosis_tx_hash(
+                network, db, tx_hash
+            )
+            if symbiosis_bridges:
+                bridges = symbiosis_bridges
 
     if bridges is None:
         return []

@@ -22,6 +22,7 @@ from graphsenselib.defi.swapping.models import (
     SwapStrategy,
     get_swap_strategy_from_decoded_logs,
 )
+from graphsenselib.defi.models import Trace
 
 
 @dataclass
@@ -49,7 +50,7 @@ class AmountInfo:
 def extract_asset_flows(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
-    traces: List[Dict[str, Any]],
+    traces: List[Trace],
 ) -> Tuple[List[AssetFlow], List[AssetFlow], List[AssetFlow], List[AssetFlow]]:
     """Extract asset flows from transfers, withdrawals, deposits and traces."""
 
@@ -102,19 +103,15 @@ def extract_asset_flows(
     ]
 
     # Extract traces
-    relevant_traces = [
-        trace
-        for trace in traces
-        if trace["call_type"] == "call" and trace["value"] != 0
-    ]
+    relevant_traces = [trace for trace in traces if trace.is_call and trace.value != 0]
     traces_asset_flows = [
         AssetFlow(
-            from_address="0x" + trace["from_address"].hex(),
-            to_address="0x" + trace["to_address"].hex(),
+            from_address=trace.from_address,
+            to_address=trace.to_address,
             asset=ETH_PLACEHOLDER_ADDRESS,
-            amount=trace["value"],
+            amount=trace.value,
             source_type="trace",
-            source_index=trace["trace_index"],
+            source_index=trace.trace_index,
         )
         for trace in relevant_traces
     ]
@@ -180,14 +177,16 @@ def create_payment_identifier(
 def get_swap_from_eulerian_path(
     all_asset_flows: List[AssetFlow],
     transfer_asset_flows: List[AssetFlow],
-    traces: List[Dict[str, Any]],
+    traces: List[Trace],
     logs_raw: List[Dict[str, Any]],
     version: str,
 ) -> ExternalSwap:
     """Extract swap information from eulerian path analysis."""
     trace0 = traces[0]
-    assert trace0["trace_address"] == ""
-    sender = ensure_0x_prefix(trace0["from_address"].hex())
+    assert (
+        trace0.trace_address == ""
+    )  # this means the trace is the first trace of the tx
+    sender = trace0.from_address
 
     # get all the amounts outgoing from the sender
     outgoing_amounts, incoming_amounts = get_asset_flows_of_address(
@@ -384,7 +383,7 @@ def visualize_graph(
 def handle_general_swap(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
-    traces: List[Dict[str, Any]],
+    traces: List[Trace],
     visualize: bool = False,
 ) -> Optional[ExternalSwap]:
     """Handle general swap detection using graph analysis."""
@@ -436,8 +435,10 @@ def handle_general_swap(
     tx_sender = None
     if traces:
         trace0 = traces[0]
-        if trace0["trace_address"] == "":
-            tx_sender = ensure_0x_prefix(trace0["from_address"].hex())
+        if trace0.trace_address is None:
+            return None
+        if trace0.trace_address == "":
+            tx_sender = trace0.from_address
 
     transfer_edges = [
         (flow.from_address, flow.to_address) for flow in transfer_asset_flows
@@ -512,7 +513,7 @@ def handle_general_swap(
 def get_swap_from_decoded_logs(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
-    traces: List[Dict[str, Any]],
+    traces: List[Trace],
     visualize: bool = False,
 ) -> List[ExternalSwap]:
     """

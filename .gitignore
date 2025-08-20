@@ -268,3 +268,4 @@ MANIFEST
 .venv*/
 .conda*/
 .python-version
+.claude/

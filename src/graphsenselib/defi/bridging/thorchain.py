@@ -18,6 +18,8 @@ from graphsenselib.utils.logging import logger
 from graphsenselib.utils.accountmodel import is_native_placeholder
 from graphsenselib.datatypes.abi import decode_logs_db, log_signatures
 from graphsenselib.db.asynchronous.cassandra import Cassandra
+from graphsenselib.defi.models import Trace
+
 
 UTXO_NETWORKS = ["btc", "bch", "ltc", "zec"]
 ACCOUNT_NETWORKS = ["eth", "trx"]
@@ -202,6 +204,8 @@ async def get_bridges_from_thorchain_send_from_tx_hash_account(
             network, block_number, tx_hash=tx_hash_bytes
         )
 
+        traces_set = Trace.dicts_to_normalized(network, traces_set, tx)
+
         dlogs_logs = decode_logs_db(logs_set, log_signatures_local=log_signatures)
         dlogs_filtered = [dlog for dlog, _ in dlogs_logs]
         logs_raw_filtered = [log for _, log in dlogs_logs]
@@ -218,7 +222,7 @@ def get_bridges_from_thorchain_send(
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
-    traces: List[Dict[str, Any]],
+    traces: List[Trace],
 ) -> Optional[Iterable[Tuple[BridgeSendTransfer, BridgeReceiveReference]]]:
     """
     # example tx 6d65123e246d752de3f39e0fdf5b788baad35a29b7e95b74c714e6c7c1ea61dd Bybit hack bridge to BTC
@@ -267,7 +271,7 @@ def get_bridges_from_thorchain_send(
     eth_transfers = [
         trace
         for trace in traces
-        if trace["value"] > 0 and from_hex(trace["from_address"]) == from_address
+        if trace.value > 0 and trace.from_address == from_address
     ]
 
     from_tx = tx["tx_hash"].hex()
@@ -304,8 +308,8 @@ def get_bridges_from_thorchain_send(
                 f"Expected exactly one ETH transfer from sender, got {len(eth_transfers)}"
             )
 
-        trace_index = eth_transfers[0]["trace_index"]
-        from_amount = eth_transfers[0]["value"]
+        trace_index = eth_transfers[0].trace_index
+        from_amount = eth_transfers[0].value
 
         from_payment = SubTransactionIdentifier(
             tx_hash=from_tx,
@@ -336,7 +340,7 @@ async def get_bridges_from_thorchain_receive(
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
-    traces: List[Dict[str, Any]],
+    traces: List[Trace],
 ) -> Optional[Iterable[Tuple[BridgeReceiveTransfer, BridgeSendReference]]]:
     """
     TODO: This doesnt work yet for BTC. Would need OP_RETURN data.
@@ -375,15 +379,15 @@ async def get_bridges_from_thorchain_receive(
         eth_transfers = [
             trace
             for trace in traces
-            if trace["value"] > 0 and from_hex(trace["to_address"]) == to_address
+            if trace.value > 0 and trace.to_address == to_address
         ]
         if len(eth_transfers) != 1:
             raise ValueError(
                 f"Expected exactly one ETH transfer, got {len(eth_transfers)}"
             )
 
-        trace_index = eth_transfers[0]["trace_index"]
-        to_amount = eth_transfers[0]["value"]
+        trace_index = eth_transfers[0].trace_index
+        to_amount = eth_transfers[0].value
 
         to_payment = SubTransactionIdentifier(
             tx_hash=tx_hash,

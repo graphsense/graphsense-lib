@@ -570,6 +570,33 @@ log_signatures = {
             "tags": ["0x", "exchange", "fill", "swap"],
         }
     ],
+    "0xaeef64b7687b985665b6620c7fa271b6f051a3fbe2bfc366fb9c964602eb6d26": [  # you find this at the receiving side of the bridge
+        {
+            "name": "BurnCompleted",
+            "inputs": [
+                {"name": "id", "type": "bytes32", "indexed": True},
+                {"name": "crossChainID", "type": "bytes32", "indexed": True},
+                {"name": "to", "type": "address", "indexed": True},
+                {"name": "amount", "type": "uint256", "indexed": False},
+                {"name": "bridgingFee", "type": "uint256", "indexed": False},
+                {"name": "token", "type": "address", "indexed": False},
+            ],
+            "tags": ["symbiosis", "bridging", "receive"],
+        }
+    ],
+    "0x532dbb6d061eee97ab4370060f60ede10b3dc361cc1214c07ae5e34dd86e6aaf": [
+        {
+            "name": "OracleRequest",
+            "inputs": [
+                {"name": "bridge", "type": "address", "indexed": False},
+                {"name": "callData", "type": "bytes", "indexed": False},
+                {"name": "receiveSide", "type": "address", "indexed": False},
+                {"name": "oppositeBridge", "type": "address", "indexed": False},
+                {"name": "chainId", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["symbiosis", "bridging", "send"],
+        }
+    ],
 }
 
 
