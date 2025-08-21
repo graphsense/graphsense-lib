@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, List, Optional, Protocol
 
-from ....utils.rest_utils import alphanumeric_lower
+from ....utils.rest_utils import alphanumeric_lower_identifier
 from .models import (
     GeneralStats,
     LabeledItemRef,
@@ -96,13 +96,16 @@ class GeneralService:
             if currency is None or currency.lower() == curr.lower()
         ]
 
-        expression_norm = alphanumeric_lower(q)
+        expression_norm = alphanumeric_lower_identifier(q)
 
         tagstore_search = self.tagstore.search_labels(
             expression_norm, limit, groups=tagstore_groups
         )
 
-        aws1 = [self.search_by_currency(curr, q, limit=limit) for curr in currs]
+        aws1 = [
+            self.search_by_currency(curr, expression_norm, limit=limit)
+            for curr in currs
+        ]
         aw1 = asyncio.gather(*aws1)
 
         [r1, r2] = await asyncio.gather(aw1, tagstore_search)
