@@ -102,10 +102,7 @@ class GeneralService:
             expression_norm, limit, groups=tagstore_groups
         )
 
-        aws1 = [
-            self.search_by_currency(curr, expression_norm, limit=limit)
-            for curr in currs
-        ]
+        aws1 = [self.search_by_currency(curr, q, limit=limit) for curr in currs]
         aw1 = asyncio.gather(*aws1)
 
         [r1, r2] = await asyncio.gather(aw1, tagstore_search)
