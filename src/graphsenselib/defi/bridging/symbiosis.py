@@ -150,7 +150,7 @@ def _create_payment_identifier(
             relevant_traces = [
                 trace
                 for trace in traces
-                if trace.from_address == strip_0x(address).lower() and trace.value > 0
+                if trace.from_address == address.lower() and trace.value > 0
             ]
 
             if relevant_traces:
@@ -207,7 +207,7 @@ async def _create_payment_identifier_for_receive(
             relevant_traces = [
                 trace
                 for trace in traces
-                if trace.to_address == strip_0x(address).lower() and trace.value > 0
+                if trace.to_address == address.lower() and trace.value > 0
             ]
 
             if relevant_traces:
