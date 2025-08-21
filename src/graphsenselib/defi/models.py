@@ -20,16 +20,16 @@ class Trace(BaseModel):
             if network == "eth":
                 is_call = trace["call_type"] == "call"
                 trace_index = trace["trace_index"]
-                from_address = ensure_0x_prefix(trace["from_address"].hex())
-                to_address = ensure_0x_prefix(trace["to_address"].hex())
+                from_address = ensure_0x_prefix(trace["from_address"].hex()).lower()
+                to_address = ensure_0x_prefix(trace["to_address"].hex()).lower()
                 value = trace["value"]
                 trace_address = trace["trace_address"]
 
             if network == "trx":
                 is_call = trace["note"] == "call"
                 trace_index = trace["trace_index"]
-                from_address = ensure_0x_prefix(trace["caller_address"].hex())
-                to_address = ensure_0x_prefix(trace["transferto_address"].hex())
+                from_address = ensure_0x_prefix(trace["caller_address"].hex()).lower()
+                to_address = ensure_0x_prefix(trace["transferto_address"].hex()).lower()
                 value = trace["call_value"]
                 trace_address = None
                 if trace["call_token_id"] is None:
