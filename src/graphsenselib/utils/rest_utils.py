@@ -21,3 +21,11 @@ pattern = re.compile(r"[\W_]+", re.UNICODE)  # alphanumeric chars for label
 
 def alphanumeric_lower(expression):
     return pattern.sub("", expression).lower()
+
+
+def alphanumeric_lower_identifier(expression):
+    split = expression.split("_")
+    if len(split) == 1:
+        return alphanumeric_lower(expression)
+    else:
+        return alphanumeric_lower(split[0]) + "_" + split[1]
