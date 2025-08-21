@@ -1,11 +1,10 @@
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Tuple
 
 from graphsenselib.defi.bridging.thorchain import (
     get_full_bridges_from_thorchain_send,
     get_full_bridges_from_thorchain_receive,
 )
 from graphsenselib.defi.bridging.symbiosis import (
-    get_bridges_from_symbiosis_tx_hash,
     get_bridges_from_symbiosis_decoded_logs,
 )
 from graphsenselib.datatypes.abi import decode_logs_dict
@@ -62,7 +61,7 @@ async def get_conversions_from_db(
     db: Cassandra,
     tx: Dict[str, Any],
     visualize: bool = False,
-    include_bridging_actions: bool = False,
+    included_bridges: Tuple[str, ...] = (),
 ) -> List[Union[ExternalSwap, Bridge]]:
     """
     Extract all conversion information (swaps and bridges) from decoded logs.
@@ -87,11 +86,16 @@ async def get_conversions_from_db(
 
     tx_traces = Trace.dicts_to_normalized(network, tx_traces, tx)
 
-    if include_bridging_actions:
-        bridge_result = await get_bridges_from_decoded_logs(
-            network, db, tx, decoded_log_data, tx_logs_raw_filtered, tx_traces
-        )
-        conversions += bridge_result
+    bridge_result = await get_bridges_from_decoded_logs(
+        network,
+        db,
+        tx,
+        decoded_log_data,
+        tx_logs_raw_filtered,
+        tx_traces,
+        included_bridges,
+    )
+    conversions += bridge_result
 
     swap_results = get_swap_from_decoded_logs(
         decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
@@ -155,6 +159,7 @@ async def get_bridges_from_decoded_logs(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
     traces: List[Trace],
+    included_bridges: Tuple[str, ...] = (),
 ) -> List[Bridge]:
     """
     Extract bridging information from decoded logs.
@@ -184,7 +189,7 @@ async def get_bridges_from_decoded_logs(
     elif strategy == BridgeStrategy.STARGATE:
         bridges = get_bridges_from_stargate(dlogs, logs_raw)
 
-    elif strategy == BridgeStrategy.THORCHAIN_SEND:
+    elif strategy == BridgeStrategy.THORCHAIN_SEND and "thorchain" in included_bridges:
         bridge_generator = get_full_bridges_from_thorchain_send(
             network, db, tx, dlogs, logs_raw, traces
         )
@@ -195,7 +200,9 @@ async def get_bridges_from_decoded_logs(
         else:
             bridges = []
 
-    elif strategy == BridgeStrategy.THORCHAIN_RECEIVE:
+    elif (
+        strategy == BridgeStrategy.THORCHAIN_RECEIVE and "thorchain" in included_bridges
+    ):
         bridge_generator = get_full_bridges_from_thorchain_receive(
             network, db, tx, dlogs, logs_raw, traces
         )
@@ -206,22 +213,10 @@ async def get_bridges_from_decoded_logs(
         else:
             bridges = []
 
-    elif strategy == BridgeStrategy.SYMBIOSIS:
+    elif strategy == BridgeStrategy.SYMBIOSIS and "symbiosis" in included_bridges:
         bridges = await get_bridges_from_symbiosis_decoded_logs(
             network, db, tx, dlogs, logs_raw, traces
         )
-
-    # Try Symbiosis API as fallback even if no specific strategy detected
-    if bridges is None or len(bridges) == 0:
-        tx_hash = tx.get("tx_hash")
-        if tx_hash:
-            if isinstance(tx_hash, bytes):
-                tx_hash = tx_hash.hex()
-            symbiosis_bridges = await get_bridges_from_symbiosis_tx_hash(
-                network, db, tx_hash
-            )
-            if symbiosis_bridges:
-                bridges = symbiosis_bridges
 
     if bridges is None:
         return []

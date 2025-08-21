@@ -129,39 +129,6 @@ async def get_bridges_from_symbiosis_decoded_logs(
     ]
 
 
-# For backwards compatibility
-async def get_bridges_from_symbiosis_tx_hash(
-    network: str, db: Cassandra, tx_hash: str
-) -> Optional[List[Bridge]]:
-    """Simple fallback that just uses tx hashes as payment identifiers"""
-    record = _search_symbiosis_api(tx_hash)
-    if not record or not record.get("from_route") or not record.get("to_route"):
-        return None
-
-    from_info = record["from_route"][0]
-    to_info = record["to_route"][-1]
-    from_network = SYMBIOSIS_CHAIN_ID_TO_NETWORK.get(record.get("from_chain_id"))
-    to_network = SYMBIOSIS_CHAIN_ID_TO_NETWORK.get(record.get("to_chain_id"))
-
-    if not from_network or not to_network:
-        return None
-
-    return [
-        Bridge(
-            fromAddress=record["from_address"],
-            fromAsset=_get_asset_from_token(from_info.get("token")),
-            fromAmount=int(from_info.get("amount", 0)),
-            fromPayment=record["from_tx_hash"],  # Simple fallback
-            fromNetwork=from_network,
-            toAddress=record["to_address"],
-            toAsset=_get_asset_from_token(to_info.get("token")),
-            toAmount=int(to_info.get("amount", 0)),
-            toPayment=record["to_tx_hash"],  # Simple fallback
-            toNetwork=to_network,
-        )
-    ]
-
-
 def _create_payment_identifier(
     tx_hash: str,
     address: str,
