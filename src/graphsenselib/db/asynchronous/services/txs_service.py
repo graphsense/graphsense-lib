@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import Any, Dict, List, Optional, Protocol, Union, Tuple
 
 from graphsenselib.defi import Bridge, ExternalSwap
 from graphsenselib.defi.conversions import get_conversions_from_db
@@ -323,7 +323,7 @@ class TxsService:
         )
 
     async def get_conversions(
-        self, currency: str, identifier: str, include_bridging_actions: bool = False
+        self, currency: str, identifier: str, included_bridges: Tuple[str, ...]
     ) -> List[ExternalConversion]:
         """Extract swap information from a single transaction hash."""
         if not is_eth_like(currency):
@@ -347,7 +347,7 @@ class TxsService:
             raise TransactionNotFoundException(currency, tx_hash)
 
         conversions_gslib = await get_conversions_from_db(
-            currency, self.db, tx, include_bridging_actions=include_bridging_actions
+            currency, self.db, tx, included_bridges=included_bridges
         )
 
         # if it is a raw tx hash without a subtx, dont filter, otherwise
