@@ -9,7 +9,9 @@ from ..config import (
     schema_types,
     supported_base_currencies,
 )
-from ..utils.console import console
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def require_environment(required=True):
@@ -86,16 +88,33 @@ def try_load_config(filename: str):
 
         return app_config, md5hash
     except Exception as e:
-        console.print("There are errors in you graphsenselib config:")
-        console.rule("Errors")
-        console.print(e)
-        console.rule("Suggestions")
+        # if the first arg is the verbosity, we need to remove it
+        if (
+            len(sys.argv) > 1
+            and sys.argv[1][0] == "-"
+            and sys.argv[1][1:] == "v" * len(sys.argv[1][1:])
+        ):
+            remaining_args = sys.argv[2:]
+        else:
+            remaining_args = sys.argv[1:]
+
+        if len(remaining_args) > 1 and remaining_args[0] in [
+            "tagpack-tool",
+            "tagstore",
+        ]:
+            logger.debug("Skipping config loading for tagpack-tool or tagstore")
+            return None, None
+
+        logger.debug("There are errors in you graphsenselib config:")
+        logger.debug(e)
+        logger.debug("Suggestions")
         file_loc = " or ".join(app_config.model_config["default_files"])
-        console.print(
+        logger.error(
             "Maybe there is no config file specified. "
             f"Please create one in {file_loc} or specify a custom config path"
             f" in the environment variable {app_config.model_config['file_env_var']}."
         )
-        console.rule("Template")
-        console.print(app_config.generate_yaml(DEBUG=False))
+        logger.debug("Template")
+        logger.debug(app_config.generate_yaml(DEBUG=False))
+
         sys.exit(10)
