@@ -22,7 +22,6 @@ from graphsenselib.tagpack.cmd_utils import (
     print_info,
     print_line,
     print_success,
-    print_warn,
 )
 from graphsenselib.tagpack.graphsense import GraphSense
 from graphsenselib.tagpack.tagpack import (
@@ -42,8 +41,22 @@ from graphsenselib.tagpack.constants import (
 )
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
+import logging
+
+logger = logging.getLogger(__name__)
 
 colorama_init()
+
+
+def override_postgres_url(url):
+    def_url, url_msg = read_url_from_env()
+    if not url:
+        url = def_url
+    if not url:
+        logger.warning(url_msg)
+        click.echo("No postgresql URL connection was provided. Exiting.")
+        sys.exit(1)
+    return url
 
 
 def _load_config(cfile):
@@ -103,9 +116,9 @@ def config(ctx, verbosity):
     """show repository config"""
     config_file = ctx.obj["config"]
     if os.path.exists(config_file):
-        print("Using Config File:", config_file)
+        logger.info("Using Config File:", config_file)
     else:
-        print_info(
+        logger.info(
             f"No override config file found at {config_file}. Using default values."
         )
     if verbosity:
@@ -113,7 +126,7 @@ def config(ctx, verbosity):
         print_line("Show configured taxonomies")
         count = 0
         if "taxonomies" not in config_data:
-            print_line("No configured taxonomies", "fail")
+            logger.error("No configured taxonomies")
         else:
             for key, value in config_data["taxonomies"].items():
                 print_info(value)
@@ -169,14 +182,7 @@ def sync(
     dont_update_quality_metrics,
 ):
     """syncs the tagstore with a list of git repos."""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
 
     if os.path.isfile(repos):
         with open(repos, "r") as f:
@@ -571,13 +577,7 @@ def validate_tagpack_cli(ctx, path, no_address_validation):
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def list_tagpack_cli(schema, url, unique, category, network, csv):
     """list Tags"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     list_tags(url, schema, unique, category, network, csv)
 
 
@@ -645,13 +645,7 @@ def insert_tagpack_cli(
     tag_type_default,
 ):
     """insert TagPacks"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
 
     insert_tagpack(
         url,
@@ -679,13 +673,7 @@ def insert_tagpack_cli(
 @click.option("--max", type=int, default=5, help="Limits the number of results")
 def suggest_actors(schema, url, label, max):
     """suggest an actor based on input"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     _suggest_actors(url, schema, label, max)
 
 
@@ -708,13 +696,7 @@ def suggest_actors(schema, url, label, max):
 )
 def add_actors(path, schema, url, max, categories, inplace):
     """interactively add actors to tagpack"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     add_actors_to_tagpack(url, schema, path, max, categories, inplace)
 
 
@@ -958,13 +940,7 @@ def insert_actorpack_cli(
     ctx, path, schema, url, batch_size, force, add_new, no_strict_check, no_git
 ):  # noqa: F811
     """insert ActorPacks"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     insert_actorpacks(
         url,
         schema,
@@ -987,13 +963,7 @@ def insert_actorpack_cli(
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def list_actorpack_cli(schema, url, category, csv):  # noqa: F811
     """list Actors"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     list_actors(url, schema, category, csv)
 
 
@@ -1008,13 +978,7 @@ def list_actorpack_cli(schema, url, category, csv):  # noqa: F811
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def list_address_actor(schema, url, network, csv):
     """list addresses-actors"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     list_address_actors(url, schema, network, csv)
 
 
@@ -1367,13 +1331,7 @@ def insert_cluster_mappings(
     update,
 ):
     """insert cluster mappings"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     insert_cluster_mapping(
         url,
         schema,
@@ -1395,13 +1353,7 @@ def insert_cluster_mappings(
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
 def refresh_views(schema, url):
     """update views"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     update_db(url, schema)
 
 
@@ -1414,13 +1366,7 @@ def refresh_views(schema, url):
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
 def remove_duplicates(schema, url):
     """remove duplicate tags"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     _remove_duplicates(url, schema)
 
 
@@ -1435,13 +1381,7 @@ def remove_duplicates(schema, url):
 )
 def show_composition(schema, url, csv, by_network):
     """Shows the tag composition grouped by creator and category."""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     show_tagstore_composition(url, schema, csv, by_network)
 
 
@@ -1453,13 +1393,7 @@ def show_composition(schema, url, csv, by_network):
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def show_source_repos(schema, url, csv):
     """Shows which repos sources are stored in the database."""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     show_tagstore_source_repos(url, schema, csv)
 
 
@@ -1656,13 +1590,7 @@ def list_addresses_with_actor_collisions_impl(url, schema, csv):
 def quality(ctx, schema, url, network):
     """calculate tags quality measures"""
     ctx.ensure_object(dict)
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
 
     ctx.obj["url"] = url
     ctx.obj["schema"] = schema
@@ -1761,7 +1689,7 @@ def main():
         cli()
     except click.ClickException as e:
         if hasattr(e, "message") and "No postgresql URL" in str(e.message):
-            print_warn(url_msg)
+            logger.warning(url_msg)
         e.show()
         sys.exit(1)
 
