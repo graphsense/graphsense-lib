@@ -97,9 +97,9 @@ def cli(ctx, config):
 
 
 @cli.command()
-@click.option("-v", "--verbose", is_flag=True, help="verbose configuration")
+@click.option("-v", "--verbosity", is_flag=True, help="verbosity configuration")
 @click.pass_context
-def config(ctx, verbose):
+def config(ctx, verbosity):
     """show repository config"""
     config_file = ctx.obj["config"]
     if os.path.exists(config_file):
@@ -108,7 +108,7 @@ def config(ctx, verbose):
         print_info(
             f"No override config file found at {config_file}. Using default values."
         )
-    if verbose:
+    if verbosity:
         config_data = _load_config(config_file)
         print_line("Show configured taxonomies")
         count = 0
@@ -1030,7 +1030,7 @@ def list_taxonomies(config):
         print_line(f"{count} configured taxonomies", "success")
 
 
-def show_taxonomy_concepts(config, taxonomy, tree, verbose):
+def show_taxonomy_concepts(config, taxonomy, tree, verbosity):
     from anytree import RenderTree
 
     if "taxonomies" not in config:
@@ -1045,7 +1045,7 @@ def show_taxonomy_concepts(config, taxonomy, tree, verbose):
         for pre, fill, node in RenderTree(taxonomy_obj.get_concept_tree()):
             print("%s%s" % (pre, node.name))
     else:
-        if verbose:
+        if verbosity:
             headers = ["Id", "Label", "Level", "Uri", "Description"]
             table = [
                 [c.id, c.label, c.level, c.uri, c.description]
@@ -1094,13 +1094,13 @@ def list_taxonomies_cli(ctx):  # noqa: F811
     "taxonomy_key",
     type=click.Choice(["abuse", "entity", "confidence", "country", "concept"]),
 )
-@click.option("-v", "--verbose", is_flag=True, help="verbose concepts")
+@click.option("-v", "--verbosity", is_flag=True, help="verbosity concepts")
 @click.option("--tree", is_flag=True, help="Show as tree")
 @click.pass_context
-def show(ctx, taxonomy_key, verbose, tree):
+def show(ctx, taxonomy_key, verbosity, tree):
     """show taxonomy concepts"""
     config = _load_config(ctx.obj.get("config"))
-    show_taxonomy_concepts(config, taxonomy_key, tree, verbose)
+    show_taxonomy_concepts(config, taxonomy_key, tree, verbosity)
 
 
 @taxonomy.command("insert")
