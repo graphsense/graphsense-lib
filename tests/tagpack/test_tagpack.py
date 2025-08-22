@@ -344,36 +344,50 @@ def test_verify_addresses(tagpack):
     assert tagpack.verify_addresses() is None
 
 
-def test_valid_addresses(tagpack, capsys):
+def test_valid_addresses(tagpack, caplog):
     tagpack.contents["tags"] = [
         {"label": "binance", "address": "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s"},
     ]
     tagpack.verify_addresses()
-    captured = capsys.readouterr()
-    assert captured.out == ""
+
+    # Should have no warning messages for valid addresses
+    warning_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert len(warning_messages) == 0
 
 
-def test_addresses_whitespace(tagpack, capsys):
+def test_addresses_whitespace(tagpack, caplog):
     tagpack.contents["tags"] = [
         {"label": "binance1", "address": "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s "},
         {"label": "binance2", "address": "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s\t"},
         {"label": "binance3", "address": "\n1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s"},
     ]
     tagpack.verify_addresses()
-    captured = capsys.readouterr()
+
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+
     msg1 = "Address contains whitespace: '1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s '"
     msg2 = "Address contains whitespace: '1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s\\t'"
     msg3 = "Address contains whitespace: '\\n1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s'"
-    assert msg1 in captured.out
-    assert msg2 in captured.out
-    assert msg3 in captured.out
+    assert msg1 in log_text
+    assert msg2 in log_text
+    assert msg3 in log_text
 
 
-def test_invalid_addresses(tagpack, capsys):
+def test_invalid_addresses(tagpack, caplog):
     tagpack.verify_addresses()
-    captured = capsys.readouterr()
-    assert "Possible invalid BTC address: 123Bitcoin45" in captured.out
-    assert "Possible invalid ETH address: 123Bitcoin66" in captured.out
+
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+
+    assert "Possible invalid BTC address: 123Bitcoin45" in log_text
+    assert "Possible invalid ETH address: 123Bitcoin66" in log_text
 
 
 def test_context_is_valid_json(tagpack):
@@ -633,7 +647,7 @@ def test_multiple_tags_for_one_address_work(taxonomies):
     tagpack.validate()
 
 
-def test_duplicate_does_not_raise_only_inform(capsys, taxonomies):
+def test_duplicate_does_not_raise_only_inform(caplog, taxonomies):
     tagpack = TagPack.load_from_file(
         "http://example.com/packs",
         "tests/testfiles/simple/duplicate_tag.yaml",
@@ -642,9 +656,13 @@ def test_duplicate_does_not_raise_only_inform(capsys, taxonomies):
     )
 
     tagpack.validate()
-    captured = capsys.readouterr()
 
-    assert "1 duplicate(s) found" in captured.out
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+
+    assert "1 duplicate(s) found" in log_text
     assert len(tagpack.get_unique_tags()) == 2
 
 
@@ -691,7 +709,7 @@ def test_concepts_always_contain_abuse_and_category(tagpack):
     tagpack.validate()
 
 
-def test_network_from_currency(capsys, tagpack_w_network):
+def test_network_from_currency(caplog, tagpack_w_network):
     t0 = tagpack_w_network.tags[0]
     t1 = tagpack_w_network.tags[1]
 
@@ -702,12 +720,16 @@ def test_network_from_currency(capsys, tagpack_w_network):
 
     tagpack_w_network.validate()
 
-    captured = capsys.readouterr()
-    assert "ETH23 is not a known network." in captured.out
-    assert "CCOIN is not a known network." in captured.out
-    assert "CCOIN is not a known currency." in captured.out
-    assert "USDT is not a known network." in captured.out
-    assert "Did you mean on of: ETH, ARB, ETC, BSC, TRX" in captured.out
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+
+    assert "ETH23 is not a known network" in log_text
+    assert "CCOIN is not a known network" in log_text
+    assert "CCOIN is not a known currency" in log_text
+    assert "USDT is not a known network" in log_text
+    assert "Did you mean one of: ETH, ARB, ETC, BSC, TRX" in log_text
 
 
 def test_validate_fail_null_characters_in_header(schema, taxonomies):
