@@ -87,6 +87,7 @@ def cli(ctx, verbosity: int, config_file: str):
         verbosity (int): One v stands for loglevel warning, two for info and so on...
     """
 
+    configure_logging(verbosity)
     config, h = try_load_config(config_file)
     # if we have a config, we can set up the slack notification context
     if config is not None:
@@ -95,7 +96,6 @@ def cli(ctx, verbosity: int, config_file: str):
                 config.get_slack_exception_notification_hook_urls()
             )
         )
-        configure_logging(verbosity)
         logger.info(
             f"Running version {__version__} using config {config.underlying_file} @ md5 {h}"
         )

@@ -331,7 +331,8 @@ def validate_tagpack(config, path, no_address_validation):
             f"{no_passed}/{n_tagpacks} TagPacks passed in {duration}s", fg="green"
         )
 
-    sys.exit(0 if not failed else 1)
+    if failed:
+        sys.exit(1)
 
 
 def list_tags(url, schema, unique, category, network, csv):
@@ -741,7 +742,8 @@ def validate_actorpack(config, path):
     else:
         click.secho(msg, fg="green")
 
-    sys.exit(0 if not failed else 1)
+    if failed:
+        sys.exit(1)
 
 
 def insert_actorpacks(
