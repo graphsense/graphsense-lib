@@ -122,7 +122,10 @@ class TagsService:
         cache: Optional[Dict[str, Any]] = None,
     ) -> List["TagPublic"]:  # noqa: F821
         address = address_to_user_format(currency, address)
+
         page = page or 0
+
+        assert page is None or isinstance(page, int)
 
         tags = list(
             await self.tagstore.get_tags_by_subjectid(
@@ -315,6 +318,8 @@ class TagsService:
     ) -> AddressTagResult:
         page = page or 0
 
+        assert page is None or isinstance(page, int)
+
         tags = await self.tagstore.get_tags_by_actorid(
             actor_id,
             offset=page * (pagesize or 0),
@@ -343,6 +348,8 @@ class TagsService:
         pagesize: Optional[int] = None,
     ) -> AddressTagResult:
         page = page or 0
+
+        assert page is None or isinstance(page, int)
 
         tags = await self.tagstore.get_tags_by_label(
             label,

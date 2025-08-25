@@ -383,6 +383,8 @@ class EntitiesService:
     ) -> AddressTagResult:
         page = page or 0
 
+        assert page is None or isinstance(page, int)
+
         tags = await self.tagstore.get_tags_by_clusterid(
             entity_id,
             currency.upper(),

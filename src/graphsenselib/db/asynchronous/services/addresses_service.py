@@ -167,6 +167,9 @@ class AddressesService:
         include_best_cluster_tag: bool = False,
     ) -> AddressTagResult:
         page = page or 0
+
+        assert page is None or isinstance(page, int)
+
         cluster_id = await try_get_cluster_id(self.db, currency, address, cache=cache)
 
         tags = await self.tags_service.list_tags_by_address_raw(
