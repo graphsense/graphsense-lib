@@ -14,7 +14,7 @@ from psycopg2.extensions import AsIs, register_adapter
 from psycopg2.extras import execute_batch, execute_values
 
 from graphsenselib.tagpack import ValidationError
-from graphsenselib.tagpack.cmd_utils import print_success
+import click
 from graphsenselib.tagpack.constants import KNOWN_NETWORKS
 from graphsenselib.tagpack.tagpack import TagPack
 from graphsenselib.tagpack.utils import get_github_repo_url
@@ -74,8 +74,8 @@ class InsertTagpackWorker:
                 default_prefix,
                 relpath,
             )
-            print_success(
-                logger, f"{i} {tagpack_file}: PROCESSED {len(tagpack.tags)} Tags"
+            click.secho(
+                f"{i} {tagpack_file}: PROCESSED {len(tagpack.tags)} Tags", fg="green"
             )
             return 1, len(tagpack.tags)
         except Exception as e:
