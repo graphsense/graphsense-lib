@@ -70,8 +70,11 @@ def read_url_from_env():
         fields = ["USER", "PASSWORD", "HOST", "DB"]
         miss = {f"POSTGRES_{a}" for a in fields}
         miss -= set(ev.keys())
-        msg = "Unable to build postgresql URL from environment variables: "
-        msg += ", ".join(miss) + " not found."
+        msg = (
+            "Unable to build postgresql URL: required environment variables "
+            "(POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_DB) not found: "
+            + ", ".join(miss)
+        )
         url = None
     return url, msg
 
@@ -1686,7 +1689,9 @@ def main():
         cli()
     except click.ClickException as e:
         if hasattr(e, "message") and "No postgresql URL" in str(e.message):
-            logger.warning(url_msg)
+            logger.warning(
+                "Missing required PostgreSQL environment variables for URL construction."
+            )
         e.show()
         sys.exit(1)
 
