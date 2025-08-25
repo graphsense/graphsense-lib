@@ -110,8 +110,9 @@ def try_load_config(filename: str):
         logger.debug("Suggestions")
         file_loc = " or ".join(app_config.model_config["default_files"])
         logger.error(
-            "Maybe there is no config file specified. "
-            f"Please create one in {file_loc} or specify a custom config path"
+            f"Error: {e} \n"
+            "Maybe there is no config file specified or an error in the config file. "
+            f"Please create the file in {file_loc} or specify a custom config path"
             f" in the environment variable {app_config.model_config['file_env_var']}."
         )
         logger.debug("Template")
