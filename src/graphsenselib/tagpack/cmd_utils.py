@@ -22,10 +22,6 @@ except OSError:  # if running as GitHub Action
     rows, columns = 24, 80
 
 
-def print_success(logger, text):
-    print(f"{bcolors.OKGREEN}{text}{bcolors.ENDC}")
-
-
 def get_user_choice(label, options):
     if not options:
         return None

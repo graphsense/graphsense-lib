@@ -35,7 +35,6 @@ from graphsenselib.tagpack.constants import (
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
 import logging
-from graphsenselib.tagpack.cmd_utils import print_success
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +122,7 @@ def config(ctx, verbose):
             for key, value in config_data["taxonomies"].items():
                 logger.info(value)
                 count += 1
-            print_success(logger, f"{count} configured taxonomies")
+            click.secho(f"{count} configured taxonomies", fg="green")
 
 
 @cli.command()
@@ -276,7 +275,7 @@ def sync(
             logger.info("Refreshing db views ...")
             click_ctx_tagstore.invoke(refresh_views, url=url)
 
-        print_success(logger, "Your tagstore is now up-to-date again.")
+        click.secho("Your tagstore is now up-to-date again.", fg="green")
 
     else:
         logger.error(f"Repos to sync file {repos} does not exist.")
@@ -313,7 +312,7 @@ def validate_tagpack(config, path, no_address_validation):
                 if not no_address_validation:
                     tagpack.verify_addresses()
 
-                print_success(logger, "PASSED")
+                click.secho("PASSED", fg="green")
 
                 no_passed += 1
     except (ValidationError, TagPackFileError) as e:
@@ -325,8 +324,8 @@ def validate_tagpack(config, path, no_address_validation):
     if failed:
         logger.error(f"{no_passed}/{n_tagpacks} TagPacks passed in {duration}s")
     else:
-        print_success(
-            logger, f"{no_passed}/{n_tagpacks} TagPacks passed in {duration}s"
+        click.secho(
+            f"{no_passed}/{n_tagpacks} TagPacks passed in {duration}s", fg="green"
         )
 
     sys.exit(0 if not failed else 1)
@@ -351,7 +350,7 @@ def list_tags(url, schema, unique, category, network, csv):
 
         duration = round(time.time() - t0, 2)
         if not csv:
-            print_success(logger, f"Done in {duration}s")
+            click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
         logger.error(f"Operation failed: {e}")
 
@@ -417,7 +416,7 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
                     if not inplace
                     else tagpack_file
                 )
-                print_success(logger, f"Writing updated Tagpack {updated_file}")
+                click.secho(f"Writing updated Tagpack {updated_file}", fg="green")
                 with open(updated_file, "w") as outfile:
                     tagpack.contents["tags"] = tagpack.contents.pop(
                         "tags"
@@ -427,7 +426,7 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
                         tagpack.contents, outfile, sort_keys=False
                     )  # write in order of insertion
             else:
-                print_success(logger, "No actors added, moving on.")
+                click.secho("No actors added, moving on.", fg="green")
 
 
 def insert_tagpack(
@@ -533,7 +532,7 @@ def insert_tagpack(
     if status == "fail":
         logger.error(msg.format(no_passed, n_ppacks, no_tags, duration))
     else:
-        print_success(logger, msg.format(no_passed, n_ppacks, no_tags, duration))
+        click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
     msg = "Don't forget to run 'graphsense-cli tagstore refresh-views' soon to keep the database"
     msg += " consistent!"
     print(msg)
@@ -722,7 +721,7 @@ def validate_actorpack(config, path):
                 logger.info(f"{actorpack_file}:\n", end="")
 
                 actorpack.validate()
-                print_success(logger, "PASSED")
+                click.secho("PASSED", fg="green")
 
                 no_passed += 1
     except (ValidationError, TagPackFileError, ParserError, ScannerError) as e:
@@ -737,7 +736,7 @@ def validate_actorpack(config, path):
     if status == "fail":
         logger.error(msg)
     else:
-        print_success(logger, msg)
+        click.secho(msg, fg="green")
 
     sys.exit(0 if not failed else 1)
 
@@ -807,7 +806,7 @@ def insert_actorpacks(
             tagstore.insert_actorpack(
                 actorpack, force, prefix if prefix else default_prefix, relpath
             )
-            print_success(logger, f"PROCESSED {len(actorpack.actors)} Actors")
+            click.secho(f"PROCESSED {len(actorpack.actors)} Actors", fg="green")
             no_passed += 1
             no_actors += len(actorpack.actors)
         except Exception as e:
@@ -820,7 +819,7 @@ def insert_actorpacks(
     if status == "fail":
         logger.error(msg.format(no_passed, n_ppacks, no_actors, duration))
     else:
-        print_success(logger, msg.format(no_passed, n_ppacks, no_actors, duration))
+        click.secho(msg.format(no_passed, n_ppacks, no_actors, duration), fg="green")
 
 
 def list_actors(url, schema, category, csv):
@@ -842,7 +841,7 @@ def list_actors(url, schema, category, csv):
 
         duration = round(time.time() - t0, 2)
         if not csv:
-            print_success(logger, f"Done in {duration}s")
+            click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
         logger.error(f"Operation failed: {e}")
 
@@ -866,7 +865,7 @@ def list_address_actors(url, schema, network, csv):
 
         duration = round(time.time() - t0, 2)
         if not csv:
-            print_success(logger, f"Done in {duration}s")
+            click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
         logger.error(f"Operation failed: {e}")
 
@@ -990,7 +989,7 @@ def list_taxonomies(config):
         for key, value in config["taxonomies"].items():
             logger.info(value)
             count += 1
-        print_success(logger, f"{count} configured taxonomies")
+        click.secho(f"{count} configured taxonomies", fg="green")
 
 
 def show_taxonomy_concepts(config, taxonomy, tree, verbose):
@@ -1211,8 +1210,8 @@ def insert_cluster_mapping(
         mappings_count = sum(
             [items for network, items in processed_workpackages if network == pc]
         )
-        print_success(
-            logger, f"INSERTED/UPDATED {mappings_count} {pc} cluster mappings"
+        click.secho(
+            f"INSERTED/UPDATED {mappings_count} {pc} cluster mappings", fg="green"
         )
 
     tagstore.finish_mappings_update(networks)
@@ -1454,7 +1453,7 @@ def calc_quality_measures(url, schema):
         print_quality_measures(qm)
 
         duration = round(time.time() - t0, 2)
-        print_success(logger, f"Done in {duration}s")
+        click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
         logger.error(f"Error: {e}")
         logger.error("Operation failed")
