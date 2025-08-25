@@ -10,10 +10,11 @@ from cassandra.query import dict_factory
 from pandas import DataFrame
 from pandas import pandas as pd
 
-from graphsenselib.tagpack.cmd_utils import print_warn
-
 from graphsenselib.utils.tron import tron_address_to_evm, evm_to_tron_address_string
 from graphsenselib.utils.rest_utils import is_eth_like
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def try_convert_tron_to_eth(x):
@@ -22,7 +23,7 @@ def try_convert_tron_to_eth(x):
             return x
         return eth_address_to_hex_str(tron_address_to_evm(x))
     except Exception as e:
-        print_warn(f"Can't convert address {x} to eth format; {e}")
+        logger.warning(f"Can't convert address {x} to eth format; {e}")
         return None
 
 
@@ -33,7 +34,7 @@ def try_convert_to_tron(x):
         else:
             return evm_to_tron_address_string(eth_address_to_hex_str(x))
     except Exception as e:
-        print_warn(f"Can't convert address {x} to tron format; {e}")
+        logger.warning(f"Can't convert address {x} to tron format; {e}")
         return None
 
 
@@ -52,7 +53,7 @@ def eth_address_from_hex(address):
     try:
         b = bytes.fromhex(address[2:].lower())
     except Exception as e:
-        print_warn(f"can't convert to hex {address}; {e}")
+        logger.warning(f"can't convert to hex {address}; {e}")
         return None
     return b
 
@@ -81,7 +82,7 @@ class GraphSense(object):
 
     def close(self):
         self.cluster.shutdown()
-        print(f"Disconnected from {self.hosts}")
+        logger.info(f"Disconnected from {self.hosts}")
 
     def _execute_query(self, statement, parameters):
         """Generic query execution"""
@@ -93,7 +94,7 @@ class GraphSense(object):
         all_results = []
         for success, result in results:
             if not success:
-                print("failed" + result)
+                logger.warning("failed" + result)
             else:
                 for row in result:
                     i = i + 1

@@ -11,7 +11,6 @@ import yaml
 from yamlinclude import YamlIncludeConstructor
 
 from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
-from graphsenselib.tagpack.cmd_utils import print_warn
 from graphsenselib.tagpack.utils import (
     apply_to_dict_field,
     get_secondlevel_domain,
@@ -19,7 +18,9 @@ from graphsenselib.tagpack.utils import (
     strip_empty,
     try_parse_date,
 )
+import logging
 
+logger = logging.getLogger(__name__)
 LBL_BLACKLIST = re.compile(r"[@_!#$%^*<>?\|}{~:;]")
 
 
@@ -207,14 +208,14 @@ class ActorPack(object):
 
             lbl = actor.all_fields["label"]
             if LBL_BLACKLIST.search(lbl):
-                print_warn(
+                logger.warning(
                     f"Actor {actor.identifier}: label {lbl} contains special "
                     "characters. Please avoid."
                 )
 
             for uri in set(actor.uris):
                 if "." not in uri:
-                    print_warn(
+                    logger.warning(
                         f"There is no dot in uri: {uri} in actor {actor.identifier}"
                     )
                 domain_overlap[get_secondlevel_domain(uri)].add(actor.identifier)
@@ -260,13 +261,13 @@ class ActorPack(object):
 
         for domain, actors in domain_overlap.items():
             if len(actors) > 1:
-                print_warn(
+                logger.warning(
                     f"Actors share the same domain {domain}: {actors}. Please merge!"
                 )
 
         for twitter_handle, actors in twitter_handle_overlap.items():
             if len(actors) > 1:
-                print_warn(
+                logger.warning(
                     "These actors share the same twitter_handle "
                     f" {twitter_handle}: {actors}. Consider Merge?"
                 )
