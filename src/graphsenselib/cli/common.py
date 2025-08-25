@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sys
 
 import click
@@ -77,45 +78,68 @@ def out_file(required=True, append=False):
 
 
 def try_load_config(filename: str):
+    if (
+        len(sys.argv) > 1
+        and sys.argv[1][0] == "-"
+        and sys.argv[1][1:] == "v" * len(sys.argv[1][1:])
+    ):
+        remaining_args = sys.argv[2:]
+    else:
+        remaining_args = sys.argv[1:]
+
+    is_tagpack_tool = len(remaining_args) > 0 and remaining_args[0] in [
+        "tagpack-tool",
+        "tagstore",
+    ]
+
+    app_config = get_config()
+    f = filename or app_config.underlying_file
+
     try:
-        app_config = get_config()
-        app_config.load(filename=filename)
+        if is_tagpack_tool:
+            success, errors = app_config.load_partial(filename=filename)
 
-        f = filename or app_config.underlying_file
+            if not success:
+                logger.debug(
+                    f"Partial config loading for {remaining_args[0]} with {len(errors)} issues:"
+                )
+                for error in errors:
+                    logger.debug(f"  - {error}")
+                logger.debug("Continuing with partial/default configuration...")
+            else:
+                logger.debug(f"Config created successfully for {remaining_args[0]}")
+        else:
+            # Use strict loading for other tools
+            app_config.load(filename=filename)
 
-        with open(f, "rb") as f:
-            md5hash = hashlib.md5(f.read()).hexdigest()
+        if f and os.path.exists(f):
+            with open(f, "rb") as file:
+                md5hash = hashlib.md5(file.read()).hexdigest()
+        else:
+            md5hash = "no-config-file"
+            if not is_tagpack_tool:
+                raise Exception("No config file loaded")
 
         return app_config, md5hash
+
     except Exception as e:
-        # if the first arg is the verbosity, we need to remove it
-        if (
-            len(sys.argv) > 1
-            and sys.argv[1][0] == "-"
-            and sys.argv[1][1:] == "v" * len(sys.argv[1][1:])
-        ):
-            remaining_args = sys.argv[2:]
+        if not f:
+            logger.error("No config file specified or found in default locations")
+        elif not os.path.exists(f):
+            logger.error(f"Config file {f} does not exist")
+            logger.error("Suggestions")
+            file_loc = " or ".join(app_config.model_config["default_files"])
+            logger.error(
+                f"Error: {e} \n"
+                f"Please create the file in {file_loc} or specify a custom config path"
+                f" in the environment variable {app_config.model_config['file_env_var']}."
+            )
         else:
-            remaining_args = sys.argv[1:]
-
-        if len(remaining_args) > 1 and remaining_args[0] in [
-            "tagpack-tool",
-            "tagstore",
-        ]:
-            logger.debug("Skipping config loading for tagpack-tool or tagstore")
-            return None, None
-
-        logger.debug("There are errors in you graphsenselib config:")
-        logger.debug(e)
-        logger.debug("Suggestions")
-        file_loc = " or ".join(app_config.model_config["default_files"])
-        logger.error(
-            f"Error: {e} \n"
-            "Maybe there is no config file specified or an error in the config file. "
-            f"Please create the file in {file_loc} or specify a custom config path"
-            f" in the environment variable {app_config.model_config['file_env_var']}."
-        )
-        logger.debug("Template")
-        logger.debug(app_config.generate_yaml(DEBUG=False))
+            logger.error(e)
+            logger.error(
+                "If there are errors in your graphsenselib config, please check the template below:"
+            )
+            logger.error("Template")
+            logger.debug(app_config.generate_yaml(DEBUG=False))
 
         sys.exit(10)
