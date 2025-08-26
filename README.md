@@ -350,7 +350,7 @@ cache_directory: "~/.graphsense/cache"
 
 ### Tagpack Management
 
-GraphSense-lib includes comprehensive tagpack management tools (formerly standalone tagpack-tool). For detailed documentation, see [Tagpack README](docs/tagpacks/README.md).
+GraphSense-lib includes comprehensive tagpack management tools (formerly standalone tagpack-tool). For detailed documentation, see [Tagpack README](tagpacks/docs/README.md).
 
 ```bash
 # Validate tagpacks
@@ -521,7 +521,7 @@ Some components use OpenSSL hash functions that aren't available by default in O
 - Check [GitHub Issues](https://github.com/graphsense/graphsense-lib/issues)
 - Review [GraphSense Documentation](https://graphsense.github.io/)
 - Use `--help` with any CLI command for detailed usage information
-- For tagpack-specific issues, see [Tagpack Documentation](docs/tagpacks/README.md)
+- For tagpack-specific issues, see [Tagpack Documentation](tagpack/docs/README.md)
 
 ## License
 
