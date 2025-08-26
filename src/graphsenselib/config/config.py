@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
+from goodconf import _load_config
 from pydantic import BaseModel, field_validator
 
 from ..utils import first_or_default, flatten
+
+logger = logging.getLogger(__name__)
 
 supported_base_currencies = ["btc", "eth", "ltc", "bch", "zec", "trx"]
 default_environments = ["prod", "test", "dev", "exp1", "exp2", "exp3", "pytest"]
@@ -38,6 +41,7 @@ reorg_backoff_blocks = {
 
 
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+GRAPHSENSE_VERBOSE_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
@@ -186,7 +190,9 @@ class AppConfig(GoodConf):
         description="Config per environment",
     )
 
-    slack_topics: Dict[str, SlackTopic] = Field(default_factory=lambda: {})
+    slack_topics: Dict[str, SlackTopic] = Field(
+        default_factory=lambda: {"exceptions": SlackTopic(hooks=[])}
+    )
 
     cache_directory: str = Field(
         # initial=lambda: "~/.graphsense/cache",
@@ -231,6 +237,8 @@ class AppConfig(GoodConf):
             for f in default_files:
                 if os.path.exists(f):
                     return f
+
+        logger.debug("No config file found in default locations.")
         return None
 
     def text(self) -> str:
@@ -287,6 +295,45 @@ class AppConfig(GoodConf):
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)
 
+    def load_partial(self, filename: Optional[str] = None) -> Tuple[bool, List[str]]:
+        errors = []
+
+        self._init_with_field_defaults()
+
+        config_file = filename or self.underlying_file
+
+        if config_file and os.path.exists(config_file):
+            raw_config = _load_config(config_file)
+        else:
+            logger.warning(
+                f"Config file not found: {config_file}. Continuing with defaults."
+            )
+            raw_config = {}
+
+        if raw_config:
+            for field_name, value in raw_config.items():
+                try:
+                    if field_name == "slack_topics" and isinstance(value, dict):
+                        converted_topics = {}
+                        for topic_name, topic_data in value.items():
+                            if isinstance(topic_data, dict):
+                                converted_topics[topic_name] = SlackTopic(**topic_data)
+                            else:
+                                converted_topics[topic_name] = topic_data
+                        setattr(self, field_name, converted_topics)
+                    else:
+                        setattr(self, field_name, value)
+                except Exception as e:
+                    errors.append(f"{field_name}: {str(e)}")
+
+        return len(errors) == 0, errors
+
+    def _init_with_field_defaults(self):
+        """Initialize config using field default factories."""
+        defaults = self.__class__.get_initial()
+
+        super().__init__(**defaults)
+
     def get_deltaupdater_config(self, env: str, currency: str) -> DeltaUpdaterConfig:
         delta_sink = (
             self.get_environment(env)
@@ -294,7 +341,7 @@ class AppConfig(GoodConf):
             .ingest_config.raw_keyspace_file_sinks.get("delta")
         )
         if delta_sink is None:
-            logging.debug(f"Delta sink not configured for {currency} in {env}")
+            logger.debug(f"Delta sink not configured for {currency} in {env}")
         return DeltaUpdaterConfig(
             delta_sink=delta_sink,
             currency=currency,

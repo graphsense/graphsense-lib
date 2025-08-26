@@ -22,44 +22,6 @@ except OSError:  # if running as GitHub Action
     rows, columns = 24, 80
 
 
-def print_separator(symbol, text, colour=None):
-    left = int((columns - len(text) - 2) / 2)
-    right = columns - left - len(text) - 2
-    if colour:
-        print(f"{colour}", end="")
-    print(symbol * left, text, symbol * right)
-    if colour:
-        print(f"{bcolors.ENDC}", end="")
-
-
-def print_line(text, status=None):
-    if status == "fail":
-        colour = bcolors.FAIL
-    elif status == "success":
-        colour = bcolors.OKGREEN
-    else:
-        colour = bcolors.INFO
-    print_separator("=", text, colour)
-
-
-def print_info(text, **args):
-    print(f"{bcolors.INFO}{text}{bcolors.ENDC}", **args)
-
-
-def print_success(text, **args):
-    print(f"{bcolors.OKGREEN}{text}{bcolors.ENDC}")
-
-
-def print_fail(text, exception=None):
-    print(f"{bcolors.FAIL}{text}{bcolors.ENDC}")
-    if exception:
-        print(f"{bcolors.FAIL}{exception}{bcolors.ENDC}")
-
-
-def print_warn(text, **args):
-    print(f"{bcolors.WARNING}{text}{bcolors.ENDC}", **args)
-
-
 def get_user_choice(label, options):
     if not options:
         return None
