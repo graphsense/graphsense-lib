@@ -214,6 +214,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 )
                 return Action.DATA_TO_PROCESS_NOT_FOUND, None
 
+            log.debug(f"Getting fiat values for blocks {batch}")
             for block in batch:
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
@@ -223,6 +224,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                     fiat_values = [0, 0]
                 rates[block] = fiat_values
                 bts[block] = self._db.raw.get_block_timestamp(block)
+            log.debug(f"Getting fiat values for blocks {batch} done")
 
             final_block = max(batch)
 
@@ -275,7 +277,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             blocks[["base_fee_per_gas"]] = blocks[["base_fee_per_gas"]].replace(
                 {np.nan: None}
             )
-
+            logger.debug("Converting to dataclasses")
             # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()
             block_adapter = AccountBlockAdapter()
@@ -286,6 +288,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             logs = log_adapter.df_to_dataclasses(logs)
             blocks = block_adapter.df_to_dataclasses(blocks)
             blocks = block_adapter.process_fields_in_list(blocks)
+            logger.debug("Converting to dataclasses done")
 
             changes = []
 
@@ -302,6 +305,7 @@ class UpdateStrategyAccount(UpdateStrategy):
 
             runtime_seconds = int(time.time() - self.batch_start_time)
 
+            logger.debug("Getting bookkeeping changes")
             bookkeeping_changes = get_bookkeeping_changes(
                 self._statistics,
                 self._db.transformed.get_summary_statistics(),
@@ -315,6 +319,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 len(blocks),
                 patch_mode=self._patch_mode,
             )
+            logger.debug("Bookkeeping changes done")
 
             changes.extend(bookkeeping_changes)
 
