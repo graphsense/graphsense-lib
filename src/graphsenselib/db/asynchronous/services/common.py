@@ -395,7 +395,7 @@ async def _tx_account_from_row(
         else convert_token_value(row["value"], r, token_config[row["currency"]]),
         is_external=is_external,
         input=input,
-        parsed_input=function_call_from_row(row.get("parsed_input", None)),
+        parsed_input=function_call_from_row(row.get("input_parsed", None)),
     )
 
 
