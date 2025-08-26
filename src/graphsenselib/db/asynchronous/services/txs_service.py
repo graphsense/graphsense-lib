@@ -57,7 +57,6 @@ async def _raw_trace_to_std_tx(
     result["type"] = "internal"
     result["timestamp"] = tx_timestamp
     # result["is_tx_trace"] = False
-
     if "input" in result:
         result["input_parsed"] = parse_function_call(
             result["input"], function_call_signatures
@@ -73,15 +72,14 @@ async def _raw_trace_to_std_tx(
         if trace_index is None or is_first_trace:
             result["type"] = "external"
         else:
-            if trace_index is not None:
-                is_external = (
-                    result["trace_address"] is None
-                    or result["trace_address"].strip() == ""
-                )
+            # if trace_index is not None:
+            is_external = (
+                result["trace_address"] is None or result["trace_address"].strip() == ""
+            )
 
-                # if they are the same, then we know it is external
-                if is_external:
-                    result["type"] = "external"
+            # if they are the same, then we know it is external
+            if is_external:
+                result["type"] = "external"
 
     return await std_tx_from_row(currency, result, rates.rates, tokenConfig)
 
@@ -196,21 +194,23 @@ class TxsService:
                 include_io_index,
             )
 
-    async def get_asset_flows_in_tx(
+    async def get_asset_flows_within_tx(
         self,
         network: str,
         tx_hash: str,
         include_token_txs: bool = True,
         include_internal_txs: bool = True,
         include_zero_value: bool = True,
+        include_io: bool = True,
+        include_nonstandard_io: bool = True,
+        include_io_index: bool = True,
     ) -> List[Union[TxAccount, TxUtxo]]:
         tx = await self.db.get_tx(network, tx_hash)
+        tokenConfig = self.db.get_token_configuration(network)
+        rates = await self.rates_service.get_rates(network, tx["block_id"])
 
         results_list = []
         if is_eth_like(network):
-            tokenConfig = self.db.get_token_configuration(network)
-            rates = await self.rates_service.get_rates(network, tx["block_id"])
-
             if include_internal_txs:
                 traces = await self.db.fetch_transaction_traces(network, tx)
                 traces_converted = [
@@ -220,27 +220,41 @@ class TxsService:
                         tx["block_timestamp"],
                         rates,
                         tokenConfig,
-                        trace_index=None,
+                        trace_index=result["trace_index"],
                         is_first_trace=(i == 0),
                     )
                     for i, result in enumerate(traces)
                 ]
 
                 results_list.extend(traces_converted)
+            else:
+                results_list.append(
+                    await self._get_trace_txs(network, tx, None, get_first_trace=True)
+                )
 
-                if include_token_txs:
-                    tokens = await self.db.list_token_txs(network, tx_hash)
-                    tokens_converted = [
-                        await std_tx_from_row(network, result, rates.rates, tokenConfig)
-                        for result in tokens
-                    ]
+            if include_token_txs:
+                tokens = await self.db.list_token_txs(network, tx_hash)
+                tokens_converted = [
+                    await std_tx_from_row(network, result, rates.rates, tokenConfig)
+                    for result in tokens
+                ]
 
-                    results_list.extend(tokens_converted)
+                results_list.extend(tokens_converted)
 
-                if not include_zero_value:
-                    results_list = [x for x in results_list if x.value.value != 0]
+            if not include_zero_value:
+                results_list = [x for x in results_list if x.value.value != 0]
         else:
-            results_list.append(tx)
+            results_list.append(
+                await std_tx_from_row(
+                    network,
+                    tx,
+                    rates,
+                    tokenConfig,
+                    include_io=include_io,
+                    include_nonstandard_io=include_nonstandard_io,
+                    include_io_index=include_io_index,
+                )
+            )
 
         return results_list
 
