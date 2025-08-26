@@ -8,6 +8,10 @@ from graphsenselib.errors import (
     TransactionNotFoundException,
 )
 from graphsenselib.utils.accountmodel import hex_to_bytes, strip_0x
+from graphsenselib.utils.function_call_parser import (
+    parse_function_call,
+    function_signatures as function_call_signatures,
+)
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
     SubTransactionType,
@@ -39,6 +43,47 @@ def is_supported_asset(
     return (
         strip_0x(asset_address.lower()) in supported_tokens or asset_address == "native"
     )
+
+
+async def _raw_trace_to_std_tx(
+    currency: str,
+    result: Dict[str, Any],
+    tx_timestamp: int,
+    rates,
+    tokenConfig,
+    trace_index: Optional[int],
+    is_first_trace: bool,
+) -> Dict[str, Any]:
+    result["type"] = "internal"
+    result["timestamp"] = tx_timestamp
+    # result["is_tx_trace"] = False
+
+    if "input" in result:
+        result["input_parsed"] = parse_function_call(
+            result["input"], function_call_signatures
+        )
+
+    if currency == "trx":
+        result["from_address"] = result["caller_address"]
+        result["to_address"] = result["transferto_address"]
+        result["value"] = result["call_value"]
+    else:
+        result["contract_creation"] = result["trace_type"] == "create"
+
+        if trace_index is None or is_first_trace:
+            result["type"] = "external"
+        else:
+            if trace_index is not None:
+                is_external = (
+                    result["trace_address"] is None
+                    or result["trace_address"].strip() == ""
+                )
+
+                # if they are the same, then we know it is external
+                if is_external:
+                    result["type"] = "external"
+
+    return await std_tx_from_row(currency, result, rates.rates, tokenConfig)
 
 
 class DatabaseProtocol(Protocol):
@@ -151,6 +196,54 @@ class TxsService:
                 include_io_index,
             )
 
+    async def get_asset_flows_in_tx(
+        self,
+        network: str,
+        tx_hash: str,
+        include_token_txs: bool = True,
+        include_internal_txs: bool = True,
+        include_zero_value: bool = True,
+    ) -> List[Union[TxAccount, TxUtxo]]:
+        tx = await self.db.get_tx(network, tx_hash)
+
+        results_list = []
+        if is_eth_like(network):
+            tokenConfig = self.db.get_token_configuration(network)
+            rates = await self.rates_service.get_rates(network, tx["block_id"])
+
+            if include_internal_txs:
+                traces = await self.db.fetch_transaction_traces(network, tx)
+                traces_converted = [
+                    await _raw_trace_to_std_tx(
+                        network,
+                        result,
+                        tx["block_timestamp"],
+                        rates,
+                        tokenConfig,
+                        trace_index=None,
+                        is_first_trace=(i == 0),
+                    )
+                    for i, result in enumerate(traces)
+                ]
+
+                results_list.extend(traces_converted)
+
+                if include_token_txs:
+                    tokens = await self.db.list_token_txs(network, tx_hash)
+                    tokens_converted = [
+                        await std_tx_from_row(network, result, rates.rates, tokenConfig)
+                        for result in tokens
+                    ]
+
+                    results_list.extend(tokens_converted)
+
+                if not include_zero_value:
+                    results_list = [x for x in results_list if x.value.value != 0]
+        else:
+            results_list.append(tx)
+
+        return results_list
+
     async def get_tx_io(
         self,
         currency: str,
@@ -245,36 +338,16 @@ class TxsService:
         )
 
         if result and result["tx_hash"] == tx["tx_hash"]:
-            result["type"] = "internal"
-            result["timestamp"] = tx["block_timestamp"]
-            # result["is_tx_trace"] = False
-
-            if currency == "trx":
-                result["from_address"] = result["caller_address"]
-                result["to_address"] = result["transferto_address"]
-                result["value"] = result["call_value"]
-            else:
-                result["contract_creation"] = result["trace_type"] == "create"
-
-                if trace_index is None or get_first_trace:
-                    result["type"] = "external"
-                else:
-                    if trace_index is not None:
-                        is_external = (
-                            result["trace_address"] is None
-                            or result["trace_address"].strip() == ""
-                        )
-
-                        # if they are the same, then we know it is external
-                        if is_external:
-                            result["type"] = "external"
-
-            rates = await self.rates_service.get_rates(currency, result["block_id"])
-            return await std_tx_from_row(
+            tokenConfig = self.db.get_token_configuration(currency)
+            rates = await self.rates_service.get_rates(currency, tx["block_id"])
+            return await _raw_trace_to_std_tx(
                 currency,
                 result,
-                rates.rates,
-                self.db.get_token_configuration(currency),
+                tx["block_timestamp"],
+                rates,
+                tokenConfig,
+                trace_index,
+                get_first_trace,
             )
         else:
             return None
