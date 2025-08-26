@@ -1,6 +1,7 @@
 # flake8: noqa: F401
 from .config import (
     GRAPHSENSE_DEFAULT_DATETIME_FORMAT,
+    GRAPHSENSE_VERBOSE_DATETIME_FORMAT,
     AppConfig,
     Environment,
     KeyspaceConfig,

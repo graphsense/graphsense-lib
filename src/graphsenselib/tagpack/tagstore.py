@@ -14,17 +14,15 @@ from psycopg2.extensions import AsIs, register_adapter
 from psycopg2.extras import execute_batch, execute_values
 
 from graphsenselib.tagpack import ValidationError
-from graphsenselib.tagpack.cmd_utils import (
-    print_fail,
-    print_info,
-    print_success,
-    print_warn,
-)
+import click
 from graphsenselib.tagpack.constants import KNOWN_NETWORKS
 from graphsenselib.tagpack.tagpack import TagPack
 from graphsenselib.tagpack.utils import get_github_repo_url
+import logging
 
 register_adapter(np.int64, AsIs)
+
+logger = logging.getLogger(__name__)
 
 
 class InsertTagpackWorker:
@@ -65,7 +63,7 @@ class InsertTagpackWorker:
         )
 
         try:
-            print_info(f"{i} {tagpack_file}: INSERTING {len(tagpack.tags)} Tags")
+            logger.info(f"{i} {tagpack_file}: INSERTING {len(tagpack.tags)} Tags")
             if self.validate_tagpack:
                 tagpack.validate()
             self.tagstore.insert_tagpack(
@@ -76,10 +74,12 @@ class InsertTagpackWorker:
                 default_prefix,
                 relpath,
             )
-            print_success(f"{i} {tagpack_file}: PROCESSED {len(tagpack.tags)} Tags")
+            click.secho(
+                f"{i} {tagpack_file}: PROCESSED {len(tagpack.tags)} Tags", fg="green"
+            )
             return 1, len(tagpack.tags)
         except Exception as e:
-            print_fail(f"{i} {tagpack_file}: FAILED", e)
+            logger.error(f"{i} {tagpack_file}: FAILED", e)
             return 0, 0
 
 
@@ -116,7 +116,9 @@ def retry_on_deadlock(times=1):
                     return function(*args, **kwargs)
                 except DeadlockDetected:
                     time.sleep(1)
-                    print_warn(f"Deadlock Detected retrying, n={times - attempt} times")
+                    logger.warning(
+                        f"Deadlock Detected retrying, n={times - attempt} times"
+                    )
                     attempt += 1
             return function(*args, **kwargs)
 
@@ -159,7 +161,7 @@ class TagStore(object):
         h = _get_header(tagpack, tagpack_id)
 
         if force_insert:
-            print(f"evicting and re-inserting tagpack {tagpack_id}")
+            logger.info(f"evicting and re-inserting tagpack {tagpack_id}")
             q = "DELETE FROM tagpack WHERE id = (%s)"
             self.cursor.execute(q, (tagpack_id,))
 
@@ -244,7 +246,7 @@ class TagStore(object):
         h = _get_actor_header(actorpack, actorpack_id)
 
         if force_insert:
-            print(f"Evicting and re-inserting actorpack {actorpack_id}")
+            logger.info(f"Evicting and re-inserting actorpack {actorpack_id}")
             q = "DELETE FROM actorpack WHERE id = (%s)"
             self.cursor.execute(q, (actorpack_id,))
 
@@ -835,7 +837,7 @@ class TagStore(object):
 def validate_network(network):
     network = network.upper()
     if network not in ([""] + list(KNOWN_NETWORKS.keys())):
-        print_warn(f"WARNING: Unknown network {network}")
+        logger.warning(f"WARNING: Unknown network {network}")
 
 
 def _get_tag_concepts(tag):

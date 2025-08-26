@@ -17,6 +17,7 @@ from ..utils.console import console
 from ..utils.logging import configure_logging
 from ..utils.slack import ClickSlackErrorNotificationContext
 from ..watch.cli import watch_cli
+from .common import try_load_config
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ def version_cmd():
     epilog="GraphSense - https://graphsense.github.io/",
 )
 @click.option(
-    "-v", "--verbose", count=True, help="One v for warning, two for info etc."
+    "-v", "--verbosity", count=True, help="One v for warning, two for info etc."
 )
 @click.option(
     "--config-file",
@@ -76,35 +77,32 @@ def version_cmd():
     required=False,
 )
 @click.pass_context
-def cli(ctx, verbose: int, config_file: str):
+def cli(ctx, verbosity: int, config_file: str):
     """Commandline interface of graphsense-lib
 
     graphsense-cli exposes many tools and features to manager your
     graphsense crypto-analytics database.
     \f
     Args:
-        verbose (int): One v stands for loglevel warning, two for info and so on...
+        verbosity (int): One v stands for loglevel warning, two for info and so on...
     """
-    from .common import try_load_config
 
-    if len(sys.argv) > 1 and sys.argv[1] in ["tagpack-tool", "tagstore"]:
-        configure_logging(verbose)
-        logger.info(
-            f"Running version {__version__} (config loading skipped for {sys.argv[1]})"
-        )
-        logger.info("Running with parameters: " + (" ".join(sys.argv)))
-        return
-
+    configure_logging(verbosity)
     config, h = try_load_config(config_file)
-    ctx.with_resource(
-        ClickSlackErrorNotificationContext(
-            config.get_slack_exception_notification_hook_urls()
+    # if we have a config, we can set up the slack notification context
+    if config is not None:
+        ctx.with_resource(
+            ClickSlackErrorNotificationContext(
+                config.get_slack_exception_notification_hook_urls()
+            )
         )
-    )
-    configure_logging(verbose)
-    logger.info(
-        f"Running version {__version__} using config {config.underlying_file} @ md5 {h}"
-    )
+        logger.info(
+            f"Running version {__version__} using config {config.underlying_file} @ md5 {h}"
+        )
+    else:
+        configure_logging(verbosity)
+        logger.info(f"Running version {__version__} without a config.")
+
     logger.info("Running with parameters: " + (" ".join(sys.argv)))
 
 

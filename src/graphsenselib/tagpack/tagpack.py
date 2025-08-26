@@ -17,12 +17,6 @@ from git import Repo
 from yamlinclude import YamlIncludeConstructor
 
 from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
-from graphsenselib.tagpack.cmd_utils import (
-    bcolors,
-    get_user_choice,
-    print_info,
-    print_warn,
-)
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
 from graphsenselib.tagpack.constants import (
     is_known_currency,
@@ -31,6 +25,10 @@ from graphsenselib.tagpack.constants import (
 )
 from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
 from graphsenselib.utils.address import validate_address
+from graphsenselib.tagpack.cmd_utils import get_user_choice
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class InconsistencyChecker:
@@ -44,11 +42,9 @@ class InconsistencyChecker:
             and not self.currency_seen.get(value, False)
             and not is_known_currency(value)
         ):
-            print_warn(
-                (
-                    f"{value} is not a known currency. "
-                    "Be careful to avoid introducing ambiguity into the dataset."
-                )
+            logger.warning(
+                f"{value} is not a known currency. "
+                "Be careful to avoid introducing ambiguity into the dataset."
             )
             self.currency_seen[value] = True
 
@@ -58,17 +54,15 @@ class InconsistencyChecker:
             and not is_known_network(value)
         ):
             suggestions = suggest_networks_from_currency(value)
-            print_warn(
+            logger.warning(
                 (
-                    (
-                        f"{value} is not a known network. "
-                        "Be careful to avoid introducing ambiguity into the dataset. "
-                    )
-                    + (
-                        f"Did you mean on of: {', '.join(suggestions)}"
-                        if len(suggestions) > 0
-                        else ""
-                    )
+                    f"{value} is not a known network. "
+                    "Be careful to avoid introducing ambiguity into the dataset. "
+                )
+                + (
+                    f"Did you mean one of: {', '.join(suggestions)}"
+                    if len(suggestions) > 0
+                    else ""
                 )
             )
             self.network_seen[value] = True
@@ -126,7 +120,7 @@ def get_uri_for_tagpack(repo_path, tagpack_file, strict_check, no_git):
     if strict_check and repo.is_dirty():
         msg = f"Local modifications in {repo.common_dir} detected, please "
         msg += "push first."
-        print_info(msg)
+        logger.info(msg)
         sys.exit(0)
 
     if len(repo.remotes) > 1:
@@ -203,7 +197,7 @@ def collect_tagpack_files(path, search_actorpacks=False, max_mb=200):
     elif os.path.isfile(path):  # validate single file
         files = {path}
     else:  # TODO Error! Should we validate the path within __main__?
-        print_warn(f"Not a valid path: {path}")
+        logger.warning(f"Not a valid path: {path}")
         return {}
 
     files = {f for f in files if not f.endswith("config.yaml")}
@@ -240,7 +234,7 @@ def collect_tagpack_files(path, search_actorpacks=False, max_mb=200):
         if not fs:
             msj = f"\tThe header file in {os.path.realpath(t)} won't be "
             msj += "included in any tagpack"
-            print_warn(msj)
+            logger.warning(msj)
 
     tagpack_files = {k: v for k, v in tagpack_files.items() if v}
 
@@ -249,8 +243,8 @@ def collect_tagpack_files(path, search_actorpacks=False, max_mb=200):
     for _, files in tagpack_files.items():
         for f in files.copy():
             if os.stat(f).st_size > max_bytes:
-                print_warn(
-                    f"{f} is too large and will be not be processed: "
+                logger.warning(
+                    f"{f} is too large and will not be processed: "
                     f"{(os.stat(f).st_size / 1048576):.2f} mb, current "
                     f"max file size is {max_mb} mb. "
                     "Please split the file to be processed."
@@ -353,7 +347,7 @@ class TagPack(object):
                 min_confs.index[-1] if len(min_confs) > 0 else None
             )
             self.contents["confidence"] = lowest_confidence_score
-            print_warn(
+            logger.warning(
                 "Not all tags have a confidence score set. "
                 f"Set default confidence level to {lowest_confidence_score} "
                 "on tagpack level."
@@ -447,7 +441,7 @@ class TagPack(object):
             check_for_null_characters(field, value, "header")
 
             if field == "is_public":
-                print_warn(
+                logger.warning(
                     "YAML field 'is_public' is DEPRECATED and will be removed "
                     "in future versions. Use the commandline flag "
                     "--public for inserting public tagpacks. By default, tagpacks "
@@ -516,7 +510,7 @@ class TagPack(object):
                     raise ValidationError(f"{e} in {tag}")
 
         if nr_no_actors > 0:
-            print_warn(
+            logger.warning(
                 f"{nr_no_actors}/{len(ut)} tags have no actor configured. "
                 "Please consider connecting the tag to an actor."
             )
@@ -529,15 +523,15 @@ class TagPack(object):
 
         for address, count in address_counts.items():
             if count > 100:
-                print_warn(
+                logger.warning(
                     f"{count} tags with the same address {address} found. "
                     "Consider aggregating them."
                 )
 
         if self._duplicates:
             msg = f"{len(self._duplicates)} duplicate(s) found, starting "
-            msg += f"with {self._duplicates[0]}\n"
-            print_info(msg)
+            msg += f"with {self._duplicates[0]}"
+            logger.warning(msg)
         return True
 
     def verify_addresses(self):
@@ -556,18 +550,20 @@ class TagPack(object):
             address = tag.all_fields.get("address")
             if address is not None:
                 if len(address) != len(address.strip()):
-                    print_warn(f"Address contains whitespace: {repr(address)}")
+                    logger.warning(f"Address contains whitespace: {repr(address)}")
+
                 elif currency in self.verifiable_currencies:
                     v = validate_address(currency, address)
                     if not v:
-                        print_warn(msg.format(cupper, address))
+                        logger.warning(msg.format(cupper, address))
                 else:
                     unsupported[cupper].add(address)
 
         for c, addrs in unsupported.items():
-            print_warn(f"Address verification is not supported for {c}:")
+            logger.warning(f"Address verification is not supported for {c}:")
             for a in sorted(addrs):
-                print_warn(f"\t{a}")
+                logger.debug(f"Address verification skipped for: {a}")
+            logger.warning(f"Address verification skipped for: {len(addrs)} addresses")
 
     def add_actors(
         self, find_actor_candidates, only_categories=None, user_choice_cache={}
@@ -600,14 +596,14 @@ class TagPack(object):
                 if len(candidates) == 0:
                     choice = None
                 else:
-                    print(hl_context_str)
+                    logger.info(hl_context_str)
                     magic_choice = 1
                     newhl = hl
                     while True:
                         new_candidates = candidates + [
                             (
                                 magic_choice,
-                                f"{bcolors.BOLD}NOTHING FOUND - Refine Search",
+                                "NOTHING FOUND - Refine Search",
                             )
                         ]
                         choice = get_user_choice(newhl, new_candidates)
@@ -639,7 +635,7 @@ class TagPack(object):
                 labels_with_no_actors.add(hl)
 
         if "actor" in self.all_header_fields and not suggestions_found:
-            print_warn("Actor is defined on Tagpack level, skip scanning all tags.")
+            logger.warning("Actor is defined on Tagpack level, skip scanning all tags.")
             return False
 
         # update tags and trace if all labels carry the same actor
@@ -672,10 +668,10 @@ class TagPack(object):
                 tag.contents.pop("actor")
 
         if len(labels_with_no_actors) > 0:
-            print_warn("Did not assign an actor to the tags with labels:")
+            logger.warning("Did not assign an actor to the tags with labels:")
             for hl in labels_with_no_actors:
-                print_warn(f" - {hl}")
-            print_warn("Consider creating a suitable actor or manual linking.")
+                logger.warning(f" - {hl}")
+            logger.warning("Consider creating a suitable actor or manual linking.")
 
         return suggestions_found
 

@@ -9,7 +9,6 @@ from multiprocessing import Pool, cpu_count
 import click
 import pandas as pd
 import yaml
-from colorama import init as colorama_init
 from git import Repo
 from tabulate import tabulate
 from yaml.parser import ParserError, ScannerError
@@ -17,13 +16,6 @@ from yaml.parser import ParserError, ScannerError
 from graphsenselib.tagpack import get_version
 from graphsenselib.tagpack.actorpack import Actor, ActorPack
 from graphsenselib.tagpack.actorpack_schema import ActorPackSchema
-from graphsenselib.tagpack.cmd_utils import (
-    print_fail,
-    print_info,
-    print_line,
-    print_success,
-    print_warn,
-)
 from graphsenselib.tagpack.graphsense import GraphSense
 from graphsenselib.tagpack.tagpack import (
     TagPack,
@@ -42,8 +34,20 @@ from graphsenselib.tagpack.constants import (
 )
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
+import logging
 
-colorama_init()
+logger = logging.getLogger(__name__)
+
+
+def override_postgres_url(url):
+    def_url, url_msg = read_url_from_env()
+    if not url:
+        url = def_url
+    if not url:
+        logger.warning(url_msg)
+        click.echo("No postgresql URL connection was provided. Exiting.")
+        sys.exit(1)
+    return url
 
 
 def _load_config(cfile):
@@ -66,8 +70,11 @@ def read_url_from_env():
         fields = ["USER", "PASSWORD", "HOST", "DB"]
         miss = {f"POSTGRES_{a}" for a in fields}
         miss -= set(ev.keys())
-        msg = "Unable to build postgresql URL from environment variables: "
-        msg += ", ".join(miss) + " not found."
+        msg = (
+            "Unable to build postgresql URL: required environment variables "
+            "(POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_DB) not found: "
+            + ", ".join(miss)
+        )
         url = None
     return url, msg
 
@@ -103,22 +110,22 @@ def config(ctx, verbose):
     """show repository config"""
     config_file = ctx.obj["config"]
     if os.path.exists(config_file):
-        print("Using Config File:", config_file)
+        logger.info("Using Config File:", config_file)
     else:
-        print_info(
+        logger.info(
             f"No override config file found at {config_file}. Using default values."
         )
     if verbose:
         config_data = _load_config(config_file)
-        print_line("Show configured taxonomies")
+        logger.info("Show configured taxonomies")
         count = 0
         if "taxonomies" not in config_data:
-            print_line("No configured taxonomies", "fail")
+            logger.error("No configured taxonomies")
         else:
             for key, value in config_data["taxonomies"].items():
-                print_info(value)
+                logger.info(value)
                 count += 1
-            print_line(f"{count} configured taxonomies", "success")
+            click.secho(f"{count} configured taxonomies", fg="green")
 
 
 @cli.command()
@@ -169,20 +176,13 @@ def sync(
     dont_update_quality_metrics,
 ):
     """syncs the tagstore with a list of git repos."""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
 
     if os.path.isfile(repos):
         with open(repos, "r") as f:
             repos_list = [x.strip() for x in f.readlines() if not x.startswith("#")]
 
-        print_line("Init db and add taxonomies ...")
+        logger.info("Init db and add taxonomies ...")
 
         from graphsenselib.tagstore.cli import (
             tagstore as tagstore_tool,
@@ -210,23 +210,23 @@ def sync(
 
         for repo_url in repos_list:
             with tempfile.TemporaryDirectory(suffix="tagstore_sync") as temp_dir_tt:
-                print(f"Syncing {repo_url}. Temp files in: {temp_dir_tt}")
+                logger.info(f"Syncing {repo_url}. Temp files in: {temp_dir_tt}")
 
-                print_info("Cloning...")
+                logger.info("Cloning...")
                 repo_url, *branch_etc = repo_url.split(" ")
                 repo = Repo.clone_from(repo_url, temp_dir_tt)
                 if len(branch_etc) > 0:
                     branch = branch_etc[0]
-                    print_info(f"Using branch {branch}")
+                    logger.info(f"Using branch {branch}")
                     repo.git.checkout(branch)
 
-                print("Inserting actorpacks ...")
+                logger.info("Inserting actorpacks ...")
 
                 click_ctx_actorpack.invoke(
                     insert_actorpack_cli, path=temp_dir_tt, url=url
                 )
 
-                print("Inserting tagpacks ...")
+                logger.info("Inserting tagpacks ...")
                 public = len(branch_etc) > 1 and branch_etc[1].strip() == "public"
 
                 tag_type_default = (
@@ -234,7 +234,7 @@ def sync(
                 )
 
                 if public:
-                    print("Caution: This repo is imported as public.")
+                    logger.info("Caution: This repo is imported as public.")
 
                 args = {
                     "path": temp_dir_tt,
@@ -252,19 +252,19 @@ def sync(
 
                 click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
 
-        print("Removing duplicates ...")
+        logger.info("Removing duplicates ...")
         click_ctx_tagstore.invoke(remove_duplicates, url=url)
 
-        print("Refreshing db views ...")
+        logger.info("Refreshing db views ...")
         click_ctx_tagstore.invoke(refresh_views, url=url)
 
         if not dont_update_quality_metrics:
-            print("Calc Quality metrics ...")
+            logger.info("Calc Quality metrics ...")
             calc_quality_measures(url, DEFAULT_SCHEMA)
             # click_ctx_tagpacktool_quality.invoke(calculate_quality, url=url)
 
         if run_cluster_mapping_with_env or rerun_cluster_mapping_with_env:
-            print("Import cluster mappings ...")
+            logger.info("Import cluster mappings ...")
 
             click_ctx_tagpacktool_tagstore.invoke(
                 insert_cluster_mappings,
@@ -275,30 +275,30 @@ def sync(
                 update=rerun_cluster_mapping_with_env is not None,
             )
 
-            print("Refreshing db views ...")
+            logger.info("Refreshing db views ...")
             click_ctx_tagstore.invoke(refresh_views, url=url)
 
-        print_success("Your tagstore is now up-to-date again.")
+        click.secho("Your tagstore is now up-to-date again.", fg="green")
 
     else:
-        print_fail(f"Repos to sync file {repos} does not exist.")
+        logger.error(f"Repos to sync file {repos} does not exist.")
 
 
 def validate_tagpack(config, path, no_address_validation):
     t0 = time.time()
-    print_line("TagPack validation starts")
-    print(f"Path: {path}")
+    logger.info("TagPack validation starts")
+    logger.info(f"Path: {path}")
 
     taxonomies = _load_taxonomies(config)
     taxonomy_keys = taxonomies.keys()
-    print(f"Loaded taxonomies: {taxonomy_keys}")
+    logger.info(f"Loaded taxonomies: {taxonomy_keys}")
 
     schema = TagPackSchema()
-    print(f"Loaded schema: {schema.definition}")
+    logger.info(f"Loaded schema: {schema.definition}")
 
     tagpack_files = collect_tagpack_files(path)
     n_tagpacks = len([f for fs in tagpack_files.values() for f in fs])
-    print_info(f"Collected {n_tagpacks} TagPack files\n")
+    logger.info(f"Collected {n_tagpacks} TagPack files")
 
     no_passed = 0
     try:
@@ -308,35 +308,37 @@ def validate_tagpack(config, path, no_address_validation):
                     "", tagpack_file, schema, taxonomies, headerfile_dir
                 )
 
-                print(f"{tagpack_file}: ", end="\n")
+                logger.info(f"Validating {tagpack_file}")
 
                 tagpack.validate()
                 # verify valid blocknetwork addresses using internal checksum
                 if not no_address_validation:
                     tagpack.verify_addresses()
 
-                print_success("PASSED")
+                click.secho("PASSED", fg="green")
 
                 no_passed += 1
     except (ValidationError, TagPackFileError) as e:
-        print_fail("FAILED", e)
+        logger.error(f"FAILED: {e}")
 
     failed = no_passed < n_tagpacks
 
-    status = "fail" if failed else "success"
-
     duration = round(time.time() - t0, 2)
-    print_line(
-        "{}/{} TagPacks passed in {}s".format(no_passed, n_tagpacks, duration), status
-    )
+    if failed:
+        logger.error(f"{no_passed}/{n_tagpacks} TagPacks passed in {duration}s")
+    else:
+        click.secho(
+            f"{no_passed}/{n_tagpacks} TagPacks passed in {duration}s", fg="green"
+        )
 
-    sys.exit(0 if not failed else 1)
+    if failed:
+        sys.exit(1)
 
 
 def list_tags(url, schema, unique, category, network, csv):
     t0 = time.time()
     if not csv:
-        print_line("List tags starts")
+        logger.info("List tags starts")
 
     tagstore = TagStore(url, schema)
 
@@ -344,22 +346,21 @@ def list_tags(url, schema, unique, category, network, csv):
         uniq, cat, net = unique, category, network
         qm = tagstore.list_tags(unique=uniq, category=cat, network=net)
         if not csv:
-            print(f"{len(qm)} Tags found")
+            logger.info(f"{len(qm)} Tags found")
         else:
-            print("network,tp_title,tag_label")
+            logger.info("network,tp_title,tag_label")
         for row in qm:
-            print(("," if csv else ", ").join(map(str, row)))
+            logger.info(("," if csv else ", ").join(map(str, row)))
 
         duration = round(time.time() - t0, 2)
         if not csv:
-            print_line(f"Done in {duration}s", "success")
+            click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
-        print_fail(e)
-        print_line("Operation failed", "fail")
+        logger.error(f"Operation failed: {e}")
 
 
 def _suggest_actors(url, schema, label, max_results):
-    print_line(f"Searching suitable actors for {label} in TagStore")
+    logger.info(f"Searching suitable actors for {label} in TagStore")
     tagstore = TagStore(url, schema)
     candidates = tagstore.find_actors_for(
         label, max_results, use_simple_similarity=False, threshold=0.1
@@ -377,7 +378,7 @@ def _suggest_actors(url, schema, label, max_results):
 
 
 def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
-    print("Starting interactive tagpack actor enrichment process.")
+    logger.info("Starting interactive tagpack actor enrichment process.")
 
     tagstore = TagStore(url, schema)
     tagpack_files = collect_tagpack_files(path)
@@ -390,7 +391,7 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
             tagpack = TagPack.load_from_file(
                 "", tagpack_file, schema_obj, None, headerfile_dir
             )
-            print(f"Loading {tagpack_file}: ")
+            logger.info(f"Loading {tagpack_file}: ")
 
             def find_actor_candidates(search_term):
                 res = tagstore.find_actors_for(
@@ -419,7 +420,7 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
                     if not inplace
                     else tagpack_file
                 )
-                print_success(f"Writing updated Tagpack {updated_file}\n")
+                click.secho(f"Writing updated Tagpack {updated_file}", fg="green")
                 with open(updated_file, "w") as outfile:
                     tagpack.contents["tags"] = tagpack.contents.pop(
                         "tags"
@@ -429,7 +430,7 @@ def add_actors_to_tagpack(url, schema, path, max_results, categories, inplace):
                         tagpack.contents, outfile, sort_keys=False
                     )  # write in order of insertion
             else:
-                print_success("No actors added, moving on.")
+                click.secho("No actors added, moving on.", fg="green")
 
 
 def insert_tagpack(
@@ -448,25 +449,25 @@ def insert_tagpack(
     config,
 ):
     t0 = time.time()
-    print_line("TagPack insert starts")
-    print(f"Path: {path}")
+    logger.info("TagPack insert starts")
+    logger.info(f"Path: {path}")
 
     if no_git:
         base_url = path
-        print_line("No repository detection done.")
+        logger.info("No repository detection done.")
     else:
         base_url = get_repository(path)
-        print_line(f"Detected repository root in {base_url}")
+        logger.info(f"Detected repository root in {base_url}")
 
     tagstore = TagStore(url, schema)
 
     schema_obj = TagPackSchema()
-    print_info(f"Loaded TagPack schema definition: {schema_obj.definition}")
+    logger.info(f"Loaded TagPack schema definition: {schema_obj.definition}")
 
     config_data = _load_config(config)
     taxonomies = _load_taxonomies(config_data)
     taxonomy_keys = taxonomies.keys()
-    print(f"Loaded taxonomies: {taxonomy_keys}")
+    logger.info(f"Loaded taxonomies: {taxonomy_keys}")
 
     tagpack_files = collect_tagpack_files(path)
 
@@ -483,7 +484,7 @@ def insert_tagpack(
 
     prefix = None  # config.get("prefix", None)
     if add_new:  # don't re-insert existing tagpacks
-        print_info("Checking which files are new to the tagstore:")
+        logger.info("Checking which files are new to the tagstore:")
         prepared_packs = [
             (t, h, u, r, default_prefix)
             for (t, h, u, r, default_prefix) in prepared_packs
@@ -491,18 +492,18 @@ def insert_tagpack(
         ]
 
     n_ppacks = len(prepared_packs)
-    print_info(f"Collected {n_ppacks} TagPack files\n")
+    logger.info(f"Collected {n_ppacks} TagPack files")
 
     packs = enumerate(sorted(prepared_packs), start=1)
 
     n_processes = n_workers if n_workers > 0 else cpu_count() + n_workers
 
     if n_processes < 1:
-        print_fail(f"Can't use {n_processes} adjust your n_workers setting.")
+        logger.error(f"Can't use {n_processes} adjust your n_workers setting.")
         sys.exit(100)
 
     if n_processes > 1:
-        print_info(f"Running parallel insert on {n_processes} workers.")
+        logger.info(f"Running parallel insert on {n_processes} workers.")
 
     worker = InsertTagpackWorker(
         url,
@@ -532,10 +533,13 @@ def insert_tagpack(
 
     duration = round(time.time() - t0, 2)
     msg = "Processed {}/{} TagPacks with {} Tags in {}s. "
-    print_line(msg.format(no_passed, n_ppacks, no_tags, duration), status)
+    if status == "fail":
+        logger.error(msg.format(no_passed, n_ppacks, no_tags, duration))
+    else:
+        click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
     msg = "Don't forget to run 'graphsense-cli tagstore refresh-views' soon to keep the database"
     msg += " consistent!"
-    print_info(msg)
+    print(msg)
 
 
 @cli.group("tagpack")
@@ -571,13 +575,7 @@ def validate_tagpack_cli(ctx, path, no_address_validation):
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def list_tagpack_cli(schema, url, unique, category, network, csv):
     """list Tags"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     list_tags(url, schema, unique, category, network, csv)
 
 
@@ -645,13 +643,7 @@ def insert_tagpack_cli(
     tag_type_default,
 ):
     """insert TagPacks"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
 
     insert_tagpack(
         url,
@@ -679,13 +671,7 @@ def insert_tagpack_cli(
 @click.option("--max", type=int, default=5, help="Limits the number of results")
 def suggest_actors(schema, url, label, max):
     """suggest an actor based on input"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     _suggest_actors(url, schema, label, max)
 
 
@@ -708,31 +694,25 @@ def suggest_actors(schema, url, label, max):
 )
 def add_actors(path, schema, url, max, categories, inplace):
     """interactively add actors to tagpack"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     add_actors_to_tagpack(url, schema, path, max, categories, inplace)
 
 
 def validate_actorpack(config, path):
     t0 = time.time()
-    print_line("ActorPack validation starts")
-    print(f"Path: {path}")
+    logger.info("ActorPack validation starts")
+    logger.info(f"Path: {path}")
 
     taxonomies = _load_taxonomies(config)
     taxonomy_keys = taxonomies.keys()
-    print(f"Loaded taxonomies: {taxonomy_keys}")
+    logger.info(f"Loaded taxonomies: {taxonomy_keys}")
 
     schema = ActorPackSchema()
-    print(f"Loaded schema: {schema.definition}")
+    logger.info(f"Loaded schema: {schema.definition}")
 
     actorpack_files = collect_tagpack_files(path, search_actorpacks=True)
     n_actorpacks = len([f for fs in actorpack_files.values() for f in fs])
-    print_info(f"Collected {n_actorpacks} ActorPack files\n")
+    logger.info(f"Collected {n_actorpacks} ActorPack files")
 
     no_passed = 0
     try:
@@ -742,14 +722,14 @@ def validate_actorpack(config, path):
                     "", actorpack_file, schema, taxonomies, headerfile_dir
                 )
 
-                print(f"{actorpack_file}:\n", end="")
+                logger.info(f"{actorpack_file}:\n", end="")
 
                 actorpack.validate()
-                print_success("PASSED")
+                click.secho("PASSED", fg="green")
 
                 no_passed += 1
     except (ValidationError, TagPackFileError, ParserError, ScannerError) as e:
-        print_fail("FAILED", e)
+        logger.error(f"FAILED: {e}")
 
     failed = no_passed < n_actorpacks
 
@@ -757,34 +737,38 @@ def validate_actorpack(config, path):
 
     duration = round(time.time() - t0, 2)
     msg = f"{no_passed}/{n_actorpacks} ActorPacks passed in {duration}s"
-    print_line(msg, status)
+    if status == "fail":
+        logger.error(msg)
+    else:
+        click.secho(msg, fg="green")
 
-    sys.exit(0 if not failed else 1)
+    if failed:
+        sys.exit(1)
 
 
 def insert_actorpacks(
     url, schema, path, batch_size, force, add_new, no_strict_check, no_git, config
 ):
     t0 = time.time()
-    print_line("ActorPack insert starts")
-    print(f"Path: {path}")
+    logger.info("ActorPack insert starts")
+    logger.info(f"Path: {path}")
 
     if no_git:
         base_url = path
-        print_line("No repository detection done.")
+        logger.info("No repository detection done.")
     else:
         base_url = get_repository(path)
-        print_line(f"Detected repository root in {base_url}")
+        logger.info(f"Detected repository root in {base_url}")
 
     tagstore = TagStore(url, schema)
 
     schema_obj = ActorPackSchema()
-    print_info(f"Loaded ActorPack schema definition: {schema_obj.definition}")
+    logger.info(f"Loaded ActorPack schema definition: {schema_obj.definition}")
 
     config_data = _load_config(config)
     taxonomies = _load_taxonomies(config_data)
     taxonomy_keys = taxonomies.keys()
-    print(f"Loaded taxonomies: {taxonomy_keys}")
+    logger.info(f"Loaded taxonomies: {taxonomy_keys}")
 
     actorpack_files = collect_tagpack_files(path, search_actorpacks=True)
 
@@ -802,7 +786,7 @@ def insert_actorpacks(
 
     prefix = None  # config.get("prefix", None)
     if add_new:  # don't re-insert existing tagpacks
-        print_info("Checking which ActorPacks are new to the tagstore:")
+        logger.info("Checking which ActorPacks are new to the tagstore:")
         prepared_packs = [
             (t, h, u, r, default_prefix)
             for (t, h, u, r, default_prefix) in prepared_packs
@@ -810,7 +794,7 @@ def insert_actorpacks(
         ]
 
     n_ppacks = len(prepared_packs)
-    print_info(f"Collected {n_ppacks} ActorPack files\n")
+    logger.info(f"Collected {n_ppacks} ActorPack files")
 
     no_passed = 0
     no_actors = 0
@@ -822,28 +806,31 @@ def insert_actorpacks(
             uri, actorpack_file, schema_obj, taxonomies, headerfile_dir
         )
 
-        print(f"{i} {actorpack_file}: ", end="")
+        logger.info(f"{i} {actorpack_file}: ", end="")
         try:
             tagstore.insert_actorpack(
                 actorpack, force, prefix if prefix else default_prefix, relpath
             )
-            print_success(f"PROCESSED {len(actorpack.actors)} Actors")
+            click.secho(f"PROCESSED {len(actorpack.actors)} Actors", fg="green")
             no_passed += 1
             no_actors += len(actorpack.actors)
         except Exception as e:
-            print_fail("FAILED", e)
+            logger.error(f"FAILED: {e}")
 
     status = "fail" if no_passed < n_ppacks else "success"
 
     duration = round(time.time() - t0, 2)
     msg = "Processed {}/{} ActorPacks with {} Actors in {}s."
-    print_line(msg.format(no_passed, n_ppacks, no_actors, duration), status)
+    if status == "fail":
+        logger.error(msg.format(no_passed, n_ppacks, no_actors, duration))
+    else:
+        click.secho(msg.format(no_passed, n_ppacks, no_actors, duration), fg="green")
 
 
 def list_actors(url, schema, category, csv):
     t0 = time.time()
     if not csv:
-        print_line("List actors starts")
+        logger.info("List actors starts")
 
     tagstore = TagStore(url, schema)
 
@@ -859,16 +846,15 @@ def list_actors(url, schema, category, csv):
 
         duration = round(time.time() - t0, 2)
         if not csv:
-            print_line(f"Done in {duration}s", "success")
+            click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
-        print_fail(e)
-        print_line("Operation failed", "fail")
+        logger.error(f"Operation failed: {e}")
 
 
 def list_address_actors(url, schema, network, csv):
     t0 = time.time()
     if not csv:
-        print_line("List addresses with actor tags starts")
+        logger.info("List addresses with actor tags starts")
 
     tagstore = TagStore(url, schema)
 
@@ -884,10 +870,9 @@ def list_address_actors(url, schema, network, csv):
 
         duration = round(time.time() - t0, 2)
         if not csv:
-            print_line(f"Done in {duration}s", "success")
+            click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
-        print_fail(e)
-        print_line("Operation failed", "fail")
+        logger.error(f"Operation failed: {e}")
 
 
 # Move this to the top level of the module
@@ -958,13 +943,7 @@ def insert_actorpack_cli(
     ctx, path, schema, url, batch_size, force, add_new, no_strict_check, no_git
 ):  # noqa: F811
     """insert ActorPacks"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     insert_actorpacks(
         url,
         schema,
@@ -987,13 +966,7 @@ def insert_actorpack_cli(
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def list_actorpack_cli(schema, url, category, csv):  # noqa: F811
     """list Actors"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     list_actors(url, schema, category, csv)
 
 
@@ -1008,36 +981,30 @@ def list_actorpack_cli(schema, url, category, csv):  # noqa: F811
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def list_address_actor(schema, url, network, csv):
     """list addresses-actors"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     list_address_actors(url, schema, network, csv)
 
 
 def list_taxonomies(config):
-    print_line("Show configured taxonomies")
+    logger.info("Show configured taxonomies")
     count = 0
     if "taxonomies" not in config:
-        print_line("No configured taxonomies", "fail")
+        logger.error("No configured taxonomies")
     else:
         for key, value in config["taxonomies"].items():
-            print_info(value)
+            logger.info(value)
             count += 1
-        print_line(f"{count} configured taxonomies", "success")
+        click.secho(f"{count} configured taxonomies", fg="green")
 
 
 def show_taxonomy_concepts(config, taxonomy, tree, verbose):
     from anytree import RenderTree
 
     if "taxonomies" not in config:
-        print_line("No taxonomies configured", "fail")
+        logger.error("No taxonomies configured")
         return
 
-    print_line("Showing concepts of taxonomy {}".format(taxonomy))
+    print(f"Showing concepts of taxonomy {taxonomy}")
     uri = config["taxonomies"][taxonomy]
     print(f"URI: {uri}\n")
     taxonomy_obj = _load_taxonomy(config, taxonomy)
@@ -1059,14 +1026,13 @@ def show_taxonomy_concepts(config, taxonomy, tree, verbose):
             table = [[c.id, c.label] for c in taxonomy_obj.concepts]
 
         print(tabulate(table, headers=headers))
-        print_line(f"{len(taxonomy_obj.concepts)} taxonomy concepts", "success")
+        print(f"{len(taxonomy_obj.concepts)} taxonomy concepts")
 
 
 def insert_taxonomy():
-    print_line(
+    logger.error(
         "tagpack-tool taxonomy insert was"
-        " retired in favor of tagstore init, please use this command",
-        "fail",
+        " retired in favor of tagstore init, please use this command"
     )
     sys.exit(1)
 
@@ -1136,7 +1102,7 @@ def insert_cluster_mapping_wp(network, ks_mapping, args, batch):
         tagstore.insert_cluster_mappings(clusters)
     else:
         clusters = []
-        print_fail(
+        logger.error(
             "At least one of the configured keyspaces"
             f" for network {network} does not exist."
         )
@@ -1167,28 +1133,27 @@ def load_ks_mapping(args):
                     }
                     return ret
                 else:
-                    print_fail(
+                    logger.error(
                         f"Environment {args.use_gs_lib_config_env} "
                         "not found in gs-config"
                     )
                     sys.exit(1)
 
         else:
-            print_fail("Graphsense config not found at ~/.graphsense.yaml")
+            logger.error("Graphsense config not found at ~/.graphsense.yaml")
             sys.exit(1)
     else:
         if args.ks_file and os.path.exists(args.ks_file):
             return json.load(open(args.ks_file))
         else:
-            print_fail(f"Keyspace config file not found at {args.ks_file}")
+            logger.error(f"Keyspace config file not found at {args.ks_file}")
             sys.exit(1)
 
 
 def init_db():
-    print_line(
+    logger.error(
         "tagpack-tool init was retired"
-        " in favor of tagstore init, please use this command",
-        "fail",
+        " in favor of tagstore init, please use this command"
     )
     sys.exit(1)
 
@@ -1220,7 +1185,7 @@ def insert_cluster_mapping(
     tagstore = TagStore(url, schema)
     df = pd.DataFrame(tagstore.get_addresses(update), columns=["address", "network"])
     ks_mapping = load_ks_mapping(args)
-    print("Importing with mapping config: ", ks_mapping)
+    logger.info("Importing with mapping config: ", ks_mapping)
     networks = ks_mapping.keys()
     gs = GraphSense(
         args.db_nodes,
@@ -1236,7 +1201,7 @@ def insert_cluster_mapping(
                 workpackages.append((network, ks_mapping, args, batch))
 
     nr_workers = int(cpu_count() / 2)
-    print(
+    logger.info(
         f"Processing {len(workpackages)} batches for "
         f"{len(networks)} networks on {nr_workers} workers."
     )
@@ -1250,28 +1215,29 @@ def insert_cluster_mapping(
         mappings_count = sum(
             [items for network, items in processed_workpackages if network == pc]
         )
-        print_success(f"INSERTED/UPDATED {mappings_count} {pc} cluster mappings")
+        click.secho(
+            f"INSERTED/UPDATED {mappings_count} {pc} cluster mappings", fg="green"
+        )
 
     tagstore.finish_mappings_update(networks)
     duration = round(time.time() - t0, 2)
-    print_line(
+    logger.info(
         f"Inserted {'missing' if not update else 'all'} cluster mappings "
-        f"for {processed_networks} in {duration}s",
-        "success",
+        f"for {processed_networks} in {duration}s"
     )
 
 
 def update_db(url, schema):
     tagstore = TagStore(url, schema)
     tagstore.refresh_db()
-    print_info("All relevant views have been updated.")
+    logger.info("All relevant views have been updated.")
 
 
 def _remove_duplicates(url, schema):
     tagstore = TagStore(url, schema)
     rows_deleted = tagstore.remove_duplicates()
     msg = f"{rows_deleted} duplicate tags have been deleted from the database."
-    print_info(msg)
+    logger.info(msg)
 
 
 def show_tagstore_composition(url, schema, csv, by_network):
@@ -1367,13 +1333,7 @@ def insert_cluster_mappings(
     update,
 ):
     """insert cluster mappings"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     insert_cluster_mapping(
         url,
         schema,
@@ -1395,13 +1355,7 @@ def insert_cluster_mappings(
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
 def refresh_views(schema, url):
     """update views"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     update_db(url, schema)
 
 
@@ -1414,13 +1368,7 @@ def refresh_views(schema, url):
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
 def remove_duplicates(schema, url):
     """remove duplicate tags"""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     _remove_duplicates(url, schema)
 
 
@@ -1435,13 +1383,7 @@ def remove_duplicates(schema, url):
 )
 def show_composition(schema, url, csv, by_network):
     """Shows the tag composition grouped by creator and category."""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     show_tagstore_composition(url, schema, csv, by_network)
 
 
@@ -1453,13 +1395,7 @@ def show_composition(schema, url, csv, by_network):
 @click.option("--csv", is_flag=True, help="Show csv output.")
 def show_source_repos(schema, url, csv):
     """Shows which repos sources are stored in the database."""
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
     show_tagstore_source_repos(url, schema, csv)
 
 
@@ -1496,7 +1432,7 @@ def print_quality_measures(qm):
 
 
 def show_quality_measures(url, schema, network):
-    print_line("Show quality measures")
+    logger.info("Show quality measures")
     tagstore = TagStore(url, schema)
 
     try:
@@ -1506,13 +1442,13 @@ def show_quality_measures(url, schema, network):
         print_quality_measures(qm)
 
     except Exception as e:
-        print_fail(e)
-        print_line("Operation failed", "fail")
+        logger.error(f"Error: {e}")
+        logger.error("Operation failed")
 
 
 def calc_quality_measures(url, schema):
     t0 = time.time()
-    print_line("Calculate quality measures starts")
+    logger.info("Calculate quality measures starts")
 
     tagstore = TagStore(url, schema)
 
@@ -1522,15 +1458,15 @@ def calc_quality_measures(url, schema):
         print_quality_measures(qm)
 
         duration = round(time.time() - t0, 2)
-        print_line(f"Done in {duration}s", "success")
+        click.secho(f"Done in {duration}s", fg="green")
     except Exception as e:
-        print_fail(e)
-        print_line("Operation failed", "fail")
+        logger.error(f"Error: {e}")
+        logger.error("Operation failed")
 
 
 def low_quality_addresses(url, schema, threshold, network, category, csv, cluster):
     if not csv:
-        print_line("Addresses with low quality")
+        print("Addresses with low quality")
     tagstore = TagStore(url, schema)
 
     try:
@@ -1577,8 +1513,8 @@ def low_quality_addresses(url, schema, threshold, network, category, csv, cluste
                 print("\tNone")
 
     except Exception as e:
-        print_fail(e)
-        print_line("Operation failed", "fail")
+        logger.error(f"Error: {e}")
+        logger.error("Operation failed")
 
 
 def list_low_quality_actors(url, schema, category, max_results, not_used, csv):
@@ -1591,7 +1527,7 @@ def list_low_quality_actors(url, schema, category, max_results, not_used, csv):
     if csv:
         print(df.to_csv(header=True, sep=",", index=True))
     else:
-        print_line("Actors without Jurisdictions")
+        print("Actors without Jurisdictions")
         print(
             tabulate(
                 df,
@@ -1610,7 +1546,7 @@ def list_top_labels_without_actor(url, schema, category, max_results, csv):
     if csv:
         print(df.to_csv(header=True, sep=",", index=True))
     else:
-        print_line("Top labels without actor")
+        print("Top labels without actor")
         print(
             tabulate(
                 df,
@@ -1629,7 +1565,7 @@ def list_addresses_with_actor_collisions_impl(url, schema, csv):
     if csv:
         print(df.to_csv(header=True, sep=",", index=True))
     else:
-        print_line("Addresses with actor collisions")
+        print("Addresses with actor collisions")
         print(
             tabulate(
                 df,
@@ -1656,13 +1592,7 @@ def list_addresses_with_actor_collisions_impl(url, schema, csv):
 def quality(ctx, schema, url, network):
     """calculate tags quality measures"""
     ctx.ensure_object(dict)
-    def_url, url_msg = read_url_from_env()
-    if not url:
-        url = def_url
-    if not url:
-        print_warn(url_msg)
-        click.echo("No postgresql URL connection was provided. Exiting.")
-        sys.exit(1)
+    url = override_postgres_url(url)
 
     ctx.obj["url"] = url
     ctx.obj["schema"] = schema
@@ -1761,7 +1691,9 @@ def main():
         cli()
     except click.ClickException as e:
         if hasattr(e, "message") and "No postgresql URL" in str(e.message):
-            print_warn(url_msg)
+            logger.warning(
+                "Missing required PostgreSQL environment variables for URL construction."
+            )
         e.show()
         sys.exit(1)
 

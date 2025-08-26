@@ -7,7 +7,10 @@ import click
 from rich.console import Console
 from rich.logging import RichHandler
 
-from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
+from ..config import (
+    GRAPHSENSE_DEFAULT_DATETIME_FORMAT,
+    GRAPHSENSE_VERBOSE_DATETIME_FORMAT,
+)
 
 # create logger
 logger = logging.getLogger(__name__)
@@ -24,6 +27,7 @@ def suppress_log_level(loglevel: int):
 
 def configure_logging(loglevel):
     log_format = "| %(subsystem)s | %(message)s"
+    datefmt = GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 
     def addSubsys(record: logging.LogRecord):
         try:
@@ -43,6 +47,7 @@ def configure_logging(loglevel):
         elif loglevel >= 2:
             loglevel = logging.DEBUG
             log_format = " | %(name)s | %(thread)d | %(message)s"
+            datefmt = GRAPHSENSE_VERBOSE_DATETIME_FORMAT
 
     """ RichHandler colorizes the logs """
     c = Console(width=220)
@@ -62,7 +67,7 @@ def configure_logging(loglevel):
     logging.basicConfig(
         format=log_format,
         level=loglevel,
-        datefmt=GRAPHSENSE_DEFAULT_DATETIME_FORMAT,
+        datefmt=datefmt,
         handlers=[rh],
     )
 
