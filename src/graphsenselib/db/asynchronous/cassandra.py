@@ -2240,7 +2240,9 @@ class Cassandra:
 
         return await self.execute_async(currency, "raw", query, params)
 
-    async def list_matching_txs(self, currency, expression, limit):
+    async def list_matching_txs(
+        self, currency, expression, limit, include_sub_tx_identifiers: bool = True
+    ):
         expression_original = expression
         expression = expression.split("_")[0]
 
@@ -2309,7 +2311,7 @@ class Cassandra:
         rows = [row[key].rjust(32, b"\x00").hex() for row in result.current_rows]
 
         # also show internal txs and token txs when only on result is left
-        if is_eth_like(currency) and len(rows) == 1:
+        if is_eth_like(currency) and len(rows) == 1 and include_sub_tx_identifiers:
             tx_hash = bytearray.fromhex(rows[0])
             tx = await self.get_tx_by_hash_eth(currency, tx_hash)
             token_txs = await self.fetch_token_transactions(currency, tx)

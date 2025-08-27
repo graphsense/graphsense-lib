@@ -15,7 +15,7 @@ from .models import (
 class DatabaseProtocol(Protocol):
     def get_supported_currencies(self) -> List[str]: ...
     async def list_matching_txs(
-        self, currency: str, q: str, limit: int
+        self, currency: str, q: str, limit: int, include_sub_tx_identifiers: bool
     ) -> List[str]: ...
     async def list_matching_addresses(
         self, currency: str, q: str, limit: int
@@ -61,13 +61,22 @@ class GeneralService:
         )
 
     async def search_by_currency(
-        self, currency: str, q: str, limit: int = 10
+        self,
+        currency: str,
+        q: str,
+        limit: int = 10,
+        include_sub_tx_identifiers: bool = True,
     ) -> SearchResultByCurrency:
         r = SearchResultByCurrency(currency=currency, addresses=[], txs=[])
 
         if len(q) >= 3:
             [txs, addresses] = await asyncio.gather(
-                self.db.list_matching_txs(currency, q, limit),
+                self.db.list_matching_txs(
+                    currency,
+                    q,
+                    limit,
+                    include_sub_tx_identifiers=include_sub_tx_identifiers,
+                ),
                 self.db.list_matching_addresses(currency, q, limit=limit),
             )
         else:
@@ -84,6 +93,7 @@ class GeneralService:
         tagstore_groups: List[str],
         currency: Optional[str] = None,
         limit: int = 10,
+        include_sub_tx_identifiers: bool = True,
     ) -> SearchResult:
         currencies = self.db.get_supported_currencies()
 
@@ -102,7 +112,15 @@ class GeneralService:
             expression_norm, limit, groups=tagstore_groups
         )
 
-        aws1 = [self.search_by_currency(curr, q, limit=limit) for curr in currs]
+        aws1 = [
+            self.search_by_currency(
+                curr,
+                q,
+                limit=limit,
+                include_sub_tx_identifiers=include_sub_tx_identifiers,
+            )
+            for curr in currs
+        ]
         aw1 = asyncio.gather(*aws1)
 
         [r1, r2] = await asyncio.gather(aw1, tagstore_search)
