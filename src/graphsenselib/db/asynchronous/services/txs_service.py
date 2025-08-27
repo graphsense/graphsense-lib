@@ -202,6 +202,7 @@ class TxsService:
         include_token_txs: bool = True,
         include_internal_txs: bool = True,
         include_zero_value: bool = True,
+        include_base_transaction: bool = True,
         include_io: bool = True,
         include_nonstandard_io: bool = True,
         include_io_index: bool = True,
@@ -246,6 +247,9 @@ class TxsService:
 
             if not include_zero_value:
                 results_list = [x for x in results_list if x.value.value != 0]
+
+            if not include_base_transaction:
+                results_list = [x for x in results_list if x.is_external is not True]
         else:
             results_list.append(
                 await std_tx_from_row(
