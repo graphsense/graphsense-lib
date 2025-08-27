@@ -415,5 +415,10 @@ class CrossChainPubkeyRelatedAddresses(BaseModel):
     next_page: Optional[int] = None
 
 
+class Txs(BaseModel):
+    txs: List[Union[TxAccount, TxUtxo]] = Field(default_factory=list)
+    next_page: Optional[int] = None
+
+
 # Update forward references
 Values.model_rebuild()

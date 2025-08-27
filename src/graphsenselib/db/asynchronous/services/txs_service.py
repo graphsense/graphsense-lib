@@ -25,6 +25,7 @@ from .models import (
     TxRef,
     TxUtxo,
     TxValue,
+    Txs,
 )
 from .rates_service import RatesService
 
@@ -204,7 +205,9 @@ class TxsService:
         include_io: bool = True,
         include_nonstandard_io: bool = True,
         include_io_index: bool = True,
-    ) -> List[Union[TxAccount, TxUtxo]]:
+        page: Optional[int] = None,
+        page_size: Optional[int] = None,
+    ) -> Txs:
         tx = await self.db.get_tx(network, tx_hash)
         tokenConfig = self.db.get_token_configuration(network)
         rates = await self.rates_service.get_rates(network, tx["block_id"])
@@ -256,7 +259,16 @@ class TxsService:
                 )
             )
 
-        return results_list
+        next_page = None
+        if page is not None and page_size is not None:
+            page = page - 1
+            start = page * page_size
+            end = start + page_size
+            if end < len(results_list):
+                next_page = page + 2
+            results_list = results_list[start:end]
+
+        return Txs(txs=results_list, next_page=next_page)
 
     async def get_tx_io(
         self,
