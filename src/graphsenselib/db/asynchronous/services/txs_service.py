@@ -206,6 +206,7 @@ class TxsService:
         include_io: bool = True,
         include_nonstandard_io: bool = True,
         include_io_index: bool = True,
+        asset: Optional[str] = None,
         page: Optional[int] = None,
         page_size: Optional[int] = None,
     ) -> Txs:
@@ -250,6 +251,7 @@ class TxsService:
 
             if not include_base_transaction:
                 results_list = [x for x in results_list if x.is_external is not True]
+
         else:
             results_list.append(
                 await std_tx_from_row(
@@ -262,6 +264,13 @@ class TxsService:
                     include_io_index=include_io_index,
                 )
             )
+
+        if asset is not None:
+            results_list = [
+                x
+                for x in results_list
+                if x.currency.strip().upper() == asset.strip().upper()
+            ]
 
         next_page = None
         if page is not None and page_size is not None:
