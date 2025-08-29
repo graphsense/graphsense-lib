@@ -1,5 +1,3 @@
-# flake8: noqa: T201
-
 from typing import Dict, Optional, Any, Tuple, List, Iterable
 import requests
 from graphsenselib.utils import strip_0x
@@ -348,9 +346,6 @@ async def get_bridges_from_thorchain_receive(
     hash_field_name = "tx_hash" if network in ACCOUNT_NETWORKS else "tx_hash"
     tx_hash = tx[hash_field_name].hex()
 
-    def from_hex(address):
-        return "0x" + address.hex()
-
     relevant_dlogs = [
         dlog
         for dlog in dlogs
@@ -367,6 +362,15 @@ async def get_bridges_from_thorchain_receive(
     memo = params["memo"]
 
     parsed_memo = decode_withdrawal(memo)
+
+    if "error" in parsed_memo:
+        # e.g. 9b1ad0f967a06891e444477fbd254bea40179acd074ea697a305a2b4e91cbe86_I506
+        logger.warning(
+            f"There was an error in the thorchain memo: {parsed_memo['error']}, skipping."
+        )
+        yield None
+        return
+
     to_tx_hash = parsed_memo["tx_id"].lower()
 
     if not parsed_memo["is_withdrawal"]:
@@ -501,7 +505,8 @@ async def get_full_bridges_from_thorchain_receive(
     async for item in get_bridges_from_thorchain_receive(
         network, tx, dlogs, logs_raw, traces
     ):
-        result.append(item)
+        if item:
+            result.append(item)
 
     if len(result) == 0:
         logger.warning(f"No receive transfers found for {tx['tx_hash'].hex()}")
@@ -793,19 +798,20 @@ if __name__ == "__main__":
         "=:ETH.ETH:0x19317e026ef473d44D746d364062539Ba7Cb0fa3:117890211/1/0:wr:100",
     ]
     for memo in swap_examples:
-        print(f"\nMemo: {memo}")
+        print(f"\nMemo: {memo}")  # noqa: T201
         result = decode_swap(memo)
         if result["is_swap"]:
-            print(f"  Target asset: {result.get('asset')}")
-            print(f"  Destination: {result.get('destination')}")
+            print(f"  Target asset: {result.get('asset')}")  # noqa: T201
+            print(f"  Destination: {result.get('destination')}")  # noqa: T201
             if "limit" in result:
-                print(f"  Limit: {result['limit']}")
+                print(f"  Limit: {result['limit']}")  # noqa: T201
             if "affiliate" in result:
-                print(
+                # noqa: T201
+                print(  # noqa: T201
                     f"  Affiliate: {result['affiliate']} (fee: {result.get('affiliate_fee')} bps)"
                 )
         else:
-            print(f"  Not a swap: {result.get('error')}")
+            print(f"  Not a swap: {result.get('error')}")  # noqa: T201
 
     transfer_examples = [
         "OUT:EA7D80B3EB709319A6577AF6CF4DEFF67975D4F5A93CD8817E7FF04A048D1C5C",
@@ -815,12 +821,12 @@ if __name__ == "__main__":
     ]
 
     for memo in transfer_examples:
-        print(f"\nMemo: {memo}")
+        print(f"\nMemo: {memo}")  # noqa: T201
         result = decode_withdrawal(memo)
         if result["is_withdrawal"]:
-            print(f"  Type: {result['type']}")
-            print(f"  TX ID: {result.get('tx_id')}")
+            print(f"  Type: {result['type']}")  # noqa: T201
+            print(f"  TX ID: {result.get('tx_id')}")  # noqa: T201
             if "additional_info" in result:
-                print(f"  Additional: {result['additional_info']}")
+                print(f"  Additional: {result['additional_info']}")  # noqa: T201
         else:
-            print(f"  Not a transfer out: {result.get('error')}")
+            print(f"  Not a transfer out: {result.get('error')}")  # noqa: T201
