@@ -435,7 +435,7 @@ class TxsService:
         )
 
     async def get_conversions(
-        self, currency: str, identifier: str, included_bridges: Tuple[str, ...]
+        self, currency: str, identifier: str, included_bridges: Tuple[str, ...] = ()
     ) -> List[ExternalConversion]:
         """Extract swap information from a single transaction hash."""
         if not is_eth_like(currency):
