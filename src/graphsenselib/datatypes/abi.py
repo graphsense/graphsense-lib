@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import eth_event
 
@@ -639,7 +639,7 @@ def decode_logs_db(db_logs, log_signatures_local=log_signatures):
 
 def decode_logs_dict(
     db_logs: List[Dict[str, Any]], log_signatures_local=log_signatures
-):
+) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
     return [
         x
         for x in [

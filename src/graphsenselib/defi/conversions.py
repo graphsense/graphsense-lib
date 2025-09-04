@@ -80,6 +80,10 @@ async def get_conversions_from_db(
 
     decoded_logs_and_logs = decode_logs_dict(tx_logs_raw)
 
+    if len(decoded_logs_and_logs) == 0:
+        logger.debug(f"No decoded logs found for transaction {tx['tx_hash']}")
+        return []
+
     decoded_log_data, tx_logs_raw_filtered = zip(*decoded_logs_and_logs)
 
     conversions = []

@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Any, Tuple, List, Iterable
+from typing import Dict, Optional, Any, Tuple, List, AsyncGenerator, Generator
 import requests
 from graphsenselib.utils import strip_0x
 from graphsenselib.utils.transactions import (
@@ -184,7 +184,8 @@ async def get_bridges_from_thorchain_send_from_tx_hash_account(
     network: str,
     db: Cassandra,
     tx_hash: str,
-) -> Optional[Iterable[BridgeSendTransfer]]:
+) -> AsyncGenerator[BridgeSendTransfer, None]:
+    """Get bridge send transfers from transaction hash for account-based networks"""
     if network in ACCOUNT_NETWORKS:
         tx_hash_bytes = bytes.fromhex(strip_0x(tx_hash))
         tx = await db.get_tx_by_hash(network, tx_hash_bytes)
@@ -221,7 +222,7 @@ def get_bridges_from_thorchain_send(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
     traces: List[Trace],
-) -> Optional[Iterable[Tuple[BridgeSendTransfer, BridgeReceiveReference]]]:
+) -> Generator[Tuple[BridgeSendTransfer, BridgeReceiveReference], None, None]:
     """
     # example tx 6d65123e246d752de3f39e0fdf5b788baad35a29b7e95b74c714e6c7c1ea61dd Bybit hack bridge to BTC
 
@@ -339,7 +340,7 @@ async def get_bridges_from_thorchain_receive(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
     traces: List[Trace],
-) -> Optional[Iterable[Tuple[BridgeReceiveTransfer, BridgeSendReference]]]:
+) -> AsyncGenerator[Tuple[BridgeReceiveTransfer, BridgeSendReference], None]:
     """
     TODO: This doesnt work yet for BTC. Would need OP_RETURN data.
     """
@@ -368,8 +369,7 @@ async def get_bridges_from_thorchain_receive(
         logger.warning(
             f"There was an error in the thorchain memo: {parsed_memo['error']}, skipping."
         )
-        yield None
-        return
+        return  # Early return for async generator
 
     to_tx_hash = parsed_memo["tx_id"].lower()
 
@@ -462,7 +462,7 @@ async def get_full_bridges_from_thorchain_send(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
     traces: List[Dict[str, Any]],
-) -> Optional[Iterable[Bridge]]:
+) -> AsyncGenerator[Bridge, None]:
     """
     Get full Bridge objects from THORCHAIN send (deposit) transactions.
     Combines send transfers with their corresponding receive transfers.
@@ -470,10 +470,10 @@ async def get_full_bridges_from_thorchain_send(
 
     result = list(get_bridges_from_thorchain_send(network, tx, dlogs, logs_raw, traces))
     if len(result) == 0:
-        return
+        logger.warning(f"No send transfers found for {tx['tx_hash'].hex()}")
+        return  # This stops the generator iteration
 
-    send_transfers, receive_references = zip(*list(result))
-
+    send_transfers, receive_references = zip(*result)
     matcher = ThorchainTransactionMatcher(network, db)
 
     for send_transfer, receive_reference in zip(send_transfers, receive_references):
@@ -482,10 +482,9 @@ async def get_full_bridges_from_thorchain_send(
         )
         if receive_transfers is None:
             continue
+
         for receive_transfer in receive_transfers:
             yield combine_bridge_transfers(send_transfer, receive_transfer)
-
-    return
 
 
 async def get_full_bridges_from_thorchain_receive(
@@ -495,11 +494,9 @@ async def get_full_bridges_from_thorchain_receive(
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
     traces: List[Dict[str, Any]],
-) -> Optional[Iterable[Bridge]]:
+) -> AsyncGenerator[Bridge, None]:
     """
     Get full Bridge objects from THORCHAIN receive (withdrawal) transactions.
-    For now, this returns incomplete bridges as finding the original send transaction
-    requires more complex cross-chain lookups.
     """
     result = []
     async for item in get_bridges_from_thorchain_receive(
@@ -510,10 +507,9 @@ async def get_full_bridges_from_thorchain_receive(
 
     if len(result) == 0:
         logger.warning(f"No receive transfers found for {tx['tx_hash'].hex()}")
-        return
+        return  # This is fine in async generators - just stops iteration
 
-    receive_transfers, send_references = zip(*list(result))
-
+    receive_transfers, send_references = zip(*result)
     matcher = ThorchainTransactionMatcher(network, db)
 
     for receive_transfer, send_reference in zip(receive_transfers, send_references):
@@ -523,8 +519,6 @@ async def get_full_bridges_from_thorchain_receive(
 
         for send_transfer in send_transfers:
             yield combine_bridge_transfers(send_transfer, receive_transfer)
-
-    return
 
 
 def preliminary_utxo_handling_receive(
@@ -782,10 +776,10 @@ class ThorchainTransactionMatcher:
             return preliminary_utxo_handling_send(fromNetwork, send_reference)
 
         elif fromNetwork in ACCOUNT_NETWORKS:
-            bridges = get_bridges_from_thorchain_send_from_tx_hash_account(
+            bridges_generator = get_bridges_from_thorchain_send_from_tx_hash_account(
                 fromNetwork, self.db, send_reference.fromTxHash
             )
-            return [bridge async for bridge in bridges]
+            return [bridge async for bridge in bridges_generator]
 
         else:
             raise ValueError(f"Unsupported network: {fromNetwork}")
