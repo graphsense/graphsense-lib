@@ -5,7 +5,7 @@ from eth_utils import to_hex, keccak
 
 
 def parse_function_call(
-    input_bytes: bytes, function_signatures: Dict[str, List[Dict[str, Any]]]
+    input_bytes: Optional[bytes], function_signatures: Dict[str, List[Dict[str, Any]]]
 ) -> Optional[Dict[str, Any]]:
     """
     Parse an Ethereum function call given input bytes and function signatures database.
@@ -17,7 +17,7 @@ def parse_function_call(
     Returns:
         Dictionary containing decoded function call data or None if parsing fails
     """
-    if len(input_bytes) < 4:
+    if not input_bytes or len(input_bytes) < 4:
         return None
 
     # Extract function selector (first 4 bytes)
