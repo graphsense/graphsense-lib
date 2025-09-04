@@ -243,44 +243,44 @@ def get_swap_from_eulerian_path(
     )
 
 
-def handle_order_record_swap(
-    dlogs: List[Dict[str, Any]], logs_raw: List[Dict[str, Any]]
-) -> ExternalSwap:
-    """Handle OrderRecord type swaps."""
-    relevant_logs = [dlog for dlog in dlogs if dlog["name"] == "OrderRecord"]
-    relevant_logs_i = [
-        i for i, dlog in enumerate(dlogs) if dlog["name"] == "OrderRecord"
-    ]
-    assert len(relevant_logs) == 1, "Expected exactly one OrderRecord log"
-    dlog = relevant_logs[0]
-    log_raw = logs_raw[relevant_logs_i[0]]
-
-    # todo maybe not optimal - this is now just the log of the OrderRecord
-    # and not of the transfers
-    fromPayment = SubTransactionIdentifier(
-        tx_hash=ensure_0x_prefix(log_raw["tx_hash"].hex()),
-        tx_type=SubTransactionType.ERC20,
-        sub_index=int(log_raw["log_index"]),
-    ).to_string()
-
-    params = dlog["parameters"]
-
-    fromAmount = params["fromAmount"]
-    toAmount = params["toAmount"]
-    fromAsset = params["fromToken"]
-    toAsset = params["toToken"]
-    sender = params["sender"]
-
-    return ExternalSwap(
-        fromAddress=sender,
-        toAddress=sender,
-        fromAsset=normalize_asset(fromAsset),
-        toAsset=normalize_asset(toAsset),
-        fromAmount=fromAmount,
-        toAmount=toAmount,
-        fromPayment=fromPayment,
-        toPayment=fromPayment,
-    )
+# def handle_order_record_swap(
+#    dlogs: List[Dict[str, Any]], logs_raw: List[Dict[str, Any]]
+# ) -> ExternalSwap:
+#    """Handle OrderRecord type swaps."""
+#    relevant_logs = [dlog for dlog in dlogs if dlog["name"] == "OrderRecord"]
+#    relevant_logs_i = [
+#        i for i, dlog in enumerate(dlogs) if dlog["name"] == "OrderRecord"
+#    ]
+#    assert len(relevant_logs) == 1, "Expected exactly one OrderRecord log"
+#    dlog = relevant_logs[0]
+#    log_raw = logs_raw[relevant_logs_i[0]]
+#
+#    # todo maybe not optimal - this is now just the log of the OrderRecord
+#    # and not of the transfers
+#    fromPayment = SubTransactionIdentifier(
+#        tx_hash=ensure_0x_prefix(log_raw["tx_hash"].hex()),
+#        tx_type=SubTransactionType.ERC20,
+#        sub_index=int(log_raw["log_index"]),
+#    ).to_string()
+#
+#    params = dlog["parameters"]
+#
+#    fromAmount = params["fromAmount"]
+#    toAmount = params["toAmount"]
+#    fromAsset = params["fromToken"]
+#    toAsset = params["toToken"]
+#    sender = params["sender"]
+#
+#    return ExternalSwap(
+#        fromAddress=sender,
+#        toAddress=sender,
+#        fromAsset=normalize_asset(fromAsset),
+#        toAsset=normalize_asset(toAsset),
+#        fromAmount=fromAmount,
+#        toAmount=toAmount,
+#        fromPayment=fromPayment,
+#        toPayment=fromPayment,
+#    )
 
 
 def filter_graph_for_eulerian_path(
@@ -532,9 +532,9 @@ def get_swap_from_decoded_logs(
     # if strategy == SwapStrategy.IGNORE:
     swaps = []
 
-    if strategy == SwapStrategy.ORDER_RECORD:
-        swaps += [handle_order_record_swap(dlogs, logs_raw)]
-    elif strategy == SwapStrategy.SWAP:
+    # if strategy == SwapStrategy.ORDER_RECORD:
+    #    swaps += [handle_order_record_swap(dlogs, logs_raw)]
+    if strategy == SwapStrategy.SWAP:
         swaps += [handle_general_swap(dlogs, logs_raw, traces, visualize)]
 
     swaps = [swap for swap in swaps if swap is not None]

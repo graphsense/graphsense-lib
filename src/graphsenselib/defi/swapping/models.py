@@ -31,7 +31,7 @@ def get_swap_strategy_from_decoded_logs(dlogs: list) -> SwapStrategy:
     if not dlogs:
         return SwapStrategy.UNKNOWN
 
-    names = [dlog["name"] for dlog in dlogs]
+    # names = [dlog["name"] for dlog in dlogs]
 
     def get_tags(dlog):
         return dlog["log_def"]["tags"]
@@ -41,9 +41,9 @@ def get_swap_strategy_from_decoded_logs(dlogs: list) -> SwapStrategy:
 
     # just a guess but i think it should be last, so its not just routed through there?
     # Lets be conservative
-    if "OrderRecord" == names[-1]:
-        return SwapStrategy.ORDER_RECORD
-    elif (
+    # if "OrderRecord" == names[-1]:
+    #    return SwapStrategy.ORDER_RECORD
+    if (
         "settlement" in final_log_tags and "cow-protocol" in final_log_tags
     ) or "cross-chain" in tags:
         # e.g. https://etherscan.io/tx/0x8e7a3d044ed6873a5683ffe2f59b8cd68a3d786edaa64cdc4c05a9ae8ff97984
