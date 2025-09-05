@@ -1,5 +1,5 @@
 from typing import Dict, Optional, Any, Tuple, List, AsyncGenerator, Generator
-import httpx  # Changed from import requests
+from graphsenselib.utils.httpx import RetryHTTPClient  # Changed from import requests
 from graphsenselib.utils import strip_0x
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
@@ -529,34 +529,34 @@ async def preliminary_utxo_handling_receive(
         f"https://thornode.ninerealms.com/thorchain/tx/status/{tx_hash_upper}"
     )
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(thorchain_url)
-        if response.status_code == 200:
-            thorchain_data = response.json()
+    client = RetryHTTPClient()
+    response = await client.get(thorchain_url)
+    if response.status_code == 200:
+        thorchain_data = response.json()
 
-            # Find the outbound transaction for the target network
-            target_out_tx = None
-            for out_tx in thorchain_data.get("out_txs", []):
-                if out_tx[
-                    "chain"
-                ].lower() == receive_reference.toNetwork and not out_tx.get(
-                    "refund", False
-                ):
-                    target_out_tx = out_tx
-                    break
+        # Find the outbound transaction for the target network
+        target_out_tx = None
+        for out_tx in thorchain_data.get("out_txs", []):
+            if out_tx[
+                "chain"
+            ].lower() == receive_reference.toNetwork and not out_tx.get(
+                "refund", False
+            ):
+                target_out_tx = out_tx
+                break
 
-            if target_out_tx:
-                # Use the actual outbound transaction ID and amount
-                toPayment = target_out_tx["id"].lower()
-                # Get the actual amount received (not the planned amount)
-                if target_out_tx["coins"]:
-                    toAmount = target_out_tx["coins"][0]["amount"]
-                else:
-                    raise ValueError("No coins found")
+        if target_out_tx:
+            # Use the actual outbound transaction ID and amount
+            toPayment = target_out_tx["id"].lower()
+            # Get the actual amount received (not the planned amount)
+            if target_out_tx["coins"]:
+                toAmount = target_out_tx["coins"][0]["amount"]
             else:
-                raise ValueError("No outbound transaction found")
+                raise ValueError("No coins found")
         else:
-            raise ValueError("Thorchain API request failed")
+            raise ValueError("No outbound transaction found")
+    else:
+        raise ValueError("Thorchain API request failed")
 
     return [
         BridgeReceiveTransfer(
@@ -577,32 +577,32 @@ async def preliminary_utxo_handling_send(
         f"https://thornode.ninerealms.com/thorchain/tx/status/{tx_hash_upper}"
     )
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(thorchain_url)
-        if response.status_code == 200:
-            thorchain_data = response.json()
-            # Find the inbound transaction (UTXO)
-            tx = thorchain_data.get("tx")
-            if not tx or tx.get("chain", "").lower() not in UTXO_NETWORKS:
-                raise ValueError("No UTXO inbound transaction found")
-            fromAddress = tx["from_address"]
-            fromAsset = "native"
-            fromAmount = tx["coins"][0]["amount"] if tx["coins"] else None
+    client = RetryHTTPClient()
+    response = await client.get(thorchain_url)
+    if response.status_code == 200:
+        thorchain_data = response.json()
+        # Find the inbound transaction (UTXO)
+        tx = thorchain_data.get("tx")
+        if not tx or tx.get("chain", "").lower() not in UTXO_NETWORKS:
+            raise ValueError("No UTXO inbound transaction found")
+        fromAddress = tx["from_address"]
+        fromAsset = "native"
+        fromAmount = tx["coins"][0]["amount"] if tx["coins"] else None
 
-            fromPayment = send_reference.fromTxHash  # For UTXO, just the txid
-            if not fromAmount:
-                raise ValueError("No UTXO amount found in inbound transaction")
-            return [
-                BridgeSendTransfer(
-                    fromAddress=fromAddress,
-                    fromAsset=fromAsset,
-                    fromAmount=fromAmount,
-                    fromNetwork=fromNetwork,
-                    fromPayment=fromPayment,
-                )
-            ]
-        else:
-            raise ValueError("Thorchain API request failed")
+        fromPayment = send_reference.fromTxHash  # For UTXO, just the txid
+        if not fromAmount:
+            raise ValueError("No UTXO amount found in inbound transaction")
+        return [
+            BridgeSendTransfer(
+                fromAddress=fromAddress,
+                fromAsset=fromAsset,
+                fromAmount=fromAmount,
+                fromNetwork=fromNetwork,
+                fromPayment=fromPayment,
+            )
+        ]
+    else:
+        raise ValueError("Thorchain API request failed")
 
 
 class ThorchainTransactionMatcher:
