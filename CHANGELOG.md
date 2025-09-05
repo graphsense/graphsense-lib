@@ -3,12 +3,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.09.1/2.7.1] 2025-09-05
+### changed
+- added retry logic for bridging requests
 
 ## [25.09.0/2.7.0] 2025-09-04
 ### added
 - added services layer form gs-rest
 - added tagpack-tool and gs-tagstore-cli functionality (See Readme)
-### Changed
+### changed
 - improved swaps and bridge decoding support
 
 

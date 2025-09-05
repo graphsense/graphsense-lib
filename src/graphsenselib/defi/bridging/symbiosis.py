@@ -1,5 +1,5 @@
 from typing import Dict, Optional, Any, List
-import httpx
+from graphsenselib.utils.httpx import RetryHTTPClient
 from graphsenselib.utils import strip_0x
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
@@ -19,15 +19,15 @@ SYMBIOSIS_CHAIN_ID_TO_NETWORK = {1: "eth", 728126428: "trx", 13863860: "btc"}
 async def _search_symbiosis_api(tx_hash: str) -> Optional[Dict[str, Any]]:
     """Search for transaction in Symbiosis API"""
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.symbiosis.finance/explorer/v1/transactions",
-                params={"search": strip_0x(tx_hash)},
-            )
-            if response.status_code == 200:
-                records = response.json().get("records", [])
-                return records[0] if len(records) == 1 else None
-            return None
+        client = RetryHTTPClient()
+        response = await client.get(
+            "https://api.symbiosis.finance/explorer/v1/transactions",
+            params={"search": strip_0x(tx_hash)},
+        )
+        if response.status_code == 200:
+            records = response.json().get("records", [])
+            return records[0] if len(records) == 1 else None
+        return None
     except Exception as e:
         logger.warning(f"Symbiosis API error: {e}")
         return None
