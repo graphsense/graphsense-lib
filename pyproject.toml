@@ -8,7 +8,6 @@ description = "Graphsense backend lib and automation cli"
 authors = [{name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@ikna.io"}]
 license-files = ["LICENSE"]
 classifiers = [
-    "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -54,11 +53,9 @@ content-type = "text/markdown; charset=UTF-8; variant=GFM"
 
 [project.urls]
 Homepage = "https://graphsense.github.io/"
-"#    Documentation" = "https://graphsense.github.io/graphsense-lib"
 Source = "https://github.com/graphsense/graphsense-lib"
 Changelog = "https://github.com/graphsense/graphsense-lib/blob/master/CHANGELOG.md"
 Tracker = "https://github.com/graphsense/graphsense-lib/issues"
-"#    Conda-Forge" = "https://anaconda.org/conda-forge/pyscaffold"
 Download = "https://github.com/graphsense"
 # Twitter = https://twitter.com/graphsense
 # Change if running only on Windows, Mac or Linux (comma-separated)
