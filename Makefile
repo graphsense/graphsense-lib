@@ -32,7 +32,6 @@ test-all:
 
 install-dev:
 	uv sync --all-packages --force-reinstall --all-extras
-	pre-commit install
 
 install:
 	uv sync
