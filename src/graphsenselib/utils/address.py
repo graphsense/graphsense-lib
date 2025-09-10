@@ -119,7 +119,7 @@ class AddressConverter(ABC):
 
 class AddressConverterEth(AddressConverter):
     def to_canonical_address_str(self, address: str) -> str:
-        return strip_0x(address.lower())
+        return strip_0x(address.lower())  # ty: ignore[invalid-return-type]
 
     def to_bytes(self, address: str) -> bytes:
         try:
@@ -136,7 +136,7 @@ class AddressConverterEth(AddressConverter):
 
 class AddressConverterTrx(AddressConverterEth):
     def to_canonical_address_str(self, address: str) -> str:
-        return strip_0x(tron_address_to_evm_string(address))
+        return strip_0x(tron_address_to_evm_string(address))  # ty: ignore[invalid-return-type]
 
     def to_user_address_str(self, address: str):
         return evm_to_tron_address_string(address)
@@ -299,7 +299,7 @@ def cannonicalize_address(currency, address: str):
     elif currency == "bch":
         return try_bch_address_to_legacy(address)
     elif currency == "eth":
-        return hex_str_to_bytes(strip_0x(address))
+        return hex_str_to_bytes(strip_0x(address))  # ty: ignore[invalid-argument-type]
     elif isinstance(address, str):
         return address
     else:
@@ -393,7 +393,7 @@ def bech32_verify_checksum(hrp, data):
     return bech32_polymod(bech32_hrp_expand(hrp) + data) == 1
 
 
-def bech32_validate(s: str, expected_hrp: str = None) -> bool:
+def bech32_validate(s: str, expected_hrp: Optional[str] = None) -> bool:
     """Validate bech32 string"""
     if not s:
         return False

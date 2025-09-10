@@ -30,14 +30,16 @@ def add_tron_prefix(address_bytes, prefix: bytes = TRON_ADDRESS_PREFIX):
     return address_bytes
 
 
-def strip_tron_prefix(address_bytes, prefix: bytes = TRON_ADDRESS_PREFIX):
+def strip_tron_prefix(
+    address_bytes: bytes, prefix: bytes = TRON_ADDRESS_PREFIX
+) -> bytes:
     if len(address_bytes) == 21 and address_bytes.startswith(prefix):
         return address_bytes[len(prefix) :]
     return address_bytes
 
 
 def evm_to_bytes(evm_address_hex: str, prefix: bytes = TRON_ADDRESS_PREFIX) -> bytes:
-    return strip_tron_prefix(hex_str_to_bytes(strip_0x(evm_address_hex)), prefix)
+    return strip_tron_prefix(hex_str_to_bytes(strip_0x(evm_address_hex)), prefix)  # type: ignore[invalid-argument-type]
 
 
 def evm_to_tron_address(
@@ -45,7 +47,7 @@ def evm_to_tron_address(
 ) -> bytes:
     # inspired by
     # https://github.com/tronprotocol/tronweb/blob/d8c0d48847c0a2dd1c92f4a93f1e01b31c33dc94/src/utils/crypto.js#L14
-    a = add_tron_prefix(hex_str_to_bytes(strip_0x(evm_address_hex)), prefix)
+    a = add_tron_prefix(hex_str_to_bytes(strip_0x(evm_address_hex)), prefix)  # ty: ignore[invalid-argument-type]
     checkSum = get_tron_address_checksum(a)
     taddress = a + checkSum
     return base58.b58encode(taddress)
@@ -69,14 +71,14 @@ def tron_address_to_evm(taddress_str: str, validate: bool = True) -> bytes:
     # recompute checksum
     checkSumComputed = get_tron_address_checksum(a) if validate else None
 
-    if not validate or all(a == b for a, b in zip(checkSum, checkSumComputed)):
+    if not validate or all(a == b for a, b in zip(checkSum, checkSumComputed)):  # ty: ignore[invalid-argument-type]
         return strip_tron_prefix(a)
     else:
         raise ValueError(f"Invalid checksum on address {taddress_str}")
 
 
 def tron_address_to_evm_string(taddress_str: str, validate: bool = True) -> str:
-    return "0x" + bytes_to_hex(tron_address_to_evm(taddress_str, validate))
+    return "0x" + bytes_to_hex(tron_address_to_evm(taddress_str, validate))  # ty: ignore[unsupported-operator]
 
 
 def tron_address_to_legacy(taddress_str: str, validate: bool = True) -> bytes:
@@ -145,7 +147,7 @@ def partial_tron_to_partial_evm(
         if (
             len_taddress == len_full_taddress
         ):  # if it is a full address, don't return only a prefix
-            return "0x" + bytes_to_hex(partial_evm)
-        return ("0x" + bytes_to_hex(partial_evm))[:len_taddress]
+            return "0x" + bytes_to_hex(partial_evm)  # type: ignore
+        return ("0x" + bytes_to_hex(partial_evm))[:len_taddress]  # type: ignore
     except Exception as e:
         raise ValueError(f"Could not convert partial TRON address: {e}")

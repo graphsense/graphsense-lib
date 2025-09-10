@@ -27,9 +27,9 @@ def test_dict_to_dataobject():
     obj2 = Mock()
     obj = dict_to_dataobject(d)
 
-    assert obj.a == 1
+    assert obj.a == 1  # type: ignore
     assert obj2.a == 1
-    assert dict_to_dataobject(obj2).a == 1
+    assert dict_to_dataobject(obj2).a == 1  # type: ignore
 
 
 def test_btoh_works(capsys):

@@ -5,7 +5,7 @@ import sys
 from contextlib import contextmanager
 from typing import Dict, List, Optional
 
-import click
+from click.exceptions import Exit, ClickException
 import requests
 
 from .errorhandling import get_exception_digest
@@ -41,12 +41,10 @@ class ClickSlackErrorNotificationContext:
 
     def __exit__(self, *exc):
         e = sys.exc_info()[1]
-        if isinstance(e, click.exceptions.Exit) and (
-            e.exit_code == 0 or e.exit_code == 911
-        ):
+        if isinstance(e, Exit) and (e.exit_code == 0 or e.exit_code == 911):
             # this is how click communicated all is well
             return
-        if isinstance(e, click.exceptions.ClickException):
+        if isinstance(e, ClickException):
             return
         if (
             isinstance(e, SystemExit)

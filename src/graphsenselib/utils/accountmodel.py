@@ -18,7 +18,7 @@ def ensure_0x_prefix(istr: str) -> str:
 def eth_address_to_hex(address):
     if not isinstance(address, bytes):
         return address
-    return "0x" + bytes_to_hex(address)
+    return "0x" + bytes_to_hex(address)  # ty: ignore[unsupported-operator]
 
 
 def hex_str_to_bytes(hex_str: str) -> bytes:
@@ -40,7 +40,7 @@ def is_hex_string(string: Optional[str]) -> bool:
 
 def strip_0x(string: Optional[str]) -> Optional[str]:
     return (
-        remove_prefix(remove_prefix(string, "0x"), "0X")
+        remove_prefix(remove_prefix(string, "0x"), "0X")  # ty: ignore[invalid-argument-type]
         if is_hex_string(string)
         else string
     )
@@ -58,7 +58,7 @@ def to_int(string: Union[str, int]) -> int:
 
 def hex_to_bytes(hex_str: Optional[str]) -> Optional[bytes]:
     """Convert hexstring (starting with 0x) to bytearray."""
-    return bytes.fromhex(strip_0x(hex_str)) if hex_str is not None else None
+    return bytes.fromhex(strip_0x(hex_str)) if hex_str is not None else None  # type: ignore[invalid-argument-type]
 
 
 def is_native_placeholder(asset: str) -> bool:

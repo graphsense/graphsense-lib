@@ -618,11 +618,11 @@ def is_supported_log(log, log_signatures_local=log_signatures) -> bool:
 
 def convert_log_generic(db_log) -> dict:
     db_log = dict_to_dataobject(db_log)
-    data_str = db_log.data.hex()
+    data_str = db_log.data.hex()  # ty: ignore[unresolved-attribute]
     return {
-        "topics": [f"0x{topic.hex()}" for topic in (db_log.topics or [])],
+        "topics": [f"0x{topic.hex()}" for topic in (db_log.topics or [])],  # ty: ignore[unresolved-attribute]
         "data": f"0x{data_str}",
-        "address": f"0x{db_log.address.hex()}",
+        "address": f"0x{db_log.address.hex()}",  # ty: ignore[unresolved-attribute]
     }
 
 
