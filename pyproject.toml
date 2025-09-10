@@ -231,3 +231,4 @@ exclude = ["src/graphsenselib/ingest/tron/grpc/**"]
 
 [tool.ty.rules]
 unused-ignore-comment = "error"
+unresolved-import = "warn"
