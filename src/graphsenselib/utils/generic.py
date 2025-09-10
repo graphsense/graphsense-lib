@@ -1,7 +1,7 @@
 import bisect
 import itertools
 from datetime import timedelta
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional, Sequence, Any, Union, List
 
 import pandas as pd
 
@@ -22,7 +22,7 @@ class DataObject:
         return self.__dict__ == other.__dict__
 
 
-def dict_to_dataobject(d: dict) -> DataObject:
+def dict_to_dataobject(d: dict) -> Union[DataObject, List[DataObject]]:
     if isinstance(d, dict):
         obj = DataObject(**d)
         for k, v in obj.__dict__.items():
@@ -157,7 +157,7 @@ def subkey_exists(item, key_list) -> bool:
         return False
 
 
-def subkey_get(item, key_list) -> bool:
+def subkey_get(item, key_list) -> Optional[Any]:
     if item is None and len(key_list) > 0:
         return item
     if not key_list:

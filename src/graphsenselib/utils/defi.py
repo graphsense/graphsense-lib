@@ -141,7 +141,7 @@ def decode_uint8_result(result):
 def decode_text_result(data):
     try:
         if "result" in data:
-            bytes_text = bytes.fromhex(strip_0x(data["result"]))
+            bytes_text = bytes.fromhex(strip_0x(data["result"]))  # ty: ignore[invalid-argument-type]
             if len(bytes_text) == 0:
                 text = None
             else:
@@ -190,7 +190,7 @@ def get_token_details(
     )
     data = response.json()
     if "result" in data:
-        bytes_decimals = bytes.fromhex(strip_0x(data["result"]))
+        bytes_decimals = bytes.fromhex(strip_0x(data["result"]))  # ty: ignore[invalid-argument-type]
         decimals = (
             None if len(bytes_decimals) == 0 else decode_uint8_result(bytes_decimals)
         )

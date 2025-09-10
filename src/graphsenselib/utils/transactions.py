@@ -62,7 +62,7 @@ class SubTransactionIdentifier(BaseModel):
 
 def try_decode_subTx(
     stringRep: str, stt: SubTransactionType
-) -> SubTransactionIdentifier:
+) -> Optional[SubTransactionIdentifier]:
     prefix = SUBTX_TYPE_TO_PREFIX[stt]
     if f"{SUBTX_IDENT_SEPERATOR_CHAR}{prefix}" in stringRep:
         h, postfix, *_ = stringRep.split(SUBTX_IDENT_SEPERATOR_CHAR)

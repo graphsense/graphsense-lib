@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 def parse_timestamp(timestamp: int) -> datetime:
     check_timestamp(timestamp)
-    return datetime.utcfromtimestamp(timestamp)
+    return datetime.utcfromtimestamp(timestamp)  # ty: ignore[deprecated]
 
 
 def check_timestamp(timestamp: int) -> None:

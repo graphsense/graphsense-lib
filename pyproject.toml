@@ -224,8 +224,14 @@ extend-select = ["T201"]
 [tool.ty.src]
 include = ["src/graphsenselib/config/**",
           "src/graphsenselib/schema/**",
+          "src/graphsenselib/errors/**",
+          "src/graphsenselib/datatypes/**",
+          "src/graphsenselib/utils/**",
           "tests/config/**",
-          "tests/schema/**"
+          "tests/schema/**",
+          "tests/errors/**",
+          "tests/datatypes/**",
+          "tests/utils/**"
 ]
 exclude = ["src/graphsenselib/ingest/tron/grpc/**"]
 

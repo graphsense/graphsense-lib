@@ -1,5 +1,4 @@
 # flake8: noqa: F501
-import importlib
 import random
 from functools import reduce
 
@@ -291,7 +290,6 @@ def test_address_converter_inject_nonencodable_char():
             address_to_bytes(n, ac)
 
 
-@pytest.mark.slow
 def test_address_converter_testset():
     tests = 0
     pct = 0.8
@@ -300,8 +298,10 @@ def test_address_converter_testset():
     pct_error = len(networks) * addresses_per_network * (0.01)
     e_tests = len(networks) * addresses_per_network * (1 - pct) - pct_error
 
+    from importlib.resources import path as pf
+
     for network in networks:
-        with importlib.resources.path(
+        with pf(
             resources,
             f"{network}_addresses.txt",
         ) as path:
