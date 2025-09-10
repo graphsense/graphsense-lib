@@ -199,7 +199,7 @@ class GraphsenseSchemas:
 
     def get_by_currency(
         self, currency, keyspace_type=None, no_extensions=False
-    ) -> List[tuple[str, str]]:
+    ) -> List[tuple[str, Schema]]:
         schema_type = currency_to_schema_type[currency]
         if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
             schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
@@ -317,7 +317,7 @@ class GraphsenseSchemas:
 
     def get_by_schema_type(
         self, schema_type, keyspace_type=None
-    ) -> List[tuple[str, str]]:
+    ) -> List[tuple[str, Schema]]:
         if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
             schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
         return [

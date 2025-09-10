@@ -64,10 +64,10 @@ class TestCassandraConfig:
         }
         config = CassandraConfig(**config_dict)
 
-        assert config.currencies["btc"].raw == "btc_raw"
-        assert config.currencies["btc"].transformed == "btc_transformed"
-        assert config.currencies["eth"].raw == "eth_raw"
-        assert config.currencies["eth"].balance_provider == "node"
+        assert config.currencies["btc"].raw == "btc_raw"  # ty: ignore[possibly-unbound-attribute]
+        assert config.currencies["btc"].transformed == "btc_transformed"  # ty: ignore[possibly-unbound-attribute]
+        assert config.currencies["eth"].raw == "eth_raw"  # ty: ignore[possibly-unbound-attribute]
+        assert config.currencies["eth"].balance_provider == "node"  # ty: ignore[possibly-unbound-attribute]
         assert config.nodes == ["127.0.0.1", "127.0.0.2"]
         assert config.port == 9043
         assert config.username == "cassandra"
@@ -92,7 +92,7 @@ class TestCassandraConfig:
         """Test currencies field validation."""
         # Invalid type for currencies
         with pytest.raises(ValidationError) as exc_info:
-            CassandraConfig(currencies="invalid", nodes=["127.0.0.1"])
+            CassandraConfig(currencies="invalid", nodes=["127.0.0.1"])  # ty: ignore[invalid-argument-type]
         assert "currencies must be a dictionary" in str(exc_info.value)
 
         # Invalid currency config type
@@ -166,7 +166,9 @@ class TestCassandraConfig:
         # Invalid port type
         with pytest.raises(ValidationError):
             CassandraConfig(
-                currencies={"btc": None}, nodes=["127.0.0.1"], port="invalid_port"
+                currencies={"btc": None},
+                nodes=["127.0.0.1"],
+                port="invalid_port",  # ty: ignore[invalid-argument-type]
             )
 
         # Invalid retry_interval type
@@ -174,7 +176,7 @@ class TestCassandraConfig:
             CassandraConfig(
                 currencies={"btc": None},
                 nodes=["127.0.0.1"],
-                retry_interval="invalid_interval",
+                retry_interval="invalid_interval",  # ty: ignore[invalid-argument-type]
             )
 
         # Invalid list_address_txs_ordered_legacy type
@@ -182,7 +184,7 @@ class TestCassandraConfig:
             CassandraConfig(
                 currencies={"btc": None},
                 nodes=["127.0.0.1"],
-                list_address_txs_ordered_legacy="invalid_bool",
+                list_address_txs_ordered_legacy="invalid_bool",  # ty: ignore[invalid-argument-type]
             )
 
     def test_extra_fields_allowed(self):
@@ -190,8 +192,8 @@ class TestCassandraConfig:
         config = CassandraConfig(
             currencies={"btc": None},
             nodes=["127.0.0.1"],
-            custom_field="custom_value",
-            another_extra_field=123,
+            custom_field="custom_value",  # ty: ignore[unknown-argument]
+            another_extra_field=123,  # ty: ignore[unknown-argument]
         )
 
         # Extra fields should be accessible
@@ -216,7 +218,9 @@ class TestCassandraConfig:
         new_config = CassandraConfig(**config_dict)
 
         # Compare
-        assert new_config.currencies["btc"].raw == "btc_raw"
+        assert (
+            new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[possibly-unbound-attribute]
+        )
         assert isinstance(new_config.currencies["eth"], CurrencyConfig)
         assert new_config.nodes == ["127.0.0.1"]
         assert new_config.port == 9043

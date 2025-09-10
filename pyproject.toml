@@ -91,8 +91,9 @@ dev = [
     "pytest-vcr",
     "vcrpy",
     "pytest-asyncio>=0.26.0",
-    "build>=1.2.2.post1",
-    "httpx<1.0.0" # dependency only for restriction for vcrpy
+    "build>=1.2.2.post1", # dependency only for restriction for vcrpy
+    "httpx<1.0.0",
+    "ty>=0.0.1a20",
 ]
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies
@@ -219,3 +220,14 @@ exclude = [
 
 [tool.ruff.lint]
 extend-select = ["T201"]
+
+[tool.ty.src]
+include = ["src/graphsenselib/config/**",
+          "src/graphsenselib/schema/**",
+          "tests/config/**",
+          "tests/schema/**"
+]
+exclude = ["src/graphsenselib/ingest/tron/grpc/**"]
+
+[tool.ty.rules]
+unused-ignore-comment = "error"
