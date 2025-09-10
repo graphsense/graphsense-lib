@@ -1,7 +1,6 @@
 # flake8: noqa: F501
 import random
 from functools import reduce
-
 import pytest
 
 from graphsenselib.utils.address import (
@@ -20,6 +19,7 @@ from graphsenselib.utils.address import (
 )
 
 from . import resources
+import importlib.resources
 
 testset_correct = [
     (
@@ -298,21 +298,22 @@ def test_address_converter_testset():
     pct_error = len(networks) * addresses_per_network * (0.01)
     e_tests = len(networks) * addresses_per_network * (1 - pct) - pct_error
 
-    from importlib.resources import path as pf
-
     for network in networks:
-        with pf(
-            resources,
-            f"{network}_addresses.txt",
-        ) as path:
-            with open(path) as f:
-                for a in f.readlines():
-                    if random.uniform(0, 1) > pct:
-                        a = a.strip()
-                        b = address_to_bytes(network, a)
-                        c = address_to_str(network, b)
-                        assert a == c
-                        tests += 1
+        resource_package = resources
+        resource_name = f"{network}_addresses.txt"
+        # Use files() and open_text() for modern resource access
+        with (
+            importlib.resources.files(resource_package)
+            .joinpath(resource_name)
+            .open("r") as f
+        ):
+            for a in f:
+                if random.uniform(0, 1) > pct:
+                    a = a.strip()
+                    b = address_to_bytes(network, a)
+                    c = address_to_str(network, b)
+                    assert a == c
+                    tests += 1
 
     assert tests > e_tests
 
