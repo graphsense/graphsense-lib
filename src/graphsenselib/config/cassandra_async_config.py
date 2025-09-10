@@ -1,8 +1,9 @@
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class CurrencyConfig(BaseModel):
+class CurrencyConfig(BaseSettings):
     """Configuration for a specific currency/network."""
 
     raw: Optional[str] = None
@@ -10,7 +11,7 @@ class CurrencyConfig(BaseModel):
     balance_provider: Optional[str] = None
 
 
-class CassandraConfig(BaseModel):
+class CassandraConfig(BaseSettings):
     """Configuration for Cassandra database connection and settings."""
 
     # Required fields
@@ -92,7 +93,7 @@ class CassandraConfig(BaseModel):
             raise ValueError(f"consistency_level must be one of {valid_levels}")
         return v
 
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         extra="allow",
         env_prefix="GRAPHSENSE_CASSANDRA_ASYNC_",
     )  # Allow additional fields for extensibility

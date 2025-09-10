@@ -32,5 +32,7 @@ jobs:
         run: make test-with-base-dependencies-ci
       - name: Run Lint
         run: make lint
+      - name: Run type check
+        run: make type-check
       - name: Build wheel
         run: make build

@@ -1,5 +1,5 @@
-from pydantic import ConfigDict, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class TagStoreReaderConfig(BaseSettings):
@@ -66,7 +66,7 @@ class TagStoreReaderConfig(BaseSettings):
             return f"{self.url}{separator}prepared_statement_cache_size=0"
         return self.url
 
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         extra="allow",
         env_prefix="GRAPHSENSE_TAGSTORE_READ_",
     )
