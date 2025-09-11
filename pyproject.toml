@@ -38,10 +38,11 @@ dependencies = [
     "async-lru>=2.0.4",
     "aiohttp>=3.8.0",
     "tenacity>=8.2.3",
-    "graphsense-ethereum-etl",
     "coincurve>=21.0.0",
     "bech32>=1.2.0",
     "httpx>=0.28.1",
+    "ecdsa>=0.13",
+    "eth-account>=0.13.7",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]
@@ -98,9 +99,9 @@ dev = [
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies
 ingest = [
-    "graphsense-ethereum-etl>=2.4.5",
+    "graphsense-ethereum-etl>=2.4.6",
     "chainside-btcpy>=0.6",
-    "graphsense-bitcoin-etl==1.5.4",
+    "graphsense-bitcoin-etl>=1.5.5",
     "lz4>=4.3.2",
     "pyarrow>=16.0.0, <17.0.0",
     "deltalake~=0.22.3",

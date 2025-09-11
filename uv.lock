@@ -1113,30 +1113,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ethereum-dasm"
-version = "0.1.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorama" },
-    { name = "evmdasm" },
-    { name = "requests" },
-    { name = "tabulate" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/e1/6a65615b927cee41cf141540ef0e18aa42d8483e55d1685739eac7441b3c/ethereum-dasm-0.1.4.tar.gz", hash = "sha256:bad8b20f68728592b87bc9a4145e037cce329c4e396c0a4b79fc6ac32ffac220", size = 42200 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/f1/9556efc3b5a80254a9376bfc339aafb33579429c78b03272a9204f90b1a7/ethereum_dasm-0.1.4-py3-none-any.whl", hash = "sha256:1defae432dfc45b118b4a3e69e375fd76c1a676b87c032c71c51bea92552bdb5", size = 44574 },
-]
-
-[[package]]
-name = "evmdasm"
-version = "0.1.10"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/00/c4/2c782594450eac176ca0785904245979a7c0ecd3a96e65781a192f6b5765/evmdasm-0.1.10.tar.gz", hash = "sha256:b7a699740ab56bee605e0ffff51c72d49033755f41d40d001a4769567e906d78", size = 12878 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/46/b2cae45334f4e1e658aacb0f44feb175c1354f297e969203fa49423b0aff/evmdasm-0.1.10-py3-none-any.whl", hash = "sha256:30b7ef0c7b13edcaed7ee04a31fac7e24735610fa24b6803cd81706d93db1c61", size = 14341 },
-]
-
-[[package]]
 name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1379,7 +1355,7 @@ yaml = [
 
 [[package]]
 name = "graphsense-bitcoin-etl"
-version = "1.5.4"
+version = "1.5.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -1387,14 +1363,14 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/a5/05a5e71ebde28a1f52525241902d16e058740f633e6619024fce9d3c9e87/graphsense-bitcoin-etl-1.5.4.tar.gz", hash = "sha256:328ab58100ef0e73b83a7a0953cff9deadf6a5fae158012e0cc3d62c64d090b6", size = 46510 }
+sdist = { url = "https://files.pythonhosted.org/packages/43/3d/9fc57ceb6ef872c1c4a41356e43d9f9523bd776dfe103f773c2b2d57b4a2/graphsense_bitcoin_etl-1.5.5.tar.gz", hash = "sha256:95b587319722ce9b7e9308405520c035be8548a38eff50dffed1c0f1ddff5eb8", size = 46808 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/bb/621ea497fc1e13ed3719c7b7494b5180df8c0956f0dc68279080dbd32ccd/graphsense_bitcoin_etl-1.5.4-py3-none-any.whl", hash = "sha256:6d5d2cab7b478b56c0cf05910a15a5e8a651e331309bf77127e700cd0b296313", size = 92486 },
+    { url = "https://files.pythonhosted.org/packages/ee/21/a9ba1db7db43643391922e26b2c37eb9f316c3279c677f23cb63a60b1cbd/graphsense_bitcoin_etl-1.5.5-py3-none-any.whl", hash = "sha256:de0d1b76582f3698c5abf40be42eb66481418c35ce0e810793bb261b92e2a8a7", size = 92630 },
 ]
 
 [[package]]
 name = "graphsense-ethereum-etl"
-version = "2.4.5"
+version = "2.4.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "base58" },
@@ -1403,15 +1379,14 @@ dependencies = [
     { name = "eth-abi" },
     { name = "eth-typing" },
     { name = "eth-utils" },
-    { name = "ethereum-dasm" },
     { name = "python-dateutil" },
     { name = "requests" },
     { name = "urllib3" },
     { name = "web3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3c/df/e48026491a8dc58a36fc5eb97427374780914c228b5a86481bceb82869ee/graphsense_ethereum_etl-2.4.5.tar.gz", hash = "sha256:e484aaaee9bc15a23f5954947e096fb5718e7a9bafeab596b33969466757a7b8", size = 342657 }
+sdist = { url = "https://files.pythonhosted.org/packages/02/eb/500acc00b53a09a28f2666bed636707a832b8a75b617f8f32961bdf4d560/graphsense_ethereum_etl-2.4.6.tar.gz", hash = "sha256:eb2d857dcef39a4af82256a551ef0e536490f160ad0f7668c5b04771b9e1f9eb", size = 342794 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/8a/803257171d1b64184c95ff3e83ce29b7536503db01d0e4a2c2af0aed3d34/graphsense_ethereum_etl-2.4.5-py3-none-any.whl", hash = "sha256:d55e41739bef6fda7499062ecd33cabf385f3a75e14d9a6cfea259955adefe99", size = 441330 },
+    { url = "https://files.pythonhosted.org/packages/8b/e2/380d9fadecd384e91883c8c9406bd308aa2987185cfcb184be1b8504c9d1/graphsense_ethereum_etl-2.4.6-py3-none-any.whl", hash = "sha256:ed08902ee7aba4d0daf235c0768c656a49345fa19beec00b813d0c63335cc7ab", size = 441394 },
 ]
 
 [[package]]
@@ -1428,11 +1403,12 @@ dependencies = [
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "click", version = "8.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "coincurve" },
+    { name = "ecdsa" },
+    { name = "eth-account" },
     { name = "eth-event" },
     { name = "eth-hash" },
     { name = "filelock" },
     { name = "goodconf", extra = ["yaml"] },
-    { name = "graphsense-ethereum-etl" },
     { name = "httpx" },
     { name = "methodtools" },
     { name = "pandas" },
@@ -1555,6 +1531,8 @@ requires-dist = [
     { name = "colorama", marker = "extra == 'tagpacks'", specifier = ">=0.4.6" },
     { name = "deltalake", marker = "extra == 'ingest'", specifier = "~=0.22.3" },
     { name = "duckdb", marker = "extra == 'ingest'", specifier = ">=1.0.0" },
+    { name = "ecdsa", specifier = ">=0.13" },
+    { name = "eth-account", specifier = ">=0.13.7" },
     { name = "eth-event", specifier = ">=1.2.3" },
     { name = "eth-hash", specifier = ">=0.3.0" },
     { name = "fastapi", extras = ["all"], marker = "extra == 'tagpacks'", specifier = ">=0.115.0" },
@@ -1562,9 +1540,8 @@ requires-dist = [
     { name = "gitpython", marker = "extra == 'tagpacks'", specifier = ">=3.1" },
     { name = "giturlparse", marker = "extra == 'tagpacks'", specifier = ">=0.10" },
     { name = "goodconf", extras = ["yaml"], specifier = ">=3.0.0" },
-    { name = "graphsense-bitcoin-etl", marker = "extra == 'ingest'", specifier = "==1.5.4" },
-    { name = "graphsense-ethereum-etl" },
-    { name = "graphsense-ethereum-etl", marker = "extra == 'ingest'", specifier = ">=2.4.5" },
+    { name = "graphsense-bitcoin-etl", marker = "extra == 'ingest'", specifier = ">=1.5.5" },
+    { name = "graphsense-ethereum-etl", marker = "extra == 'ingest'", specifier = ">=2.4.6" },
     { name = "graphsense-lib", extras = ["conversions"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["tagpacks"], marker = "extra == 'all'" },
