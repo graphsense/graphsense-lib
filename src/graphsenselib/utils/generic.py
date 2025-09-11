@@ -4,6 +4,9 @@ from datetime import timedelta
 from typing import Iterable, Optional, Sequence, Any, Union, List
 
 import pandas as pd
+import base64
+
+max_int64 = 2**63 - 1
 
 
 class DataObject:
@@ -295,3 +298,19 @@ class RangeManager:
 
         range_manager.ranges = ranges
         return range_manager
+
+
+def custom_json_encoder(obj):
+    if isinstance(obj, bytes):
+        return {"type": "bytes", "value": base64.b64encode(obj).decode("utf-8")}
+    if isinstance(obj, int) and (obj > max_int64 or obj < -max_int64):
+        return {"type": "bytes", "value": str(obj)}
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
+def custom_json_decoder(dct):
+    if "type" in dct and dct["type"] == "bytes" and "value" in dct:
+        return base64.b64decode(dct["value"].encode("utf-8"))
+    if "type" in dct and dct["type"] == "int" and "value" in dct:
+        return int(dct["value"])
+    return dct
