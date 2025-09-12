@@ -4,9 +4,11 @@ import pytest
 pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack.tagstore import _perform_address_modifications, TagStore
+from graphsenselib.tagpack.cli import insert_tagpack, DEFAULT_SCHEMA
 
 from graphsenselib.tagstore.db.queries import UserReportedAddressTag
 from graphsenselib.tagstore.db import TagAlreadyExistsException
+from pathlib import Path
 
 
 def test_bch_conversion():
@@ -26,6 +28,56 @@ def test_eth_conversion():
     result = _perform_address_modifications(checksumaddr, "ETH")
 
     assert expected == result
+
+
+def test_update_of_tagpack_file(db_setup):
+    file = (
+        Path(__file__).parent.resolve()
+        / ".."
+        / "testfiles"
+        / "simple"
+        / "with_concepts.yaml"
+    )
+
+    m_succ, n_tagpacks = insert_tagpack(
+        db_setup["db_connection_string"],
+        DEFAULT_SCHEMA,
+        str(file.resolve()),
+        batch_size=100,
+        public=True,
+        force=False,
+        add_new=False,
+        no_strict_check=True,
+        no_git=True,
+        n_workers=1,
+        no_validation=True,
+        tag_type_default="actor",
+        config=None,
+        update_flag=True,
+    )
+
+    assert n_tagpacks == m_succ == 0, f"Update even though no change tagpack {file}"
+
+    file.touch()  # update modification time to force update
+
+    m_succ, n_tagpacks = insert_tagpack(
+        db_setup["db_connection_string"],
+        DEFAULT_SCHEMA,
+        str(file.resolve()),
+        batch_size=100,
+        public=True,
+        force=False,
+        add_new=False,
+        no_strict_check=True,
+        no_git=True,
+        n_workers=1,
+        no_validation=True,
+        tag_type_default="actor",
+        config=None,
+        update_flag=True,
+    )
+
+    assert n_tagpacks == m_succ == 1, f"Failed to update modified tagpack {file}"
 
 
 def test_db_consistency(db_setup):

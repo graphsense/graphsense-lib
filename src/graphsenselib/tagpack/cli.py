@@ -35,6 +35,7 @@ from graphsenselib.tagpack.constants import (
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
 import logging
+from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +244,8 @@ def sync(
                     "force": force,
                     "n_workers": n_workers,
                     "no_validation": no_validation,
-                    "add_new": not force,
+                    "add_new": False,
+                    "update": not force,
                     "tag_type_default": tag_type_default,
                 }
 
@@ -447,10 +449,13 @@ def insert_tagpack(
     no_validation,
     tag_type_default,
     config,
-):
+    update_flag,
+) -> Tuple[int, int]:
     t0 = time.time()
     logger.info("TagPack insert starts")
     logger.info(f"Path: {path}")
+
+    assert not (update_flag and add_new), "Can't use update and add_new together."
 
     if no_git:
         base_url = path
@@ -474,7 +479,7 @@ def insert_tagpack(
     # resolve backlinks to remote repository and relative paths
     scheck, nogit = not no_strict_check, no_git
     prepared_packs = [
-        (m, h, n[0], n[1], n[2])
+        (m, h, n[0], n[1], n[2], n[3], False)
         for m, h, n in [
             (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit))
             for h, fs in tagpack_files.items()
@@ -483,15 +488,35 @@ def insert_tagpack(
     ]
 
     prefix = None  # config.get("prefix", None)
+
+    if update_flag:  # update existing tagpacks if modified, skip unmodified ones
+        logger.info("Checking which files are new or modified in the tagstore:")
+        prepared_packs = [
+            (
+                t,
+                h,
+                u,
+                r,
+                default_prefix,
+                lastmod,
+                tagstore.tp_exists(prefix if prefix else default_prefix, r),
+            )
+            for (t, h, u, r, default_prefix, lastmod, _) in prepared_packs
+            if tagstore.tp_needs_update(
+                prefix if prefix else default_prefix, r, lastmod
+            )
+        ]
+
     if add_new:  # don't re-insert existing tagpacks
         logger.info("Checking which files are new to the tagstore:")
         prepared_packs = [
-            (t, h, u, r, default_prefix)
-            for (t, h, u, r, default_prefix) in prepared_packs
+            (t, h, u, r, default_prefix, lastmod, False)
+            for (t, h, u, r, default_prefix, lastmod, _) in prepared_packs
             if not tagstore.tp_exists(prefix if prefix else default_prefix, r)
         ]
 
     n_ppacks = len(prepared_packs)
+
     logger.info(f"Collected {n_ppacks} TagPack files")
 
     packs = enumerate(sorted(prepared_packs), start=1)
@@ -512,6 +537,7 @@ def insert_tagpack(
         taxonomies,
         public,
         force,
+        updateMode=update_flag,
         validate_tagpack=not no_validation,
         tag_type_default=tag_type_default,
         no_git=no_git,
@@ -540,6 +566,8 @@ def insert_tagpack(
     msg = "Don't forget to run 'graphsense-cli tagstore refresh-views' soon to keep the database"
     msg += " consistent!"
     print(msg)
+
+    return (no_passed, n_ppacks)
 
 
 @cli.group("tagpack")
@@ -626,6 +654,11 @@ def list_tagpack_cli(schema, url, unique, category, network, csv):
     default="actor",
     help="Default value for tag-type if missing in the tagpack. Default is legacy value actor.",
 )
+@click.option(
+    "--update",
+    is_flag=True,
+    help="By default, tagpack insertion stops when an already inserted tagpack exists in the database. Use this switch to update existing tagpacks if modified, but skip unmodified ones.",
+)
 @click.pass_context
 def insert_tagpack_cli(
     ctx,
@@ -641,6 +674,7 @@ def insert_tagpack_cli(
     n_workers,
     no_validation,
     tag_type_default,
+    update,
 ):
     """insert TagPacks"""
     url = override_postgres_url(url)
@@ -659,6 +693,7 @@ def insert_tagpack_cli(
         no_validation,
         tag_type_default,
         ctx.obj.get("config"),
+        update,
     )
 
 

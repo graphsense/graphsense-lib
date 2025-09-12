@@ -8,7 +8,8 @@ import os
 import pathlib
 import sys
 from collections import UserDict, defaultdict
-from datetime import date
+from datetime import date, datetime
+from typing import Tuple
 
 from graphsenselib.config import supported_base_currencies
 import giturlparse as gup
@@ -84,7 +85,9 @@ def get_repository(path: str) -> pathlib.Path:
     raise ValidationError(f"No repository root found in path {path}")
 
 
-def get_uri_for_tagpack(repo_path, tagpack_file, strict_check, no_git):
+def get_uri_for_tagpack(
+    repo_path, tagpack_file, strict_check, no_git
+) -> Tuple[str, str, str, date]:
     """For a given path string
         '/home/anna/graphsense/graphsense-tagpacks/public/packs'
 
@@ -113,7 +116,9 @@ def get_uri_for_tagpack(repo_path, tagpack_file, strict_check, no_git):
 
         else:
             rel_path = tagpack_file
-        return tagpack_file, rel_path, default_prefix
+
+        date_last_mod = datetime.fromtimestamp(os.path.getmtime(tagpack_file))
+        return tagpack_file, rel_path, default_prefix, date_last_mod
 
     repo = Repo(repo_path)
 
@@ -122,6 +127,18 @@ def get_uri_for_tagpack(repo_path, tagpack_file, strict_check, no_git):
         msg += "push first."
         logger.info(msg)
         sys.exit(0)
+
+    # Get the list of commits for the specified file
+    commits = list(repo.iter_commits(paths=tagpack_file))
+
+    if commits:
+        # Get the most recent commit
+        latest_commit = commits[0]
+
+        # Convert the commit date (Unix timestamp) to a readable format
+        commit_date = datetime.fromtimestamp(latest_commit.committed_date)
+    else:
+        commit_date = None
 
     if len(repo.remotes) > 1:
         msg = (
@@ -152,7 +169,7 @@ def get_uri_for_tagpack(repo_path, tagpack_file, strict_check, no_git):
 
     default_prefix = hashlib.sha256(g.encode("utf-8")).hexdigest()[:16]
 
-    return res, rel_path, default_prefix
+    return res, rel_path, default_prefix, commit_date
 
 
 def check_for_null_characters(field_name: str, value, context: str = "") -> None:

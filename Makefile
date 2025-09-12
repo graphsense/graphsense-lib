@@ -40,7 +40,7 @@ lint:
 	uv run ruff check tests src
 
 type-check:
-	uv run ty check
+	uv run --all-extras ty check
 
 format:
 	uv run ruff check --fix .
