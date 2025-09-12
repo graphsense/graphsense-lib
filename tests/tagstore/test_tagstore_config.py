@@ -22,7 +22,9 @@ class TestTagStoreReaderConfig:
         config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", pool_size=1)
         assert config.pool_size == 1
 
-        config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", pool_size=100)
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", pool_size=100
+        )
         assert config.pool_size == 100
 
         # Invalid values
@@ -37,10 +39,14 @@ class TestTagStoreReaderConfig:
     def test_pool_timeout_validation(self):
         """Test pool_timeout validation."""
         # Valid values
-        config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", pool_timeout=1)
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", pool_timeout=1
+        )
         assert config.pool_timeout == 1
 
-        config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", pool_timeout=600)
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", pool_timeout=600
+        )
         assert config.pool_timeout == 600
 
         # Invalid values
@@ -55,10 +61,14 @@ class TestTagStoreReaderConfig:
     def test_max_overflow_validation(self):
         """Test max_overflow validation."""
         # Valid values
-        config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", max_overflow=0)
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", max_overflow=0
+        )
         assert config.max_overflow == 0
 
-        config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", max_overflow=20)
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", max_overflow=20
+        )
         assert config.max_overflow == 20
 
         # Invalid values
@@ -73,10 +83,14 @@ class TestTagStoreReaderConfig:
     def test_pool_recycle_validation(self):
         """Test pool_recycle validation."""
         # Valid values
-        config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", pool_recycle=1)
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", pool_recycle=1
+        )
         assert config.pool_recycle == 1
 
-        config = TagStoreReaderConfig(url="postgresql://localhost:5432/db", pool_recycle=7200)
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", pool_recycle=7200
+        )
         assert config.pool_recycle == 7200
 
         # Invalid values
@@ -91,26 +105,29 @@ class TestTagStoreReaderConfig:
     def test_get_connection_url_without_cache(self):
         """Test get_connection_url when prepared statements cache is disabled."""
         config = TagStoreReaderConfig(
-            url="postgresql://localhost:5432/db",
-            enable_prepared_statements_cache=False
+            url="postgresql://localhost:5432/db", enable_prepared_statements_cache=False
         )
         result = config.get_connection_url()
-        assert result == "postgresql://localhost:5432/db?prepared_statement_cache_size=0"
+        assert (
+            result == "postgresql://localhost:5432/db?prepared_statement_cache_size=0"
+        )
 
     def test_get_connection_url_with_existing_params(self):
         """Test get_connection_url when URL already has parameters."""
         config = TagStoreReaderConfig(
             url="postgresql://localhost:5432/db?sslmode=require",
-            enable_prepared_statements_cache=False
+            enable_prepared_statements_cache=False,
         )
         result = config.get_connection_url()
-        assert result == "postgresql://localhost:5432/db?sslmode=require&prepared_statement_cache_size=0"
+        assert (
+            result
+            == "postgresql://localhost:5432/db?sslmode=require&prepared_statement_cache_size=0"
+        )
 
     def test_get_connection_url_with_cache_enabled(self):
         """Test get_connection_url when prepared statements cache is enabled."""
         config = TagStoreReaderConfig(
-            url="postgresql://localhost:5432/db",
-            enable_prepared_statements_cache=True
+            url="postgresql://localhost:5432/db", enable_prepared_statements_cache=True
         )
         result = config.get_connection_url()
         assert result == "postgresql://localhost:5432/db"

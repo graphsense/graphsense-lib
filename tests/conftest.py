@@ -53,6 +53,7 @@ def insert_test_data(db_setup):
             (True, "multiple_tags_for_address.yaml"),
             (True, "with_concepts.yaml"),
         ]
+
         for public, tpf in tps:
             result = runner.invoke(
                 tagpacktool_cli,
@@ -66,12 +67,17 @@ def insert_test_data(db_setup):
                     "--no-git",
                 ]
                 + (["--public"] if public else []),
+                catch_exceptions=False,
             )
+
+            assert result.exit_code == 0, f"Failed to insert {tpf}: {result.output}"
 
         result = runner.invoke(
             tagpacktool_cli, ["tagstore", "refresh-views", "-u", db_url]
         )
-        assert result.exit_code == 0
+
+        assert result.exit_code == 0, f"Failed to refresh views: {result.output}"
+        # assert result.exit_code == 0
 
     finally:
         # Properly dispose of the SQLAlchemy engine to close all connections
@@ -201,3 +207,4 @@ def patch_config(gs_db_setup, monkeypatch):
     app_config = get_config()
 
     assert list(app_config.environments.keys()) == ["pytest"]
+    assert app_config.underlying_file is None

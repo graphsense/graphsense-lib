@@ -4,7 +4,7 @@ import textwrap
 import time
 from datetime import datetime
 from functools import wraps
-from typing import List
+from typing import List, Dict, Optional
 
 import numpy as np
 from cashaddress.convert import to_legacy_address
@@ -28,12 +28,13 @@ logger = logging.getLogger(__name__)
 class InsertTagpackWorker:
     def __init__(
         self,
-        url,
+        url: str,
         db_schema,
         tp_schema,
         taxonomies,
-        public,
-        force,
+        public: bool,
+        force: bool,
+        updateMode: bool,
         validate_tagpack=False,
         tag_type_default="actor",
         no_git: bool = False,
@@ -45,6 +46,7 @@ class InsertTagpackWorker:
         self.public = public
         self.tag_type_default = tag_type_default
         self.force = force
+        self.updateMode = updateMode
         self.tagstore = None
         self.validate_tagpack = validate_tagpack
         self.no_git = no_git
@@ -53,7 +55,15 @@ class InsertTagpackWorker:
         i, tp = data
         if not self.tagstore:
             self.tagstore = TagStore(self.url, self.db_schema)
-        tagpack_file, headerfile_dir, uri, relpath, default_prefix = tp
+        (
+            tagpack_file,
+            headerfile_dir,
+            uri,
+            relpath,
+            default_prefix,
+            lastmod,
+            exists_in_db,
+        ) = tp
         tagpack = TagPack.load_from_file(
             uri if not self.no_git else relpath,
             tagpack_file,
@@ -66,11 +76,16 @@ class InsertTagpackWorker:
             logger.info(f"{i} {tagpack_file}: INSERTING {len(tagpack.tags)} Tags")
             if self.validate_tagpack:
                 tagpack.validate()
+
             self.tagstore.insert_tagpack(
                 tagpack,
                 self.public,
                 self.tag_type_default,
-                self.force,
+                self.force
+                or (
+                    self.updateMode and exists_in_db
+                ),  # force insert if in update mode and exists
+                lastmod,
                 default_prefix,
                 relpath,
             )
@@ -142,6 +157,12 @@ class TagStore(object):
             self.existing_packs = self.get_ingested_tagpacks()
         return self.create_id(prefix, rel_path) in self.existing_packs
 
+    def tp_needs_update(self, prefix, rel_path, lastmod):
+        if not self.existing_packs:
+            self.existing_packs = self.get_ingested_tagpacks()
+        tp_id = self.create_id(prefix, rel_path)
+        return tp_id not in self.existing_packs or self.existing_packs[tp_id] < lastmod
+
     def create_id(self, prefix, rel_path):
         return ":".join([prefix, rel_path]) if prefix else rel_path
 
@@ -150,9 +171,10 @@ class TagStore(object):
     def insert_tagpack(
         self,
         tagpack,
-        is_public,
+        is_public: bool,
         tag_type_default,
-        force_insert,
+        force_insert: bool,
+        lastmod: Optional[datetime],
         prefix,
         rel_path,
         batch=1000,
@@ -165,17 +187,31 @@ class TagStore(object):
             q = "DELETE FROM tagpack WHERE id = (%s)"
             self.cursor.execute(q, (tagpack_id,))
 
-        q = "INSERT INTO tagpack \
-            (id, title, description, creator, uri, acl_group) \
-            VALUES (%s,%s,%s,%s,%s,%s)"
-        v = (
-            h.get("id"),
-            h.get("title"),
-            h.get("description"),
-            h.get("creator"),
-            tagpack.uri,
-            "public" if is_public else "private",
-        )
+        if lastmod is None:
+            q = "INSERT INTO tagpack \
+                (id, title, description, creator, uri, acl_group) \
+                VALUES (%s,%s,%s,%s,%s,%s)"
+            v = (
+                h.get("id"),
+                h.get("title"),
+                h.get("description"),
+                h.get("creator"),
+                tagpack.uri,
+                "public" if is_public else "private",
+            )
+        else:
+            q = "INSERT INTO tagpack \
+                (id, title, description, creator, uri, acl_group, lastmod) \
+                VALUES (%s,%s,%s,%s,%s,%s,%s)"
+            v = (
+                h.get("id"),
+                h.get("title"),
+                h.get("description"),
+                h.get("creator"),
+                tagpack.uri,
+                "public" if is_public else "private",
+                lastmod,
+            )
         self.cursor.execute(q, v)
         self.conn.commit()
 
@@ -652,9 +688,10 @@ class TagStore(object):
                 AND network IN %s"
         self.cursor.execute(q, (tuple(keys),))
 
-    def get_ingested_tagpacks(self) -> List:
-        self.cursor.execute("SELECT id from tagpack")
-        return [i[0] for i in self.cursor.fetchall()]
+    def get_ingested_tagpacks(self) -> Dict[str, datetime]:
+        self.cursor.execute("SELECT id, lastmod from tagpack")
+        results = self.cursor.fetchall()
+        return {i[0]: i[1] for i in results}
 
     def get_tags_count(self, network="") -> int:
         validate_network(network)
