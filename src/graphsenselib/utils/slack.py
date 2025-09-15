@@ -9,6 +9,7 @@ from click.exceptions import Exit, ClickException
 import requests
 
 from .errorhandling import get_exception_digest
+from .generic import filter_sensitive_sys_argv
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +93,11 @@ def on_exception_notify_slack(webhooks: List[str]):
 def send_exception_digest_to_slack(ex, webhook: str):
     machine = os.uname()
     machine_str = f"{machine.nodename} ({machine.sysname})"
+
+    masked_argv = filter_sensitive_sys_argv()
     return send_message_to_slack(
         f"{get_exception_digest(ex)} \n"
-        f"in {' '.join(sys.argv)}.\n"
+        f"in {' '.join(masked_argv)}.\n"
         f"on {machine_str}\n"
         "Check the logs for more detail.",
         webhook,

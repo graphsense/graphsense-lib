@@ -77,8 +77,8 @@ def get_repository(path: str) -> pathlib.Path:
 
     while str(repo_path) != repo_path.root:
         try:
-            Repo(repo_path)
-            return repo_path
+            with Repo(repo_path):
+                return repo_path
         except Exception:
             pass
         repo_path = repo_path.parent
@@ -120,56 +120,57 @@ def get_uri_for_tagpack(
         date_last_mod = datetime.fromtimestamp(os.path.getmtime(tagpack_file))
         return tagpack_file, rel_path, default_prefix, date_last_mod
 
-    repo = Repo(repo_path)
+    with Repo(repo_path) as repo:
+        if strict_check and repo.is_dirty():
+            msg = f"Local modifications in {repo.common_dir} detected, please "
+            msg += "push first."
+            logger.info(msg)
+            sys.exit(0)
 
-    if strict_check and repo.is_dirty():
-        msg = f"Local modifications in {repo.common_dir} detected, please "
-        msg += "push first."
-        logger.info(msg)
-        sys.exit(0)
+        # Get the list of commits for the specified file
+        commits = list(repo.iter_commits(paths=tagpack_file))
 
-    # Get the list of commits for the specified file
-    commits = list(repo.iter_commits(paths=tagpack_file))
+        if commits:
+            # Get the most recent commit
+            latest_commit = commits[0]
 
-    if commits:
-        # Get the most recent commit
-        latest_commit = commits[0]
+            # Convert the commit date (Unix timestamp) to a readable format
+            commit_date = datetime.fromtimestamp(latest_commit.committed_date)
+        else:
+            commit_date = None
 
-        # Convert the commit date (Unix timestamp) to a readable format
-        commit_date = datetime.fromtimestamp(latest_commit.committed_date)
-    else:
-        commit_date = None
+        if len(repo.remotes) > 1:
+            msg = (
+                f"Multiple remotes present, cannot "
+                f"decide on backlink. Remotes: {repo.remotes}"
+            )
+            raise ValidationError(msg)
 
-    if len(repo.remotes) > 1:
-        msg = (
-            f"Multiple remotes present, cannot "
-            f"decide on backlink. Remotes: {repo.remotes}"
-        )
-        raise ValidationError(msg)
+        rel_path = str(pathlib.Path(tagpack_file).relative_to(repo_path))
 
-    rel_path = str(pathlib.Path(tagpack_file).relative_to(repo_path))
+        u = next(repo.remotes[0].urls)
+        if u.endswith("/"):
+            u = u[:-1]
+        if not u.endswith(".git"):
+            u += ".git"
 
-    u = next(repo.remotes[0].urls)
-    if u.endswith("/"):
-        u = u[:-1]
-    if not u.endswith(".git"):
-        u += ".git"
+        g = gup.parse(u).url2https.replace(".git", "")
 
-    g = gup.parse(u).url2https.replace(".git", "")
+        try:
+            tree_name = repo.active_branch.name
+        except TypeError:
+            # needed if a tags is checked out eg. in ci
+            # tree_name = repo.git.describe()
+            tag = next(
+                (tag for tag in repo.tags if tag.commit == repo.head.commit), None
+            )
+            tree_name = tag.name
 
-    try:
-        tree_name = repo.active_branch.name
-    except TypeError:
-        # needed if a tags is checked out eg. in ci
-        # tree_name = repo.git.describe()
-        tag = next((tag for tag in repo.tags if tag.commit == repo.head.commit), None)
-        tree_name = tag.name
+        res = f"{g}/tree/{tree_name}/{rel_path}"
 
-    res = f"{g}/tree/{tree_name}/{rel_path}"
+        default_prefix = hashlib.sha256(g.encode("utf-8")).hexdigest()[:16]
 
-    default_prefix = hashlib.sha256(g.encode("utf-8")).hexdigest()[:16]
-
-    return res, rel_path, default_prefix, commit_date
+        return res, rel_path, default_prefix, commit_date
 
 
 def check_for_null_characters(field_name: str, value, context: str = "") -> None:

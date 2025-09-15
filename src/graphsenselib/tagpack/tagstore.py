@@ -94,7 +94,7 @@ class InsertTagpackWorker:
             )
             return 1, len(tagpack.tags)
         except Exception as e:
-            logger.error(f"{i} {tagpack_file}: FAILED", e)
+            logger.error(f"{i} {tagpack_file}: FAILED - {e}")
             return 0, 0
 
 

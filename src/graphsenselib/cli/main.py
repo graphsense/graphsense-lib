@@ -1,5 +1,4 @@
 import logging
-import sys
 
 import click
 from rich.traceback import install
@@ -16,6 +15,7 @@ from ..schema.cli import schema_cli
 from ..utils.console import console
 from ..utils.logging import configure_logging
 from ..utils.slack import ClickSlackErrorNotificationContext
+from ..utils.generic import filter_sensitive_sys_argv
 from ..watch.cli import watch_cli
 from .common import try_load_config
 
@@ -103,7 +103,9 @@ def cli(ctx, verbosity: int, config_file: str):
         configure_logging(verbosity)
         logger.info(f"Running version {__version__} without a config.")
 
-    logger.info("Running with parameters: " + (" ".join(sys.argv)))
+    masked_argv = filter_sensitive_sys_argv()
+
+    logger.info("Running with parameters: " + (" ".join(masked_argv)))
 
 
 def main():
