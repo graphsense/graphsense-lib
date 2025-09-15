@@ -22,6 +22,47 @@ from graphsenselib.defi.models import Trace
 UTXO_NETWORKS = ["btc", "bch", "ltc", "zec"]
 ACCOUNT_NETWORKS = ["eth", "trx"]
 THOR_TO_GRAPHSENSE_NETWORK = {"BTC": "btc", "ETH": "eth"}
+THORNODE_URLS = [
+    "https://thornode.ninerealms.com/thorchain/tx/status/",
+    "https://thornode-v1.ninerealms.com/thorchain/tx/details/",
+]
+
+
+async def try_thornode_endpoints(tx_hash_upper: str):
+    """
+    Try all THORNODE_URLS endpoints for the given transaction hash.
+    Returns the first successful and decodable JSON response.
+    """
+    client = RetryHTTPClient()
+
+    for base_url in THORNODE_URLS:
+        try:
+            url = f"{base_url}{tx_hash_upper}"
+            logger.debug(f"Trying THORChain endpoint: {url}")
+
+            response = await client.get(url)
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    if data.get("out_txs") is None or data.get("tx") is None:
+                        continue
+
+                    logger.debug(f"Successfully got decodable response from {url}")
+                    return data
+                except Exception as json_error:
+                    logger.warning(
+                        f"Response from {url} returned 200 but was not decodable JSON: {json_error}"
+                    )
+                    continue
+            else:
+                logger.debug(f"Endpoint {url} returned status {response.status_code}")
+        except Exception as e:
+            logger.warning(f"Error trying endpoint {base_url}: {e}")
+            continue
+
+    raise ValueError(
+        "All THORChain endpoints failed or returned non-decodable responses"
+    )
 
 
 class SwapDecoder:
@@ -525,38 +566,28 @@ async def preliminary_utxo_handling_receive(
     receive_reference: BridgeReceiveReference,
 ) -> Optional[List[BridgeReceiveTransfer]]:
     tx_hash_upper = receive_reference.fromTxHash.upper()
-    thorchain_url = (
-        f"https://thornode.ninerealms.com/thorchain/tx/status/{tx_hash_upper}"
-    )
 
-    client = RetryHTTPClient()
-    response = await client.get(thorchain_url)
-    if response.status_code == 200:
-        thorchain_data = response.json()
+    thorchain_data = await try_thornode_endpoints(tx_hash_upper)
 
-        # Find the outbound transaction for the target network
-        target_out_tx = None
-        for out_tx in thorchain_data.get("out_txs", []):
-            if out_tx[
-                "chain"
-            ].lower() == receive_reference.toNetwork and not out_tx.get(
-                "refund", False
-            ):
-                target_out_tx = out_tx
-                break
+    # Find the outbound transaction for the target network
+    target_out_tx = None
+    for out_tx in thorchain_data.get("out_txs", []):
+        if out_tx["chain"].lower() == receive_reference.toNetwork and not out_tx.get(
+            "refund", False
+        ):
+            target_out_tx = out_tx
+            break
 
-        if target_out_tx:
-            # Use the actual outbound transaction ID and amount
-            toPayment = target_out_tx["id"].lower()
-            # Get the actual amount received (not the planned amount)
-            if target_out_tx["coins"]:
-                toAmount = target_out_tx["coins"][0]["amount"]
-            else:
-                raise ValueError("No coins found")
+    if target_out_tx:
+        # Use the actual outbound transaction ID and amount
+        toPayment = target_out_tx["id"].lower()
+        # Get the actual amount received (not the planned amount)
+        if target_out_tx["coins"]:
+            toAmount = target_out_tx["coins"][0]["amount"]
         else:
-            raise ValueError("No outbound transaction found")
+            raise ValueError("No coins found")
     else:
-        raise ValueError("Thorchain API request failed")
+        raise ValueError("No outbound transaction found")
 
     return [
         BridgeReceiveTransfer(
@@ -573,36 +604,29 @@ async def preliminary_utxo_handling_send(
     fromNetwork: str, send_reference: BridgeSendReference
 ) -> Optional[List[BridgeSendTransfer]]:
     tx_hash_upper = send_reference.fromTxHash.upper()
-    thorchain_url = (
-        f"https://thornode.ninerealms.com/thorchain/tx/status/{tx_hash_upper}"
-    )
 
-    client = RetryHTTPClient()
-    response = await client.get(thorchain_url)
-    if response.status_code == 200:
-        thorchain_data = response.json()
-        # Find the inbound transaction (UTXO)
-        tx = thorchain_data.get("tx")
-        if not tx or tx.get("chain", "").lower() not in UTXO_NETWORKS:
-            raise ValueError("No UTXO inbound transaction found")
-        fromAddress = tx["from_address"]
-        fromAsset = "native"
-        fromAmount = tx["coins"][0]["amount"] if tx["coins"] else None
+    thorchain_data = await try_thornode_endpoints(tx_hash_upper)
 
-        fromPayment = send_reference.fromTxHash  # For UTXO, just the txid
-        if not fromAmount:
-            raise ValueError("No UTXO amount found in inbound transaction")
-        return [
-            BridgeSendTransfer(
-                fromAddress=fromAddress,
-                fromAsset=fromAsset,
-                fromAmount=fromAmount,
-                fromNetwork=fromNetwork,
-                fromPayment=fromPayment,
-            )
-        ]
-    else:
-        raise ValueError("Thorchain API request failed")
+    # Find the inbound transaction (UTXO)
+    tx = thorchain_data.get("tx")
+    if not tx or tx.get("chain", "").lower() not in UTXO_NETWORKS:
+        raise ValueError("No UTXO inbound transaction found")
+    fromAddress = tx["from_address"]
+    fromAsset = "native"
+    fromAmount = tx["coins"][0]["amount"] if tx["coins"] else None
+
+    fromPayment = send_reference.fromTxHash  # For UTXO, just the txid
+    if not fromAmount:
+        raise ValueError("No UTXO amount found in inbound transaction")
+    return [
+        BridgeSendTransfer(
+            fromAddress=fromAddress,
+            fromAsset=fromAsset,
+            fromAmount=fromAmount,
+            fromNetwork=fromNetwork,
+            fromPayment=fromPayment,
+        )
+    ]
 
 
 class ThorchainTransactionMatcher:
