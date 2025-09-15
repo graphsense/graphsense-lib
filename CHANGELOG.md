@@ -3,6 +3,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.09.2/2.7.2] 2025-09-15
+### changed
+- added better handling for thorchain bridge
+- updated btc/eth-etl dependencies (added new fields txinwitness, vrs)
+
+### added
+- code to compute pubkey from vrs eth
+- typing checks via ty
+
+
 ## [25.09.1/2.7.1] 2025-09-05
 ### changed
 - added retry logic for bridging requests
