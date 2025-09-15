@@ -5,6 +5,7 @@ from typing import Iterable, Optional, Sequence, Any, Union, List
 
 import pandas as pd
 import base64
+import sys
 
 max_int64 = 2**63 - 1
 
@@ -314,3 +315,46 @@ def custom_json_decoder(dct):
     if "type" in dct and dct["type"] == "int" and "value" in dct:
         return int(dct["value"])
     return dct
+
+
+def filter_sensitive_sys_argv(
+    argv: Optional[List[str]] = None, sensitive_keys: Optional[List[str]] = None
+) -> List[str]:
+    """
+    Returns a filtered version of sys.argv with sensitive parameters masked.
+
+    Args:
+        argv (list): List of command-line arguments (defaults to sys.argv).
+        sensitive_keys (list): List of parameter names to filter (case-insensitive).
+
+    Returns:
+        List of arguments with sensitive values replaced by '***'.
+    """
+    if argv is None:
+        argv = sys.argv
+    if sensitive_keys is None:
+        sensitive_keys = ["password", "token", "secret", "apikey", "api_key", "-u"]
+
+    filtered = []
+    skip_next = False
+    for i, arg in enumerate(argv):
+        if skip_next:
+            filtered.append("***")
+            skip_next = False
+            continue
+        lower_arg = arg.lower()
+        # Match --key=value or --key value
+        if any(key in lower_arg for key in sensitive_keys):
+            if "=" in arg:
+                key, _ = arg.split("=", 1)
+                filtered.append(f"{key}=***")
+            else:
+                filtered.append(arg)
+                skip_next = True  # Mask next value
+        else:
+            filtered.append(arg)
+    return filtered
+
+
+# Example usage:
+# safe_argv = filter_sensitive_sys_argv()
