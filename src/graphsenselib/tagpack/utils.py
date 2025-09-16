@@ -7,7 +7,6 @@ else:
     from importlib_resources import files as imprtlb_files
 
 import os
-from datetime import datetime
 from urllib.parse import urlparse
 
 from . import conf, db
@@ -35,9 +34,13 @@ def try_parse_date(date, format="%Y-%m-%d"):
     Returns:
         Union[str|object]: Either returns a parsed date or the original object
     """
+    from dateutil.parser import parse
+
     if date is not None and type(date) is str:
         try:
-            return datetime.strptime(date, format)
+            # more flexible parsing
+            d = parse(date)
+            return d
         except ValueError:
             return date
     else:

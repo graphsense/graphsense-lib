@@ -57,8 +57,12 @@ def check_type(udts, field_name, field_definition, value):
         if len(value.strip()) == 0:
             raise ValidationError("Empty value in text field {}".format(field_name))
     elif schema_type == "datetime":
-        if not isinstance(value, datetime.date):
-            raise ValidationError(f"Field {field_name} must be of type datetime")
+        if not isinstance(value, datetime.date) and not isinstance(
+            value, datetime.datetime
+        ):
+            raise ValidationError(
+                f"Field {field_name} must be of type datetime. Found {type(value)}"
+            )
     elif schema_type == "boolean":
         if not isinstance(value, bool):
             raise ValidationError(f"Field {field_name} must be of type boolean")

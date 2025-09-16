@@ -746,6 +746,10 @@ class Tag(object):
 
         self.contents["concepts"] = concepts
 
+        # the yaml parser does not deal with string quoted dates.
+        # so '2022-10-1' is not interpreted as a date. This line fixes this.
+        apply_to_dict_field(self.contents, "lastmod", try_parse_date, fail=False)
+
     @staticmethod
     def from_contents(contents, tagpack):
         return Tag(contents, tagpack)
