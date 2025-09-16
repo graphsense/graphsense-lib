@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -418,6 +418,15 @@ def test_validate_fail_type_date(tagpack):
     with pytest.raises(ValidationError) as e:
         tagpack.validate()
     assert "Field lastmod must be of type datetime" in str(e.value)
+
+
+def test_validate_type_datetime_succeedes(tagpack):
+    from dateutil.parser import parse
+
+    tagpack.contents["lastmod"] = parse("2024-04-08T18:14:01")
+
+    tagpack.validate()
+    assert isinstance(tagpack.contents["lastmod"], datetime)
 
 
 def test_validate_fail_missing(tagpack):
