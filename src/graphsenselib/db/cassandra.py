@@ -575,10 +575,13 @@ class CassandraDb:
         parameters,
         concurrency: int = 100,
         retries=4,
+        base_delay=0.5,
+        max_delay=10,
     ) -> None:
         """Concurrent ingest into Apache Cassandra."""
         nr_statements = len(parameters)
         retries = (retries - 1) * nr_statements
+        retry_attempt = 0
 
         while True:
             try:
@@ -591,6 +594,7 @@ class CassandraDb:
 
                 for i, (success, _) in enumerate(results):
                     if not success:
+                        individual_retry_attempt = 0
                         while True:
                             try:
                                 logger.warning(
@@ -600,10 +604,18 @@ class CassandraDb:
                                 )
                                 self.session.execute(prepared_stmt, parameters[i])
                             except Exception as exception:
+                                # Individual statement retry backoff
+                                individual_retry_attempt += 1
+                                delay = min(
+                                    base_delay * (2**individual_retry_attempt),
+                                    max_delay,
+                                )
                                 logger.warning(
                                     f"Retry after exception: {str(exception)} "
-                                    f"retrying another {retries} times/statements"
+                                    f"retrying another {retries} times/statements. "
+                                    f"Backing off for {delay} seconds"
                                 )
+                                time.sleep(delay)
                                 retries -= 1
                                 if retries < 0:
                                     logger.error("Giving up retries for ingest.")
@@ -614,12 +626,15 @@ class CassandraDb:
                 break
 
             except Exception as exception:
+                # Batch retry backoff
+                retry_attempt += 1
+                delay = min(base_delay * (2**retry_attempt), max_delay)
                 logger.warning(
                     f"Retry after exception: {str(exception)} "
-                    f"retrying another {retries} times/statements"
+                    f"retrying another {retries} times/statements. "
+                    f"Backing off for {delay} seconds"
                 )
-                # TODO: Refactor, sleeps are probably only masking another problem
-                time.sleep(1)
+                time.sleep(delay)
                 retries -= nr_statements
                 if retries < 0:
                     logger.error("Giving up retries for ingest.")

@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.09.4/2.7.4] 2025-09-30
+### fixed
+- add exponential backoff for ingest retries.
+
 ## [25.09.3/2.7.3] 2025-09-16
 ### fixed
 - allow datetime values in lastmod of tagpack and tag, instead of only date
