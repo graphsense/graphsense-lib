@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List, Optional, Union, Any, Tuple
 
 from graphsenselib.defi.bridging.thorchain import (
@@ -9,7 +10,6 @@ from graphsenselib.defi.bridging.symbiosis import (
 )
 from graphsenselib.datatypes.abi import decode_logs_dict
 from ..defi.swaps import get_swap_from_decoded_logs
-from graphsenselib.utils.logging import logger
 from graphsenselib.defi.bridging.models import Bridge, BridgeStrategy
 from graphsenselib.defi.swapping.models import ExternalSwap
 from graphsenselib.db.asynchronous.cassandra import Cassandra
@@ -17,6 +17,8 @@ from graphsenselib.defi.models import Trace
 
 # todo What doesnt work yet:
 # Swaps that have a specified to address https://etherscan.io/tx/0x1f76090132cd8b58f7a4f8724141ca500ca65ed84d646aa200bb0dd6ec45503f
+
+logger = logging.getLogger(__name__)
 
 
 def get_bridge_strategy_from_decoded_logs(dlogs: list) -> BridgeStrategy:
@@ -39,9 +41,10 @@ def get_bridge_strategy_from_decoded_logs(dlogs: list) -> BridgeStrategy:
                 return BridgeStrategy.WORMHOLE_AUTOMATIC_RELAY
             else:
                 # todo we might not get this case if we dont have the final log decoded. Bring all logs here (not just decoded)
-                raise ValueError(
+                logger.error(
                     "Not a LogMessagePublished as a final log, could be a cross chain swap or sth"
                 )
+                return BridgeStrategy.UNKNOWN
         elif "stargate" in tags:
             if "Swap" in names:
                 return BridgeStrategy.STARGATE
