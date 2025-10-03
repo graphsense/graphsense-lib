@@ -1,0 +1,138 @@
+name: Create Downstream Pull Request
+
+on:
+  workflow_run:
+    workflows: ["pypi-publish"]  # Name of the workflow file or display name
+    types:
+      - completed
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    # Only run if the workflow completed successfully
+    if: github.event.workflow_run.conclusion == 'success'
+
+    steps:
+    - name: Get workflow run details
+      id: workflow_info
+      run: |
+        echo "Workflow: ${{ github.event.workflow_run.name }}"
+        echo "Conclusion: ${{ github.event.workflow_run.conclusion }}"
+        echo "Head SHA: ${{ github.event.workflow_run.head_sha }}"
+        echo "Head Branch: ${{ github.event.workflow_run.head_branch }}"
+
+    - name: Checkout source repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.workflow_run.head_sha }}
+        fetch-depth: 0
+
+    - name: Extract version from latest tag
+      id: get_version
+      run: |
+        # Get the latest tag from the head commit
+        TAG=$(git describe --tags --exact-match ${{ github.event.workflow_run.head_sha }} 2>/dev/null || git describe --tags --abbrev=0 ${{ github.event.workflow_run.head_sha }})
+        echo "Found tag: $TAG"
+
+        # Remove 'v' prefix from tag if present
+        VERSION=${TAG#v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "Extracted version: $VERSION"
+
+    - name: Checkout target repository
+      uses: actions/checkout@v4
+      with:
+        repository: 'graphsense/graphsense-rest'  # Replace with actual target repo
+        token: ${{ secrets.GITHUB_TOKEN }}
+        path: 'target-repo'
+        fetch-depth: 0
+
+    - name: Create branch and update version
+      working-directory: target-repo
+      run: |
+        # Configure git
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Create new branch for the PR
+        BRANCH_NAME="update-graphsense-lib-${{ steps.get_version.outputs.version }}"
+        git checkout -b "$BRANCH_NAME"
+
+        # Update package version in target repo files
+
+        uv add -U "graphsense-lib[conversions,tagpacks]==${{ steps.get_version.outputs.version }}"
+
+        make run-codegen
+
+        # Check if any files were actually changed
+        if git diff --quiet; then
+          echo "No changes detected in target repository"
+          echo "changes_detected=false" >> $GITHUB_ENV
+        else
+          echo "Changes detected, proceeding with PR creation"
+          echo "changes_detected=true" >> $GITHUB_ENV
+
+          # Stage and commit changes
+          git add -A
+          git commit -m "Update graphsense-lib to version ${{ steps.get_version.outputs.version }}
+
+          Automated update triggered by release ${{ steps.get_version.outputs.tag }}
+
+          Source: ${{ github.repository }}@${{ steps.get_version.outputs.tag }}
+          "
+
+          # Push the branch
+          git push origin "$BRANCH_NAME"
+        fi
+
+    - name: Create Pull Request
+      if: env.changes_detected == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        path: target-repo
+        branch: update-graphsense-lib-${{ steps.get_version.outputs.version }}
+        title: "Update graphsense-lib to ${{ steps.get_version.outputs.version }}"
+        body: |
+          ## 🚀 Automated Dependency Update
+
+          This PR updates `graphsense-lib` to version `${{ steps.get_version.outputs.version }}`.
+
+          ### Changes
+          - Updated graphsense-lib dependency from previous version to `${{ steps.get_version.outputs.version }}`
+
+          ### Source
+          - **Repository**: `${{ github.repository }}`
+          - **Tag**: `${{ steps.get_version.outputs.tag }}`
+          - **Commit**: `${{ github.sha }}`
+
+          ### Release Notes
+          For detailed release notes, see: https://github.com/${{ github.repository }}/releases/tag/${{ steps.get_version.outputs.tag }}
+
+          ---
+
+          🤖 This PR was automatically created by GitHub Actions.
+        labels: |
+          dependencies
+          automated
+          graphsense-lib
+        reviewers: |
+          maintainer1
+          maintainer2
+        assignees: |
+          maintainer1
+        draft: false
+
+    - name: Summary
+      if: env.changes_detected == 'true'
+      run: |
+        echo "✅ Successfully created downstream PR for version ${{ steps.get_version.outputs.version }}"
+        echo "🔗 Source workflow: ${{ github.event.workflow_run.html_url }}"
+        echo "📋 Target repository: graphsense/target-repo"
+
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "❌ Failed to create downstream PR for version ${{ steps.get_version.outputs.version }}"
+        echo "🔗 Check workflow logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
