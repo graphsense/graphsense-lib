@@ -3,10 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.09.6/2.7.6] 2025-10-03
+### fixed
+- handling of exotic tron transactions (on addr, TMNS5BrLWVYiNDSgHvxmuojoPEhq9cPddM and tx f0b31777dcc58cbca074380ff6f25f8495898edba2da0c43b099b3f276ae3d74)
+
+
 ## [25.09.5/2.7.5] 2025-10-02
 ### fixed
 - logging instead of exception for unknown wormhole bridegeing strategy
-
 
 ## [25.09.4/2.7.4] 2025-09-30
 ### fixed

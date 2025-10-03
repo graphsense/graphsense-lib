@@ -13,6 +13,27 @@ class TagstoreProtocol(Protocol):
     async def get_network_statistics_cached(self) -> Any: ...
 
 
+class TagstoreStatisticsPublicMock:
+    @property
+    def by_network(self) -> Dict[str, Any]:
+        class ByNetworkMock:
+            def get(self, key, default):
+                from graphsenselib.tagstore.db import NetworkStatisticsPublic
+
+                return NetworkStatisticsPublic(
+                    nr_labels=0,
+                    nr_identifiers_implicit=0,
+                    nr_identifiers_explicit=0,
+                )
+
+        return ByNetworkMock()
+
+
+class TagstoreStatsMock:
+    async def get_network_statistics_cached(self) -> Any:
+        return TagstoreStatisticsPublicMock()
+
+
 class StatsService:
     def __init__(self, db: DatabaseProtocol, tagstore: TagstoreProtocol, logger: Any):
         self.db = db

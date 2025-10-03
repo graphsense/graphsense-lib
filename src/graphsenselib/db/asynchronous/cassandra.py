@@ -29,6 +29,9 @@ from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
 from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
+from graphsenselib.utils.constants import (
+    replace_tron_dummy_address_with_valid_null_address,
+)
 from graphsenselib.utils.function_call_parser import (
     parse_function_call,
     function_signatures as function_call_signatures,
@@ -3142,7 +3145,11 @@ class Cassandra:
                 )
 
                 addr_tx["from_address"] = trace["caller_address"]
-                addr_tx["to_address"] = trace["transferto_address"]
+                addr_tx["to_address"] = (
+                    replace_tron_dummy_address_with_valid_null_address(
+                        trace["transferto_address"]
+                    )
+                )
                 addr_tx["type"] = "internal"
                 value = trace["call_value"]
             elif currency == "eth" and addr_tx["trace_index"] is not None:
@@ -3231,7 +3238,7 @@ class Cassandra:
         params = [[hash.hex()[: prefix["tx"]], hash] for hash in hashes]
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address, input from "
+            "from_address, to_address, receipt_contract_address, input, transaction_type from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
         result = await self.concurrent_with_args(currency, "raw", statement, params)
@@ -3255,6 +3262,13 @@ class Cassandra:
                 row["input"], function_call_signatures
             )
 
+            if (
+                currency == "trx"
+                and row.get("transaction_type") == 13
+                and row["from_address"] is None
+            ):
+                row["from_address"] = row["to_address"]
+
             result_with_tokens.append(row)
             if include_token_txs:
                 token_txs = await self.fetch_token_transactions(currency, row)
@@ -3274,7 +3288,7 @@ class Cassandra:
             )
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address, input from "
+            "from_address, to_address, receipt_contract_address, input, transaction_type from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
 
@@ -3300,6 +3314,13 @@ class Cassandra:
         result["input_parsed"] = parse_function_call(
             result["input"], function_call_signatures
         )
+
+        if (
+            currency == "trx"
+            and result.get("transaction_type") == 13
+            and result["from_address"] is None
+        ):
+            result["from_address"] = result["to_address"]
 
         return result
 
