@@ -612,7 +612,7 @@ class Cassandra:
 
             if one(result) is None:
                 if self.logger:
-                    self.logger.error(
+                    self.logger.warning(
                         f"{ks} is not online (missing summary_statistics row). skipping"
                     )
                 continue
