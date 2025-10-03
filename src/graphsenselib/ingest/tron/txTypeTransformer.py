@@ -78,6 +78,17 @@ class TxTypeTransformer:
         and sends those rewards to the null address. This does not represent the
         flow of funds, therefore we reverse it.
         """
+
+        # old txs like e4f4ab696d4f3e00cfc41a7b89a93bd4b95b82d5faeaa70b9813c8aa558081da set both from and to to the same address
+        # newer txs do not have the same behavior 6f12793ec7bfb964dec723a6415e5ddfc6653b3cf486abd1e796109ce08dc4a2
+        # we unify their behavior here by setting the None address to the other address here
+
+        if x["to_address"] is None:
+            x["to_address"] = x["from_address"]
+
+        if x["from_address"] is None:
+            x["from_address"] = x["to_address"]
+
         x["to_address"], x["from_address"] = x["from_address"], x["to_address"]
         return x
 

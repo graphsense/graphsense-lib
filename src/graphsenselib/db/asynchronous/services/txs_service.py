@@ -28,6 +28,9 @@ from .models import (
     Txs,
 )
 from .rates_service import RatesService
+from graphsenselib.utils.constants import (
+    replace_tron_dummy_address_with_valid_null_address,
+)
 
 
 def is_supported_asset(
@@ -65,7 +68,10 @@ async def _raw_trace_to_std_tx(
 
     if currency == "trx":
         result["from_address"] = result["caller_address"]
-        result["to_address"] = result["transferto_address"]
+        result["to_address"] = replace_tron_dummy_address_with_valid_null_address(
+            result["transferto_address"],
+            replace_empty=(result["note"] == "voteWitness"),
+        )
         result["value"] = result["call_value"]
     else:
         result["contract_creation"] = result["trace_type"] == "create"

@@ -35,6 +35,7 @@ from graphsenselib.schema.resources.parquet.account_trx import (
 
 # drop block_id_group column
 from .utxo import drop_columns_from_list
+from graphsenselib.utils.constants import TRON_DUMMY_REPLACEMENT_ADDRESS
 
 
 class TransformerUTXO(Transformer):
@@ -129,7 +130,12 @@ class TransformerTRX(Transformer):
                 # e.g. f0b31777dcc58cbca074380ff6f25f8495898edba2da0c43b099b3f276ae3d74
                 # transferTo_address is empty which does not mach our schema.
                 # as a quick fix we set a dummy address for now.
-                dummy_address = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00ikna"  # noqa
+
+                # CAUTION: THIS CAUSES PROBLEMS IN THE UI WHICH EXPECTS VALID ADDRESSES
+                # WE CURRENTLY HAVE A FIX IN THE LOADING CODE THAT REPLACES THIS
+                # DUMMY ADDRESS WITH THE NULL ADDRESS (T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb)
+
+                dummy_address = TRON_DUMMY_REPLACEMENT_ADDRESS  # noqa
                 item["transferto_address"] = dummy_address
             return item
 
