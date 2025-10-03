@@ -292,12 +292,20 @@ def get_bridges_from_thorchain_send(
         to_network_thor = asset_code.split(".")[0]
         # asset = asset_code.split(".")[1]
         to_network = THOR_TO_GRAPHSENSE_NETWORK.get(to_network_thor)
+
+        # Check if the target network is supported
+        if to_network is None:
+            logger.warning(
+                f"Skipping thorchain transaction: unsupported network '{to_network_thor}' in memo: {memo}"
+            )
+            return
+
         # to_asset = "native" if asset == network else asset
         # to_amount = swap_info["limit"]  # should be determined from the linked tx
 
     else:
         logger.warning(f"Skipping thorchain action, not implemented memo: {memo}")
-        return None
+        return
 
     from_network = network
 
