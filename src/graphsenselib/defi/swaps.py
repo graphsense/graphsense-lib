@@ -435,8 +435,6 @@ def handle_general_swap(
     tx_sender = None
     if traces:
         trace0 = traces[0]
-        if trace0.trace_address is None:
-            return None
         if trace0.trace_address == "":
             tx_sender = trace0.from_address
 

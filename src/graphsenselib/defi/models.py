@@ -23,7 +23,10 @@ class Trace(BaseModel):
                 from_address = ensure_0x_prefix(trace["from_address"].hex()).lower()
                 to_address = ensure_0x_prefix(trace["to_address"].hex()).lower()
                 value = trace["value"]
-                trace_address = trace["trace_address"]
+                if trace["trace_address"] is None:  # Legacy version of ""
+                    trace_address = ""
+                else:
+                    trace_address = trace["trace_address"]
 
             if network == "trx":
                 is_call = trace["note"] == "call"
