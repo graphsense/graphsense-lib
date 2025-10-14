@@ -54,9 +54,9 @@ Recursively validate all TagPacks in (a) given folder(s).
 
     graphsense-cli tagpack-tool tagpack validate tests/testfiles/
 
-TagPacks are validated against the [tagpack schema](src/tagpack/conf/tagpack_schema.yaml).
+TagPacks are validated against the [tagpack schema](src/graphsenselib/tagpack/conf/tagpack_schema.yaml).
 
-Confidence settings are validated against a set of acceptable [confidence](src/tagpack/db/confidence.csv) values.
+Confidence settings are validated against a set of acceptable [confidence](src/graphsenselib/tagpack/db/confidence.csv) values.
 
 ## Actors for tags and TagPacks
 
@@ -112,9 +112,9 @@ Recursively validate all TagPacks in (a) given folder(s).
 
     graphsense-cli tagpack-tool actorpack validate tests/testfiles/actors/
 
-Actorpacks are validated against the [actorpack schema](src/tagpack/conf/actorpack_schema.yaml).
+Actorpacks are validated against the [actorpack schema](src/graphsenselib/tagpack/conf/actorpack_schema.yaml).
 
-Values in the field jurisdictions are validated against a set of [country codes](src/tagpack/db/countries.csv).
+Values in the field jurisdictions are validated against a set of [country codes](src/graphsenselib/tagpack/db/countries.csv).
 
 ## View available taxonomies and concepts <a name="taxonomies"></a>
 
@@ -259,7 +259,7 @@ You can use the parameters `--force`, `--add_new`, `--no_strict_check` and `--no
 The final step after inserting a tagpack is to fetch the corresponding
 Graphsense cluster mapping ids for the crypto addresses in the tagpack.
 
-Copy `src/tagpack/conf/ks_map.json.template` to `ks_map.json` and edit the file to
+Copy `src/graphsenselib/tagpack/conf/ks_map.json.template` to `ks_map.json` and edit the file to
 suit your Graphsense setup.
 
 Then fetch the cluster mappings from your Graphsense instance and insert them
