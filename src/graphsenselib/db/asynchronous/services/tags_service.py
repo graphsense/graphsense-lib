@@ -389,7 +389,7 @@ class TagsService:
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for taxonomy operations. "
-                "Please install it with: uv pip install tagstore"
+                "Please install it with: uv pip install graphsense-lib[tagpacks]"
             ) from e
 
         taxonomy = taxonomy.lower().strip()
@@ -437,7 +437,7 @@ class TagsService:
                 taxonomy=k,
                 uri=(
                     "https://github.com/graphsense/"
-                    "graphsense-tagpack-tool/tree/master/src/tagpack/db"
+                    "graphsense-lib/tree/master/src/graphsenselib/tagpack/db"
                 ),
             )
             for k, v in taxs
@@ -451,7 +451,7 @@ class TagsService:
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for tag reporting. "
-                "Please install it with: uv pip install tagstore"
+                "Please install it with: uv pip install graphsense-lib[tagpacks]"
             ) from e
 
         reporting_enabled = config.enable_user_tag_reporting
@@ -473,7 +473,7 @@ class TagsService:
                 for h in info_hook.hooks:
                     try:
                         send_message_to_slack(
-                            f"User Reported new Tag: {str(nt)} to ACL Group {tag_acl_group}",
+                            f"User Reported new Tag: ID {insert_id} to ACL Group {tag_acl_group}",
                             h,
                         )
                     except Exception as e:
