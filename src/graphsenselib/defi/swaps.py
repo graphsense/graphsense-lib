@@ -445,7 +445,10 @@ def handle_general_swap(
     # Build graph
     G = nx.DiGraph()
     G.add_edges_from(all_from_tos)
-    assert nx.is_weakly_connected(G), "Graph is not weakly connected"
+    if not nx.is_weakly_connected(G):
+        logger.warning(f"Graph is not weakly connected, stop swap detection, {tx_hash}")
+        return None
+    # assert nx.is_weakly_connected(G), "Graph is not weakly connected"
 
     if visualize:
         visualize_graph(G, tx_hash, swap_from_tos, transfer_edges, tx_sender)
