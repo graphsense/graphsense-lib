@@ -386,6 +386,12 @@ class TagSummary(BaseModel):
     label_summary: Dict[str, "LabelSummary"] = Field(default_factory=dict)
 
 
+class AddressTagQueryInput(BaseModel):
+    network: str
+    address: Union[str, bytes]
+    inherited_from_marker: Optional[str] = None
+
+
 class TagCloudEntry(BaseModel):
     cnt: int
     weighted: float
@@ -407,7 +413,7 @@ class CrossChainPubkeyRelatedAddress(BaseModel):
     network: str = Field(alias="currency")
     type: str
     address: str
-    pubkey: bytes
+    pubkey: Optional[bytes] = None
 
 
 class CrossChainPubkeyRelatedAddresses(BaseModel):

@@ -389,9 +389,15 @@ class EntitiesService:
             entity_id,
             currency.upper(),
             page * (pagesize or 0),
-            pagesize,
+            (pagesize + 1) if pagesize is not None else None,
             tagstore_groups,
         )
+
+        is_last_page = pagesize is None or len(tags) <= pagesize
+
+        tags = tags[
+            : pagesize or len(tags)
+        ]  # Throw away the extra tag if we fetched one for pagination
 
         # Convert to AddressTag objects using tags service
         address_tags = []
@@ -399,4 +405,6 @@ class EntitiesService:
             tag = self.tags_service._address_tag_from_public_tag(pt, entity_id)
             address_tags.append(tag)
 
-        return self.tags_service._get_address_tag_result(page, pagesize, address_tags)
+        return self.tags_service._get_address_tag_result(
+            page, pagesize, address_tags, is_last_page
+        )
