@@ -129,7 +129,10 @@ def compute_tag_digest(tags: List[TagPublic]) -> TagDigest:
 
             tags_count += 1
 
-            if t.inherited_from == InheritedFrom.CLUSTER:
+            if (
+                t.inherited_from == InheritedFrom.CLUSTER
+                or t.inherited_from == InheritedFrom.PUBKEY_AND_CLUSTER
+            ):
                 tags_count_cluster += 1
 
             # compute words
@@ -169,8 +172,9 @@ def compute_tag_digest(tags: List[TagPublic]) -> TagDigest:
             ls["sumConfidence"] += conf
             ls["lastmod"] = max(ls["lastmod"], t.lastmod)
             ls["inherited"] = (
-                t.inherited_from == InheritedFrom.CLUSTER and (ls["inherited"])
-            )
+                t.inherited_from == InheritedFrom.CLUSTER
+                or t.inherited_from == InheritedFrom.PUBKEY_AND_CLUSTER
+            ) and (ls["inherited"])
 
         return tags_count, total_words, tags_count_cluster
 

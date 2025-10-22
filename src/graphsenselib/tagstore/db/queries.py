@@ -44,6 +44,20 @@ class Taxonomies(IntEnum):
 
 class InheritedFrom(IntEnum):
     CLUSTER = 1
+    PUBKEY = 2
+    PUBKEY_AND_CLUSTER = 3
+
+    @staticmethod
+    def from_string(s: str) -> "InheritedFrom":
+        s_lower = s.lower()
+        if s_lower == "cluster":
+            return InheritedFrom.CLUSTER
+        elif s_lower == "pubkey":
+            return InheritedFrom.PUBKEY
+        elif s_lower == "pubkey_and_cluster":
+            return InheritedFrom.PUBKEY_AND_CLUSTER
+        else:
+            raise ValueError(f"Unknown InheritedFrom string: {s}")
 
 
 _ALL_TAXONOMIES = {
@@ -639,7 +653,7 @@ class TagstoreDbAsync:
 
     @_inject_session
     async def get_tag_count_by_subjectid(
-        self, subject_id: str, network: str, groups: List[str], session=None
+        self, subject_id: str, network: Optional[str], groups: List[str], session=None
     ) -> int:
         results = await session.exec(
             _get_tag_count_by_subjectid_stmt(subject_id, network, groups)

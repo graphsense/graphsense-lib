@@ -25,6 +25,7 @@ from .models import (
     TagCloudEntry,
     TagSummary,
     Taxonomy,
+    AddressTagQueryInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 class TagInsertConfigProtocol(Protocol):
     enable_user_tag_reporting: bool
     slack_info_hook: Dict[str, SlackTopic]
+    privacy_preserving_tag_notification: bool
 
 
 class TagstoreProtocol(Protocol):
@@ -63,6 +65,14 @@ class TagstoreProtocol(Protocol):
 class ConceptProtocol(Protocol):
     def get_is_abuse(self, concept_id: str) -> bool: ...
     def get_taxonomy_concept_label(self, taxonomy: Any, concept_id: str) -> str: ...
+
+
+class MockConceptProtocol:
+    def get_is_abuse(self, concept_id: str) -> bool:
+        return False
+
+    def get_taxonomy_concept_label(self, taxonomy: Any, concept_id: str) -> str:
+        return concept_id
 
 
 class TagsService:
@@ -111,6 +121,96 @@ class TagsService:
             currency=pt.network.upper(),
         )
 
+    async def list_tags_by_addresses_raw(
+        self,
+        addresses: List[AddressTagQueryInput],
+        tagstore_groups: List[str],
+        page: Optional[int] = None,
+        pagesize: Optional[int] = None,
+        include_best_cluster_tag: bool = False,
+        cache: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List["TagPublic"], bool]:  # noqa: F821
+        if pagesize is not None and len(addresses) > 1:
+            # TODO optimize for pagination over multiple addresses, current workaround is to load all and then page in memory
+            p = page or 0
+            ps = pagesize or 0
+            all_tags, _ = await self._list_tags_by_addresses_raw(
+                addresses,
+                tagstore_groups,
+                page=page,
+                pagesize=None,
+                include_best_cluster_tag=include_best_cluster_tag,
+                cache=cache,
+            )
+
+            slice_from = (p) * (ps)
+            slice_to = (p + 1) * (ps)
+            is_last_page = len(all_tags) <= slice_to
+
+            return all_tags[slice_from:slice_to], is_last_page
+        else:
+            return await self._list_tags_by_addresses_raw(
+                addresses,
+                tagstore_groups,
+                page,
+                pagesize,
+                include_best_cluster_tag,
+                cache,
+            )
+
+    async def _list_tags_by_addresses_raw(
+        self,
+        addresses: List[AddressTagQueryInput],
+        tagstore_groups: List[str],
+        page: Optional[int] = None,
+        pagesize: Optional[int] = None,
+        include_best_cluster_tag: bool = False,
+        cache: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List["TagPublic"], bool]:  # noqa: F821
+        try:
+            from graphsenselib.tagstore.db.queries import InheritedFrom
+        except ImportError as e:
+            raise ImportError(
+                "tagstore is required for tag digest computation. "
+                "Please install it with: uv pip install tagstore"
+            ) from e
+
+        tags_total = []
+        addresses_seen = set()
+        for tqi in addresses:
+            address_canonical = cannonicalize_address(tqi.network, tqi.address)
+
+            if address_canonical in addresses_seen:
+                # only process unique addresses (tag query ignores currency anyway)
+                continue
+
+            addresses_seen.add(address_canonical)
+
+            tags, is_last_page = await self.list_tags_by_address_raw(
+                tqi.network,
+                address_canonical,
+                tagstore_groups,
+                page,
+                pagesize,
+                include_best_cluster_tag=include_best_cluster_tag,
+                cache=cache,
+            )
+
+            for tag in tags:
+                if tqi.inherited_from_marker is not None:
+                    if tag.inherited_from is None:
+                        tag.inherited_from = InheritedFrom.from_string(
+                            tqi.inherited_from_marker
+                        )
+                    else:
+                        tag.inherited_from = InheritedFrom.from_string(
+                            f"{tqi.inherited_from_marker}_and_{tag.inherited_from.name.lower()}"
+                        )
+
+            tags_total.extend(tags)
+
+        return tags_total, is_last_page
+
     async def list_tags_by_address_raw(
         self,
         currency: str,
@@ -120,7 +220,7 @@ class TagsService:
         pagesize: Optional[int] = None,
         include_best_cluster_tag: bool = False,
         cache: Optional[Dict[str, Any]] = None,
-    ) -> List["TagPublic"]:  # noqa: F821
+    ) -> Tuple[List["TagPublic"], bool]:  # noqa: F821
         address = address_to_user_format(currency, address)
 
         page = page or 0
@@ -131,12 +231,25 @@ class TagsService:
             await self.tagstore.get_tags_by_subjectid(
                 address,
                 page * (pagesize or 0),
-                pagesize,
+                (pagesize + 1) if pagesize is not None else None,
                 tagstore_groups,
             )
         )
 
-        if include_best_cluster_tag and not is_eth_like(currency):
+        is_last_page = pagesize is None or len(tags) <= pagesize
+
+        tags = tags[
+            : pagesize or len(tags)
+        ]  # Throw away the extra tag if we fetched to eval if last page.
+        is_page_full = pagesize is not None and len(tags) == pagesize
+
+        if (
+            include_best_cluster_tag
+            and not is_eth_like(currency)
+            and is_last_page
+            and not is_page_full
+        ):
+            # make sure cluster definer is only added in last page.
             cluster_id = await try_get_cluster_id(self.db, currency, address, cache)
             if cluster_id:
                 _, best_cluster_tag = await self._get_best_cluster_tag_raw(
@@ -146,8 +259,15 @@ class TagsService:
                     is_direct_tag = best_cluster_tag.identifier == address
                     if not is_direct_tag:
                         tags.append(best_cluster_tag)
+        elif (
+            include_best_cluster_tag
+            and not is_eth_like(currency)
+            and is_last_page
+            and is_page_full
+        ):
+            is_last_page = False  # add another page to add the cluster definer.
 
-        return tags
+        return tags, is_last_page
 
     def _tag_summary_from_tag_digest(self, td: "TagDigest") -> TagSummary:  # noqa: F821
         return TagSummary(
@@ -183,6 +303,18 @@ class TagsService:
         tagstore_groups: List[str],
         include_best_cluster_tag: bool = False,
     ) -> TagSummary:
+        return await self.get_tag_summary_by_addresses(
+            [AddressTagQueryInput(network=currency, address=address)],
+            tagstore_groups,
+            include_best_cluster_tag=include_best_cluster_tag,
+        )
+
+    async def get_tag_summary_by_addresses(
+        self,
+        addresses: List[AddressTagQueryInput],
+        tagstore_groups: List[str],
+        include_best_cluster_tag: bool = False,
+    ) -> TagSummary:
         try:
             from graphsenselib.tagstore.algorithms.tag_digest import compute_tag_digest
         except ImportError as e:
@@ -191,18 +323,17 @@ class TagsService:
                 "Please install it with: uv pip install tagstore"
             ) from e
 
-        address_canonical = cannonicalize_address(currency, address)
-
-        tags = await self.list_tags_by_address_raw(
-            currency,
-            address_canonical,
-            tagstore_groups,
+        tags_total, is_last_page = await self.list_tags_by_addresses_raw(
+            addresses=addresses,
+            tagstore_groups=tagstore_groups,
+            include_best_cluster_tag=include_best_cluster_tag,
             page=None,
             pagesize=None,
-            include_best_cluster_tag=include_best_cluster_tag,
         )
 
-        digest = compute_tag_digest(tags)
+        assert is_last_page, "Should have loaded all tags for digest computation"
+
+        digest = compute_tag_digest(tags_total)
         return self._tag_summary_from_tag_digest(digest)
 
     async def _get_best_cluster_tag_raw(
@@ -227,11 +358,14 @@ class TagsService:
             return cluster_id, data
 
     def _get_address_tag_result(
-        self, current_page: int, page_size: int, tags: List[AddressTag]
+        self,
+        current_page: int,
+        page_size: int,
+        tags: List[AddressTag],
+        is_last_page: bool,
     ) -> AddressTagResult:
-        tcnt = len(tags)
         current_page = int(current_page)
-        np = current_page + 1 if (tcnt > 0 and tcnt == page_size) else None
+        np = current_page + 1 if not is_last_page else None
         return AddressTagResult(
             next_page=str(np) if np is not None else None, address_tags=tags
         )
@@ -323,9 +457,14 @@ class TagsService:
         tags = await self.tagstore.get_tags_by_actorid(
             actor_id,
             offset=page * (pagesize or 0),
-            page_size=pagesize,
+            page_size=pagesize + 1 if pagesize is not None else None,
             groups=tagstore_groups,
         )
+
+        is_last_page = pagesize is None or len(tags) <= pagesize
+        tags = tags[
+            : pagesize or len(tags)
+        ]  # Throw away the extra tag if we fetched one for pagination
 
         tag_entities = await self._get_entities_dict(self.db, tags)
 
@@ -338,6 +477,7 @@ class TagsService:
                 )
                 for t in tags
             ],
+            is_last_page,
         )
 
     async def list_address_tags_by_label(
@@ -354,9 +494,14 @@ class TagsService:
         tags = await self.tagstore.get_tags_by_label(
             label,
             offset=page * (pagesize or 0),
-            page_size=pagesize,
+            page_size=pagesize + 1 if pagesize is not None else None,
             groups=tagstore_groups,
         )
+
+        is_last_page = pagesize is None or len(tags) <= pagesize
+        tags = tags[
+            : pagesize or len(tags)
+        ]  # Throw away the extra tag if we fetched one for pagination
 
         tag_entities = await self._get_entities_dict(self.db, tags)
 
@@ -369,6 +514,7 @@ class TagsService:
                 )
                 for t in tags
             ],
+            is_last_page,
         )
 
     async def get_actors_by_subjectid(
@@ -456,6 +602,10 @@ class TagsService:
 
         reporting_enabled = config.enable_user_tag_reporting
 
+        privacy_preserving_tag_notification = getattr(
+            config, "privacy_preserving_tag_notification", True
+        )
+
         insert_id = None
         if reporting_enabled:
             nt = data
@@ -472,10 +622,16 @@ class TagsService:
             if info_hook is not None:
                 for h in info_hook.hooks:
                     try:
-                        send_message_to_slack(
-                            f"User Reported new Tag: ID {insert_id} to ACL Group {tag_acl_group}",
-                            h,
-                        )
+                        if privacy_preserving_tag_notification:
+                            send_message_to_slack(
+                                f"User Reported new Tag: ID {insert_id} to ACL Group {tag_acl_group}",
+                                h,
+                            )
+                        else:
+                            send_message_to_slack(
+                                f"User Reported new Tag: {nt} to ACL Group {tag_acl_group}",
+                                h,
+                            )
                     except Exception as e:
                         logger.error(f"Failed to send tag reported slack info: {e}")
 

@@ -32,6 +32,7 @@ from .models import (
     NeighborAddresses,
     CrossChainPubkeyRelatedAddress,
     TagSummary,
+    AddressTagQueryInput,
 )
 from .rates_service import RatesService
 from .tags_service import TagsService
@@ -68,11 +69,13 @@ class DatabaseProtocol(Protocol):
     def get_token_configuration(self, currency: str) -> Dict[str, Any]: ...
 
 
+FORK_TUPLES = [("btc", "bch")]
+
+
 class AddressesService:
     def __init__(
         self,
         db: DatabaseProtocol,
-        tagstore: Any,
         tags_service: TagsService,
         entities_service: EntitiesService,
         blocks_service: BlocksService,
@@ -80,12 +83,63 @@ class AddressesService:
         logger: Any,
     ):
         self.db = db
-        self.tagstore = tagstore
+        self.tagstore = tags_service.tagstore
         self.tags_service = tags_service
         self.entities_service = entities_service
         self.blocks_service = blocks_service
         self.rates_service = rates_service
         self.logger = logger
+
+    async def _handle_fork_address_overlap(
+        self,
+        raw_query_results: List[Dict[str, Any]],
+        address: str,
+        network: Optional[str] = None,
+    ) -> List[CrossChainPubkeyRelatedAddress]:
+        results = []
+        for b, f in FORK_TUPLES:
+            included_nets = {addr["currency"] for addr in raw_query_results}
+
+            if network is not None:
+                included_nets.add(network)
+
+            if b in included_nets and f not in included_nets:
+                base_network = b
+                fork_network = f
+
+            elif f in included_nets and b not in included_nets:
+                base_network = f
+                fork_network = b
+            else:
+                continue
+
+            core_addresses = [
+                addr for addr in raw_query_results if addr["currency"] == base_network
+            ]
+            fork_address = await self.get_address(
+                fork_network, address, tagstore_groups=[], include_actors=False
+            )
+
+            if fork_address is not None and len(core_addresses) > 0:
+                core_address = core_addresses[0]
+                results.append(
+                    CrossChainPubkeyRelatedAddress(
+                        currency=fork_address.currency,
+                        address=fork_address.address,
+                        type=core_address["type"],
+                        pubkey=core_address["pubkey"],
+                    )
+                )
+            elif fork_address is not None:
+                results.append(
+                    CrossChainPubkeyRelatedAddress(
+                        currency=fork_address.currency,
+                        address=fork_address.address,
+                        type="fork_only",
+                        pubkey=None,
+                    )
+                )
+        return results
 
     async def get_cross_chain_pubkey_related_addresses(
         self,
@@ -97,11 +151,13 @@ class AddressesService:
         if page is not None and page < 1:
             raise ValueError("Page number must be at least 1")
 
+        raw_query_results = await self.db.get_cross_chain_pubkey_related_addresses(
+            address, network
+        )
+
         data = [
             CrossChainPubkeyRelatedAddress.model_validate(addr)
-            for addr in await self.db.get_cross_chain_pubkey_related_addresses(
-                address, network
-            )
+            for addr in raw_query_results
             if addr["address"] != address
             or (
                 network is None or (network is not None and addr["currency"] != network)
@@ -128,6 +184,13 @@ class AddressesService:
                 )
             ]
 
+        forked_addresses = await self._handle_fork_address_overlap(
+            raw_query_results, address, network=network
+        )
+
+        data.extend(forked_addresses)
+
+        # Note: we always produce all results and then simulate pages if needed.
         next_page = None
         if page is not None and pagesize is not None:
             page = page - 1
@@ -165,6 +228,7 @@ class AddressesService:
         page: Optional[int] = None,
         pagesize: Optional[int] = None,
         include_best_cluster_tag: bool = False,
+        include_pubkey_derived_tags: bool = False,
     ) -> AddressTagResult:
         page = page or 0
 
@@ -172,9 +236,25 @@ class AddressesService:
 
         cluster_id = await try_get_cluster_id(self.db, currency, address, cache=cache)
 
-        tags = await self.tags_service.list_tags_by_address_raw(
-            currency,
-            address,
+        if include_pubkey_derived_tags:
+            additional_tags = await self.get_cross_chain_pubkey_related_addresses(
+                address,
+                network=currency,
+            )
+
+            addresses = [AddressTagQueryInput(network=currency, address=address)] + [
+                AddressTagQueryInput(
+                    network=pk.network,
+                    address=pk.address,
+                    inherited_from_marker="pubkey",
+                )
+                for pk in additional_tags.addresses
+            ]
+        else:
+            addresses = [AddressTagQueryInput(network=currency, address=address)]
+
+        tags, is_last_page = await self.tags_service.list_tags_by_addresses_raw(
+            addresses,
             tagstore_groups,
             page=page,
             pagesize=pagesize,
@@ -185,9 +265,7 @@ class AddressesService:
         # Convert to AddressTag objects using tags service
         address_tags = []
         for pt in tags:
-            tag = self.tags_service._address_tag_from_public_tag(
-                pt, cluster_id
-            )  # request_app not needed
+            tag = self.tags_service._address_tag_from_public_tag(pt, cluster_id)
             # Handle foreign network clusters
             if tag.currency and tag.currency.upper() != currency.upper():
                 tag.entity = await try_get_cluster_id(
@@ -196,7 +274,10 @@ class AddressesService:
             address_tags.append(tag)
 
         return self.tags_service._get_address_tag_result(
-            current_page=page, page_size=pagesize, tags=address_tags
+            current_page=page,
+            page_size=pagesize,
+            tags=address_tags,
+            is_last_page=is_last_page,
         )
 
     async def list_address_txs(
@@ -401,10 +482,27 @@ class AddressesService:
         address: str,
         tagstore_groups: List[str],
         include_best_cluster_tag: bool = False,
+        include_pubkey_derived_tags: bool = False,
     ) -> TagSummary:
-        return await self.tags_service.get_tag_summary_by_address(
-            currency,
-            address,
+        if include_pubkey_derived_tags:
+            additional_tags = await self.get_cross_chain_pubkey_related_addresses(
+                address,
+                network=currency,
+            )
+
+            addresses = [AddressTagQueryInput(network=currency, address=address)] + [
+                AddressTagQueryInput(
+                    network=pk.network,
+                    address=pk.address,
+                    inherited_from_marker="pubkey",
+                )
+                for pk in additional_tags.addresses
+            ]
+        else:
+            addresses = [AddressTagQueryInput(network=currency, address=address)]
+
+        return await self.tags_service.get_tag_summary_by_addresses(
+            addresses,
             tagstore_groups,
             include_best_cluster_tag=include_best_cluster_tag,
         )
