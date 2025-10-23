@@ -116,9 +116,12 @@ class AddressesService:
             core_addresses = [
                 addr for addr in raw_query_results if addr["currency"] == base_network
             ]
-            fork_address = await self.get_address(
-                fork_network, address, tagstore_groups=[], include_actors=False
-            )
+            try:
+                fork_address = await self.get_address(
+                    fork_network, address, tagstore_groups=[], include_actors=False
+                )
+            except AddressNotFoundException:
+                fork_address = None
 
             if fork_address is not None and len(core_addresses) > 0:
                 core_address = core_addresses[0]
