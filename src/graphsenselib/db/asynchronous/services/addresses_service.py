@@ -155,9 +155,12 @@ class AddressesService:
         if page is not None and page < 1:
             raise ValueError("Page number must be at least 1")
 
-        raw_query_results = await self.db.get_cross_chain_pubkey_related_addresses(
-            address, network
-        )
+        try:
+            raw_query_results = await self.db.get_cross_chain_pubkey_related_addresses(
+                address, network
+            )
+        except NetworkNotFoundException:
+            raw_query_results = []
 
         data = [
             CrossChainPubkeyRelatedAddress.model_validate(addr)
@@ -176,11 +179,16 @@ class AddressesService:
             # directly in the address_to_pubkey table.
             evm_address = tron_address_to_evm_string(address)
 
-            data = [
-                CrossChainPubkeyRelatedAddress.model_validate(addr)
-                for addr in await self.db.get_cross_chain_pubkey_related_addresses(
+            try:
+                results_trx = await self.db.get_cross_chain_pubkey_related_addresses(
                     evm_address, "eth"
                 )
+            except NetworkNotFoundException:
+                results_trx = []
+
+            data = [
+                CrossChainPubkeyRelatedAddress.model_validate(addr)
+                for addr in results_trx
                 if addr["address"] != address
                 or (
                     network is None
