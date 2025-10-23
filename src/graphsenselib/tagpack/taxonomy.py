@@ -161,6 +161,8 @@ class Taxonomy(object):
         root = Node("root")
         lookup = {None: root}
         queue = deque(list(self.concepts))
+        max_steps = len(self.concepts) * 2
+        steps = 0
         while queue:
             c = queue.popleft()
             p = c.parent
@@ -170,6 +172,9 @@ class Taxonomy(object):
                 lookup[c.id] = n
             else:
                 queue.append(c)
+            steps += 1
+            if steps > max_steps:
+                raise ValueError("Possible cycle detected in taxonomy concepts")
 
         return root
 
