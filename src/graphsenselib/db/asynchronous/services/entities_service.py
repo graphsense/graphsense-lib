@@ -69,38 +69,17 @@ class DatabaseProtocol(Protocol):
     def get_token_configuration(self, currency: str) -> Dict[str, Any]: ...
 
 
-class TagstoreProtocol(Protocol):
-    async def get_tags_by_clusterid(
-        self,
-        cluster_id: int,
-        currency: str,
-        offset: int,
-        limit: Optional[int],
-        groups: List[str],
-    ) -> List[Any]: ...
-    async def get_best_cluster_tag(
-        self, cluster_id: int, currency: str, groups: List[str]
-    ) -> Optional[Any]: ...
-    async def get_nr_tags_by_clusterid(
-        self, cluster_id: int, currency: str, groups: List[str]
-    ) -> int: ...
-    async def get_actors_by_clusterid(
-        self, cluster_id: int, currency: str, groups: List[str]
-    ) -> List[Any]: ...
-
-
 class EntitiesService:
     def __init__(
         self,
         db: DatabaseProtocol,
-        tagstore: TagstoreProtocol,
         tags_service: TagsService,
         blocks_service: BlocksService,
         rates_service: RatesService,
         logger: Any,
     ):
         self.db = db
-        self.tagstore = tagstore
+        self.tagstore = tags_service.tagstore
         self.tags_service = tags_service
         self.blocks_service = blocks_service
         self.rates_service = rates_service
