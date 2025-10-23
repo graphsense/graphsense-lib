@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import (
     AddressNotFoundException,
+    NetworkNotFoundException,
     ClusterNotFoundException,
     DBInconsistencyException,
 )
@@ -449,7 +450,7 @@ class AddressesService:
 
         try:
             entity_id = await self.db.get_address_entity_id(currency, address_canonical)
-        except AddressNotFoundException:
+        except (AddressNotFoundException, NetworkNotFoundException):
             rates = await self.rates_service.get_rates(currency)
             entity_data = await self.db.new_entity(currency, address_canonical)
             return self.entities_service._from_row(
