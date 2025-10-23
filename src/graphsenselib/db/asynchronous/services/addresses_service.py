@@ -121,7 +121,7 @@ class AddressesService:
                 fork_address = await self.get_address(
                     fork_network, address, tagstore_groups=[], include_actors=False
                 )
-            except AddressNotFoundException:
+            except (AddressNotFoundException, NetworkNotFoundException):
                 fork_address = None
 
             if fork_address is not None and len(core_addresses) > 0:
@@ -450,7 +450,7 @@ class AddressesService:
 
         try:
             entity_id = await self.db.get_address_entity_id(currency, address_canonical)
-        except (AddressNotFoundException, NetworkNotFoundException):
+        except AddressNotFoundException:
             rates = await self.rates_service.get_rates(currency)
             entity_data = await self.db.new_entity(currency, address_canonical)
             return self.entities_service._from_row(
