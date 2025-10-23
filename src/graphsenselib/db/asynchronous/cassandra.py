@@ -64,6 +64,7 @@ SEARCH_PAGE_SIZE = 100
 
 MAX_HEX_STRING_LENGTH = 64
 FETCH_SIZE_MIN = 100
+HEX_ALPHABET = "0123456789ABCDEF"
 
 
 def try_partial_tron_to_partial_evm(addr_prefix):
@@ -103,7 +104,7 @@ def create_upper_bound(s, is_string_not_hex=False):
 def is_hexadecimal(s):
     """Check if a string is a valid hexadecimal number."""
     s = strip_0x(s)
-    return all(c in "0123456789abcdefABCDEF" for c in s)
+    return all(c in HEX_ALPHABET for c in s.upper())
 
 
 def getDateFromKeyspaceName(x):
@@ -127,9 +128,6 @@ def to_hex(paging_state):
 
 def bytes_from_hex(h_str: str) -> bytes:
     return hex_to_bytes(h_str)
-    # if isinstance(h_str, str) and h_str.startswith("0x"):
-    #     h_str = h_str[2:]
-    # return bytes.fromhex(h_str) if h_str else None
 
 
 def tx_hash_from_hex(tx_hash_str: str) -> bytes:
@@ -1774,7 +1772,31 @@ class Cassandra:
 
         return final_results, str(page) if page is not None else None
 
+    async def _list_matching_addresses_short_prefix_and_postfix_eth(
+        self, currency: str, prefix: str, postfix: str, limit: int
+    ):
+        queries = [
+            self.list_matching_addresses(
+                currency, f"{prefix}{c}...{postfix}", limit=200
+            )
+            for c in HEX_ALPHABET
+        ]
+
+        results = await asyncio.gather(*queries)
+
+        res = []
+        for r in results:
+            res.extend(r)
+
+        return res[:limit]
+
     async def list_matching_addresses(self, currency, expression, limit=10):
+        # Todo: the new postfix filtering is incomplete in scenarios where the item with the postfix is not in the
+        # results within the limit specified. A more complete solution would require a different querying approach.
+        # e.g. if a postfix is given we would need to iterate the entire result set.
+        # we don't do this now for performance reasons. (some prefixes are huge, eg 0x00000)
+        expression, postfix = expression.split("...", 1)
+
         prefix_lengths = self.get_prefix_lengths(currency)
         expression_orginal = expression
 
@@ -1785,6 +1807,17 @@ class Cassandra:
             currency_for_prefixscrub = "eth"
 
         expression = postprocess_address(expression)
+
+        if (
+            currency == "eth"
+            and len(strip_0x(expression)) == (prefix_lengths["address"] - 1)
+            and postfix is not None
+        ):
+            # Tools like TRM show addresses in with short prefixes but with postfixes
+            # e.g. 0x33d05...8f65 we have to add special handling to also find these here.
+            return await self._list_matching_addresses_short_prefix_and_postfix_eth(
+                currency, expression, postfix, limit
+            )
 
         if len(expression) < prefix_lengths["address"]:
             return []
@@ -1867,6 +1900,9 @@ class Cassandra:
                     if "new_addresses" not in str(e):
                         raise e
             rows = sorted(rows)
+
+        if postfix:
+            rows = [r for r in rows if r.lower().endswith(postfix.lower())]
         return rows
 
     @eth
