@@ -1795,7 +1795,13 @@ class Cassandra:
         # results within the limit specified. A more complete solution would require a different querying approach.
         # e.g. if a postfix is given we would need to iterate the entire result set.
         # we don't do this now for performance reasons. (some prefixes are huge, eg 0x00000)
-        expression, postfix = expression.split("...", 1)
+
+        parts = expression.split("...", 1)
+        if len(parts) == 2:
+            expression, postfix = parts
+        else:
+            postfix = None
+            expression = parts[0]
 
         prefix_lengths = self.get_prefix_lengths(currency)
         expression_orginal = expression
