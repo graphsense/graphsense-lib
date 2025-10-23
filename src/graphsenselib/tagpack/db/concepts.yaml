@@ -80,29 +80,29 @@ abuse:
   narrower: [scam]
 
 gray_usage:
-    id: gray_usage
-    type: concept
-    prefLabel: Gray usage patterns
-    description: >
-      Usage patterns that can be of concerning depending on the context
-    broader: behaviour
-    narrower: [mixing]
+  id: gray_usage
+  type: concept
+  prefLabel: Gray usage patterns
+  description: >
+    Usage patterns that can be of concerning depending on the context
+  broader: behaviour
+  narrower: [mixing]
 
 mixing:
-    id: mixing
-    type: concept
-    prefLabel: Mixing
-    description: >
-      An activity to conceal the source or destination of a payment flow
-    broader: gray_usage
-    narrower: [coinjoin]
+  id: mixing
+  type: concept
+  prefLabel: Mixing
+  description: >
+    An activity to conceal the source or destination of a payment flow
+  broader: gray_usage
+  narrower: [coinjoin]
 
 white_usage:
   id: white_usage
   type: concept
-  prefLabel: White (benin) usage patterns
+  prefLabel: White (benign) usage patterns
   description: >
-    Usage patterns that are tipically not concerning
+    Usage patterns that are typically of concern
   broader: behaviour
   narrower: [cold_wallet]
 
@@ -114,7 +114,7 @@ sexual_abuse:
   type: concept
   prefLabel: Sexual Abuse
   description: >
-    Abuseive secual behavior.
+    Abusive sexual behavior.
   seeAlso: https://en.wikipedia.org/wiki/Sexual_abuse
   broader: abuse
 
@@ -123,7 +123,7 @@ child_sexual_abuse:
   type: concept
   prefLabel: Child Sexual Abuse
   description: >
-    Abuseive secual behavior towards minors.
+    Abusive sexual behavior towards minors.
   seeAlso: https://en.wikipedia.org/wiki/Child_sexual_abuse
   broader: sexual_abuse
 
@@ -431,7 +431,7 @@ entity:
     An actor is anything playing an active role in Darknets or Cryptoasset
     ecosystems. This subsumes individuals and organizations as well as automated
     services fulfilling a certain function in such environments.
-  narrower: [organization, user, service, item]
+  narrower: [organization, user, service]
   broader: concept
 
 organization:
@@ -451,7 +451,7 @@ user:
     A user is a person who utilizes Darknet or Cryptoasset infrastructures
     and / or offered services.
   broader: entity
-  narrower: [user, perpetrator, donation]
+  narrower: [perpetrator, donation]
 
 service:
   id: service
@@ -843,3 +843,36 @@ collectible:
     A collectible refers to an item that is worth far more than it was originally sold for
     because of its rarity and/or popularity.
   broader: item
+
+black_list:
+  id: black_list
+  type: concept
+  prefLabel: Blacklist
+  description: >
+    A blacklist is a list of items that are prohibited or restricted from use, access, or consideration.
+  broader: abuse
+  narrower: [gov_black_list]
+
+gov_black_list:
+  id: gov_black_list
+  type: concept
+  prefLabel: Governmental Blacklist
+  description: >
+    A blacklist managed by a governmental institution is a list of items that are prohibited or restricted from use, access, or consideration.
+  broader: black_list
+
+white_list:
+  id: white_list
+  type: concept
+  prefLabel: Whitelist
+  description: >
+    A whitelist is a list of items that are approved for use, access, or consideration.
+  broader: white_usage
+
+gov_white_list:
+  id: gov_white_list
+  type: concept
+  prefLabel: Governmental Whitelist
+  description: >
+    A whitelist managed by a governmental institution is a list of items that are approved for use, access, or consideration.
+  broader: white_list
