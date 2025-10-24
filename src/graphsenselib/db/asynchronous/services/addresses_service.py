@@ -84,7 +84,7 @@ class AddressesService:
         logger: Any,
     ):
         self.db = db
-        self.tagstore = tags_service.tagstore
+        self.tagstore = tags_service.tagstore if tags_service is not None else None
         self.tags_service = tags_service
         self.entities_service = entities_service
         self.blocks_service = blocks_service
@@ -272,6 +272,10 @@ class AddressesService:
             pagesize=pagesize,
             include_best_cluster_tag=include_best_cluster_tag,
             cache=cache,
+        )
+
+        self.logger.info(
+            f"Fetched {len(tags)} tags for address {address} on network {currency}"
         )
 
         # Convert to AddressTag objects using tags service
