@@ -499,6 +499,7 @@ class AddressesService:
         tagstore_groups: List[str],
         include_best_cluster_tag: bool = False,
         include_pubkey_derived_tags: bool = False,
+        only_propagate_high_confidence_actors: bool = True,
     ) -> TagSummary:
         if include_pubkey_derived_tags:
             additional_tags = await self.get_cross_chain_pubkey_related_addresses(
@@ -520,5 +521,6 @@ class AddressesService:
         return await self.tags_service.get_tag_summary_by_addresses(
             addresses,
             tagstore_groups,
+            only_propagate_high_confidence_actors=only_propagate_high_confidence_actors,
             include_best_cluster_tag=include_best_cluster_tag,
         )

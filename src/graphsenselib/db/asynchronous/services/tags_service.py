@@ -304,10 +304,12 @@ class TagsService:
         address: str,
         tagstore_groups: List[str],
         include_best_cluster_tag: bool = False,
+        only_propagate_high_confidence_actors: bool = True,
     ) -> TagSummary:
         return await self.get_tag_summary_by_addresses(
             [AddressTagQueryInput(network=currency, address=address)],
             tagstore_groups,
+            only_propagate_high_confidence_actors=only_propagate_high_confidence_actors,
             include_best_cluster_tag=include_best_cluster_tag,
         )
 
@@ -316,9 +318,13 @@ class TagsService:
         addresses: List[AddressTagQueryInput],
         tagstore_groups: List[str],
         include_best_cluster_tag: bool = False,
+        only_propagate_high_confidence_actors: bool = True,
     ) -> TagSummary:
         try:
-            from graphsenselib.tagstore.algorithms.tag_digest import compute_tag_digest
+            from graphsenselib.tagstore.algorithms.tag_digest import (
+                compute_tag_digest,
+                TagDigestComputationConfig,
+            )
         except ImportError as e:
             raise ImportError(
                 "tagstore is required for tag digest computation. "
@@ -335,7 +341,12 @@ class TagsService:
 
         assert is_last_page, "Should have loaded all tags for digest computation"
 
-        digest = compute_tag_digest(tags_total)
+        digest = compute_tag_digest(
+            tags_total,
+            config=TagDigestComputationConfig().with_only_propagate_high_confidence_actors(
+                only_propagate_high_confidence_actors
+            ),
+        )
         return self._tag_summary_from_tag_digest(digest)
 
     async def _get_best_cluster_tag_raw(
