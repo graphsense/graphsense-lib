@@ -542,6 +542,12 @@ class Cassandra:
             self.check_keyspace(config["currencies"][currency]["transformed"])
             self.load_parameters(currency)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
     def connect(self):
         try:
             cl = ConsistencyLevel.name_to_value.get(
@@ -1832,6 +1838,9 @@ class Cassandra:
 
         if is_eth_like(currency):
             if not is_hexadecimal(expression):
+                return []
+
+            if postfix is not None and not is_hexadecimal(postfix):
                 return []
 
             # eth addresses are case insensitive

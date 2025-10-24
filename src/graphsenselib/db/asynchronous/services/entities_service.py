@@ -79,7 +79,7 @@ class EntitiesService:
         logger: Any,
     ):
         self.db = db
-        self.tagstore = tags_service.tagstore
+        self.tagstore = tags_service.tagstore if tags_service is not None else None
         self.tags_service = tags_service
         self.blocks_service = blocks_service
         self.rates_service = rates_service

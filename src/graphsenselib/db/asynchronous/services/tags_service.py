@@ -177,14 +177,16 @@ class TagsService:
 
         tags_total = []
         addresses_seen = set()
+        is_last_page = True
         for tqi in addresses:
             address_canonical = cannonicalize_address(tqi.network, tqi.address)
+            address_user_format = address_to_user_format(tqi.network, address_canonical)
 
-            if address_canonical in addresses_seen:
+            if address_user_format in addresses_seen:
                 # only process unique addresses (tag query ignores currency anyway)
                 continue
 
-            addresses_seen.add(address_canonical)
+            addresses_seen.add(address_user_format)
 
             tags, is_last_page = await self.list_tags_by_address_raw(
                 tqi.network,
