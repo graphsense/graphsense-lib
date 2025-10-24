@@ -1775,22 +1775,20 @@ class Cassandra:
     async def _list_matching_addresses_short_prefix_and_postfix_eth(
         self, currency: str, prefix: str, postfix: str, limit: int
     ):
-        queries = [
-            self.list_matching_addresses(
-                currency, f"{prefix}{c}...{postfix}", limit=200
-            )
-            for c in HEX_ALPHABET
-        ]
-
-        results = await asyncio.gather(*queries)
-
         res = []
-        for r in results:
-            res.extend(r)
+        for c in HEX_ALPHABET:
+            results = await self.list_matching_addresses(
+                currency, f"{prefix}{c}...{postfix}", limit=None
+            )
+            res.extend(results)
+            if len(res) >= limit:
+                break
 
         return res[:limit]
 
-    async def list_matching_addresses(self, currency, expression, limit=10):
+    async def list_matching_addresses(
+        self, currency, expression, limit: Optional[int] = 10
+    ):
         # Todo: the new postfix filtering is incomplete in scenarios where the item with the postfix is not in the
         # results within the limit specified. A more complete solution would require a different querying approach.
         # e.g. if a postfix is given we would need to iterate the entire result set.
@@ -1841,21 +1839,16 @@ class Cassandra:
             norm = address_to_user_format
             prefix = prefix.upper()
 
+            query_expression = expression
+
         else:
             expression = expression_orginal
+            query_expression = expression_orginal
+
         rows = []
 
         if len(prefix) < 1:
             return []
-
-        async def collect(query, params):
-            result = await self.execute_async(currency, "transformed", query, params)
-            rows.extend([norm(currency, row["address"]) for row in result.current_rows])
-
-        # Use the expression that would actually be stored in the database
-        query_expression = (
-            expression_orginal if not is_eth_like(currency) else expression
-        )
 
         upper_bound = create_upper_bound(
             query_expression, is_string_not_hex=not is_eth_like(currency)
@@ -1870,45 +1863,26 @@ class Cassandra:
         query = (
             "SELECT address FROM address_ids_by_address_prefix "
             "WHERE address_prefix = %s AND address >= %s AND address < %s"
-            "LIMIT %s"
-        )
+        ) + (" LIMIT %s" if limit is not None else "")
         if is_eth_like(currency):
             params = [
                 prefix,
                 hex_str_to_bytes(strip_0x(query_expression)),
                 hex_str_to_bytes(strip_0x(upper_bound)),
-                limit,
             ]
         else:
-            params = [prefix, query_expression, upper_bound, limit]
+            params = [prefix, query_expression, upper_bound]
 
-        await collect(query, params)
+        if limit is not None:
+            params.append(limit)
 
-        if len(rows) < limit:
-            remaining_limit = limit - len(rows)
-            query = (
-                "SELECT address FROM new_addresses "
-                "WHERE address_prefix = %s AND address >= %s AND address < %s LIMIT %s"
-            )
-            if is_eth_like(currency):
-                params = [
-                    prefix,
-                    hex_str_to_bytes(strip_0x(query_expression)),
-                    hex_str_to_bytes(strip_0x(upper_bound)),
-                    remaining_limit,
-                ]
-            else:
-                params = [prefix, query_expression, upper_bound, remaining_limit]
-            if self.parameters[currency]["use_delta_updater_v1"]:
-                try:
-                    await collect(query, params)
-                except InvalidRequest as e:
-                    if "new_addresses" not in str(e):
-                        raise e
-            rows = sorted(rows)
+        # get results and use postfilter
+        result = await self.execute_async(currency, "transformed", query, params)
+        rows.extend([norm(currency, row["address"]) for row in result.current_rows])
 
         if postfix:
             rows = [r for r in rows if r.lower().endswith(postfix.lower())]
+
         return rows
 
     @eth
