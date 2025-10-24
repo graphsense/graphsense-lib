@@ -1824,7 +1824,7 @@ class Cassandra:
             and postfix is not None
         ):
             # Tools like TRM show addresses in with short prefixes but with postfixes
-            # e.g. 0x33d05...8f65 we have to add special handling to also find these here.
+            # e.g. 0x33d05d...8f65 we have to add special handling to also find these here.
             return await self._list_matching_addresses_short_prefix_and_postfix_eth(
                 currency, expression, postfix, limit
             )

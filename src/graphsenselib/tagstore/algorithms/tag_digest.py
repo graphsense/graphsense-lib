@@ -101,7 +101,20 @@ def _calcTagCloud(wctr: wCounter, at_most=None) -> Dict[str, TagCloudEntry]:
     }
 
 
-def compute_tag_digest(tags: List[TagPublic]) -> TagDigest:
+class TagDigestComputationConfig(BaseModel):
+    only_propagate_high_confidence_actors: bool = False
+    consider_n_confidence_buckets: int = 2
+    max_confidence_drop: int = 20
+
+    def with_only_propagate_high_confidence_actors(self, only: bool = True):
+        self.only_propagate_high_confidence_actors = only
+        return self
+
+
+def compute_tag_digest(
+    tags: List[TagPublic],
+    config: TagDigestComputationConfig = TagDigestComputationConfig(),
+) -> TagDigest:
     tags_count = 0
     total_words = 0
     tags_count_cluster = 0
@@ -110,6 +123,8 @@ def compute_tag_digest(tags: List[TagPublic]) -> TagDigest:
     full_label_counter = wCounter()
     concepts_counter = wCounter()
     actor_labels = defaultdict(wCounter)
+    confidences = set()
+
     label_summary = defaultdict(
         lambda: {
             "cnt": 0,
@@ -123,7 +138,13 @@ def compute_tag_digest(tags: List[TagPublic]) -> TagDigest:
         }
     )
 
-    def add_tag_data(t, tags_count: int, total_words: int, tags_count_cluster: int):
+    def add_tag_data(
+        t,
+        tags_count: int,
+        total_words: int,
+        tags_count_cluster: int,
+        actor_confidence_threshold: float = 0.0,
+    ):
         if not _skipTag(t):
             conf = t.confidence_level or 0.1
 
@@ -149,7 +170,7 @@ def compute_tag_digest(tags: List[TagPublic]) -> TagDigest:
             full_label_counter.add(nlabel, conf)
 
             # add actor
-            if t.actor:
+            if t.actor and conf >= actor_confidence_threshold:
                 actor_labels[t.actor].add(nlabel, weight=conf)
                 actor_counter.add(t.actor, weight=conf)
 
@@ -179,8 +200,34 @@ def compute_tag_digest(tags: List[TagPublic]) -> TagDigest:
         return tags_count, total_words, tags_count_cluster
 
     for t in tags:
+        conf = t.confidence_level or 0.1
+        confidences.add(conf)
+
+    if config.only_propagate_high_confidence_actors:
+        highest_n = list(reversed(sorted(list(confidences))))[
+            : config.consider_n_confidence_buckets
+        ]
+
+        # only keep confidences if drop is less than max_confidence_drop
+        lastc = None
+        considered_confs = []
+        for c in highest_n:
+            if lastc is not None and (lastc - c) > config.max_confidence_drop:
+                break
+            lastc = c
+            considered_confs.append(c)
+
+        actor_confidence_threshold = min(considered_confs)
+    else:
+        actor_confidence_threshold = 0.0
+
+    for t in tags:
         tags_count, total_words, tags_count_cluster = add_tag_data(
-            t, tags_count, total_words, tags_count_cluster
+            t,
+            tags_count,
+            total_words,
+            tags_count_cluster,
+            actor_confidence_threshold=actor_confidence_threshold,
         )
 
     # create a relevance score, prefer items where similar labels exist.
