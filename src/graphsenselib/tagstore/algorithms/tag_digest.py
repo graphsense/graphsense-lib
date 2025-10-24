@@ -217,7 +217,9 @@ def compute_tag_digest(
             lastc = c
             considered_confs.append(c)
 
-        actor_confidence_threshold = min(considered_confs)
+        actor_confidence_threshold = (
+            min(considered_confs) if len(considered_confs) > 0 else 0.0
+        )
     else:
         actor_confidence_threshold = 0.0
 
