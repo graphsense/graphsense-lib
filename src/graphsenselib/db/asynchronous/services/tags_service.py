@@ -130,15 +130,9 @@ class TagsService:
         include_best_cluster_tag: bool = False,
         cache: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List["TagPublic"], bool]:  # noqa: F821
-        if (
-            pagesize is not None
-            and pagesize == 1
-            and page is not None
-            and page == 0
-            and len(addresses) > 1
-        ):
-            # optimize for single tag fetch
-            all_tags, _ = await self._list_tags_by_addresses_raw(
+        if pagesize is not None and page == 0:
+            # optimize for fetching first page only
+            all_tags, is_last_page = await self._list_tags_by_addresses_raw(
                 addresses,
                 tagstore_groups,
                 0,
@@ -146,7 +140,8 @@ class TagsService:
                 include_best_cluster_tag,
                 cache,
             )
-            return all_tags[:1], len(all_tags) <= pagesize
+            return all_tags[:pagesize], len(all_tags) <= pagesize
+
         elif pagesize is not None and len(addresses) > 1:
             # TODO optimize for pagination over multiple addresses, current workaround is to load all and then page in memory
             p = page or 0
@@ -192,6 +187,12 @@ class TagsService:
                 "Please install it with: uv pip install tagstore"
             ) from e
 
+        assert (
+            len(addresses) == 1
+            or (pagesize is None)
+            or (len(addresses) >= 1 and pagesize is not None and page == 0)
+        ), "pagination over multiple addresses not supported"
+
         tags_total = []
         addresses_seen = set()
         is_last_page = True
@@ -229,7 +230,6 @@ class TagsService:
             tags_total.extend(tags)
 
             if pagesize is not None and len(tags_total) >= pagesize:
-                is_last_page = False
                 tags_total = tags_total[:pagesize]
                 break
 
