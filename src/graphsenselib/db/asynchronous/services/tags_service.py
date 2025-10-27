@@ -130,7 +130,24 @@ class TagsService:
         include_best_cluster_tag: bool = False,
         cache: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List["TagPublic"], bool]:  # noqa: F821
-        if pagesize is not None and len(addresses) > 1:
+        if (
+            pagesize is not None
+            and pagesize == 1
+            and page is not None
+            and page == 0
+            and len(addresses) > 1
+        ):
+            # optimize for single tag fetch
+            all_tags, _ = await self._list_tags_by_addresses_raw(
+                addresses,
+                tagstore_groups,
+                0,
+                pagesize + 1,
+                include_best_cluster_tag,
+                cache,
+            )
+            return all_tags[:1], len(all_tags) <= pagesize
+        elif pagesize is not None and len(addresses) > 1:
             # TODO optimize for pagination over multiple addresses, current workaround is to load all and then page in memory
             p = page or 0
             ps = pagesize or 0
@@ -210,6 +227,11 @@ class TagsService:
                         )
 
             tags_total.extend(tags)
+
+            if pagesize is not None and len(tags_total) >= pagesize:
+                is_last_page = False
+                tags_total = tags_total[:pagesize]
+                break
 
         return tags_total, is_last_page
 
