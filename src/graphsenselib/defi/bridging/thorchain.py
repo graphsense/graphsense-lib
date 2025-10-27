@@ -139,8 +139,13 @@ class SwapDecoder:
             result["affiliate"] = parts[4]
 
         # Parse affiliate fee
-        if len(parts) > 5 and parts[5]:
-            result["affiliate_fee"] = int(parts[5])
+        try:
+            if len(parts) > 5 and parts[5]:
+                result["affiliate_fee"] = int(parts[5])
+        except ValueError:
+            # some txs have non-integer affiliate fees
+            # e.g. 0x6264da18732889def93336b2bd6f14d70471d9e7bb626d7012f683d6061e3480_I460
+            result["affiliate_fee"] = None
 
         return result
 
