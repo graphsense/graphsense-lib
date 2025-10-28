@@ -10,7 +10,7 @@ from graphsenselib.errors import (
 )
 from graphsenselib.utils.address import address_to_user_format
 from graphsenselib.utils.tron import tron_address_to_evm_string
-
+from graphsenselib.tagstore.db import TagPublic
 
 from .blocks_service import BlocksService
 from .common import (
@@ -34,7 +34,6 @@ from .models import (
     CrossChainPubkeyRelatedAddress,
     TagSummary,
     AddressTagQueryInput,
-    TagPublic,
 )
 from .rates_service import RatesService
 from .tags_service import TagsService
