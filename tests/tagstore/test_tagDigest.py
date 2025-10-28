@@ -8,6 +8,7 @@ from graphsenselib.tagstore.algorithms.tag_digest import (
     TagDigestComputationConfig,
     compute_tag_digest,
 )
+from graphsenselib.tagstore.algorithms.obfuscate import obfuscate_tag_if_not_public
 from graphsenselib.tagstore.db.queries import TagPublic
 
 
@@ -61,6 +62,35 @@ def test_tag_digest_cryptoDogs(tagsCryptoDogs):
     ]
     assert list(digest.label_digest.values())[0].label == digest.best_label
 
+    assert list(digest.concept_tag_cloud.keys())[0] == "payment_processor"
+    assert list(digest.concept_tag_cloud.keys()) == [
+        "payment_processor",
+        "defi_bridge",
+        "unknown",
+        "search_engine",
+        "service",
+    ]
+
+
+def test_tag_digest_cryptoDogs_obfuscated(tagsCryptoDogs):
+    digest = compute_tag_digest(
+        [obfuscate_tag_if_not_public(t) for t in tagsCryptoDogs]
+    )
+
+    assert digest.best_actor == "CryptoDogs"
+
+    assert digest.best_label == "CryptoDogs USD"
+    assert digest.broad_concept == "entity"
+    assert digest.nr_tags == 6
+
+    assert [x.label for x in digest.label_digest.values()] == [
+        "",
+        "CryptoDogs USD",
+    ]
+    assert list(digest.label_digest.keys()) == ["", "cryptodogs usd"]
+    assert list(digest.label_digest.values())[1].label == digest.best_label
+
+    # all the concepts are still there
     assert list(digest.concept_tag_cloud.keys())[0] == "payment_processor"
     assert list(digest.concept_tag_cloud.keys()) == [
         "payment_processor",

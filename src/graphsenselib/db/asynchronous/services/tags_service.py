@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, Callable
 
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.errors import FeatureNotAvailableException, NotFoundException
@@ -26,6 +26,7 @@ from .models import (
     TagSummary,
     Taxonomy,
     AddressTagQueryInput,
+    TagPublic,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ class TagsService:
             abuse=abuse,
             source=pt.source,
             lastmod=pt.lastmod,
-            tagpack_is_public=pt.group == "public",
+            tagpack_is_public=pt.tagpack_is_public,
             tagpack_uri=pt.tagpack_uri,
             tagpack_creator=pt.creator,
             tagpack_title=pt.tagpack_title,
@@ -341,6 +342,7 @@ class TagsService:
         tagstore_groups: List[str],
         include_best_cluster_tag: bool = False,
         only_propagate_high_confidence_actors: bool = True,
+        tag_transformer: Callable[["TagPublic"], "TagPublic"] = None,
     ) -> TagSummary:
         try:
             from graphsenselib.tagstore.algorithms.tag_digest import (
@@ -364,7 +366,9 @@ class TagsService:
         assert is_last_page, "Should have loaded all tags for digest computation"
 
         digest = compute_tag_digest(
-            tags_total,
+            tags_total
+            if tag_transformer is None
+            else [tag_transformer(t) for t in tags_total],
             config=TagDigestComputationConfig().with_only_propagate_high_confidence_actors(
                 only_propagate_high_confidence_actors
             ),
