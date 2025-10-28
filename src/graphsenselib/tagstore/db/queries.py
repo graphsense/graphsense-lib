@@ -228,6 +228,10 @@ class TagPublic(BaseModel):
             ).keys()
         )
 
+    @property
+    def tagpack_is_public(self) -> bool:
+        return self.group == "public"
+
     @classmethod
     def fromDB(cls, t: Tag, tp: TagPack, inherited_from=None) -> "TagPublic":
         c = t.concepts

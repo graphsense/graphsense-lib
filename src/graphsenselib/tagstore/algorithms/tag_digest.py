@@ -171,6 +171,7 @@ def compute_tag_digest(
             # add actor
             if (
                 t.actor is not None
+                and len(t.actor.strip()) > 0
                 and conf >= actor_confidence_threshold
                 and (
                     not config.only_propagate_high_confidence_actors
