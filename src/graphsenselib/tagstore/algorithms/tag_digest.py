@@ -123,7 +123,6 @@ def compute_tag_digest(
     full_label_counter = wCounter()
     concepts_counter = wCounter()
     actor_labels = defaultdict(wCounter)
-    confidences = set()
 
     label_summary = defaultdict(
         lambda: {
@@ -170,7 +169,14 @@ def compute_tag_digest(
             full_label_counter.add(nlabel, conf)
 
             # add actor
-            if t.actor and conf >= actor_confidence_threshold:
+            if (
+                t.actor is not None
+                and conf >= actor_confidence_threshold
+                and (
+                    not config.only_propagate_high_confidence_actors
+                    or t.tag_type == "actor"
+                )
+            ):
                 actor_labels[t.actor].add(nlabel, weight=conf)
                 actor_counter.add(t.actor, weight=conf)
 
@@ -199,12 +205,14 @@ def compute_tag_digest(
 
         return tags_count, total_words, tags_count_cluster
 
-    for t in tags:
-        conf = t.confidence_level or 0.1
-        confidences.add(conf)
-
     if config.only_propagate_high_confidence_actors:
-        highest_n = list(reversed(sorted(list(confidences))))[
+        confidences_for_actor_inheritance = set()
+        for t in tags:
+            if t.tag_type == "actor":
+                conf = t.confidence_level or 0.1
+                confidences_for_actor_inheritance.add(conf)
+
+        highest_n = list(reversed(sorted(list(confidences_for_actor_inheritance))))[
             : config.consider_n_confidence_buckets
         ]
 

@@ -1,6 +1,26 @@
 [
     {
         "identifier": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+        "label": "OFAC SDN Listed Entity",
+        "source": "https://ofac.treasury.gov/sdn-list",
+        "creator": "GraphSense Core Team",
+        "confidence": "service_data",
+        "confidence_level": 90,
+        "tag_subject": "address",
+        "tag_type": "attribute",
+        "actor": null,
+        "primary_concept": "sanction_list",
+        "additional_concepts": [],
+        "is_cluster_definer": true,
+        "network": "BTC",
+        "lastmod": 1636675200,
+        "group": "public",
+        "inherited_from": null,
+        "tagpack_title": "GraphSense Demo TagPack",
+        "tagpack_uri": "https://github.com/graphsense/graphsense-tagpacks/tree/master/packs/demo.yaml"
+    },
+    {
+        "identifier": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
         "label": "Internet Archive",
         "source": "https://archive.org/donate/cryptocurrency",
         "creator": "GraphSense Core Team",

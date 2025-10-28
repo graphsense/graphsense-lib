@@ -3,6 +3,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.11.0-rc/2.8.0-rc] ...
+### changed
+- introduced attribute tags and improve tag summary actor inheritance
+- new concepts funder, deployer, white_list, black_list, gov_white_list
+### added
+- tags are now derived from other chains if the addresses are derived from the same pubkey
+- search for more address patterns eg. addresses with 0x33d0 short prefixes and postfixes, e.g. 0x33d0...8f65
+- option to avoid data leaks to slack for tag notifications
+
+
 ## [25.09.7/2.7.7] 2025-10-03
 ### fixed
 - handling of thorchain bridges that target an unsupported asset. (e.g. cd884dafc0e2294be028dfc41d3a7d043e0a36b94b112339993d753f50b27677)
