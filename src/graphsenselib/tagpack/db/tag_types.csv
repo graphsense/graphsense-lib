@@ -1,4 +1,5 @@
 label,id,description
 Actor Tag,actor,Specifies the actor of an Address
-Event Tag,event,Specifies an event that occured on the Address or with involvment of the address
-Mention Tag,mention,Tag was mentioned in some interessting context e.g. on a darkweb forum or market
+Event Tag,event,Specifies an event that occurred on the Address or with involvement of the address
+Attribute Tag,attribute,Specifies an attribute or property or behavior of the Address e.g. if the user of a certain service is a miner or contract deployer or similar
+Mention Tag,mention,Tag was mentioned in some interesting context e.g. on a darkweb forum or market

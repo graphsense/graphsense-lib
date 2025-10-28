@@ -4,7 +4,10 @@ import pytest
 
 pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
 
-from graphsenselib.tagstore.algorithms.tag_digest import compute_tag_digest
+from graphsenselib.tagstore.algorithms.tag_digest import (
+    TagDigestComputationConfig,
+    compute_tag_digest,
+)
 from graphsenselib.tagstore.db.queries import TagPublic
 
 
@@ -69,26 +72,37 @@ def test_tag_digest_cryptoDogs(tagsCryptoDogs):
 
 
 def test_tag_digest_IA(tagsIA):
-    digest = compute_tag_digest(tagsIA)
+    digest = compute_tag_digest(
+        tagsIA,
+        config=TagDigestComputationConfig().with_only_propagate_high_confidence_actors(
+            True
+        ),
+    )
 
     assert digest.best_actor == "internet_archive"
 
     assert digest.best_label == "Internet Archive"
     assert digest.broad_concept == "entity"
-    assert digest.nr_tags == 2
+    assert digest.nr_tags == 3
 
     assert [x.label for x in digest.label_digest.values()] == [
+        "OFAC SDN Listed Entity",
         "Internet Archive",
         "Bad Stuff with Low Confidence",
     ]
     assert list(digest.label_digest.keys()) == [
+        "OFAC SDN Listed Entity".lower(),
         "internet archive",
         "bad stuff with low confidence",
     ]
-    assert list(digest.label_digest.values())[0].label == digest.best_label
+    assert list(digest.label_digest.values())[1].label == digest.best_label
 
-    assert list(digest.concept_tag_cloud.keys())[0] == "organization"
-    assert list(digest.concept_tag_cloud.keys()) == ["organization", "filesharing"]
+    assert list(digest.concept_tag_cloud.keys())[0] == "sanction_list"
+    assert list(digest.concept_tag_cloud.keys()) == [
+        "sanction_list",
+        "organization",
+        "filesharing",
+    ]
 
 
 def test_tag_digest_exchange(tagsExchange):

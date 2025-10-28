@@ -876,3 +876,20 @@ gov_white_list:
   description: >
     A whitelist managed by a governmental institution is a list of items that are approved for use, access, or consideration.
   broader: white_list
+
+
+deployer:
+  id: deployer
+  type: concept
+  prefLabel: Deployer
+  description: >
+    An entity that has deployed smart contracts on a blockchain network.
+  broader: behaviour
+
+funder:
+  id: funder
+  type: concept
+  prefLabel: Funder
+  description: >
+    An address that is used to fund other smart contracts (e.g. exchange funders).
+  broader: behaviour
