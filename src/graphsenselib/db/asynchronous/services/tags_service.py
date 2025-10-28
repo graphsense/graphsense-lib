@@ -26,8 +26,8 @@ from .models import (
     TagSummary,
     Taxonomy,
     AddressTagQueryInput,
-    TagPublic,
 )
+from graphsenselib.tagstore.db import TagPublic
 
 logger = logging.getLogger(__name__)
 
