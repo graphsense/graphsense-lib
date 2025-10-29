@@ -213,6 +213,16 @@ def test_all_header_fields(tagpack, schema):
     assert tagpack.all_header_fields.get("title") == "Test TagPack"
 
 
+def test_tag_type_is_inherited(tagpack):
+    t = tagpack.tags[0]
+
+    assert t.all_fields.get("tag_type") is None
+
+    tagpack.contents["tag_type"] = "attribute"
+
+    assert t.all_fields.get("tag_type") == "attribute"
+
+
 def test_header_fields(tagpack):
     h = ["title", "creator", "tags"]
 
