@@ -15,7 +15,9 @@ CREATE TABLE block (
 CREATE TYPE IF NOT EXISTS tx_input_output (
     address list<text>,
     value bigint,
-    address_type smallint
+    address_type smallint,
+    script_hex blob,
+    txinwitness list<blob>
 );
 
 CREATE TABLE IF NOT EXISTS transaction (

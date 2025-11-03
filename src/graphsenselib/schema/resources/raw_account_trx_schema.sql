@@ -63,6 +63,9 @@ CREATE TABLE transaction (
     receipt_root blob,
     receipt_status bigint,
     receipt_effective_gas_price bigint,
+    v smallint,
+    r varint,
+    s varint,
     PRIMARY KEY (tx_hash_prefix, tx_hash)
 );
 

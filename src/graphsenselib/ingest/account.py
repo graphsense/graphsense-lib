@@ -535,6 +535,7 @@ def prepare_transactions_inplace_eth(
         "receipt_contract_address",
         "receipt_root",
     ]
+
     for item in items:
         # remove column
         item.pop("type")
@@ -838,6 +839,17 @@ def ingest(
                 )
                 enriched_txs = enrich_transactions(txs, receipts)
 
+            # enrich tx strips v, r, s from txs so we add them back
+            tx_hash_to_vrs = {
+                tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs
+            }
+
+            for etx in enriched_txs:
+                v, r, s = tx_hash_to_vrs[etx["hash"]]
+                etx["v"] = v
+                etx["r"] = r
+                etx["s"] = s
+
             # reformat and edit data
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
             prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
@@ -1013,7 +1025,19 @@ class EthETLStrategy(AbstractETLStrategy):
         return enriched_txs
 
     def enrich_transactions(self, txs, receipts):
-        return enrich_transactions(txs, receipts)
+        enriched_txs = enrich_transactions(txs, receipts)
+        # enrich tx strips v, r, s from txs so we add them back
+        tx_hash_to_vrs = {
+            tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs
+        }
+
+        for etx in enriched_txs:
+            v, r, s = tx_hash_to_vrs[etx["hash"]]
+            etx["v"] = v
+            etx["r"] = r
+            etx["s"] = s
+
+        return enriched_txs
 
     def transform_traces(self, traces, block_bucket_size: int):
         prepare_traces_inplace_eth(traces, block_bucket_size)
