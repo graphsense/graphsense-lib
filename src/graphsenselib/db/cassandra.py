@@ -339,9 +339,18 @@ class CassandraDb:
         self.prep_stmts = {}
         self._default_timeout = default_timeout
 
+    @property
+    def nodes_with_port(self) -> List[str]:
+        if self.db_port != 9042:
+            return [f"{node}:{self.db_port}" for node in self.db_nodes]
+        return self.db_nodes
+
     def clone(self) -> "CassandraDb":
         return CassandraDb(
-            self.db_nodes, self._default_timeout, self.db_username, self.db_password
+            self.nodes_with_port,
+            self._default_timeout,
+            self.db_username,
+            self.db_password,
         )
 
     def __repr__(self):
@@ -366,8 +375,8 @@ class CassandraDb:
             self.db_nodes,
             port=self.db_port,
             execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
-            connect_timeout=self._default_timeout,
-            idle_heartbeat_timeout=self._default_timeout,
+            connect_timeout=5,
+            idle_heartbeat_timeout=5,
             # protocol_version=6,
             compression="lz4",
             auth_provider=auth_provider,
