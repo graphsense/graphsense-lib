@@ -396,6 +396,9 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         self._keyspace = keyspace_config.keyspace_name
         self._db = db
 
+    def execute_raw_cql(self, cql: str):
+        return self._db.execute(cql, keyspace=self._keyspace)
+
     def _get_bucket_divisors_by_table_name(self) -> dict:
         return {
             "block": self.get_block_bucket_size(),
@@ -634,6 +637,9 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             "cluster": self.get_cluster_id_bucket_size(),
             "transaction_ids_by_transaction_id_group": bucket_size,
         }
+
+    def execute_raw_cql(self, cql: str):
+        return self._db.execute(cql, keyspace=self._keyspace)
 
     def exists(self) -> bool:
         return self._db.has_keyspace(self._keyspace)

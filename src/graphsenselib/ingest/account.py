@@ -7,7 +7,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 
 try:
-    import grpc
     from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
     from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
     from ethereumetl.jobs.export_traces_job import (
@@ -27,6 +26,7 @@ try:
     from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
     from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
     from .tron.txTypeTransformer import TxTypeTransformer
+    from graphsenselib.utils.grpc import get_channel
 except ImportError:
     _has_ingest_dependencies = False
 else:
@@ -287,7 +287,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
-        channel = grpc.insecure_channel(grpc_endpoint)
+        channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
         def get_type(tx):
@@ -313,7 +313,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         self, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
-        channel = grpc.insecure_channel(grpc_endpoint)
+        channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
         def get_type(tx):
@@ -348,7 +348,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
 
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
 
-        channel = grpc.insecure_channel(grpc_endpoint)
+        channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
         trc10_tokens = wallet_stub.GetAssetIssueList(EmptyMessage())
 
@@ -535,6 +535,7 @@ def prepare_transactions_inplace_eth(
         "receipt_contract_address",
         "receipt_root",
     ]
+
     for item in items:
         # remove column
         item.pop("type")
@@ -838,6 +839,17 @@ def ingest(
                 )
                 enriched_txs = enrich_transactions(txs, receipts)
 
+            # enrich tx strips v, r, s from txs so we add them back
+            tx_hash_to_vrs = {
+                tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs
+            }
+
+            for etx in enriched_txs:
+                v, r, s = tx_hash_to_vrs[etx["hash"]]
+                etx["v"] = v
+                etx["r"] = r
+                etx["s"] = s
+
             # reformat and edit data
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
             prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE)
@@ -1013,7 +1025,19 @@ class EthETLStrategy(AbstractETLStrategy):
         return enriched_txs
 
     def enrich_transactions(self, txs, receipts):
-        return enrich_transactions(txs, receipts)
+        enriched_txs = enrich_transactions(txs, receipts)
+        # enrich tx strips v, r, s from txs so we add them back
+        tx_hash_to_vrs = {
+            tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs
+        }
+
+        for etx in enriched_txs:
+            v, r, s = tx_hash_to_vrs[etx["hash"]]
+            etx["v"] = v
+            etx["r"] = r
+            etx["s"] = s
+
+        return enriched_txs
 
     def transform_traces(self, traces, block_bucket_size: int):
         prepare_traces_inplace_eth(traces, block_bucket_size)

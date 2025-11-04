@@ -28,10 +28,10 @@ test-with-base-dependencies-ci:
 
 
 test-all:
-	uv run --all-groups  pytest --cov=src -W error --cov-report term-missing
+	uv run --dev --all-groups  pytest --cov=src -W error --cov-report term-missing
 
 install-dev:
-	uv sync --all-packages --force-reinstall --all-extras
+	uv sync --dev --all-packages --force-reinstall --all-extras
 
 install:
 	uv sync

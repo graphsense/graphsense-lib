@@ -452,7 +452,16 @@ def tx_io_summary(x):
     Returns:
         TYPE: list of form address, value, type
     """
-    return [address_as_string(x), x["value"], addresstype_to_int(x["type"])]
+    txinwitness = x.get("txinwitness", None)
+    if txinwitness is not None:
+        txinwitness = [hex_to_bytes(wit) for wit in txinwitness]
+    return [
+        address_as_string(x),
+        x["value"],
+        addresstype_to_int(x["type"]),
+        hex_to_bytes(x["script_hex"]),
+        txinwitness,
+    ]
 
 
 def tx_stats(tx):

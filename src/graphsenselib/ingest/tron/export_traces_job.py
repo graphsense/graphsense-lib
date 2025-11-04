@@ -10,6 +10,7 @@ try:
     from .grpc.api.tron_api_pb2 import NumberMessage
     from .grpc.api.tron_api_pb2_grpc import WalletStub
     from .grpc.core.response_pb2 import TransactionInfoList
+    from graphsenselib.utils.grpc import get_channel
 except ImportError:
     _has_ingest_dependencies = False
 else:
@@ -153,7 +154,7 @@ class TronExportTracesJob:
         self.max_workers = max_workers
 
     def run(self):
-        channel = grpc.insecure_channel(self.grpc_endpoint)
+        channel = get_channel(self.grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
         traces = []
@@ -193,7 +194,7 @@ class TronExportTracesJob:
             def fetch_and_process_block_wrapper(i):
                 return self.fetch_and_process_block(i, wallet_stub)
 
-            with grpc.insecure_channel(self.grpc_endpoint) as channel:
+            with get_channel(self.grpc_endpoint) as channel:
                 logger.debug("Connected to gRPC endpoint")
                 wallet_stub = WalletStub(channel)
 
