@@ -28,6 +28,7 @@ from .models import (
     AddressTagQueryInput,
 )
 from graphsenselib.tagstore.db import TagPublic
+from graphsenselib.tagstore.db.queries import UserReportedAddressTag
 
 logger = logging.getLogger(__name__)
 
@@ -629,7 +630,10 @@ class TagsService:
         ]
 
     async def report_tag(
-        self, data: Any, config: TagInsertConfigProtocol, tag_acl_group: str
+        self,
+        data: UserReportedAddressTag,
+        config: TagInsertConfigProtocol,
+        tag_acl_group: str,
     ) -> Optional[str]:
         try:
             from graphsenselib.tagstore.db import TagAlreadyExistsException
@@ -663,7 +667,7 @@ class TagsService:
                     try:
                         if privacy_preserving_tag_notification:
                             send_message_to_slack(
-                                f"User Reported new Tag: ID {insert_id} to ACL Group {tag_acl_group}",
+                                f"User Reported new Tag: ID {insert_id} on {nt.address} to ACL Group {tag_acl_group}",
                                 h,
                             )
                         else:
