@@ -2176,11 +2176,12 @@ class Cassandra:
         r = await self.get_traces_in_block(
             currency, tx["block_id"], trace_index, tx_hash=tx["tx_hash"]
         )
+
         result = r.current_rows
 
         if len(result) == 0:
             raise NotFoundException(
-                f"Found {len(result)} trace in tx {tx['tx_hash']}:{trace_index}"
+                f"Found no traces in tx {tx['tx_hash']}:{trace_index}"
             )
 
         if get_first_trace:
@@ -2188,7 +2189,7 @@ class Cassandra:
 
         if len(result) > 1:
             raise NotFoundException(
-                f"Found {len(result)} trace in tx {tx['tx_hash']}:{trace_index}"
+                f"Found {len(result)} traces in tx {tx['tx_hash']}:{trace_index}"
             )
 
         return result[0]
