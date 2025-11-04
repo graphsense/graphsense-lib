@@ -7,7 +7,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 
 try:
-    import grpc
     from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
     from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
     from ethereumetl.jobs.export_traces_job import (
@@ -27,6 +26,7 @@ try:
     from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
     from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
     from .tron.txTypeTransformer import TxTypeTransformer
+    from graphsenselib.utils.grpc import get_channel
 except ImportError:
     _has_ingest_dependencies = False
 else:
@@ -287,7 +287,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
-        channel = grpc.insecure_channel(grpc_endpoint)
+        channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
         def get_type(tx):
@@ -313,7 +313,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         self, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
-        channel = grpc.insecure_channel(grpc_endpoint)
+        channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
         def get_type(tx):
@@ -348,7 +348,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
 
         grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
 
-        channel = grpc.insecure_channel(grpc_endpoint)
+        channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
         trc10_tokens = wallet_stub.GetAssetIssueList(EmptyMessage())
 
