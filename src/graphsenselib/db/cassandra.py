@@ -431,11 +431,13 @@ class CassandraDb:
         return self.session.execute(stmt, params)
 
     @needs_session
-    def execute(self, cql_query_str: str, fetch_size=None) -> Iterable:
+    def execute(
+        self, cql_query_str: str, fetch_size=None, keyspace: Optional[str] = None
+    ) -> Iterable:
         # flat_stmt = cql_query_str.replace("\n", " ")
         # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
 
-        stmt = SimpleStatement(cql_query_str, fetch_size=None)
+        stmt = SimpleStatement(cql_query_str, fetch_size=None, keyspace=keyspace)
         if fetch_size is not None:
             stmt.fetch_size = fetch_size
 
