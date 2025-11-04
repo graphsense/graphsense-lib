@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 from importlib.resources import files
 from typing import Iterable, List, Optional
+from cassandra import InvalidRequest
 
 from parsy import forward_declaration, seq, string
 
@@ -184,6 +185,7 @@ class Schema:
 
 class GraphsenseSchemas:
     RESOUCE_PATH = f"{__package__}.resources"
+    MIGRATIONS_PATH = f"{RESOUCE_PATH}.migrations"
 
     def is_extension(filename, schema_type):
         return not any(
@@ -214,6 +216,54 @@ class GraphsenseSchemas:
                 or not GraphsenseSchemas.is_extension(x[0], schema_type)
             )
         ]
+
+    def apply_migrations(self, env, currency, keyspace_type: str):
+        with DbFactory().from_config(env, currency) as db:
+            db_ks = db.by_ks_type(keyspace_type)
+            schema_type = f"{keyspace_type}_{currency_to_schema_type[currency]}"
+            db_conf = db_ks.get_configuration()
+
+            if db_conf is None:
+                raise ValueError(
+                    f"Cannot apply migrations, configuration table not populated "
+                    f"in {schema_type} keyspace."
+                )
+
+            current_version = int(db_conf._asdict().get("schema_version", "0") or "0")
+
+            migrations_left = True
+            while migrations_left:
+                migration_file_name = (
+                    f"{schema_type}_{current_version}_to_{current_version + 1}.sql"
+                )
+                migration_file = files(self.MIGRATIONS_PATH).joinpath(
+                    migration_file_name
+                )
+                if migration_file.is_file():
+                    logger.info(
+                        f"Applying migration {migration_file.name} to {schema_type} keyspace"
+                    )
+                    for x in migration_file.read_text().split(";"):
+                        change = x.strip()
+                        if change != "":
+                            try:
+                                db_ks.execute_raw_cql(change)
+                            except InvalidRequest as e:
+                                if "already exists" in str(e):
+                                    logger.warning(
+                                        f"Skipping already applied change : '{change}'"
+                                    )
+                                else:
+                                    raise e
+                    current_version += 1
+                    db_ks.execute_raw_cql(
+                        f"UPDATE configuration SET schema_version = {current_version} WHERE id = '{db_conf.id}';"
+                    )
+                else:
+                    logger.info(
+                        f"No migration file {migration_file_name} found, migrations complete."
+                    )
+                    migrations_left = False
 
     def create_keyspaces_if_not_exist(self, env, currency):
         for kstype in keyspace_types:
@@ -339,32 +389,48 @@ class GraphsenseSchemas:
             if file.name.endswith("sql")
         ]
 
-    def get_db_validation_report(self, env, currency):
+    def get_db_validation_report(
+        self, env, currency, schema_type: Optional[str] = None
+    ) -> List[str]:
+        reports = []
         with DbFactory().from_config(env, currency) as db:
-            raw_schemas = self.get_by_currency(
-                currency, keyspace_type="raw", no_extensions=True
-            )
-            report_raw = self._validate_against_db_intermal(db.raw, raw_schemas)
+            val_targets = ["raw", "transformed"]
+            if schema_type is not None:
+                val_targets = [k for k in val_targets if k == schema_type]
 
-            trans_schemas = self.get_by_currency(
-                currency, keyspace_type="transformed", no_extensions=True
-            )
-            report_trans = self._validate_against_db_intermal(
-                db.transformed, trans_schemas
-            )
-        return report_raw + report_trans
+            if val_targets is None or len(val_targets) == 0:
+                logger.warning(
+                    f"No schema definitions found for "
+                    f"{env}, {currency}, type: {schema_type}"
+                )
+                return reports
 
-    def _validate_against_db_intermal(self, db, schemas):
+            for ks_type in val_targets:
+                ks_db = db.by_ks_type(ks_type)
+                logger.info(f"Validating keyspace type: {ks_type}")
+
+                raw_schemas = self.get_by_currency(
+                    currency, keyspace_type=ks_type, no_extensions=True
+                )
+
+                report_raw = self._validate_against_db_internal(ks_db, raw_schemas)
+
+                reports.extend(report_raw)
+
+        return reports
+
+    def _validate_against_db_internal(self, db, schemas):
         report = []
         creates_defs = flatten([s.parse_create_table_statements() for f, s in schemas])
         for x in creates_defs:
             pkeys = []
             ckeys = []
             result = db.get_columns_for_table(x.table)
+
             expected_cols = x.columns.copy()
             mres = list(result)
             ks_table = f"{db.get_keyspace()}.{x.table}"
-            logger.info(f"Validating schema of {ks_table}.")
+            logger.info(f"Validating schema of {ks_table}")
             if len(mres) == 0:
                 report.append(f"Table {ks_table} not present in database.")
             for col in mres:

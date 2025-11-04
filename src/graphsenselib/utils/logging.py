@@ -25,6 +25,18 @@ def suppress_log_level(loglevel: int):
         logging.disable(logging.NOTSET)
 
 
+class NoETLBatchExecSpamFilter(logging.Filter):
+    def filter(self, record):
+        # only filter for log level error
+        if record.levelno != logging.ERROR:
+            return True
+        return not record.getMessage().startswith(
+            "An exception occurred while executing work_handler"
+        ) and not record.getMessage().startswith(
+            "An exception occurred while executing execute_with_retries"
+        )
+
+
 def configure_logging(loglevel):
     log_format = "| %(subsystem)s | %(message)s"
     datefmt = GRAPHSENSE_DEFAULT_DATETIME_FORMAT
@@ -63,6 +75,7 @@ def configure_logging(loglevel):
         )
 
     rh.addFilter(addSubsys)
+    rh.addFilter(NoETLBatchExecSpamFilter())
 
     logging.basicConfig(
         format=log_format,
