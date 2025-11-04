@@ -2181,7 +2181,7 @@ class Cassandra:
 
         if len(result) == 0:
             raise NotFoundException(
-                f"Found no traces in tx {tx['tx_hash']}:{trace_index}"
+                f"Found no traces in tx {tx['tx_hash'].hex()}:{trace_index}"
             )
 
         if get_first_trace:
@@ -2189,7 +2189,7 @@ class Cassandra:
 
         if len(result) > 1:
             raise NotFoundException(
-                f"Found {len(result)} traces in tx {tx['tx_hash']}:{trace_index}"
+                f"Found {len(result)} traces in tx {tx['tx_hash'].hex()}:{trace_index}"
             )
 
         return result[0]
