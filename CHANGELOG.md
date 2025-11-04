@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - tags are now derived from other chains if the addresses are derived from the same pubkey
 - search for more address patterns eg. addresses with 0x33d0 short prefixes and postfixes, e.g. 0x33d0...8f65
 - option to avoid data leaks to slack for tag notifications
+- new fields to utxo raw keyspace script_hex for inputs and outputs txinwitness for inputs
+- new fields for account raw keyspace vrs (signature data)
 
 
 ## [25.09.7/2.7.7] 2025-10-03
