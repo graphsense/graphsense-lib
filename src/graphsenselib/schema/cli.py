@@ -9,8 +9,10 @@ from ..config import keyspace_types
 from .schema import GraphsenseSchemas
 
 
-def print_schema_validation_report(env, currency):
-    report = GraphsenseSchemas().get_db_validation_report(env, currency)
+def print_schema_validation_report(env, currency, schema_type=None):
+    report = GraphsenseSchemas().get_db_validation_report(
+        env, currency, schema_type=schema_type
+    )
     if any(report):
         for row in report:
             click.secho(f"Error: {row}", fg="red")
@@ -148,7 +150,13 @@ def create_new_tf(env, currency, suffix, no_date):
 )
 @require_environment()
 @require_currency()
-def validate(env, currency):
+@click.option(
+    "--schema-type",
+    type=str,
+    required=False,
+    help="what type of keyspace to validate",
+)
+def validate(env, currency, schema_type):
     """Summary
         Validates if the expected schema matches the database.
     \f
@@ -156,4 +164,4 @@ def validate(env, currency):
         env (str): Environment to work on
         currency (str): currency to work on
     """
-    print_schema_validation_report(env, currency)
+    print_schema_validation_report(env, currency, schema_type=schema_type)

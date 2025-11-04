@@ -178,10 +178,13 @@ def ingest(
         )
         sys.exit(11)
 
+    schema_tools = GraphsenseSchemas()
+    ks_type = "raw"
     if create_schema:
-        GraphsenseSchemas().create_keyspace_if_not_exist(
-            env, currency, keyspace_type="raw"
-        )
+        schema_tools.create_keyspace_if_not_exist(env, currency, keyspace_type=ks_type)
+
+    logger.info("Apply migrations to raw keyspace if necessary")
+    schema_tools.apply_migrations(env, currency, keyspace_type=ks_type)
 
     sink_configs = [(k, create_sink_config(k, currency, ks_config)) for k in sinks]
 
