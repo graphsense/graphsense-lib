@@ -44,6 +44,11 @@ class CassandraConfig(BaseSettings):
         default="pubkey", description="Keyspace for cross-chain public key mapping"
     )
 
+    ignore_traces_not_found_in_list_txs: bool = Field(
+        default=True,
+        description="Ignore missing traces in list_address_txs for Ethereum-like currencies",
+    )
+
     @field_validator("currencies", mode="before")
     @classmethod
     def validate_currencies(cls, v):
@@ -95,5 +100,5 @@ class CassandraConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         extra="allow",
-        env_prefix="GRAPHSENSE_CASSANDRA_ASYNC_",
+        env_prefix="GS_CASSANDRA_ASYNC_",
     )  # Allow additional fields for extensibility
