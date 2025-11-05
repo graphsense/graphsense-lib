@@ -38,7 +38,7 @@ class BinaryInterpreter:
             self.binary_col_conversion_map = BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX
         elif self.network == "eth":
             self.binary_col_conversion_map = BINARY_COL_CONVERSION_MAP_ACCOUNT
-        elif self.network == "btc":
+        elif self.network in ["btc", "bch", "ltc", "zec"]:
             self.binary_col_conversion_map = {}
         else:
             raise NotImplementedError(f"Network {self.network} not supported")
