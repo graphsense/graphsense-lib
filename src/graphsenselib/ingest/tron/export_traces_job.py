@@ -16,7 +16,6 @@ except ImportError:
 else:
     _has_ingest_dependencies = True
 
-from ...utils import remove_prefix
 
 logger = logging.getLogger(__name__)
 # todo check if traces are saved in correct order
@@ -150,7 +149,7 @@ class TronExportTracesJob:
         self.start_block = start_block
         self.end_block = end_block
         self.batch_size = batch_size
-        self.grpc_endpoint = remove_prefix(grpc_endpoint, "grpc://")
+        self.grpc_endpoint = grpc_endpoint
         self.max_workers = max_workers
 
     def run(self):

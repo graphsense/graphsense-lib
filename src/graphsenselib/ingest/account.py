@@ -42,7 +42,6 @@ from ..utils import (
     first_or_default,
     hex_to_bytes,
     parse_timestamp,
-    remove_prefix,
     strip_0x,
 )
 from ..utils.account import get_id_group
@@ -81,6 +80,8 @@ def enrich_txs_with_vrs(
         etx["v"] = v
         etx["r"] = r
         etx["s"] = s
+
+    return enriched_txs
 
 
 class InMemoryItemExporter:
@@ -301,7 +302,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
     def export_hash_to_type_mappings(
         self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
-        grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
+        grpc_endpoint = self.grpc_endpoint
         channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
@@ -327,7 +328,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
     def export_hash_to_type_mappings_parallel(
         self, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
-        grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
+        grpc_endpoint = self.grpc_endpoint
         channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
 
@@ -361,7 +362,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
     def get_trc10_token_infos(self) -> Iterable[Dict]:
         """Get all trc10 tokens from a grpc endpoint"""
 
-        grpc_endpoint = remove_prefix(self.grpc_endpoint, "grpc://")
+        grpc_endpoint = self.grpc_endpoint
 
         channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
