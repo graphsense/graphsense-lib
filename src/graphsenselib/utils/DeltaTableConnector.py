@@ -161,7 +161,7 @@ class DeltaTableConnector:
         # from     delta_scan('{table_path}') WHERE block_id = '{block_id}';
         content_query = f"""
         SELECT *
-        from     parquet_scan({table_files},HIVE_PARTITIONING=1)
+        from     parquet_scan({table_files},HIVE_PARTITIONING=1, union_by_name = true)
         WHERE partition IN {partition_str}
         AND block_id IN {list_str};
         """
