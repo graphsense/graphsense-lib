@@ -943,18 +943,32 @@ class TagstoreDbAsync:
 
     @_inject_session
     async def search_labels(
-        self, label: str, limit: int, groups: List[str], session=None
+        self,
+        label: str,
+        limit: int,
+        groups: List[str],
+        query_actors: bool = True,
+        query_labels: bool = True,
+        session=None,
     ) -> LabelSearchResultPublic:
         return LabelSearchResultPublic(
-            actor_labels=await self.search_actor_labels(
-                label.strip(), limit, session=session
-            ),
-            tag_labels=[
-                HumanReadableId(id=x, label=x)
-                for x in (
-                    await self.search_tag_labels(label, limit, groups, session=session)
-                )
-            ],
+            actor_labels=(
+                await self.search_actor_labels(label.strip(), limit, session=session)
+            )
+            if query_actors
+            else [],
+            tag_labels=(
+                [
+                    HumanReadableId(id=x, label=x)
+                    for x in (
+                        await self.search_tag_labels(
+                            label, limit, groups, session=session
+                        )
+                    )
+                ]
+            )
+            if query_labels
+            else [],
         )
 
     @_inject_session

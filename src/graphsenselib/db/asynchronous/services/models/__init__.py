@@ -3,6 +3,14 @@ from typing import Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
+class SearchRequestConfig(BaseModel):
+    include_sub_tx_identifiers: bool = True
+    include_labels: bool = True
+    include_actors: bool = True
+    include_txs: bool = True
+    include_addresses: bool = True
+
+
 class TokenConfig(BaseModel):
     ticker: str
     decimals: int
