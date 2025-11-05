@@ -125,12 +125,15 @@ else:
                 ("receipt_blob_gas_price", pa.int64()),
                 ("max_fee_per_blob_gas", pa.int64()),
                 ("blob_versioned_hashes", pa.list_(pa.binary(32))),
+                ("v", pa.int32()),
+                ("r", pa.binary()),
+                ("s", pa.binary()),
             ]
         ),
     }
 
 BINARY_COL_CONVERSION_MAP_ACCOUNT = {
-    "transaction": ["value"],
+    "transaction": ["value", "r", "s"],
     "trace": ["value"],
     "block": ["difficulty", "total_difficulty"],
     "log": [],

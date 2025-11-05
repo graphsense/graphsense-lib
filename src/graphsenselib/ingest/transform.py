@@ -1,15 +1,16 @@
 try:
-    from ethereumetl.streaming.enrich import enrich_transactions
+    import ethereumetl.streaming.enrich  # noqa
 except ImportError:
     _has_ingest_dependencies = False
 else:
     _has_ingest_dependencies = True
 
+
 from graphsenselib.ingest.account import (
     BLOCK_BUCKET_SIZE,
     TX_HASH_PREFIX_LEN,
     enrich_transactions_with_type,
-    prepare_blocks_inplace_eth,
+    enrich_txs_with_vrs,
     prepare_blocks_inplace_trx,
     prepare_fees_inplace,
     prepare_logs_inplace,
@@ -97,7 +98,7 @@ class TransformerTRX(Transformer):
         hash_to_type = data["hash_to_type"]
 
         prepare_blocks_inplace_trx(blocks, BLOCK_BUCKET_SIZE, self.partition_batch_size)
-        txs = enrich_transactions(txs, receipts)
+        txs = enrich_txs_with_vrs(txs, receipts)
         txs = enrich_transactions_with_type(txs, hash_to_type)
         # todo this can be a problem if the there are multiple partitions
         partition = blocks[0]["block_id"] // self.partition_batch_size
@@ -183,8 +184,7 @@ class TransformerETH(Transformer):
         logs = data["logs"]
         traces = data["traces"]
 
-        prepare_blocks_inplace_eth(blocks, BLOCK_BUCKET_SIZE, self.partition_batch_size)
-        txs = enrich_transactions(txs, receipts)
+        txs = enrich_txs_with_vrs(txs, receipts)
         prepare_transactions_inplace_eth(
             txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, self.partition_batch_size
         )
