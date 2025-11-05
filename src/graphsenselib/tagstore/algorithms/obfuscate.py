@@ -28,7 +28,7 @@ def obfuscate_tag_if_not_public(t: ObfuscatableTag) -> ObfuscatableTag:
         return t
 
 
-def obfuscate_entity_actor(cls, entity):
+def obfuscate_entity_actor(entity):
     if not entity:
         return
     if not entity.actors:
