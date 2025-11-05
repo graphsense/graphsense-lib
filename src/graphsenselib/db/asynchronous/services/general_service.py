@@ -9,6 +9,7 @@ from .models import (
     SearchResult,
     SearchResultByCurrency,
     Stats,
+    SearchRequestConfig,
 )
 
 
@@ -24,7 +25,12 @@ class DatabaseProtocol(Protocol):
 
 class TagstoreProtocol(Protocol):
     async def search_labels(
-        self, expression: str, limit: int, groups: List[str]
+        self,
+        expression: str,
+        limit: int,
+        groups: List[str],
+        query_actors: bool,
+        query_labels: bool,
     ) -> Any: ...
 
 
@@ -65,20 +71,39 @@ class GeneralService:
         currency: str,
         q: str,
         limit: int = 10,
-        include_sub_tx_identifiers: bool = True,
+        config: SearchRequestConfig = SearchRequestConfig(),
     ) -> SearchResultByCurrency:
         r = SearchResultByCurrency(currency=currency, addresses=[], txs=[])
 
+        include_sub_tx_identifiers = config.include_sub_tx_identifiers
+
         if len(q) >= 3:
-            [txs, addresses] = await asyncio.gather(
-                self.db.list_matching_txs(
+            if config.include_txs and config.include_addresses:
+                [txs, addresses] = await asyncio.gather(
+                    self.db.list_matching_txs(
+                        currency,
+                        q,
+                        limit,
+                        include_sub_tx_identifiers=include_sub_tx_identifiers,
+                    ),
+                    self.db.list_matching_addresses(currency, q, limit=limit),
+                )
+            elif config.include_txs:
+                txs = await self.db.list_matching_txs(
                     currency,
                     q,
                     limit,
                     include_sub_tx_identifiers=include_sub_tx_identifiers,
-                ),
-                self.db.list_matching_addresses(currency, q, limit=limit),
-            )
+                )
+                addresses = []
+            elif config.include_addresses:
+                addresses = await self.db.list_matching_addresses(
+                    currency, q, limit=limit
+                )
+                txs = []
+            else:
+                txs = []
+                addresses = []
         else:
             txs = []
             addresses = []
@@ -93,7 +118,7 @@ class GeneralService:
         tagstore_groups: List[str],
         currency: Optional[str] = None,
         limit: int = 10,
-        include_sub_tx_identifiers: bool = True,
+        config: SearchRequestConfig = SearchRequestConfig(),
     ) -> SearchResult:
         currencies = self.db.get_supported_currencies()
 
@@ -109,7 +134,11 @@ class GeneralService:
         expression_norm = alphanumeric_lower_identifier(q)
 
         tagstore_search = self.tagstore.search_labels(
-            expression_norm, limit, groups=tagstore_groups
+            expression_norm,
+            limit,
+            groups=tagstore_groups,
+            query_actors=config.include_actors,
+            query_labels=config.include_labels,
         )
 
         aws1 = [
@@ -117,7 +146,7 @@ class GeneralService:
                 curr,
                 q,
                 limit=limit,
-                include_sub_tx_identifiers=include_sub_tx_identifiers,
+                config=config,
             )
             for curr in currs
         ]

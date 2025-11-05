@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - introduced attribute tags and improve tag summary actor inheritance
 - new concepts funder, deployer, white_list, black_list, gov_white_list
 - tag summary now supports transformation before digest computation (for e.g. redacting private information)
+- search now support more config options to select what to include
 ### added
 - tags are now derived from other chains if the addresses are derived from the same pubkey
 - search for more address patterns eg. addresses with 0x33d0 short prefixes and postfixes, e.g. 0x33d0...8f65
