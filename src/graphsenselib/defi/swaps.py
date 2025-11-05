@@ -377,7 +377,8 @@ def visualize_graph(
     plt.legend(handles=legend_elements, loc="upper right", bbox_to_anchor=(0.1, 0.1))
 
     # add enough padding
-    plt.show()
+    plt.savefig(f"graph_{tx_hash}.png")
+    plt.close()
 
 
 def handle_general_swap(
