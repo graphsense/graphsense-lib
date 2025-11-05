@@ -348,6 +348,8 @@ def test_utxo_schema_data_coverage():
                 {
                     "spent_transaction_hash": b"\x01" * 32,
                     "spent_output_index": 0,
+                    "script_hex": "abcdef",
+                    "txinwitness": [b"witness1", b"witness2"],
                     "index": 0,
                     "sequence": 4294967295,
                 },

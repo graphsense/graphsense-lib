@@ -68,6 +68,21 @@ WEB3_QUERY_BATCH_SIZE = 50
 WEB3_QUERY_WORKERS = 40
 
 
+def enrich_txs_with_vrs(
+    txs: Iterable[Dict], receipts: Iterable[Dict]
+) -> Iterable[Dict]:
+    # enrich tx strips v, r, s from txs so we add them back
+    tx_hash_to_vrs = {tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs}
+
+    enriched_txs = enrich_transactions(txs, receipts)
+
+    for etx in enriched_txs:
+        v, r, s = tx_hash_to_vrs[etx["hash"]]
+        etx["v"] = v
+        etx["r"] = r
+        etx["s"] = s
+
+
 class InMemoryItemExporter:
     """In-memory item exporter for EthStreamerAdapter export jobs."""
 
@@ -837,18 +852,7 @@ def ingest(
                 traces, fees = adapter.export_traces(
                     block_id, current_end_block, True, True
                 )
-                enriched_txs = enrich_transactions(txs, receipts)
-
-            # enrich tx strips v, r, s from txs so we add them back
-            tx_hash_to_vrs = {
-                tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs
-            }
-
-            for etx in enriched_txs:
-                v, r, s = tx_hash_to_vrs[etx["hash"]]
-                etx["v"] = v
-                etx["r"] = r
-                etx["s"] = s
+                enriched_txs = enrich_txs_with_vrs(txs, receipts)
 
             # reformat and edit data
             prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE)
@@ -1025,19 +1029,7 @@ class EthETLStrategy(AbstractETLStrategy):
         return enriched_txs
 
     def enrich_transactions(self, txs, receipts):
-        enriched_txs = enrich_transactions(txs, receipts)
-        # enrich tx strips v, r, s from txs so we add them back
-        tx_hash_to_vrs = {
-            tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs
-        }
-
-        for etx in enriched_txs:
-            v, r, s = tx_hash_to_vrs[etx["hash"]]
-            etx["v"] = v
-            etx["r"] = r
-            etx["s"] = s
-
-        return enriched_txs
+        return enrich_txs_with_vrs(txs, receipts)
 
     def transform_traces(self, traces, block_bucket_size: int):
         prepare_traces_inplace_eth(traces, block_bucket_size)

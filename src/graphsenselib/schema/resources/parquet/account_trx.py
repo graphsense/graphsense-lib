@@ -119,7 +119,7 @@ else:
     )
 
 BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX = {
-    "transaction": ["value"],
+    "transaction": ["value", "r", "s"],
     "trace": ["call_value"],
     "block": ["difficulty", "total_difficulty"],
     "log": [],
