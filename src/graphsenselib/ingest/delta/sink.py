@@ -25,16 +25,30 @@ logger = logging.getLogger(__name__)
 
 
 def optimize_tables(
-    network: str, directory: str, s3_credentials: Optional[dict] = None, mode="both"
+    network: str,
+    directory: str,
+    s3_credentials: Optional[dict] = None,
+    mode="both",
+    full_vacuum=False,
 ) -> None:
     tables = [n.table_name for n in CONFIG_MAP[network].table_configs]
 
     for table in tables:
-        optimize_table(directory, table, s3_credentials=s3_credentials, mode=mode)
+        optimize_table(
+            directory,
+            table,
+            s3_credentials=s3_credentials,
+            mode=mode,
+            full_vacuum=full_vacuum,
+        )
 
 
 def optimize_table(
-    directory: str, table_name: str, s3_credentials: Optional[dict] = None, mode="both"
+    directory: str,
+    table_name: str,
+    s3_credentials: Optional[dict] = None,
+    mode="both",
+    full_vacuum=False,
 ):
     if not _has_ingest_dependencies:
         raise ImportError(
@@ -67,7 +81,10 @@ def optimize_table(
     if mode in ["both", "vacuum"]:
         logger.debug("Vacuuming table...")
         metrics = table.vacuum(
-            retention_hours=0, enforce_retention_duration=False, dry_run=False
+            retention_hours=0,
+            enforce_retention_duration=False,
+            dry_run=False,
+            full=full_vacuum,
         )
         logger.debug(f"Files vacuumed: {len(metrics)}")
     logger.debug("Table optimized")
@@ -188,9 +205,7 @@ class DeltaTableWriter:
                         table,
                         partition_by=partition_by,
                         mode=delta_write_mode,
-                        # schema_mode="overwrite", # todo maybe make this dependent
-                        # on delta_write mode?
-                        engine="rust",
+                        schema_mode="merge",
                         predicate=predicate,
                         storage_options=storage_options,
                         **options,
