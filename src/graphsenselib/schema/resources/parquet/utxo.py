@@ -64,8 +64,8 @@ else:
                                 ),
                                 ("index", pa.int32()),
                                 # ("script_asm", pa.string()),
-                                ("script_hex", pa.string()),
                                 ("sequence", pa.uint64()),
+                                ("script_hex", pa.string()),
                                 ("txinwitness", pa.list_(pa.binary())),
                                 # ("required_signatures", pa.int8()),
                                 # ("type", pa.string()),  # Optional, can be None
