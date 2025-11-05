@@ -40,8 +40,9 @@ def get_channel(url: str, enable_retries: bool = True):
 
     parsed_url = urlparse(url)
     if parsed_url.scheme == "grpc":
+        url_without_credentials = f"{parsed_url.hostname}:{parsed_url.port}"
         return grpc.insecure_channel(
-            parsed_url.netloc, options=options if options else None
+            url_without_credentials, options=options if options else None
         )
     elif parsed_url.scheme == "grpcs":
         if parsed_url.username != "x-token":
