@@ -1659,7 +1659,11 @@ class Cassandra:
             self.logger.debug(f"results2 {len(results2)}")
 
             if is_eth_like(currency):
-                results2 = await self.normalize_address_transactions(currency, results2)
+                results2 = await self.normalize_address_transactions(
+                    currency,
+                    results2,
+                    ignore_traces_not_found=self.tconfig.ignore_traces_not_found_in_list_txs,
+                )
             else:
                 results1 = {row[tx_id]: row for row in results1_raw}
                 tx_ids = [row[tx_id] for row in results2]
@@ -3122,14 +3126,20 @@ class Cassandra:
         )
         paging_state = paging_states[-1] if paging_states and not finished else None
 
-        results = await self.normalize_address_transactions(currency, results)
+        results = await self.normalize_address_transactions(
+            currency,
+            results,
+            ignore_traces_not_found=self.tconfig.ignore_traces_not_found_in_list_txs,
+        )
 
         for row in results:
             row["value"] *= -1 if row["is_outgoing"] else 1
 
         return results, str(paging_state) if paging_state is not None else None
 
-    async def normalize_address_transactions(self, currency, txs):
+    async def normalize_address_transactions(
+        self, currency, txs, ignore_traces_not_found=False
+    ):
         use_legacy_log_index = self.parameters[currency]["use_legacy_log_index"]
 
         tx_ids = [tx["transaction_id"] for tx in txs]
@@ -3165,9 +3175,18 @@ class Cassandra:
                 value = token_tx["value"]
 
             elif currency == "trx" and addr_tx["trace_index"] is not None:
-                trace = await self.fetch_transaction_trace(
-                    currency, full_tx, addr_tx["trace_index"]
-                )
+                try:
+                    trace = await self.fetch_transaction_trace(
+                        currency, full_tx, addr_tx["trace_index"]
+                    )
+                except NotFoundException as e:
+                    if not ignore_traces_not_found:
+                        raise e
+                    self.logger.error(
+                        f"Trace index {addr_tx['trace_index']} for tx "
+                        f"{full_tx['tx_hash'].hex()} not found"
+                    )
+                    addr_tx["error"] = e
 
                 addr_tx["from_address"] = trace["caller_address"]
                 addr_tx["to_address"] = (
@@ -3178,9 +3197,21 @@ class Cassandra:
                 addr_tx["type"] = "internal"
                 value = trace["call_value"]
             elif currency == "eth" and addr_tx["trace_index"] is not None:
-                trace = await self.fetch_transaction_trace(
-                    currency, full_tx, addr_tx["trace_index"]
-                )
+                try:
+                    trace = await self.fetch_transaction_trace(
+                        currency, full_tx, addr_tx["trace_index"]
+                    )
+                except NotFoundException as e:
+                    #### TODO: remove again after data consistency is fixes
+                    #### issue arose since erigon returned different number of traces switching from on version to another.
+
+                    if not ignore_traces_not_found:
+                        raise e
+                    self.logger.error(
+                        f"Trace index {addr_tx['trace_index']} for tx "
+                        f"{full_tx['tx_hash'].hex()} not found"
+                    )
+                    addr_tx["error"] = e
 
                 addr_tx["from_address"] = trace["from_address"]
                 addr_tx["to_address"] = trace["to_address"]
@@ -3222,7 +3253,7 @@ class Cassandra:
             await self.fix_timestamp(
                 currency, addr_tx, timestamp_col="timestamp", block_id_col="height"
             )
-        return txs
+        return [tx for tx in txs if "error" not in tx]  # remove errored txs
 
     async def list_txs_by_ids_eth(self, currency, ids, include_token_txs=False):
         params = [[self.get_tx_id_group(currency, id), id] for id in ids]
