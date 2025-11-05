@@ -19,6 +19,7 @@ from graphsenselib.ingest.account import (
     prepare_transactions_inplace_eth,
     prepare_transactions_inplace_trx,
     prepare_trc10_tokens_inplace,
+    prepare_blocks_inplace_eth,
     to_bytes,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Transformer
@@ -184,6 +185,7 @@ class TransformerETH(Transformer):
         logs = data["logs"]
         traces = data["traces"]
 
+        prepare_blocks_inplace_eth(blocks, BLOCK_BUCKET_SIZE, self.partition_batch_size)
         txs = enrich_txs_with_vrs(txs, receipts)
         prepare_transactions_inplace_eth(
             txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, self.partition_batch_size
