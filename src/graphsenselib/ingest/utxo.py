@@ -38,7 +38,12 @@ else:
 
 from methodtools import lru_cache as mlru_cache
 from requests.exceptions import ConnectionError as RequestsConnectionError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..db import AnalyticsDb
@@ -153,9 +158,10 @@ class BtcStreamerAdapter:
 
     @retry(
         retry=retry_if_exception_type(RequestsConnectionError)
-        | retry_if_exception_type(JSONDecodeError),
+        | retry_if_exception_type(JSONDecodeError)
+        | retry_if_exception_type(ValueError),
         stop=stop_after_attempt(10),
-        wait=wait_fixed(20),
+        wait=wait_exponential(multiplier=1, min=4, max=20),
     )
     def export_transactions(self, start_block, end_block):
         transactions_item_exporter = InMemoryItemExporter(item_types=["transaction"])
@@ -179,9 +185,10 @@ class BtcStreamerAdapter:
 
     @retry(
         retry=retry_if_exception_type(RequestsConnectionError)
-        | retry_if_exception_type(JSONDecodeError),
+        | retry_if_exception_type(JSONDecodeError)
+        | retry_if_exception_type(ValueError),
         stop=stop_after_attempt(10),
-        wait=wait_fixed(20),
+        wait=wait_exponential(multiplier=1, min=4, max=20),
     )
     def export_blocks_and_transactions(self, start_block, end_block):
         blocks_and_transactions_item_exporter = InMemoryItemExporter(
