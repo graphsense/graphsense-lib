@@ -171,6 +171,10 @@ class TronExportTracesJob:
 
     def fetch_and_process_block(self, i, wallet_stub, retries=5, timeout=3 * 60):
         attempt = 0
+        base_delay = 1.0  # Base delay in seconds
+        max_delay = 15.0  # Maximum delay in seconds
+        backoff_multiplier = 2.0  # Exponential backoff multiplier
+
         while attempt < retries:
             try:
                 block = wallet_stub.GetTransactionInfoByBlockNum(
@@ -180,11 +184,22 @@ class TronExportTracesJob:
                 fees_per_block = decode_fees(i, block)
                 return traces_per_block, fees_per_block
             except grpc.RpcError as e:
-                logger.error(f"Error fetching block {i}, attempt {attempt + 1}: {e}")
-                logger.error(e)
-                logger.error("Retrying...")
                 attempt += 1
-                time.sleep(1)  # Backoff before retry
+                if attempt >= retries:
+                    raise Exception(
+                        f"Failed to fetch block {i} after {retries} attempts. Last error: {e}"
+                    )
+
+                # Calculate exponential backoff delay
+                delay = min(
+                    base_delay * (backoff_multiplier ** (attempt - 1)), max_delay
+                )
+
+                logger.error(
+                    f"Error fetching block {i}, attempt {attempt}/{retries}: {e}"
+                )
+                logger.error(f"Retrying in {delay:.1f} seconds...")
+                time.sleep(delay)
 
         raise Exception(f"Failed to fetch block {i} after {retries} attempts")
 
@@ -220,18 +235,32 @@ class TronExportTracesJob:
 
         attempt = 0
         retries = 5
+        base_delay = 2.0  # Base delay in seconds for block range retries
+        max_delay = 15.0  # Maximum delay in seconds
+        backoff_multiplier = 2.0
 
         while attempt < retries:
             try:
                 return run_parallel()
             except Exception as e:
-                logger.error(
-                    f"Error fetching block range {self.start_block} "
-                    f"{self.end_block}, attempt {attempt + 1}: {e}"
-                )
-                logger.error(e)
-                logger.error("Retrying...")
                 attempt += 1
+                if attempt >= retries:
+                    raise Exception(
+                        f"Failed to fetch block range {self.start_block} {self.end_block} after "
+                        f"{retries} attempts. Last error: {e}"
+                    )
+
+                # Calculate exponential backoff delay
+                delay = min(
+                    base_delay * (backoff_multiplier ** (attempt - 1)), max_delay
+                )
+
+                logger.error(
+                    f"Error fetching block range {self.start_block} - {self.end_block}, "
+                    f"attempt {attempt}/{retries}: {e}"
+                )
+                logger.error(f"Retrying entire block range in {delay:.1f} seconds...")
+                time.sleep(delay)
 
         raise Exception(
             f"Failed to fetch block range {self.start_block} {self.end_block} after "
