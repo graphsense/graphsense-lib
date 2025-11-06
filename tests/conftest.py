@@ -194,7 +194,11 @@ def patch_config(gs_db_setup, monkeypatch):
     )
 
     # make sure none of the configured files are loaded.
-    monkeypatch.setattr(AppConfig, "model_config", GoodConfConfigDict(default_files=[]))
+    monkeypatch.setattr(
+        AppConfig,
+        "model_config",
+        GoodConfConfigDict(default_files=[], env_prefix="GRAPHSENSE_PYTEST_"),
+    )
 
     data = AppConfig(environments={"pytest": pytest_env}, slack_topics={})
 

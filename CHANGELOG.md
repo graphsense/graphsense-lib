@@ -3,18 +3,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [25.11.0-rc/2.8.0-rc] ...
+## [25.11.0/2.8.0] 2025-11-06
 ### changed
-- introduced attribute tags and improve tag summary actor inheritance
-- new concepts funder, deployer, white_list, black_list, gov_white_list
-- tag summary now supports transformation before digest computation (for e.g. redacting private information)
-- search now support more config options to select what to include
+- Tags: tag summary only propagates actors from high confidence tags
+- Search: search now support more config options to select what to include
+- Search: search for more address patterns eg. addresses with 0x33d0 short prefixes and postfixes, e.g. 0x33d0...8f65
+- Chore: better retry handling and logging
 ### added
-- tags are now derived from other chains if the addresses are derived from the same pubkey
-- search for more address patterns eg. addresses with 0x33d0 short prefixes and postfixes, e.g. 0x33d0...8f65
-- option to avoid data leaks to slack for tag notifications
-- new fields to utxo raw keyspace script_hex for inputs and outputs txinwitness for inputs
-- new fields for account raw keyspace vrs (signature data)
+- Tags: tags are now derived from other chains if the addresses are derived from the same pubkey
+- Tags: tag type attribute which is not used tag summary actor propagation (e.g. for tags like sanction lists this is useful)
+- Tags: introduced attribute tags and improve tag summary actor inheritance
+- Tags: new tag concepts funder, deployer, white_list, black_list, gov_white_list
+- Tags: tag summary now supports transformation before digest computation (for e.g. redacting private information)
+- Tags: option to avoid data leaks to slack for tag notifications
+- Schema: new fields to utxo raw keyspace script_hex for inputs and outputs txinwitness for inputs
+- Schema: new fields for account raw keyspace vrs (signature data)
+- Schema: added migration support for cassandra schemas
+- Ingest: credential support for grpc endpoints
+### fixed
+- error for swaps where graph is not weakly connected
+- error for bridge txs with nonsensical affiliate fee data
 
 
 ## [25.09.7/2.7.7] 2025-10-03
