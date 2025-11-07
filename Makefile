@@ -42,6 +42,9 @@ lint:
 type-check:
 	uv run --all-extras ty check
 
+ty:
+	uv run --all-extras ty check
+
 format:
 	uv run ruff check --fix .
 	uv run ruff format .
@@ -79,4 +82,4 @@ package-ui:
 	- rm -rf tagpack/admin-ui/dist
 	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
 
-.PHONY: all test install lint format build pre-commit test-all type-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui

@@ -35,6 +35,13 @@ repos:
     -   id: check-docstring-first
 -   repo: local
     hooks:
+    -   id: ensure-env
+        name: Ensure UV environment is ready
+        entry: uv sync --dev --all-packages --all-extras
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit, pre-push]
     -   id: pytest-check
         name: pytest-check
         entry: make test
@@ -43,7 +50,7 @@ repos:
         always_run: true
     -   id: type-check
         name: type-check
-        entry: uv run ty check
+        entry: make type-check
         language: system
         pass_filenames: false
         always_run: true
