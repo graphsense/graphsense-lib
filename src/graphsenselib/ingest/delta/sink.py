@@ -59,7 +59,8 @@ def optimize_table(
     if s3_credentials and directory.startswith("s3"):
         storage_options = {
             "AWS_ALLOW_HTTP": "true",
-            "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+            "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
+            "AWS_CONDITIONAL_PUT": "etag",
             "timeout": "300s",
         }
         storage_options.update(s3_credentials)
@@ -148,7 +149,8 @@ class DeltaTableWriter:
         if self.s3_credentials:
             storage_options = {
                 "AWS_ALLOW_HTTP": "true",
-                "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+                "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
+                "AWS_CONDITIONAL_PUT": "etag",
                 "AWS_EC2_METADATA_DISABLED": "true",  # right now only works as env var
             }
             storage_options.update(self.s3_credentials)
@@ -446,7 +448,8 @@ class DeltaDumpWriter(Sink):
         if self.s3_credentials:
             storage_options = {
                 "AWS_ALLOW_HTTP": "true",
-                "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+                "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
+                "AWS_CONDITIONAL_PUT": "etag",
             }
             storage_options.update(self.s3_credentials)
         else:
