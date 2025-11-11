@@ -111,7 +111,8 @@ class DeltaTableConnector:
         if self.s3_credentials:
             storage_options = {
                 "AWS_ALLOW_HTTP": "true",
-                "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+                "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
+                "AWS_CONDITIONAL_PUT": "etag",
             }
             storage_options.update(self.s3_credentials)
         else:
