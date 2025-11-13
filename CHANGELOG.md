@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.11.1/2.8.1] 2025-11-13
+### fixed
+- fixed parsing error in enum for tag inheritance marker
+
 ## [25.11.0/2.8.0] 2025-11-06
 ### changed
 - Tags: tag summary only propagates actors from high confidence tags
