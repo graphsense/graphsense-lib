@@ -56,6 +56,10 @@ class InheritedFrom(IntEnum):
             return InheritedFrom.PUBKEY
         elif s_lower == "pubkey_and_cluster":
             return InheritedFrom.PUBKEY_AND_CLUSTER
+        elif s_lower.startswith("pubkey_and_cluster"):
+            return InheritedFrom.PUBKEY_AND_CLUSTER
+        elif s_lower.startswith("pubkey_and_pubkey"):
+            return InheritedFrom.PUBKEY_AND_CLUSTER
         else:
             raise ValueError(f"Unknown InheritedFrom string: {s}")
 
