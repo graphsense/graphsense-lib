@@ -75,7 +75,7 @@ def tagpack_w_network(schema, taxonomies):
                     "address": "123Bitcoin66",
                     "context": '{"counts": 1}',
                     "currency": "USDT",
-                    "network": "ETH23",
+                    "network": "ETH",
                 },  # overrides currency
                 {
                     "label": "Another attribution tag",
@@ -726,29 +726,6 @@ def test_concepts_always_contain_abuse_and_category(tagpack):
         "stuff",
     }
     tagpack.validate()
-
-
-def test_network_from_currency(caplog, tagpack_w_network):
-    t0 = tagpack_w_network.tags[0]
-    t1 = tagpack_w_network.tags[1]
-
-    assert t0.all_fields.get("network") == "BTC"
-    assert t0.all_fields.get("currency") == "BTC"
-    assert t1.all_fields.get("network") == "ETH23"
-    assert t1.all_fields.get("currency") == "USDT"
-
-    tagpack_w_network.validate()
-
-    log_messages = [
-        record.message for record in caplog.records if record.levelname == "WARNING"
-    ]
-    log_text = " ".join(log_messages)
-
-    assert "ETH23 is not a known network" in log_text
-    assert "CCOIN is not a known network" in log_text
-    assert "CCOIN is not a known currency" in log_text
-    assert "USDT is not a known network" in log_text
-    assert "Did you mean one of: ETH, ARB, ETC, BSC, TRX" in log_text
 
 
 def test_validate_fail_null_characters_in_header(schema, taxonomies):

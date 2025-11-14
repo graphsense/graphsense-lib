@@ -19,54 +19,12 @@ from yamlinclude import YamlIncludeConstructor
 
 from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
-from graphsenselib.tagpack.constants import (
-    is_known_currency,
-    is_known_network,
-    suggest_networks_from_currency,
-)
 from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
 from graphsenselib.utils.address import validate_address
 from graphsenselib.tagpack.cmd_utils import get_user_choice
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-class InconsistencyChecker:
-    def __init__(self):
-        self.currency_seen = dict()
-        self.network_seen = dict()
-
-    def warn_on_possibly_inconsistent_currency_or_network(self, field, value):
-        if (
-            field == "currency"
-            and not self.currency_seen.get(value, False)
-            and not is_known_currency(value)
-        ):
-            logger.warning(
-                f"{value} is not a known currency. "
-                "Be careful to avoid introducing ambiguity into the dataset."
-            )
-            self.currency_seen[value] = True
-
-        if (
-            field == "network"
-            and not self.network_seen.get(value, False)
-            and not is_known_network(value)
-        ):
-            suggestions = suggest_networks_from_currency(value)
-            logger.warning(
-                (
-                    f"{value} is not a known network. "
-                    "Be careful to avoid introducing ambiguity into the dataset. "
-                )
-                + (
-                    f"Did you mean one of: {', '.join(suggestions)}"
-                    if len(suggestions) > 0
-                    else ""
-                )
-            )
-            self.network_seen[value] = True
 
 
 def get_repository(path: str) -> pathlib.Path:
@@ -437,7 +395,6 @@ class TagPack(object):
 
     def validate(self):
         """Validates a TagPack against its schema and used taxonomies"""
-        inconsistency_checker = InconsistencyChecker()
         # check if mandatory header fields are used by a TagPack
         for schema_field in self.schema.mandatory_header_fields:
             if schema_field not in self.header_fields:
@@ -465,10 +422,6 @@ class TagPack(object):
                     "--public for inserting public tagpacks. By default, tagpacks "
                     "are inserted with access set to private."
                 )
-
-            inconsistency_checker.warn_on_possibly_inconsistent_currency_or_network(
-                field, value
-            )
 
             self.schema.check_type(field, value)
             self.schema.check_taxonomies(field, value, self.taxonomies)
@@ -515,10 +468,6 @@ class TagPack(object):
                     raise ValidationError(e4.format(field, tag))
 
                 check_for_null_characters(field, value, str(tag))
-
-                inconsistency_checker.warn_on_possibly_inconsistent_currency_or_network(
-                    field, value
-                )
 
                 # check types and taxomomy use
                 try:
