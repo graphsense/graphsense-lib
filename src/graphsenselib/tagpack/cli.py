@@ -317,7 +317,7 @@ def validate_tagpack(config, path, no_address_validation):
                 if not no_address_validation:
                     tagpack.verify_addresses()
 
-                click.secho("PASSED", fg="green")
+                click.secho(f"PASSED: {tagpack_file}", fg="green")
 
                 no_passed += 1
     except (ValidationError, TagPackFileError) as e:
