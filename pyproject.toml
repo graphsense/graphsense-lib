@@ -128,6 +128,7 @@ tagpacks = [
     "pyyaml>=6.0",
     "sqlmodel>=0.0.22",
     "tabulate>=0.9.0",
+    "rapidfuzz>=3.13.0",
 ]
 
 all = [
