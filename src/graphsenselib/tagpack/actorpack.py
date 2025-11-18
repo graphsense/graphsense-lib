@@ -259,10 +259,19 @@ class ActorPack(object):
                 f"Collision detected: Actor ids and aliases share the following values: {collision}"
             )
 
+        whitelist_domains = [
+            "x.com",
+            "github.com",
+            "walletexplorer.com",
+            "wikipedia.org",
+        ]
+
         for domain, actors in domain_overlap.items():
+            if domain in whitelist_domains:
+                continue
             if len(actors) > 1:
                 logger.warning(
-                    f"Actors share the same domain {domain}: {actors}. Please merge!"
+                    f"Actors share the same domain {domain}: {actors}. Please consider merging them"
                 )
 
         for twitter_handle, actors in twitter_handle_overlap.items():

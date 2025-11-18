@@ -26,7 +26,7 @@ from graphsenselib.tagpack.tagpack import (
 )
 from graphsenselib.tagpack.tagpack_schema import TagPackSchema, ValidationError
 from graphsenselib.tagpack.tagstore import InsertTagpackWorker, TagStore
-from graphsenselib.tagpack.utils import strip_empty
+from graphsenselib.tagpack.utils import strip_empty, normalize_id
 from graphsenselib.tagpack.constants import (
     CONFIG_FILE,
     DEFAULT_CONFIG,
@@ -82,6 +82,103 @@ def read_url_from_env():
 
 def show_version():
     return f"GraphSense TagPack management tool {get_version()}"
+
+
+def remove_generic(name: str) -> str:
+    """Remove common domain extensions and generic words from actor names"""
+    extensions = [
+        "com",
+        "net",
+        "io",
+        "org",
+        "finance",
+        "protocol",
+        "exchange",
+        "swap",
+        "dex",
+        "fi",
+    ]
+    for ext in extensions:
+        if name.endswith(ext):
+            name = name[: -len(ext)]
+    return name
+
+
+def find_similar_actors(
+    actor_id: str, existing_actors: list, threshold: int = 80, limit: int = 5
+):
+    """Find similar actors using fuzzy matching on normalized IDs"""
+    from rapidfuzz import process, fuzz
+
+    actor_normalized = remove_generic(normalize_id(actor_id))
+
+    # Normalize existing actor IDs, try to match on existing actors or versions without generic words
+    candidates = [remove_generic(normalize_id(a)) for a in existing_actors] + [
+        normalize_id(actor_id) for a in existing_actors
+    ]
+
+    normalized_without_generic = [
+        remove_generic(normalize_id(a)) for a in existing_actors
+    ]
+    normalized_with_generic = [normalize_id(a) for a in existing_actors]
+
+    # make them unique and map them to the original actor ids
+    candidates_with_original = [
+        (a, b)
+        for a, b in zip(
+            normalized_without_generic + normalized_with_generic,
+            existing_actors + existing_actors,
+        )
+    ]
+    # dedupe in the first argument
+
+    # should be deduped here:
+    candidate_to_original = {c[0]: c[1] for c in candidates_with_original}
+    candidates = list(candidate_to_original.keys())
+    originals = list(candidate_to_original.values())
+
+    # Find best matches
+    matches = process.extract(
+        actor_normalized, candidates, scorer=fuzz.ratio, limit=limit
+    )
+    # Filter by threshold and return original IDs
+    similar = []
+    for _, score, idx in matches:
+        if score >= threshold:
+            similar.append((originals[idx], score))
+
+    return similar
+
+
+def load_actorpack_for_validation(actorpack_path, config):
+    """Load and validate actorpack for actor checking"""
+    import requests
+
+    # Download if not provided or doesn't exist
+    if actorpack_path is None or not os.path.isfile(actorpack_path):
+        if actorpack_path is None:
+            actorpack_path = "graphsense.actorpack.yaml"
+
+        if not os.path.isfile(actorpack_path):
+            logger.info("Downloading GraphSense actorpack...")
+            url = "https://raw.githubusercontent.com/graphsense/graphsense-tagpacks/master/actors/graphsense.actorpack.yaml"
+            try:
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                with open(actorpack_path, "w") as f:
+                    f.write(response.text)
+                logger.info(f"Downloaded actorpack to {actorpack_path}")
+            except Exception as e:
+                logger.error(f"Failed to download actorpack: {e}")
+                return None
+
+    schema = ActorPackSchema()
+    taxonomies = _load_taxonomies(config)
+
+    ap = ActorPack.load_from_file("", actorpack_path, schema, taxonomies, None)
+    ap.validate()
+    logger.info(f"Loaded actorpack from {actorpack_path}")
+    return ap
 
 
 @click.group()
@@ -286,7 +383,13 @@ def sync(
         logger.error(f"Repos to sync file {repos} does not exist.")
 
 
-def validate_tagpack(config, path, no_address_validation):
+def validate_tagpack(
+    config,
+    path,
+    no_address_validation,
+    check_actor_references=False,
+    actorpack_path=None,
+):
     t0 = time.time()
     logger.info("TagPack validation starts")
     logger.info(f"Path: {path}")
@@ -301,6 +404,34 @@ def validate_tagpack(config, path, no_address_validation):
     tagpack_files = collect_tagpack_files(path)
     n_tagpacks = len([f for fs in tagpack_files.values() for f in fs])
     logger.info(f"Collected {n_tagpacks} TagPack files")
+
+    # Load actorpack if actor checking is enabled
+    actorpack = None
+    existing_actor_ids = []
+    similarity_threshold = 80  # Default threshold for fuzzy matching
+
+    if check_actor_references:
+        # Check if rapidfuzz is installed
+        try:
+            import rapidfuzz  # noqa: F401
+        except ImportError:
+            logger.error("rapidfuzz is required for actor name recommendations.")
+            logger.error(
+                "Make sure you installed graphsense-lib with the 'tagpacks' extra."
+            )
+            sys.exit(1)
+
+        actorpack = load_actorpack_for_validation(actorpack_path, config)
+        if actorpack is None:
+            logger.error("Failed to load actorpack. Actor validation will be skipped.")
+            check_actor_references = False
+        else:
+            existing_actor_ids = list(actorpack.get_resolve_mapping().keys())
+            logger.info(f"Loaded {len(existing_actor_ids)} actors for validation")
+
+    # Track actor validation results
+    unique_known_actors = set()
+    unique_unknown_actors = {}  # {actor: [(similar_id, score), ...]}
 
     no_passed = 0
     try:
@@ -317,6 +448,36 @@ def validate_tagpack(config, path, no_address_validation):
                 if not no_address_validation:
                     tagpack.verify_addresses()
 
+                # Check actors if enabled
+                if check_actor_references and actorpack:
+                    actor = tagpack.all_header_fields.get("actor")
+                    if actor:
+                        resolved = actorpack.resolve_actor(actor)
+                        if resolved is None:
+                            # Unknown actor
+                            if actor not in unique_unknown_actors:
+                                similar = find_similar_actors(
+                                    actor, existing_actor_ids, similarity_threshold
+                                )
+                                unique_unknown_actors[actor] = similar
+                                msg = "  Actor '{actor}' NOT FOUND in actorpack"
+
+                                if similar:
+                                    suggestions = ", ".join(
+                                        [
+                                            f"{sid} ({score}%)"
+                                            for sid, score in similar[:3]
+                                        ]
+                                    )
+                                    msg += f" (existing actors with similar names: {suggestions})"
+                                else:
+                                    msg += (
+                                        " (no existing actors with similar names found)"
+                                    )
+                                logger.warning(msg)
+                        else:
+                            unique_known_actors.add(actor)
+
                 click.secho(f"PASSED: {tagpack_file}", fg="green")
 
                 no_passed += 1
@@ -332,6 +493,37 @@ def validate_tagpack(config, path, no_address_validation):
         click.secho(
             f"{no_passed}/{n_tagpacks} TagPacks passed in {duration}s", fg="green"
         )
+
+    # Print actor validation summary if enabled
+    if check_actor_references and actorpack:
+        click.secho("\n" + "=" * 80, fg="cyan")
+        click.secho("ACTOR VALIDATION SUMMARY", fg="cyan")
+        click.secho("=" * 80, fg="cyan")
+        click.secho(
+            f"Unique actors found in actorpack: {len(unique_known_actors)}", fg="green"
+        )
+        click.secho(
+            f"Unique actors NOT in actorpack: {len(unique_unknown_actors)}",
+            fg="yellow" if unique_unknown_actors else "green",
+        )
+
+        if unique_known_actors:
+            click.secho(
+                f"\nKnown actors: {', '.join(sorted(unique_known_actors))}", fg="green"
+            )
+
+        if unique_unknown_actors:
+            click.secho("\nUnknown actors:", fg="yellow")
+            for actor, similar in sorted(unique_unknown_actors.items()):
+                if similar:
+                    suggestions = ", ".join(
+                        [f"{sid} ({score}%)" for sid, score in similar[:3]]
+                    )
+                    click.secho(
+                        f"  - {actor} (suggestions: {suggestions})", fg="yellow"
+                    )
+                else:
+                    click.secho(f"  - {actor} (no suggestions)", fg="yellow")
 
     if failed:
         sys.exit(1)
@@ -583,11 +775,25 @@ def tagpack():
     is_flag=True,
     help="Disables checksum validation of addresses",
 )
+@click.option(
+    "--check-actor-references",
+    is_flag=True,
+    help="Validates that actors referenced in tagpacks exist in actorpack",
+)
+@click.option(
+    "--actorpack-path",
+    default=None,
+    help="Path to actorpack file (downloads graphsense actorpack if not provided)",
+)
 @click.pass_context
-def validate_tagpack_cli(ctx, path, no_address_validation):
+def validate_tagpack_cli(
+    ctx, path, no_address_validation, check_actor_references, actorpack_path
+):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
-    validate_tagpack(config, path, no_address_validation)
+    validate_tagpack(
+        config, path, no_address_validation, check_actor_references, actorpack_path
+    )
 
 
 @tagpack.command("list")
@@ -757,7 +963,7 @@ def validate_actorpack(config, path):
                     "", actorpack_file, schema, taxonomies, headerfile_dir
                 )
 
-                logger.info(f"{actorpack_file}:\n", end="")
+                logger.info(f"{actorpack_file}:\n")
 
                 actorpack.validate()
                 click.secho("PASSED", fg="green")
@@ -840,8 +1046,7 @@ def insert_actorpacks(
         actorpack = ActorPack.load_from_file(
             uri, actorpack_file, schema_obj, taxonomies, headerfile_dir
         )
-
-        logger.info(f"{i} {actorpack_file}: ", end="")
+        logger.info(f"{i} {actorpack_file}: ")
         try:
             tagstore.insert_actorpack(
                 actorpack, force, prefix if prefix else default_prefix, relpath
