@@ -3,6 +3,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.11.2/2.8.2] 2025-11-13
+### Changes
+- removed unknown network warnings in tagpack validation
+- actor recommendation without db connection
+- new flag --auto-compact for automatic delta lake compaction on a schedule
+### fixed
+- delta lake connection issues when using when using union_by_name=True
+
+
 ## [25.11.1/2.8.1] 2025-11-13
 ### fixed
 - fixed parsing error in enum for tag inheritance marker
