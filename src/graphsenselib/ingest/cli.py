@@ -10,6 +10,7 @@ from filelock import FileLock
 from filelock import Timeout as LockFileTimeout
 
 from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
+from graphsenselib.utils.date import parse_older_than_run_spec
 
 from ..cli.common import require_currency, require_environment
 from ..config import get_config
@@ -269,6 +270,12 @@ def deltalake():
     help="Ignore check in the overwrite mode that only lets you start at the "
     "beginning of a partition",
 )
+@click.option(
+    "--auto-compact",
+    type=str,
+    default=None,
+    help="Run autocompation, paramater controls age since last run and day the compaction should be run on, e.g. 7d;sunday means run on sundays iif the last compaction was more than 7 days ago days ago",
+)
 def dump_rawdata(
     env,
     currency,
@@ -277,6 +284,7 @@ def dump_rawdata(
     timeout,
     write_mode,
     ignore_overwrite_safechecks,
+    auto_compact,
 ):
     """Exports raw cryptocurrency data to parquet files either to s3
     or a local directory.
@@ -304,17 +312,52 @@ def dump_rawdata(
 
     parquet_directory = parquet_directory_config.directory
 
-    export_delta(
-        currency=currency,
-        sources=sources,
-        directory=parquet_directory,
-        start_block=start_block,
-        end_block=end_block,
-        provider_timeout=timeout,
-        s3_credentials=s3_credentials,
-        write_mode=write_mode,
-        ignore_overwrite_safechecks=ignore_overwrite_safechecks,
-    )
+    try:
+        lockfile_name = f"/tmp/delta_ingest_{currency}.lock"
+        logger.info(f"Try acquiring lockfile {lockfile_name}")
+        with FileLock(lockfile_name, timeout=1):
+            export_delta(
+                currency=currency,
+                sources=sources,
+                directory=parquet_directory,
+                start_block=start_block,
+                end_block=end_block,
+                provider_timeout=timeout,
+                s3_credentials=s3_credentials,
+                write_mode=write_mode,
+                ignore_overwrite_safechecks=ignore_overwrite_safechecks,
+            )
+
+            if auto_compact:
+                logger.info("Running auto-compaction check")
+
+                # currently just check when last vacuum was run on block table to figure out if we should run compaction
+                last_vaccum_time = DeltaTableConnector(
+                    parquet_directory, s3_credentials
+                ).get_last_completed_vacuum_date("block")
+
+                should_run = parse_older_than_run_spec(auto_compact, last_vaccum_time)
+
+                if should_run:
+                    logger.info("Auto-compaction conditions met, running compaction")
+                    optimize_tables(
+                        currency,
+                        parquet_directory,
+                        s3_credentials,
+                        mode="compact",
+                        auto_compact=auto_compact,
+                    )
+                else:
+                    logger.info(
+                        f"Auto-compaction conditions not met, last compaction was {last_vaccum_time}, skipping compaction"
+                    )
+
+    except LockFileTimeout:
+        logger.error(
+            f"Lockfile {lockfile_name} could not be acquired. "
+            "Is another delta-ingest running? If not delete the lockfile."
+        )
+        sys.exit(911)
 
 
 # optimize deltalake

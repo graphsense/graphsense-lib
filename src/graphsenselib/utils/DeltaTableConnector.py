@@ -19,6 +19,8 @@ from graphsenselib.schema.resources.parquet.account import (
 from graphsenselib.schema.resources.parquet.account_trx import (
     BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
 )
+from typing import Optional
+from datetime import datetime
 
 DEFAULT_KEY_ENCODERS = {
     bytes: lambda x: x.hex(),
@@ -73,6 +75,29 @@ class DeltaTableConnector:
         files = delta_table.files()
         files = [f"{table_path}/{file}" for file in files]
         return files
+
+    def get_last_completed_vacuum_date(self, table: str) -> Optional[datetime]:
+        storage_options = self.get_storage_options()
+        table_path = self.get_table_path(table)
+        # Load the Delta table with storage options
+        dt = deltalake.DeltaTable(table_path, storage_options=storage_options)
+
+        # Get the table history
+        history = dt.history()
+
+        # Filter for VACUUM operations
+        vacuum_operations = sorted(
+            [h for h in history if h["operation"] == "VACUUM END"],
+            key=lambda x: x["timestamp"],
+            reverse=True,
+        )
+
+        if len(vacuum_operations) > 0:
+            # Get the most recent vacuum operation
+            last_vacuum = vacuum_operations[0]  # History is sorted by timestamp desc
+            return datetime.fromtimestamp(last_vacuum["timestamp"] // 1000)
+        else:
+            return None
 
     def list_partitions(self, table: str) -> List[int]:
         table_path = self.get_table_path(table)
