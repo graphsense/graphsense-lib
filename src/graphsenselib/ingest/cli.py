@@ -339,12 +339,15 @@ def dump_rawdata(
                 should_run = parse_older_than_run_spec(auto_compact, last_vaccum_time)
 
                 if should_run:
-                    logger.info("Auto-compaction conditions met, running compaction")
+                    logger.info(
+                        f"Auto-compaction conditions met, last compaction was {last_vaccum_time}, running compaction"
+                    )
                     optimize_tables(
                         currency,
                         parquet_directory,
                         s3_credentials,
-                        mode="compact",
+                        mode="both",
+                        full_vacuum=True,
                     )
                 else:
                     logger.info(
