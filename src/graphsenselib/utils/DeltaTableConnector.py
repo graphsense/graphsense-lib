@@ -92,6 +92,9 @@ class DeltaTableConnector:
             password = self.s3_credentials.get("AWS_SECRET_ACCESS_KEY")
             access_key = self.s3_credentials.get("AWS_ACCESS_KEY_ID")
 
+            # added  http_keep_alive=false to avoid
+            # IOException: IO Error: Could not establish connection error for HTTP HEAD
+            # https://github.com/duckdb/duckdb/issues/11695
             auth_query = f"""
             INSTALL httpfs;
             LOAD httpfs;
@@ -101,6 +104,7 @@ class DeltaTableConnector:
             SET s3_endpoint='{endpoint_URL}';
             SET s3_access_key_id='{access_key}';
             SET s3_secret_access_key='{password}';
+            SET http_keep_alive=false;
             """
         else:
             auth_query = ""
