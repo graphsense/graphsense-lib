@@ -345,7 +345,6 @@ def dump_rawdata(
                         parquet_directory,
                         s3_credentials,
                         mode="compact",
-                        auto_compact=auto_compact,
                     )
                 else:
                     logger.info(
