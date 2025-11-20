@@ -67,15 +67,18 @@ FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
 
-def account_calc_tx_fee(tx) -> int:
+def account_calc_tx_fee(tx) -> Optional[int]:
+    rgu = tx.get("receipt_gas_used", None)
+    if rgu is None:
+        return None
     # do we need to use effective gas price here?
     if (
         "receipt_effective_gas_price" in tx
         and tx["receipt_effective_gas_price"] is not None
     ):
-        return tx["receipt_gas_used"] * tx["receipt_effective_gas_price"]
+        return rgu * tx["receipt_effective_gas_price"]
     else:
-        return tx["receipt_gas_used"] * tx.get("gas_price", 0)
+        return rgu * tx.get("gas_price", 0)
 
 
 def try_partial_tron_to_partial_evm(addr_prefix):
