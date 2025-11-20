@@ -235,6 +235,7 @@ class TxAccount(BaseModel):
     token_tx_id: Optional[int] = None
     contract_creation: Optional[bool] = None
     value: Values
+    fee: Optional[Values] = None
     is_external: Optional[bool] = None
     input: Optional[bytes] = None
     parsed_input: Optional[FunctionCall] = None

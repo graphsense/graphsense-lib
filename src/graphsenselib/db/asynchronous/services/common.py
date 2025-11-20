@@ -378,6 +378,8 @@ async def _tx_account_from_row(
 
     input = row.get("input", None)
 
+    fee = convert_value(currency, row["fee"], r) if "fee" in row else None
+
     return TxAccount(
         currency=currency if "token_tx_id" not in row else row["currency"].lower(),
         network=currency,
@@ -393,6 +395,7 @@ async def _tx_account_from_row(
         value=convert_value(currency, row["value"], r)
         if "token_tx_id" not in row
         else convert_token_value(row["value"], r, token_config[row["currency"]]),
+        fee=fee,
         is_external=is_external,
         input=input,
         parsed_input=function_call_from_row(row.get("input_parsed", None)),
