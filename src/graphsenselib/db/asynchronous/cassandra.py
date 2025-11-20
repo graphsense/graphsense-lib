@@ -3110,6 +3110,11 @@ class Cassandra:
     ):
         ascending = order == "asc"
 
+        if direction is not None and direction not in ["in", "out"]:
+            raise BadUserInputException(
+                f"Direction {direction} not supported, use 'in' or 'out' or None for both"
+            )
+
         if node_type == NodeType.CLUSTER:
             node_type = NodeType.ADDRESS
             address = await self.get_address_by_address_id(currency, address)
