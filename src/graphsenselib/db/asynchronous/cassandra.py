@@ -67,6 +67,17 @@ FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
 
+def account_calc_tx_fee(tx) -> int:
+    # do we need to use effective gas price here?
+    if (
+        "receipt_effective_gas_price" in tx
+        and tx["receipt_effective_gas_price"] is not None
+    ):
+        return tx["receipt_gas_used"] * tx["receipt_effective_gas_price"]
+    else:
+        return tx["receipt_gas_used"] * tx.get("gas_price", 0)
+
+
 def try_partial_tron_to_partial_evm(addr_prefix):
     try:
         return partial_tron_to_partial_evm(addr_prefix)
@@ -3143,7 +3154,7 @@ class Cassandra:
     ):
         use_legacy_log_index = self.parameters[currency]["use_legacy_log_index"]
 
-        tx_ids = [tx["transaction_id"] for tx in txs]
+        tx_ids = list({tx["transaction_id"] for tx in txs})
 
         full_txs = {
             tx_id: tx_row
@@ -3251,6 +3262,10 @@ class Cassandra:
             addr_tx["value"] = value
             addr_tx.pop("log_index")
 
+            if addr_tx["type"] == "external":
+                # do we need to use effective gas price here?
+                addr_tx["fee"] = account_calc_tx_fee(full_tx)
+
             await self.fix_timestamp(
                 currency, addr_tx, timestamp_col="timestamp", block_id_col="height"
             )
@@ -3295,7 +3310,8 @@ class Cassandra:
         params = [[hash.hex()[: prefix["tx"]], hash] for hash in hashes]
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address, input, transaction_type from "
+            "from_address, to_address, receipt_contract_address, input, transaction_type, "
+            "receipt_gas_used, gas_price, receipt_effective_gas_price from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
         result = await self.concurrent_with_args(currency, "raw", statement, params)
@@ -3318,6 +3334,7 @@ class Cassandra:
             row["input_parsed"] = parse_function_call(
                 row["input"], function_call_signatures
             )
+            row["fee"] = account_calc_tx_fee(row)
 
             if (
                 currency == "trx"
@@ -3345,7 +3362,8 @@ class Cassandra:
             )
         statement = (
             "SELECT tx_hash, block_id, block_timestamp, value, "
-            "from_address, to_address, receipt_contract_address, input, transaction_type from "
+            "from_address, to_address, receipt_contract_address, input, transaction_type, "
+            "receipt_gas_used, gas_price, receipt_effective_gas_price from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
 
@@ -3378,6 +3396,8 @@ class Cassandra:
             and result["from_address"] is None
         ):
             result["from_address"] = result["to_address"]
+
+        result["fee"] = account_calc_tx_fee(result)
 
         return result
 
