@@ -3,7 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [25.11.2/2.8.2] 2025-11-13
+## [25.11.3/2.8.3] 2025-11-20
+### Changes
+- added fee field to accountTxs
+
+## [25.11.2/2.8.2] 2025-11-19
 ### Changes
 - removed unknown network warnings in tagpack validation
 - actor recommendation without db connection
