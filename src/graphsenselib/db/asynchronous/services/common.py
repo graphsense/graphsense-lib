@@ -378,7 +378,11 @@ async def _tx_account_from_row(
 
     input = row.get("input", None)
 
-    fee = convert_value(currency, row["fee"], r) if "fee" in row else None
+    fee = (
+        convert_value(currency, row["fee"], r)
+        if "fee" in row and row["fee"] is not None
+        else None
+    )
 
     return TxAccount(
         currency=currency if "token_tx_id" not in row else row["currency"].lower(),
