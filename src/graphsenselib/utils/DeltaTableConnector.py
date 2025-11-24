@@ -117,9 +117,7 @@ class DeltaTableConnector:
             password = self.s3_credentials.get("AWS_SECRET_ACCESS_KEY")
             access_key = self.s3_credentials.get("AWS_ACCESS_KEY_ID")
 
-            # added  http_keep_alive=false to avoid
-            # IOException: IO Error: Could not establish connection error for HTTP HEAD
-            # https://github.com/duckdb/duckdb/issues/11695
+            # Enhanced HTTP settings for reliability
             auth_query = f"""
             INSTALL httpfs;
             LOAD httpfs;
@@ -129,10 +127,22 @@ class DeltaTableConnector:
             SET s3_endpoint='{endpoint_URL}';
             SET s3_access_key_id='{access_key}';
             SET s3_secret_access_key='{password}';
+
+            -- HTTP reliability settings
             SET http_keep_alive=false;
+            SET http_retries=6;
+            SET http_retry_wait_ms=1000;
+            SET http_timeout=30000;
+            SET enable_http_metadata_cache=false;
+            SET http_pool_size=1;
             """
         else:
-            auth_query = ""
+            auth_query = """
+            -- Set basic retry settings even for local files
+            SET http_retries=3;
+            SET http_retry_wait_ms=500;
+            SET http_timeout=15000;
+            """
 
         return auth_query
 
@@ -198,16 +208,16 @@ class DeltaTableConnector:
 
         query = auth_query + content_query
 
-        con = duckdb.connect()
-        con.execute(query)
-        data = con.fetchdf()
+        with duckdb.connect() as con:
+            con.execute(query)
+            data = con.fetchdf()
 
-        if not data.empty:
-            return self.interpreter.interpret(data, table)
-        else:
-            raise EmptyDeltaTableException(
-                f"block_ids {block_ids} not found in table {table}"
-            )
+            if not data.empty:
+                return self.interpreter.interpret(data, table)
+            else:
+                raise EmptyDeltaTableException(
+                    f"block_ids {block_ids} not found in table {table}"
+                )
 
     def __getitem__(self, kv: Tuple[str, List[int]]):
         table, key = kv
