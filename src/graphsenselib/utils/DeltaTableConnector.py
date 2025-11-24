@@ -134,7 +134,6 @@ class DeltaTableConnector:
             SET http_retry_wait_ms=1000;
             SET http_timeout=30000;
             SET enable_http_metadata_cache=false;
-            SET http_pool_size=1;
             """
         else:
             auth_query = """

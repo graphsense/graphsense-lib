@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v25.11.4rc1'
-RELEASESEM := 'v2.8.4rc1'
+RELEASE := 'v25.11.4rc2'
+RELEASESEM := 'v2.8.4rc2'
 
 -include .env
 
