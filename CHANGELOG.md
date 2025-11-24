@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.11.4/2.8.4] 2025-11-24
+### fixed
+- http connection issues delta lake
+
 ## [25.11.3/2.8.3] 2025-11-20
 ### Changes
 - added fee field to accountTxs
