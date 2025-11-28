@@ -136,7 +136,7 @@ Fetch and show concepts of a specific remote/local taxonomy (referenced by key: 
 - Docker Compose: https://docs.docker.com/compose/install/
 
 First, copy `tagpack/env.template`
-to `.env` and fill the fields `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_TAGSTORE`.
+to `tagpack/.env` and fill the fields `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_TAGSTORE`.
 
 Run
 
@@ -146,9 +146,13 @@ and modify the configuration parameters to your requirements. If no special conf
 
     touch postgres-conf.sql
 
+Then, create a network for the docker container:
+
+    docker network create graphsense
+
 Start a PostgreSQL instance using Docker Compose:
 
-    docker-compose up -d
+    docker compose -f tagpack/docker-compose.yml up -d
 
 This will automatically create the database with the nessesary permissions for the `POSTGRES_USER_TAGSTORE`.
 
@@ -314,7 +318,7 @@ To list all tagpack creators and their contributions to a tagstore's content use
 To provide REST endpoints for accessing tags, start the service
 
 ```
-make serve
+make serve-tagstore
 ```
 
 and check out http://localhost:8000/docs

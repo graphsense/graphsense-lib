@@ -350,7 +350,7 @@ cache_directory: "~/.graphsense/cache"
 
 ### Tagpack Management
 
-GraphSense-lib includes comprehensive tagpack management tools (formerly standalone tagpack-tool). For detailed documentation, see [Tagpack README](tagpacks/docs/README.md).
+GraphSense-lib includes comprehensive tagpack management tools (formerly standalone tagpack-tool). For detailed documentation, see [Tagpack README](tagpack/docs/README.md).
 
 ```bash
 # Validate tagpacks
