@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.11.5rc1/2.8.5rc1] 2025-12-4
+### fixed
+- bch spurious btc like address in tx f39592c35da4260b06baa47f62a181fe95b3d7b45b5205879552b4b22c852abf
+
 ## [25.11.4/2.8.4] 2025-11-24
 ### fixed
 - http connection issues delta lake

@@ -4,7 +4,7 @@ import re
 from abc import ABC, abstractmethod
 from collections import Counter
 from functools import reduce
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 from bitarray import bitarray
 from bitarray.util import ba2int
@@ -261,6 +261,33 @@ class AddressConverterBch(AddressConverterBtcLike):
             raise InvalidAddress(f"{address} is not a valid bch address.") from e
 
 
+class AddressConverterBchWithNonstandardFallback(AddressConverterBch):
+    # Specialized BCH converter that falls back to nonstandard prefix for
+    # addresses that cannot be converted to legacy format
+    # E.g. bc1 addresses that are valid BTC addresses but not valid BCH addresses
+    # happend in tx f39592c35da4260b06baa47f62a181fe95b3d7b45b5205879552b4b22c852abf
+
+    def __init__(
+        self,
+        non_standard_fallback_prefixes: List[str] = [],
+        nonstandard_prefix: str = "nonstandard",
+    ):
+        self.non_standard_fallback_prefixes = non_standard_fallback_prefixes
+        self.nonstandard_prefix = nonstandard_prefix
+        super().__init__()
+
+    def to_str(self, address_byte):
+        return super().to_str(address_byte).removeprefix(self.nonstandard_prefix)
+
+    def to_bytes(self, address: str) -> bytes:
+        if any(
+            address.startswith(prefix) for prefix in self.non_standard_fallback_prefixes
+        ):
+            return super().to_bytes(f"{self.nonstandard_prefix}{address}")
+        else:
+            return super().to_bytes(address)
+
+
 converters = {
     "eth": AddressConverterEth(),
     "trx": AddressConverterTrx(),
@@ -270,7 +297,9 @@ converters = {
     "btc": AddressConverterBtcLike(
         bech32_prefix="bc1", nonstandard_prefix="nonstandard"
     ),
-    "bch": AddressConverterBch(),
+    "bch": AddressConverterBchWithNonstandardFallback(
+        non_standard_fallback_prefixes=["bc1"]
+    ),
     "zec": AddressConverterBtcLike(
         bech32_prefix=None, nonstandard_prefix="nonstandard"
     ),
