@@ -16,6 +16,7 @@ from graphsenselib.utils.address import (
     validate_zec_address,
     validate_eth_address,
     validate_trx_address,
+    AddressConverterBchWithNonstandardFallback,
 )
 
 from . import resources
@@ -576,3 +577,15 @@ class TestAddressValidation:
         assert validate_address("BTC", address)
         assert validate_address("btc", address)
         assert validate_address("Btc", address)
+
+    def test_address_converter_bch_special_btc_cases(self):
+        conv = AddressConverterBchWithNonstandardFallback(
+            non_standard_fallback_prefixes=["bc1"]
+        )
+
+        btc_address_in_bch = "bc1qrhxr09xy8mjufvevnz22ll8d45z9cf6mk4r3nj"
+
+        encoded = conv.to_bytes(btc_address_in_bch)
+        decoded = conv.to_str(encoded)
+
+        assert decoded == btc_address_in_bch
