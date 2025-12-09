@@ -3233,25 +3233,26 @@ class Cassandra:
                     )
                     addr_tx["error"] = e
 
-                addr_tx["from_address"] = trace["from_address"]
-                addr_tx["to_address"] = trace["to_address"]
-                is_external = (
-                    trace["trace_address"] is None
-                    or trace["trace_address"].strip() == ""
-                )
+                if "error" not in addr_tx:
+                    addr_tx["from_address"] = trace["from_address"]
+                    addr_tx["to_address"] = trace["to_address"]
+                    is_external = (
+                        trace["trace_address"] is None
+                        or trace["trace_address"].strip() == ""
+                    )
 
-                # if they are the same, then we know it is external
-                if is_external:
-                    addr_tx["type"] = "external"
-                else:
-                    addr_tx["type"] = "internal"
+                    # if they are the same, then we know it is external
+                    if is_external:
+                        addr_tx["type"] = "external"
+                    else:
+                        addr_tx["type"] = "internal"
 
-                addr_tx["contract_creation"] = trace["trace_type"] == "create"
-                addr_tx["input"] = trace["input"]
-                addr_tx["input_parsed"] = parse_function_call(
-                    trace["input"], function_call_signatures
-                )
-                value = trace["value"]
+                    addr_tx["contract_creation"] = trace["trace_type"] == "create"
+                    addr_tx["input"] = trace["input"]
+                    addr_tx["input_parsed"] = parse_function_call(
+                        trace["input"], function_call_signatures
+                    )
+                    value = trace["value"]
             else:
                 addr_tx["to_address"] = full_tx["to_address"]
                 addr_tx["from_address"] = full_tx["from_address"]

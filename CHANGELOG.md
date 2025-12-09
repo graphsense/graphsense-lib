@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.11.6/2.8.6] 2025-12-9
+### fixed
+- fix traces not found error handling.
+
+
 ## [25.11.5/2.8.5] 2025-12-5
 ### fixed
 - bch spurious btc like address in tx f39592c35da4260b06baa47f62a181fe95b3d7b45b5205879552b4b22c852abf
