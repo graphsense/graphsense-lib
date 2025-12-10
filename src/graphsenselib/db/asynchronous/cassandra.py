@@ -3253,6 +3253,9 @@ class Cassandra:
                         trace["input"], function_call_signatures
                     )
                     value = trace["value"]
+                else:
+                    value = 0
+                    addr_tx["type"] = "Error"
             else:
                 addr_tx["to_address"] = full_tx["to_address"]
                 addr_tx["from_address"] = full_tx["from_address"]
@@ -3271,7 +3274,7 @@ class Cassandra:
             addr_tx["value"] = value
             addr_tx.pop("log_index")
 
-            if addr_tx["type"] == "external":
+            if "error" not in addr_tx and addr_tx["type"] == "external":
                 # do we need to use effective gas price here?
                 addr_tx["fee"] = account_calc_tx_fee(full_tx)
 
