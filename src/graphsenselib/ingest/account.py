@@ -1189,7 +1189,9 @@ def ingest_async(
     start_block = 0
     if user_start_block is None:
         if last_ingested_block is not None:
-            start_block = last_ingested_block + 1
+            # to be safe if some error occured in the last import we reimport the las
+            # two batches.
+            start_block = max(last_ingested_block - (batch_size_user * 2) + 1, 0)
     else:
         start_block = user_start_block
 
