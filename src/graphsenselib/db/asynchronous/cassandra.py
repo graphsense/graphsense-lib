@@ -3172,9 +3172,10 @@ class Cassandra:
         }
 
         # they must be aligned so at least have the same number of results
-        assert len(full_txs) == len(txs), (
-            f"Expected {len(txs)} results, got {len(full_txs)}."
-        )
+        if self.tconfig.strict_data_validation:
+            assert len(full_txs) == len(txs), (
+                f"Expected {len(txs)} results, got {len(full_txs)}."
+            )
 
         for addr_tx in txs:
             # fix log index field with new tx_refstruct
