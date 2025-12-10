@@ -72,11 +72,13 @@ class DbFactory:
         transformed_keyspace_name,
         schema_type,
         cassandra_nodes,
-        currency,
+        currency: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
     ) -> AnalyticsDb:
         db_types = get_db_types_by_schema_type(schema_type)
+        if currency is None:
+            currency = raw_keyspace_name.split("_")[0]
         return AnalyticsDb(
             raw=KeyspaceConfigDB(
                 raw_keyspace_name,
