@@ -3170,6 +3170,12 @@ class Cassandra:
                 tx_ids, await self.list_txs_by_ids(currency, tx_ids)
             )
         }
+
+        # they must be aligned so at least have the same number of results
+        assert len(full_txs) == len(txs), (
+            f"Expected {len(txs)} results, got {len(full_txs)}."
+        )
+
         for addr_tx in txs:
             # fix log index field with new tx_refstruct
             if not use_legacy_log_index:
@@ -3326,7 +3332,15 @@ class Cassandra:
             "receipt_gas_used, gas_price, receipt_effective_gas_price from "
             "transaction where tx_hash_prefix=%s and tx_hash=%s"
         )
-        result = await self.concurrent_with_args(currency, "raw", statement, params)
+        result = await self.concurrent_with_args(
+            currency, "raw", statement, params, filter_empty=False
+        )
+        missing_hashes = [
+            hash_.hex() for hash_, value in zip(hashes, result) if value is None
+        ]
+        assert len(missing_hashes) == 0, (
+            f"Expected {len(hashes)} results, got {len(result)}. Missing hashes: {missing_hashes}"
+        )
 
         result_with_tokens = []
         for row in result:
