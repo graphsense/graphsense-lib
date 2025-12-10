@@ -32,6 +32,10 @@ class CassandraConfig(BaseSettings):
         default="LOCAL_ONE", description="Cassandra consistency level"
     )
 
+    strict_data_validation: bool = Field(
+        default=True, description="Enable strict data validation"
+    )
+
     # Optional operational settings
     retry_interval: Optional[int] = Field(
         default=5, description="Retry interval in seconds when connection fails"
