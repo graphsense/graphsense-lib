@@ -557,6 +557,16 @@ warm_wallet:
     A warm wallet is a similar to a hot wallet but with a user in the loop (no automated usage of keys)
   broader: white_usage
 
+deposit_wallet:
+  id: deposit_wallet
+  type: concept
+  prefLabel: Deposit Wallet
+  description: >
+    A wallet provided by a service (e.g., exchange, payment processor) to users
+    for depositing funds. Typically unique per user, aggregating
+    incoming funds before consolidation into operational wallets.
+  broader: white_usage
+
 filesharing:
   id: filesharing
   type: concept
