@@ -208,6 +208,18 @@ def one(result):
     return None
 
 
+def check_height_bounds_impossible(
+    min_height: Optional[int], max_height: Optional[int], last_height: int
+) -> bool:
+    """Check if the height bounds represent an impossible query range.
+
+    Returns True if the query would never return results.
+    """
+    return (min_height is not None and min_height > last_height) or (
+        max_height is not None and max_height < 0
+    )
+
+
 def build_token_tx(token_currency, tx, token_tx, log):
     token_from = token_tx["parameters"].get("from", "decoding error")
     token_to = token_tx["parameters"].get("to", "decoding error")
@@ -1248,6 +1260,11 @@ class Cassandra:
         if not stats:
             return None, None
         last_height = stats["no_blocks"] - 1
+
+        # Check for impossible height constraints that should yield empty results
+        if check_height_bounds_impossible(min_height, max_height, last_height):
+            return 0, -1
+
         first_tx_id = last_tx_id = None
         if min_height is not None:
             min_block_with_txs = await self.get_next_block_with_transactions(

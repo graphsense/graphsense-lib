@@ -3,6 +3,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [25.11.9/2.8.9] 2025-12-11
+### fixed
+- Fix unexpected behavior of resolve_tx_id_range_by_block where min_height was ignored when larger than the current highest block. List address transaction now return an empty response if min_height>current_highest_block.
+
 ## [25.11.8/2.8.8] 2025-12-11
 ### added
 - add concept of deposit_wallet
