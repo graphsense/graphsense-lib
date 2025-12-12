@@ -56,6 +56,7 @@ from graphsenselib.errors import (
     nodeNotFoundException,
 )
 from graphsenselib.utils.rest_utils import is_eth_like
+from graphsenselib.utils.account import get_block_from_tx_id
 
 
 SMALL_PAGE_SIZE = 1000
@@ -2823,9 +2824,6 @@ class Cassandra:
 
         first_tx = data.get("first_tx_id")
         last_tx = data.get("last_tx_id")
-
-        def get_block_from_tx_id(id_):
-            return id_ >> 32
 
         def get_secondary_id_group_from_block(block):
             return block // self.parameters[network]["block_bucket_size_address_txs"]
