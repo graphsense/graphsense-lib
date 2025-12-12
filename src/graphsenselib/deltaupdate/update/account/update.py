@@ -59,6 +59,7 @@ from graphsenselib.utils import no_nones
 from graphsenselib.utils.account import (
     get_id_group_with_secondary_addresstransactions,
     get_id_group_with_secondary_relations,
+    get_tx_id,
 )
 from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
 from graphsenselib.utils.errorhandling import CrashRecoverer
@@ -120,7 +121,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         self.crash_recoverer = CrashRecoverer(crash_file)
 
     def consume_transaction_id_composite(self, block_id, transaction_index):
-        return (block_id << 32) + transaction_index
+        return get_tx_id(block_id, transaction_index)
 
     def persist_updater_progress(self):
         if self.changes is not None:

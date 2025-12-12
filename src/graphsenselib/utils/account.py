@@ -15,6 +15,40 @@ class SlimTx:
     direction: FlowDirection
 
 
+def get_tx_id(block_id: int, transaction_index: int) -> int:
+    """Generates a transaction id from block id and transaction index.
+
+    Args:
+        block_id (int): block id
+        transaction_index (int): transaction index
+    Returns:
+        int: transaction id
+    """
+    return (block_id << 32) + transaction_index
+
+
+def get_block_from_tx_id(tx_id: int) -> int:
+    """Extracts the block id from a transaction id.
+
+    Args:
+        tx_id (int): transaction id
+    Returns:
+        int: block id
+    """
+    return tx_id >> 32
+
+
+def get_transaction_index_from_tx_id(tx_id: int) -> int:
+    """Extracts the transaction index from a transaction id.
+
+    Args:
+        tx_id (int): transaction id
+    Returns:
+        int: transaction index
+    """
+    return tx_id & 0xFFFFFFFF
+
+
 def get_total_input_sum(input_list: list) -> int:
     """Simple sum of all input
 
