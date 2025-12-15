@@ -15,6 +15,9 @@ from cassandra.cluster import (
 # Session,
 from cassandra.concurrent import execute_concurrent, execute_concurrent_with_args
 from cassandra.policies import DCAwareRoundRobinPolicy, RetryPolicy, TokenAwarePolicy
+from cassandra.cluster import NoHostAvailable
+from cassandra import OperationTimedOut, ReadTimeout, WriteTimeout
+
 from cassandra.query import (
     UNSET_VALUE,
     BatchStatement,
@@ -338,6 +341,8 @@ class CassandraDb:
         self.session = None
         self.prep_stmts = {}
         self._default_timeout = default_timeout
+        self._columns_cache = {}
+        self._columns_cache_ttl = 600  # 10 minutes in seconds
 
     @property
     def nodes_with_port(self) -> List[str]:
@@ -352,6 +357,51 @@ class CassandraDb:
             self.db_username,
             self.db_password,
         )
+
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """Check if cached entry is still valid based on TTL."""
+        if cache_key not in self._columns_cache:
+            return False
+        cached_time = self._columns_cache[cache_key]["timestamp"]
+        return (time.time() - cached_time) < self._columns_cache_ttl
+
+    def _get_cached_columns(self, cache_key: str):
+        """Get cached columns if valid, otherwise return None."""
+        if self._is_cache_valid(cache_key):
+            return self._columns_cache[cache_key]["data"]
+        return None
+
+    def _cache_columns(self, cache_key: str, data):
+        """Cache column data with timestamp."""
+        self._columns_cache[cache_key] = {"data": data, "timestamp": time.time()}
+
+    def invalidate_columns_cache(
+        self, keyspace: Optional[str] = None, table: Optional[str] = None
+    ):
+        """Invalidate the columns cache.
+
+        Args:
+            keyspace: If provided, only invalidate cache entries for this keyspace
+            table: If provided (along with keyspace), only invalidate cache for this specific table
+        """
+        if keyspace is None and table is None:
+            # Clear entire cache
+            self._columns_cache.clear()
+        elif keyspace is not None and table is not None:
+            # Clear specific keyspace.table entry
+            cache_key = f"{keyspace}.{table}"
+            self._columns_cache.pop(cache_key, None)
+        elif keyspace is not None:
+            # Clear all entries for the keyspace
+            keys_to_remove = [
+                key
+                for key in self._columns_cache.keys()
+                if key.startswith(f"{keyspace}.")
+            ]
+            for key in keys_to_remove:
+                self._columns_cache.pop(key, None)
+        else:
+            raise ValueError("Cannot specify table without keyspace")
 
     def __repr__(self):
         return f"{', '.join(self.db_nodes)}"
@@ -531,27 +581,81 @@ class CassandraDb:
 
     @needs_session
     def get_columns_for_table(self, keyspace: str, table: str):
+        # Check cache first
+        cache_key = f"{keyspace}.{table}"
+        cached_result = self._get_cached_columns(cache_key)
+        if cached_result is not None:
+            return cached_result
+
+        # Query database if not in cache or expired
         cql_str = (
             f"SELECT * FROM system_schema.columns "
             f"WHERE keyspace_name = '{keyspace}' "
             f"AND table_name = '{table}';"
         )
-        return self.session.execute(cql_str)
+        result = self.session.execute(cql_str)
+
+        # Cache the result
+        self._cache_columns(cache_key, result)
+        return result
 
     @needs_session
     def get_prepared_insert_statement(
-        self, keyspace: str, table: str, upsert=True, cl=None
+        self,
+        keyspace: str,
+        table: str,
+        upsert=True,
+        cl=None,
+        max_retries=3,
+        base_delay=0.5,
+        max_delay=10,
     ) -> PreparedStatement:
         """Build prepared CQL statement for specified table."""
 
-        result_set = self.get_columns_for_table(keyspace, table)
-        columns = [elem.column_name for elem in result_set._current_rows]
-        ps = self.get_prepared_statement(
-            build_insert_stmt(columns, table, upsert=upsert, keyspace=keyspace)
-        )
-        if cl is not None:
-            ps.consistency_level = cl
-        return ps
+        retry_attempt = 0
+        while retry_attempt <= max_retries:
+            try:
+                result_set = self.get_columns_for_table(keyspace, table)
+                columns = [elem.column_name for elem in result_set._current_rows]
+                ps = self.get_prepared_statement(
+                    build_insert_stmt(columns, table, upsert=upsert, keyspace=keyspace)
+                )
+                if cl is not None:
+                    ps.consistency_level = cl
+                return ps
+            except (
+                NoHostAvailable,
+                OperationTimedOut,
+                ReadTimeout,
+                WriteTimeout,
+                Exception,
+            ) as exception:
+                if retry_attempt == max_retries:
+                    if isinstance(exception, NoHostAvailable):
+                        logger.error(
+                            f"Failed to prepare insert statement after {max_retries + 1} attempts due to NoHostAvailable: {exception}"
+                        )
+                    else:
+                        logger.error(
+                            f"Failed to prepare insert statement after {max_retries + 1} attempts: {exception}"
+                        )
+                    raise exception
+
+                retry_attempt += 1
+                delay = min(base_delay * (2**retry_attempt), max_delay)
+
+                if isinstance(exception, NoHostAvailable):
+                    logger.warning(
+                        f"NoHostAvailable error while preparing insert statement (attempt {retry_attempt}/{max_retries + 1}): {exception}. "
+                        f"Retrying in {delay} seconds..."
+                    )
+                else:
+                    logger.warning(
+                        f"Error while preparing insert statement (attempt {retry_attempt}/{max_retries + 1}): {exception}. "
+                        f"Retrying in {delay} seconds..."
+                    )
+
+                time.sleep(delay)
 
     @needs_session
     def get_prepared_statement(self, stmt):
@@ -590,6 +694,8 @@ class CassandraDb:
         max_delay=10,
     ) -> None:
         """Concurrent ingest into Apache Cassandra."""
+        from cassandra.cluster import NoHostAvailable
+
         nr_statements = len(parameters)
         retries = (retries - 1) * nr_statements
         retry_attempt = 0
@@ -614,18 +720,27 @@ class CassandraDb:
                                     parameters[i],
                                 )
                                 self.session.execute(prepared_stmt, parameters[i])
-                            except Exception as exception:
+                            except (NoHostAvailable, Exception) as exception:
                                 # Individual statement retry backoff
                                 individual_retry_attempt += 1
                                 delay = min(
                                     base_delay * (2**individual_retry_attempt),
                                     max_delay,
                                 )
-                                logger.warning(
-                                    f"Retry after exception: {str(exception)} "
-                                    f"retrying another {retries} times/statements. "
-                                    f"Backing off for {delay} seconds"
-                                )
+
+                                if isinstance(exception, NoHostAvailable):
+                                    logger.warning(
+                                        f"NoHostAvailable error: {str(exception)} "
+                                        f"retrying another {retries} times/statements. "
+                                        f"Backing off for {delay} seconds"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Retry after exception: {str(exception)} "
+                                        f"retrying another {retries} times/statements. "
+                                        f"Backing off for {delay} seconds"
+                                    )
+
                                 time.sleep(delay)
                                 retries -= 1
                                 if retries < 0:
@@ -636,19 +751,33 @@ class CassandraDb:
                             break
                 break
 
-            except Exception as exception:
+            except (NoHostAvailable, Exception) as exception:
                 # Batch retry backoff
                 retry_attempt += 1
                 delay = min(base_delay * (2**retry_attempt), max_delay)
-                logger.warning(
-                    f"Retry after exception: {str(exception)} "
-                    f"retrying another {retries} times/statements. "
-                    f"Backing off for {delay} seconds"
-                )
+
+                if isinstance(exception, NoHostAvailable):
+                    logger.warning(
+                        f"NoHostAvailable error in batch execution: {str(exception)} "
+                        f"retrying another {retries} times/statements. "
+                        f"Backing off for {delay} seconds"
+                    )
+                else:
+                    logger.warning(
+                        f"Retry after exception: {str(exception)} "
+                        f"retrying another {retries} times/statements. "
+                        f"Backing off for {delay} seconds"
+                    )
+
                 time.sleep(delay)
                 retries -= nr_statements
                 if retries < 0:
-                    logger.error("Giving up retries for ingest.")
+                    if isinstance(exception, NoHostAvailable):
+                        logger.error(
+                            "Giving up retries for ingest due to NoHostAvailable."
+                        )
+                    else:
+                        logger.error("Giving up retries for ingest.")
                     raise exception
                 else:
                     continue
