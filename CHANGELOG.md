@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [25.11.11/2.8.11] 2025-12-17
+### fixed
+- Tagpack actor validation
+
 ## [25.11.10/2.8.10] 2025-12-15
 ### fixed
 - better retry on ingest (also for prepared statements)
