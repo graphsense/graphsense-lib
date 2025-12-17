@@ -450,8 +450,17 @@ def validate_tagpack(
 
                 # Check actors if enabled
                 if check_actor_references and actorpack:
-                    actor = tagpack.all_header_fields.get("actor")
-                    if actor:
+                    # Collect actors from header level and tag level
+                    actors_to_check = set()
+                    header_actor = tagpack.all_header_fields.get("actor")
+                    if header_actor:
+                        actors_to_check.add(header_actor)
+                    for tag in tagpack.tags:
+                        tag_actor = tag.all_fields.get("actor")
+                        if tag_actor:
+                            actors_to_check.add(tag_actor)
+
+                    for actor in actors_to_check:
                         resolved = actorpack.resolve_actor(actor)
                         if resolved is None:
                             # Unknown actor
