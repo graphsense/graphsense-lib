@@ -95,6 +95,7 @@ class Taxonomy(object):
         self.key = key
         self.uri = uri
         self.concepts = []
+        self._concept_ids_cache = None
 
     def load_from_remote(self):
         response = requests.get(self.uri)
@@ -147,7 +148,9 @@ class Taxonomy(object):
 
     @property
     def concept_ids(self):
-        return [concept.id for concept in self.concepts]
+        if self._concept_ids_cache is None:
+            self._concept_ids_cache = frozenset(concept.id for concept in self.concepts)
+        return self._concept_ids_cache
 
     def add_concept(self, concept_id, label, level, description):
         concept_uri = self.uri + "/" + concept_id

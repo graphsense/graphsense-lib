@@ -17,7 +17,12 @@ import yaml
 from git import Repo
 from yamlinclude import YamlIncludeConstructor
 
-from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
+from graphsenselib.tagpack import (
+    TagPackFileError,
+    UniqueKeyLoader,
+    ValidationError,
+    load_yaml_fast,
+)
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
 from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
 from graphsenselib.utils.address import validate_address
@@ -131,14 +136,14 @@ def get_uri_for_tagpack(
         return res, rel_path, default_prefix, commit_date
 
 
-def check_for_null_characters(field_name: str, value, context: str = "") -> None:
+def check_for_null_characters(field_name: str, value, context="") -> None:
     """
     Check if a field value contains null characters (\x00 or \u0000).
 
     Args:
         field_name: Name of the field being checked
         value: Value to check for null characters
-        context: Additional context for error messages (e.g., tag info)
+        context: Additional context for error messages
 
     Raises:
         ValidationError: If null characters are found in the value
@@ -293,14 +298,21 @@ class TagPack(object):
     verifiable_currencies = supported_base_currencies
 
     def load_from_file(uri, pathname, schema, taxonomies, header_dir=None):
-        YamlIncludeConstructor.add_to_loader_class(
-            loader_class=UniqueKeyLoader, base_dir=header_dir
-        )
-
         if not os.path.isfile(pathname):
             sys.exit("This program requires {} to be a file".format(pathname))
-        with open(pathname, "r") as f:
-            contents = yaml.load(f, UniqueKeyLoader)
+
+        # Check first 4KB for !include directives
+        with open(pathname, "rb") as f:
+            has_include = b"!include" in f.read(4096)
+
+        if header_dir is not None or has_include:
+            YamlIncludeConstructor.add_to_loader_class(
+                loader_class=UniqueKeyLoader, base_dir=header_dir
+            )
+            with open(pathname, "r") as f:
+                contents = yaml.load(f, UniqueKeyLoader)
+        else:
+            contents = load_yaml_fast(pathname)
 
         if "header" in contents.keys():
             for k, v in contents["header"].items():
@@ -312,8 +324,13 @@ class TagPack(object):
         self.contents["lastmod"] = date.today()
 
     def init_default_values(self):
+        raw_tags = self.contents.get("tags", [])
+
+        if self.schema is None:
+            return
+
         if "confidence" not in self.contents and not all(
-            "confidence" in tag.contents for tag in self.tags
+            "confidence" in tag for tag in raw_tags
         ):
             conf_scores_df = self.schema.confidences
             min_confs = conf_scores_df[
@@ -334,9 +351,9 @@ class TagPack(object):
         if "network" not in self.contents and "currency" in self.contents:
             self.contents["network"] = self.contents["currency"]
 
-        for t in self.tags:
-            if "network" not in t.contents and "currency" in t.contents:
-                t.contents["network"] = t.contents["currency"]
+        for raw_tag in raw_tags:
+            if "network" not in raw_tag and "currency" in raw_tag:
+                raw_tag["network"] = raw_tag["currency"]
 
     @property
     def all_header_fields(self):
@@ -379,17 +396,23 @@ class TagPack(object):
         keys = ("address", "currency", "network", "label", "source")
         seen = set()
         duplicates = []
-        self._unique_tags = []
+        unique_raw_tags = []
 
-        for tag in self.tags:
-            fields = tag.all_fields
-            key_tuple = tuple(str(fields.get(k, "")).lower() for k in keys)
+        header_tag_fields = self.tag_fields
+        raw_tags = self.contents.get("tags", [])
+
+        for raw_tag in raw_tags:
+            key_tuple = tuple(
+                str(raw_tag.get(k) or header_tag_fields.get(k) or "").lower()
+                for k in keys
+            )
             if key_tuple in seen:
                 duplicates.append(key_tuple)
             else:
                 seen.add(key_tuple)
-                self._unique_tags.append(tag)
+                unique_raw_tags.append(raw_tag)
 
+        self._unique_tags = [Tag.from_contents(raw, self) for raw in unique_raw_tags]
         self._duplicates = duplicates
         return self._unique_tags
 
@@ -427,66 +450,71 @@ class TagPack(object):
             self.schema.check_taxonomies(field, value, self.taxonomies)
 
         # iterate over all tags, check types, taxonomy and mandatory use
-        e2 = "Mandatory tag field {} missing in {}"
-        e3 = "Field {} not allowed in {}"
-        e4 = "Value of body field {} must not be empty (None) in {}"
+        uri = self.uri
+        e2 = f"Mandatory tag field {{}} missing in {{}} ({uri})"
+        e3 = f"Field {{}} not allowed in {{}} ({uri})"
+        e4 = f"Value of body field {{}} must not be empty (None) in {{}} ({uri})"
 
         ut = self.get_unique_tags()
         nr_no_actors = 0
-        for tag in ut:
-            # check if mandatory tag fields are defined
-            if not isinstance(tag, Tag):
-                raise ValidationError("Unknown tag type {}".format(tag))
+        address_counts = defaultdict(int)
+        schema_tag_fields = self.schema.tag_fields
+        schema_mandatory_tag_fields = self.schema.mandatory_tag_fields
+        tagpack_tag_fields = self.tag_fields
 
-            actor = tag.all_fields.get("actor", None)
+        for tag in ut:
+            if not isinstance(tag, Tag):
+                raise ValidationError(f"Unknown tag type {tag} ({uri})")
+
+            fields = tag.all_fields
+            explicit = tag.explicit_fields
+
+            actor = fields.get("actor")
             if actor is None:
                 nr_no_actors += 1
 
-            address = tag.all_fields.get("address", None)
-            tx_hash = tag.all_fields.get("tx_hash", None)
+            address = fields.get("address")
+            tx_hash = fields.get("tx_hash")
             if address is None and tx_hash is None:
                 raise ValidationError(e2.format("address", tag))
             elif address is not None and tx_hash is not None:
                 raise ValidationError(
-                    "The fields tx_hash and address are mutually exclusive but both are set."
+                    f"The fields tx_hash and address are mutually exclusive but both are set in {tag} ({uri})"
                 )
 
-            for schema_field in self.schema.mandatory_tag_fields:
+            if address is not None:
+                address_counts[address] += 1
+
+            for schema_field in schema_mandatory_tag_fields:
                 if (
-                    schema_field not in tag.explicit_fields
-                    and schema_field not in self.tag_fields
+                    schema_field not in explicit
+                    and schema_field not in tagpack_tag_fields
                 ):
                     raise ValidationError(e2.format(schema_field, tag))
 
-            for field, value in tag.explicit_fields.items():
+            for field, value in explicit.items():
                 # check whether field is defined as body field
-                if field not in self.schema.tag_fields:
+                if field not in schema_tag_fields:
                     raise ValidationError(e3.format(field, tag))
 
                 # check for None values
                 if value is None:
                     raise ValidationError(e4.format(field, tag))
 
-                check_for_null_characters(field, value, str(tag))
+                check_for_null_characters(field, value, tag)
 
-                # check types and taxomomy use
+                # check types and taxonomy use
                 try:
                     self.schema.check_type(field, value)
                     self.schema.check_taxonomies(field, value, self.taxonomies)
                 except ValidationError as e:
-                    raise ValidationError(f"{e} in {tag}")
+                    raise ValidationError(f"{e} in {tag} ({uri})")
 
         if nr_no_actors > 0:
             logger.warning(
                 f"{nr_no_actors}/{len(ut)} tags have no actor configured. "
                 "Please consider connecting the tag to an actor."
             )
-
-        address_counts = defaultdict(int)
-        for tag in ut:
-            address = tag.all_fields.get("address")
-            if address is not None:
-                address_counts[address] += 1
 
         for address, count in address_counts.items():
             if count > 100:
@@ -663,37 +691,54 @@ class Tag(object):
         self.contents = contents
         self.tagpack = tagpack
 
-        # This allows the context in the yaml file to be written in eithe
-        # normal yaml syntax which is now converted to a json string
-        # of directly as json string.
-        if isinstance(self.contents.get("context", None), dict):
-            apply_to_dict_field(self.contents, "context", json.dumps, fail=True)
+        header = tagpack.tag_fields
+        explicit = contents
 
-        # set default values for concepts field
-        # make sure abuse and category are always part of the context
-        concepts = self.all_fields.get("concepts", [])
-        category = self.all_fields.get("category", None)
-        abuse = self.all_fields.get("abuse", None)
+        # Handle context field: extract tags before converting to JSON string
+        context = (
+            explicit["context"] if "context" in explicit else header.get("context")
+        )
+        context_tags = None
+        if isinstance(context, dict):
+            context_tags = context.get("tags")
+            # Convert dict context to JSON string (required for storage)
+            contents["context"] = json.dumps(context)
+        elif context is not None:
+            # Context is already a string, parse once to get tags
+            try:
+                context_tags = json.loads(context).get("tags")
+            except json.JSONDecodeError:
+                pass
+
+        # Ensure abuse and category are always part of concepts
+        concepts = (
+            explicit["concepts"]
+            if "concepts" in explicit
+            else header.get("concepts", [])
+        )
+        if isinstance(concepts, list):
+            concepts = concepts.copy()  # Don't mutate original
+        else:
+            concepts = []
+
+        category = (
+            explicit["category"] if "category" in explicit else header.get("category")
+        )
+        abuse = explicit["abuse"] if "abuse" in explicit else header.get("abuse")
+
         if abuse and abuse not in concepts:
             concepts.append(abuse)
 
         if category and category not in concepts:
             concepts.append(category)
 
-        # add tags from "tags" field in concepts.
-        try:
-            ctx = self.all_fields.get("context")
-            if ctx is not None:
-                tags = json.loads(ctx).get("tags", None)
-                if tags is not None:
-                    mcs = map_concepts_to_supported_concepts(tags)
-                    for mc in mcs:
-                        if mc not in concepts:
-                            concepts.append(mc)
-        except json.decoder.JSONDecodeError:
-            pass
+        if context_tags is not None:
+            mcs = map_concepts_to_supported_concepts(context_tags)
+            for mc in mcs:
+                if mc not in concepts:
+                    concepts.append(mc)
 
-        self.contents["concepts"] = concepts
+        contents["concepts"] = concepts
 
         # the yaml parser does not deal with string quoted dates.
         # so '2022-10-1' is not interpreted as a date. This line fixes this.
