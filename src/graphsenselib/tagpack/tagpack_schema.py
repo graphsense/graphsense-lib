@@ -12,18 +12,42 @@ TAGPACK_SCHEMA_FILE = "tagpack_schema.yaml"
 CONFIDENCE_FILE = "confidence.csv"
 
 
+class _ObservableDict(dict):
+    """Dict that calls a callback when modified."""
+
+    def __init__(self, data, on_change):
+        super().__init__(data)
+        self._on_change = on_change
+        # Wrap nested dicts
+        for k, v in self.items():
+            if isinstance(v, dict) and not isinstance(v, _ObservableDict):
+                super().__setitem__(k, _ObservableDict(v, on_change))
+
+    def __setitem__(self, key, value):
+        if isinstance(value, dict) and not isinstance(value, _ObservableDict):
+            value = _ObservableDict(value, self._on_change)
+        super().__setitem__(key, value)
+        self._on_change()
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        self._on_change()
+
+
 class TagPackSchema(object):
     """Defines the structure of a TagPack and supports validation"""
 
     def __init__(self):
         with open_pkgresource_file(TAGPACK_SCHEMA_FILE) as f:
             schema = f.read()  # pkg_resources.read_text(conf, TAGPACK_SCHEMA_FILE)
-        self.schema = yaml.safe_load(schema)
+        raw_schema = yaml.safe_load(schema)
         with open_pkgresource_file(CONFIDENCE_FILE) as confidence:
             # confidence = pkg_resources.open_text(db, CONFIDENCE_FILE)
             self.confidences = pd.read_csv(confidence, index_col="id")
         self.definition = TAGPACK_SCHEMA_FILE
 
+        # Wrap schema in observable dict that auto-rebuilds cache on changes
+        self.schema = _ObservableDict(raw_schema, self._rebuild_cache)
         self._header_fields = self.schema["header"]
         self._tag_fields = self.schema["tag"]
         self._mandatory_header_fields = {
@@ -33,6 +57,13 @@ class TagPackSchema(object):
             k: v for k, v in self._tag_fields.items() if v["mandatory"]
         }
         self._taxonomy_cache = {}
+        self._all_fields = {**self._header_fields, **self._tag_fields}
+
+    def _rebuild_cache(self):
+        """Rebuild caches after schema modifications."""
+        self._header_fields = self.schema["header"]
+        self._tag_fields = self.schema["tag"]
+        self._all_fields = {**self._header_fields, **self._tag_fields}
 
     @property
     def header_fields(self):
@@ -53,7 +84,7 @@ class TagPackSchema(object):
     @property
     def all_fields(self):
         """Returns all header and body fields"""
-        return {**self._header_fields, **self._tag_fields}
+        return self._all_fields
 
     def field_type(self, field):
         return self.all_fields[field]["type"]

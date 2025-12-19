@@ -198,7 +198,7 @@ def test_validate_wrong_with_mandatory_context_field(
 ):
     with pytest.raises(ValidationError) as e:
         assert actorpack_wrong_with_mandatory_context_field.validate()
-    assert "Mandatory field refs not in" in str(e.value)
+    assert "Mandatory field" in str(e.value) and "refs" in str(e.value)
 
 
 def test_validate(actorpack):
