@@ -788,3 +788,51 @@ def test_validate_fail_null_characters_in_list_field(schema, taxonomies):
 
     with pytest.raises(ValidationError, match="Field 'label' contains null characters"):
         tagpack.validate()
+
+
+def test_tags_cache_invalidation(schema, taxonomies):
+    """Test that tags are cached and cache invalidates when contents change."""
+    tagpack = TagPack(
+        "http://example.com",
+        {
+            "title": "Test",
+            "creator": "Test",
+            "source": "http://example.com",
+            "currency": "BTC",
+            "tags": [{"label": "first", "address": "addr1"}],
+        },
+        schema,
+        taxonomies,
+    )
+
+    # Access tags twice - should return same cached list
+    tags1 = tagpack.tags
+    tags2 = tagpack.tags
+    assert tags1 is tags2, "Cache should return same list object"
+
+    # Modify contents["tags"] - should invalidate cache
+    tagpack.contents["tags"] = [{"label": "second", "address": "addr2"}]
+
+    # Access tags again - should be new list with new data
+    tags3 = tagpack.tags
+    assert tags3 is not tags1, "Cache should be invalidated after contents change"
+    assert tags3[0].contents["label"] == "second"
+
+
+def test_concept_ids_cache_invalidation():
+    """Test that concept_ids are cached and cache invalidates on add_concept."""
+    taxonomy = Taxonomy("test", "http://example.com/test")
+    taxonomy.add_concept("concept1", "Concept 1", None, "First concept")
+
+    # Access concept_ids twice - should return same cached list
+    ids1 = taxonomy.concept_ids
+    ids2 = taxonomy.concept_ids
+    assert ids1 is ids2, "Cache should return same list object"
+
+    # Add another concept - should invalidate cache
+    taxonomy.add_concept("concept2", "Concept 2", None, "Second concept")
+
+    # Access concept_ids again - should be new list with both concepts
+    ids3 = taxonomy.concept_ids
+    assert ids3 is not ids1, "Cache should be invalidated after add_concept"
+    assert ids3 == ["concept1", "concept2"]
