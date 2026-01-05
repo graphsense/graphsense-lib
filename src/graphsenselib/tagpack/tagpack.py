@@ -17,7 +17,12 @@ import yaml
 from git import Repo
 from yamlinclude import YamlIncludeConstructor
 
-from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
+from graphsenselib.tagpack import (
+    TagPackFileError,
+    UniqueKeyLoader,
+    ValidationError,
+    load_yaml_fast,
+)
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
 from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
 from graphsenselib.utils.address import validate_address
@@ -293,14 +298,21 @@ class TagPack(object):
     verifiable_currencies = supported_base_currencies
 
     def load_from_file(uri, pathname, schema, taxonomies, header_dir=None):
-        YamlIncludeConstructor.add_to_loader_class(
-            loader_class=UniqueKeyLoader, base_dir=header_dir
-        )
-
         if not os.path.isfile(pathname):
             sys.exit("This program requires {} to be a file".format(pathname))
-        with open(pathname, "r") as f:
-            contents = yaml.load(f, UniqueKeyLoader)
+
+        # Check first 4KB for !include directives
+        with open(pathname, "rb") as f:
+            has_include = b"!include" in f.read(4096)
+
+        if header_dir is not None or has_include:
+            YamlIncludeConstructor.add_to_loader_class(
+                loader_class=UniqueKeyLoader, base_dir=header_dir
+            )
+            with open(pathname, "r") as f:
+                contents = yaml.load(f, UniqueKeyLoader)
+        else:
+            contents = load_yaml_fast(pathname)
 
         if "header" in contents.keys():
             for k, v in contents["header"].items():

@@ -7,6 +7,12 @@ try:
 except ImportError:
     from yaml import SafeLoader as SafeLoader
 
+import warnings
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    import ryml as _ryml
+
 if sys.version_info[:2] >= (3, 8):
     # TODO: Import directly (no need for conditional) when `python_requires = >= 3.8`
     from importlib.metadata import PackageNotFoundError, version  # pragma: no cover
@@ -62,9 +68,30 @@ class StorageError(Exception):
 class UniqueKeyLoader(SafeLoader):
     def construct_mapping(self, node, deep=False):
         mapping = set()
-        for key_node, value_node in node.value:
+        for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
             if key in mapping:
                 raise ValidationError(f"Duplicate {key!r} key found in YAML.")
             mapping.add(key)
         return super().construct_mapping(node, deep)
+
+
+def _dict_raise_on_duplicates(pairs):
+    """Raise ValidationError on duplicate keys during JSON parsing."""
+    d = {}
+    for k, v in pairs:
+        if k in d:
+            raise ValidationError(f"Duplicate {k!r} key found in YAML.")
+        d[k] = v
+    return d
+
+
+def load_yaml_fast(file_path):
+    """Load YAML using rapidyaml"""
+    import json
+
+    with open(file_path, "rb") as f:
+        content = f.read()
+    tree = _ryml.parse_in_arena(content)
+    json_bytes = _ryml.emit_json_malloc(tree, tree.root_id())
+    return json.loads(json_bytes, object_pairs_hook=_dict_raise_on_duplicates)
