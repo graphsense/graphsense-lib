@@ -136,14 +136,14 @@ def get_uri_for_tagpack(
         return res, rel_path, default_prefix, commit_date
 
 
-def check_for_null_characters(field_name: str, value, context: str = "") -> None:
+def check_for_null_characters(field_name: str, value, context=None) -> None:
     """
     Check if a field value contains null characters (\x00 or \u0000).
 
     Args:
         field_name: Name of the field being checked
         value: Value to check for null characters
-        context: Additional context for error messages (e.g., tag info)
+        context: Additional context for error messages (converted to str only on error)
 
     Raises:
         ValidationError: If null characters are found in the value
@@ -240,10 +240,12 @@ class TagPackContents(UserDict):
         super().__init__(contents)
         self.schema = schema
         self._tag_fields_cache = None
+        self._tags_cache = None
 
     def _invalidate_cache(self):
-        """Invalidate the cached tag_fields."""
+        """Invalidate all caches."""
         self._tag_fields_cache = None
+        self._tags_cache = None
 
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
@@ -379,8 +381,13 @@ class TagPack(object):
     @property
     def tags(self):
         """Returns all tags defined in a TagPack's body"""
+        if self.contents._tags_cache is not None:
+            return self.contents._tags_cache
         try:
-            return [Tag.from_contents(tag, self) for tag in self.contents["tags"]]
+            self.contents._tags_cache = [
+                Tag.from_contents(tag, self) for tag in self.contents["tags"]
+            ]
+            return self.contents._tags_cache
         except AttributeError:
             raise TagPackFileError("Cannot extract tags from tagpack")
 
@@ -479,7 +486,7 @@ class TagPack(object):
                 if value is None:
                     raise ValidationError(e4.format(field, tag))
 
-                check_for_null_characters(field, value, str(tag))
+                check_for_null_characters(field, value, tag)
 
                 # check types and taxomomy use
                 try:
