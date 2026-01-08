@@ -389,6 +389,7 @@ def validate_tagpack(
     no_address_validation,
     check_actor_references=False,
     actorpack_path=None,
+    use_pyyaml=False,
 ):
     t0 = time.time()
     logger.info("TagPack validation starts")
@@ -438,7 +439,7 @@ def validate_tagpack(
         for headerfile_dir, files in tagpack_files.items():
             for tagpack_file in files:
                 tagpack = TagPack.load_from_file(
-                    "", tagpack_file, schema, taxonomies, headerfile_dir
+                    "", tagpack_file, schema, taxonomies, headerfile_dir, use_pyyaml
                 )
 
                 logger.info(f"Validating {tagpack_file}")
@@ -651,6 +652,7 @@ def insert_tagpack(
     tag_type_default,
     config,
     update_flag,
+    use_pyyaml=False,
 ) -> Tuple[int, int]:
     t0 = time.time()
     logger.info("TagPack insert starts")
@@ -742,6 +744,7 @@ def insert_tagpack(
         validate_tagpack=not no_validation,
         tag_type_default=tag_type_default,
         no_git=no_git,
+        use_pyyaml=use_pyyaml,
     )
 
     if n_processes != 1:
@@ -794,14 +797,24 @@ def tagpack():
     default=None,
     help="Path to actorpack file (downloads graphsense actorpack if not provided)",
 )
+@click.option(
+    "--use-pyyaml",
+    is_flag=True,
+    help="Use PyYAML instead of rapidyaml for YAML parsing",
+)
 @click.pass_context
 def validate_tagpack_cli(
-    ctx, path, no_address_validation, check_actor_references, actorpack_path
+    ctx, path, no_address_validation, check_actor_references, actorpack_path, use_pyyaml
 ):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
     validate_tagpack(
-        config, path, no_address_validation, check_actor_references, actorpack_path
+        config,
+        path,
+        no_address_validation,
+        check_actor_references,
+        actorpack_path,
+        use_pyyaml,
     )
 
 
@@ -874,6 +887,11 @@ def list_tagpack_cli(schema, url, unique, category, network, csv):
     is_flag=True,
     help="By default, tagpack insertion stops when an already inserted tagpack exists in the database. Use this switch to update existing tagpacks if modified, but skip unmodified ones.",
 )
+@click.option(
+    "--use-pyyaml",
+    is_flag=True,
+    help="Use PyYAML instead of rapidyaml for YAML parsing",
+)
 @click.pass_context
 def insert_tagpack_cli(
     ctx,
@@ -890,6 +908,7 @@ def insert_tagpack_cli(
     no_validation,
     tag_type_default,
     update,
+    use_pyyaml,
 ):
     """insert TagPacks"""
     url = override_postgres_url(url)
@@ -909,6 +928,7 @@ def insert_tagpack_cli(
         tag_type_default,
         ctx.obj.get("config"),
         update,
+        use_pyyaml,
     )
 
 
