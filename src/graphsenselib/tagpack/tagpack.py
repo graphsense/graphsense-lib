@@ -299,7 +299,9 @@ class TagPack(object):
 
     verifiable_currencies = supported_base_currencies
 
-    def load_from_file(uri, pathname, schema, taxonomies, header_dir=None):
+    def load_from_file(
+        uri, pathname, schema, taxonomies, header_dir=None, use_pyyaml=False
+    ):
         if not os.path.isfile(pathname):
             sys.exit("This program requires {} to be a file".format(pathname))
 
@@ -307,7 +309,7 @@ class TagPack(object):
         with open(pathname, "rb") as f:
             has_include = b"!include" in f.read(4096)
 
-        if header_dir is not None or has_include:
+        if use_pyyaml or header_dir is not None or has_include:
             YamlIncludeConstructor.add_to_loader_class(
                 loader_class=UniqueKeyLoader, base_dir=header_dir
             )
