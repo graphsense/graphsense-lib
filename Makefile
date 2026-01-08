@@ -82,4 +82,8 @@ package-ui:
 	- rm -rf tagpack/admin-ui/dist
 	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui
+tagpack-integration-test:
+	chmod +x tagpack/integration_test.sh
+	cd tagpack && ./integration_test.sh
+
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui integration-test
