@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v25.11.11'
-RELEASESEM := 'v2.8.11'
+RELEASE := 'v25.11.12rc1'
+RELEASESEM := 'v2.8.12rc1'
 
 -include .env
 
@@ -24,7 +24,7 @@ test-ci:
 	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
 
 test-with-base-dependencies-ci:
-	uv run --exact --no-dev --group testing --extra conversions pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
+	uv run --exact --no-dev --group testing --extra conversions --extra tagpacks pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
 
 
 test-all:
