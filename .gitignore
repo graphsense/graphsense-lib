@@ -269,3 +269,4 @@ MANIFEST
 .conda*/
 .python-version
 .claude/
+tagpack/test-tagpacks/
