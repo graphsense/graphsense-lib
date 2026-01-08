@@ -9,6 +9,9 @@ except ImportError:
 
 import warnings
 
+import re
+
+
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     import ryml as _ryml
@@ -27,6 +30,8 @@ except PackageNotFoundError:  # pragma: no cover
     __version__ = "unknown"
 finally:
     del version, PackageNotFoundError
+
+_YAML_DATE_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def get_version():
@@ -86,12 +91,43 @@ def _dict_raise_on_duplicates(pairs):
     return d
 
 
+def _convert_yaml_dates(obj):
+    """Recursively convert YYYY-MM-DD strings to datetime.date objects.
+
+    This matches PyYAML SafeLoader behavior for dates while keeping
+    rapidyaml behavior for other types (yes/no remain as strings).
+    """
+    from datetime import date
+
+    if isinstance(obj, dict):
+        return {k: _convert_yaml_dates(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_yaml_dates(item) for item in obj]
+    elif isinstance(obj, str):
+        if _YAML_DATE_REGEX.match(obj):
+            try:
+                parts = obj.split("-")
+                return date(int(parts[0]), int(parts[1]), int(parts[2]))
+            except (ValueError, IndexError):
+                pass
+        return obj
+    else:
+        return obj
+
+
 def load_yaml_fast(file_path):
-    """Load YAML using rapidyaml"""
+    """Load YAML using rapidyaml.
+
+    Note: This produces slightly different types than PyYAML SafeLoader:
+    - 'yes'/'no'/'on'/'off' remain as strings (PyYAML converts to bool)
+    - 'YYYY-MM-DD' dates are converted to datetime.date (same as PyYAML)
+    - 'true'/'false' are converted to bool (same as PyYAML)
+    """
     import json
 
     with open(file_path, "rb") as f:
         content = f.read()
     tree = _ryml.parse_in_arena(content)
     json_bytes = _ryml.emit_json_malloc(tree, tree.root_id())
-    return json.loads(json_bytes, object_pairs_hook=_dict_raise_on_duplicates)
+    data = json.loads(json_bytes, object_pairs_hook=_dict_raise_on_duplicates)
+    return _convert_yaml_dates(data)
