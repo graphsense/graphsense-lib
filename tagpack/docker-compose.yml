@@ -11,7 +11,7 @@ services:
     volumes:
       - "$LOCAL_DATA_DIR:/var/lib/postgresql/data:Z"
       - ./postgres-conf.sql:/tmp/postgres-conf.sql:Z
-      - ./docker/init.sh:/docker-entrypoint-initdb.d/init.sh:Z
+      - ./init.sh:/docker-entrypoint-initdb.d/init.sh:Z
     ports:
       - 5432:5432
     shm_size: "2048mb"

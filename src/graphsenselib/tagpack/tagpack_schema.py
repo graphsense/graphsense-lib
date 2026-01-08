@@ -23,6 +23,7 @@ class TagPackSchema(object):
             # confidence = pkg_resources.open_text(db, CONFIDENCE_FILE)
             self.confidences = pd.read_csv(confidence, index_col="id")
         self.definition = TAGPACK_SCHEMA_FILE
+        self._taxonomy_cache = {}
 
     @property
     def header_fields(self):
@@ -63,8 +64,7 @@ class TagPackSchema(object):
         return check_type(self.schema, field, field_def, value)
 
     def check_taxonomies(self, field, value, taxonomies):
-        """Checks whether a field uses values from given taxonomies, with performance improvements."""
-        # Retrieve the taxonomy information once
+        """Checks whether a field uses values from given taxonomies."""
         taxonomy = self.field_taxonomy(field)
         if not taxonomy:
             return True
@@ -74,17 +74,19 @@ class TagPackSchema(object):
         if isinstance(taxonomy, str):
             taxonomy = [taxonomy]
 
-        expected_taxonomies = [taxonomies.get(tid) for tid in taxonomy]
-        if None in expected_taxonomies:
-            raise ValidationError(f"Unknown taxonomy {taxonomy}")
-
-        valid_concepts = set()
-        for t in expected_taxonomies:
-            valid_concepts.update(t.concept_ids)
+        # Cache valid_concepts per field (taxonomies are stable during validation)
+        cache_key = (field, tuple(taxonomy))
+        valid_concepts = self._taxonomy_cache.get(cache_key)
+        if valid_concepts is None:
+            expected_taxonomies = [taxonomies.get(tid) for tid in taxonomy]
+            if None in expected_taxonomies:
+                raise ValidationError(f"Unknown taxonomy {taxonomy}")
+            valid_concepts = set()
+            for t in expected_taxonomies:
+                valid_concepts.update(t.concept_ids)
+            self._taxonomy_cache[cache_key] = valid_concepts
 
         values = value if isinstance(value, list) else [value]
-
-        # Check each provided value against the union of valid concept IDs
         for v in values:
             if v not in valid_concepts:
                 raise ValidationError(f"Undefined concept {v} for {field} field")

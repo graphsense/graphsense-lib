@@ -17,7 +17,12 @@ import yaml
 from git import Repo
 from yamlinclude import YamlIncludeConstructor
 
-from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
+from graphsenselib.tagpack import (
+    TagPackFileError,
+    UniqueKeyLoader,
+    ValidationError,
+    load_yaml_fast,
+)
 from graphsenselib.tagpack.concept_mapping import map_concepts_to_supported_concepts
 from graphsenselib.tagpack.utils import apply_to_dict_field, try_parse_date
 from graphsenselib.utils.address import validate_address
@@ -131,14 +136,14 @@ def get_uri_for_tagpack(
         return res, rel_path, default_prefix, commit_date
 
 
-def check_for_null_characters(field_name: str, value, context: str = "") -> None:
+def check_for_null_characters(field_name: str, value, context=None) -> None:
     """
     Check if a field value contains null characters (\x00 or \u0000).
 
     Args:
         field_name: Name of the field being checked
         value: Value to check for null characters
-        context: Additional context for error messages (e.g., tag info)
+        context: Additional context for error messages (converted to str only on error)
 
     Raises:
         ValidationError: If null characters are found in the value
@@ -235,10 +240,12 @@ class TagPackContents(UserDict):
         super().__init__(contents)
         self.schema = schema
         self._tag_fields_cache = None
+        self._tags_cache = None
 
     def _invalidate_cache(self):
-        """Invalidate the cached tag_fields."""
+        """Invalidate all caches."""
         self._tag_fields_cache = None
+        self._tags_cache = None
 
     def __setitem__(self, key, value):
         super().__setitem__(key, value)
@@ -292,15 +299,24 @@ class TagPack(object):
 
     verifiable_currencies = supported_base_currencies
 
-    def load_from_file(uri, pathname, schema, taxonomies, header_dir=None):
-        YamlIncludeConstructor.add_to_loader_class(
-            loader_class=UniqueKeyLoader, base_dir=header_dir
-        )
-
+    def load_from_file(
+        uri, pathname, schema, taxonomies, header_dir=None, use_pyyaml=False
+    ):
         if not os.path.isfile(pathname):
             sys.exit("This program requires {} to be a file".format(pathname))
-        with open(pathname, "r") as f:
-            contents = yaml.load(f, UniqueKeyLoader)
+
+        # Check first 4KB for !include directives
+        with open(pathname, "rb") as f:
+            has_include = b"!include" in f.read(4096)
+
+        if use_pyyaml or header_dir is not None or has_include:
+            YamlIncludeConstructor.add_to_loader_class(
+                loader_class=UniqueKeyLoader, base_dir=header_dir
+            )
+            with open(pathname, "r") as f:
+                contents = yaml.load(f, UniqueKeyLoader)
+        else:
+            contents = load_yaml_fast(pathname)
 
         if "header" in contents.keys():
             for k, v in contents["header"].items():
@@ -367,8 +383,13 @@ class TagPack(object):
     @property
     def tags(self):
         """Returns all tags defined in a TagPack's body"""
+        if self.contents._tags_cache is not None:
+            return self.contents._tags_cache
         try:
-            return [Tag.from_contents(tag, self) for tag in self.contents["tags"]]
+            self.contents._tags_cache = [
+                Tag.from_contents(tag, self) for tag in self.contents["tags"]
+            ]
+            return self.contents._tags_cache
         except AttributeError:
             raise TagPackFileError("Cannot extract tags from tagpack")
 
@@ -467,7 +488,7 @@ class TagPack(object):
                 if value is None:
                     raise ValidationError(e4.format(field, tag))
 
-                check_for_null_characters(field, value, str(tag))
+                check_for_null_characters(field, value, tag)
 
                 # check types and taxomomy use
                 try:

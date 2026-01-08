@@ -38,6 +38,7 @@ class InsertTagpackWorker:
         validate_tagpack=False,
         tag_type_default="actor",
         no_git: bool = False,
+        use_pyyaml: bool = False,
     ):
         self.url = url
         self.db_schema = db_schema
@@ -50,6 +51,7 @@ class InsertTagpackWorker:
         self.tagstore = None
         self.validate_tagpack = validate_tagpack
         self.no_git = no_git
+        self.use_pyyaml = use_pyyaml
 
     def __call__(self, data):
         i, tp = data
@@ -70,6 +72,7 @@ class InsertTagpackWorker:
             self.tp_schema,
             self.taxonomies,
             headerfile_dir,
+            self.use_pyyaml,
         )
 
         try:
