@@ -34,6 +34,7 @@ from graphsenselib.tagpack.constants import (
 )
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
+from graphsenselib.monitoring.notifications import send_msg_to_topic
 import logging
 from typing import Tuple
 
@@ -765,6 +766,14 @@ def insert_tagpack(
     msg = "Processed {}/{} TagPacks with {} Tags in {}s. "
     if status == "fail":
         logger.error(msg.format(no_passed, n_ppacks, no_tags, duration))
+        failed_count = n_ppacks - no_passed
+        try:
+            send_msg_to_topic(
+                "tagpack_insert_errors",
+                f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {path}",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send Slack notification: {e}")
     else:
         click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
     msg = "Don't forget to run 'graphsense-cli tagstore refresh-views' soon to keep the database"
