@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 import pytest
+from types import SimpleNamespace
 
 pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
 
-from graphsenselib.tagpack.tagstore import _perform_address_modifications, TagStore
+from graphsenselib.tagpack.tagstore import (
+    _perform_address_modifications,
+    _get_tag,
+    TagStore,
+)
 from graphsenselib.tagpack.cli import insert_tagpack, DEFAULT_SCHEMA
 
 from graphsenselib.tagstore.db.queries import UserReportedAddressTag
@@ -31,13 +36,8 @@ def test_eth_conversion():
 
 
 def test_update_of_tagpack_file(db_setup):
-    file = (
-        Path(__file__).parent.resolve()
-        / ".."
-        / "testfiles"
-        / "simple"
-        / "with_concepts.yaml"
-    )
+    testfiles_dir = Path(__file__).parent.resolve() / ".." / "testfiles"
+    file = testfiles_dir / "simple" / "with_concepts.yaml"
 
     m_succ, n_tagpacks = insert_tagpack(
         db_setup["db_connection_string"],
@@ -266,3 +266,109 @@ async def test_insert_user_tag(async_tagstore_db):
     assert len(taxonomiesAfter.tag_subject) == len(taxonomiesBefore.tag_subject)
     assert len(taxonomiesAfter.country) == len(taxonomiesBefore.country)
     assert len(taxonomiesAfter.confidence) == len(taxonomiesBefore.confidence)
+
+
+def test_get_tag_resolves_actor_alias():
+    """Test that _get_tag() resolves actor aliases to main IDs"""
+    tag = SimpleNamespace(
+        all_fields={
+            "label": "Test Label",
+            "source": "http://example.com",
+            "address": "1ABC123",
+            "currency": "BTC",
+            "network": "BTC",
+            "is_cluster_definer": False,
+            "confidence": "web_crawl",
+            "context": None,
+            "actor": "binanceexchange",  # This is an alias
+            "tag_type": "actor",
+        }
+    )
+
+    actor_resolve_mapping = {
+        "binance": "binance",
+        "binanceexchange": "binance",  # Alias maps to main ID
+        "coinbase": "coinbase",
+    }
+
+    result = _get_tag(tag, "test-tagpack-id", "actor", actor_resolve_mapping)
+
+    # Result is a tuple, actor is at index 10
+    assert result[10] == "binance", "Actor alias should be resolved to main ID"
+
+
+def test_get_tag_keeps_actor_when_no_mapping():
+    """Test that _get_tag() keeps original actor when no mapping provided"""
+    tag = SimpleNamespace(
+        all_fields={
+            "label": "Test Label",
+            "source": "http://example.com",
+            "address": "1ABC123",
+            "currency": "BTC",
+            "network": "BTC",
+            "is_cluster_definer": False,
+            "confidence": "web_crawl",
+            "context": None,
+            "actor": "binanceexchange",
+            "tag_type": "actor",
+        }
+    )
+
+    result = _get_tag(tag, "test-tagpack-id", "actor", None)
+
+    assert result[10] == "binanceexchange", (
+        "Actor should remain unchanged without mapping"
+    )
+
+
+def test_get_tag_keeps_actor_when_not_in_mapping():
+    """Test that _get_tag() keeps original actor when not found in mapping"""
+    tag = SimpleNamespace(
+        all_fields={
+            "label": "Test Label",
+            "source": "http://example.com",
+            "address": "1ABC123",
+            "currency": "BTC",
+            "network": "BTC",
+            "is_cluster_definer": False,
+            "confidence": "web_crawl",
+            "context": None,
+            "actor": "unknownactor",
+            "tag_type": "actor",
+        }
+    )
+
+    actor_resolve_mapping = {
+        "binance": "binance",
+        "binanceexchange": "binance",
+    }
+
+    result = _get_tag(tag, "test-tagpack-id", "actor", actor_resolve_mapping)
+
+    assert result[10] == "unknownactor", "Unknown actor should remain unchanged"
+
+
+def test_get_tag_handles_none_actor():
+    """Test that _get_tag() handles None actor correctly"""
+    tag = SimpleNamespace(
+        all_fields={
+            "label": "Test Label",
+            "source": "http://example.com",
+            "address": "1ABC123",
+            "currency": "BTC",
+            "network": "BTC",
+            "is_cluster_definer": False,
+            "confidence": "web_crawl",
+            "context": None,
+            "actor": None,
+            "tag_type": "actor",
+        }
+    )
+
+    actor_resolve_mapping = {
+        "binance": "binance",
+    }
+
+    result = _get_tag(tag, "test-tagpack-id", "actor", actor_resolve_mapping)
+
+    assert result[10] is None, "None actor should remain None"

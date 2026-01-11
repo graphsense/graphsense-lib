@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa: T201
+import json
 import textwrap
 import time
 from datetime import datetime
@@ -39,6 +40,7 @@ class InsertTagpackWorker:
         tag_type_default="actor",
         no_git: bool = False,
         use_pyyaml: bool = False,
+        actor_resolve_mapping=None,
     ):
         self.url = url
         self.db_schema = db_schema
@@ -52,6 +54,7 @@ class InsertTagpackWorker:
         self.validate_tagpack = validate_tagpack
         self.no_git = no_git
         self.use_pyyaml = use_pyyaml
+        self.actor_resolve_mapping = actor_resolve_mapping
 
     def __call__(self, data):
         i, tp = data
@@ -91,6 +94,7 @@ class InsertTagpackWorker:
                 lastmod,
                 default_prefix,
                 relpath,
+                actor_resolve_mapping=self.actor_resolve_mapping,
             )
             click.secho(
                 f"{i} {tagpack_file}: PROCESSED {len(tagpack.tags)} Tags", fg="green"
@@ -181,6 +185,7 @@ class TagStore(object):
         prefix,
         rel_path,
         batch=1000,
+        actor_resolve_mapping=None,
     ):
         tagpack_id = self.create_id(prefix, rel_path)
         h = _get_header(tagpack, tagpack_id)
@@ -251,7 +256,9 @@ class TagStore(object):
         address_data = []
         tag_concepts = []
         for tag in tagpack.get_unique_tags():
-            tag_data.append(_get_tag(tag, tagpack_id, tag_type_default))
+            tag_data.append(
+                _get_tag(tag, tagpack_id, tag_type_default, actor_resolve_mapping)
+            )
             adr_and_net = _get_network_and_address(tag)
             if adr_and_net is not None:
                 address_data.append(adr_and_net)
@@ -278,6 +285,28 @@ class TagStore(object):
     def get_ingested_actorpacks(self) -> List:
         self.cursor.execute("SELECT id from actorpack")
         return [i[0] for i in self.cursor.fetchall()]
+
+    def get_actor_alias_mapping(self) -> Dict[str, str]:
+        """Load all actors and build alias -> actor_id mapping from context field."""
+        self.cursor.execute("SELECT id, context FROM actor")
+        mapping = {}
+        for actor_id, context_json in self.cursor.fetchall():
+            mapping[actor_id] = actor_id
+            if context_json:
+                try:
+                    context = json.loads(context_json)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Invalid JSON in context for actor {actor_id}: {e}")
+                    continue
+                for alias in context.get("aliases", []):
+                    if alias in mapping and mapping[alias] != actor_id:
+                        logger.warning(
+                            f"Alias '{alias}' already mapped to '{mapping[alias]}', "
+                            f"skipping duplicate mapping to '{actor_id}'"
+                        )
+                        continue
+                    mapping[alias] = actor_id
+        return mapping
 
     @auto_commit
     def insert_actorpack(self, actorpack, force_insert, prefix, rel_path, batch=1000):
@@ -898,7 +927,7 @@ def _get_tag_concepts(tag):
     return tc
 
 
-def _get_tag(tag, tagpack_id, tag_type_default):
+def _get_tag(tag, tagpack_id, tag_type_default, actor_resolve_mapping=None):
     label = tag.all_fields.get("label").strip()
     lastmod = tag.all_fields.get("lastmod", datetime.now().isoformat())
 
@@ -909,6 +938,10 @@ def _get_tag(tag, tagpack_id, tag_type_default):
     else:
         identifier = tag.all_fields.get("tx_hash")
         tag_subject = "tx"
+
+    actor = tag.all_fields.get("actor", None)
+    if actor and actor_resolve_mapping:
+        actor = actor_resolve_mapping.get(actor, actor)
 
     return (
         label,
@@ -921,7 +954,7 @@ def _get_tag(tag, tagpack_id, tag_type_default):
         lastmod,
         tag.all_fields.get("context"),
         tagpack_id,
-        tag.all_fields.get("actor", None),
+        actor,
         tag.all_fields.get("tag_type", tag_type_default),
         tag_subject,
     )

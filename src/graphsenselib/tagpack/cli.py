@@ -678,6 +678,18 @@ def insert_tagpack(
     taxonomy_keys = taxonomies.keys()
     logger.info(f"Loaded taxonomies: {taxonomy_keys}")
 
+    actor_resolve_mapping = None
+    try:
+        actor_resolve_mapping = tagstore.get_actor_alias_mapping()
+        logger.info(f"Loaded {len(actor_resolve_mapping)} actor mappings from tagstore")
+    except Exception as e:
+        msg = f"Failed to load actor alias mapping from tagstore: {e}"
+        logger.error(msg)
+        try:
+            send_msg_to_topic("tagpack_insert_errors", msg)
+        except Exception as slack_err:
+            logger.warning(f"Failed to send Slack notification: {slack_err}")
+
     tagpack_files = collect_tagpack_files(path)
 
     # resolve backlinks to remote repository and relative paths
@@ -746,6 +758,7 @@ def insert_tagpack(
         tag_type_default=tag_type_default,
         no_git=no_git,
         use_pyyaml=use_pyyaml,
+        actor_resolve_mapping=actor_resolve_mapping,
     )
 
     if n_processes != 1:
