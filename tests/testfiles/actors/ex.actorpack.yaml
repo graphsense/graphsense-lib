@@ -8,7 +8,7 @@ actors:
   uri: https://archive.org
   label: Internet Archive
   jurisdictions: [US]
-  context: '{"test": 1}'
+  context: '{"test": 1, "aliases": ["internetarchive"]}'
   categories: [organization]
 - id: binance
   uri: https://binance.com
