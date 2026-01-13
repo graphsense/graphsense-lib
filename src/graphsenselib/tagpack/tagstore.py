@@ -292,20 +292,17 @@ class TagStore(object):
         mapping = {}
         for actor_id, context_json in self.cursor.fetchall():
             mapping[actor_id] = actor_id
-            if context_json:
-                try:
-                    context = json.loads(context_json)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Invalid JSON in context for actor {actor_id}: {e}")
+            if not context_json:
+                continue
+            context = json.loads(context_json)
+            for alias in context.get("aliases", []):
+                if alias in mapping and mapping[alias] != actor_id:
+                    logger.warning(
+                        f"Alias '{alias}' already mapped to '{mapping[alias]}', "
+                        f"skipping duplicate mapping to '{actor_id}'"
+                    )
                     continue
-                for alias in context.get("aliases", []):
-                    if alias in mapping and mapping[alias] != actor_id:
-                        logger.warning(
-                            f"Alias '{alias}' already mapped to '{mapping[alias]}', "
-                            f"skipping duplicate mapping to '{actor_id}'"
-                        )
-                        continue
-                    mapping[alias] = actor_id
+                mapping[alias] = actor_id
         return mapping
 
     @auto_commit

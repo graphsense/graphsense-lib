@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 LBL_BLACKLIST = re.compile(r"[@_!#$%^*<>?\|}{~:;]")
 
 
+def _safe_json_parse(text: str):
+    """Parse JSON string, returning None on decode error."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
 class ActorPack(object):
     """Represents an ActorPack"""
 
@@ -115,17 +123,31 @@ class ActorPack(object):
         self._duplicates = duplicates
         return self._unique_actors
 
-    def get_resolve_mapping(self):
-        """Returns a mapping of aliases to actor ids"""
+    def get_resolve_mapping(self) -> dict:
+        """Returns a mapping of aliases to actor ids.
+
+        Reads aliases from the 'aliases' key within the 'context' field (JSON).
+        Actors with invalid JSON context are skipped for alias resolution.
+        """
         if self._resolve_mapping:
             return self._resolve_mapping
 
-        unique_actors = self.get_unique_actors()
-
-        mapping = {actor.identifier: actor.identifier for actor in unique_actors}
-
-        for actor in unique_actors:
-            for alias in actor.all_fields.get("aliases", []):
+        mapping = {}
+        for actor in self.get_unique_actors():
+            mapping[actor.identifier] = actor.identifier
+            context_raw = actor.all_fields.get("context")
+            if not context_raw:
+                continue
+            if isinstance(context_raw, dict):
+                context = context_raw
+            elif not isinstance(context_raw, str):
+                continue
+            else:
+                parsed = _safe_json_parse(context_raw)
+                if not isinstance(parsed, dict):
+                    continue
+                context = parsed
+            for alias in context.get("aliases", []):
                 mapping[alias] = actor.identifier
 
         self._resolve_mapping = mapping

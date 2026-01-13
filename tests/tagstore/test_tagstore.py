@@ -80,6 +80,21 @@ def test_update_of_tagpack_file(db_setup):
     assert n_tagpacks == m_succ == 1, f"Failed to update modified tagpack {file}"
 
 
+def test_get_actor_alias_mapping(db_setup):
+    """Test that get_actor_alias_mapping loads aliases from context field."""
+    ts = TagStore(db_setup["db_connection_string"], "public")
+
+    mapping = ts.get_actor_alias_mapping()
+
+    # Actor IDs should map to themselves
+    assert mapping["internet_archive"] == "internet_archive"
+    assert mapping["binance"] == "binance"
+
+    # Aliases from context should map to actor ID
+    # (internet_archive has aliases: ["internetarchive"] in context)
+    assert mapping["internetarchive"] == "internet_archive"
+
+
 def test_db_consistency(db_setup):
     # this is all based on the tagpacks inserted in conftest.py
 

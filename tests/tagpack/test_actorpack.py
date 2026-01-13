@@ -224,3 +224,86 @@ def test_load_actorpack_from_file(taxonomies):
     )
 
     assert ap.validate()
+
+
+def test_get_resolve_mapping_reads_aliases_from_context(schema, taxonomies):
+    """Test that get_resolve_mapping reads aliases from context.aliases field."""
+    ap = ActorPack(
+        "http://example.com",
+        {
+            "title": "Test Actors",
+            "creator": "Test",
+            "lastmod": "2021-04-21",
+            "categories": ["exchange"],
+            "actors": [
+                {
+                    "id": "binance",
+                    "label": "Binance",
+                    "uri": "https://binance.com",
+                    "jurisdictions": ["US"],
+                    "context": '{"aliases": ["binanceexchange", "binance_ex"]}',
+                },
+                {
+                    "id": "kraken",
+                    "label": "Kraken",
+                    "uri": "https://kraken.com",
+                    "jurisdictions": ["US"],
+                    "context": '{"other_data": "foo"}',  # no aliases
+                },
+            ],
+        },
+        schema,
+        taxonomies,
+    )
+
+    mapping = ap.get_resolve_mapping()
+
+    # Actor IDs map to themselves
+    assert mapping["binance"] == "binance"
+    assert mapping["kraken"] == "kraken"
+
+    # Aliases from context map to actor ID
+    assert mapping["binanceexchange"] == "binance"
+    assert mapping["binance_ex"] == "binance"
+
+    # No extra mappings for kraken (no aliases in context)
+    assert len([k for k, v in mapping.items() if v == "kraken"]) == 1
+
+
+def test_get_resolve_mapping_handles_invalid_json_context(schema, taxonomies):
+    """Test that get_resolve_mapping skips actors with invalid JSON in context."""
+    ap = ActorPack(
+        "http://example.com",
+        {
+            "title": "Test Actors",
+            "creator": "Test",
+            "lastmod": "2021-04-21",
+            "categories": ["exchange"],
+            "actors": [
+                {
+                    "id": "broken",
+                    "label": "Broken",
+                    "uri": "https://broken.com",
+                    "jurisdictions": ["US"],
+                    "context": "not valid json{",
+                },
+                {
+                    "id": "valid",
+                    "label": "Valid",
+                    "uri": "https://valid.com",
+                    "jurisdictions": ["US"],
+                    "context": '{"aliases": ["valid_alias"]}',
+                },
+            ],
+        },
+        schema,
+        taxonomies,
+    )
+
+    # Should not raise, just skip the broken one
+    mapping = ap.get_resolve_mapping()
+
+    assert mapping["broken"] == "broken"  # ID still maps
+    assert mapping["valid"] == "valid"
+    assert mapping["valid_alias"] == "valid"
+    assert "broken_alias" not in mapping  # no alias for broken actor
