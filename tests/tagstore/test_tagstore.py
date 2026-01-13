@@ -387,3 +387,63 @@ def test_get_tag_handles_none_actor():
     result = _get_tag(tag, "test-tagpack-id", "actor", actor_resolve_mapping)
 
     assert result[10] is None, "None actor should remain None"
+
+
+def test_tagpack_insertion_is_atomic(db_setup, tmp_path):
+    """Test that tagpack insertion is atomic - if a tag fails, the entire
+    tagpack (including header) should be rolled back."""
+
+    # Count tagpacks before insertion attempt
+    ts_before = TagStore(db_setup["db_connection_string"], "public")
+    ts_before.cursor.execute("SELECT COUNT(*) FROM tagpack")
+    count_before = ts_before.cursor.fetchone()[0]
+    ts_before.conn.close()
+
+    # Create a tagpack with an invalid confidence level that will cause
+    # a foreign key violation
+    invalid_tagpack_content = """
+title: Atomic Test TagPack
+creator: Test Creator
+source: http://example.com/atomic_test
+confidence: this_confidence_does_not_exist_in_db
+currency: BTC
+lastmod: 2021-04-21
+tags:
+- address: 1atomictestaddress123
+  label: atomictest
+"""
+    tagpack_file = tmp_path / "atomic_test_tagpack.yaml"
+    tagpack_file.write_text(invalid_tagpack_content)
+
+    # Try to insert - this should fail due to invalid confidence FK
+    m_succ, n_tagpacks = insert_tagpack(
+        db_setup["db_connection_string"],
+        DEFAULT_SCHEMA,
+        str(tagpack_file.resolve()),
+        batch_size=100,
+        public=True,
+        force=False,
+        add_new=False,
+        no_strict_check=True,
+        no_git=True,
+        n_workers=1,
+        no_validation=True,  # Skip validation to let FK violation happen at DB level
+        tag_type_default="actor",
+        config=None,
+        update_flag=False,
+    )
+
+    # Insertion should have failed
+    assert m_succ == 0, "Expected insertion to fail due to FK violation"
+
+    # Count tagpacks after - should be the same (no orphaned header)
+    ts_after = TagStore(db_setup["db_connection_string"], "public")
+    ts_after.cursor.execute("SELECT COUNT(*) FROM tagpack")
+    count_after = ts_after.cursor.fetchone()[0]
+    ts_after.conn.close()
+
+    assert count_after == count_before, (
+        f"Tagpack count changed from {count_before} to {count_after} - "
+        "orphaned tagpack header was left in DB after failed tag insertion. "
+        "Transaction should have been rolled back atomically."
+    )
