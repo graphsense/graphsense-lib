@@ -221,7 +221,6 @@ class TagStore(object):
                 lastmod,
             )
         self.cursor.execute(q, v)
-        self.conn.commit()
 
         addr_sql = "INSERT INTO address (network, address) VALUES %s \
             ON CONFLICT DO NOTHING"
