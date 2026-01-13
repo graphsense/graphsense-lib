@@ -296,12 +296,6 @@ class TagStore(object):
                 continue
             context = json.loads(context_json)
             for alias in context.get("aliases", []):
-                if alias in mapping and mapping[alias] != actor_id:
-                    logger.warning(
-                        f"Alias '{alias}' already mapped to '{mapping[alias]}', "
-                        f"skipping duplicate mapping to '{actor_id}'"
-                    )
-                    continue
                 mapping[alias] = actor_id
         return mapping
 

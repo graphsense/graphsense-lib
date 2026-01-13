@@ -32,6 +32,22 @@ def _safe_json_parse(text: str):
         return None
 
 
+def _get_aliases_from_context(actor) -> list:
+    """Extract aliases from actor's context field."""
+    context_raw = actor.all_fields.get("context")
+    if not context_raw:
+        return []
+    if isinstance(context_raw, dict):
+        context = context_raw
+    elif isinstance(context_raw, str):
+        context = _safe_json_parse(context_raw)
+        if not isinstance(context, dict):
+            return []
+    else:
+        return []
+    return context.get("aliases", [])
+
+
 class ActorPack(object):
     """Represents an ActorPack"""
 
@@ -127,7 +143,6 @@ class ActorPack(object):
         """Returns a mapping of aliases to actor ids.
 
         Reads aliases from the 'aliases' key within the 'context' field (JSON).
-        Actors with invalid JSON context are skipped for alias resolution.
         """
         if self._resolve_mapping:
             return self._resolve_mapping
@@ -135,19 +150,7 @@ class ActorPack(object):
         mapping = {}
         for actor in self.get_unique_actors():
             mapping[actor.identifier] = actor.identifier
-            context_raw = actor.all_fields.get("context")
-            if not context_raw:
-                continue
-            if isinstance(context_raw, dict):
-                context = context_raw
-            elif not isinstance(context_raw, str):
-                continue
-            else:
-                parsed = _safe_json_parse(context_raw)
-                if not isinstance(parsed, dict):
-                    continue
-                context = parsed
-            for alias in context.get("aliases", []):
+            for alias in _get_aliases_from_context(actor):
                 mapping[alias] = actor.identifier
 
         self._resolve_mapping = mapping
@@ -257,7 +260,7 @@ class ActorPack(object):
         global_aliases = []
         for actor in unique_actors:
             normalized_id = normalize_id(actor.identifier)
-            aliases = actor.all_fields.get("aliases", [])
+            aliases = _get_aliases_from_context(actor)
             global_aliases.extend(aliases)
 
             if normalized_id != actor.identifier and normalized_id not in aliases:
