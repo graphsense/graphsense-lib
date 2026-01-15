@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [25.11.12/2.8.12] 2026-01-15
+
+### changed
+- Actorpacks: Move aliases to context field
+- Improved logging in tagpack-tool: Send errors to slack; cassandra retries are now warnings, not errors
+
+### fixed
+- Tagpack insertion is now atomic - removed early commit
+
+### added
+- Support for aliases on tagpack insert
+- Faster tagpack reading and validation
+- --use-pyyaml flag to use legacy reader for tagpack insert and validate
+
 ## [25.11.11/2.8.11] 2025-12-17
 ### fixed
 - Tagpack actor validation
