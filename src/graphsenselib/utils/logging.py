@@ -72,6 +72,7 @@ def configure_logging(loglevel):
             tracebacks_suppress=[click],
             console=c,
             show_path=False,
+            omit_repeated_times=False,
         )
 
     rh.addFilter(addSubsys)
