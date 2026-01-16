@@ -378,7 +378,7 @@ def sync(
             logger.info("Refreshing db views ...")
             click_ctx_tagstore.invoke(refresh_views, url=url)
 
-        click.secho("Your tagstore is now up-to-date again.", fg="green")
+        logger.info("Your tagstore is now up-to-date again.")
 
     else:
         logger.error(f"Repos to sync file {repos} does not exist.")
@@ -489,7 +489,7 @@ def validate_tagpack(
                         else:
                             unique_known_actors.add(actor)
 
-                click.secho(f"PASSED: {tagpack_file}", fg="green")
+                logger.info(f"PASSED: {tagpack_file}")
 
                 no_passed += 1
     except (ValidationError, TagPackFileError) as e:
@@ -1017,7 +1017,7 @@ def validate_actorpack(config, path):
                 logger.info(f"{actorpack_file}:\n")
 
                 actorpack.validate()
-                click.secho("PASSED", fg="green")
+                logger.info("PASSED")
 
                 no_passed += 1
     except (ValidationError, TagPackFileError, ParserError, ScannerError) as e:
@@ -1032,7 +1032,7 @@ def validate_actorpack(config, path):
     if status == "fail":
         logger.error(msg)
     else:
-        click.secho(msg, fg="green")
+        logger.info(msg)
 
     if failed:
         sys.exit(1)
@@ -1102,7 +1102,7 @@ def insert_actorpacks(
             tagstore.insert_actorpack(
                 actorpack, force, prefix if prefix else default_prefix, relpath
             )
-            click.secho(f"PROCESSED {len(actorpack.actors)} Actors", fg="green")
+            logger.info(f"PROCESSED {len(actorpack.actors)} Actors")
             no_passed += 1
             no_actors += len(actorpack.actors)
         except Exception as e:
@@ -1115,7 +1115,7 @@ def insert_actorpacks(
     if status == "fail":
         logger.error(msg.format(no_passed, n_ppacks, no_actors, duration))
     else:
-        click.secho(msg.format(no_passed, n_ppacks, no_actors, duration), fg="green")
+        logger.info(msg.format(no_passed, n_ppacks, no_actors, duration))
 
 
 def list_actors(url, schema, category, csv):
@@ -1506,9 +1506,7 @@ def insert_cluster_mapping(
         mappings_count = sum(
             [items for network, items in processed_workpackages if network == pc]
         )
-        click.secho(
-            f"INSERTED/UPDATED {mappings_count} {pc} cluster mappings", fg="green"
-        )
+        logger.info(f"INSERTED/UPDATED {mappings_count} {pc} cluster mappings")
 
     tagstore.finish_mappings_update(networks)
     duration = round(time.time() - t0, 2)
@@ -1749,7 +1747,7 @@ def calc_quality_measures(url, schema):
         print_quality_measures(qm)
 
         duration = round(time.time() - t0, 2)
-        click.secho(f"Done in {duration}s", fg="green")
+        logger.info(f"Done in {duration}s")
     except Exception as e:
         logger.error(f"Error: {e}")
         logger.error("Operation failed")

@@ -15,7 +15,6 @@ from psycopg2.extensions import AsIs, register_adapter
 from psycopg2.extras import execute_batch, execute_values
 
 from graphsenselib.tagpack import ValidationError
-import click
 from graphsenselib.tagpack.constants import KNOWN_NETWORKS
 from graphsenselib.tagpack.tagpack import TagPack
 from graphsenselib.tagpack.utils import get_github_repo_url
@@ -96,9 +95,7 @@ class InsertTagpackWorker:
                 relpath,
                 actor_resolve_mapping=self.actor_resolve_mapping,
             )
-            click.secho(
-                f"{i} {tagpack_file}: PROCESSED {len(tagpack.tags)} Tags", fg="green"
-            )
+            logger.info(f"{i} {tagpack_file}: PROCESSED {len(tagpack.tags)} Tags")
             return 1, len(tagpack.tags)
         except Exception as e:
             logger.error(f"{i} {tagpack_file}: FAILED - {e}")
