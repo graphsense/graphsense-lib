@@ -1,5 +1,6 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -148,6 +149,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
 
     def get_block_data(self, dt_connector: DeltaTableConnector, block_ids: List[int]):
+        """Fetch block, transaction, trace, and log data sequentially."""
         time_start = time.time()
         blocks = dt_connector.get(("block", block_ids), pd.DataFrame())
         logger.debug(f"Got {len(blocks)} blocks in {time.time() - time_start} seconds.")
@@ -162,6 +164,42 @@ class UpdateStrategyAccount(UpdateStrategy):
         time_start = time.time()
         logs = dt_connector.get(("log", block_ids), pd.DataFrame())
         logger.debug(f"Got {len(logs)} logs in {time.time() - time_start} seconds.")
+        return txs, traces, logs, blocks
+
+    def get_block_data_fast(
+        self, dt_connector: DeltaTableConnector, block_ids: List[int]
+    ):
+        """Fetch block, transaction, trace, and log data in parallel."""
+        time_start = time.time()
+
+        def fetch_blocks():
+            return dt_connector.get(("block", block_ids), pd.DataFrame())
+
+        def fetch_transactions():
+            return dt_connector.get(("transaction", block_ids), pd.DataFrame())
+
+        def fetch_traces():
+            return dt_connector.get(("trace", block_ids), pd.DataFrame())
+
+        def fetch_logs():
+            return dt_connector.get(("log", block_ids), pd.DataFrame())
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            blocks_future = executor.submit(fetch_blocks)
+            txs_future = executor.submit(fetch_transactions)
+            traces_future = executor.submit(fetch_traces)
+            logs_future = executor.submit(fetch_logs)
+
+            blocks = blocks_future.result()
+            txs = txs_future.result()
+            traces = traces_future.result()
+            logs = logs_future.result()
+
+        logger.debug(
+            f"Got {len(blocks)} blocks, {len(txs)} transactions, "
+            f"{len(traces)} traces, {len(logs)} logs in "
+            f"{time.time() - time_start:.2f} seconds (parallel fetch)."
+        )
         return txs, traces, logs, blocks
 
     def get_fee_data(self, dt_connector: DeltaTableConnector, block_ids: List[int]):
@@ -200,7 +238,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 self.du_config.delta_sink.directory, self.du_config.s3_credentials
             )
 
-            transactions, traces, logs, blocks = self.get_block_data(
+            transactions, traces, logs, blocks = self.get_block_data_fast(
                 tableconnector, batch
             )
 
