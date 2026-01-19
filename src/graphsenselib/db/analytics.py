@@ -655,6 +655,36 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def get_exchange_rates_by_block(self, block) -> Iterable:
         return self.select_one("exchange_rates", where={"block_id": block})
 
+    def get_exchange_rates_by_blocks(self, block_ids: List[int]) -> dict:
+        """Fetch exchange rates for multiple blocks in a single batch query.
+
+        Returns:
+            Dict mapping block_id to exchange rate row (or None if not found)
+        """
+        if not block_ids:
+            return {}
+
+        stmt = self.select_stmt(
+            "exchange_rates",
+            columns=["*"],
+            where=dict.fromkeys(["block_id"], "?"),
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bstmts = [prep.bind({"block_id": block_id}) for block_id in block_ids]
+
+        results = list(
+            self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
+        )
+
+        return {
+            block_id: (
+                self._at_most_one_result(qr.result_or_exc) if qr.success else None
+            )
+            for block_id, qr in zip(block_ids, results)
+        }
+
     def get_address_id_bucket_size(self) -> Optional[int]:
         config = self.get_configuration()
         return int(config.bucket_size) if config is not None else None

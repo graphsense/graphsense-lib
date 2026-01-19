@@ -254,15 +254,20 @@ class UpdateStrategyAccount(UpdateStrategy):
                 return Action.DATA_TO_PROCESS_NOT_FOUND, None
 
             log.debug(f"Getting fiat values for blocks {batch}")
+            # Batch fetch exchange rates and timestamps for better performance
+            exchange_rates_batch = self._db.transformed.get_exchange_rates_by_blocks(
+                batch
+            )
+            bts = self._db.raw.get_block_timestamps_batch(batch)
+
             for block in batch:
-                fiat_values = self._db.transformed.get_exchange_rates_by_block(
-                    block
-                ).fiat_values
-                if fiat_values is None:
+                er = exchange_rates_batch.get(block)
+                if er is not None and er.fiat_values is not None:
+                    fiat_values = er.fiat_values
+                else:
                     missing_rates_in_block = True
                     fiat_values = [0, 0]
                 rates[block] = fiat_values
-                bts[block] = self._db.raw.get_block_timestamp(block)
             log.debug(f"Getting fiat values for blocks {batch} done")
 
             final_block = max(batch)
