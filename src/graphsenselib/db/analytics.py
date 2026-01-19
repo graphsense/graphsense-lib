@@ -961,6 +961,46 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
 
+    def _build_inrelations_stmts_account(self, rel_ids: List[Tuple[int, int]]) -> List:
+        """Build inrelation query statements without executing.
+        Used for batching with other query types for parallel execution.
+        """
+        stmt = self.select_stmt(
+            "address_incoming_relations",
+            columns=["*"],
+            where=dict.fromkeys(
+                [
+                    "dst_address_id_group",
+                    "dst_address_id_secondary_group",
+                    "dst_address_id",
+                    "src_address_id",
+                ],
+                "?",
+            ),
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+
+        bucketsize = self.get_address_id_bucket_size()
+        relations_nbuckets = self.get_addressrelations_ids_nbuckets()
+
+        bstmts = []
+        for dst_address, src_address in rel_ids:
+            address_group, secondary_group = get_id_group_with_secondary_relations(
+                dst_address, src_address, bucketsize, relations_nbuckets
+            )
+            bstmts.append(
+                prep.bind(
+                    {
+                        "dst_address_id_group": address_group,
+                        "dst_address_id_secondary_group": secondary_group,
+                        "dst_address_id": dst_address,
+                        "src_address_id": src_address,
+                    }
+                )
+            )
+        return bstmts
+
     def get_address_incoming_relations_async(
         self, address_id: int, src_address_id: Optional[int]
     ):
@@ -1068,6 +1108,101 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             )
 
         return self._db.execute_statements_async(bstmts, concurrency=CONCURRENCY)
+
+    def _build_outrelations_stmts_account(self, rel_ids: List[Tuple[int, int]]) -> List:
+        """Build outrelation query statements without executing.
+        Used for batching with other query types for parallel execution.
+        """
+        stmt = self.select_stmt(
+            "address_outgoing_relations",
+            columns=["*"],
+            where=dict.fromkeys(
+                [
+                    "src_address_id_group",
+                    "src_address_id_secondary_group",
+                    "src_address_id",
+                    "dst_address_id",
+                ],
+                "?",
+            ),
+            limit=1,
+        )
+        prep = self._db.get_prepared_statement(stmt)
+        bucketsize = self.get_address_id_bucket_size()
+        relations_nbuckets = self.get_addressrelations_ids_nbuckets()
+
+        bstmts = []
+        for src_address, dst_address in rel_ids:
+            address_group, secondary_group = get_id_group_with_secondary_relations(
+                src_address, dst_address, bucketsize, relations_nbuckets
+            )
+            bstmts.append(
+                prep.bind(
+                    {
+                        "src_address_id_group": address_group,
+                        "src_address_id_secondary_group": secondary_group,
+                        "src_address_id": src_address,
+                        "dst_address_id": dst_address,
+                    }
+                )
+            )
+        return bstmts
+
+    def _build_balance_stmts_account(self, address_ids: List[int]) -> List:
+        """Build balance query statements without executing.
+        Used for batching with other query types for parallel execution.
+        """
+        stmt = self.select_stmt(
+            "balance",
+            columns=["*"],
+            where=dict.fromkeys(["address_id_group", "address_id"], "?"),
+        )
+        prep = self._db.get_prepared_statement(stmt)
+        bs = self.get_address_id_bucket_size()
+
+        return [
+            prep.bind(
+                {
+                    "address_id_group": self.get_id_group(address_id, bs),
+                    "address_id": address_id,
+                }
+            )
+            for address_id in address_ids
+        ]
+
+    def execute_combined_queries_account_delta_updates(
+        self,
+        rel_to_query_out: List[Tuple[int, int]],
+        rel_to_query_in: List[Tuple[int, int]],
+        address_ids: List[int],
+    ) -> Tuple[List, List, List]:
+        """Execute outrelation, inrelation, and balance queries in a single
+        concurrent batch for improved performance.
+
+        Returns:
+            Tuple of (outrelation_results, inrelation_results, balance_results)
+        """
+        # Build all statements
+        out_stmts = self._build_outrelations_stmts_account(rel_to_query_out)
+        in_stmts = self._build_inrelations_stmts_account(rel_to_query_in)
+        bal_stmts = self._build_balance_stmts_account(address_ids)
+
+        # Combine into single list
+        all_stmts = out_stmts + in_stmts + bal_stmts
+
+        # Execute all in one concurrent batch
+        all_results = list(
+            self._db.execute_statements_async(all_stmts, concurrency=2 * CONCURRENCY)
+        )
+
+        # Split results back by type
+        n_out = len(out_stmts)
+        n_in = len(in_stmts)
+        out_results = all_results[:n_out]
+        in_results = all_results[n_out : n_out + n_in]
+        bal_results = all_results[n_out + n_in :]
+
+        return out_results, in_results, bal_results
 
     def get_balance_async_batch_account(self, address_ids: List[id]):
         stmt = self.select_stmt(
