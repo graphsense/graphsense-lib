@@ -282,13 +282,11 @@ class UpdateStrategyAccount(UpdateStrategy):
             # convert dictionaries to dataclasses and unify naming
             log_adapter = AccountLogAdapter()
             block_adapter = AccountBlockAdapter()
-            traces = trace_adapter.df_to_renamed_dataclasses(traces)
+            traces = trace_adapter.df_to_renamed_dataclasses_fast(traces)
             traces = trace_adapter.process_fields_in_list(traces)
-            transactions = transaction_adapter.df_to_dataclasses(transactions)
-
-            logs = log_adapter.df_to_dataclasses(logs)
-            blocks = block_adapter.df_to_dataclasses(blocks)
-            blocks = block_adapter.process_fields_in_list(blocks)
+            transactions = transaction_adapter.df_to_dataclasses_fast(transactions)
+            logs = log_adapter.df_to_dataclasses_fast(logs)
+            blocks = block_adapter.df_to_dataclasses_fast(blocks)
             logger.debug("Converting to dataclasses done")
 
             changes = []

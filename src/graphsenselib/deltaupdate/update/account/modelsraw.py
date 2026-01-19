@@ -13,6 +13,10 @@ class BlockchainAdapter:
     def dict_to_dataclass(self, data_dict):
         return self.datamodel.model_validate(data_dict)
 
+    def dict_to_dataclass_fast(self, data_dict):
+        """Skip validation for trusted data - significantly faster."""
+        return self.datamodel.model_construct(**data_dict)
+
     def process_fields(self, data_object):
         # Check if the object is an instance of a dataclass
         for field_name, field_processor in self.field_processing.items():
@@ -35,8 +39,20 @@ class BlockchainAdapter:
         data_req = {k: v for k, v in renamed_dict.items() if k in dc.__annotations__}
         return dc(**data_req)
 
+    def dict_to_renamed_dataclass_fast(self, data_dict):
+        """Skip validation for trusted data - significantly faster."""
+        dc = self.datamodel
+        renamed_dict = self.rename_dict(data_dict)
+        data_req = {k: v for k, v in renamed_dict.items() if k in dc.__annotations__}
+        return dc.model_construct(**data_req)
+
     def dicts_to_dataclasses(self, data_dicts):
         return [self.dict_to_dataclass(data_dict) for data_dict in data_dicts]
+
+    def dicts_to_dataclasses_fast(self, data_dicts):
+        """Skip validation for trusted data - significantly faster."""
+        model_construct = self.datamodel.model_construct
+        return [model_construct(**data_dict) for data_dict in data_dicts]
 
     def df_to_dataclasses(self, df: pd.DataFrame):
         return [
@@ -44,14 +60,42 @@ class BlockchainAdapter:
             for data_dict in df.to_dict(orient="records")
         ]
 
+    def df_to_dataclasses_fast(self, df: pd.DataFrame):
+        """Skip validation for trusted data - significantly faster."""
+        model_construct = self.datamodel.model_construct
+        return [model_construct(**row) for row in df.to_dict(orient="records")]
+
     def dicts_to_renamed_dataclasses(self, data_dicts):
         return [self.dict_to_renamed_dataclass(data_dict) for data_dict in data_dicts]
+
+    def dicts_to_renamed_dataclasses_fast(self, data_dicts):
+        """Skip validation for trusted data - significantly faster."""
+        dc = self.datamodel
+        annotations = dc.__annotations__
+        result = []
+        for data_dict in data_dicts:
+            renamed_dict = self.rename_dict(data_dict)
+            data_req = {k: v for k, v in renamed_dict.items() if k in annotations}
+            result.append(dc.model_construct(**data_req))
+        return result
 
     def df_to_renamed_dataclasses(self, df: pd.DataFrame):
         return [
             self.dict_to_renamed_dataclass(data_dict)
             for data_dict in df.to_dict(orient="records")
         ]
+
+    def df_to_renamed_dataclasses_fast(self, df: pd.DataFrame):
+        """Skip validation for trusted data - significantly faster."""
+        dc = self.datamodel
+        annotations = dc.__annotations__
+        records = df.to_dict(orient="records")
+        result = []
+        for data_dict in records:
+            renamed_dict = self.rename_dict(data_dict)
+            data_req = {k: v for k, v in renamed_dict.items() if k in annotations}
+            result.append(dc.model_construct(**data_req))
+        return result
 
     def process_fields_in_list(self, data_list):
         return [self.process_fields(data_object) for data_object in data_list]
