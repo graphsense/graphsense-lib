@@ -602,48 +602,42 @@ class UpdateStrategyAccount(UpdateStrategy):
             dbdelta = dbdelta.compress()
 
         with LoggerScope.debug(logger, "Query data from database"):
-            # Query outrelations
-            rel_to_query = [
+            # Prepare query parameters for all query types
+            rel_to_query_out = [
                 (
                     addresses_to_id__rows[update.src_identifier][0],
                     addresses_to_id__rows[update.dst_identifier][0],
                 )
                 for update in dbdelta.relation_updates
             ]
-            addr_outrelations_q = tdb.get_address_outrelations_async_batch_account(
-                rel_to_query
+            rel_to_query_in = [
+                (
+                    addresses_to_id__rows[update.dst_identifier][0],
+                    addresses_to_id__rows[update.src_identifier][0],
+                )
+                for update in dbdelta.relation_updates
+            ]
+            address_ids = [addresses_to_id__rows[address][0] for address in addresses]
+
+            # Execute all queries in a single concurrent batch for better performance
+            out_results, in_results, bal_results = (
+                tdb.execute_combined_queries_account_delta_updates(
+                    rel_to_query_out, rel_to_query_in, address_ids
+                )
             )
+
+            # Build result dictionaries
             addr_outrelations = {
                 (update.src_identifier, update.dst_identifier): qr
-                for update, qr in zip(dbdelta.relation_updates, addr_outrelations_q)
+                for update, qr in zip(dbdelta.relation_updates, out_results)
             }
-
-            # Query inrelations
-            rel_to_query = [
-                (
-                    addresses_to_id__rows[update.dst_identifier][0],
-                    addresses_to_id__rows[update.src_identifier][0],
-                )
-                for update in dbdelta.relation_updates
-            ]
-            addr_inrelations_q = tdb.get_address_inrelations_async_batch_account(
-                rel_to_query
-            )
             addr_inrelations = {
                 (update.src_identifier, update.dst_identifier): qr
-                for update, qr in zip(dbdelta.relation_updates, addr_inrelations_q)
+                for update, qr in zip(dbdelta.relation_updates, in_results)
             }
-
-            # Query balances of addresses
-            address_ids = [addresses_to_id__rows[address][0] for address in addresses]
-            addr_balances_q = (
-                tdb.get_balance_async_batch_account(  # could probably query less
-                    address_ids
-                )
-            )
             addr_balances = {
                 addr_id: BalanceDelta.from_db(addr_id, qr.result_or_exc.all())
-                for addr_id, qr in zip(address_ids, addr_balances_q)
+                for addr_id, qr in zip(address_ids, bal_results)
             }
 
         with LoggerScope.debug(logger, "Prepare changes"):
