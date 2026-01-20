@@ -172,9 +172,29 @@ def update_transformed(
 
             if shutdown_initialized():
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
+                _log_timing_summary(updater, start_block, b[-1])
                 return b[-1]
 
+    _log_timing_summary(updater, start_block, end_block)
     return end_block
+
+
+def _log_timing_summary(updater, start_block: int, end_block: int):
+    timing = updater.timing_summary
+    total = timing["total"]
+    blocks_processed = end_block - start_block + 1
+
+    parts = []
+    for name, seconds in timing.items():
+        if name != "total" and seconds > 0:
+            pct = (seconds / total * 100) if total > 0 else 0
+            parts.append(f"{name}={seconds:.1f}s ({pct:.1f}%)")
+
+    timing_str = ", ".join(parts) if parts else "no timing data"
+    logger.info(
+        f"Delta update completed: {blocks_processed} blocks in {total:.1f}s. "
+        f"Timing breakdown: {timing_str}"
+    )
 
 
 def update(

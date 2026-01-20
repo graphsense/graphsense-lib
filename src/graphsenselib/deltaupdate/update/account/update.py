@@ -126,11 +126,13 @@ class UpdateStrategyAccount(UpdateStrategy):
 
     def persist_updater_progress(self):
         if self.changes is not None:
+            t_start = time.time()
             atomic = ApplicationStrategy.TX == self.application_strategy
             apply_changes(
                 self._db, self.changes, self._pedantic, try_atomic_writes=atomic
             )
             self.changes = None
+            self._timing_persist += time.time() - t_start
         self._time_last_batch = time.time() - self._batch_start_time
 
     def prepare_database(self):
@@ -238,9 +240,11 @@ class UpdateStrategyAccount(UpdateStrategy):
                 self.du_config.delta_sink.directory, self.du_config.s3_credentials
             )
 
+            t_fetch_start = time.time()
             transactions, traces, logs, blocks = self.get_block_data_fast(
                 tableconnector, batch
             )
+            self._timing_delta_lake += time.time() - t_fetch_start
 
             block_ids_got = set(blocks["block_id"].unique())
             block_ids_expected = set(batch)
@@ -278,7 +282,9 @@ class UpdateStrategyAccount(UpdateStrategy):
                 trace_adapter = TrxTraceAdapter()
                 transaction_adapter = TrxTransactionAdapter()
 
+                t_fetch_start = time.time()
                 fees = self.get_fee_data(tableconnector, batch)
+                self._timing_delta_lake += time.time() - t_fetch_start
                 # merge fees into transactions
                 # cast tx_hash of both to bytes so it can be hashed
                 assert fees.empty == transactions.empty
@@ -451,6 +457,7 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         hash_to_tx = dict(zip(tx_hashes, transactions))
 
+        t_transform_start = time.time()
         with LoggerScope.debug(logger, "Decode logs to token transfers"):
             supported_tokens = self._db.transformed.get_token_configuration()
             tokendecoder = ERC20Decoder(currency, supported_tokens)
@@ -475,12 +482,16 @@ class UpdateStrategyAccount(UpdateStrategy):
                 blocks,
             )
             len_addr = len(addresses)
+        self._timing_transform += time.time() - t_transform_start
 
+        t_db_start = time.time()
         with LoggerScope.debug(
             logger, f"Checking existence for {len_addr} addresses"
         ) as _:
             addr_ids = dict(tdb.get_address_id_async_batch(list(addresses)))
+        self._timing_cassandra_read += time.time() - t_db_start
 
+        t_db_start = time.time()
         with LoggerScope.debug(logger, "Reading addresses to be updated"):
             existing_addr_ids = no_nones(
                 [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
@@ -523,7 +534,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             address_hash_to_id = {
                 address: id_row[0] for address, id_row in addresses_to_id__rows.items()
             }
+        self._timing_cassandra_read += time.time() - t_db_start
 
+        t_transform_start = time.time()
         with LoggerScope.debug(logger, "Get transactions to insert into the database"):
             txs_to_insert = []
 
@@ -638,7 +651,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
             """ Group and merge deltas before merge with db deltas """
             dbdelta = dbdelta.compress()
+        self._timing_transform += time.time() - t_transform_start
 
+        t_db_start = time.time()
         with LoggerScope.debug(logger, "Query data from database"):
             # Prepare query parameters for all query types
             rel_to_query_out = [
@@ -677,7 +692,9 @@ class UpdateStrategyAccount(UpdateStrategy):
                 addr_id: BalanceDelta.from_db(addr_id, qr.result_or_exc.all())
                 for addr_id, qr in zip(address_ids, bal_results)
             }
+        self._timing_cassandra_read += time.time() - t_db_start
 
+        t_transform_start = time.time()
         with LoggerScope.debug(logger, "Prepare changes"):
             changes = []
 
@@ -740,6 +757,7 @@ class UpdateStrategyAccount(UpdateStrategy):
             assert sum(new_rels_in.values()) == sum(new_rels_out.values())
             nr_new_rels = sum(new_rels_in.values())
             nr_new_entities_created = nr_new_entities
+        self._timing_transform += time.time() - t_transform_start
 
         return (
             changes,
