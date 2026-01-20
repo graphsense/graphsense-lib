@@ -93,6 +93,11 @@ class AbstractUpdateStrategy(ABC):
         self._time_last_batch = 0
         self._last_block_processed = None
         self._global_start_time = time.time()
+        self._timing_exchange_rates = 0.0
+        self._timing_delta_lake = 0.0
+        self._timing_cassandra_read = 0.0
+        self._timing_transform = 0.0
+        self._timing_persist = 0.0
 
     @property
     def start_time(self):
@@ -109,6 +114,17 @@ class AbstractUpdateStrategy(ABC):
     @property
     def last_block_processed(self) -> int:
         return self._last_block_processed
+
+    @property
+    def timing_summary(self) -> Dict[str, float]:
+        return {
+            "exchange_rates": self._timing_exchange_rates,
+            "delta_lake": self._timing_delta_lake,
+            "cassandra_read": self._timing_cassandra_read,
+            "transform": self._timing_transform,
+            "persist": self._timing_persist,
+            "total": self.elapsed_seconds_global,
+        }
 
     @abstractmethod
     def prepare_database(self):
@@ -190,8 +206,10 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self._batch_start_time = time.time()
 
         batch_int = list(batch)
+        t_start = time.time()
         with LoggerScope.debug(logger, "Importing exchange rates"):
             self.import_exchange_rates(batch_int)
+        self._timing_exchange_rates += time.time() - t_start
 
         with LoggerScope.debug(logger, "Transform data"):
             action, final_block = self.process_batch_impl_hook(batch_int)
