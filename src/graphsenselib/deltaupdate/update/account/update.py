@@ -721,14 +721,8 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         t_db_start = time.time()
         with LoggerScope.debug(logger, "Query data from database"):
-            # Prepare query parameters for all query types
-            rel_to_query_out = [
-                (
-                    addresses_to_id__rows[update.src_identifier][0],
-                    addresses_to_id__rows[update.dst_identifier][0],
-                )
-                for update in dbdelta.relation_updates
-            ]
+            # Prepare query parameters - only incoming relations needed
+            # (outgoing relations have identical data, so we skip querying them)
             rel_to_query_in = [
                 (
                     addresses_to_id__rows[update.dst_identifier][0],
@@ -738,19 +732,14 @@ class UpdateStrategyAccount(UpdateStrategy):
             ]
             address_ids = [addresses_to_id__rows[address][0] for address in addresses]
 
-            # Execute all queries in a single concurrent batch for better performance
-            out_results, in_results, bal_results, query_timing = (
+            # Execute inrelation and balance queries (outgoing skipped - same data)
+            in_results, bal_results, query_timing = (
                 tdb.execute_combined_queries_account_delta_updates(
-                    rel_to_query_out, rel_to_query_in, address_ids
+                    rel_to_query_in, address_ids
                 )
             )
-            n_out = int(query_timing["n_out"])
             n_in = int(query_timing["n_in"])
             n_bal = int(query_timing["n_bal"])
-            logger.debug(
-                f"  DB: out_relations: {n_out} queries in "
-                f"{query_timing['out_time']:.2f}s ({query_timing['out_qps']:.0f} q/s)"
-            )
             logger.debug(
                 f"  DB: in_relations: {n_in} queries in "
                 f"{query_timing['in_time']:.2f}s ({query_timing['in_qps']:.0f} q/s)"
@@ -760,11 +749,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 f"{query_timing['bal_time']:.2f}s ({query_timing['bal_qps']:.0f} q/s)"
             )
 
-            # Build result dictionaries
-            addr_outrelations = {
-                (update.src_identifier, update.dst_identifier): qr
-                for update, qr in zip(dbdelta.relation_updates, out_results)
-            }
+            # Build result dictionaries (only inrelations - outgoing derived from it)
             addr_inrelations = {
                 (update.src_identifier, update.dst_identifier): qr
                 for update, qr in zip(dbdelta.relation_updates, in_results)
@@ -775,9 +760,6 @@ class UpdateStrategyAccount(UpdateStrategy):
             }
 
             # Count existing vs new (for diagnostics)
-            n_existing_out = sum(
-                1 for qr in out_results if qr.result_or_exc.one() is not None
-            )
             n_existing_in = sum(
                 1 for qr in in_results if qr.result_or_exc.one() is not None
             )
@@ -785,8 +767,8 @@ class UpdateStrategyAccount(UpdateStrategy):
                 1 for qr in bal_results if len(qr.result_or_exc.all()) > 0
             )
             logger.debug(
-                f"  Existing records: out={n_existing_out}/{n_out}, "
-                f"in={n_existing_in}/{n_in}, bal={n_existing_bal}/{n_bal}"
+                f"  Existing records: in={n_existing_in}/{n_in}, "
+                f"bal={n_existing_bal}/{n_bal}"
             )
         elapsed = time.time() - t_db_start
         self._timing_cassandra_query_relations += elapsed
@@ -834,7 +816,6 @@ class UpdateStrategyAccount(UpdateStrategy):
                 dbdelta.relation_updates,
                 address_hash_to_id,
                 addr_inrelations,
-                addr_outrelations,
                 id_bucket_size,
                 relations_nbuckets,
             )
