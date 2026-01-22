@@ -721,21 +721,57 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         t_db_start = time.time()
         with LoggerScope.debug(logger, "Query data from database"):
-            # Prepare query parameters - only incoming relations needed
-            # (outgoing relations have identical data, so we skip querying them)
-            rel_to_query_in = [
-                (
-                    addresses_to_id__rows[update.dst_identifier][0],
-                    addresses_to_id__rows[update.src_identifier][0],
-                )
-                for update in dbdelta.relation_updates
+            # Separate relations: skip queries for those involving new addresses
+            # If either address is new, the relation cannot exist in the database
+            relations_with_new_addr = set()
+            rel_to_query_in = []
+            relations_to_query_keys = []
+
+            for update in dbdelta.relation_updates:
+                src_is_new = addresses_to_id__rows[update.src_identifier][1] is None
+                dst_is_new = addresses_to_id__rows[update.dst_identifier][1] is None
+
+                if src_is_new or dst_is_new:
+                    # At least one address is new -> relation must be new
+                    relations_with_new_addr.add(
+                        (update.src_identifier, update.dst_identifier)
+                    )
+                else:
+                    # Both addresses exist -> need to query database
+                    rel_to_query_in.append(
+                        (
+                            addresses_to_id__rows[update.dst_identifier][0],
+                            addresses_to_id__rows[update.src_identifier][0],
+                        )
+                    )
+                    relations_to_query_keys.append(
+                        (update.src_identifier, update.dst_identifier)
+                    )
+
+            n_rel_skipped = len(relations_with_new_addr)
+            n_rel_queried = len(rel_to_query_in)
+            logger.debug(
+                f"  Relations: {n_rel_skipped} skipped (new addr), "
+                f"{n_rel_queried} queried"
+            )
+
+            # Filter balances: skip queries for new addresses (no existing balances)
+            address_ids_to_query = [
+                addresses_to_id__rows[address][0]
+                for address in addresses
+                if addresses_to_id__rows[address][1] is not None
             ]
-            address_ids = [addresses_to_id__rows[address][0] for address in addresses]
+            n_bal_skipped = len(addresses) - len(address_ids_to_query)
+            n_bal_queried = len(address_ids_to_query)
+            logger.debug(
+                f"  Balances: {n_bal_skipped} skipped (new addr), "
+                f"{n_bal_queried} queried"
+            )
 
             # Execute inrelation and balance queries (outgoing skipped - same data)
             in_results, bal_results, query_timing = (
                 tdb.execute_combined_queries_account_delta_updates(
-                    rel_to_query_in, address_ids
+                    rel_to_query_in, address_ids_to_query
                 )
             )
             n_in = int(query_timing["n_in"])
@@ -750,13 +786,15 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
 
             # Build result dictionaries (only inrelations - outgoing derived from it)
+            # Only includes relations that were actually queried
             addr_inrelations = {
-                (update.src_identifier, update.dst_identifier): qr
-                for update, qr in zip(dbdelta.relation_updates, in_results)
+                key: qr for key, qr in zip(relations_to_query_keys, in_results)
             }
+            # Only includes balances for existing addresses that were queried
+            # New addresses get empty BalanceDelta via .get() default in prepare_balances
             addr_balances = {
                 addr_id: BalanceDelta.from_db(addr_id, qr.result_or_exc.all())
-                for addr_id, qr in zip(address_ids, bal_results)
+                for addr_id, qr in zip(address_ids_to_query, bal_results)
             }
 
             # Count existing vs new (for diagnostics)
@@ -766,9 +804,11 @@ class UpdateStrategyAccount(UpdateStrategy):
             n_existing_bal = sum(
                 1 for qr in bal_results if len(qr.result_or_exc.all()) > 0
             )
+            n_total_rel = n_rel_skipped + n_rel_queried
+            n_total_bal = n_bal_skipped + n_bal_queried
             logger.debug(
-                f"  Existing records: in={n_existing_in}/{n_in}, "
-                f"bal={n_existing_bal}/{n_bal}"
+                f"  Existing records: in={n_existing_in}/{n_total_rel}, "
+                f"bal={n_existing_bal}/{n_total_bal}"
             )
         elapsed = time.time() - t_db_start
         self._timing_cassandra_query_relations += elapsed
@@ -816,6 +856,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 dbdelta.relation_updates,
                 address_hash_to_id,
                 addr_inrelations,
+                relations_with_new_addr,
                 id_bucket_size,
                 relations_nbuckets,
             )

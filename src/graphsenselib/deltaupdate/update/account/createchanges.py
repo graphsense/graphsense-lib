@@ -117,6 +117,7 @@ def prepare_relations_for_ingest(
     delta: List[RelationDeltaAccount],
     hash_to_id: Dict[str, bytes],
     inrelations: dict,
+    relations_with_new_addr: set,
     id_bucket_size: int,
     relations_nbuckets: int,
 ) -> Tuple[List[DbChange], dict, dict]:
@@ -126,6 +127,11 @@ def prepare_relations_for_ingest(
     data (no_transactions, value, token_values) and their existence can be
     derived from incoming relations. Both tables are still written to.
     Cassandra's UPSERT behavior handles any rare inconsistencies.
+
+    Args:
+        relations_with_new_addr: Set of (src, dst) relation keys where at least
+            one address is new. These relations are guaranteed to be new and
+            don't need database queries.
     """
     new_relations_in = defaultdict(int)
     new_relations_out = defaultdict(int)
@@ -134,10 +140,14 @@ def prepare_relations_for_ingest(
 
     """ Merging relations deltas """
     for relations_update in delta:
-        # Only query incoming - outgoing has identical data
-        inr = inrelations[
-            (relations_update.src_identifier, relations_update.dst_identifier)
-        ].result_or_exc.one()
+        rel_key = (relations_update.src_identifier, relations_update.dst_identifier)
+
+        # Check if this relation involves a new address (skip query)
+        if rel_key in relations_with_new_addr:
+            inr = None  # Guaranteed new - no query needed
+        else:
+            # Query result from database
+            inr = inrelations[rel_key].result_or_exc.one()
 
         id_src = hash_to_id[relations_update.src_identifier]
         id_dst = hash_to_id[relations_update.dst_identifier]
