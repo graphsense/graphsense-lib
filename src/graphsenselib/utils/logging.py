@@ -1,4 +1,5 @@
 import logging
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -6,6 +7,7 @@ from contextlib import contextmanager
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.traceback import install as install_rich_traceback
 
 from ..config import (
     GRAPHSENSE_DEFAULT_DATETIME_FORMAT,
@@ -61,28 +63,37 @@ def configure_logging(loglevel):
             log_format = " | %(name)s | %(thread)d | %(message)s"
             datefmt = GRAPHSENSE_VERBOSE_DATETIME_FORMAT
 
-    """ RichHandler colorizes the logs """
+    """ RichHandler colorizes the logs for terminal, plain handler for file """
     c = Console(width=220)
     if c.is_terminal:
         rh = RichHandler(rich_tracebacks=True, tracebacks_suppress=[click])
+        rh.addFilter(addSubsys)
+        rh.addFilter(NoETLBatchExecSpamFilter())
+        handlers = [rh]
     else:
-        # if file redirect set terminal width to 220
-        rh = RichHandler(
-            rich_tracebacks=True,
-            tracebacks_suppress=[click],
-            console=c,
-            show_path=False,
-            omit_repeated_times=False,
+        # For file output: plain StreamHandler (no wrapping) + rich tracebacks for exceptions
+        sh = logging.StreamHandler()
+        sh.setFormatter(
+            logging.Formatter(
+                fmt=f"%(asctime)s %(levelname)-8s{log_format}",
+                datefmt=datefmt,
+            )
         )
-
-    rh.addFilter(addSubsys)
-    rh.addFilter(NoETLBatchExecSpamFilter())
+        sh.addFilter(addSubsys)
+        sh.addFilter(NoETLBatchExecSpamFilter())
+        handlers = [sh]
+        # Install rich tracebacks for uncaught exceptions (shows local variables)
+        install_rich_traceback(
+            show_locals=True,
+            suppress=[click],
+            console=Console(file=sys.stderr, width=220),
+        )
 
     logging.basicConfig(
         format=log_format,
         level=loglevel,
         datefmt=datefmt,
-        handlers=[rh],
+        handlers=handlers,
     )
 
     if loglevel <= logging.DEBUG:
