@@ -123,8 +123,14 @@ class AbstractUpdateStrategy(ABC):
             "cassandra_read": self._timing_cassandra_read,
             "transform": self._timing_transform,
             "persist": self._timing_persist,
-            "total": self.elapsed_seconds_global,
         }
+
+    def reset_timing(self):
+        self._timing_exchange_rates = 0.0
+        self._timing_delta_lake = 0.0
+        self._timing_cassandra_read = 0.0
+        self._timing_transform = 0.0
+        self._timing_persist = 0.0
 
     @abstractmethod
     def prepare_database(self):
