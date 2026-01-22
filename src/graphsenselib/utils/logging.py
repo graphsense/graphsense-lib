@@ -98,10 +98,11 @@ def configure_logging(loglevel):
 
     if loglevel <= logging.DEBUG:
         logger.debug("Logging set to verbose mode.")
-        logging.getLogger("cassandra").setLevel(logging.DEBUG)
+        # Suppress cassandra driver logs to avoid interleaving with performance logs
+        logging.getLogger("cassandra").setLevel(logging.WARNING)
         logging.getLogger("ethereumetl").setLevel(logging.WARNING)
         logging.getLogger("web3").setLevel(logging.WARNING)
-        logging.getLogger("Cluster").setLevel(logging.DEBUG)
+        logging.getLogger("Cluster").setLevel(logging.WARNING)
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.ERROR)
         logging.getLogger("ProgressLogger").setLevel(logging.ERROR)

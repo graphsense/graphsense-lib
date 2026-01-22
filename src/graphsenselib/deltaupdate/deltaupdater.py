@@ -182,16 +182,28 @@ def update_transformed(
 
 def _log_batch_timing(updater):
     timing = updater.timing_summary
-    batch_total = sum(timing.values())
+    # Exclude breakdown dict from top-level sum
+    batch_total = sum(v for k, v in timing.items() if isinstance(v, (int, float)))
 
     parts = []
-    for name, seconds in timing.items():
-        if seconds > 0:
-            pct = (seconds / batch_total * 100) if batch_total > 0 else 0
-            parts.append(f"{name}={seconds:.1f}s ({pct:.1f}%)")
+    for name, value in timing.items():
+        if isinstance(value, (int, float)) and value > 0:
+            pct = (value / batch_total * 100) if batch_total > 0 else 0
+            parts.append(f"{name}={value:.1f}s ({pct:.1f}%)")
 
     timing_str = ", ".join(parts) if parts else "no timing data"
     logger.info(f"Batch timing: {timing_str}")
+
+    # DEBUG level: detailed Cassandra read breakdown
+    if logger.isEnabledFor(logging.DEBUG):
+        breakdown = timing.get("cassandra_read_breakdown", {})
+        if breakdown:
+            logger.debug(
+                f"  Cassandra read breakdown: "
+                f"check_existence={breakdown.get('check_existence', 0):.1f}s, "
+                f"read_addresses={breakdown.get('read_addresses', 0):.1f}s, "
+                f"query_relations={breakdown.get('query_relations', 0):.1f}s"
+            )
 
 
 def update(
