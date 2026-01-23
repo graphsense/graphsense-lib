@@ -3,6 +3,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime
 
 import click
 from rich.console import Console
@@ -39,6 +40,20 @@ class NoETLBatchExecSpamFilter(logging.Filter):
         )
 
 
+class MicrosecondFormatter(logging.Formatter):
+    """Custom formatter that supports %f (microseconds) in datefmt.
+
+    The standard logging.Formatter uses time.strftime() which doesn't support %f.
+    This formatter uses datetime.strftime() instead.
+    """
+
+    def formatTime(self, record, datefmt=None):
+        ct = datetime.fromtimestamp(record.created)
+        if datefmt:
+            return ct.strftime(datefmt)
+        return ct.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def configure_logging(loglevel):
     log_format = "| %(subsystem)s | %(message)s"
     datefmt = GRAPHSENSE_DEFAULT_DATETIME_FORMAT
@@ -66,15 +81,18 @@ def configure_logging(loglevel):
     """ RichHandler colorizes the logs for terminal, plain handler for file """
     c = Console(width=220)
     if c.is_terminal:
-        rh = RichHandler(rich_tracebacks=True, tracebacks_suppress=[click])
+        rh = RichHandler(
+            rich_tracebacks=True, tracebacks_suppress=[click], log_time_format=datefmt
+        )
         rh.addFilter(addSubsys)
         rh.addFilter(NoETLBatchExecSpamFilter())
         handlers = [rh]
     else:
         # For file output: plain StreamHandler (no wrapping) + rich tracebacks for exceptions
+        # Use MicrosecondFormatter to support %f in datefmt
         sh = logging.StreamHandler()
         sh.setFormatter(
-            logging.Formatter(
+            MicrosecondFormatter(
                 fmt=f"%(asctime)s %(levelname)-8s{log_format}",
                 datefmt=datefmt,
             )
