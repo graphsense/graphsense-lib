@@ -12,10 +12,6 @@ import warnings
 import re
 
 
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    import ryml as _ryml
-
 if sys.version_info[:2] >= (3, 8):
     # TODO: Import directly (no need for conditional) when `python_requires = >= 3.8`
     from importlib.metadata import PackageNotFoundError, version  # pragma: no cover
@@ -125,9 +121,13 @@ def load_yaml_fast(file_path):
     """
     import json
 
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
+        import ryml
+
     with open(file_path, "rb") as f:
         content = f.read()
-    tree = _ryml.parse_in_arena(content)
-    json_bytes = _ryml.emit_json_malloc(tree, tree.root_id())
+    tree = ryml.parse_in_arena(content)
+    json_bytes = ryml.emit_json_malloc(tree, tree.root_id())
     data = json.loads(json_bytes, object_pairs_hook=_dict_raise_on_duplicates)
     return _convert_yaml_dates(data)

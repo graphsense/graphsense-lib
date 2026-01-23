@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [25.11.13/2.8.13] 2026-01-23
+
+### changed
+- Delta updater: Restructured Cassandra and Delta Lake queries
+
+### added
+- More logging in delta updater
+
 ## [25.11.12/2.8.12] 2026-01-15
 
 ### changed
