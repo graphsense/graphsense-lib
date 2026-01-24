@@ -37,6 +37,21 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    - name: Validate version is not date-based
+      run: |
+        VERSION="${GITHUB_REF#refs/tags/}"
+        # Extract major version number (after 'v')
+        MAJOR=$(echo "$VERSION" | sed -n 's/^v\([0-9]*\)\..*/\1/p')
+        if [ -z "$MAJOR" ]; then
+          echo "Error: Could not parse version from tag '$VERSION'"
+          exit 1
+        fi
+        if [ ${#MAJOR} -ge 2 ]; then
+          echo "Error: Major version '$MAJOR' has 2+ digits - looks like date-based versioning (e.g., v25.01.24)"
+          echo "Use semantic versioning with single-digit major version (e.g., v2.8.13)"
+          exit 1
+        fi
+        echo "Version '$VERSION' looks like valid semver (major=$MAJOR)"
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@v6
       with:
