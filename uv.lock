@@ -1579,6 +1579,11 @@ tagpacks = [
     { name = "sqlmodel" },
     { name = "tabulate" },
 ]
+tagstore = [
+    { name = "asyncpg" },
+    { name = "psycopg2-binary" },
+    { name = "sqlmodel" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1613,7 +1618,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.0" },
     { name = "anytree", marker = "extra == 'tagpacks'", specifier = ">=2.9.0" },
     { name = "async-lru", specifier = ">=2.0.4" },
-    { name = "asyncpg", marker = "extra == 'tagpacks'", specifier = ">=0.30.0" },
+    { name = "asyncpg", marker = "extra == 'tagstore'", specifier = ">=0.30.0" },
     { name = "base58", specifier = ">=2.1" },
     { name = "bech32", specifier = ">=1.2.0" },
     { name = "bitarray", specifier = ">=2.9" },
@@ -1639,6 +1644,7 @@ requires-dist = [
     { name = "graphsense-lib", extras = ["conversions"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["tagpacks"], marker = "extra == 'all'" },
+    { name = "graphsense-lib", extras = ["tagstore"], marker = "extra == 'tagpacks'" },
     { name = "grpcio", marker = "extra == 'ingest'", specifier = ">=1.49.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'tagpacks'", specifier = "<1.0.0" },
@@ -1650,7 +1656,7 @@ requires-dist = [
     { name = "networkx", marker = "extra == 'conversions'", specifier = ">=3.2.1" },
     { name = "pandas", specifier = ">=1.4.1" },
     { name = "parsy", specifier = ">=2.0,<3.0" },
-    { name = "psycopg2-binary", marker = "extra == 'tagpacks'", specifier = ">=2.9.3" },
+    { name = "psycopg2-binary", marker = "extra == 'tagstore'", specifier = ">=2.9.3" },
     { name = "pyarrow", marker = "extra == 'ingest'", specifier = ">=16.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "python-dotenv", marker = "extra == 'tagpacks'", specifier = ">=1.0.1" },
@@ -1662,11 +1668,11 @@ requires-dist = [
     { name = "rich", specifier = ">=12.6.0" },
     { name = "setuptools", specifier = ">=80.0.0,<80.9" },
     { name = "simplejson", specifier = ">=3.17.6" },
-    { name = "sqlmodel", marker = "extra == 'tagpacks'", specifier = ">=0.0.22" },
+    { name = "sqlmodel", marker = "extra == 'tagstore'", specifier = ">=0.0.22" },
     { name = "tabulate", marker = "extra == 'tagpacks'", specifier = ">=0.9.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
 ]
-provides-extras = ["ingest", "conversions", "tagpacks", "all"]
+provides-extras = ["ingest", "conversions", "tagstore", "tagpacks", "all"]
 
 [package.metadata.requires-dev]
 dev = [
