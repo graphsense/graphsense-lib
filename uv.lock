@@ -1580,6 +1580,8 @@ tagpacks = [
     { name = "tabulate" },
 ]
 tagstore = [
+    { name = "anytree", version = "2.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.2'" },
+    { name = "anytree", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.2'" },
     { name = "asyncpg" },
     { name = "colorama" },
     { name = "fastapi", extra = ["all"] },
@@ -1626,7 +1628,7 @@ testing = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.0" },
-    { name = "anytree", marker = "extra == 'tagpacks'", specifier = ">=2.9.0" },
+    { name = "anytree", marker = "extra == 'tagstore'", specifier = ">=2.9.0" },
     { name = "async-lru", specifier = ">=2.0.4" },
     { name = "asyncpg", marker = "extra == 'tagstore'", specifier = ">=0.30.0" },
     { name = "base58", specifier = ">=2.1" },
