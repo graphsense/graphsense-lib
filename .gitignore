@@ -270,3 +270,4 @@ MANIFEST
 .python-version
 .claude/
 tagpack/test-tagpacks/
+logs.txt

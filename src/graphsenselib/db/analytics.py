@@ -7,12 +7,13 @@ Attributes:
 """
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache, partial
-from typing import Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 from cassandra import OperationTimedOut, WriteTimeout
@@ -1172,37 +1173,57 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def execute_combined_queries_account_delta_updates(
         self,
-        rel_to_query_out: List[Tuple[int, int]],
         rel_to_query_in: List[Tuple[int, int]],
         address_ids: List[int],
-    ) -> Tuple[List, List, List]:
-        """Execute outrelation, inrelation, and balance queries in a single
-        concurrent batch for improved performance.
+    ) -> Tuple[List, List, Dict[str, float]]:
+        """Execute inrelation and balance queries separately
+        to get per-query-type timing.
+
+        Note: We only query incoming relations. Outgoing relations have identical
+        data (no_transactions, value, token_values) and their existence can be
+        derived from incoming relations. This halves the number of relation queries.
 
         Returns:
-            Tuple of (outrelation_results, inrelation_results, balance_results)
+            Tuple of (inrelation_results, balance_results, timing_breakdown)
+            timing_breakdown contains per-query-type timing and counts
         """
-        # Build all statements
-        out_stmts = self._build_outrelations_stmts_account(rel_to_query_out)
+        # Build statements for each type
+        t_build = time.time()
         in_stmts = self._build_inrelations_stmts_account(rel_to_query_in)
         bal_stmts = self._build_balance_stmts_account(address_ids)
+        build_time = time.time() - t_build
 
-        # Combine into single list
-        all_stmts = out_stmts + in_stmts + bal_stmts
-
-        # Execute all in one concurrent batch
-        all_results = list(
-            self._db.execute_statements_async(all_stmts, concurrency=2 * CONCURRENCY)
+        # Execute in queries
+        t_in = time.time()
+        in_results = list(
+            self._db.execute_statements_async(in_stmts, concurrency=2 * CONCURRENCY)
         )
+        in_time = time.time() - t_in
 
-        # Split results back by type
-        n_out = len(out_stmts)
-        n_in = len(in_stmts)
-        out_results = all_results[:n_out]
-        in_results = all_results[n_out : n_out + n_in]
-        bal_results = all_results[n_out + n_in :]
+        # Execute balance queries
+        t_bal = time.time()
+        bal_results = list(
+            self._db.execute_statements_async(bal_stmts, concurrency=2 * CONCURRENCY)
+        )
+        bal_time = time.time() - t_bal
 
-        return out_results, in_results, bal_results
+        total_time = in_time + bal_time
+        total_queries = len(in_stmts) + len(bal_stmts)
+
+        # Build timing breakdown for DEBUG logging
+        timing = {
+            "build_stmts": build_time,
+            "execute": total_time,
+            "n_in": len(in_stmts),
+            "n_bal": len(bal_stmts),
+            "in_time": in_time,
+            "bal_time": bal_time,
+            "in_qps": len(in_stmts) / in_time if in_time > 0 else 0,
+            "bal_qps": len(bal_stmts) / bal_time if bal_time > 0 else 0,
+            "queries_per_sec": total_queries / total_time if total_time > 0 else 0,
+        }
+
+        return in_results, bal_results, timing
 
     def get_balance_async_batch_account(self, address_ids: List[id]):
         stmt = self.select_stmt(

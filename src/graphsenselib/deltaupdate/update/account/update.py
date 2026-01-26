@@ -1,5 +1,6 @@
 import logging
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
@@ -474,6 +475,36 @@ class UpdateStrategyAccount(UpdateStrategy):
             else:
                 raise ValueError(f"Unknown currency {currency}")
 
+            # Collect all (address, block_id) pairs to compute per-block unique counts
+            addr_block_pairs = []
+            for t in traces_s:
+                if t.from_address is not None:
+                    addr_block_pairs.append((t.from_address, t.block_id))
+                if t.to_address is not None:
+                    addr_block_pairs.append((t.to_address, t.block_id))
+            for t in reward_traces:
+                if t.to_address is not None:
+                    addr_block_pairs.append((t.to_address, t.block_id))
+            for tt in token_transfers:
+                if tt.from_address is not None:
+                    addr_block_pairs.append((tt.from_address, tt.block_id))
+                if tt.to_address is not None:
+                    addr_block_pairs.append((tt.to_address, tt.block_id))
+            for tx in transactions_for_addresses:
+                if tx.from_address is not None:
+                    addr_block_pairs.append((tx.from_address, tx.block_id))
+                if tx.to_address is not None:
+                    addr_block_pairs.append((tx.to_address, tx.block_id))
+            for b in blocks:
+                if b.miner is not None:
+                    addr_block_pairs.append((b.miner, b.block_id))
+
+            # Count unique addresses per block, then sum
+            addrs_by_block = defaultdict(set)
+            for addr, block_id in addr_block_pairs:
+                addrs_by_block[block_id].add(addr)
+            sum_unique_per_block = sum(len(addrs) for addrs in addrs_by_block.values())
+
             addresses = get_sorted_unique_addresses(
                 traces_s,
                 reward_traces,
@@ -482,6 +513,15 @@ class UpdateStrategyAccount(UpdateStrategy):
                 blocks,
             )
             len_addr = len(addresses)
+            overlap_pct = (
+                ((sum_unique_per_block - len_addr) / sum_unique_per_block * 100)
+                if sum_unique_per_block > 0
+                else 0
+            )
+            logger.debug(
+                f"  Addresses: {sum_unique_per_block} unique/block (summed) -> "
+                f"{len_addr} unique/batch ({overlap_pct:.1f}% overlap between blocks)"
+            )
         self._timing_transform += time.time() - t_transform_start
 
         t_db_start = time.time()
@@ -489,19 +529,34 @@ class UpdateStrategyAccount(UpdateStrategy):
             logger, f"Checking existence for {len_addr} addresses"
         ) as _:
             addr_ids = dict(tdb.get_address_id_async_batch(list(addresses)))
-        self._timing_cassandra_read += time.time() - t_db_start
+        elapsed = time.time() - t_db_start
+        self._timing_cassandra_check_existence += elapsed
+        self._timing_cassandra_read += elapsed
+        qps = len_addr / elapsed if elapsed > 0 else 0
+        logger.debug(
+            f"  DB: get_address_id_async_batch: {len_addr} queries "
+            f"in {elapsed:.2f}s ({qps:.0f} q/s)"
+        )
 
         t_db_start = time.time()
         with LoggerScope.debug(logger, "Reading addresses to be updated"):
             existing_addr_ids = no_nones(
                 [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
             )
+            n_existing = len(existing_addr_ids)
 
             global addresses_resolved
+            t_addr_batch_start = time.time()
             addresses_resolved = dict(
                 tdb.get_address_async_batch(
                     [adr.address_id for adr in existing_addr_ids]
                 )
+            )
+            t_addr_batch_elapsed = time.time() - t_addr_batch_start
+            qps = n_existing / t_addr_batch_elapsed if t_addr_batch_elapsed > 0 else 0
+            logger.debug(
+                f"  DB: get_address_async_batch: {n_existing} queries "
+                f"in {t_addr_batch_elapsed:.2f}s ({qps:.0f} q/s)"
             )
 
             def get_resolved_address(addr_id_exc):
@@ -534,7 +589,9 @@ class UpdateStrategyAccount(UpdateStrategy):
             address_hash_to_id = {
                 address: id_row[0] for address, id_row in addresses_to_id__rows.items()
             }
-        self._timing_cassandra_read += time.time() - t_db_start
+        elapsed = time.time() - t_db_start
+        self._timing_cassandra_read_addresses += elapsed
+        self._timing_cassandra_read += elapsed
 
         t_transform_start = time.time()
         with LoggerScope.debug(logger, "Get transactions to insert into the database"):
@@ -646,53 +703,116 @@ class UpdateStrategyAccount(UpdateStrategy):
 
         with LoggerScope.debug(logger, "Create dbdelta and compress"):
             """Combine all updates except the pure inserts into a delta object"""
+            n_relations_before = len(relation_updates)
+            n_entity_txs_before = len(entity_transactions)
+            n_balances_before = len(balance_updates)
             dbdelta = DbDeltaAccount(
                 entity_deltas, entity_transactions, relation_updates, balance_updates
             )
             """ Group and merge deltas before merge with db deltas """
             dbdelta = dbdelta.compress()
+            logger.debug(
+                f"  Relations: {n_relations_before} -> {len(dbdelta.relation_updates)} "
+                f"after compress, entity_txs: {n_entity_txs_before} -> "
+                f"{len(dbdelta.new_entity_txs)}, balances: {n_balances_before} -> "
+                f"{len(dbdelta.balance_updates)}"
+            )
         self._timing_transform += time.time() - t_transform_start
 
         t_db_start = time.time()
         with LoggerScope.debug(logger, "Query data from database"):
-            # Prepare query parameters for all query types
-            rel_to_query_out = [
-                (
-                    addresses_to_id__rows[update.src_identifier][0],
-                    addresses_to_id__rows[update.dst_identifier][0],
-                )
-                for update in dbdelta.relation_updates
-            ]
-            rel_to_query_in = [
-                (
-                    addresses_to_id__rows[update.dst_identifier][0],
-                    addresses_to_id__rows[update.src_identifier][0],
-                )
-                for update in dbdelta.relation_updates
-            ]
-            address_ids = [addresses_to_id__rows[address][0] for address in addresses]
+            # Separate relations: skip queries for those involving new addresses
+            # If either address is new, the relation cannot exist in the database
+            relations_with_new_addr = set()
+            rel_to_query_in = []
+            relations_to_query_keys = []
 
-            # Execute all queries in a single concurrent batch for better performance
-            out_results, in_results, bal_results = (
-                tdb.execute_combined_queries_account_delta_updates(
-                    rel_to_query_out, rel_to_query_in, address_ids
-                )
+            for update in dbdelta.relation_updates:
+                src_is_new = addresses_to_id__rows[update.src_identifier][1] is None
+                dst_is_new = addresses_to_id__rows[update.dst_identifier][1] is None
+
+                if src_is_new or dst_is_new:
+                    # At least one address is new -> relation must be new
+                    relations_with_new_addr.add(
+                        (update.src_identifier, update.dst_identifier)
+                    )
+                else:
+                    # Both addresses exist -> need to query database
+                    rel_to_query_in.append(
+                        (
+                            addresses_to_id__rows[update.dst_identifier][0],
+                            addresses_to_id__rows[update.src_identifier][0],
+                        )
+                    )
+                    relations_to_query_keys.append(
+                        (update.src_identifier, update.dst_identifier)
+                    )
+
+            n_rel_skipped = len(relations_with_new_addr)
+            n_rel_queried = len(rel_to_query_in)
+            logger.debug(
+                f"  Relations: {n_rel_skipped} skipped (new addr), "
+                f"{n_rel_queried} queried"
             )
 
-            # Build result dictionaries
-            addr_outrelations = {
-                (update.src_identifier, update.dst_identifier): qr
-                for update, qr in zip(dbdelta.relation_updates, out_results)
-            }
+            # Filter balances: skip queries for new addresses (no existing balances)
+            address_ids_to_query = [
+                addresses_to_id__rows[address][0]
+                for address in addresses
+                if addresses_to_id__rows[address][1] is not None
+            ]
+            n_bal_skipped = len(addresses) - len(address_ids_to_query)
+            n_bal_queried = len(address_ids_to_query)
+            logger.debug(
+                f"  Balances: {n_bal_skipped} skipped (new addr), "
+                f"{n_bal_queried} queried"
+            )
+
+            # Execute inrelation and balance queries (outgoing skipped - same data)
+            in_results, bal_results, query_timing = (
+                tdb.execute_combined_queries_account_delta_updates(
+                    rel_to_query_in, address_ids_to_query
+                )
+            )
+            n_in = int(query_timing["n_in"])
+            n_bal = int(query_timing["n_bal"])
+            logger.debug(
+                f"  DB: in_relations: {n_in} queries in "
+                f"{query_timing['in_time']:.2f}s ({query_timing['in_qps']:.0f} q/s)"
+            )
+            logger.debug(
+                f"  DB: balances: {n_bal} queries in "
+                f"{query_timing['bal_time']:.2f}s ({query_timing['bal_qps']:.0f} q/s)"
+            )
+
+            # Build result dictionaries (only inrelations - outgoing derived from it)
+            # Only includes relations that were actually queried
             addr_inrelations = {
-                (update.src_identifier, update.dst_identifier): qr
-                for update, qr in zip(dbdelta.relation_updates, in_results)
+                key: qr for key, qr in zip(relations_to_query_keys, in_results)
             }
+            # Only includes balances for existing addresses that were queried
+            # New addresses get empty BalanceDelta via .get() default in prepare_balances
             addr_balances = {
                 addr_id: BalanceDelta.from_db(addr_id, qr.result_or_exc.all())
-                for addr_id, qr in zip(address_ids, bal_results)
+                for addr_id, qr in zip(address_ids_to_query, bal_results)
             }
-        self._timing_cassandra_read += time.time() - t_db_start
+
+            # Count existing vs new (for diagnostics)
+            n_existing_in = sum(
+                1 for qr in in_results if qr.result_or_exc.one() is not None
+            )
+            n_existing_bal = sum(
+                1 for qr in bal_results if len(qr.result_or_exc.all()) > 0
+            )
+            n_total_rel = n_rel_skipped + n_rel_queried
+            n_total_bal = n_bal_skipped + n_bal_queried
+            logger.debug(
+                f"  Existing records: in={n_existing_in}/{n_total_rel}, "
+                f"bal={n_existing_bal}/{n_total_bal}"
+            )
+        elapsed = time.time() - t_db_start
+        self._timing_cassandra_query_relations += elapsed
+        self._timing_cassandra_read += elapsed
 
         t_transform_start = time.time()
         with LoggerScope.debug(logger, "Prepare changes"):
@@ -736,7 +856,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 dbdelta.relation_updates,
                 address_hash_to_id,
                 addr_inrelations,
-                addr_outrelations,
+                relations_with_new_addr,
                 id_bucket_size,
                 relations_nbuckets,
             )
