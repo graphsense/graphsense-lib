@@ -111,15 +111,36 @@ def _convert_yaml_dates(obj):
         return obj
 
 
-def load_yaml_fast(file_path):
-    """Load YAML using rapidyaml.
+def _ryml_available():
+    """Check if rapidyaml is available."""
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            import ryml  # noqa: F401
 
-    Note: This produces slightly different types than PyYAML SafeLoader:
+        return True
+    except ImportError:
+        return False
+
+
+RYML_AVAILABLE = _ryml_available()
+
+
+def load_yaml_fast(file_path):
+    """Load YAML using rapidyaml if available, otherwise fall back to PyYAML.
+
+    Note: When using rapidyaml, this produces slightly different types than PyYAML:
     - 'yes'/'no'/'on'/'off' remain as strings (PyYAML converts to bool)
     - 'YYYY-MM-DD' dates are converted to datetime.date (same as PyYAML)
     - 'true'/'false' are converted to bool (same as PyYAML)
     """
     import json
+
+    if not RYML_AVAILABLE:
+        import yaml
+
+        with open(file_path, "r") as f:
+            return yaml.load(f, UniqueKeyLoader)
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=DeprecationWarning)
