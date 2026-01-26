@@ -117,10 +117,22 @@ def prepare_relations_for_ingest(
     delta: List[RelationDeltaAccount],
     hash_to_id: Dict[str, bytes],
     inrelations: dict,
-    outrelations: dict,
+    relations_with_new_addr: set,
     id_bucket_size: int,
     relations_nbuckets: int,
 ) -> Tuple[List[DbChange], dict, dict]:
+    """Prepare relation changes for database ingest.
+
+    Note: We only query incoming relations. Outgoing relations have identical
+    data (no_transactions, value, token_values) and their existence can be
+    derived from incoming relations. Both tables are still written to.
+    Cassandra's UPSERT behavior handles any rare inconsistencies.
+
+    Args:
+        relations_with_new_addr: Set of (src, dst) relation keys where at least
+            one address is new. These relations are guaranteed to be new and
+            don't need database queries.
+    """
     new_relations_in = defaultdict(int)
     new_relations_out = defaultdict(int)
 
@@ -128,14 +140,14 @@ def prepare_relations_for_ingest(
 
     """ Merging relations deltas """
     for relations_update in delta:
-        outr = outrelations[
-            (relations_update.src_identifier, relations_update.dst_identifier)
-        ].result_or_exc.one()
-        inr = inrelations[
-            (relations_update.src_identifier, relations_update.dst_identifier)
-        ].result_or_exc.one()
+        rel_key = (relations_update.src_identifier, relations_update.dst_identifier)
 
-        # assert (outr is None) == (inr is None)
+        # Check if this relation involves a new address (skip query)
+        if rel_key in relations_with_new_addr:
+            inr = None  # Guaranteed new - no query needed
+        else:
+            # Query result from database
+            inr = inrelations[rel_key].result_or_exc.one()
 
         id_src = hash_to_id[relations_update.src_identifier]
         id_dst = hash_to_id[relations_update.dst_identifier]
@@ -147,31 +159,7 @@ def prepare_relations_for_ingest(
             id_dst, id_src, id_bucket_size, relations_nbuckets
         )
 
-        # checking and logging inconsistencies
-        if (outr is None) == (inr is None):
-            pass
-        else:
-            debug_msg = "inoutcheck: inconsistency "
-            debug_msg += f"src: {bytes.hex(relations_update.src_identifier)} "
-            debug_msg += f"dst: {bytes.hex(relations_update.dst_identifier)} "
-            debug_msg += f"inr: {inr} "
-            debug_msg += f"outr: {outr} "
-            logger.warning(debug_msg)
-
-        # missing record patching
-        if (outr is None) and (inr is not None):
-            outr = MutableNamedTuple(**inr._asdict())
-
-            outr.src_address_id_group = src_group
-            outr.src_address_id_secondary_group = src_secondary
-
-        if (inr is None) and (outr is not None):
-            inr = MutableNamedTuple(**outr._asdict())
-
-            inr.dst_address_id_group = dst_group
-            inr.dst_address_id_secondary_group = dst_secondary
-
-        if outr is None:
+        if inr is None:
             """new address relation to insert"""
             new_relations_out[relations_update.src_identifier] += 1
             new_relations_in[relations_update.dst_identifier] += 1
@@ -202,10 +190,10 @@ def prepare_relations_for_ingest(
             )
 
         else:
-            """update existing adddress relation"""
-            nv = DeltaValue.from_db(outr.value).merge(relations_update.value)
+            """update existing address relation - use inr data for both tables"""
+            nv = DeltaValue.from_db(inr.value).merge(relations_update.value)
 
-            nv_token = outr.token_values
+            nv_token = inr.token_values
             nv_token = nv_token if nv_token is not None else {}
             new_token = relations_update.token_values
             keys = set(nv_token.keys()).union(new_token.keys())
@@ -219,8 +207,6 @@ def prepare_relations_for_ingest(
                 elif key in relations_update.token_values:
                     nv_token[key] = relations_update.token_values[key]
 
-            # assert outr.no_transactions == inr.no_transactions
-
             chng_in = DbChange.update(
                 table="address_incoming_relations",
                 data={
@@ -228,14 +214,14 @@ def prepare_relations_for_ingest(
                     "dst_address_id_secondary_group": dst_secondary,
                     "dst_address_id": id_dst,
                     "src_address_id": id_src,
-                    "no_transactions": outr.no_transactions
+                    "no_transactions": inr.no_transactions
                     + relations_update.no_transactions,
-                    # outr and and inr should be the same
                     "value": nv,
                     "token_values": nv_token,
                 },
             )
 
+            # Cassandra UPSERT handles rare case where outgoing doesn't exist
             chng_out = DbChange.update(
                 table="address_outgoing_relations",
                 data={
@@ -243,7 +229,7 @@ def prepare_relations_for_ingest(
                     "src_address_id_secondary_group": src_secondary,
                     "src_address_id": id_src,
                     "dst_address_id": id_dst,
-                    "no_transactions": outr.no_transactions
+                    "no_transactions": inr.no_transactions
                     + relations_update.no_transactions,
                     "value": nv,
                     "token_values": nv_token,

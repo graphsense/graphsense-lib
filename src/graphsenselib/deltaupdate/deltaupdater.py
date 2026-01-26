@@ -150,6 +150,7 @@ def update_transformed(
                 f"from block {min(b)} to {max(b)}. "
                 f"Done with {min(b) - start_block}, {end_block - min(b) + 1} to go."
             )
+            updater.reset_timing()
             action = updater.process_batch(b)
             if action == Action.DATA_TO_PROCESS_NOT_FOUND:
                 logger.warning(
@@ -170,31 +171,39 @@ def update_transformed(
                 "minutes remaining."
             )
 
+            _log_batch_timing(updater)
+
             if shutdown_initialized():
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
-                _log_timing_summary(updater, start_block, b[-1])
                 return b[-1]
 
-    _log_timing_summary(updater, start_block, end_block)
     return end_block
 
 
-def _log_timing_summary(updater, start_block: int, end_block: int):
+def _log_batch_timing(updater):
     timing = updater.timing_summary
-    total = timing["total"]
-    blocks_processed = end_block - start_block + 1
+    # Exclude breakdown dict from top-level sum
+    batch_total = sum(v for k, v in timing.items() if isinstance(v, (int, float)))
 
     parts = []
-    for name, seconds in timing.items():
-        if name != "total" and seconds > 0:
-            pct = (seconds / total * 100) if total > 0 else 0
-            parts.append(f"{name}={seconds:.1f}s ({pct:.1f}%)")
+    for name, value in timing.items():
+        if isinstance(value, (int, float)) and value > 0:
+            pct = (value / batch_total * 100) if batch_total > 0 else 0
+            parts.append(f"{name}={value:.1f}s ({pct:.1f}%)")
 
     timing_str = ", ".join(parts) if parts else "no timing data"
-    logger.info(
-        f"Delta update completed: {blocks_processed} blocks in {total:.1f}s. "
-        f"Timing breakdown: {timing_str}"
-    )
+    logger.info(f"Batch timing: {timing_str}")
+
+    # DEBUG level: detailed Cassandra read breakdown
+    if logger.isEnabledFor(logging.DEBUG):
+        breakdown = timing.get("cassandra_read_breakdown", {})
+        if breakdown:
+            logger.debug(
+                f"  Cassandra read breakdown: "
+                f"check_existence={breakdown.get('check_existence', 0):.1f}s, "
+                f"read_addresses={breakdown.get('read_addresses', 0):.1f}s, "
+                f"query_relations={breakdown.get('query_relations', 0):.1f}s"
+            )
 
 
 def update(

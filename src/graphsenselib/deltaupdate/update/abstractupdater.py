@@ -98,6 +98,10 @@ class AbstractUpdateStrategy(ABC):
         self._timing_cassandra_read = 0.0
         self._timing_transform = 0.0
         self._timing_persist = 0.0
+        # Sub-timing for Cassandra reads breakdown
+        self._timing_cassandra_check_existence = 0.0
+        self._timing_cassandra_read_addresses = 0.0
+        self._timing_cassandra_query_relations = 0.0
 
     @property
     def start_time(self):
@@ -121,10 +125,25 @@ class AbstractUpdateStrategy(ABC):
             "exchange_rates": self._timing_exchange_rates,
             "delta_lake": self._timing_delta_lake,
             "cassandra_read": self._timing_cassandra_read,
+            "cassandra_read_breakdown": {
+                "check_existence": self._timing_cassandra_check_existence,
+                "read_addresses": self._timing_cassandra_read_addresses,
+                "query_relations": self._timing_cassandra_query_relations,
+            },
             "transform": self._timing_transform,
             "persist": self._timing_persist,
-            "total": self.elapsed_seconds_global,
         }
+
+    def reset_timing(self):
+        self._timing_exchange_rates = 0.0
+        self._timing_delta_lake = 0.0
+        self._timing_cassandra_read = 0.0
+        self._timing_transform = 0.0
+        self._timing_persist = 0.0
+        # Reset sub-timing
+        self._timing_cassandra_check_existence = 0.0
+        self._timing_cassandra_read_addresses = 0.0
+        self._timing_cassandra_query_relations = 0.0
 
     @abstractmethod
     def prepare_database(self):
