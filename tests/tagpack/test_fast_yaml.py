@@ -5,7 +5,12 @@ from datetime import date
 import pytest
 import yaml
 
-from graphsenselib.tagpack import UniqueKeyLoader, ValidationError, load_yaml_fast
+from graphsenselib.tagpack import (
+    RYML_AVAILABLE,
+    UniqueKeyLoader,
+    ValidationError,
+    load_yaml_fast,
+)
 
 
 class TestLoadYamlFast:
@@ -70,6 +75,7 @@ class TestLoadYamlFast:
         assert "label" in str(exc_info.value)
 
 
+@pytest.mark.skipif(not RYML_AVAILABLE, reason="rapidyaml not installed")
 class TestYamlParserDifferences:
     """Tests documenting the differences between PyYAML and rapidyaml.
 
@@ -135,3 +141,35 @@ class TestYamlParserDifferences:
         assert rapid_result["bool_false"] is False
         assert pyyaml_result["bool_true"] is True
         assert pyyaml_result["bool_false"] is False
+
+
+class TestPyYamlFallback:
+    """Tests for PyYAML fallback when rapidyaml is not available."""
+
+    def test_fallback_loads_basic_yaml(self, tmp_path, monkeypatch):
+        """Test that fallback to PyYAML works correctly."""
+        import graphsenselib.tagpack as tagpack_module
+
+        # Force fallback by setting RYML_AVAILABLE to False
+        monkeypatch.setattr(tagpack_module, "RYML_AVAILABLE", False)
+
+        content = {"title": "Test", "tags": [{"label": "a", "address": "b"}]}
+        yaml_file = tmp_path / "test.yaml"
+        yaml_file.write_text(yaml.dump(content))
+
+        result = load_yaml_fast(str(yaml_file))
+        assert result == content
+
+    def test_fallback_detects_duplicates(self, tmp_path, monkeypatch):
+        """Test that duplicate detection works in fallback mode."""
+        import graphsenselib.tagpack as tagpack_module
+
+        monkeypatch.setattr(tagpack_module, "RYML_AVAILABLE", False)
+
+        yaml_file = tmp_path / "dup.yaml"
+        yaml_file.write_text("title: First\ntitle: Duplicate\n")
+
+        with pytest.raises(ValidationError) as exc_info:
+            load_yaml_fast(str(yaml_file))
+        assert "Duplicate" in str(exc_info.value)
+        assert "title" in str(exc_info.value)
