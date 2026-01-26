@@ -3,7 +3,6 @@ import sys
 from datetime import datetime
 from functools import cache, partial
 
-from anytree import find
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import Session, SQLModel, create_engine, create_mock_engine, text
 
@@ -11,9 +10,6 @@ if sys.version_info >= (3, 9):
     from importlib.resources import files as imprtlb_files
 else:
     from importlib_resources import files as imprtlb_files
-
-from graphsenselib.tagpack.constants import DEFAULT_CONFIG
-from graphsenselib.tagpack.taxonomy import _load_taxonomies
 
 from .. import db as db
 from .models import (
@@ -111,6 +107,8 @@ def init_database(engine):
 
 @cache
 def _is_abuse_concept(tree, concept):
+    from anytree import find  # Lazy import to avoid loading at module import time
+
     return any(
         x.name == "abuse"
         for x in find(tree, lambda node: node.name == concept).iter_path_reverse()
@@ -118,6 +116,10 @@ def _is_abuse_concept(tree, concept):
 
 
 def _add_fk_data(session):
+    # Lazy imports to avoid loading tagpack dependencies at module import time
+    from graphsenselib.tagpack.constants import DEFAULT_CONFIG
+    from graphsenselib.tagpack.taxonomy import _load_taxonomies
+
     desc = f"Imported at {datetime.now().isoformat()}"
     tax = _load_taxonomies(DEFAULT_CONFIG)
     for tax_name, tax in tax.items():
