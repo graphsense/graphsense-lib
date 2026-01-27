@@ -597,12 +597,18 @@ def io_from_rows(
 
     results = []
     for idx, i in enumerate(values[key]):
+        # Extract script_hex if available (for nonstandard outputs like OP_RETURN)
+        script_hex = None
+        if include_nonstandard_io and hasattr(i, "script_hex") and i.script_hex:
+            script_hex = i.script_hex.hex()  # Convert blob to hex string
+
         if i.address is not None:
             results.append(
                 TxValue(
                     address=i.address,
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
+                    script_hex=script_hex,
                 )
             )
         elif include_nonstandard_io:
@@ -611,6 +617,7 @@ def io_from_rows(
                     address=[],
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
+                    script_hex=script_hex,
                 )
             )
     return results
