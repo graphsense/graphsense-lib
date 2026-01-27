@@ -1,5 +1,5 @@
-from typing import Dict, Optional, Any, Tuple, List, AsyncGenerator, Generator
-from graphsenselib.utils.httpx import RetryHTTPClient  # Changed from import requests
+from typing import Dict, Optional, Any, Tuple, List, AsyncGenerator
+from graphsenselib.utils.httpx import RetryHTTPClient
 from graphsenselib.utils import strip_0x
 from graphsenselib.utils.transactions import (
     SubTransactionIdentifier,
@@ -17,6 +17,7 @@ from graphsenselib.utils.accountmodel import is_native_placeholder
 from graphsenselib.datatypes.abi import decode_logs_db, log_signatures
 from graphsenselib.db.asynchronous.cassandra import Cassandra
 from graphsenselib.defi.models import Trace
+from graphsenselib.datatypes.common import NodeType
 
 
 UTXO_NETWORKS = ["btc", "bch", "ltc", "zec"]
@@ -27,11 +28,22 @@ THORNODE_URLS = [
     "https://thornode-v1.ninerealms.com/thorchain/tx/details/",
 ]
 
+# Known THORChain router addresses (for validating deposit addresses)
+# These are the main router contracts that receive funds from deposit addresses
+THORCHAIN_ROUTER_ADDRESSES = {
+    "eth": [
+        "0xd37bbe5744d730a1d98d8dc97c42f0ca46ad7146",  # Current ETH router
+        "0x3624525075b88b24ecc29ce226b0cec1ffcb6976",  # Previous router
+        "0xc145990e84155416144c532e31f89b840ca8c2ce",  # Historical router
+    ],
+}
+
 
 async def try_thornode_endpoints(tx_hash_upper: str):
     """
     Try all THORNODE_URLS endpoints for the given transaction hash.
     Returns the first successful and decodable JSON response.
+    Used as fallback when OP_RETURN data is not available in DB.
     """
     client = RetryHTTPClient()
 
@@ -63,6 +75,83 @@ async def try_thornode_endpoints(tx_hash_upper: str):
     raise ValueError(
         "All THORChain endpoints failed or returned non-decodable responses"
     )
+
+
+def parse_op_return_memo(script_hex: str) -> Optional[str]:
+    """
+    Parse memo from OP_RETURN script hex.
+
+    OP_RETURN format:
+    - 6a = OP_RETURN opcode
+    - Next byte(s) = length (or OP_PUSHDATA1/2/4 for longer data)
+    - Remaining = data bytes (memo as UTF-8)
+
+    Returns decoded memo string or None if not valid OP_RETURN.
+    """
+    if not script_hex or not script_hex.startswith("6a"):
+        return None
+
+    script_bytes = bytes.fromhex(script_hex)
+
+    if len(script_bytes) < 2:
+        return None
+
+    # Skip OP_RETURN (0x6a)
+    pos = 1
+    length_byte = script_bytes[pos]
+
+    # Handle OP_PUSHDATA variants
+    if length_byte <= 0x4B:  # Direct push (0-75 bytes)
+        data_start = pos + 1
+        data_len = length_byte
+    elif length_byte == 0x4C:  # OP_PUSHDATA1
+        if len(script_bytes) < pos + 2:
+            return None
+        data_start = pos + 2
+        data_len = script_bytes[pos + 1]
+    elif length_byte == 0x4D:  # OP_PUSHDATA2
+        if len(script_bytes) < pos + 3:
+            return None
+        data_start = pos + 3
+        data_len = int.from_bytes(script_bytes[pos + 1 : pos + 3], "little")
+    else:
+        return None
+
+    if len(script_bytes) < data_start + data_len:
+        return None
+
+    data = script_bytes[data_start : data_start + data_len]
+    return data.decode("utf-8", errors="replace")
+
+
+async def get_utxo_tx_with_memo(
+    db: Cassandra, network: str, tx_hash: str
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """
+    Get UTXO transaction from DB and extract OP_RETURN memo.
+
+    Returns (tx_dict, memo) where memo is extracted from OP_RETURN output.
+    """
+    # get_tx_by_hash expects a hex string, not bytes
+    tx = await db.get_tx_by_hash(network, tx_hash.lower())
+
+    if tx is None:
+        raise ValueError(f"Transaction {tx_hash} not found in {network}")
+
+    # Find OP_RETURN output and extract memo
+    memo = None
+    for output in tx.get("outputs", []) or []:
+        script_hex = getattr(output, "script_hex", None)
+        if script_hex:
+            # script_hex might be bytes, convert to str
+            if isinstance(script_hex, bytes):
+                script_hex = script_hex.hex()
+            parsed_memo = parse_op_return_memo(script_hex)
+            if parsed_memo:
+                memo = parsed_memo
+                break
+
+    return tx, memo
 
 
 class SwapDecoder:
@@ -256,23 +345,137 @@ async def get_bridges_from_thorchain_send_from_tx_hash_account(
         logs_raw_filtered = [log for _, log in dlogs_logs]
         traces_filtered = [trace for trace in traces_set]
 
-        for bridge_send, _ in get_bridges_from_thorchain_send(
-            network, tx, dlogs_filtered, logs_raw_filtered, traces_filtered
+        async for bridge_send, _ in get_bridges_from_thorchain_send(
+            network, db, tx, dlogs_filtered, logs_raw_filtered, traces_filtered
         ):
             yield bridge_send
 
 
-def get_bridges_from_thorchain_send(
+def extract_memo_from_input(tx: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract THORChain memo from transaction input data.
+
+    Direct deposits to THORChain vaults include the memo as ASCII in the input field.
+    """
+    input_data = tx.get("input")
+    if not input_data:
+        return None
+
+    if isinstance(input_data, bytes):
+        input_bytes = input_data
+    else:
+        input_bytes = bytes.fromhex(input_data)
+
+    if len(input_bytes) == 0:
+        return None
+
+    # Try to decode as UTF-8
+    try:
+        memo = input_bytes.decode("utf-8", errors="strict")
+        # Validate it looks like a THORChain memo (starts with swap indicators)
+        if memo and memo[0] in ["=", "s", "S", "+", "-", "~"]:
+            return memo
+    except (UnicodeDecodeError, ValueError):
+        pass
+
+    return None
+
+
+async def is_thorchain_deposit_address(
+    db: Cassandra, network: str, address: str
+) -> bool:
+    """
+    Check if an address is a THORChain deposit address.
+
+    A THORChain deposit address is identified by:
+    1. Having only one outgoing neighbor
+    2. That neighbor being a known THORChain router address
+
+    Args:
+        db: Cassandra database connection
+        network: Network identifier (e.g., 'eth')
+        address: Address to check (hex string with or without 0x prefix)
+
+    Returns:
+        True if the address is a THORChain deposit address
+    """
+
+    # Normalize address format
+    if address.startswith("0x"):
+        address_bytes = bytes.fromhex(address[2:])
+    else:
+        address_bytes = bytes.fromhex(address)
+
+    # Get outgoing neighbors (only first page, we just need to check if there's exactly 1)
+    neighbors, _ = await db.list_neighbors(
+        currency=network,
+        id=address_bytes,
+        is_outgoing=True,
+        node_type=NodeType.ADDRESS,
+        targets=None,
+        page=None,
+        pagesize=10,  # Small page size - we only need to check if there's exactly 1
+    )
+
+    if len(neighbors) != 1:
+        logger.debug(
+            f"Address {address} has {len(neighbors)} outgoing neighbors, expected 1"
+        )
+        return False
+
+    # Get the neighbor address
+    neighbor = neighbors[0]
+    neighbor_address_id = neighbor.get("dst_address_id")
+    if neighbor_address_id is None:
+        return False
+
+    # Get the actual address from the ID
+    neighbor_address = await db.get_address_by_address_id(network, neighbor_address_id)
+    if neighbor_address is None:
+        return False
+
+    neighbor_address_hex = "0x" + neighbor_address.hex()
+
+    # Check if neighbor is a known THORChain router
+    known_routers = THORCHAIN_ROUTER_ADDRESSES.get(network, [])
+    if neighbor_address_hex.lower() in [r.lower() for r in known_routers]:
+        logger.debug(
+            f"Address {address} is a THORChain deposit address "
+            f"(neighbor {neighbor_address_hex} is a known router)"
+        )
+        return True
+
+    logger.debug(
+        f"Address {address} neighbor {neighbor_address_hex} is not a known THORChain router"
+    )
+    return False
+
+
+async def get_bridges_from_thorchain_send(
     network: str,
+    db: Optional[Cassandra],
     tx: Dict[str, Any],
     dlogs: List[Dict[str, Any]],
     logs_raw: List[Dict[str, Any]],
     traces: List[Trace],
-) -> Generator[Tuple[BridgeSendTransfer, BridgeReceiveReference], None, None]:
+) -> AsyncGenerator[Tuple[BridgeSendTransfer, BridgeReceiveReference], None]:
     """
-    # example tx 6d65123e246d752de3f39e0fdf5b788baad35a29b7e95b74c714e6c7c1ea61dd Bybit hack bridge to BTC
+    Extract bridge send information from THORChain deposit transactions.
 
-    TODO Tag all addresses funded by Thorchain
+    Handles two types of deposits:
+    1. Router deposits: Use the Deposit log event (contains asset and memo)
+    2. Direct vault deposits: Memo is in the transaction input data (native ETH only)
+       - Requires validation that the receiver is a THORChain deposit address
+
+    Args:
+        network: Network identifier (e.g., 'eth')
+        db: Cassandra database connection (required for direct vault deposit validation)
+        tx: Transaction data
+        dlogs: Decoded logs
+        logs_raw: Raw logs
+        traces: Transaction traces
+
+    Example tx: 6d65123e246d752de3f39e0fdf5b788baad35a29b7e95b74c714e6c7c1ea61dd (Bybit hack bridge to BTC)
     """
 
     def from_hex(address):
@@ -281,14 +484,47 @@ def get_bridges_from_thorchain_send(
     from_address = from_hex(tx["from_address"])
 
     deposits = [dlog for dlog in dlogs if dlog["name"] == "Deposit"]
-    assert len(deposits) == 1, "Expected exactly one deposit"
-    deposit = deposits[0]
-    # to_ = deposit["parameters"]["to"]
-    from_asset = deposit["parameters"]["asset"]
-    # amount = deposit["parameters"]["amount"]
-    # # '=:b:bc1q6fxj6446h2gr40wtfkzqyfk848gw4q4t8akr2p:0/1/0:dx:30' or
-    # '=:ETH.ETH:0x19317e026ef473d44D746d364062539Ba7Cb0fa3:117890211/1/0:wr:100'
-    memo = deposit["parameters"]["memo"]
+
+    # Handle the two deposit types
+    if len(deposits) == 1:
+        # Type 1: Router deposit with Deposit log
+        deposit = deposits[0]
+        from_asset = deposit["parameters"]["asset"]
+        memo = deposit["parameters"]["memo"]
+    elif len(deposits) == 0:
+        # Type 2: Direct vault deposit - memo in input data
+        memo = extract_memo_from_input(tx)
+        if memo is None:
+            logger.debug(
+                f"No Deposit log and no memo in input for tx {tx['tx_hash'].hex()}"
+            )
+            return
+
+        # Validate that the receiver is a THORChain deposit address
+        to_address = from_hex(tx["to_address"])
+        if db is None:
+            logger.warning(
+                f"Cannot validate THORChain deposit address without db connection "
+                f"for tx {tx['tx_hash'].hex()}"
+            )
+            return
+
+        is_deposit_addr = await is_thorchain_deposit_address(db, network, to_address)
+        if not is_deposit_addr:
+            logger.debug(
+                f"Receiver {to_address} is not a THORChain deposit address "
+                f"for tx {tx['tx_hash'].hex()}"
+            )
+            return
+
+        # Direct vault deposits are always native ETH
+        from_asset = "0x0000000000000000000000000000000000000000"
+    else:
+        logger.warning(
+            f"Expected 0 or 1 Deposit logs, got {len(deposits)} for tx {tx['tx_hash'].hex()}"
+        )
+        return
+
     swap_info = decode_swap(memo)
 
     if swap_info["is_swap"]:
@@ -522,7 +758,12 @@ async def get_full_bridges_from_thorchain_send(
     Combines send transfers with their corresponding receive transfers.
     """
 
-    result = list(get_bridges_from_thorchain_send(network, tx, dlogs, logs_raw, traces))
+    result = [
+        item
+        async for item in get_bridges_from_thorchain_send(
+            network, db, tx, dlogs, logs_raw, traces
+        )
+    ]
     if len(result) == 0:
         logger.warning(f"No send transfers found for {tx['tx_hash'].hex()}")
         return  # This stops the generator iteration
@@ -576,8 +817,74 @@ async def get_full_bridges_from_thorchain_receive(
 
 
 async def preliminary_utxo_handling_receive(
+    db: Cassandra,
+    network: str,
     receive_reference: BridgeReceiveReference,
 ) -> Optional[List[BridgeReceiveTransfer]]:
+    """
+    Find the receiving UTXO transaction using OP_RETURN memo from DB.
+    The memo contains OUT:<original_tx_hash> which links to the deposit.
+    Falls back to Thornode API if OP_RETURN data is not available.
+    """
+    # Get all incoming transactions for the recipient address
+    address = receive_reference.toAddress
+    txs, _ = await db.list_address_txs(network, address, direction="in", order="asc")
+
+    has_script_hex = False
+    for tx_ref in txs:
+        tx_hash = tx_ref["tx_hash"].hex()
+        tx, memo = await get_utxo_tx_with_memo(db, network, tx_hash)
+
+        # Check if any output has script_hex (to know if we should fallback)
+        for output in tx.get("outputs", []) or []:
+            if getattr(output, "script_hex", None):
+                has_script_hex = True
+                break
+
+        if memo is None:
+            continue
+
+        # Parse the memo to check if it's the matching OUT:<fromTxHash>
+        parsed = decode_withdrawal(memo)
+        if not parsed.get("is_withdrawal"):
+            continue
+
+        if parsed.get("tx_id", "").lower() != receive_reference.fromTxHash.lower():
+            continue
+
+        # Found the matching transaction - get the output value to recipient
+        to_amount = 0
+        for output in tx.get("outputs", []) or []:
+            output_addresses = getattr(output, "address", None) or []
+            if address in output_addresses:
+                to_amount = getattr(output, "value", 0)
+                break
+
+        return [
+            BridgeReceiveTransfer(
+                toAddress=receive_reference.toAddress,
+                toAsset="native",
+                toAmount=to_amount,
+                toPayment=tx_hash,
+                toNetwork=receive_reference.toNetwork,
+            )
+        ]
+
+    # Fallback to Thornode API if no script_hex data available (older blocks)
+    if not has_script_hex:
+        logger.debug(
+            f"No script_hex data in DB for {receive_reference.toAddress}, "
+            "falling back to Thornode API"
+        )
+        return await _thornode_fallback_receive(receive_reference)
+
+    return None
+
+
+async def _thornode_fallback_receive(
+    receive_reference: BridgeReceiveReference,
+) -> Optional[List[BridgeReceiveTransfer]]:
+    """Fallback to Thornode API when OP_RETURN data is not available in DB."""
     tx_hash_upper = receive_reference.fromTxHash.upper()
 
     thorchain_data = await try_thornode_endpoints(tx_hash_upper)
@@ -592,9 +899,7 @@ async def preliminary_utxo_handling_receive(
             break
 
     if target_out_tx:
-        # Use the actual outbound transaction ID and amount
         toPayment = target_out_tx["id"].lower()
-        # Get the actual amount received (not the planned amount)
         if target_out_tx["coins"]:
             toAmount = target_out_tx["coins"][0]["amount"]
         else:
@@ -614,8 +919,69 @@ async def preliminary_utxo_handling_receive(
 
 
 async def preliminary_utxo_handling_send(
+    db: Cassandra, fromNetwork: str, send_reference: BridgeSendReference
+) -> Optional[List[BridgeSendTransfer]]:
+    """
+    Get UTXO send transaction details using DB with OP_RETURN memo.
+    Falls back to Thornode API if OP_RETURN data is not available.
+    """
+    tx, memo = await get_utxo_tx_with_memo(db, fromNetwork, send_reference.fromTxHash)
+
+    if tx is None:
+        raise ValueError(f"Transaction {send_reference.fromTxHash} not found")
+
+    # Check if script_hex data is available
+    has_script_hex = False
+    for output in tx.get("outputs", []) or []:
+        if getattr(output, "script_hex", None):
+            has_script_hex = True
+            break
+
+    # If no script_hex data, fall back to Thornode API
+    if not has_script_hex:
+        logger.debug(
+            f"No script_hex data in DB for tx {send_reference.fromTxHash}, "
+            "falling back to Thornode API"
+        )
+        return await _thornode_fallback_send(fromNetwork, send_reference)
+
+    # Parse the swap memo to validate it's a THORChain deposit
+    if memo:
+        swap_info = decode_swap(memo)
+        if not swap_info.get("is_swap"):
+            logger.warning(f"UTXO tx {send_reference.fromTxHash} is not a swap: {memo}")
+
+    # Find the sender address and amount from inputs
+    # For UTXO, the sender is typically the first input's address
+    from_address = None
+    from_amount = tx.get("total_input", 0)
+
+    inputs = tx.get("inputs", []) or []
+    if inputs:
+        first_input = inputs[0]
+        input_addresses = getattr(first_input, "address", None) or []
+        if input_addresses:
+            from_address = (
+                input_addresses[0]
+                if isinstance(input_addresses, list)
+                else input_addresses
+            )
+
+    return [
+        BridgeSendTransfer(
+            fromAddress=from_address or "unknown",
+            fromAsset="native",
+            fromAmount=from_amount,
+            fromNetwork=fromNetwork,
+            fromPayment=send_reference.fromTxHash,
+        )
+    ]
+
+
+async def _thornode_fallback_send(
     fromNetwork: str, send_reference: BridgeSendReference
 ) -> Optional[List[BridgeSendTransfer]]:
+    """Fallback to Thornode API when OP_RETURN data is not available in DB."""
     tx_hash_upper = send_reference.fromTxHash.upper()
 
     thorchain_data = await try_thornode_endpoints(tx_hash_upper)
@@ -628,9 +994,10 @@ async def preliminary_utxo_handling_send(
     fromAsset = "native"
     fromAmount = tx["coins"][0]["amount"] if tx["coins"] else None
 
-    fromPayment = send_reference.fromTxHash  # For UTXO, just the txid
+    fromPayment = send_reference.fromTxHash
     if not fromAmount:
         raise ValueError("No UTXO amount found in inbound transaction")
+
     return [
         BridgeSendTransfer(
             fromAddress=fromAddress,
@@ -664,8 +1031,9 @@ class ThorchainTransactionMatcher:
             return dlog["log_def"]["tags"]
 
         if receive_reference.toNetwork in UTXO_NETWORKS:
-            # todo replace this asap
-            return await preliminary_utxo_handling_receive(receive_reference)
+            return await preliminary_utxo_handling_receive(
+                self.db, receive_reference.toNetwork, receive_reference
+            )
 
         elif receive_reference.toNetwork == "eth":
             matched = []
@@ -812,7 +1180,9 @@ class ThorchainTransactionMatcher:
             return None
 
         if fromNetwork in UTXO_NETWORKS:
-            return await preliminary_utxo_handling_send(fromNetwork, send_reference)
+            return await preliminary_utxo_handling_send(
+                self.db, fromNetwork, send_reference
+            )
 
         elif fromNetwork in ACCOUNT_NETWORKS:
             bridges_generator = get_bridges_from_thorchain_send_from_tx_hash_account(

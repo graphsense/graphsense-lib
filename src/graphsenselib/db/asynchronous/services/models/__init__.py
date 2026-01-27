@@ -188,6 +188,7 @@ class TxValue(BaseModel):
     address: List[str]
     value: Values
     index: Optional[int] = None
+    script_hex: Optional[str] = None  # Raw script hex for OP_RETURN outputs
 
 
 class TxRef(BaseModel):

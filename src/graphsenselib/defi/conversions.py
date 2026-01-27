@@ -4,6 +4,8 @@ from typing import Dict, List, Optional, Union, Any, Tuple
 from graphsenselib.defi.bridging.thorchain import (
     get_full_bridges_from_thorchain_send,
     get_full_bridges_from_thorchain_receive,
+    extract_memo_from_input,
+    is_thorchain_deposit_address,
 )
 from graphsenselib.defi.bridging.symbiosis import (
     get_bridges_from_symbiosis_decoded_logs,
@@ -19,6 +21,33 @@ from graphsenselib.defi.models import Trace
 # Swaps that have a specified to address https://etherscan.io/tx/0x1f76090132cd8b58f7a4f8724141ca500ca65ed84d646aa200bb0dd6ec45503f
 
 logger = logging.getLogger(__name__)
+
+
+async def is_direct_vault_deposit(
+    network: str, db: Cassandra, tx: Dict[str, Any]
+) -> bool:
+    """
+    Check if a transaction is a direct THORChain vault deposit.
+
+    Direct vault deposits have:
+    1. A THORChain memo in the transaction input data
+    2. The receiver is a THORChain deposit address (single outgoing neighbor to a router)
+    """
+    # Check for memo in input data
+    memo = extract_memo_from_input(tx)
+    if memo is None:
+        return False
+
+    # Get receiver address
+    to_address = tx.get("to_address")
+    if to_address is None:
+        return False
+
+    if isinstance(to_address, bytes):
+        to_address = "0x" + to_address.hex()
+
+    # Validate receiver is a THORChain deposit address
+    return await is_thorchain_deposit_address(db, network, to_address)
 
 
 def get_bridge_strategy_from_decoded_logs(dlogs: list) -> BridgeStrategy:
@@ -76,6 +105,21 @@ async def get_conversions_from_db(
 
     tx_logs_raw = await db.fetch_transaction_logs(network, tx)
     tx_traces = await db.fetch_transaction_traces(network, tx)
+    tx_traces = Trace.dicts_to_normalized(network, tx_traces, tx)
+
+    # Check for direct vault deposits (no logs, memo in input data)
+    # This must be checked before the early return for no logs
+    if (not tx_logs_raw or len(tx_logs_raw) == 0) and "thorchain" in included_bridges:
+        if await is_direct_vault_deposit(network, db, tx):
+            logger.debug(
+                f"Direct vault deposit detected for tx {tx['tx_hash'].hex() if isinstance(tx['tx_hash'], bytes) else tx['tx_hash']}"
+            )
+            bridges = []
+            async for bridge in get_full_bridges_from_thorchain_send(
+                network, db, tx, [], [], tx_traces
+            ):
+                bridges.append(bridge)
+            return bridges
 
     if not tx_logs_raw:
         logger.info(f"No logs found for transaction {tx['tx_hash']}")
@@ -90,8 +134,6 @@ async def get_conversions_from_db(
     decoded_log_data, tx_logs_raw_filtered = zip(*decoded_logs_and_logs)
 
     conversions = []
-
-    tx_traces = Trace.dicts_to_normalized(network, tx_traces, tx)
 
     bridge_result = await get_bridges_from_decoded_logs(
         network,
