@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## [25.11.18/2.8.18] 2026-01-28
+
+### added
+- Thorchain Bridges: Support ETH direct vault deposits where memo is in tx input data (no router logs)
+- Thorchain Bridges: Validate deposit addresses by checking single outgoing neighbor is a known router
+- Thorchain Bridges: Add script_hex exposure in TxValue for UTXO OP_RETURN memo parsing
+- Thorchain Bridges: Use DB-first approach for UTXO networks with Thornode API fallback for older blocks
+
 ## [25.11.17/2.8.17] 2026-01-26
 
 ### added
