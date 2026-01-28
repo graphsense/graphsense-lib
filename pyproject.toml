@@ -36,7 +36,6 @@ dependencies = [
     "eth-hash>=0.3.0",
     "cassandra-driver>=3.27.0",
     "async-lru>=2.0.4",
-    "aiohttp>=3.8.0",
     "tenacity>=8.2.3",
     "coincurve>=21.0.0",
     "bech32>=1.2.0",

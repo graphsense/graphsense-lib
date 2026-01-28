@@ -1,6 +1,6 @@
 import asyncio
 
-import aiohttp
+import httpx
 from async_lru import alru_cache
 from graphsenselib.utils.accountmodel import eth_address_to_hex
 from graphsenselib.utils.defi import (
@@ -10,9 +10,9 @@ from graphsenselib.utils.defi import (
 
 
 async def send_node_request(node_url: str, payload):
-    async with aiohttp.ClientSession() as session:
-        async with session.post(node_url, json=payload) as resp:
-            return await resp.json()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(node_url, json=payload)
+        return resp.json()
 
 
 @alru_cache(maxsize=1000)
