@@ -1350,15 +1350,18 @@ class ThorchainTransactionMatcher:
     async def match_sending_transactions(
         self, send_reference: BridgeSendReference
     ) -> Optional[List[BridgeSendTransfer]]:
-        # todo dont use api client, use the self.db and try to get the tx from the db
         currencies_supported = self.db.config["currencies"]
         hits = []
+        tx_hash_hex = strip_0x(send_reference.fromTxHash).lower()
         for n in currencies_supported:
             try:
-                tx_hash_bytes = bytes.fromhex(send_reference.fromTxHash)
-                hit = await self.db.get_tx_by_hash(n, tx_hash_bytes)
+                if n in UTXO_NETWORKS:
+                    tx_param = tx_hash_hex
+                else:
+                    tx_param = bytes.fromhex(tx_hash_hex)
+                hit = await self.db.get_tx_by_hash(n, tx_param)
                 hits.append({"currency": n, "tx": hit})
-            except Exception as _:
+            except Exception:
                 pass
 
         # Get all networks that have matches
