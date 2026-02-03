@@ -1487,6 +1487,26 @@ class Cassandra:
 
         return await self.finish_address(currency, result)
 
+    async def get_address_tx_range(self, currency, address):
+        """Get only first_tx_id and last_tx_id for an address."""
+        address_id, address_id_group = await self.get_address_id_id_group(
+            currency, address
+        )
+        query = (
+            "SELECT first_tx_id, last_tx_id FROM address "
+            "WHERE address_id = %s AND address_id_group = %s"
+        )
+        result = await self.execute_async(
+            currency, "transformed", query, [address_id, address_id_group]
+        )
+        result = one(result)
+        if not result:
+            if not is_eth_like(currency):
+                return None
+            raise AddressNotFoundException(currency, address, no_external_txs=True)
+
+        return result
+
     @eth
     async def get_address_entity_id(self, currency, address):
         address_id, address_id_group = await self.get_address_id_id_group(
@@ -2820,9 +2840,8 @@ class Cassandra:
                 descending if False
         """
 
-        # get first and last tx id for the node
         if node_type == NodeType.ADDRESS:
-            data = await self.get_address(network, id)
+            data = await self.get_address_tx_range(network, id)
         elif node_type == NodeType.CLUSTER:
             data = await self.get_entity(network, id)
         else:
