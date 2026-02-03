@@ -2503,16 +2503,24 @@ class Cassandra:
         row["total_received"] = self.markup_currency(currency, row["total_received"])
         row["total_spent"] = self.markup_currency(currency, row["total_spent"])
 
-        await self.add_balance(currency, row)
-
         if not with_txs:
+            await self.add_balance(currency, row)
             return row
 
-        aws = [
+        balance_task = self.add_balance(currency, row)
+        tx_tasks = [
             self.get_tx_by_id(currency, id)
             for id in [row["first_tx_id"], row["last_tx_id"]]
         ]
-        [tx1, tx2] = await asyncio.gather(*aws)
+
+        has_address = "address" in row
+        if has_address:
+            dirty_task = self.is_address_dirty(currency, row["address"])
+            results = await asyncio.gather(balance_task, *tx_tasks, dirty_task)
+            tx1, tx2, is_dirty = results[1], results[2], results[3]
+        else:
+            results = await asyncio.gather(balance_task, *tx_tasks)
+            tx1, tx2 = results[1], results[2]
 
         if not tx1 or not tx2:
             raise DBInconsistencyException(
@@ -2527,8 +2535,7 @@ class Cassandra:
             tx_hash=tx2["tx_hash"], timestamp=tx2["timestamp"], height=tx2["block_id"]
         )
 
-        if "address" in row:
-            is_dirty = await self.is_address_dirty(currency, row["address"])
+        if has_address:
             row["status"] = "dirty" if is_dirty else "clean"
 
         return row
@@ -2550,17 +2557,19 @@ class Cassandra:
                 k: self.markup_currency(currency, v) for k, v in ts.items()
             }
 
-        await self.add_balance(currency, row)
-
         if not with_txs:
+            await self.add_balance(currency, row)
             return row
 
-        aws = [
+        balance_task = self.add_balance(currency, row)
+        tx_tasks = [
             self.get_tx_by_id(currency, id)
             for id in [row["first_tx_id"], row["last_tx_id"]]
         ]
+        dirty_task = self.is_address_dirty(currency, row["address"])
 
-        [tx1, tx2] = await asyncio.gather(*aws)
+        results = await asyncio.gather(balance_task, *tx_tasks, dirty_task)
+        tx1, tx2, is_dirty = results[1], results[2], results[3]
 
         if not tx1 or not tx2:
             raise DBInconsistencyException(
@@ -2579,7 +2588,6 @@ class Cassandra:
             height=tx2["block_id"],
         )
 
-        is_dirty = await self.is_address_dirty(currency, row["address"])
         row["status"] = "dirty" if is_dirty else "clean"
 
         return row
@@ -2641,17 +2649,17 @@ class Cassandra:
                 "and currency=%s"
             )
 
-            results = {
-                c: one(
-                    await self.execute_async(
-                        currency,
-                        "transformed",
-                        query,
-                        [row["address_id"], row["address_id_group"], c],
-                    )
+            balance_tasks = [
+                self.execute_async(
+                    currency,
+                    "transformed",
+                    query,
+                    [row["address_id"], row["address_id_group"], c],
                 )
                 for c in balance_currencies
-            }
+            ]
+            balance_results = await asyncio.gather(*balance_tasks)
+            results = {c: one(r) for c, r in zip(balance_currencies, balance_results)}
 
         if results[currency.upper()] is None:
             results[currency.upper()] = {
