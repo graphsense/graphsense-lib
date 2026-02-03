@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 from typing import Dict, Optional, Any, Tuple, List, AsyncGenerator
 from graphsenselib.utils.httpx import RetryHTTPClient
 from graphsenselib.utils import strip_0x
@@ -22,7 +25,16 @@ from graphsenselib.datatypes.common import NodeType
 
 UTXO_NETWORKS = ["btc", "bch", "ltc", "zec"]
 ACCOUNT_NETWORKS = ["eth", "trx"]
-THOR_TO_GRAPHSENSE_NETWORK = {"BTC": "btc", "ETH": "eth"}
+
+# Networks where we can search for THORChain receives (TransferOut logs for EVM, OP_RETURN for UTXO)
+SUPPORTED_RECEIVE_NETWORKS = UTXO_NETWORKS + ["eth"]
+THOR_TO_GRAPHSENSE_NETWORK = {
+    "BTC": "btc",
+    "ETH": "eth",
+    "LTC": "ltc",
+    "BCH": "bch",
+}
+GRAPHSENSE_TO_THOR_NETWORK = {v: k for k, v in THOR_TO_GRAPHSENSE_NETWORK.items()}
 THORNODE_URLS = [
     "https://thornode.ninerealms.com/thorchain/tx/status/",
     "https://thornode-v1.ninerealms.com/thorchain/tx/details/",
@@ -37,6 +49,15 @@ THORCHAIN_ROUTER_ADDRESSES = {
         "0xc145990e84155416144c532e31f89b840ca8c2ce",  # Historical router
     ],
 }
+
+# THORChain event topic signatures (keccak256 hashes)
+# These are used for efficient DB queries since topic0 is part of the clustering key
+THORCHAIN_TRANSFEROUT_TOPIC = bytes.fromhex(
+    "a9cd03aa3c1b4515114539cd53d22085129d495cb9e9f9af77864526240f1bf7"
+)
+ERC20_TRANSFER_TOPIC = bytes.fromhex(
+    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+)
 
 
 async def try_thornode_endpoints(tx_hash_upper: str):
@@ -124,6 +145,51 @@ def parse_op_return_memo(script_hex: str) -> Optional[str]:
     return data.decode("utf-8", errors="replace")
 
 
+THORCHAIN_MEMO_PREFIXES = ["=", "s", "S", "+", "-", "~"]
+
+
+def is_thorchain_memo(memo: str) -> bool:
+    """
+    Check if a memo string looks like a THORChain memo.
+
+    THORChain memos start with action indicators:
+    - =, s, S: swap
+    - +: add liquidity
+    - -: withdraw liquidity
+    - ~: loan
+    """
+    if not memo or len(memo) < 2:
+        return False
+    return memo[0] in THORCHAIN_MEMO_PREFIXES
+
+
+def extract_memo_from_utxo_tx(tx: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract memo from UTXO transaction OP_RETURN output.
+
+    Returns the memo string if found, None otherwise.
+    """
+    for output in tx.get("outputs", []) or []:
+        script_hex = getattr(output, "script_hex", None)
+        if script_hex:
+            if isinstance(script_hex, bytes):
+                script_hex = script_hex.hex()
+            memo = parse_op_return_memo(script_hex)
+            if memo:
+                return memo
+    return None
+
+
+def is_thorchain_utxo_deposit(tx: Dict[str, Any]) -> bool:
+    """
+    Check if a UTXO transaction is a THORChain deposit based on OP_RETURN memo.
+
+    Returns True if the transaction has an OP_RETURN output with a THORChain memo.
+    """
+    memo = extract_memo_from_utxo_tx(tx)
+    return memo is not None and is_thorchain_memo(memo)
+
+
 async def get_utxo_tx_with_memo(
     db: Cassandra, network: str, tx_hash: str
 ) -> Tuple[Dict[str, Any], Optional[str]]:
@@ -132,25 +198,12 @@ async def get_utxo_tx_with_memo(
 
     Returns (tx_dict, memo) where memo is extracted from OP_RETURN output.
     """
-    # get_tx_by_hash expects a hex string, not bytes
     tx = await db.get_tx_by_hash(network, tx_hash.lower())
 
     if tx is None:
         raise ValueError(f"Transaction {tx_hash} not found in {network}")
 
-    # Find OP_RETURN output and extract memo
-    memo = None
-    for output in tx.get("outputs", []) or []:
-        script_hex = getattr(output, "script_hex", None)
-        if script_hex:
-            # script_hex might be bytes, convert to str
-            if isinstance(script_hex, bytes):
-                script_hex = script_hex.hex()
-            parsed_memo = parse_op_return_memo(script_hex)
-            if parsed_memo:
-                memo = parsed_memo
-                break
-
+    memo = extract_memo_from_utxo_tx(tx)
     return tx, memo
 
 
@@ -372,8 +425,7 @@ def extract_memo_from_input(tx: Dict[str, Any]) -> Optional[str]:
     # Try to decode as UTF-8
     try:
         memo = input_bytes.decode("utf-8", errors="strict")
-        # Validate it looks like a THORChain memo (starts with swap indicators)
-        if memo and memo[0] in ["=", "s", "S", "+", "-", "~"]:
+        if is_thorchain_memo(memo):
             return memo
     except (UnicodeDecodeError, ValueError):
         pass
@@ -608,6 +660,9 @@ async def get_bridges_from_thorchain_send(
     else:
         raise ValueError("No token transfers or ETH transfers found from sender")
 
+    # Get timestamp from tx (could be 'block_timestamp' or 'timestamp')
+    from_timestamp = tx.get("block_timestamp") or tx.get("timestamp")
+
     yield (
         BridgeSendTransfer(
             fromAddress=from_address,
@@ -620,6 +675,8 @@ async def get_bridges_from_thorchain_send(
             toAddress=to_address,
             toNetwork=to_network,
             fromTxHash=from_tx,
+            fromTimestamp=from_timestamp,
+            targetAssetCode=asset_code,  # e.g., "ETH.ETH" or "ETH.USDT-0x..."
         ),
     )
 
@@ -1039,27 +1096,121 @@ class ThorchainTransactionMatcher:
             matched = []
             address = receive_reference.toAddress
             address_bytes = bytes.fromhex(address[2:])
-            txs = await self.db.list_address_txs(
+
+            # Determine token_currency filter based on target asset
+            # THORChain asset codes: "ETH.ETH" (native), "ETH.USDT-0x..." (token)
+            token_currency = None
+            if receive_reference.targetAssetCode:
+                asset_parts = receive_reference.targetAssetCode.split(".")
+                if len(asset_parts) >= 2:
+                    asset_symbol = asset_parts[1]  # e.g., "ETH" or "USDT-0x..."
+                    if "-" not in asset_symbol:
+                        # Native asset (no contract address)
+                        token_currency = "ETH"
+                    # For tokens, we leave token_currency=None to fetch all
+                    # (we could parse the contract address for more specific filtering)
+
+            # Note: We considered estimating min_height from the source transaction
+            # timestamp to skip older blocks, but this optimization is tricky because:
+            # 1. THORChain may process swaps before BTC confirmations (mempool detection)
+            # 2. Mathematical block estimation can be inaccurate
+            # 3. The DB query for block-by-timestamp is expensive (ALLOW FILTERING)
+            # The parallel bucket querying optimization already provides good performance,
+            # so we skip timestamp-based filtering for now.
+
+            # Get incoming transactions for the destination address
+            # Note: Only pass min_height if > 0, as min_height=0 triggers expensive lookups
+            t_list_start = time.perf_counter()
+            txs, _ = await self.db.list_address_txs(
                 receive_reference.toNetwork,
                 address_bytes,
                 direction="in",
-                min_height=min_height,
+                min_height=min_height if min_height else None,
                 order="asc",
+                token_currency=token_currency,
+                pagesize=100,
             )
-            txs = txs[0]
+            t_list_end = time.perf_counter()
+            logger.debug(
+                f"[PERF] list_address_txs: {t_list_end - t_list_start:.3f}s, found {len(txs)} txs (token_currency={token_currency})"
+            )
 
+            if not txs:
+                return matched
+
+            # Filter by known THORChain router addresses
+            known_routers = THORCHAIN_ROUTER_ADDRESSES.get(
+                receive_reference.toNetwork, []
+            )
+            known_routers_bytes = [
+                bytes.fromhex(addr[2:].lower()) for addr in known_routers
+            ]
+
+            filtered_txs = [
+                tx for tx in txs if tx.get("from_address") in known_routers_bytes
+            ]
+
+            if filtered_txs:
+                logger.debug(
+                    f"[PERF] router filter: {len(txs)} -> {len(filtered_txs)} txs"
+                )
+                txs = filtered_txs
+            else:
+                logger.debug(
+                    f"[PERF] no txs from known routers, checking all {len(txs)} txs"
+                )
+
+            # OPTIMIZATION: Query logs by topic instead of tx_hash
+            # topic0 is part of the clustering key, so no ALLOW FILTERING needed
+            # Group txs by block to minimize queries
+            t_logs_start = time.perf_counter()
+
+            # Build a mapping of block -> [txs in that block]
+            blocks_to_txs = {}
             for tx in txs:
-                tx_hash = (
-                    tx["tx_hash"].hex()
-                )  # 18afc09b68ffd6797d8c89cca38fde2ad8e0319f46c38c0b00cc16a98d16521c
+                block_id = tx["height"]
+                if block_id not in blocks_to_txs:
+                    blocks_to_txs[block_id] = []
+                blocks_to_txs[block_id].append(tx)
+
+            # Fetch TransferOut logs for each unique block (one query per block, no ALLOW FILTERING)
+            log_tasks = [
+                self.db.get_logs_in_block_eth(
+                    receive_reference.toNetwork,
+                    block_id,
+                    topic=THORCHAIN_TRANSFEROUT_TOPIC,  # Filter by topic - efficient!
+                )
+                for block_id in blocks_to_txs.keys()
+            ]
+            all_logs_results = await asyncio.gather(*log_tasks)
+
+            # Build mapping of block -> logs
+            block_to_logs = {}
+            for block_id, logs_result in zip(blocks_to_txs.keys(), all_logs_results):
+                logs = (
+                    logs_result.current_rows
+                    if hasattr(logs_result, "current_rows")
+                    else logs_result
+                )
+                block_to_logs[block_id] = logs
+
+            t_logs_end = time.perf_counter()
+            logger.debug(
+                f"[PERF] topic-filtered log fetch for {len(blocks_to_txs)} blocks: {t_logs_end - t_logs_start:.3f}s"
+            )
+
+            # Process logs to find matching TransferOut
+            for tx in txs:
+                tx_hash = tx["tx_hash"].hex()
+                tx_hash_bytes = tx["tx_hash"]
                 block_of_tx = tx["height"]
-                # get the logs, decode, check
 
-                logs = await self.db.get_logs_in_block_eth(self.network, block_of_tx)
-                logs = logs.current_rows  # todo paginate?
-
-                relevant_logs = [log for log in logs if log["tx_hash"].hex() == tx_hash]
-                decoded_logs = decode_logs_db(relevant_logs)
+                # Get logs for this block and filter by tx_hash in Python
+                block_logs = block_to_logs.get(block_of_tx, [])
+                tx_logs = [
+                    log for log in block_logs if log.get("tx_hash") == tx_hash_bytes
+                ]
+                decoded_logs = decode_logs_db(tx_logs)
 
                 for dlog, log in decoded_logs:
                     if dlog["name"] == "TransferOut" and "thorchain" in get_tags(dlog):
@@ -1082,7 +1233,52 @@ class ThorchainTransactionMatcher:
 
                     if is_native_placeholder(asset_thorchain_log):
                         asset = "native"
-                        transfer = tx_hash  # tx hash itself without an _I
+                        to_address_log = params["to"].lower()
+
+                        # Fetch traces to find the specific internal tx
+                        traces_result = await self.db.get_traces_in_block(
+                            receive_reference.toNetwork,
+                            block_of_tx,
+                            tx_hash=tx_hash_bytes,
+                        )
+                        traces = (
+                            traces_result.current_rows
+                            if hasattr(traces_result, "current_rows")
+                            else traces_result
+                        )
+
+                        # Find the trace matching recipient and amount
+                        matching_trace_index = None
+                        for trace in traces:
+                            trace_to = trace.get("to_address")
+                            trace_value = trace.get("value", 0)
+                            if trace_to is not None:
+                                trace_to_hex = (
+                                    "0x" + trace_to.hex()
+                                    if isinstance(trace_to, bytes)
+                                    else trace_to
+                                )
+                                if (
+                                    trace_to_hex.lower() == to_address_log
+                                    and trace_value == value_thorchain_log
+                                ):
+                                    matching_trace_index = trace.get("trace_index")
+                                    break
+
+                        if matching_trace_index is not None:
+                            transfer = SubTransactionIdentifier(
+                                tx_hash=tx_hash,
+                                tx_type=SubTransactionType.InternalTx,
+                                sub_index=matching_trace_index,
+                            ).to_string()
+                        else:
+                            # Fallback to tx hash if no matching trace found
+                            logger.warning(
+                                f"No matching trace found for TransferOut in tx {tx_hash}, "
+                                f"to={to_address_log}, amount={value_thorchain_log}"
+                            )
+                            transfer = tx_hash
+
                         matched.append(
                             BridgeReceiveTransfer(
                                 toAddress=receive_reference.toAddress,
@@ -1094,14 +1290,37 @@ class ThorchainTransactionMatcher:
                         )
                         break
 
-                    # note that assets that we dont natively support wont show up here because there are no tx links
+                    # For token transfers, we need to fetch the ERC20 Transfer logs
+                    # (not included in TransferOut topic query)
+                    transfer_logs_result = await self.db.get_logs_in_block_eth(
+                        receive_reference.toNetwork,
+                        block_of_tx,
+                        topic=ERC20_TRANSFER_TOPIC,
+                    )
+                    transfer_logs_raw = (
+                        transfer_logs_result.current_rows
+                        if hasattr(transfer_logs_result, "current_rows")
+                        else transfer_logs_result
+                    )
+                    # Filter to this tx's Transfer logs
+                    tx_transfer_logs = [
+                        log
+                        for log in transfer_logs_raw
+                        if log.get("tx_hash") == tx_hash_bytes
+                    ]
+                    decoded_transfer_logs = decode_logs_db(tx_transfer_logs)
+
                     transfers = [
-                        dlog for dlog in decoded_logs if dlog[0]["name"] == "Transfer"
+                        dlog
+                        for dlog in decoded_transfer_logs
+                        if dlog[0]["name"] == "Transfer"
                     ]
 
-                    assert len(transfers) == 1, (
-                        f"Expected 1 transfer, got {len(transfers)}"
-                    )
+                    if len(transfers) != 1:
+                        logger.warning(
+                            f"Expected 1 transfer in token TransferOut tx {tx_hash}, got {len(transfers)}"
+                        )
+                        continue
                     transfer = transfers[0][0]
                     transfer_tx = transfers[0][1]
 
@@ -1192,6 +1411,167 @@ class ThorchainTransactionMatcher:
 
         else:
             raise ValueError(f"Unsupported network: {fromNetwork}")
+
+
+async def find_thorchain_receive_for_utxo_send(
+    db: Cassandra,
+    utxo_network: str,
+    utxo_tx_hash: str,
+    memo: str,
+    from_timestamp: Optional[int] = None,
+) -> Optional[BridgeReceiveTransfer]:
+    """
+    Find the receiving transaction for a UTXO THORChain deposit.
+
+    Parses the memo to extract destination, then uses ThorchainTransactionMatcher
+    to find the matching receive transaction.
+
+    Args:
+        db: Cassandra database connection
+        utxo_network: Source UTXO network (e.g., 'btc')
+        utxo_tx_hash: Hash of the UTXO transaction
+        memo: THORChain memo from the OP_RETURN
+        from_timestamp: Unix timestamp of the source transaction (for min_height estimation)
+
+    Returns:
+        BridgeReceiveTransfer if matching receive found, None otherwise
+    """
+    swap_info = decode_swap(memo)
+    if not swap_info.get("is_swap"):
+        logger.debug(f"UTXO tx {utxo_tx_hash} memo is not a swap: {memo}")
+        return None
+
+    target_address = swap_info.get("destination")
+    asset_code = swap_info.get("asset")  # e.g., "ETH.ETH"
+
+    if not target_address or not asset_code:
+        logger.debug(f"Missing destination or asset in memo: {memo}")
+        return None
+
+    # Extract target network from asset code
+    target_network_thor = asset_code.split(".")[0]
+    target_network = THOR_TO_GRAPHSENSE_NETWORK.get(target_network_thor)
+
+    if target_network is None:
+        logger.debug(f"Unsupported target network in memo: {target_network_thor}")
+        return None
+
+    # Only search on networks where we can find TransferOut logs (EVM) or OP_RETURN (UTXO)
+    if target_network not in SUPPORTED_RECEIVE_NETWORKS:
+        logger.debug(
+            f"Target network {target_network} not supported for receive matching"
+        )
+        return None
+
+    # Build reference and use existing matcher
+    receive_ref = BridgeReceiveReference(
+        toAddress=target_address,
+        toNetwork=target_network,
+        fromTxHash=utxo_tx_hash,
+        fromTimestamp=from_timestamp,
+        toAsset=asset_code,  # e.g., "ETH.ETH" or "ETH.USDT-0x..."
+    )
+
+    matcher = ThorchainTransactionMatcher(target_network, db)
+    receives = await matcher.match_receiving_transactions(receive_ref)
+
+    if receives and len(receives) > 0:
+        return receives[0]
+    return None
+
+
+async def get_bridges_from_thorchain_utxo_send(
+    db: Cassandra,
+    network: str,
+    tx: Dict[str, Any],
+) -> AsyncGenerator[Bridge, None]:
+    """
+    Get bridge objects from a UTXO THORChain deposit transaction.
+
+    This is the main entry point for detecting UTXO → ETH/UTXO bridges.
+    It parses the OP_RETURN memo to identify THORChain deposits, then
+    uses cross-chain confirmation to find the matching receive transaction.
+
+    Args:
+        db: Cassandra database connection
+        network: Source UTXO network (e.g., 'btc', 'ltc')
+        tx: UTXO transaction data
+
+    Yields:
+        Bridge objects for detected bridges
+    """
+    if network not in UTXO_NETWORKS:
+        return
+
+    # Extract memo from OP_RETURN
+    memo = extract_memo_from_utxo_tx(tx)
+    if memo is None:
+        return
+
+    if not is_thorchain_memo(memo):
+        return
+
+    tx_hash = tx["tx_hash"].hex() if isinstance(tx["tx_hash"], bytes) else tx["tx_hash"]
+
+    # Parse swap info to get destination details
+    swap_info = decode_swap(memo)
+    if not swap_info.get("is_swap"):
+        logger.debug(f"UTXO tx {tx_hash} has THORChain memo but not a swap: {memo}")
+        return
+
+    # Build send transfer from UTXO tx
+    from_address = None
+    from_amount = tx.get("total_input", 0)
+
+    inputs = tx.get("inputs", []) or []
+    if inputs:
+        first_input = inputs[0]
+        input_addresses = getattr(first_input, "address", None) or []
+        if input_addresses:
+            from_address = (
+                input_addresses[0]
+                if isinstance(input_addresses, list)
+                else input_addresses
+            )
+
+    send_transfer = BridgeSendTransfer(
+        fromAddress=from_address or "unknown",
+        fromAsset="native",
+        fromAmount=from_amount,
+        fromNetwork=network,
+        fromPayment=tx_hash,
+    )
+
+    # Try to find matching receive transaction via cross-chain confirmation
+    # Get timestamp for min_height estimation
+    from_timestamp = tx.get("block_timestamp") or tx.get("timestamp")
+    receive_transfer = await find_thorchain_receive_for_utxo_send(
+        db, network, tx_hash, memo, from_timestamp=from_timestamp
+    )
+
+    if receive_transfer is not None:
+        # Found complete bridge
+        yield combine_bridge_transfers(send_transfer, receive_transfer)
+    else:
+        # Return partial bridge (send only, receive pending/failed)
+        logger.debug(
+            f"No matching receive found for UTXO tx {tx_hash}, returning partial bridge"
+        )
+        # For partial bridges, we still need the target info from the memo
+        target_address = swap_info.get("destination", "unknown")
+        asset_code = swap_info.get("asset", "")
+        target_network_thor = asset_code.split(".")[0] if asset_code else ""
+        target_network = THOR_TO_GRAPHSENSE_NETWORK.get(target_network_thor, "unknown")
+
+        # Create a partial receive transfer with zero amount (pending)
+        partial_receive = BridgeReceiveTransfer(
+            toAddress=target_address,
+            toAsset="native",
+            toAmount=0,  # Unknown until confirmed
+            toPayment="pending",
+            toNetwork=target_network,
+        )
+        yield combine_bridge_transfers(send_transfer, partial_receive)
 
 
 # Example test cases
