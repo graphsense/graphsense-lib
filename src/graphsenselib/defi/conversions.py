@@ -6,6 +6,9 @@ from graphsenselib.defi.bridging.thorchain import (
     get_full_bridges_from_thorchain_receive,
     extract_memo_from_input,
     is_thorchain_deposit_address,
+    is_thorchain_utxo_deposit,
+    get_bridges_from_thorchain_utxo_send,
+    UTXO_NETWORKS,
 )
 from graphsenselib.defi.bridging.symbiosis import (
     get_bridges_from_symbiosis_decoded_logs,
@@ -103,6 +106,24 @@ async def get_conversions_from_db(
         the conversion information. Empty list if no conversions detected.
     """
 
+    # Check for UTXO THORChain deposits FIRST (before fetching logs)
+    # UTXO networks don't have logs - detection is via OP_RETURN memo
+    if network in UTXO_NETWORKS:
+        if "thorchain" in included_bridges and is_thorchain_utxo_deposit(tx):
+            tx_hash = (
+                tx["tx_hash"].hex()
+                if isinstance(tx["tx_hash"], bytes)
+                else tx["tx_hash"]
+            )
+            logger.debug(f"UTXO THORChain deposit detected for tx {tx_hash}")
+            bridges = []
+            async for bridge in get_bridges_from_thorchain_utxo_send(db, network, tx):
+                bridges.append(bridge)
+            return bridges
+        # No other conversions supported for UTXO
+        return []
+
+    # For EVM networks, fetch logs and traces
     tx_logs_raw = await db.fetch_transaction_logs(network, tx)
     tx_traces = await db.fetch_transaction_traces(network, tx)
     tx_traces = Trace.dicts_to_normalized(network, tx_traces, tx)
@@ -122,7 +143,7 @@ async def get_conversions_from_db(
             return bridges
 
     if not tx_logs_raw:
-        logger.info(f"No logs found for transaction {tx['tx_hash']}")
+        logger.debug(f"No logs found for transaction {tx['tx_hash']}")
         return []
 
     decoded_logs_and_logs = decode_logs_dict(tx_logs_raw)

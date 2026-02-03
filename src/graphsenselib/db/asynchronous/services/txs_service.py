@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional, Protocol, Union, Tuple
 
 from graphsenselib.defi import Bridge, ExternalSwap
 from graphsenselib.defi.conversions import get_conversions_from_db
+from graphsenselib.defi.bridging.thorchain import UTXO_NETWORKS
 from graphsenselib.errors import (
     BadUserInputException,
     NotFoundException,
@@ -443,8 +444,12 @@ class TxsService:
     async def get_conversions(
         self, currency: str, identifier: str, included_bridges: Tuple[str, ...] = ()
     ) -> List[ExternalConversion]:
-        """Extract swap information from a single transaction hash."""
-        if not is_eth_like(currency):
+        """Extract swap/bridge information from a single transaction hash."""
+        # UTXO networks are supported for THORChain bridging (via OP_RETURN memo)
+        is_utxo_thorchain = (
+            currency.lower() in UTXO_NETWORKS and "thorchain" in included_bridges
+        )
+        if not is_eth_like(currency) and not is_utxo_thorchain:
             raise BadUserInputException(
                 f"Swap extraction is only supported for EVM-like networks, not {currency}"
             )
@@ -453,9 +458,13 @@ class TxsService:
         tx_hash = tx_obj.tx_hash
 
         # Get tx to get block_id
+        # Note: get_tx_by_hash expects bytes for ETH-like, string for UTXO
         try:
-            tx_hash_bytes = hex_to_bytes(tx_hash)
-            tx = await self.db.get_tx_by_hash(currency, tx_hash_bytes)
+            if is_eth_like(currency):
+                tx_hash_param = hex_to_bytes(tx_hash)
+            else:
+                tx_hash_param = tx_hash  # UTXO expects string
+            tx = await self.db.get_tx_by_hash(currency, tx_hash_param)
         except ValueError:
             raise BadUserInputException(
                 f"{tx_hash} does not look like a valid transaction hash"

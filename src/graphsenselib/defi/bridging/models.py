@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict
+from typing import Dict, Optional
 from pydantic import BaseModel
 
 
@@ -51,6 +51,10 @@ class BridgeReceiveReference(BaseModel):
     toAddress: str
     toNetwork: str
     fromTxHash: str
+    fromTimestamp: Optional[int] = None  # Unix timestamp of the source transaction
+    targetAssetCode: Optional[str] = (
+        None  # THORChain asset code (e.g., "ETH.ETH" or "ETH.USDT-0x...")
+    )
 
 
 class Bridge(BridgeSendTransfer, BridgeReceiveTransfer):
