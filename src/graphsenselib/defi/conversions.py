@@ -7,7 +7,9 @@ from graphsenselib.defi.bridging.thorchain import (
     extract_memo_from_input,
     is_thorchain_deposit_address,
     is_thorchain_utxo_deposit,
+    is_thorchain_utxo_receive,
     get_bridges_from_thorchain_utxo_send,
+    get_bridges_from_thorchain_utxo_receive,
     UTXO_NETWORKS,
 )
 from graphsenselib.defi.bridging.symbiosis import (
@@ -106,21 +108,31 @@ async def get_conversions_from_db(
         the conversion information. Empty list if no conversions detected.
     """
 
-    # Check for UTXO THORChain deposits FIRST (before fetching logs)
+    # Check for UTXO THORChain transactions FIRST (before fetching logs)
     # UTXO networks don't have logs - detection is via OP_RETURN memo
     if network in UTXO_NETWORKS:
-        if "thorchain" in included_bridges and is_thorchain_utxo_deposit(tx):
+        if "thorchain" in included_bridges:
             tx_hash = (
                 tx["tx_hash"].hex()
                 if isinstance(tx["tx_hash"], bytes)
                 else tx["tx_hash"]
             )
-            logger.debug(f"UTXO THORChain deposit detected for tx {tx_hash}")
-            bridges = []
-            async for bridge in get_bridges_from_thorchain_utxo_send(db, network, tx):
-                bridges.append(bridge)
-            return bridges
-        # No other conversions supported for UTXO
+            if is_thorchain_utxo_deposit(tx):
+                logger.debug(f"UTXO THORChain deposit detected for tx {tx_hash}")
+                bridges = []
+                async for bridge in get_bridges_from_thorchain_utxo_send(
+                    db, network, tx
+                ):
+                    bridges.append(bridge)
+                return bridges
+            elif is_thorchain_utxo_receive(tx):
+                logger.debug(f"UTXO THORChain receive detected for tx {tx_hash}")
+                bridges = []
+                async for bridge in get_bridges_from_thorchain_utxo_receive(
+                    db, network, tx
+                ):
+                    bridges.append(bridge)
+                return bridges
         return []
 
     # For EVM networks, fetch logs and traces

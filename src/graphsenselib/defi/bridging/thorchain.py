@@ -190,6 +190,19 @@ def is_thorchain_utxo_deposit(tx: Dict[str, Any]) -> bool:
     return memo is not None and is_thorchain_memo(memo)
 
 
+def is_thorchain_utxo_receive(tx: Dict[str, Any]) -> bool:
+    """
+    Check if a UTXO transaction is a THORChain receive (OUT: or REFUND:).
+
+    Returns True if the transaction has an OP_RETURN with OUT: or REFUND: prefix.
+    """
+    memo = extract_memo_from_utxo_tx(tx)
+    if memo is None:
+        return False
+    parsed = decode_withdrawal(memo)
+    return parsed.get("is_withdrawal", False)
+
+
 async def get_utxo_tx_with_memo(
     db: Cassandra, network: str, tx_hash: str
 ) -> Tuple[Dict[str, Any], Optional[str]]:
@@ -1575,6 +1588,85 @@ async def get_bridges_from_thorchain_utxo_send(
             toNetwork=target_network,
         )
         yield combine_bridge_transfers(send_transfer, partial_receive)
+
+
+async def get_bridges_from_thorchain_utxo_receive(
+    db: Cassandra,
+    network: str,
+    tx: Dict[str, Any],
+) -> AsyncGenerator[Bridge, None]:
+    """
+    Get bridge objects from a UTXO THORChain receive transaction.
+
+    This handles the case where a UTXO tx has an OUT: or REFUND: memo,
+    indicating it's the receive side of a bridge (e.g., ETH -> BTC).
+
+    Args:
+        db: Cassandra database connection
+        network: UTXO network (e.g., 'btc')
+        tx: UTXO transaction data
+
+    Yields:
+        Bridge objects for detected bridges
+    """
+    if network not in UTXO_NETWORKS:
+        return
+
+    memo = extract_memo_from_utxo_tx(tx)
+    if memo is None:
+        return
+
+    parsed = decode_withdrawal(memo)
+    if not parsed.get("is_withdrawal"):
+        return
+
+    source_tx_hash = parsed.get("tx_id")
+    if not source_tx_hash:
+        logger.warning(f"OUT memo missing tx_id: {memo}")
+        return
+
+    tx_hash = tx["tx_hash"].hex() if isinstance(tx["tx_hash"], bytes) else tx["tx_hash"]
+
+    # Find recipient address and amount from outputs
+    to_address = None
+    to_amount = 0
+    for output in tx.get("outputs", []) or []:
+        output_addresses = getattr(output, "address", None) or []
+        script_hex = getattr(output, "script_hex", None)
+        if script_hex:
+            if isinstance(script_hex, bytes):
+                script_hex = script_hex.hex()
+            if script_hex.startswith("6a"):
+                continue
+        if output_addresses:
+            to_address = (
+                output_addresses[0]
+                if isinstance(output_addresses, list)
+                else output_addresses
+            )
+            to_amount = getattr(output, "value", 0)
+            break
+
+    receive_transfer = BridgeReceiveTransfer(
+        toAddress=to_address or "unknown",
+        toAsset="native",
+        toAmount=to_amount,
+        toNetwork=network,
+        toPayment=tx_hash,
+    )
+
+    send_reference = BridgeSendReference(fromTxHash=source_tx_hash)
+    matcher = ThorchainTransactionMatcher(network, db)
+    send_transfers = await matcher.match_sending_transactions(send_reference)
+
+    if send_transfers:
+        for send_transfer in send_transfers:
+            yield combine_bridge_transfers(send_transfer, receive_transfer)
+    else:
+        logger.debug(
+            f"No matching send found for UTXO receive tx {tx_hash}, "
+            f"source tx: {source_tx_hash}"
+        )
 
 
 # Example test cases
