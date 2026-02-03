@@ -1111,17 +1111,20 @@ class ThorchainTransactionMatcher:
             address_bytes = bytes.fromhex(address[2:])
 
             # Determine token_currency filter based on target asset
-            # THORChain asset codes: "ETH.ETH" (native), "ETH.USDT-0x..." (token)
+            # THORChain asset codes: "ETH.ETH" (native), "ETH.USDT" or "ETH.USDT-0x..." (token)
             token_currency = None
             if receive_reference.targetAssetCode:
                 asset_parts = receive_reference.targetAssetCode.split(".")
                 if len(asset_parts) >= 2:
-                    asset_symbol = asset_parts[1]  # e.g., "ETH" or "USDT-0x..."
-                    if "-" not in asset_symbol:
-                        # Native asset (no contract address)
+                    asset_symbol = asset_parts[
+                        1
+                    ]  # e.g., "ETH" or "USDT" or "USDT-0x..."
+                    # Native asset is when symbol matches the chain (e.g., ETH.ETH)
+                    chain = asset_parts[0].upper()
+                    base_symbol = asset_symbol.split("-")[0].upper()
+                    if base_symbol == chain:
                         token_currency = "ETH"
                     # For tokens, we leave token_currency=None to fetch all
-                    # (we could parse the contract address for more specific filtering)
 
             # Note: We considered estimating min_height from the source transaction
             # timestamp to skip older blocks, but this optimization is tricky because:
