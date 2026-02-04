@@ -487,15 +487,6 @@ For comprehensive testing:
 make test-all
 ```
 
-### Documentation
-
-```bash
-# Generate documentation
-make docs
-```
-
-**Note:** Building docs requires Python development headers. See [this StackOverflow answer](https://stackoverflow.com/questions/21530577/fatal-error-python-h-no-such-file-or-directory) for installation instructions.
-
 ### Release Process
 
 1. Update CHANGELOG.md with new features and fixes
