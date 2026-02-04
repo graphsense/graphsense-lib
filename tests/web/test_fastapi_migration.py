@@ -1,18 +1,23 @@
 """
+DEPRECATED: Use test_baseline_regression.py instead.
+
 Test to compare FastAPI migration against original aiohttp/Connexion version.
 
 This test runs both server versions and compares their JSON outputs to ensure
 the migration maintains exact functional equivalence.
 
-Usage:
+This module is deprecated in favor of test_baseline_regression.py which uses
+a Docker container as baseline instead of requiring manual server setup.
+
+Usage (if you still need to run these tests):
     # Start old server on port 9001
     GS_REST_DEV_PORT=9001 make serve-old
 
     # Start new FastAPI server on port 9000
     uv run uvicorn graphsenselib.web.app:create_app --factory --port 9000
 
-    # Run comparison tests
-    uv run pytest tests/test_fastapi_migration.py -v -s
+    # Run comparison tests (need to explicitly include migration tests)
+    uv run pytest tests/web/test_fastapi_migration.py -v -m migration
 """
 
 import json

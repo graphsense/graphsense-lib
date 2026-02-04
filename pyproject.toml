@@ -191,19 +191,19 @@ namespaces = true
 norecursedirs = [
     "dist",
     "build",
-    "tests/web",
 ]
 testpaths = ["tests"]
 # Use pytest markers to select/deselect specific tests
 markers = [
     "slow: mark tests as slow (deselect with '-m \"not slow\"')",
     "vcr:",
-    "regression: mark test as regression test",
-    "migration: mark test as FastAPI migration comparison test",
+    "regression: mark test as regression test (baseline container vs current)",
+    "production: mark test as production comparison test (requires API key)",
+    "migration: mark test as FastAPI migration comparison test (deprecated)",
     "loki_generated: mark test as generated from Loki API logs",
 ]
-# Exclude web migration tests by default (they require special setup)
-addopts = "-m 'not regression and not migration'"
+# Exclude slow, regression (separate target), production, migration, loki tests by default
+addopts = "-m 'not slow and not regression and not production and not migration and not loki_generated'"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.

@@ -144,7 +144,7 @@ def compare_instances(call) -> Dict[str, Any]:
         raise
 
 
-@pytest.mark.regression
+@pytest.mark.production
 def test_conversions():
     """Run the regression test and return the comparison result."""
 
@@ -195,7 +195,7 @@ def test_conversions():
             )
 
 
-@pytest.mark.regression
+@pytest.mark.production
 def test_links():
     """Run the regression test and return the comparison result."""
 
@@ -233,7 +233,7 @@ def test_links():
             )
 
 
-@pytest.mark.regression
+@pytest.mark.production
 def test_txs_list():
     """Run the regression test and return the comparison result."""
 
@@ -251,7 +251,7 @@ def test_txs_list():
             )
 
 
-@pytest.mark.regression
+@pytest.mark.production
 def test_obfuscation():
     """Test that anonymous users get obfuscated tags (not zero tags).
 
@@ -279,7 +279,7 @@ def test_obfuscation():
         assert label_key == "", f"Label keys should be obfuscated, got: {label_key}"
 
 
-@pytest.mark.regression
+@pytest.mark.production
 def test_search():
     """Run the regression test and return the comparison result."""
 
