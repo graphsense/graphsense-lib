@@ -32,10 +32,9 @@ test-all:
 
 # Web tests only (includes test containers)
 test-web: install-dev
-	uv run --exact --all-extras pytest tests/web -x -rx -vv -m "not slow and not regression and not migration and not loki_generated" --capture=no
+	uv run --exact --all-extras pytest tests/web -x -rx -vv -m "not slow" --capture=no
 
 # NOTE: REST regression tests have moved to iknaio-tests-nightly repository
-# Run: cd ../iknaio/iknaio-tests-nightly && make test-rest
 
 install-dev:
 	uv sync --dev --all-packages --force-reinstall --all-extras

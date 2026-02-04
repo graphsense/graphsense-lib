@@ -34,7 +34,7 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TokensApi(api_client)
-    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., eth)
 
     try:
         # Get supported tokens for a currency

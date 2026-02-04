@@ -58,28 +58,30 @@ async def search(
         ...,
         min_length=2,
         description="Search query (address, transaction, or label)",
-        example="foo",
+        examples=["foo"],
     ),
     currency: Optional[str] = Query(
-        None, description="The cryptocurrency (e.g., btc)", example="btc"
+        None, description="The cryptocurrency (e.g., btc)", examples=["btc"]
     ),
-    limit: int = Query(10, description="Maximum number of search results", example=10),
+    limit: int = Query(
+        10, description="Maximum number of search results", examples=[10]
+    ),
     include_sub_tx_identifiers: bool = Query(
         False,
         description="Whether to include sub-transaction identifiers",
-        example=False,
+        examples=[False],
     ),
     include_labels: bool = Query(
-        True, description="Whether to include labels", example=True
+        True, description="Whether to include labels", examples=[True]
     ),
     include_actors: bool = Query(
-        True, description="Whether to include actors", example=True
+        True, description="Whether to include actors", examples=[True]
     ),
     include_txs: bool = Query(
-        True, description="Whether to include transactions", example=True
+        True, description="Whether to include transactions", examples=[True]
     ),
     include_addresses: bool = Query(
-        True, description="Whether to include addresses", example=True
+        True, description="Whether to include addresses", examples=[True]
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),

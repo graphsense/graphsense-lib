@@ -53,12 +53,15 @@ class UserReportedTag(BaseModel):
 )
 async def list_address_tags(
     request: Request,
-    label: str = Query(..., description="The label to search for", example="cimedy"),
+    label: str = Query(..., description="The label to search for", examples=["cimedy"]),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page", example=10
+        None,
+        ge=1,
+        description="Number of items returned in a single page",
+        examples=[10],
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -89,7 +92,7 @@ async def list_address_tags(
 )
 async def get_actor(
     request: Request,
-    actor: str = Path(..., description="The actor ID", example="binance"),
+    actor: str = Path(..., description="The actor ID", examples=["binance"]),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
     show_private: bool = Depends(get_show_private_tags),
@@ -117,12 +120,15 @@ async def get_actor(
 )
 async def get_actor_tags(
     request: Request,
-    actor: str = Path(..., description="The actor ID", example="binance"),
+    actor: str = Path(..., description="The actor ID", examples=["binance"]),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page", example=10
+        None,
+        ge=1,
+        description="Number of items returned in a single page",
+        examples=[10],
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -177,7 +183,7 @@ async def list_taxonomies(
 )
 async def list_concepts(
     request: Request,
-    taxonomy: str = Path(..., description="The taxonomy name", example="concept"),
+    taxonomy: str = Path(..., description="The taxonomy name", examples=["concept"]),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
     show_private: bool = Depends(get_show_private_tags),

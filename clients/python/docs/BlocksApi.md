@@ -36,8 +36,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.BlocksApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    height = 1 # int | The block height
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    height = 56 # int | The block height
 
     try:
         # Get a block by its height
@@ -107,8 +107,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.BlocksApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    var_date = '2017-07-21T17:32:28Z' # str | The date (YYYY-MM-DD)
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    var_date = 'var_date_example' # str | The date (YYYY-MM-DD)
 
     try:
         # Get block by date
@@ -178,8 +178,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.BlocksApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    height = 1 # int | The block height
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    height = 56 # int | The block height
 
     try:
         # Get block transactions

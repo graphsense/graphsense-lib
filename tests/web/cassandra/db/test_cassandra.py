@@ -1,17 +1,19 @@
-import asyncio
 import pprint
+
+import pytest
 
 from tests.web import BaseTestCase
 
 
 class TestCassandra(BaseTestCase):
-    def test_concurrent_with_args(test_case):
-        db = test_case.app["db"]
+    @pytest.mark.asyncio
+    async def test_concurrent_with_args(self):
+        db = self.app["db"]
 
         query = "select tx_id from transaction where tx_id_group = %s"
         params = [[0], [1]]
-        result = asyncio.run(
-            db.concurrent_with_args("btc", "raw", query, params, return_one=False)
+        result = await db.concurrent_with_args(
+            "btc", "raw", query, params, return_one=False
         )
         pprint.pprint(result)
         txs = [
@@ -25,9 +27,7 @@ class TestCassandra(BaseTestCase):
             [{"tx_id": 25001}, {"tx_id": 25002}, {"tx_id": 25003}],
         ]
 
-        result = asyncio.run(
-            db.execute_async(
-                "btc", "raw", query, params[0], autopaging=True, fetch_size=1
-            )
+        result = await db.execute_async(
+            "btc", "raw", query, params[0], autopaging=True, fetch_size=1
         )
-        test_case.assertEqual(txs[0], result.current_rows)
+        self.assertEqual(txs[0], result.current_rows)

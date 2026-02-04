@@ -34,8 +34,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.RatesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    height = 1 # int | The block height
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    height = 56 # int | The block height
 
     try:
         # Get exchange rates for a given block height

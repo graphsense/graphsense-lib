@@ -41,8 +41,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
     include_actors = True # bool | Whether to include actor information (optional) (default to True)
 
     try:
@@ -114,8 +114,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
     include_actors = True # bool | Whether to include actor information (optional) (default to True)
 
     try:
@@ -187,8 +187,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
     include_best_cluster_tag = True # bool | If the best cluster tag should be inherited to the address level (optional)
 
     try:
@@ -260,17 +260,17 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    neighbor = '1FKCzy3BEtiZDhRDtivp7Y7RVb9edg5BH7' # str | Neighbor address
-    min_height = 1 # int | Return transactions starting from given height (optional)
-    max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
-    order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
+    neighbor = 'neighbor_example' # str | Neighbor address
+    min_height = 56 # int | Return transactions starting from given height (optional)
+    max_height = 56 # int | Return transactions up to (including) given height (optional)
+    min_date = 'min_date_example' # str | Min date of txs (optional)
+    max_date = 'max_date_example' # str | Max date of txs (optional)
+    order = 'order_example' # str | Sorting order (optional)
+    token_currency = 'token_currency_example' # str | Return transactions of given token or base currency (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get outgoing transactions between two addresses
@@ -349,14 +349,14 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    direction = 'out' # str | Incoming or outgoing neighbors
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
+    direction = 'direction_example' # str | Incoming or outgoing neighbors
     only_ids = 'only_ids_example' # str | Restrict result to given set of comma separated addresses (optional)
-    include_labels = true # bool | Whether to include labels of first page of address tags (optional)
+    include_labels = True # bool | Whether to include labels of first page of address tags (optional)
     include_actors = True # bool | Whether to include actor information (optional) (default to True)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get an address's neighbors in the address graph
@@ -432,17 +432,17 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    direction = 'out' # str | Incoming or outgoing transactions (optional)
-    min_height = 1 # int | Return transactions starting from given height (optional)
-    max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
-    order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
+    direction = 'direction_example' # str | Incoming or outgoing transactions (optional)
+    min_height = 56 # int | Return transactions starting from given height (optional)
+    max_height = 56 # int | Return transactions up to (including) given height (optional)
+    min_date = 'min_date_example' # str | Min date of txs (optional)
+    max_date = 'max_date_example' # str | Max date of txs (optional)
+    order = 'order_example' # str | Sorting order (optional)
+    token_currency = 'token_currency_example' # str | Return transactions of given token or base currency (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get all transactions an address has been involved in
@@ -521,11 +521,11 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
     address_relation_type = pubkey # str | What type of related addresses to return (optional) (default to pubkey)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get related addresses to the input address
@@ -598,10 +598,10 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
     include_best_cluster_tag = True # bool | If the best cluster tag should be inherited to the address level (optional)
 
     try:

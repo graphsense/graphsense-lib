@@ -323,12 +323,12 @@ async def to_json_generator(the_stack):
 async def bulk_csv(
     request: Request,
     currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
     ),
     operation: str = Path(
-        ..., description="The operation to perform", example="get_block"
+        ..., description="The operation to perform", examples=["get_block"]
     ),
-    num_pages: int = Query(..., description="Number of pages to fetch", example=1),
+    num_pages: int = Query(..., description="Number of pages to fetch", examples=[1]),
     body: Dict[str, Any] = ...,
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -366,12 +366,12 @@ async def bulk_csv(
 async def bulk_json(
     request: Request,
     currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
     ),
     operation: str = Path(
-        ..., description="The operation to perform", example="get_block"
+        ..., description="The operation to perform", examples=["get_block"]
     ),
-    num_pages: int = Query(..., description="Number of pages to fetch", example=1),
+    num_pages: int = Query(..., description="Number of pages to fetch", examples=[1]),
     body: Dict[str, Any] = ...,
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),

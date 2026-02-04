@@ -197,12 +197,9 @@ testpaths = ["tests"]
 markers = [
     "slow: mark tests as slow (deselect with '-m \"not slow\"')",
     "vcr:",
-    "regression: mark test as regression test (baseline container vs current)",
-    "migration: mark test as FastAPI migration comparison test (deprecated)",
-    "loki_generated: mark test as generated from Loki API logs",
 ]
-# Exclude slow, regression (separate target), migration, loki tests by default
-addopts = "-m 'not slow and not regression and not migration and not loki_generated'"
+addopts = "-m 'not slow'"
+asyncio_mode = "auto"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.

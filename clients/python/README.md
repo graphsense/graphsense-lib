@@ -67,8 +67,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.AddressesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    address = 'address_example' # str | The cryptocurrency address
     include_actors = True # bool | Whether to include actor information (optional) (default to True)
 
     try:

@@ -40,8 +40,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    entity = 56 # int | The entity ID
     exclude_best_address_tag = True # bool | Whether to exclude best address tag (optional)
     include_actors = False # bool | Whether to include actor information (optional) (default to False)
 
@@ -115,10 +115,10 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    entity = 56 # int | The entity ID
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get address tags for a given entity
@@ -190,10 +190,10 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    entity = 56 # int | The entity ID
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get an entity's addresses
@@ -265,17 +265,17 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
-    neighbor = 123456 # int | Neighbor entity ID
-    min_height = 1 # int | Return transactions starting from given height (optional)
-    max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
-    order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    entity = 56 # int | The entity ID
+    neighbor = 56 # int | Neighbor entity ID
+    min_height = 56 # int | Return transactions starting from given height (optional)
+    max_height = 56 # int | Return transactions up to (including) given height (optional)
+    min_date = 'min_date_example' # str | Min date of txs (optional)
+    max_date = 'max_date_example' # str | Max date of txs (optional)
+    order = 'order_example' # str | Sorting order (optional)
+    token_currency = 'token_currency_example' # str | Return transactions of given token or base currency (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get transactions between two entities
@@ -354,13 +354,13 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
-    direction = 'out' # str | Incoming or outgoing neighbors
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    entity = 56 # int | The entity ID
+    direction = 'direction_example' # str | Incoming or outgoing neighbors
     only_ids = 'only_ids_example' # str | Restrict result to given set of comma separated IDs (optional)
-    include_labels = true # bool | Whether to include labels (optional)
+    include_labels = True # bool | Whether to include labels (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
     relations_only = True # bool | Return only relations without entity details (optional)
     exclude_best_address_tag = True # bool | Whether to exclude best address tag (optional)
     include_actors = False # bool | Whether to include actor information (optional) (default to False)
@@ -441,17 +441,17 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
-    direction = 'out' # str | Incoming or outgoing transactions (optional)
-    min_height = 1 # int | Return transactions starting from given height (optional)
-    max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
-    order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    entity = 56 # int | The entity ID
+    direction = 'direction_example' # str | Incoming or outgoing transactions (optional)
+    min_height = 56 # int | Return transactions starting from given height (optional)
+    max_height = 56 # int | Return transactions up to (including) given height (optional)
+    min_date = 'min_date_example' # str | Min date of txs (optional)
+    max_date = 'max_date_example' # str | Max date of txs (optional)
+    order = 'order_example' # str | Sorting order (optional)
+    token_currency = 'token_currency_example' # str | Return transactions of given token or base currency (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get all transactions an entity has been involved in
@@ -530,13 +530,13 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
-    direction = 'out' # str | Incoming or outgoing neighbors
-    key = 'category' # str | Search key
-    value = 'Miner' # str | Comma separated search values
-    depth = 2 # int | Search depth
-    breadth = 16 # int | Search breadth
+    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
+    entity = 56 # int | The entity ID
+    direction = 'direction_example' # str | Incoming or outgoing neighbors
+    key = 'key_example' # str | Search key
+    value = 'value_example' # str | Comma separated search values
+    depth = 56 # int | Search depth
+    breadth = 56 # int | Search breadth
     skip_num_addresses = 56 # int | Skip entities with more than N addresses (optional)
 
     try:

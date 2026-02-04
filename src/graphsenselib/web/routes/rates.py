@@ -26,9 +26,9 @@ router = APIRouter()
 async def get_exchange_rates(
     request: Request,
     currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
     ),
-    height: int = Path(..., description="The block height", example=1),
+    height: int = Path(..., description="The block height", examples=[1]),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):

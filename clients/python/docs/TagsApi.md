@@ -39,7 +39,7 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
-    actor = 'binance' # str | The actor ID
+    actor = 'actor_example' # str | The actor ID
 
     try:
         # Get an actor by ID
@@ -108,9 +108,9 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
-    actor = 'binance' # str | The actor ID
+    actor = 'actor_example' # str | The actor ID
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get tags associated with an actor
@@ -181,9 +181,9 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
-    label = 'cimedy' # str | The label to search for
+    label = 'label_example' # str | The label to search for
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 10 # int | Number of items returned in a single page (optional)
+    pagesize = 56 # int | Number of items returned in a single page (optional)
 
     try:
         # Get address tags by label
@@ -254,7 +254,7 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
-    taxonomy = 'concept' # str | The taxonomy name
+    taxonomy = 'taxonomy_example' # str | The taxonomy name
 
     try:
         # List concepts for a taxonomy

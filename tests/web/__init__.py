@@ -1,7 +1,7 @@
 import json
 import logging
 
-import pytest
+import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
@@ -90,7 +90,7 @@ class BaseTestCase:
     config: dict = None  # Set by conftest.py
     app = None  # Will be set during setup
 
-    @pytest.fixture(autouse=True)
+    @pytest_asyncio.fixture(autouse=True)
     async def setup_client(self):
         """Set up the test client before each test."""
         logging.getLogger("uvicorn.error").setLevel("ERROR")
