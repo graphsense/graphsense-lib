@@ -3,7 +3,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 LABEL org.opencontainers.image.title="graphsense-lib"
 LABEL org.opencontainers.image.maintainer="contact@ikna.io"
 LABEL org.opencontainers.image.url="https://www.ikna.io/"
-LABEL org.opencontainers.image.description="Dockerized Graphsense library with CLI and REST API"
+LABEL org.opencontainers.image.description="Dockerized Graphsense library for general purpose"
 LABEL org.opencontainers.image.source="https://github.com/graphsense/graphsense-lib"
 
 ENV UV_ONLY_BINARY=1
@@ -48,9 +48,6 @@ WORKDIR /home/graphsense/
 
 # Create plugins directory for REST API
 RUN mkdir -p /home/graphsense/plugins
-
-# Make uv environment available to user
-ENV PATH="/opt/graphsense/lib/.venv/bin:$PATH"
 
 # Default: run REST API with gunicorn
 # Override with: docker run ... graphsense-cli --help
