@@ -6,7 +6,7 @@ List of token configurations.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**token_configs** | [**List[TokenConfig]**](TokenConfig.md) |  |
+**token_configs** | [**List[TokenConfig]**](TokenConfig.md) |  | 
 
 ## Example
 
@@ -26,3 +26,5 @@ token_configs_dict = token_configs_instance.to_dict()
 token_configs_from_dict = TokenConfigs.from_dict(token_configs_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

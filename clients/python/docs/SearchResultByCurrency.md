@@ -6,9 +6,9 @@ Search result by currency.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**currency** | **str** |  |
-**addresses** | **List[str]** |  |
-**txs** | **List[str]** |  |
+**currency** | **str** |  | 
+**addresses** | **List[str]** |  | 
+**txs** | **List[str]** |  | 
 
 ## Example
 
@@ -28,3 +28,5 @@ search_result_by_currency_dict = search_result_by_currency_instance.to_dict()
 search_result_by_currency_from_dict = SearchResultByCurrency.from_dict(search_result_by_currency_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

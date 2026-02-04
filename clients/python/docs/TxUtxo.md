@@ -7,17 +7,17 @@ UTXO transaction model.
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **tx_type** | **str** |  | [optional] [default to 'utxo']
-**currency** | **str** |  |
-**tx_hash** | **str** |  |
-**coinbase** | **bool** |  |
-**height** | **int** |  |
-**no_inputs** | **int** |  |
-**no_outputs** | **int** |  |
-**timestamp** | **int** |  |
-**total_input** | [**Values**](Values.md) |  |
-**total_output** | [**Values**](Values.md) |  |
-**inputs** | [**List[TxValue]**](TxValue.md) |  | [optional]
-**outputs** | [**List[TxValue]**](TxValue.md) |  | [optional]
+**currency** | **str** |  | 
+**tx_hash** | **str** |  | 
+**coinbase** | **bool** |  | 
+**height** | **int** |  | 
+**no_inputs** | **int** |  | 
+**no_outputs** | **int** |  | 
+**timestamp** | **int** |  | 
+**total_input** | [**Values**](Values.md) |  | 
+**total_output** | [**Values**](Values.md) |  | 
+**inputs** | [**List[TxValue]**](TxValue.md) |  | [optional] 
+**outputs** | [**List[TxValue]**](TxValue.md) |  | [optional] 
 
 ## Example
 
@@ -37,3 +37,5 @@ tx_utxo_dict = tx_utxo_instance.to_dict()
 tx_utxo_from_dict = TxUtxo.from_dict(tx_utxo_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

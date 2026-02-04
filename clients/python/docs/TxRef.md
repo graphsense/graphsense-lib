@@ -6,9 +6,9 @@ Transaction reference model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**input_index** | **int** |  |
-**output_index** | **int** |  |
-**tx_hash** | **str** |  |
+**input_index** | **int** |  | 
+**output_index** | **int** |  | 
+**tx_hash** | **str** |  | 
 
 ## Example
 
@@ -28,3 +28,5 @@ tx_ref_dict = tx_ref_instance.to_dict()
 tx_ref_from_dict = TxRef.from_dict(tx_ref_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

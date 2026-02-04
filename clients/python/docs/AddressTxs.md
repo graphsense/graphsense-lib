@@ -6,8 +6,8 @@ Paginated list of address transactions.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**address_txs** | [**List[AddressTx]**](AddressTx.md) |  |
-**next_page** | **str** |  | [optional]
+**address_txs** | [**List[AddressTx]**](AddressTx.md) |  | 
+**next_page** | **str** |  | [optional] 
 
 ## Example
 
@@ -27,3 +27,5 @@ address_txs_dict = address_txs_instance.to_dict()
 address_txs_from_dict = AddressTxs.from_dict(address_txs_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

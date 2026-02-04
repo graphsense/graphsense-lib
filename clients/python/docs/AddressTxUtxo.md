@@ -7,12 +7,12 @@ UTXO transaction for an address.
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **tx_type** | **str** |  | [optional] [default to 'utxo']
-**tx_hash** | **str** |  |
-**currency** | **str** |  |
-**coinbase** | **bool** |  |
-**height** | **int** |  |
-**timestamp** | **int** |  |
-**value** | [**Values**](Values.md) |  |
+**tx_hash** | **str** |  | 
+**currency** | **str** |  | 
+**coinbase** | **bool** |  | 
+**height** | **int** |  | 
+**timestamp** | **int** |  | 
+**value** | [**Values**](Values.md) |  | 
 
 ## Example
 
@@ -32,3 +32,5 @@ address_tx_utxo_dict = address_tx_utxo_instance.to_dict()
 address_tx_utxo_from_dict = AddressTxUtxo.from_dict(address_tx_utxo_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

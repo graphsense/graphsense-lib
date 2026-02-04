@@ -6,9 +6,9 @@ Search result model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**currencies** | [**List[SearchResultByCurrency]**](SearchResultByCurrency.md) |  |
-**labels** | **List[str]** |  |
-**actors** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | [optional]
+**currencies** | [**List[SearchResultByCurrency]**](SearchResultByCurrency.md) |  | 
+**labels** | **List[str]** |  | 
+**actors** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | [optional] 
 
 ## Example
 
@@ -28,3 +28,5 @@ search_result_dict = search_result_instance.to_dict()
 search_result_from_dict = SearchResult.from_dict(search_result_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

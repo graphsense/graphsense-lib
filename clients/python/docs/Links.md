@@ -6,8 +6,8 @@ Paginated list of links.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**links** | [**List[LinksInner]**](LinksInner.md) |  |
-**next_page** | **str** |  | [optional]
+**links** | [**List[LinksInner]**](LinksInner.md) |  | 
+**next_page** | **str** |  | [optional] 
 
 ## Example
 
@@ -27,3 +27,5 @@ links_dict = links_instance.to_dict()
 links_from_dict = Links.from_dict(links_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

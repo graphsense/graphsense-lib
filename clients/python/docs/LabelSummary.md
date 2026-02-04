@@ -6,15 +6,15 @@ Label summary model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**label** | **str** |  |
-**count** | **int** |  |
-**confidence** | **float** |  |
-**relevance** | **float** |  |
-**creators** | **List[str]** |  |
-**sources** | **List[str]** |  |
-**concepts** | **List[str]** |  |
-**lastmod** | **int** |  |
-**inherited_from** | **str** |  | [optional]
+**label** | **str** |  | 
+**count** | **int** |  | 
+**confidence** | **float** |  | 
+**relevance** | **float** |  | 
+**creators** | **List[str]** |  | 
+**sources** | **List[str]** |  | 
+**concepts** | **List[str]** |  | 
+**lastmod** | **int** |  | 
+**inherited_from** | **str** |  | [optional] 
 
 ## Example
 
@@ -34,3 +34,5 @@ label_summary_dict = label_summary_instance.to_dict()
 label_summary_from_dict = LabelSummary.from_dict(label_summary_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

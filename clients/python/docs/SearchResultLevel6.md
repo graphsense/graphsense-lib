@@ -6,8 +6,8 @@ Search result at depth 6 (leaf).
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**neighbor** | [**NeighborEntity**](NeighborEntity.md) |  |
-**matching_addresses** | [**List[Address]**](Address.md) |  |
+**neighbor** | [**NeighborEntity**](NeighborEntity.md) |  | 
+**matching_addresses** | [**List[Address]**](Address.md) |  | 
 
 ## Example
 
@@ -27,3 +27,5 @@ search_result_level6_dict = search_result_level6_instance.to_dict()
 search_result_level6_from_dict = SearchResultLevel6.from_dict(search_result_level6_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

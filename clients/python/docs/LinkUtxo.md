@@ -7,12 +7,12 @@ UTXO link model.
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **tx_type** | **str** |  | [optional] [default to 'utxo']
-**tx_hash** | **str** |  |
-**currency** | **str** |  |
-**height** | **int** |  |
-**timestamp** | **int** |  |
-**input_value** | [**Values**](Values.md) |  |
-**output_value** | [**Values**](Values.md) |  |
+**tx_hash** | **str** |  | 
+**currency** | **str** |  | 
+**height** | **int** |  | 
+**timestamp** | **int** |  | 
+**input_value** | [**Values**](Values.md) |  | 
+**output_value** | [**Values**](Values.md) |  | 
 
 ## Example
 
@@ -32,3 +32,5 @@ link_utxo_dict = link_utxo_instance.to_dict()
 link_utxo_from_dict = LinkUtxo.from_dict(link_utxo_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

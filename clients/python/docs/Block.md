@@ -6,11 +6,11 @@ Block model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**block_hash** | **str** |  |
-**currency** | **str** |  |
-**height** | **int** |  |
-**no_txs** | **int** |  |
-**timestamp** | **int** |  |
+**block_hash** | **str** |  | 
+**currency** | **str** |  | 
+**height** | **int** |  | 
+**no_txs** | **int** |  | 
+**timestamp** | **int** |  | 
 
 ## Example
 
@@ -30,3 +30,5 @@ block_dict = block_instance.to_dict()
 block_from_dict = Block.from_dict(block_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

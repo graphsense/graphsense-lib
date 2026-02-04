@@ -5,9 +5,9 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**loc** | [**List[LocationInner]**](LocationInner.md) |  |
-**msg** | **str** |  |
-**type** | **str** |  |
+**loc** | [**List[LocationInner]**](LocationInner.md) |  | 
+**msg** | **str** |  | 
+**type** | **str** |  | 
 
 ## Example
 
@@ -27,3 +27,5 @@ validation_error_dict = validation_error_instance.to_dict()
 validation_error_from_dict = ValidationError.from_dict(validation_error_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

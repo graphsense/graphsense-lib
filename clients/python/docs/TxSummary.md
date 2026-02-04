@@ -6,9 +6,9 @@ Transaction summary model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**height** | **int** |  |
-**timestamp** | **int** |  |
-**tx_hash** | **str** |  |
+**height** | **int** |  | 
+**timestamp** | **int** |  | 
+**tx_hash** | **str** |  | 
 
 ## Example
 
@@ -28,3 +28,5 @@ tx_summary_dict = tx_summary_instance.to_dict()
 tx_summary_from_dict = TxSummary.from_dict(tx_summary_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

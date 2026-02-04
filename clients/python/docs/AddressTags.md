@@ -6,8 +6,8 @@ Paginated list of address tags.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**address_tags** | [**List[AddressTag]**](AddressTag.md) |  |
-**next_page** | **str** |  | [optional]
+**address_tags** | [**List[AddressTag]**](AddressTag.md) |  | 
+**next_page** | **str** |  | [optional] 
 
 ## Example
 
@@ -27,3 +27,5 @@ address_tags_dict = address_tags_instance.to_dict()
 address_tags_from_dict = AddressTags.from_dict(address_tags_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

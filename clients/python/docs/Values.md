@@ -6,8 +6,8 @@ Values model with fiat conversion.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**fiat_values** | [**List[Rate]**](Rate.md) |  |
-**value** | **int** |  |
+**fiat_values** | [**List[Rate]**](Rate.md) |  | 
+**value** | **int** |  | 
 
 ## Example
 
@@ -27,3 +27,5 @@ values_dict = values_instance.to_dict()
 values_from_dict = Values.from_dict(values_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

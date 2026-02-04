@@ -6,11 +6,11 @@ Neighbor entity model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**value** | [**Values**](Values.md) |  |
-**no_txs** | **int** |  |
-**entity** | [**Entity**](Entity.md) |  | [optional]
-**labels** | **List[str]** |  | [optional]
-**token_values** | [**Dict[str, Values]**](Values.md) |  | [optional]
+**value** | [**Values**](Values.md) |  | 
+**no_txs** | **int** |  | 
+**entity** | [**Entity**](Entity.md) |  | [optional] 
+**labels** | **List[str]** |  | [optional] 
+**token_values** | [**Dict[str, Values]**](Values.md) |  | [optional] 
 
 ## Example
 
@@ -30,3 +30,5 @@ neighbor_entity_dict = neighbor_entity_instance.to_dict()
 neighbor_entity_from_dict = NeighborEntity.from_dict(neighbor_entity_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

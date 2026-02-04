@@ -271,3 +271,5 @@ MANIFEST
 .claude/
 tagpack/test-tagpacks/
 logs.txt
+PRD.md
+/.ralph

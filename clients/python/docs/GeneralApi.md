@@ -1,6 +1,6 @@
 # graphsense.GeneralApi
 
-All URIs are relative to *https://api.ikna.io*
+All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
@@ -24,10 +24,10 @@ from graphsense.models.stats import Stats
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
 
@@ -89,10 +89,10 @@ from graphsense.models.search_result import SearchResult
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
 # The client must configure the authentication and authorization parameters
@@ -135,8 +135,8 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **q** | **str**| Search query (address, transaction, or label) |
- **currency** | **str**| The cryptocurrency (e.g., btc) | [optional]
+ **q** | **str**| Search query (address, transaction, or label) | 
+ **currency** | **str**| The cryptocurrency (e.g., btc) | [optional] 
  **limit** | **int**| Maximum number of search results | [optional] [default to 10]
  **include_sub_tx_identifiers** | **bool**| Whether to include sub-transaction identifiers | [optional] [default to False]
  **include_labels** | **bool**| Whether to include labels | [optional] [default to True]
@@ -165,3 +165,4 @@ Name | Type | Description  | Notes
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+

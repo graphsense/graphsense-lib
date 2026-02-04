@@ -6,9 +6,9 @@ Search result at depth 2.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**neighbor** | [**NeighborEntity**](NeighborEntity.md) |  |
-**matching_addresses** | [**List[Address]**](Address.md) |  |
-**paths** | [**List[SearchResultLevel3]**](SearchResultLevel3.md) |  |
+**neighbor** | [**NeighborEntity**](NeighborEntity.md) |  | 
+**matching_addresses** | [**List[Address]**](Address.md) |  | 
+**paths** | [**List[SearchResultLevel3]**](SearchResultLevel3.md) |  | 
 
 ## Example
 
@@ -28,3 +28,5 @@ search_result_level2_dict = search_result_level2_instance.to_dict()
 search_result_level2_from_dict = SearchResultLevel2.from_dict(search_result_level2_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

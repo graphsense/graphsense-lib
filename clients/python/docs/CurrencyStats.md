@@ -6,15 +6,15 @@ Currency statistics model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**name** | **str** |  |
-**no_blocks** | **int** |  |
-**no_address_relations** | **int** |  |
-**no_addresses** | **int** |  |
-**no_entities** | **int** |  |
-**no_txs** | **int** |  |
-**no_labels** | **int** |  |
-**no_tagged_addresses** | **int** |  |
-**timestamp** | **int** |  |
+**name** | **str** |  | 
+**no_blocks** | **int** |  | 
+**no_address_relations** | **int** |  | 
+**no_addresses** | **int** |  | 
+**no_entities** | **int** |  | 
+**no_txs** | **int** |  | 
+**no_labels** | **int** |  | 
+**no_tagged_addresses** | **int** |  | 
+**timestamp** | **int** |  | 
 
 ## Example
 
@@ -34,3 +34,5 @@ currency_stats_dict = currency_stats_instance.to_dict()
 currency_stats_from_dict = CurrencyStats.from_dict(currency_stats_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

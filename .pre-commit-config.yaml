@@ -43,6 +43,12 @@ repos:
     - id: uv-lock
 -   repo: local
     hooks:
+    -   id: codegen
+        name: Ensure Generated Code is up to date
+        entry: make run-codegen
+        language: system
+        pass_filenames: false
+        always_run: true
     -   id: ensure-env
         name: Ensure UV environment is ready
         entry: uv sync --dev --all-packages --all-extras

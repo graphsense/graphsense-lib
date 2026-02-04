@@ -6,8 +6,8 @@ Reference to a labeled item.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**id** | **str** |  |
-**label** | **str** |  |
+**id** | **str** |  | 
+**label** | **str** |  | 
 
 ## Example
 
@@ -27,3 +27,5 @@ labeled_item_ref_dict = labeled_item_ref_instance.to_dict()
 labeled_item_ref_from_dict = LabeledItemRef.from_dict(labeled_item_ref_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

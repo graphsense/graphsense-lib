@@ -6,8 +6,8 @@ Exchange rate model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**code** | **str** |  |
-**value** | **float** |  |
+**code** | **str** |  | 
+**value** | **float** |  | 
 
 ## Example
 
@@ -27,3 +27,5 @@ rate_dict = rate_instance.to_dict()
 rate_from_dict = Rate.from_dict(rate_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

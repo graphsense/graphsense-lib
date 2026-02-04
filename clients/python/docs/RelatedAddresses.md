@@ -6,8 +6,8 @@ Paginated list of related addresses.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**related_addresses** | [**List[RelatedAddress]**](RelatedAddress.md) |  |
-**next_page** | **str** |  | [optional]
+**related_addresses** | [**List[RelatedAddress]**](RelatedAddress.md) |  | 
+**next_page** | **str** |  | [optional] 
 
 ## Example
 
@@ -27,3 +27,5 @@ related_addresses_dict = related_addresses_instance.to_dict()
 related_addresses_from_dict = RelatedAddresses.from_dict(related_addresses_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

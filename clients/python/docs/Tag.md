@@ -5,11 +5,11 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**label** | **str** |  | [optional]
-**category** | **str** |  | [optional]
-**abuse** | **str** |  | [optional]
-**actor** | **str** |  | [optional]
-**concepts** | [**List[Concept]**](Concept.md) |  | [optional]
+**label** | **str** |  | [optional] 
+**category** | **str** |  | [optional] 
+**abuse** | **str** |  | [optional] 
+**actor** | **str** |  | [optional] 
+**concepts** | [**List[Concept]**](Concept.md) |  | [optional] 
 
 ## Example
 
@@ -29,3 +29,5 @@ tag_dict = tag_instance.to_dict()
 tag_from_dict = Tag.from_dict(tag_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

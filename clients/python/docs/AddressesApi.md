@@ -1,6 +1,6 @@
 # graphsense.AddressesApi
 
-All URIs are relative to *https://api.ikna.io*
+All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
@@ -23,7 +23,6 @@ Get an address
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -31,22 +30,12 @@ from graphsense.models.address import Address
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -72,8 +61,8 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
  **include_actors** | **bool**| Whether to include actor information | [optional] [default to True]
 
 ### Return type
@@ -82,7 +71,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -107,7 +96,6 @@ Get the entity of an address
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -115,22 +103,12 @@ from graphsense.models.entity import Entity
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -156,8 +134,8 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
  **include_actors** | **bool**| Whether to include actor information | [optional] [default to True]
 
 ### Return type
@@ -166,7 +144,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -191,7 +169,6 @@ Get attribution tag summary for a given address
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -199,22 +176,12 @@ from graphsense.models.tag_summary import TagSummary
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -240,9 +207,9 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
- **include_best_cluster_tag** | **bool**| If the best cluster tag should be inherited to the address level | [optional]
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
+ **include_best_cluster_tag** | **bool**| If the best cluster tag should be inherited to the address level | [optional] 
 
 ### Return type
 
@@ -250,7 +217,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -275,7 +242,6 @@ Get outgoing transactions between two addresses
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -283,22 +249,12 @@ from graphsense.models.links import Links
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -332,17 +288,17 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
- **neighbor** | **str**| Neighbor address |
- **min_height** | **int**| Return transactions starting from given height | [optional]
- **max_height** | **int**| Return transactions up to (including) given height | [optional]
- **min_date** | **str**| Min date of txs | [optional]
- **max_date** | **str**| Max date of txs | [optional]
- **order** | **str**| Sorting order | [optional]
- **token_currency** | **str**| Return transactions of given token or base currency | [optional]
- **page** | **str**| Resumption token for retrieving the next page | [optional]
- **pagesize** | **int**| Number of items returned in a single page | [optional]
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
+ **neighbor** | **str**| Neighbor address | 
+ **min_height** | **int**| Return transactions starting from given height | [optional] 
+ **max_height** | **int**| Return transactions up to (including) given height | [optional] 
+ **min_date** | **str**| Min date of txs | [optional] 
+ **max_date** | **str**| Max date of txs | [optional] 
+ **order** | **str**| Sorting order | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **page** | **str**| Resumption token for retrieving the next page | [optional] 
+ **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
 ### Return type
 
@@ -350,7 +306,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -375,7 +331,6 @@ Get an address's neighbors in the address graph
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -383,22 +338,12 @@ from graphsense.models.neighbor_addresses import NeighborAddresses
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -429,14 +374,14 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
- **direction** | **str**| Incoming or outgoing neighbors |
- **only_ids** | **str**| Restrict result to given set of comma separated addresses | [optional]
- **include_labels** | **bool**| Whether to include labels of first page of address tags | [optional]
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
+ **direction** | **str**| Incoming or outgoing neighbors | 
+ **only_ids** | **str**| Restrict result to given set of comma separated addresses | [optional] 
+ **include_labels** | **bool**| Whether to include labels of first page of address tags | [optional] 
  **include_actors** | **bool**| Whether to include actor information | [optional] [default to True]
- **page** | **str**| Resumption token for retrieving the next page | [optional]
- **pagesize** | **int**| Number of items returned in a single page | [optional]
+ **page** | **str**| Resumption token for retrieving the next page | [optional] 
+ **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
 ### Return type
 
@@ -444,7 +389,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -469,7 +414,6 @@ Get all transactions an address has been involved in
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -477,22 +421,12 @@ from graphsense.models.address_txs import AddressTxs
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -526,17 +460,17 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
- **direction** | **str**| Incoming or outgoing transactions | [optional]
- **min_height** | **int**| Return transactions starting from given height | [optional]
- **max_height** | **int**| Return transactions up to (including) given height | [optional]
- **min_date** | **str**| Min date of txs | [optional]
- **max_date** | **str**| Max date of txs | [optional]
- **order** | **str**| Sorting order | [optional]
- **token_currency** | **str**| Return transactions of given token or base currency | [optional]
- **page** | **str**| Resumption token for retrieving the next page | [optional]
- **pagesize** | **int**| Number of items returned in a single page | [optional]
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
+ **direction** | **str**| Incoming or outgoing transactions | [optional] 
+ **min_height** | **int**| Return transactions starting from given height | [optional] 
+ **max_height** | **int**| Return transactions up to (including) given height | [optional] 
+ **min_date** | **str**| Min date of txs | [optional] 
+ **max_date** | **str**| Max date of txs | [optional] 
+ **order** | **str**| Sorting order | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **page** | **str**| Resumption token for retrieving the next page | [optional] 
+ **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
 ### Return type
 
@@ -544,7 +478,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -569,7 +503,6 @@ Get related addresses to the input address
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -577,22 +510,12 @@ from graphsense.models.related_addresses import RelatedAddresses
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -620,11 +543,11 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
  **address_relation_type** | **str**| What type of related addresses to return | [optional] [default to pubkey]
- **page** | **str**| Resumption token for retrieving the next page | [optional]
- **pagesize** | **int**| Number of items returned in a single page | [optional]
+ **page** | **str**| Resumption token for retrieving the next page | [optional] 
+ **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
 ### Return type
 
@@ -632,7 +555,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -657,7 +580,6 @@ Get attribution tags for a given address
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -665,22 +587,12 @@ from graphsense.models.address_tags import AddressTags
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -708,11 +620,11 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) |
- **address** | **str**| The cryptocurrency address |
- **page** | **str**| Resumption token for retrieving the next page | [optional]
- **pagesize** | **int**| Number of items returned in a single page | [optional]
- **include_best_cluster_tag** | **bool**| If the best cluster tag should be inherited to the address level | [optional]
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
+ **page** | **str**| Resumption token for retrieving the next page | [optional] 
+ **pagesize** | **int**| Number of items returned in a single page | [optional] 
+ **include_best_cluster_tag** | **bool**| If the best cluster tag should be inherited to the address level | [optional] 
 
 ### Return type
 
@@ -720,7 +632,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -735,3 +647,4 @@ Name | Type | Description  | Notes
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+

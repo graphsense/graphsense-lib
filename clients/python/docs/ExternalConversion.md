@@ -6,19 +6,19 @@ External conversion (DEX swap or bridge) model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**conversion_type** | **str** |  |
-**from_address** | **str** |  |
-**to_address** | **str** |  |
-**from_asset** | **str** |  |
-**to_asset** | **str** |  |
-**from_amount** | **str** |  |
-**to_amount** | **str** |  |
-**from_asset_transfer** | **str** |  |
-**to_asset_transfer** | **str** |  |
-**from_network** | **str** |  |
-**to_network** | **str** |  |
-**from_is_supported_asset** | **bool** |  |
-**to_is_supported_asset** | **bool** |  |
+**conversion_type** | **str** |  | 
+**from_address** | **str** |  | 
+**to_address** | **str** |  | 
+**from_asset** | **str** |  | 
+**to_asset** | **str** |  | 
+**from_amount** | **str** |  | 
+**to_amount** | **str** |  | 
+**from_asset_transfer** | **str** |  | 
+**to_asset_transfer** | **str** |  | 
+**from_network** | **str** |  | 
+**to_network** | **str** |  | 
+**from_is_supported_asset** | **bool** |  | 
+**to_is_supported_asset** | **bool** |  | 
 
 ## Example
 
@@ -38,3 +38,5 @@ external_conversion_dict = external_conversion_instance.to_dict()
 external_conversion_from_dict = ExternalConversion.from_dict(external_conversion_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

@@ -6,7 +6,7 @@ Response for user tag report submission.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**id** | **str** |  |
+**id** | **str** |  | 
 
 ## Example
 
@@ -26,3 +26,5 @@ user_tag_report_response_dict = user_tag_report_response_instance.to_dict()
 user_tag_report_response_from_dict = UserTagReportResponse.from_dict(user_tag_report_response_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

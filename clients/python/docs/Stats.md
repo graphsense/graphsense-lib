@@ -6,9 +6,9 @@ API statistics model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**currencies** | [**List[CurrencyStats]**](CurrencyStats.md) |  |
-**version** | **str** |  | [optional]
-**request_timestamp** | **str** |  | [optional]
+**currencies** | [**List[CurrencyStats]**](CurrencyStats.md) |  | 
+**version** | **str** |  | [optional] 
+**request_timestamp** | **str** |  | [optional] 
 
 ## Example
 
@@ -28,3 +28,5 @@ stats_dict = stats_instance.to_dict()
 stats_from_dict = Stats.from_dict(stats_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

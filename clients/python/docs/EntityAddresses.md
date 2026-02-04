@@ -6,8 +6,8 @@ Paginated list of addresses in an entity.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**addresses** | [**List[Address]**](Address.md) |  |
-**next_page** | **str** |  | [optional]
+**addresses** | [**List[Address]**](Address.md) |  | 
+**next_page** | **str** |  | [optional] 
 
 ## Example
 
@@ -27,3 +27,5 @@ entity_addresses_dict = entity_addresses_instance.to_dict()
 entity_addresses_from_dict = EntityAddresses.from_dict(entity_addresses_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

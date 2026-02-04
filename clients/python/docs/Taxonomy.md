@@ -6,8 +6,8 @@ Taxonomy model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**taxonomy** | **str** |  |
-**uri** | **str** |  |
+**taxonomy** | **str** |  | 
+**uri** | **str** |  | 
 
 ## Example
 
@@ -27,3 +27,5 @@ taxonomy_dict = taxonomy_instance.to_dict()
 taxonomy_from_dict = Taxonomy.from_dict(taxonomy_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

@@ -1,15 +1,14 @@
 -include .env
 
-OPENAPI_URL ?= http://localhost:9000/openapi.json
 GENERATOR_VERSION ?= v7.19.0
 TEMPLATES_DIR ?= ../python-templates
 COMPAT_DIR ?= ../python-compat
 
 
-# v7 generator with backward compatibility patches
+# v7 generator with backward compatibility patches (offline - no server needed)
 generate-openapi-client:
-	@echo "Downloading openapi.json from $(OPENAPI_URL)..."
-	curl -s $(OPENAPI_URL) > openapi.json.tmp
+	@echo "Generating openapi.json offline..."
+	cd ../.. && uv run python scripts/generate_openapi_spec.py > clients/python/openapi.json.tmp
 	@echo "Modifying server URL to production..."
 	jq '.servers[0].url = "https://api.iknaio.com"' openapi.json.tmp > openapi.json.modified
 	@API_VERSION=$$(jq -r '.info.version' openapi.json.tmp) && \

@@ -6,13 +6,13 @@ Actor model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**id** | **str** |  |
-**label** | **str** |  |
-**uri** | **str** |  |
-**categories** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  |
-**jurisdictions** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  |
-**nr_tags** | **int** |  | [optional]
-**context** | [**ActorContext**](ActorContext.md) |  | [optional]
+**id** | **str** |  | 
+**label** | **str** |  | 
+**uri** | **str** |  | 
+**categories** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | 
+**jurisdictions** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | 
+**nr_tags** | **int** |  | [optional] 
+**context** | [**ActorContext**](ActorContext.md) |  | [optional] 
 
 ## Example
 
@@ -32,3 +32,5 @@ actor_dict = actor_instance.to_dict()
 actor_from_dict = Actor.from_dict(actor_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

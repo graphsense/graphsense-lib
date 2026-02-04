@@ -6,11 +6,11 @@ Concept model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**id** | **str** |  |
-**label** | **str** |  |
-**taxonomy** | **str** |  |
-**uri** | **str** |  | [optional]
-**description** | **str** |  | [optional]
+**id** | **str** |  | 
+**label** | **str** |  | 
+**taxonomy** | **str** |  | 
+**uri** | **str** |  | [optional] 
+**description** | **str** |  | [optional] 
 
 ## Example
 
@@ -30,3 +30,5 @@ concept_dict = concept_instance.to_dict()
 concept_from_dict = Concept.from_dict(concept_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

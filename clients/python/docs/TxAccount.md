@@ -7,19 +7,19 @@ Account-based transaction model.
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **tx_type** | **str** |  | [optional] [default to 'account']
-**identifier** | **str** |  |
-**currency** | **str** |  |
-**network** | **str** |  |
-**tx_hash** | **str** |  |
-**height** | **int** |  |
-**timestamp** | **int** |  |
-**value** | [**Values**](Values.md) |  |
-**from_address** | **str** |  |
-**to_address** | **str** |  |
-**token_tx_id** | **int** |  | [optional]
-**fee** | [**Values**](Values.md) |  | [optional]
-**contract_creation** | **bool** |  | [optional]
-**is_external** | **bool** |  | [optional]
+**identifier** | **str** |  | 
+**currency** | **str** |  | 
+**network** | **str** |  | 
+**tx_hash** | **str** |  | 
+**height** | **int** |  | 
+**timestamp** | **int** |  | 
+**value** | [**Values**](Values.md) |  | 
+**from_address** | **str** |  | 
+**to_address** | **str** |  | 
+**token_tx_id** | **int** |  | [optional] 
+**fee** | [**Values**](Values.md) |  | [optional] 
+**contract_creation** | **bool** |  | [optional] 
+**is_external** | **bool** |  | [optional] 
 
 ## Example
 
@@ -39,3 +39,5 @@ tx_account_dict = tx_account_instance.to_dict()
 tx_account_from_dict = TxAccount.from_dict(tx_account_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

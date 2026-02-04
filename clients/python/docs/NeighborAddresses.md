@@ -6,8 +6,8 @@ Paginated list of neighbor addresses.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**neighbors** | [**List[NeighborAddress]**](NeighborAddress.md) |  |
-**next_page** | **str** |  | [optional]
+**neighbors** | [**List[NeighborAddress]**](NeighborAddress.md) |  | 
+**next_page** | **str** |  | [optional] 
 
 ## Example
 
@@ -27,3 +27,5 @@ neighbor_addresses_dict = neighbor_addresses_instance.to_dict()
 neighbor_addresses_from_dict = NeighborAddresses.from_dict(neighbor_addresses_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

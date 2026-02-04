@@ -6,9 +6,9 @@ Related address model (cross-chain).
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**address** | **str** |  |
-**currency** | **str** |  |
-**relation_type** | **str** |  |
+**address** | **str** |  | 
+**currency** | **str** |  | 
+**relation_type** | **str** |  | 
 
 ## Example
 
@@ -28,3 +28,5 @@ related_address_dict = related_address_instance.to_dict()
 related_address_from_dict = RelatedAddress.from_dict(related_address_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

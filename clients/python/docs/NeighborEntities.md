@@ -6,8 +6,8 @@ Paginated list of neighbor entities.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**neighbors** | [**List[NeighborEntity]**](NeighborEntity.md) |  |
-**next_page** | **str** |  | [optional]
+**neighbors** | [**List[NeighborEntity]**](NeighborEntity.md) |  | 
+**next_page** | **str** |  | [optional] 
 
 ## Example
 
@@ -27,3 +27,5 @@ neighbor_entities_dict = neighbor_entities_instance.to_dict()
 neighbor_entities_from_dict = NeighborEntities.from_dict(neighbor_entities_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

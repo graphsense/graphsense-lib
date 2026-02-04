@@ -6,10 +6,10 @@ Token configuration model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**ticker** | **str** |  |
-**decimals** | **int** |  |
-**peg_currency** | **str** |  | [optional]
-**contract_address** | **str** |  | [optional]
+**ticker** | **str** |  | 
+**decimals** | **int** |  | 
+**peg_currency** | **str** |  | [optional] 
+**contract_address** | **str** |  | [optional] 
 
 ## Example
 
@@ -29,3 +29,5 @@ token_config_dict = token_config_instance.to_dict()
 token_config_from_dict = TokenConfig.from_dict(token_config_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

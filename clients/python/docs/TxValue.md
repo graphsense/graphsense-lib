@@ -6,9 +6,9 @@ Transaction value model for UTXO inputs/outputs.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**address** | **List[str]** |  |
-**value** | [**Values**](Values.md) |  |
-**index** | **int** |  | [optional]
+**address** | **List[str]** |  | 
+**value** | [**Values**](Values.md) |  | 
+**index** | **int** |  | [optional] 
 
 ## Example
 
@@ -28,3 +28,5 @@ tx_value_dict = tx_value_instance.to_dict()
 tx_value_from_dict = TxValue.from_dict(tx_value_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

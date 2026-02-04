@@ -6,11 +6,11 @@ User reported tag model
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**address** | **str** |  |
-**network** | **str** |  |
-**actor** | **str** |  | [optional]
-**label** | **str** |  |
-**description** | **str** |  | [optional]
+**address** | **str** |  | 
+**network** | **str** |  | 
+**actor** | **str** |  | [optional] 
+**label** | **str** |  | 
+**description** | **str** |  | [optional] 
 
 ## Example
 
@@ -30,3 +30,5 @@ user_reported_tag_dict = user_reported_tag_instance.to_dict()
 user_reported_tag_from_dict = UserReportedTag.from_dict(user_reported_tag_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

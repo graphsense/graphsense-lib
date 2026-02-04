@@ -6,8 +6,8 @@ Tag cloud entry model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**cnt** | **int** |  |
-**weighted** | **float** |  |
+**cnt** | **int** |  | 
+**weighted** | **float** |  | 
 
 ## Example
 
@@ -27,3 +27,5 @@ tag_cloud_entry_dict = tag_cloud_entry_instance.to_dict()
 tag_cloud_entry_from_dict = TagCloudEntry.from_dict(tag_cloud_entry_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

@@ -1,6 +1,6 @@
 # graphsense.TagsApi
 
-All URIs are relative to *https://api.ikna.io*
+All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
@@ -21,7 +21,6 @@ Get an actor by ID
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -29,22 +28,12 @@ from graphsense.models.actor import Actor
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -68,7 +57,7 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **actor** | **str**| The actor ID |
+ **actor** | **str**| The actor ID | 
 
 ### Return type
 
@@ -76,7 +65,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -101,7 +90,6 @@ Get tags associated with an actor
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -109,22 +97,12 @@ from graphsense.models.address_tags import AddressTags
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -150,9 +128,9 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **actor** | **str**| The actor ID |
- **page** | **str**| Resumption token for retrieving the next page | [optional]
- **pagesize** | **int**| Number of items returned in a single page | [optional]
+ **actor** | **str**| The actor ID | 
+ **page** | **str**| Resumption token for retrieving the next page | [optional] 
+ **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
 ### Return type
 
@@ -160,7 +138,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -185,7 +163,6 @@ Get address tags by label
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -193,22 +170,12 @@ from graphsense.models.address_tags import AddressTags
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -234,9 +201,9 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **label** | **str**| The label to search for |
- **page** | **str**| Resumption token for retrieving the next page | [optional]
- **pagesize** | **int**| Number of items returned in a single page | [optional]
+ **label** | **str**| The label to search for | 
+ **page** | **str**| Resumption token for retrieving the next page | [optional] 
+ **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
 ### Return type
 
@@ -244,7 +211,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -269,7 +236,6 @@ List concepts for a taxonomy
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -277,22 +243,12 @@ from graphsense.models.concept import Concept
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -316,7 +272,7 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **taxonomy** | **str**| The taxonomy name |
+ **taxonomy** | **str**| The taxonomy name | 
 
 ### Return type
 
@@ -324,7 +280,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -349,7 +305,6 @@ List all taxonomies
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -357,22 +312,12 @@ from graphsense.models.taxonomy import Taxonomy
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -400,7 +345,7 @@ This endpoint does not need any parameter.
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -424,7 +369,6 @@ Report a new tag
 
 ### Example
 
-* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -433,28 +377,18 @@ from graphsense.models.user_tag_report_response import UserTagReportResponse
 from graphsense.rest import ApiException
 from pprint import pprint
 
-# Defining the host is optional and defaults to https://api.ikna.io
+# Defining the host is optional and defaults to https://api.iknaio.com
 # See configuration.py for a list of all supported configuration parameters.
 configuration = graphsense.Configuration(
-    host = "https://api.ikna.io"
+    host = "https://api.iknaio.com"
 )
 
-# The client must configure the authentication and authorization parameters
-# in accordance with the API server security policy.
-# Examples for each auth method are provided below, use the example that
-# satisfies your auth use case.
-
-# Configure API key authorization: api_key
-configuration.api_key['api_key'] = os.environ["API_KEY"]
-
-# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
-# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
-    user_reported_tag = graphsense.UserReportedTag() # UserReportedTag |
+    user_reported_tag = graphsense.UserReportedTag() # UserReportedTag | 
     x_consumer_username = 'x_consumer_username_example' # str |  (optional)
 
     try:
@@ -473,8 +407,8 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **user_reported_tag** | [**UserReportedTag**](UserReportedTag.md)|  |
- **x_consumer_username** | **str**|  | [optional]
+ **user_reported_tag** | [**UserReportedTag**](UserReportedTag.md)|  | 
+ **x_consumer_username** | **str**|  | [optional] 
 
 ### Return type
 
@@ -482,7 +416,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-[api_key](../README.md#api_key)
+No authorization required
 
 ### HTTP request headers
 
@@ -497,3 +431,4 @@ Name | Type | Description  | Notes
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+

@@ -6,10 +6,10 @@ Block at date model.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**before_block** | **int** |  | [optional]
-**before_timestamp** | **int** |  | [optional]
-**after_block** | **int** |  | [optional]
-**after_timestamp** | **int** |  | [optional]
+**before_block** | **int** |  | [optional] 
+**before_timestamp** | **int** |  | [optional] 
+**after_block** | **int** |  | [optional] 
+**after_timestamp** | **int** |  | [optional] 
 
 ## Example
 
@@ -29,3 +29,5 @@ block_at_date_dict = block_at_date_instance.to_dict()
 block_at_date_from_dict = BlockAtDate.from_dict(block_at_date_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+
