@@ -27,8 +27,10 @@ router = APIRouter()
 )
 async def get_block(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    height: int = Path(..., description="The block height"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    height: int = Path(..., description="The block height", example=1),
     services: ServiceContainer = Depends(get_services),
 ):
     """Get a block by its height"""
@@ -55,8 +57,10 @@ async def get_block(
 )
 async def list_block_txs(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    height: int = Path(..., description="The block height"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    height: int = Path(..., description="The block height", example=1),
     services: ServiceContainer = Depends(get_services),
 ):
     """Get block transactions"""
@@ -83,8 +87,12 @@ async def list_block_txs(
 )
 async def get_block_by_date(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    date: str = Path(..., description="The date (YYYY-MM-DD)"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    date: str = Path(
+        ..., description="The date (YYYY-MM-DD)", example="2017-07-21T17:32:28Z"
+    ),
     services: ServiceContainer = Depends(get_services),
 ):
     """Get block by date"""

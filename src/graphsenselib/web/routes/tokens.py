@@ -25,7 +25,9 @@ router = APIRouter()
 )
 async def list_supported_tokens(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., eth)"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., eth)", example="eth"
+    ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):

@@ -41,8 +41,14 @@ def _normalize_page(page: Optional[str]) -> Optional[str]:
 )
 async def list_token_txs(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., eth)"),
-    tx_hash: str = Path(..., description="The transaction hash"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., eth)", example="eth"
+    ),
+    tx_hash: str = Path(
+        ...,
+        description="The transaction hash",
+        example="04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd",
+    ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):
@@ -69,8 +75,14 @@ async def list_token_txs(
 )
 async def get_tx(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    tx_hash: str = Path(..., description="The transaction hash"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    tx_hash: str = Path(
+        ...,
+        description="The transaction hash",
+        example="04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd",
+    ),
     token_tx_id: Optional[int] = Query(
         None, description="Token transaction ID for account-model currencies"
     ),
@@ -113,9 +125,17 @@ async def get_tx(
 )
 async def get_spent_in(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    tx_hash: str = Path(..., description="The transaction hash"),
-    io_index: Optional[int] = Query(None, description="Output index to check"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    tx_hash: str = Path(
+        ...,
+        description="The transaction hash",
+        example="04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd",
+    ),
+    io_index: Optional[int] = Query(
+        None, description="Output index to check", example=0
+    ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):
@@ -143,9 +163,17 @@ async def get_spent_in(
 )
 async def get_spending(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    tx_hash: str = Path(..., description="The transaction hash"),
-    io_index: Optional[int] = Query(None, description="Input index to check"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    tx_hash: str = Path(
+        ...,
+        description="The transaction hash",
+        example="04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd",
+    ),
+    io_index: Optional[int] = Query(
+        None, description="Input index to check", example=0
+    ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):
@@ -173,8 +201,14 @@ async def get_spending(
 )
 async def get_tx_conversions(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., eth)"),
-    tx_hash: str = Path(..., description="The transaction hash"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., eth)", example="eth"
+    ),
+    tx_hash: str = Path(
+        ...,
+        description="The transaction hash",
+        example="04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd",
+    ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):
@@ -199,20 +233,28 @@ async def get_tx_conversions(
 )
 async def list_tx_flows(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., eth)"),
-    tx_hash: str = Path(..., description="The transaction hash"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., eth)", example="eth"
+    ),
+    tx_hash: str = Path(
+        ...,
+        description="The transaction hash",
+        example="04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd",
+    ),
     strip_zero_value_txs: Optional[bool] = Query(
         None, description="Strip zero value transactions"
     ),
     only_token_txs: Optional[bool] = Query(
-        None, description="Only return token transactions"
+        None, description="Only return token transactions", example=False
     ),
-    token_currency: Optional[str] = Query(None, description="Filter by token currency"),
+    token_currency: Optional[str] = Query(
+        None, description="Filter by token currency", example="WETH"
+    ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -247,10 +289,18 @@ async def list_tx_flows(
 )
 async def get_tx_io(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    tx_hash: str = Path(..., description="The transaction hash"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    tx_hash: str = Path(
+        ...,
+        description="The transaction hash",
+        example="04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd",
+    ),
     io: str = Path(
-        ..., description="Input or output values of a transaction (inputs or outputs)"
+        ...,
+        description="Input or output values of a transaction (inputs or outputs)",
+        example="outputs",
     ),
     include_nonstandard_io: Optional[bool] = Query(
         None, description="Include non-standard inputs/outputs"

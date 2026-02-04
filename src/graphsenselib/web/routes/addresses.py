@@ -45,10 +45,16 @@ def _normalize_page(page: Optional[str]) -> Optional[str]:
 )
 async def get_address(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
     include_actors: bool = Query(
-        True, description="Whether to include actor information"
+        True, description="Whether to include actor information", example=True
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -77,10 +83,16 @@ async def get_address(
 )
 async def get_address_entity(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
     include_actors: bool = Query(
-        True, description="Whether to include actor information"
+        True, description="Whether to include actor information", example=True
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -109,8 +121,14 @@ async def get_address_entity(
 )
 async def get_tag_summary_by_address(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
     include_best_cluster_tag: Optional[bool] = Query(
         None,
         description="If the best cluster tag should be inherited to the address level",
@@ -142,13 +160,19 @@ async def get_tag_summary_by_address(
 )
 async def list_tags_by_address(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     include_best_cluster_tag: Optional[bool] = Query(
         None,
@@ -183,28 +207,42 @@ async def list_tags_by_address(
 )
 async def list_address_txs(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
     direction: Optional[str] = Query(
-        None, description="Incoming or outgoing transactions"
+        None, description="Incoming or outgoing transactions", example="out"
     ),
     min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height"
+        None, description="Return transactions starting from given height", example=1
     ),
     max_height: Optional[int] = Query(
-        None, description="Return transactions up to (including) given height"
+        None,
+        description="Return transactions up to (including) given height",
+        example=2,
     ),
-    min_date: Optional[str] = Query(None, description="Min date of txs"),
-    max_date: Optional[str] = Query(None, description="Max date of txs"),
-    order: Optional[str] = Query(None, description="Sorting order"),
+    min_date: Optional[str] = Query(
+        None, description="Min date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    max_date: Optional[str] = Query(
+        None, description="Max date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    order: Optional[str] = Query(None, description="Sorting order", example="desc"),
     token_currency: Optional[str] = Query(
-        None, description="Return transactions of given token or base currency"
+        None,
+        description="Return transactions of given token or base currency",
+        example="WETH",
     ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -244,25 +282,33 @@ async def list_address_txs(
 )
 async def list_address_neighbors(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
     direction: Literal["in", "out"] = Query(
-        ..., description="Incoming or outgoing neighbors"
+        ..., description="Incoming or outgoing neighbors", example="out"
     ),
     only_ids: Optional[str] = Query(
         None, description="Restrict result to given set of comma separated addresses"
     ),
     include_labels: Optional[bool] = Query(
-        None, description="Whether to include labels of first page of address tags"
+        None,
+        description="Whether to include labels of first page of address tags",
+        example=True,
     ),
     include_actors: bool = Query(
-        True, description="Whether to include actor information"
+        True, description="Whether to include actor information", example=True
     ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -296,26 +342,44 @@ async def list_address_neighbors(
 )
 async def list_address_links(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
-    neighbor: str = Query(..., description="Neighbor address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
+    neighbor: str = Query(
+        ...,
+        description="Neighbor address",
+        example="1FKCzy3BEtiZDhRDtivp7Y7RVb9edg5BH7",
+    ),
     min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height"
+        None, description="Return transactions starting from given height", example=1
     ),
     max_height: Optional[int] = Query(
-        None, description="Return transactions up to (including) given height"
+        None,
+        description="Return transactions up to (including) given height",
+        example=2,
     ),
-    min_date: Optional[str] = Query(None, description="Min date of txs"),
-    max_date: Optional[str] = Query(None, description="Max date of txs"),
-    order: Optional[str] = Query(None, description="Sorting order"),
+    min_date: Optional[str] = Query(
+        None, description="Min date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    max_date: Optional[str] = Query(
+        None, description="Max date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    order: Optional[str] = Query(None, description="Sorting order", example="desc"),
     token_currency: Optional[str] = Query(
-        None, description="Return transactions of given token or base currency"
+        None,
+        description="Return transactions of given token or base currency",
+        example="WETH",
     ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -355,16 +419,24 @@ async def list_address_links(
 )
 async def list_related_addresses(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    address: str = Path(..., description="The cryptocurrency address"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    address: str = Path(
+        ...,
+        description="The cryptocurrency address",
+        example="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    ),
     address_relation_type: Literal["pubkey"] = Query(
-        "pubkey", description="What type of related addresses to return"
+        "pubkey",
+        description="What type of related addresses to return",
+        example="pubkey",
     ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),

@@ -45,13 +45,15 @@ def _normalize_page(page: Optional[str]) -> Optional[str]:
 )
 async def get_entity(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    entity: int = Path(..., description="The entity ID"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    entity: int = Path(..., description="The entity ID", example=67065),
     exclude_best_address_tag: Optional[bool] = Query(
         None, description="Whether to exclude best address tag"
     ),
     include_actors: bool = Query(
-        False, description="Whether to include actor information"
+        False, description="Whether to include actor information", example=True
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -81,13 +83,15 @@ async def get_entity(
 )
 async def list_entity_addresses(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    entity: int = Path(..., description="The entity ID"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    entity: int = Path(..., description="The entity ID", example=67065),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -118,22 +122,24 @@ async def list_entity_addresses(
 )
 async def list_entity_neighbors(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    entity: int = Path(..., description="The entity ID"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    entity: int = Path(..., description="The entity ID", example=67065),
     direction: Literal["in", "out"] = Query(
-        ..., description="Incoming or outgoing neighbors"
+        ..., description="Incoming or outgoing neighbors", example="out"
     ),
     only_ids: Optional[str] = Query(
         None, description="Restrict result to given set of comma separated IDs"
     ),
     include_labels: Optional[bool] = Query(
-        None, description="Whether to include labels"
+        None, description="Whether to include labels", example=True
     ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     relations_only: Optional[bool] = Query(
         None, description="Return only relations without entity details"
@@ -142,7 +148,7 @@ async def list_entity_neighbors(
         None, description="Whether to exclude best address tag"
     ),
     include_actors: bool = Query(
-        False, description="Whether to include actor information"
+        False, description="Whether to include actor information", example=True
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -179,26 +185,36 @@ async def list_entity_neighbors(
 )
 async def list_entity_links(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    entity: int = Path(..., description="The entity ID"),
-    neighbor: int = Query(..., description="Neighbor entity ID"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    entity: int = Path(..., description="The entity ID", example=67065),
+    neighbor: int = Query(..., description="Neighbor entity ID", example=123456),
     min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height"
+        None, description="Return transactions starting from given height", example=1
     ),
     max_height: Optional[int] = Query(
-        None, description="Return transactions up to (including) given height"
+        None,
+        description="Return transactions up to (including) given height",
+        example=2,
     ),
-    min_date: Optional[str] = Query(None, description="Min date of txs"),
-    max_date: Optional[str] = Query(None, description="Max date of txs"),
-    order: Optional[str] = Query(None, description="Sorting order"),
+    min_date: Optional[str] = Query(
+        None, description="Min date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    max_date: Optional[str] = Query(
+        None, description="Max date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    order: Optional[str] = Query(None, description="Sorting order", example="desc"),
     token_currency: Optional[str] = Query(
-        None, description="Return transactions of given token or base currency"
+        None,
+        description="Return transactions of given token or base currency",
+        example="WETH",
     ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -239,13 +255,15 @@ async def list_entity_links(
 )
 async def list_address_tags_by_entity(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    entity: int = Path(..., description="The entity ID"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    entity: int = Path(..., description="The entity ID", example=67065),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -276,28 +294,38 @@ async def list_address_tags_by_entity(
 )
 async def list_entity_txs(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    entity: int = Path(..., description="The entity ID"),
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
+    ),
+    entity: int = Path(..., description="The entity ID", example=67065),
     direction: Optional[str] = Query(
-        None, description="Incoming or outgoing transactions"
+        None, description="Incoming or outgoing transactions", example="out"
     ),
     min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height"
+        None, description="Return transactions starting from given height", example=1
     ),
     max_height: Optional[int] = Query(
-        None, description="Return transactions up to (including) given height"
+        None,
+        description="Return transactions up to (including) given height",
+        example=2,
     ),
-    min_date: Optional[str] = Query(None, description="Min date of txs"),
-    max_date: Optional[str] = Query(None, description="Max date of txs"),
-    order: Optional[str] = Query(None, description="Sorting order"),
+    min_date: Optional[str] = Query(
+        None, description="Min date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    max_date: Optional[str] = Query(
+        None, description="Max date of txs", example="2017-07-21T17:32:28Z"
+    ),
+    order: Optional[str] = Query(None, description="Sorting order", example="desc"),
     token_currency: Optional[str] = Query(
-        None, description="Return transactions of given token or base currency"
+        None,
+        description="Return transactions of given token or base currency",
+        example="WETH",
     ),
     page: Optional[str] = Query(
         None, description="Resumption token for retrieving the next page"
     ),
     pagesize: Optional[int] = Query(
-        None, ge=1, description="Number of items returned in a single page"
+        None, ge=1, description="Number of items returned in a single page", example=10
     ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -337,15 +365,19 @@ async def list_entity_txs(
 )
 async def search_entity_neighbors(
     request: Request,
-    currency: str = Path(..., description="The cryptocurrency code (e.g., btc)"),
-    entity: int = Path(..., description="The entity ID"),
-    direction: Literal["in", "out"] = Query(
-        ..., description="Incoming or outgoing neighbors"
+    currency: str = Path(
+        ..., description="The cryptocurrency code (e.g., btc)", example="btc"
     ),
-    key: str = Query(..., description="Search key"),
-    value: str = Query(..., description="Comma separated search values"),
-    depth: int = Query(..., description="Search depth"),
-    breadth: int = Query(..., description="Search breadth"),
+    entity: int = Path(..., description="The entity ID", example=67065),
+    direction: Literal["in", "out"] = Query(
+        ..., description="Incoming or outgoing neighbors", example="out"
+    ),
+    key: str = Query(..., description="Search key", example="category"),
+    value: str = Query(
+        ..., description="Comma separated search values", example="Miner"
+    ),
+    depth: int = Query(..., description="Search depth", example=2),
+    breadth: int = Query(..., description="Search breadth", example=16),
     skip_num_addresses: Optional[int] = Query(
         None, description="Skip entities with more than N addresses"
     ),

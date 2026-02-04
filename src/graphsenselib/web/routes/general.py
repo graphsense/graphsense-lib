@@ -55,17 +55,32 @@ async def get_statistics(
 async def search(
     request: Request,
     q: str = Query(
-        ..., min_length=2, description="Search query (address, transaction, or label)"
+        ...,
+        min_length=2,
+        description="Search query (address, transaction, or label)",
+        example="foo",
     ),
-    currency: Optional[str] = Query(None, description="The cryptocurrency (e.g., btc)"),
-    limit: int = Query(10, description="Maximum number of search results"),
+    currency: Optional[str] = Query(
+        None, description="The cryptocurrency (e.g., btc)", example="btc"
+    ),
+    limit: int = Query(10, description="Maximum number of search results", example=10),
     include_sub_tx_identifiers: bool = Query(
-        False, description="Whether to include sub-transaction identifiers"
+        False,
+        description="Whether to include sub-transaction identifiers",
+        example=False,
     ),
-    include_labels: bool = Query(True, description="Whether to include labels"),
-    include_actors: bool = Query(True, description="Whether to include actors"),
-    include_txs: bool = Query(True, description="Whether to include transactions"),
-    include_addresses: bool = Query(True, description="Whether to include addresses"),
+    include_labels: bool = Query(
+        True, description="Whether to include labels", example=True
+    ),
+    include_actors: bool = Query(
+        True, description="Whether to include actors", example=True
+    ),
+    include_txs: bool = Query(
+        True, description="Whether to include transactions", example=True
+    ),
+    include_addresses: bool = Query(
+        True, description="Whether to include addresses", example=True
+    ),
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
     show_private: bool = Depends(get_show_private_tags),
