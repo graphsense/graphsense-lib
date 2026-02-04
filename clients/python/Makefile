@@ -41,4 +41,4 @@ test-compat:
 run-examples:
 	API_KEY=$(API_KEY) python test_examples.py
 
-.PHONY: generate-openapi-client generate-openapi-client-v5 test-compat run-examples
+.PHONY: generate-openapi-client test-compat run-examples
