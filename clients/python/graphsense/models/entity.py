@@ -58,6 +58,10 @@ class Entity(BaseModel):
         if v is None:
             return v
 
+        # PATCHED: Accept dict for backward compatibility (from from_json patch)
+        if isinstance(v, dict):
+            return v
+
         instance = Entity.model_construct()
         error_messages = []
         # validate data type: Entity
@@ -80,20 +84,38 @@ class Entity(BaseModel):
     def __getattr__(self, name: str):
         """Delegate attribute access to actual_instance for backward compatibility.
 
-        This allows code like `tx.height` instead of `tx.actual_instance.height`.
+        This allows code like `entity.in_degree` instead of `entity.actual_instance['in_degree']`.
+        Special handling for dict actual_instance (from Entity anyOf schema).
         """
         if name.startswith('_') or name in (
             'actual_instance', 'one_of_schemas', 'model_config',
             'discriminator_value_class_map', 'model_fields', 'model_computed_fields',
             'model_extra', 'model_fields_set', 'oneof_schema_1_validator',
-            'oneof_schema_2_validator', 'oneof_schema_3_validator'
+            'oneof_schema_2_validator', 'oneof_schema_3_validator',
+            'anyof_schema_1_validator', 'anyof_schema_2_validator'
         ):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
         actual = object.__getattribute__(self, 'actual_instance')
         if actual is None:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-        return getattr(actual, name)
+
+        # Entity stores actual_instance as dict (from from_json patch)
+        if isinstance(actual, dict):
+            if name in actual:
+                from graphsense.compat import DictModel
+                value = actual[name]
+                # Wrap nested dicts in DictModel for attribute access
+                if isinstance(value, dict):
+                    return DictModel(value)
+                elif isinstance(value, list):
+                    return [DictModel(item) if isinstance(item, dict) else item for item in value]
+                return value
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        elif isinstance(actual, int):
+            raise AttributeError(f"Cannot access attribute '{name}' on int entity")
+        else:
+            return getattr(actual, name)
 
     def __setattr__(self, name: str, value):
         """Delegate attribute setting to actual_instance for backward compatibility."""
@@ -144,7 +166,10 @@ class Entity(BaseModel):
         error_messages = []
         # anyof_schema_1_validator: Optional[Entity] = None
         try:
-            instance.actual_instance = Entity.from_json(json_str)
+            data = json.loads(json_str)
+            if isinstance(data, dict):
+                # PATCHED: Skip recursive Entity.from_json - use dict directly
+                instance.actual_instance = data
             return instance
         except (ValidationError, ValueError) as e:
              error_messages.append(str(e))

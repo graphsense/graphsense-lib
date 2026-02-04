@@ -31,13 +31,14 @@ class SearchResult(BaseModel):
     labels: List[StrictStr]
     actors: Optional[List[LabeledItemRef]] = None
     __properties: ClassVar[List[str]] = ["currencies", "labels", "actors"]
-    @field_validator('actors', mode='before')
+    @field_validator('actors', mode='wrap')
     @classmethod
-    def wrap_actors_compat(cls, v):
+    def wrap_actors_compat(cls, v, handler):
         """Wrap actors in CompatList for backward compatibility."""
-        if v is not None and not isinstance(v, CompatList):
-            return CompatList(v) if isinstance(v, list) else v
-        return v
+        validated = handler(v)
+        if validated is not None and not isinstance(validated, CompatList):
+            return CompatList(validated) if isinstance(validated, list) else validated
+        return validated
 
 
     model_config = ConfigDict(

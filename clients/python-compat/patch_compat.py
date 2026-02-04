@@ -615,16 +615,17 @@ def patch_list_field_pydantic_v2(content: str, model_name: str, fields: list) ->
             "from pydantic import", "from pydantic import field_validator, ", 1
         )
 
-    # Add field_validators for each list field
+    # Add field_validators for each list field using mode='wrap' to preserve CompatList
     for field in patched_fields:
         validator_code = f'''
-    @field_validator('{field}', mode='before')
+    @field_validator('{field}', mode='wrap')
     @classmethod
-    def wrap_{field}_compat(cls, v):
+    def wrap_{field}_compat(cls, v, handler):
         """Wrap {field} in CompatList for backward compatibility."""
-        if v is not None and not isinstance(v, CompatList):
-            return CompatList(v) if isinstance(v, list) else v
-        return v
+        validated = handler(v)
+        if validated is not None and not isinstance(validated, CompatList):
+            return CompatList(validated) if isinstance(validated, list) else validated
+        return validated
 '''
         # Find insertion point
         init_match = re.search(r"\n(\s+)def __init__", content)
@@ -801,37 +802,46 @@ def patch_entity_model(models_dir: Path) -> None:
 
     print("  Patching Entity model to wrap dict values in DictModel")
 
-    # Replace the existing __getattr__ with one that handles dicts
-    old_getattr_pattern = r'''    def __getattr__\(self, name\):
-        """Allow attribute access to entity fields for backward compatibility."""
-        # Avoid infinite recursion for private attributes and Pydantic internals
-        if name\.startswith\('_'\) or name in \('actual_instance', 'anyof_schema_1_validator', 'anyof_schema_2_validator'\):
-            raise AttributeError\(f"'{type\(self\)\.__name__}' object has no attribute '{name}'"\)
+    # Replace the generic oneOf __getattr__ (added by patch_oneof_model) with Entity-specific one
+    # that handles dict-based actual_instance with DictModel wrapping
+    generic_getattr_pattern = r'''    def __getattr__\(self, name: str\):
+        """Delegate attribute access to actual_instance for backward compatibility\.
+
+        This allows code like `tx\.height` instead of `tx\.actual_instance\.height`\.
+        """
+        if name\.startswith\('_'\) or name in \(
+            'actual_instance', 'one_of_schemas', 'model_config',
+            'discriminator_value_class_map', 'model_fields', 'model_computed_fields',
+            'model_extra', 'model_fields_set', 'oneof_schema_1_validator',
+            'oneof_schema_2_validator', 'oneof_schema_3_validator'
+        \):
+            raise AttributeError\(f"'\{type\(self\)\.__name__\}' object has no attribute '\{name\}'"\)
 
         actual = object\.__getattribute__\(self, 'actual_instance'\)
         if actual is None:
-            raise AttributeError\(f"'{type\(self\)\.__name__}' object has no attribute '{name}'"\)
+            raise AttributeError\(f"'\{type\(self\)\.__name__\}' object has no attribute '\{name\}'"\)
+        return getattr\(actual, name\)'''
 
-        if isinstance\(actual, dict\):
-            if name in actual:
-                return actual\[name\]
-            raise AttributeError\(f"'{type\(self\)\.__name__}' object has no attribute '{name}'"\)
-        elif isinstance\(actual, int\):
-            raise AttributeError\(f"Cannot access attribute '{name}' on int entity"\)
-        else:
-            # For Entity instances
-            return getattr\(actual, name\)'''
+    entity_specific_getattr = '''    def __getattr__(self, name: str):
+        """Delegate attribute access to actual_instance for backward compatibility.
 
-    new_getattr = '''    def __getattr__(self, name):
-        """Allow attribute access to entity fields for backward compatibility."""
-        # Avoid infinite recursion for private attributes and Pydantic internals
-        if name.startswith('_') or name in ('actual_instance', 'anyof_schema_1_validator', 'anyof_schema_2_validator'):
+        This allows code like `entity.in_degree` instead of `entity.actual_instance['in_degree']`.
+        Special handling for dict actual_instance (from Entity anyOf schema).
+        """
+        if name.startswith('_') or name in (
+            'actual_instance', 'one_of_schemas', 'model_config',
+            'discriminator_value_class_map', 'model_fields', 'model_computed_fields',
+            'model_extra', 'model_fields_set', 'oneof_schema_1_validator',
+            'oneof_schema_2_validator', 'oneof_schema_3_validator',
+            'anyof_schema_1_validator', 'anyof_schema_2_validator'
+        ):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
         actual = object.__getattribute__(self, 'actual_instance')
         if actual is None:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
+        # Entity stores actual_instance as dict (from from_json patch)
         if isinstance(actual, dict):
             if name in actual:
                 from graphsense.compat import DictModel
@@ -846,11 +856,115 @@ def patch_entity_model(models_dir: Path) -> None:
         elif isinstance(actual, int):
             raise AttributeError(f"Cannot access attribute '{name}' on int entity")
         else:
-            # For Entity instances
             return getattr(actual, name)'''
 
-    new_content = re.sub(old_getattr_pattern, new_getattr, content)
+    new_content = re.sub(generic_getattr_pattern, entity_specific_getattr, content)
     if new_content != content:
+        path.write_text(new_content)
+    else:
+        # Try a simpler pattern match if the regex didn't work
+        # This handles cases where the generic __getattr__ was already there
+        simple_pattern = "        return getattr(actual, name)\n\n    def __setattr__"
+        simple_replacement = """        # Entity stores actual_instance as dict (from from_json patch)
+        if isinstance(actual, dict):
+            if name in actual:
+                from graphsense.compat import DictModel
+                value = actual[name]
+                # Wrap nested dicts in DictModel for attribute access
+                if isinstance(value, dict):
+                    return DictModel(value)
+                elif isinstance(value, list):
+                    return [DictModel(item) if isinstance(item, dict) else item for item in value]
+                return value
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        elif isinstance(actual, int):
+            raise AttributeError(f"Cannot access attribute '{name}' on int entity")
+        return getattr(actual, name)
+
+    def __setattr__"""
+        if simple_pattern in content:
+            new_content = content.replace(simple_pattern, simple_replacement)
+            path.write_text(new_content)
+
+
+def patch_entity_from_json(models_dir: Path) -> None:
+    """Patch the Entity model's from_json to prevent infinite recursion.
+
+    The Entity model is generated as an anyOf with Entity | int, which causes
+    from_json to call Entity.from_json recursively. We patch it to use dict
+    deserialization instead.
+    """
+    model_files = find_model_files(models_dir)
+    if "entity" not in model_files:
+        return
+
+    path = model_files["entity"]
+    content = path.read_text()
+
+    # Check if already patched
+    if "# PATCHED: Skip recursive Entity.from_json" in content:
+        return
+
+    # Simple pattern to match the recursive call
+    old_pattern = r'(instance\.actual_instance = Entity\.from_json\(json_str\))'
+    new_code = '''data = json.loads(json_str)
+            if isinstance(data, dict):
+                # PATCHED: Skip recursive Entity.from_json - use dict directly
+                instance.actual_instance = data'''
+
+    if re.search(old_pattern, content):
+        print("  Patching Entity model to fix recursive from_json")
+        new_content = re.sub(old_pattern, new_code, content, count=1)
+        path.write_text(new_content)
+
+
+def patch_entity_validator(models_dir: Path) -> None:
+    """Patch the Entity model's actual_instance validator to accept dict values.
+
+    After patching from_json to use dict directly, the validator needs to also
+    accept dict values (not just Entity or int).
+    """
+    model_files = find_model_files(models_dir)
+    if "entity" not in model_files:
+        return
+
+    path = model_files["entity"]
+    content = path.read_text()
+
+    # Check if already patched
+    if "# PATCHED: Accept dict for backward compatibility" in content:
+        return
+
+    # Find and patch the validator to accept dict values
+    # Pattern: the validator checks isinstance(v, Entity) and then tries int validation
+    # We need to add a dict check before the Entity check
+    old_validator_start = '''    @field_validator('actual_instance')
+    def actual_instance_must_validate_anyof(cls, v):
+        if v is None:
+            return v
+
+        instance = Entity.model_construct()
+        error_messages = []
+        # validate data type: Entity
+        if not isinstance(v, Entity):'''
+
+    new_validator_start = '''    @field_validator('actual_instance')
+    def actual_instance_must_validate_anyof(cls, v):
+        if v is None:
+            return v
+
+        # PATCHED: Accept dict for backward compatibility (from from_json patch)
+        if isinstance(v, dict):
+            return v
+
+        instance = Entity.model_construct()
+        error_messages = []
+        # validate data type: Entity
+        if not isinstance(v, Entity):'''
+
+    if old_validator_start in content:
+        print("  Patching Entity model validator to accept dict values")
+        new_content = content.replace(old_validator_start, new_validator_start)
         path.write_text(new_content)
 
 
@@ -1524,6 +1638,12 @@ def main():
 
     # Patch oneOf models for transparent attribute access
     patch_oneof_models(models_dir)
+
+    # Patch Entity model to fix recursive from_json
+    patch_entity_from_json(models_dir)
+
+    # Patch Entity model validator to accept dict values
+    patch_entity_validator(models_dir)
 
     # Patch API files to export backward-compatible types
     api_dir = package_dir / "api"

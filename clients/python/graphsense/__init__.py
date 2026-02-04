@@ -12,7 +12,7 @@
 """
 
 
-__version__ = "25.11.18"
+__version__ = "2.8.18"
 
 # Define package exports
 __all__ = [
