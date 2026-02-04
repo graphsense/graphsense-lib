@@ -236,6 +236,7 @@ exclude = [
     "openapi_server",
     "tests/test_*.py",
     "tests/web",
+    "clients",
     "setup.py",
     "src/graphsenselib/ingest/tron/grpc*",
     "src/tagpack",
