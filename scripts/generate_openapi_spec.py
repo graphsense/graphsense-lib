@@ -26,6 +26,22 @@ from graphsenselib.web.routes import (
 )
 
 
+def _get_clean_version() -> str:
+    """Get base version without setuptools-scm suffixes.
+
+    Converts '25.11.18.post1.dev26+g9c72b11fe.d20260204' to '25.11.18'
+    Keeps tag suffixes: '25.11.18rc1' -> '25.11.18rc1', '25.11.18dev1' -> '25.11.18dev1'
+    """
+    import re
+
+    # Match X.Y.Z followed by optional alphanumeric suffix (rc1, dev1, alpha2, etc.)
+    # Stop at the first dot after the base version or at +
+    match = re.match(r"^(\d+\.\d+\.\d+[a-zA-Z0-9]*)", __version__)
+    if match:
+        return match.group(1)
+    return __version__.split(".")[0]
+
+
 def create_minimal_app() -> FastAPI:
     """Create a minimal FastAPI app just for OpenAPI schema generation.
 
@@ -34,7 +50,7 @@ def create_minimal_app() -> FastAPI:
     app = FastAPI(
         title="GraphSense API",
         description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
-        version=__version__,
+        version=_get_clean_version(),
     )
 
     # Register all routers (same as in the real app)
