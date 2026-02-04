@@ -7,15 +7,17 @@ repos:
   hooks:
     # Run the linter.
     - id: ruff
-      exclude: ^(src/tagpack/|src/tagstore/)
+      exclude: ^(src/tagpack/|src/tagstore/|clients/)
     # Run the formatter.
     - id: ruff-format
-      exclude: ^(src/tagpack/|src/tagstore/)
+      exclude: ^(src/tagpack/|src/tagstore/|clients/)
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
     -   id: trailing-whitespace
+        exclude: ^clients/
     -   id: end-of-file-fixer
+        exclude: ^clients/
     -
         id: check-yaml
         exclude: tests/testfiles
@@ -33,6 +35,7 @@ repos:
         id: debug-statements
         exclude: postmortemdebug.py
     -   id: check-docstring-first
+        exclude: ^clients/
 - repo: https://github.com/astral-sh/uv-pre-commit
   rev: 0.7.1
   hooks:
