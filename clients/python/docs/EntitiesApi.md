@@ -40,8 +40,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    entity = 56 # int | The entity ID
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    entity = 67065 # int | The entity ID
     exclude_best_address_tag = True # bool | Whether to exclude best address tag (optional)
     include_actors = False # bool | Whether to include actor information (optional) (default to False)
 
@@ -115,8 +115,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    entity = 56 # int | The entity ID
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    entity = 67065 # int | The entity ID
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
     pagesize = 56 # int | Number of items returned in a single page (optional)
 
@@ -190,8 +190,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    entity = 56 # int | The entity ID
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    entity = 67065 # int | The entity ID
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
     pagesize = 56 # int | Number of items returned in a single page (optional)
 
@@ -265,9 +265,9 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    entity = 56 # int | The entity ID
-    neighbor = 56 # int | Neighbor entity ID
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    entity = 67065 # int | The entity ID
+    neighbor = 123456 # int | Neighbor entity ID
     min_height = 56 # int | Return transactions starting from given height (optional)
     max_height = 56 # int | Return transactions up to (including) given height (optional)
     min_date = 'min_date_example' # str | Min date of txs (optional)
@@ -354,9 +354,9 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    entity = 56 # int | The entity ID
-    direction = 'direction_example' # str | Incoming or outgoing neighbors
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    entity = 67065 # int | The entity ID
+    direction = 'out' # str | Incoming or outgoing neighbors
     only_ids = 'only_ids_example' # str | Restrict result to given set of comma separated IDs (optional)
     include_labels = True # bool | Whether to include labels (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
@@ -441,8 +441,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    entity = 56 # int | The entity ID
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    entity = 67065 # int | The entity ID
     direction = 'direction_example' # str | Incoming or outgoing transactions (optional)
     min_height = 56 # int | Return transactions starting from given height (optional)
     max_height = 56 # int | Return transactions up to (including) given height (optional)
@@ -530,13 +530,13 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.EntitiesApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    entity = 56 # int | The entity ID
-    direction = 'direction_example' # str | Incoming or outgoing neighbors
-    key = 'key_example' # str | Search key
-    value = 'value_example' # str | Comma separated search values
-    depth = 56 # int | Search depth
-    breadth = 56 # int | Search breadth
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    entity = 67065 # int | The entity ID
+    direction = 'out' # str | Incoming or outgoing neighbors
+    key = 'category' # str | Search key
+    value = 'Miner' # str | Comma separated search values
+    depth = 2 # int | Search depth
+    breadth = 16 # int | Search breadth
     skip_num_addresses = 56 # int | Skip entities with more than N addresses (optional)
 
     try:

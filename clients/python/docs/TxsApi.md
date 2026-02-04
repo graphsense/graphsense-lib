@@ -40,8 +40,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    tx_hash = 'tx_hash_example' # str | The transaction hash
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     io_index = 56 # int | Input index to check (optional)
 
     try:
@@ -113,8 +113,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    tx_hash = 'tx_hash_example' # str | The transaction hash
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     io_index = 56 # int | Output index to check (optional)
 
     try:
@@ -186,8 +186,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    tx_hash = 'tx_hash_example' # str | The transaction hash
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     token_tx_id = 56 # int | Token transaction ID for account-model currencies (optional)
     include_io = True # bool | Include transaction inputs/outputs (optional)
     include_nonstandard_io = True # bool | Include non-standard inputs/outputs (optional)
@@ -265,8 +265,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., eth)
-    tx_hash = 'tx_hash_example' # str | The transaction hash
+    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
 
     try:
         # Get DeFi conversions for a transaction
@@ -336,9 +336,9 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., btc)
-    tx_hash = 'tx_hash_example' # str | The transaction hash
-    io = 'io_example' # str | Input or output values of a transaction (inputs or outputs)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
+    io = 'outputs' # str | Input or output values of a transaction (inputs or outputs)
     include_nonstandard_io = True # bool | Include non-standard inputs/outputs (optional)
     include_io_index = True # bool | Include input/output indices (optional)
 
@@ -413,8 +413,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., eth)
-    tx_hash = 'tx_hash_example' # str | The transaction hash
+    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
 
     try:
         # Returns all token transactions in a given transaction
@@ -483,8 +483,8 @@ configuration = graphsense.Configuration(
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'currency_example' # str | The cryptocurrency code (e.g., eth)
-    tx_hash = 'tx_hash_example' # str | The transaction hash
+    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     strip_zero_value_txs = True # bool | Strip zero value transactions (optional)
     only_token_txs = True # bool | Only return token transactions (optional)
     token_currency = 'token_currency_example' # str | Filter by token currency (optional)
