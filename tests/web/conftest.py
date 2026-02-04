@@ -1,43 +1,29 @@
-import subprocess
 from os import environ
-from pathlib import Path
 
-import docker
 import pytest
 from testcontainers.cassandra import CassandraContainer
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from tests.web import BaseTestCase
-from tests.web.cassandra.insert import load_test_data as cas_load_test_data
+from tests.web.cassandra.insert import create_schemas, load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 
 postgres = PostgresContainer("postgres:16-alpine")
 redis = RedisContainer("redis:7-alpine")
 
-# Pre-baked Cassandra image with schemas and fast startup settings already configured
-# Build with: make build-test-cassandra
-# Baked-in optimizations: NUM_TOKENS=1, ring_delay_ms=100, skip_wait_for_gossip=0
-CASSANDRA_TEST_IMAGE = environ.get(
+# Cassandra image selection:
+# - Default: vanilla cassandra:4.1.4 (slow startup, creates schemas at runtime)
+# - Fast mode: set USE_FAST_CASSANDRA=1 to use pre-baked image with schemas
+#   Build fast image with: make build-fast-cassandra
+VANILLA_CASSANDRA_IMAGE = "cassandra:4.1.4"
+FAST_CASSANDRA_IMAGE = environ.get(
     "CASSANDRA_TEST_IMAGE", "graphsense/cassandra-test:4.1.4"
 )
+USE_FAST_CASSANDRA = environ.get("USE_FAST_CASSANDRA", "").lower() in ("1", "true", "yes")
 
-
-def ensure_cassandra_image_exists():
-    """Build Cassandra test image if it doesn't exist locally."""
-    client = docker.from_env()
-    try:
-        client.images.get(CASSANDRA_TEST_IMAGE)
-    except docker.errors.ImageNotFound:
-        dockerfile_path = Path(__file__).parent / "cassandra"
-        subprocess.run(
-            ["docker", "build", "-t", CASSANDRA_TEST_IMAGE, str(dockerfile_path)],
-            check=True,
-        )
-
-
-ensure_cassandra_image_exists()
-cassandra = CassandraContainer(CASSANDRA_TEST_IMAGE)
+cassandra_image = FAST_CASSANDRA_IMAGE if USE_FAST_CASSANDRA else VANILLA_CASSANDRA_IMAGE
+cassandra = CassandraContainer(cassandra_image)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -100,6 +86,10 @@ def gs_rest_db_setup(request):
 
     # Ugly hack to pass parameters
     BaseTestCase.config = config
+
+    # Create schemas if using vanilla Cassandra (slow mode)
+    if not USE_FAST_CASSANDRA:
+        create_schemas(cas_host, cas_port)
 
     cas_load_test_data(cas_host, cas_port)
 

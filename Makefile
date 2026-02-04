@@ -30,9 +30,17 @@ test-with-base-dependencies-ci:
 test-all:
 	uv run --dev --all-groups  pytest --cov=src -W error --cov-report term-missing
 
-# Web tests only (includes test containers)
+# Web tests only (includes test containers, uses vanilla Cassandra - slow but always works)
 test-web: install-dev
 	uv run --exact --all-extras pytest tests/web -x -rx -vv -m "not slow" --capture=no
+
+# Fast web tests (requires pre-built Cassandra image, run build-fast-cassandra first)
+test-web-fast: install-dev
+	USE_FAST_CASSANDRA=1 uv run --exact --all-extras pytest tests/web -x -rx -vv -m "not slow" --capture=no
+
+# Build pre-baked Cassandra image with schemas for fast test startup
+build-fast-cassandra:
+	docker build -t graphsense/cassandra-test:4.1.4 tests/web/cassandra/
 
 # NOTE: REST regression tests have moved to iknaio-tests-nightly repository
 
@@ -107,4 +115,4 @@ package-ui:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui test-web
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui test-web test-web-fast build-fast-cassandra
