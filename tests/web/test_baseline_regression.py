@@ -28,7 +28,7 @@ from urllib.parse import urljoin
 import pytest
 import requests
 
-from tests.web.conftest import record_migration_timing
+from tests.web.conftest import record_regression_timing
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -314,10 +314,10 @@ class BaselineRegressionTestBase:
         result = self.compare_endpoint(endpoint, auth)
 
         pattern = normalize_endpoint_to_pattern(endpoint)
-        record_migration_timing(
+        record_regression_timing(
             endpoint=endpoint,
-            old_time=result["baseline_time"],
-            new_time=result["current_time"],
+            baseline_time=result["baseline_time"],
+            current_time=result["current_time"],
             pattern=pattern,
         )
 

@@ -146,8 +146,7 @@ class TestManualRegressionConversions(ManualRegressionTestBase):
     """Manual regression tests for conversion endpoints."""
 
     @pytest.mark.regression
-    @pytest.mark.regression_manual
-    def test_conversions(self):
+        def test_conversions(self):
         """Regression tests for DeFi conversion endpoints."""
         calls = [
             # DEX swap
@@ -181,8 +180,7 @@ class TestManualRegressionLinks(ManualRegressionTestBase):
     """Manual regression tests for links endpoints."""
 
     @pytest.mark.regression
-    @pytest.mark.regression_manual
-    def test_links(self):
+        def test_links(self):
         """Regression tests for links endpoints with performance edge cases."""
         calls = [
             # ETH entity links (was 60-70s, now 2s)
@@ -212,8 +210,7 @@ class TestManualRegressionTxsList(ManualRegressionTestBase):
     """Manual regression tests for transaction list endpoints."""
 
     @pytest.mark.regression
-    @pytest.mark.regression_manual
-    def test_txs_list(self):
+        def test_txs_list(self):
         """Regression tests for address transaction list with filters."""
         calls = [
             # ETH address txs with height filter (was 6s, now 1s)
@@ -230,8 +227,7 @@ class TestManualRegressionObfuscation(ManualRegressionTestBase):
     """Manual regression tests for tag obfuscation."""
 
     @pytest.mark.regression
-    @pytest.mark.regression_manual
-    def test_obfuscation(self):
+        def test_obfuscation(self):
         """Test that anonymous users get obfuscated tags (not zero tags).
 
         This catches the bug where get_show_private_tags() didn't check
@@ -261,8 +257,7 @@ class TestManualRegressionSearch(ManualRegressionTestBase):
     """Manual regression tests for search endpoint."""
 
     @pytest.mark.regression
-    @pytest.mark.regression_manual
-    def test_search(self):
+        def test_search(self):
         """Regression tests for search endpoint edge cases."""
         calls = [
             "search?q=bc1qasd&limit=100&currency=btc",

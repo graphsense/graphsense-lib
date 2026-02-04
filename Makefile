@@ -34,22 +34,13 @@ test-all:
 test-web: install-dev
 	uv run --exact --all-extras pytest tests/web -x -rx -vv -m "not slow and not regression and not migration and not loki_generated" --capture=no
 
-# Regression tests: baseline container vs current code
-# Runs both auto-generated and manual regression tests
+# REST regression tests: baseline container vs current code
 # Requires: make serve-web (on port 9000) running in another terminal
 test-regression-rest: install-dev
-	@echo "Starting regression tests against baseline container..."
+	@echo "Running REST regression tests against baseline container..."
 	@echo "Note: Current server must be running on localhost:9000"
 	@echo "Run 'make serve-web' in another terminal first."
 	uv run --exact --all-extras pytest tests/web/test_baseline_regression.py tests/web/test_production_regression.py -v -m regression
-
-# Run only auto-generated regression tests
-test-regression-rest-auto: install-dev
-	uv run --exact --all-extras pytest tests/web/test_baseline_regression.py -v -m regression
-
-# Run only manual regression tests
-test-regression-rest-manual: install-dev
-	uv run --exact --all-extras pytest tests/web/test_production_regression.py -v -m regression_manual
 
 install-dev:
 	uv sync --dev --all-packages --force-reinstall --all-extras
@@ -123,4 +114,4 @@ tagpack-integration-test:
 	chmod +x tagpack/integration_test.sh
 	cd tagpack && ./integration_test.sh
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui integration-test test-web test-regression-rest test-regression-rest-auto test-regression-rest-manual
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui integration-test test-web test-regression-rest
