@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from graphsenselib import __version__
 from graphsenselib.config import AppConfig
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
 from graphsenselib.errors import (
@@ -673,7 +674,7 @@ def create_app(
     app = FastAPI(
         title="GraphSense API",
         description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
-        version="1.16.0rc2",
+        version=__version__,
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
@@ -749,7 +750,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
 
     app = FastAPI(
         title="GraphSense API",
-        version="1.16.0rc2",
+        version=__version__,
         lifespan=lifespan,
     )
 
