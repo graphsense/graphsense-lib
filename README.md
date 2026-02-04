@@ -10,9 +10,12 @@ A comprehensive Python library for the GraphSense crypto-analytics platform. It 
 
 ### Installation
 
+> **Recommended:** We recommend using [uv](https://github.com/astral-sh/uv) instead of regular pip to avoid dependency resolution issues.
+
 ```bash
-# Install with all features
-pip install graphsense-lib[all]
+# Install with all features (recommended)
+uv pip install graphsense-lib[all]
+
 
 # Install from source
 git clone https://github.com/graphsense/graphsense-lib.git
@@ -424,7 +427,7 @@ if parsed:
 
 ```bash
 # Install with all features
-pip install graphsense-lib[all]
+uv pip install graphsense-lib[all]
 ```
 
 ### From Source
@@ -436,7 +439,7 @@ cd graphsense-lib
 make install
 
 # Or using pip directly
-pip install .
+uv pip install .
 ```
 
 ## Development
@@ -483,15 +486,6 @@ For comprehensive testing:
 # Run complete test suite (including slow tests)
 make test-all
 ```
-
-### Documentation
-
-```bash
-# Generate documentation
-make docs
-```
-
-**Note:** Building docs requires Python development headers. See [this StackOverflow answer](https://stackoverflow.com/questions/21530577/fatal-error-python-h-no-such-file-or-directory) for installation instructions.
 
 ### Release Process
 
