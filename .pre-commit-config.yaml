@@ -33,6 +33,11 @@ repos:
         id: debug-statements
         exclude: postmortemdebug.py
     -   id: check-docstring-first
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.7.1
+  hooks:
+    # Update the uv lockfile
+    - id: uv-lock
 -   repo: local
     hooks:
     -   id: ensure-env
