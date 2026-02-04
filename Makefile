@@ -34,14 +34,8 @@ test-all:
 test-web: install-dev
 	uv run --exact --all-extras pytest tests/web -x -rx -vv -m "not slow and not regression and not migration and not loki_generated" --capture=no
 
-# REST regression tests: manual edge case tests against baseline container
-# Requires: make serve-web (on port 9000) running in another terminal
-# For automated regression tests, see: iknaio-tests-nightly repo
-test-regression-rest: install-dev
-	@echo "Running manual REST regression tests against baseline container..."
-	@echo "Note: Current server must be running on localhost:9000"
-	@echo "Run 'make serve-web' in another terminal first."
-	uv run --exact --all-extras pytest tests/web/test_production_regression.py -v -m regression
+# NOTE: REST regression tests have moved to iknaio-tests-nightly repository
+# Run: cd ../iknaio/iknaio-tests-nightly && make test-rest
 
 install-dev:
 	uv sync --dev --all-packages --force-reinstall --all-extras
@@ -111,8 +105,7 @@ package-ui:
 	- rm -rf tagpack/admin-ui/dist
 	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
 
-tagpack-integration-test:
-	chmod +x tagpack/integration_test.sh
-	cd tagpack && ./integration_test.sh
+# NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
+# Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui integration-test test-web test-regression-rest
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui test-web

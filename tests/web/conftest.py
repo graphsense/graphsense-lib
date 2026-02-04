@@ -1,22 +1,16 @@
-import os
 import subprocess
-import tempfile
 from os import environ
 from pathlib import Path
 
 import docker
 import pytest
-import yaml
 from testcontainers.cassandra import CassandraContainer
-from testcontainers.core.container import DockerContainer
-from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from tests.web import BaseTestCase
 from tests.web.cassandra.insert import load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
-from tests.web.version_utils import get_baseline_image
 
 postgres = PostgresContainer("postgres:16-alpine")
 redis = RedisContainer("redis:7-alpine")
@@ -114,57 +108,7 @@ def gs_rest_db_setup(request):
     return config
 
 
-@pytest.fixture(scope="session")
-def baseline_server_url(gs_rest_db_setup):
-    """Start baseline server container connected to test databases.
-
-    This fixture starts a Docker container running the previous stable version
-    of the REST API, configured to use the same test databases as the current
-    code. This enables regression testing between versions.
-
-    The baseline version is determined by:
-    1. BASELINE_VERSION env var (explicit override)
-    2. Previous stable git tag (auto-detected)
-
-    Set SKIP_BASELINE_CONTAINER=1 to skip this fixture.
-    """
-    if environ.get("SKIP_BASELINE_CONTAINER"):
-        pytest.skip("Baseline container disabled via SKIP_BASELINE_CONTAINER")
-
-    if environ.get("SKIP_REST_CONTAINER_SETUP"):
-        pytest.skip("Container setup disabled via SKIP_REST_CONTAINER_SETUP")
-
-    # Generate config pointing to test containers
-    config = BaseTestCase.config
-    config_content = yaml.dump(config)
-
-    # Write config to temp file
-    config_file = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, prefix="gs_baseline_config_"
-    )
-    config_file.write(config_content)
-    config_file.close()
-
-    # Start baseline container with host networking
-    image = get_baseline_image()
-    baseline_port = environ.get("GS_REST_BASELINE_PORT", "9001")
-
-    container = (
-        DockerContainer(image)
-        .with_network_mode("host")  # Access test containers via localhost
-        .with_volume_mapping(config_file.name, "/config.yaml", "ro")
-        .with_env("CONFIG_FILE", "/config.yaml")
-        .with_env("GS_REST_PORT", baseline_port)
-        .with_env("NUM_WORKERS", "1")
-        .with_env("NUM_THREADS", "1")
-    )
-    container.start()
-    wait_for_logs(container, "Application startup complete", timeout=120)
-
-    yield f"http://localhost:{baseline_port}"
-
-    container.stop()
-    os.unlink(config_file.name)
+# NOTE: Regression test fixtures (baseline_server_url) moved to iknaio-tests-nightly
 
 
 @pytest.fixture
