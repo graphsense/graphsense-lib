@@ -84,6 +84,16 @@ GS_REST_DEV_PORT ?= 9000
 serve-web:
 	uv run --extra web uvicorn graphsenselib.web.app:create_app --factory --host localhost --port ${GS_REST_DEV_PORT} --reload
 
+# Python client generation (requires running server on port 9000)
+run-codegen: generate-python-client
+
+generate-python-client:
+	cd clients/python && make generate-openapi-client
+
+# Docker targets for REST API
+serve-docker:
+	docker run --rm -it --network='host' -e NUM_THREADS=1 -e NUM_WORKERS=1 -v "${PWD}/instance/config.yaml:/config.yaml:Z" -e CONFIG_FILE=/config.yaml graphsense-lib:latest
+
 package-ui:
 	- rm -rf tagpack/admin-ui/dist
 	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
@@ -92,4 +102,4 @@ tagpack-integration-test:
 	chmod +x tagpack/integration_test.sh
 	cd tagpack && ./integration_test.sh
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web package-ui integration-test
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui integration-test
