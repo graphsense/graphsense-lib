@@ -191,13 +191,19 @@ namespaces = true
 norecursedirs = [
     "dist",
     "build",
+    "tests/web",
 ]
 testpaths = ["tests"]
 # Use pytest markers to select/deselect specific tests
 markers = [
     "slow: mark tests as slow (deselect with '-m \"not slow\"')",
     "vcr:",
+    "regression: mark test as regression test",
+    "migration: mark test as FastAPI migration comparison test",
+    "loki_generated: mark test as generated from Loki API logs",
 ]
+# Exclude web migration tests by default (they require special setup)
+addopts = "-m 'not regression and not migration'"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -229,6 +235,7 @@ exclude = [
     "venv",
     "openapi_server",
     "tests/test_*.py",
+    "tests/web",
     "setup.py",
     "src/graphsenselib/ingest/tron/grpc*",
     "src/tagpack",

@@ -28,7 +28,7 @@ repos:
     -
         id: name-tests-test
         args: [--pytest-test-first]
-        exclude: helpers.py
+        exclude: (helpers\.py|tests/web/)
     -
         id: debug-statements
         exclude: postmortemdebug.py
