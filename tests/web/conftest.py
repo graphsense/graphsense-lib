@@ -1,9 +1,6 @@
-import json
 import os
 import subprocess
 import tempfile
-from collections import defaultdict
-from datetime import datetime
 from os import environ
 from pathlib import Path
 
@@ -20,9 +17,6 @@ from tests.web import BaseTestCase
 from tests.web.cassandra.insert import load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 from tests.web.version_utils import get_baseline_image
-
-# Global timing data collection for regression tests
-_regression_timing_data = []
 
 postgres = PostgresContainer("postgres:16-alpine")
 redis = RedisContainer("redis:7-alpine")
@@ -171,121 +165,6 @@ def baseline_server_url(gs_rest_db_setup):
 
     container.stop()
     os.unlink(config_file.name)
-
-
-def record_regression_timing(
-    endpoint: str, baseline_time: float, current_time: float, pattern: str = None
-):
-    """Record timing data for a regression test endpoint."""
-    _regression_timing_data.append(
-        {
-            "endpoint": endpoint,
-            "pattern": pattern or endpoint,
-            "baseline_time": baseline_time,
-            "current_time": current_time,
-            "speedup": baseline_time / current_time if current_time > 0 else 0,
-        }
-    )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def regression_timing_report(request):
-    """Generate timing report at end of regression test session."""
-    yield  # Run all tests first
-
-    if not _regression_timing_data:
-        return
-
-    # Get pytest's terminal writer for output
-    terminalreporter = request.config.pluginmanager.get_plugin("terminalreporter")
-    write = terminalreporter.write_line if terminalreporter else lambda x: None
-
-    # Calculate totals
-    total_baseline = sum(t["baseline_time"] for t in _regression_timing_data)
-    total_current = sum(t["current_time"] for t in _regression_timing_data)
-
-    # Group by pattern
-    by_pattern = defaultdict(list)
-    for t in _regression_timing_data:
-        by_pattern[t["pattern"]].append(t)
-
-    # Calculate pattern averages
-    pattern_stats = []
-    for pattern, timings in by_pattern.items():
-        baseline_avg = sum(t["baseline_time"] for t in timings) / len(timings)
-        current_avg = sum(t["current_time"] for t in timings) / len(timings)
-        pattern_stats.append(
-            {
-                "pattern": pattern,
-                "count": len(timings),
-                "baseline_avg": baseline_avg,
-                "current_avg": current_avg,
-                "speedup": baseline_avg / current_avg if current_avg > 0 else 0,
-                "diff_ms": (current_avg - baseline_avg) * 1000,
-            }
-        )
-
-    # Sort by slowdown (current slower than baseline)
-    pattern_stats.sort(key=lambda x: x["speedup"])
-
-    # Write report
-    write("")
-    write("=" * 80)
-    write("REGRESSION TIMING REPORT")
-    write("=" * 80)
-    write(f"Total endpoints tested: {len(_regression_timing_data)}")
-    write(f"Total baseline time:    {total_baseline:.2f}s")
-    write(f"Total current time:     {total_current:.2f}s")
-    write(
-        f"Overall speedup:        {total_baseline / total_current:.2f}x"
-        if total_current > 0
-        else "N/A"
-    )
-
-    # Significantly slower endpoints (current > 1.5x slower than baseline)
-    slower = [p for p in pattern_stats if p["speedup"] < 0.67]
-    if slower:
-        write(f"\n  SIGNIFICANTLY SLOWER ENDPOINTS ({len(slower)} patterns):")
-        write("-" * 80)
-        for p in slower[:20]:
-            write(f"  {p['pattern'][:60]:<60}")
-            write(
-                f"    Count: {p['count']:4d}  Baseline: {p['baseline_avg'] * 1000:7.1f}ms  "
-                f"Current: {p['current_avg'] * 1000:7.1f}ms  "
-                f"Slower by: {p['diff_ms']:+.1f}ms ({p['speedup']:.2f}x)"
-            )
-
-    # Significantly faster endpoints (current > 1.5x faster than baseline)
-    faster = [p for p in pattern_stats if p["speedup"] > 1.5]
-    if faster:
-        write(f"\n  SIGNIFICANTLY FASTER ENDPOINTS ({len(faster)} patterns):")
-        write("-" * 80)
-        for p in sorted(faster, key=lambda x: -x["speedup"])[:10]:
-            write(f"  {p['pattern'][:60]:<60}")
-            write(
-                f"    Count: {p['count']:4d}  Baseline: {p['baseline_avg'] * 1000:7.1f}ms  "
-                f"Current: {p['current_avg'] * 1000:7.1f}ms  "
-                f"Faster by: {-p['diff_ms']:+.1f}ms ({p['speedup']:.2f}x)"
-            )
-
-    write("")
-    write("=" * 80)
-
-    # Save detailed report to file
-    report_path = Path("tests/regression_timing_report.json")
-    report = {
-        "timestamp": datetime.now().isoformat(),
-        "summary": {
-            "total_endpoints": len(_regression_timing_data),
-            "total_baseline_time_s": total_baseline,
-            "total_current_time_s": total_current,
-            "overall_speedup": total_baseline / total_current if total_current > 0 else 0,
-        },
-        "pattern_stats": pattern_stats,
-        "raw_data": _regression_timing_data,
-    }
-    report_path.write_text(json.dumps(report, indent=2))
-    write(f"Detailed report saved to: {report_path}")
 
 
 @pytest.fixture

@@ -34,13 +34,14 @@ test-all:
 test-web: install-dev
 	uv run --exact --all-extras pytest tests/web -x -rx -vv -m "not slow and not regression and not migration and not loki_generated" --capture=no
 
-# REST regression tests: baseline container vs current code
+# REST regression tests: manual edge case tests against baseline container
 # Requires: make serve-web (on port 9000) running in another terminal
+# For automated regression tests, see: iknaio-tests-nightly repo
 test-regression-rest: install-dev
-	@echo "Running REST regression tests against baseline container..."
+	@echo "Running manual REST regression tests against baseline container..."
 	@echo "Note: Current server must be running on localhost:9000"
 	@echo "Run 'make serve-web' in another terminal first."
-	uv run --exact --all-extras pytest tests/web/test_baseline_regression.py tests/web/test_production_regression.py -v -m regression
+	uv run --exact --all-extras pytest tests/web/test_production_regression.py -v -m regression
 
 install-dev:
 	uv sync --dev --all-packages --force-reinstall --all-extras
