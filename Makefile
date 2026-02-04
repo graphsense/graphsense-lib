@@ -78,6 +78,12 @@ click-bash-completion:
 serve-tagstore:
 	@gs_tagstore_db_url=${gs_tagstore_db_url} uv run uvicorn --reload --log-level debug src.graphsenselib.tagstore.web.main:app
 
+# REST API server
+GS_REST_DEV_PORT ?= 9000
+
+serve-web:
+	uv run --extra web uvicorn graphsenselib.web.app:create_app --factory --host localhost --port ${GS_REST_DEV_PORT} --reload
+
 package-ui:
 	- rm -rf tagpack/admin-ui/dist
 	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
@@ -86,4 +92,4 @@ tagpack-integration-test:
 	chmod +x tagpack/integration_test.sh
 	cd tagpack && ./integration_test.sh
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore package-ui integration-test
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web package-ui integration-test
