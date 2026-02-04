@@ -27,6 +27,8 @@ generate-openapi-client:
 		--additional-properties=projectName=graphsense-python \
 		--additional-properties=packageVersion=$$API_VERSION \
 		--additional-properties=library=urllib3
+	@echo "Fixing project name in pyproject.toml..."
+	sed -i 's/^name = "graphsense"/name = "graphsense-python"/' pyproject.toml
 	@echo "Applying backward compatibility patches..."
 	python $(COMPAT_DIR)/patch_compat.py .
 	@echo "Verifying backward compatibility..."

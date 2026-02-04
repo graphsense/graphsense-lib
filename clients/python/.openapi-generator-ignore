@@ -33,3 +33,4 @@ setup.cfg
 requirements.txt
 test-requirements.txt
 setup.py
+pyproject.toml
