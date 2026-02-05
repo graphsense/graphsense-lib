@@ -615,6 +615,7 @@ class TagStore(object):
                             t.asset,
                             t.network,
                             t.confidence,
+                            t.context,
                             tp.creator,
                             ROW_NUMBER() OVER (PARTITION BY t.identifier,
                                 t.label,
