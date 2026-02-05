@@ -5,11 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [26.02.0/2.8.19] 2026-02-05
 
+### added
+- UTXO receive detection for THORChain bridges
+- `get_address_tx_range` for faster `list_address_txs`
+
 ### changed
 - less strict tag deduplication procedure.
 - updated Readme to promote uv use
 - removed unused dependency aiohttp
 - updated dependencies
+- improved THORChain bridge matching
+- improved `get_address` speed
+
+### fixed
+- token_currency detection for THORChain ETH→token swaps
+- UTXO tx lookup in match_sending_transactions
 
 
 ## [25.11.18/2.8.18] 2026-01-28
