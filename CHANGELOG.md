@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [26.02.0/2.8.19] 2026-02-05
+
+### changed
+- less strict tag deduplication procedure.
+- updated Readme to promote uv use
+- removed unused dependency aiohttp
+- updated dependencies
+
 
 ## [25.11.18/2.8.18] 2026-01-28
 
