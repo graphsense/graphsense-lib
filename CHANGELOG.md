@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [26.02.0/2.8.19] 2026-02-05
+## [2.8.19] 2026-02-05
 
 ### added
 - UTXO receive detection for THORChain bridges
@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - updated Readme to promote uv use
 - removed unused dependency aiohttp
 - updated dependencies
+- dropped calender versioning scheme, only semvar from now
 - improved THORChain bridge matching
 - improved `get_address` speed
 
