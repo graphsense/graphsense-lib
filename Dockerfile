@@ -51,4 +51,4 @@ RUN mkdir -p /home/graphsense/plugins
 
 # Default: run REST API with gunicorn
 # Override with: docker run ... graphsense-cli --help
-CMD ["sh", "-c", "gunicorn -c /opt/gunicorn-conf.py 'graphsenselib.web.app:create_app(\"$CONFIG_FILE\")' --worker-class uvicorn.workers.UvicornWorker"]
+CMD ["sh", "-c", "gunicorn -c /opt/gunicorn-conf.py \"graphsenselib.web.app:create_app('${CONFIG_FILE}')\" --worker-class uvicorn.workers.UvicornWorker"]

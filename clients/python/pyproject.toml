@@ -1,6 +1,6 @@
 [project]
 name = "graphsense-python"
-version = "2.8.19+devweb2"
+version = "2.8.19+devweb3"
 description = "GraphSense API"
 authors = [
   {name = "Iknaio Cryptoasset Analytics GmbH",email = "contact@ikna.io"},
