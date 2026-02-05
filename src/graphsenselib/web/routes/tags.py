@@ -20,18 +20,12 @@ from graphsenselib.web.routes.base import (
     get_show_private_tags,
     get_tagstore_access_groups,
     get_username,
+    normalize_page,
     to_json_response,
 )
 import graphsenselib.web.service.tags_service as service
 
 router = APIRouter()
-
-
-def _normalize_page(page: Optional[str]) -> Optional[str]:
-    """Convert empty string to None for pagination parameter."""
-    if page is not None and page.strip() == "":
-        return None
-    return page
 
 
 class UserReportedTag(BaseModel):
@@ -75,7 +69,7 @@ async def list_address_tags(
     result = await service.list_address_tags(
         adapted_request,
         label=label,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
     )
 
@@ -142,7 +136,7 @@ async def get_actor_tags(
     result = await service.get_actor_tags(
         adapted_request,
         actor=actor,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
     )
 

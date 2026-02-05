@@ -17,18 +17,12 @@ from graphsenselib.web.routes.base import (
     apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
+    normalize_page,
     to_json_response,
 )
 import graphsenselib.web.service.txs_service as service
 
 router = APIRouter()
-
-
-def _normalize_page(page: Optional[str]) -> Optional[str]:
-    """Convert empty string to None for pagination parameter."""
-    if page is not None and page.strip() == "":
-        return None
-    return page
 
 
 @router.get(
@@ -273,7 +267,7 @@ async def list_tx_flows(
         strip_zero_value_txs=strip_zero_value_txs or False,
         only_token_txs=only_token_txs or False,
         token_currency=token_currency,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
     )
 

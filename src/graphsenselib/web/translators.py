@@ -1,8 +1,22 @@
 """Simplified translation layer for converting graphsenselib models to API models.
 
 This module provides conversion functions from graphsenselib Pydantic models
-to the slim graphsenselib.web.models Pydantic models, using model_validate for automatic
-conversion where possible.
+to the slim graphsenselib.web.models Pydantic models.
+
+Conversion Patterns:
+-------------------
+Two patterns are used intentionally based on model complexity:
+
+1. Simple one-liner (for flat objects with matching schemas):
+   `Values.model_validate(pydantic_values.model_dump())`
+
+2. Manual mapping (for nested/complex objects):
+   Explicit field-by-field conversion when nested objects need recursive
+   conversion or when business logic is required (e.g., empty list → None).
+
+The choice of pattern depends on whether the API model schema exactly matches
+the service model (use simple) or requires nested conversions/transformations
+(use manual).
 """
 
 from typing import Any, Union

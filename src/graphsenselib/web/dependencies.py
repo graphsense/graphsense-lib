@@ -13,7 +13,7 @@ from graphsenselib.db.asynchronous.services.tags_service import (
 )
 from graphsenselib.db.asynchronous.services.tokens_service import TokensService
 from graphsenselib.db.asynchronous.services.txs_service import TxsService
-from graphsenselib.tagstore.db import TagstoreDbAsync, Taxonomies
+from graphsenselib.tagstore.db import TagstoreDbAsync
 from graphsenselib.tagstore.db.queries import TagPublic
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -21,32 +21,6 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     OBFUSCATION_MARKER_GROUP,
 )
 from graphsenselib.web.config import GSRestConfig
-
-
-class ConceptsCacheService(ConceptProtocol):
-    def __init__(self, app: Any, logger: Any):
-        self.logger = logger
-        self.app = app
-
-    def get_is_abuse(self, concept: str) -> bool:
-        return concept in self.app["taxonomy-cache"]["abuse"]
-
-    def get_taxonomy_concept_label(self, taxonomy: Any, concept_id: str) -> str:
-        return self.app["taxonomy-cache"]["labels"][taxonomy].get(concept_id, None)
-
-    @classmethod
-    async def setup_cache(cls, db_engine: Any, app: Any):
-        tagstore_db = TagstoreDbAsync(db_engine)
-        taxs = await tagstore_db.get_taxonomies(
-            {Taxonomies.CONCEPT, Taxonomies.COUNTRY}
-        )
-        app["taxonomy-cache"] = {
-            "labels": {
-                Taxonomies.CONCEPT: {x.id: x.label for x in taxs.concept},
-                Taxonomies.COUNTRY: {x.id: x.label for x in taxs.country},
-            },
-            "abuse": {x.id for x in taxs.concept if x.is_abuse},
-        }
 
 
 class TagAccessLoggerTagstoreProxy:
@@ -127,7 +101,7 @@ class ServiceContainer:
         config: GSRestConfig,
         db: any,
         tagstore_engine: any,
-        concepts_cache_service: ConceptsCacheService,
+        concepts_cache_service: ConceptProtocol,
         logger: any,
         redis_client: Optional[Any] = None,
         log_tag_access_prefix: Optional[str] = None,

@@ -19,6 +19,7 @@ from graphsenselib.web.routes.base import (
     apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
+    normalize_page,
     parse_comma_separated_ints,
     parse_comma_separated_strings,
     parse_datetime,
@@ -27,13 +28,6 @@ from graphsenselib.web.routes.base import (
 import graphsenselib.web.service.entities_service as service
 
 router = APIRouter()
-
-
-def _normalize_page(page: Optional[str]) -> Optional[str]:
-    """Convert empty string to None for pagination parameter."""
-    if page is not None and page.strip() == "":
-        return None
-    return page
 
 
 @router.get(
@@ -107,7 +101,7 @@ async def list_entity_addresses(
         adapted_request,
         currency=currency,
         entity=entity,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
     )
 
@@ -170,7 +164,7 @@ async def list_entity_neighbors(
         direction=direction,
         only_ids=parse_comma_separated_ints(only_ids),
         include_labels=include_labels,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
         relations_only=relations_only,
         exclude_best_address_tag=exclude_best_address_tag,
@@ -246,7 +240,7 @@ async def list_entity_links(
         max_date=max_date_parsed,
         order=order,
         token_currency=token_currency,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
     )
 
@@ -288,7 +282,7 @@ async def list_address_tags_by_entity(
         adapted_request,
         currency=currency,
         entity=entity,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
     )
 
@@ -363,7 +357,7 @@ async def list_entity_txs(
         direction=direction,
         order=order,
         token_currency=token_currency,
-        page=_normalize_page(page),
+        page=normalize_page(page),
         pagesize=pagesize,
     )
 

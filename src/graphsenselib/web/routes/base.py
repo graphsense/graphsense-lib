@@ -239,3 +239,14 @@ def parse_comma_separated_strings(value: Optional[str]) -> Optional[list[str]]:
     if value.strip() == "":
         return None
     return [x.strip() for x in value.split(",") if x.strip()]
+
+
+def normalize_page(page: Optional[str]) -> Optional[str]:
+    """Convert empty string to None for pagination parameter.
+
+    FastAPI doesn't distinguish between missing params and empty strings,
+    so this normalizes empty strings to None for consistent pagination handling.
+    """
+    if page is not None and page.strip() == "":
+        return None
+    return page
