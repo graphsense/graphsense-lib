@@ -23,6 +23,7 @@ Get an address
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -36,6 +37,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -71,7 +82,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 
@@ -96,6 +107,7 @@ Get the entity of an address
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -109,6 +121,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -144,7 +166,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 
@@ -169,6 +191,7 @@ Get attribution tag summary for a given address
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -182,6 +205,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -217,7 +250,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 
@@ -242,6 +275,7 @@ Get outgoing transactions between two addresses
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -255,6 +289,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -306,7 +350,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 
@@ -331,6 +375,7 @@ Get an address's neighbors in the address graph
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -344,6 +389,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -389,7 +444,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 
@@ -414,6 +469,7 @@ Get all transactions an address has been involved in
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -427,6 +483,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -478,7 +544,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 
@@ -503,6 +569,7 @@ Get related addresses to the input address
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -516,6 +583,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -555,7 +632,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 
@@ -580,6 +657,7 @@ Get attribution tags for a given address
 
 ### Example
 
+* Api Key Authentication (api_key):
 
 ```python
 import graphsense
@@ -593,6 +671,16 @@ configuration = graphsense.Configuration(
     host = "https://api.iknaio.com"
 )
 
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
 
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
@@ -632,7 +720,7 @@ Name | Type | Description  | Notes
 
 ### Authorization
 
-No authorization required
+[api_key](../README.md#api_key)
 
 ### HTTP request headers
 

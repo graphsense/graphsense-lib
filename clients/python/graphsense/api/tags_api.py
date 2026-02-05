@@ -364,6 +364,7 @@ class TagsApi:
 
         # authentication setting
         _auth_settings: List[str] = [
+            'api_key'
         ]
 
         return self.api_client.param_serialize(
@@ -661,6 +662,7 @@ class TagsApi:
 
         # authentication setting
         _auth_settings: List[str] = [
+            'api_key'
         ]
 
         return self.api_client.param_serialize(
@@ -960,6 +962,7 @@ class TagsApi:
 
         # authentication setting
         _auth_settings: List[str] = [
+            'api_key'
         ]
 
         return self.api_client.param_serialize(
@@ -1223,6 +1226,7 @@ class TagsApi:
 
         # authentication setting
         _auth_settings: List[str] = [
+            'api_key'
         ]
 
         return self.api_client.param_serialize(
@@ -1468,6 +1472,7 @@ class TagsApi:
 
         # authentication setting
         _auth_settings: List[str] = [
+            'api_key'
         ]
 
         return self.api_client.param_serialize(
@@ -1759,6 +1764,7 @@ class TagsApi:
 
         # authentication setting
         _auth_settings: List[str] = [
+            'api_key'
         ]
 
         return self.api_client.param_serialize(

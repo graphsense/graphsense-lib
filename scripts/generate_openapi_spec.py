@@ -8,7 +8,7 @@ Used by the pre-commit hook to regenerate the Python client.
 
 import json
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from graphsenselib.web.app import _convert_schema_names_to_snake_case
@@ -23,6 +23,7 @@ from graphsenselib.web.routes import (
     tokens,
     txs,
 )
+from graphsenselib.web.security import get_api_key
 from graphsenselib.web.version import __api_version__
 
 
@@ -50,6 +51,8 @@ def create_minimal_app() -> FastAPI:
     """Create a minimal FastAPI app just for OpenAPI schema generation.
 
     This doesn't require database connections or config files.
+    Security dependencies are included to ensure the OpenAPI spec
+    includes the api_key security scheme for the Python client generator.
     """
     app = FastAPI(
         title="GraphSense API",
@@ -57,16 +60,42 @@ def create_minimal_app() -> FastAPI:
         version=__api_version__,
     )
 
+    # Security dependency for API key authentication
+    # This ensures the OpenAPI spec includes the security scheme
+    api_key_dep = [Depends(get_api_key)]
+
     # Register all routers (same as in the real app)
+    # General router has mixed security: /stats is public, /search requires auth
     app.include_router(general.router, tags=["general"])
-    app.include_router(tags.router, tags=["tags"])
-    app.include_router(addresses.router, prefix="/{currency}", tags=["addresses"])
-    app.include_router(blocks.router, prefix="/{currency}", tags=["blocks"])
-    app.include_router(entities.router, prefix="/{currency}", tags=["entities"])
-    app.include_router(txs.router, prefix="/{currency}", tags=["txs"])
-    app.include_router(rates.router, prefix="/{currency}", tags=["rates"])
-    app.include_router(tokens.router, prefix="/{currency}", tags=["tokens"])
-    app.include_router(bulk.router, prefix="/{currency}", tags=["bulk"])
+    # All other routers require api_key authentication
+    app.include_router(tags.router, tags=["tags"], dependencies=api_key_dep)
+    app.include_router(
+        addresses.router,
+        prefix="/{currency}",
+        tags=["addresses"],
+        dependencies=api_key_dep,
+    )
+    app.include_router(
+        blocks.router, prefix="/{currency}", tags=["blocks"], dependencies=api_key_dep
+    )
+    app.include_router(
+        entities.router,
+        prefix="/{currency}",
+        tags=["entities"],
+        dependencies=api_key_dep,
+    )
+    app.include_router(
+        txs.router, prefix="/{currency}", tags=["txs"], dependencies=api_key_dep
+    )
+    app.include_router(
+        rates.router, prefix="/{currency}", tags=["rates"], dependencies=api_key_dep
+    )
+    app.include_router(
+        tokens.router, prefix="/{currency}", tags=["tokens"], dependencies=api_key_dep
+    )
+    app.include_router(
+        bulk.router, prefix="/{currency}", tags=["bulk"], dependencies=api_key_dep
+    )
 
     return app
 
