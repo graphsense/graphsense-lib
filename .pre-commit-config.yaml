@@ -43,6 +43,12 @@ repos:
     - id: uv-lock
 -   repo: local
     hooks:
+    -   id: update-api-version
+        name: Sync API version from Makefile to version.py
+        entry: make update-api-version
+        language: system
+        pass_filenames: false
+        always_run: true
     -   id: codegen
         name: Ensure Generated Code is up to date
         entry: make run-codegen

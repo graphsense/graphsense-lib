@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASE := 'v25.11.18'
-RELEASESEM := 'v2.8.18'
+RELEASE := 'v25.11.19+devweb2'
+RELEASESEM := 'v2.8.19+devweb2'
 
 -include .env
 
@@ -100,6 +100,23 @@ run-codegen: generate-python-client
 generate-python-client:
 	cd clients/python && make generate-openapi-client
 
+# API version management
+update-api-version:
+	@version=$$(echo $(RELEASESEM) | sed "s/^['\"]\\?v\\?//" | sed "s/['\"]$$//"); \
+	sed -i 's/__api_version__ = .*/__api_version__ = "'$$version'"/' src/graphsenselib/web/version.py; \
+	echo "Updated API version to $$version"
+
+check-api-version:
+	@version=$$(echo $(RELEASESEM) | sed "s/^['\"]\\?v\\?//" | sed "s/['\"]$$//"); \
+	file_version=$$(grep -oP '__api_version__ = "\K[^"]+' src/graphsenselib/web/version.py); \
+	if [ "$$version" != "$$file_version" ]; then \
+		echo "Version mismatch: Makefile has $$version, version.py has $$file_version"; \
+		echo "Run 'make update-api-version' to fix"; \
+		exit 1; \
+	else \
+		echo "API version aligned: $$version"; \
+	fi
+
 # Docker targets for REST API
 serve-docker:
 	docker run --rm -it --network='host' -e NUM_THREADS=1 -e NUM_WORKERS=1 -v "${PWD}/instance/config.yaml:/config.yaml:Z" -e CONFIG_FILE=/config.yaml graphsense-lib:latest
@@ -111,4 +128,4 @@ package-ui:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build pre-commit test-all test-fast type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra
+.PHONY: all test install lint format build pre-commit test-all test-fast type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version
