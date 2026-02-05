@@ -9,6 +9,7 @@ from cassandra.cluster import Cluster
 TAG = "master"
 SCHEMA_BASE = f"https://raw.githubusercontent.com/graphsense/graphsense-lib/{TAG}/src/graphsenselib/schema/resources/"
 
+# Web test schemas (resttest_*)
 SCHEMA_MAPPING = {"btc": "utxo", "ltc": "utxo", "eth": "account", "trx": "account_trx"}
 SCHEMA_MAPPING_OVERRIDE = {("trx", "transformed"): "account"}
 
@@ -23,32 +24,41 @@ def get_schema_file(filename):
     return res.text
 
 
+def create_schema(session, keyspace, schema_name, schema_type):
+    """Create a single keyspace with its schema."""
+    filename = f"{schema_type}_{schema_name}_schema.sql"
+
+    sys.stdout.write(f"Creating schema: {keyspace} from {filename}\n")
+    sys.stdout.flush()
+
+    schema_str = (
+        get_schema_file(filename)
+        .replace(MAGIC_REPLACE_CONSTANT2, SIMPLE_REPLICATION_CONFIG)
+        .replace(MAGIC_REPLACE_CONSTANT, keyspace)
+    )
+
+    for stmt in schema_str.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            session.execute(stmt)
+
+
 def main():
     cluster = Cluster(["127.0.0.1"])
     session = cluster.connect()
 
+    # Create web test schemas (resttest_*)
     for currency, schema_base in SCHEMA_MAPPING.items():
         for schema_type in ["raw", "transformed"]:
             schema_name = SCHEMA_MAPPING_OVERRIDE.get(
                 (currency, schema_type), schema_base
             )
-            filename = f"{schema_type}_{schema_name}_schema.sql"
             keyspace = f"resttest_{currency}_{schema_type}"
+            create_schema(session, keyspace, schema_name, schema_type)
 
-            # Log progress during Docker build
-            sys.stdout.write(f"Creating schema: {keyspace} from {filename}\n")
-            sys.stdout.flush()
-
-            schema_str = (
-                get_schema_file(filename)
-                .replace(MAGIC_REPLACE_CONSTANT2, SIMPLE_REPLICATION_CONFIG)
-                .replace(MAGIC_REPLACE_CONSTANT, keyspace)
-            )
-
-            for stmt in schema_str.split(";"):
-                stmt = stmt.strip()
-                if stmt:
-                    session.execute(stmt)
+    # Create root test schemas (pytest_btc_* only - used by tests/db/test_cassandra.py)
+    create_schema(session, "pytest_btc_raw", "utxo", "raw")
+    create_schema(session, "pytest_btc_transformed", "utxo", "transformed")
 
     sys.stdout.write("All schemas created successfully!\n")
     cluster.shutdown()

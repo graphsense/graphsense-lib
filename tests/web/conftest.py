@@ -1,29 +1,26 @@
 from os import environ
 
 import pytest
-from testcontainers.cassandra import CassandraContainer
+from docker.errors import ImageNotFound, NotFound
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from tests.web import BaseTestCase
-from tests.web.cassandra.insert import create_schemas, load_test_data as cas_load_test_data
+from tests.web.cassandra.insert import load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 
+# Import shared Cassandra container and utilities from root conftest
+# NOTE: postgres is NOT shared because web tests use different tagstore data
+from tests.conftest import (
+    cassandra,
+    USE_FAST_CASSANDRA,
+    FAST_CASSANDRA_IMAGE,
+    create_web_schemas,
+)
+
+# Web-specific containers (not shared with root tests)
 postgres = PostgresContainer("postgres:16-alpine")
 redis = RedisContainer("redis:7-alpine")
-
-# Cassandra image selection:
-# - Default: vanilla cassandra:4.1.4 (slow startup, creates schemas at runtime)
-# - Fast mode: set USE_FAST_CASSANDRA=1 to use pre-baked image with schemas
-#   Build fast image with: make build-fast-cassandra
-VANILLA_CASSANDRA_IMAGE = "cassandra:4.1.4"
-FAST_CASSANDRA_IMAGE = environ.get(
-    "CASSANDRA_TEST_IMAGE", "graphsense/cassandra-test:4.1.4"
-)
-USE_FAST_CASSANDRA = environ.get("USE_FAST_CASSANDRA", "").lower() in ("1", "true", "yes")
-
-cassandra_image = FAST_CASSANDRA_IMAGE if USE_FAST_CASSANDRA else VANILLA_CASSANDRA_IMAGE
-cassandra = CassandraContainer(cassandra_image)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -32,16 +29,45 @@ def gs_rest_db_setup(request):
     if SKIP_REST_CONTAINER_SETUP:
         return
 
+    # Track if we started cassandra (it may already be running from root conftest)
+    started_cassandra = False
+
+    # Start Cassandra (shared with root tests, may already be running)
+    if not cassandra._container:
+        try:
+            cassandra.start()
+            started_cassandra = True
+        except ImageNotFound as e:
+            if USE_FAST_CASSANDRA and "graphsense/cassandra-test" in str(e):
+                raise RuntimeError(
+                    f"Fast Cassandra image not found: {FAST_CASSANDRA_IMAGE}\n"
+                    "You need to build it first with: make build-fast-cassandra\n"
+                    "Or run tests with vanilla Cassandra: make test-web (slower)"
+                ) from e
+            raise
+
+    # Start web-specific containers
     postgres.start()
-    cassandra.start()
     redis.start()
 
-    def remove_container():
-        postgres.stop()
-        cassandra.stop()
-        redis.stop()
+    def remove_containers():
+        # Always stop web-specific containers
+        try:
+            redis.stop()
+        except NotFound:
+            pass
+        try:
+            postgres.stop()
+        except NotFound:
+            pass
+        # Only stop cassandra if we started it
+        if started_cassandra and cassandra._container:
+            try:
+                cassandra.stop()
+            except NotFound:
+                pass
 
-    request.addfinalizer(remove_container)
+    request.addfinalizer(remove_containers)
 
     cas_host = cassandra.get_container_host_ip()
     cas_port = cassandra.get_exposed_port(9042)
@@ -89,7 +115,7 @@ def gs_rest_db_setup(request):
 
     # Create schemas if using vanilla Cassandra (slow mode)
     if not USE_FAST_CASSANDRA:
-        create_schemas(cas_host, cas_port)
+        create_web_schemas(cas_host, cas_port)
 
     cas_load_test_data(cas_host, cas_port)
 

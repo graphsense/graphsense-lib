@@ -1,9 +1,13 @@
+from os import environ
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
+from docker.errors import ImageNotFound, NotFound
 from goodconf import GoodConfConfigDict
 from testcontainers.cassandra import CassandraContainer
 from testcontainers.postgres import PostgresContainer
-from pathlib import Path
+
 from click.testing import CliRunner
 from graphsenselib.config import AppConfig, Environment, KeyspaceConfig, IngestConfig
 from graphsenselib.config.config import KeyspaceSetupConfig, set_config
@@ -19,12 +23,89 @@ try:
 except ImportError:
     TAGSTORE_AVAILABLE = False
 
-cassandra = CassandraContainer("cassandra:4.1.4")
+
+# =============================================================================
+# Container Configuration
+# =============================================================================
+
+# Cassandra image selection:
+# - Default: vanilla cassandra:4.1.4 (slow startup, creates schemas at runtime)
+# - Fast mode: set USE_FAST_CASSANDRA=1 to use pre-baked image with schemas
+#   Build fast image with: make build-fast-cassandra
+VANILLA_CASSANDRA_IMAGE = "cassandra:4.1.4"
+FAST_CASSANDRA_IMAGE = environ.get(
+    "CASSANDRA_TEST_IMAGE", "graphsense/cassandra-test:4.1.4"
+)
+USE_FAST_CASSANDRA = environ.get("USE_FAST_CASSANDRA", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+cassandra_image = (
+    FAST_CASSANDRA_IMAGE if USE_FAST_CASSANDRA else VANILLA_CASSANDRA_IMAGE
+)
+
+# Cassandra is shared with web tests (imported by tests/web/conftest.py)
+# Postgres is NOT shared - web tests use different tagstore data
+cassandra = CassandraContainer(cassandra_image)
 postgres = PostgresContainer("postgres:16-alpine")
 
 # Test data directories for tagpack tests
 DATA_DIR_TP = Path(__file__).parent.resolve() / "testfiles" / "simple"
 DATA_DIR_A = Path(__file__).parent.resolve() / "testfiles" / "actors"
+
+
+# =============================================================================
+# Schema Creation (for slow/vanilla Cassandra mode)
+# =============================================================================
+
+SCHEMA_DIR = (
+    Path(__file__).parent.parent / "src" / "graphsenselib" / "schema" / "resources"
+)
+SCHEMA_MAPPING = {"btc": "utxo", "ltc": "utxo", "eth": "account", "trx": "account_trx"}
+SCHEMA_MAPPING_OVERRIDE = {("trx", "transformed"): "account"}
+MAGIC_REPLACE_CONSTANT = "0x8BADF00D"
+MAGIC_REPLACE_CONSTANT2 = f"{MAGIC_REPLACE_CONSTANT}_REPLICATION_CONFIG"
+SIMPLE_REPLICATION_CONFIG = "{'class': 'SimpleStrategy', 'replication_factor': 1}"
+
+
+def create_web_schemas(host, port):
+    """Create web test schemas (resttest_*) in vanilla Cassandra."""
+    from cassandra.cluster import Cluster
+
+    cluster = Cluster([host], port=port)
+    session = cluster.connect()
+
+    for currency, schema_base in SCHEMA_MAPPING.items():
+        for schema_type in ["raw", "transformed"]:
+            schema_name = SCHEMA_MAPPING_OVERRIDE.get(
+                (currency, schema_type), schema_base
+            )
+            filename = f"{schema_type}_{schema_name}_schema.sql"
+            keyspace = f"resttest_{currency}_{schema_type}"
+
+            schema_file = SCHEMA_DIR / filename
+            if not schema_file.exists():
+                raise FileNotFoundError(f"Schema file not found: {schema_file}")
+
+            schema_str = (
+                schema_file.read_text()
+                .replace(MAGIC_REPLACE_CONSTANT2, SIMPLE_REPLICATION_CONFIG)
+                .replace(MAGIC_REPLACE_CONSTANT, keyspace)
+            )
+
+            for stmt in schema_str.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    session.execute(stmt)
+
+    cluster.shutdown()
+
+
+# =============================================================================
+# Shared Fixtures
+# =============================================================================
 
 
 def insert_test_data(db_setup):
@@ -77,7 +158,6 @@ def insert_test_data(db_setup):
         )
 
         assert result.exit_code == 0, f"Failed to refresh views: {result.output}"
-        # assert result.exit_code == 0
 
     finally:
         # Properly dispose of the SQLAlchemy engine to close all connections
@@ -87,10 +167,23 @@ def insert_test_data(db_setup):
 
 @pytest.fixture(scope="session", autouse=True)
 def gs_db_setup(request):
-    cassandra.start()
+    """Start Cassandra container (shared across all tests)."""
+    try:
+        cassandra.start()
+    except ImageNotFound as e:
+        if USE_FAST_CASSANDRA and "graphsense/cassandra-test" in str(e):
+            raise RuntimeError(
+                f"Fast Cassandra image not found: {FAST_CASSANDRA_IMAGE}\n"
+                "You need to build it first with: make build-fast-cassandra\n"
+                "Or run tests without USE_FAST_CASSANDRA=1 (slower)"
+            ) from e
+        raise
 
     def remove_container():
-        cassandra.stop()
+        try:
+            cassandra.stop()
+        except NotFound:
+            pass  # Already stopped by another fixture
 
     request.addfinalizer(remove_container)
 
