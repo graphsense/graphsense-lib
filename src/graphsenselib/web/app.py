@@ -199,6 +199,32 @@ def _fix_response_schemas(schema: dict[str, Any]) -> dict[str, Any]:
     return fix_schema(schema)
 
 
+def _promote_schema_examples_to_parameter_level(
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Move examples from schema.examples to parameter-level example.
+
+    FastAPI with Pydantic v2 puts examples from Path(examples=[...]) and
+    Query(examples=[...]) inside the parameter's JSON Schema as schema.examples
+    (an array). Swagger UI does not read this field — it only reads the
+    parameter-level 'example' field (OpenAPI 3.0) or 'examples' map (OpenAPI 3.1).
+
+    This post-processor promotes schema.examples[0] to parameter.example so
+    that Swagger UI displays them correctly.
+    """
+    for path_val in schema.get("paths", {}).values():
+        for method_val in path_val.values():
+            if not isinstance(method_val, dict):
+                continue
+            for param in method_val.get("parameters", []):
+                param_schema = param.get("schema", {})
+                if "examples" in param_schema and "example" not in param:
+                    examples = param_schema.pop("examples")
+                    if isinstance(examples, list) and examples:
+                        param["example"] = examples[0]
+    return schema
+
+
 def _convert_schema_names_to_snake_case(schema: dict[str, Any]) -> dict[str, Any]:
     """Post-process OpenAPI schema to use snake_case schema names.
 
@@ -734,6 +760,9 @@ def _setup_custom_openapi(app: FastAPI) -> None:
             "addresses, entities, blocks, transactions and tags for automated "
             "and highly efficient forensics tasks."
         )
+
+        # Promote schema-level examples to parameter-level for Swagger UI
+        openapi_schema = _promote_schema_examples_to_parameter_level(openapi_schema)
 
         # Convert schema names to snake_case for backward compatibility
         openapi_schema = _convert_schema_names_to_snake_case(openapi_schema)

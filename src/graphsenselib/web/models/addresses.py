@@ -2,16 +2,38 @@
 
 from typing import Any, Optional
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from graphsenselib.web.models.base import APIModel
 from graphsenselib.web.models.common import LabeledItemRef
-from graphsenselib.web.models.transactions import TxSummary
-from graphsenselib.web.models.values import Values
+from graphsenselib.web.models.transactions import TX_SUMMARY_EXAMPLE, TxSummary
+from graphsenselib.web.models.values import VALUES_EXAMPLE, Values
 
 
 class Address(APIModel):
     """Address model."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "currency": "btc",
+                "address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+                "entity": 264711,
+                "balance": VALUES_EXAMPLE,
+                "total_received": VALUES_EXAMPLE,
+                "total_spent": VALUES_EXAMPLE,
+                "first_tx": TX_SUMMARY_EXAMPLE,
+                "last_tx": TX_SUMMARY_EXAMPLE,
+                "in_degree": 100,
+                "out_degree": 50,
+                "no_incoming_txs": 200,
+                "no_outgoing_txs": 100,
+                "status": "clean",
+            }
+        },
+    )
 
     currency: str
     address: str
@@ -43,6 +65,32 @@ class Address(APIModel):
 
 class NeighborAddress(APIModel):
     """Neighbor address model."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "value": VALUES_EXAMPLE,
+                "no_txs": 5,
+                "address": {
+                    "currency": "btc",
+                    "address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+                    "entity": 264711,
+                    "balance": VALUES_EXAMPLE,
+                    "total_received": VALUES_EXAMPLE,
+                    "total_spent": VALUES_EXAMPLE,
+                    "first_tx": TX_SUMMARY_EXAMPLE,
+                    "last_tx": TX_SUMMARY_EXAMPLE,
+                    "in_degree": 100,
+                    "out_degree": 50,
+                    "no_incoming_txs": 200,
+                    "no_outgoing_txs": 100,
+                },
+                "labels": ["internet archive"],
+            }
+        },
+    )
 
     value: Values
     no_txs: int

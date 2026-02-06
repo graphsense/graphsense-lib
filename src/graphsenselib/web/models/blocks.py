@@ -2,11 +2,27 @@
 
 from typing import Optional
 
+from pydantic import ConfigDict
+
 from graphsenselib.web.models.base import APIModel
 
 
 class Block(APIModel):
     """Block model."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "block_hash": "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f",
+                "currency": "btc",
+                "height": 47,
+                "no_txs": 11,
+                "timestamp": 1231614698,
+            }
+        },
+    )
 
     block_hash: str
     currency: str
@@ -17,6 +33,19 @@ class Block(APIModel):
 
 class BlockAtDate(APIModel):
     """Block at date model."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "before_block": 100,
+                "before_timestamp": 1231614698,
+                "after_block": 101,
+                "after_timestamp": 1231614700,
+            }
+        },
+    )
 
     before_block: Optional[int] = None
     before_timestamp: Optional[int] = None

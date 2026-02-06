@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from pydantic import ConfigDict
+
 from graphsenselib.web.models.addresses import Address
 from graphsenselib.web.models.base import APIModel
 from graphsenselib.web.models.common import LabeledItemRef
@@ -13,6 +15,21 @@ from graphsenselib.web.models.entities import NeighborEntity
 class SearchResultByCurrency(APIModel):
     """Search result by currency."""
 
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "currency": "btc",
+                "addresses": [
+                    "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+                    "1ArchiveisY6i4Hpostivemate1sVRhQ71",
+                ],
+                "txs": [],
+            }
+        },
+    )
+
     currency: str
     addresses: list[str]
     txs: list[str]
@@ -20,6 +37,26 @@ class SearchResultByCurrency(APIModel):
 
 class SearchResult(APIModel):
     """Search result model."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "currencies": [
+                    {
+                        "currency": "btc",
+                        "addresses": [
+                            "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+                            "1ArchiveisY6i4Hpostivemate1sVRhQ71",
+                        ],
+                        "txs": [],
+                    }
+                ],
+                "labels": [],
+            }
+        },
+    )
 
     currencies: list[SearchResultByCurrency]
     labels: list[str]
