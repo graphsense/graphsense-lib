@@ -702,7 +702,7 @@ def create_app(
         description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
         version=__api_version__,
         lifespan=lifespan,
-        docs_url="/docs",
+        docs_url="/ui",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
