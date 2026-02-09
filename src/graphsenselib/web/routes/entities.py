@@ -5,7 +5,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
     AddressTags,
     AddressTxs,
@@ -16,15 +16,12 @@ from graphsenselib.web.models import (
     SearchResultLevel1,
 )
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    get_tagstore_access_groups,
-    make_ctx,
+    get_ctx,
     normalize_page,
     parse_comma_separated_ints,
     parse_comma_separated_strings,
     parse_datetime,
-    to_json_response,
+    respond,
 )
 import graphsenselib.web.service.entities_service as service
 
@@ -50,23 +47,17 @@ async def get_entity(
     include_actors: bool = Query(
         False, description="Whether to include actor information", examples=[True]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an entity"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_entity(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         entity=entity,
         exclude_best_address_tag=exclude_best_address_tag,
         include_actors=include_actors,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -91,23 +82,17 @@ async def list_entity_addresses(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an entity's addresses"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_entity_addresses(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         entity=entity,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -151,16 +136,12 @@ async def list_entity_neighbors(
     include_actors: bool = Query(
         False, description="Whether to include actor information", examples=[True]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an entity's neighbors in the entity graph"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_entity_neighbors(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         entity=entity,
         direction=direction,
         only_ids=parse_comma_separated_ints(only_ids),
@@ -171,9 +152,7 @@ async def list_entity_neighbors(
         exclude_best_address_tag=exclude_best_address_tag,
         include_actors=include_actors,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -220,33 +199,24 @@ async def list_entity_links(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get transactions between two entities"""
-    currency = currency.lower()
-    min_date_parsed = parse_datetime(min_date)
-    max_date_parsed = parse_datetime(max_date)
-
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_entity_links(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         entity=entity,
         neighbor=neighbor,
         min_height=min_height,
         max_height=max_height,
-        min_date=min_date_parsed,
-        max_date=max_date_parsed,
+        min_date=parse_datetime(min_date),
+        max_date=parse_datetime(max_date),
         order=order,
         token_currency=token_currency,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -272,23 +242,17 @@ async def list_address_tags_by_entity(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get address tags for a given entity"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_address_tags_by_entity(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         entity=entity,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -337,33 +301,24 @@ async def list_entity_txs(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get all transactions an entity has been involved in"""
-    currency = currency.lower()
-    min_date_parsed = parse_datetime(min_date)
-    max_date_parsed = parse_datetime(max_date)
-
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_entity_txs(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         entity=entity,
         min_height=min_height,
         max_height=max_height,
-        min_date=min_date_parsed,
-        max_date=max_date_parsed,
+        min_date=parse_datetime(min_date),
+        max_date=parse_datetime(max_date),
         direction=direction,
         order=order,
         token_currency=token_currency,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -391,21 +346,14 @@ async def search_entity_neighbors(
     skip_num_addresses: Optional[int] = Query(
         None, description="Skip entities with more than N addresses"
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Search neighbors of an entity"""
-    currency = currency.lower()
-    ctx = make_ctx(
-        request,
-        services,
-        tagstore_groups,
-        logger=logging.getLogger(__name__),
-    )
+    ctx.logger = logging.getLogger(__name__)
 
     result = await service.search_entity_neighbors(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         entity=entity,
         direction=direction,
         key=key,
@@ -414,6 +362,4 @@ async def search_entity_neighbors(
         breadth=breadth,
         skip_num_addresses=skip_num_addresses,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

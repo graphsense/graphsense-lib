@@ -1,19 +1,24 @@
 """Base configuration for API models."""
 
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
 T = TypeVar("T", bound="APIModel")
 
 
+def api_model_config(example: Optional[dict] = None) -> ConfigDict:
+    """Create a ConfigDict with shared defaults and an optional Swagger example."""
+    cfg = {"populate_by_name": True, "from_attributes": True}
+    if example is not None:
+        cfg["json_schema_extra"] = {"example": example}
+    return ConfigDict(**cfg)
+
+
 class APIModel(BaseModel):
     """Base class for all API models with shared configuration."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-    )
+    model_config = api_model_config()
 
     @classmethod
     def from_dict(cls: type[T], dikt: dict) -> T:

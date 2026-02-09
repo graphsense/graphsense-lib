@@ -2,14 +2,11 @@
 
 from fastapi import APIRouter, Depends, Path, Request
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import Rates
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    get_tagstore_access_groups,
-    make_ctx,
-    to_json_response,
+    get_ctx,
+    respond,
 )
 import graphsenselib.web.service.rates_service as service
 
@@ -29,18 +26,12 @@ async def get_exchange_rates(
         ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
     ),
     height: int = Path(..., description="The block height", examples=[1]),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get exchange rates for a given block height"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_exchange_rates(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         height=height,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

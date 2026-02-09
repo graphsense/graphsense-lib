@@ -2,14 +2,11 @@
 
 from fastapi import APIRouter, Depends, Path, Request
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import TokenConfigs
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    get_tagstore_access_groups,
-    make_ctx,
-    to_json_response,
+    get_ctx,
+    respond,
 )
 import graphsenselib.web.service.tokens_service as service
 
@@ -28,17 +25,11 @@ async def list_supported_tokens(
     currency: str = Path(
         ..., description="The cryptocurrency code (e.g., eth)", examples=["eth"]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get supported tokens for a currency"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_supported_tokens(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import BaseModel
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
     Actor,
     AddressTags,
@@ -14,14 +14,10 @@ from graphsenselib.web.models import (
     UserTagReportResponse,
 )
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    get_show_private_tags,
-    get_tagstore_access_groups,
+    get_ctx,
     get_username,
-    make_ctx,
     normalize_page,
-    to_json_response,
+    respond,
 )
 import graphsenselib.web.service.tags_service as service
 
@@ -57,22 +53,16 @@ async def list_address_tags(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get address tags by label"""
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_address_tags(
         ctx,
         label=label,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -85,20 +75,14 @@ async def list_address_tags(
 async def get_actor(
     request: Request,
     actor: str = Path(..., description="The actor ID", examples=["binance"]),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an actor by ID"""
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_actor(
         ctx,
         actor=actor,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -120,22 +104,16 @@ async def get_actor_tags(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get tags associated with an actor"""
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_actor_tags(
         ctx,
         actor=actor,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -147,17 +125,11 @@ async def get_actor_tags(
 )
 async def list_taxonomies(
     request: Request,
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """List all taxonomies"""
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_taxonomies(ctx)
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -170,20 +142,14 @@ async def list_taxonomies(
 async def list_concepts(
     request: Request,
     taxonomy: str = Path(..., description="The taxonomy name", examples=["concept"]),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """List concepts for a taxonomy"""
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_concepts(
         ctx,
         taxonomy=taxonomy,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.post(
@@ -196,18 +162,14 @@ async def list_concepts(
 async def report_tag(
     request: Request,
     body: UserReportedTag,
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
     username: Optional[str] = Depends(get_username),
 ):
     """Report a new tag"""
-    ctx = make_ctx(request, services, tagstore_groups, username=username)
+    ctx.username = username
 
     result = await service.report_tag(
         ctx,
         body=body,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

@@ -4,7 +4,7 @@ from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
     ExternalConversion,
     TxAccount,
@@ -13,12 +13,9 @@ from graphsenselib.web.models import (
     TxValue,
 )
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    get_tagstore_access_groups,
-    make_ctx,
+    get_ctx,
     normalize_page,
-    to_json_response,
+    respond,
 )
 import graphsenselib.web.service.txs_service as service
 
@@ -43,21 +40,15 @@ async def list_token_txs(
         description="The transaction hash",
         examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Returns all token transactions in a given transaction"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_token_txs(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         tx_hash=tx_hash,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -89,25 +80,19 @@ async def get_tx(
     include_io_index: Optional[bool] = Query(
         None, description="Include input/output indices"
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get a transaction by its hash"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_tx(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         tx_hash=tx_hash,
         token_tx_id=token_tx_id,
         include_io=include_io,
         include_nonstandard_io=include_nonstandard_io,
         include_io_index=include_io_index,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -130,22 +115,16 @@ async def get_spent_in(
     io_index: Optional[int] = Query(
         None, description="Output index to check", examples=[0]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get transactions that spent outputs from this transaction"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_spent_in_txs(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         tx_hash=tx_hash,
         io_index=io_index,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -168,22 +147,16 @@ async def get_spending(
     io_index: Optional[int] = Query(
         None, description="Input index to check", examples=[0]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get transactions that this transaction is spending from"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_spending_txs(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         tx_hash=tx_hash,
         io_index=io_index,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -203,21 +176,15 @@ async def get_tx_conversions(
         description="The transaction hash",
         examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get DeFi conversions for a transaction"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_tx_conversions(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         tx_hash=tx_hash,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -253,16 +220,12 @@ async def list_tx_flows(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get asset flows within a transaction"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_tx_flows(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         tx_hash=tx_hash,
         strip_zero_value_txs=strip_zero_value_txs or False,
         only_token_txs=only_token_txs or False,
@@ -270,9 +233,7 @@ async def list_tx_flows(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 # NOTE: This route MUST be defined AFTER all other /txs/{tx_hash}/... routes
@@ -305,21 +266,15 @@ async def get_tx_io(
     include_io_index: Optional[bool] = Query(
         None, description="Include input/output indices"
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get transaction inputs or outputs"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_tx_io(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         tx_hash=tx_hash,
         io=io,
         include_nonstandard_io=include_nonstandard_io,
         include_io_index=include_io_index,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

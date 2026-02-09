@@ -4,15 +4,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import SearchResult, Stats
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    get_show_private_tags,
-    get_tagstore_access_groups,
-    make_ctx,
-    to_json_response,
+    get_ctx,
+    respond,
 )
 from graphsenselib.web.security import get_api_key
 import graphsenselib.web.service.general_service as service
@@ -29,16 +25,11 @@ router = APIRouter()
 )
 async def get_statistics(
     request: Request,
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get statistics of supported currencies"""
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_statistics(ctx, version=request.app.version)
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -80,16 +71,11 @@ async def search(
     include_addresses: bool = Query(
         True, description="Whether to include addresses", examples=[True]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
-    show_private: bool = Depends(get_show_private_tags),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Returns matching addresses, transactions and labels"""
-    # Normalize currency
     if currency is not None:
         currency = currency.lower()
-
-    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.search(
         ctx,
@@ -102,5 +88,4 @@ async def search(
         include_txs=include_txs,
         include_addresses=include_addresses,
     )
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

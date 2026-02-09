@@ -4,14 +4,12 @@ from typing import Union
 
 from fastapi import APIRouter, Depends, Path, Request
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import Block, BlockAtDate, TxAccount, TxUtxo
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    make_ctx,
+    get_ctx_no_tags,
     parse_datetime,
-    to_json_response,
+    respond,
 )
 import graphsenselib.web.service.blocks_service as service
 
@@ -31,20 +29,15 @@ async def get_block(
         ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
     ),
     height: int = Path(..., description="The block height", examples=[1]),
-    services: ServiceContainer = Depends(get_services),
+    ctx: ServiceContext = Depends(get_ctx_no_tags),
 ):
     """Get a block by its height"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, [])
-
     result = await service.get_block(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         height=height,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -60,20 +53,15 @@ async def list_block_txs(
         ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
     ),
     height: int = Path(..., description="The block height", examples=[1]),
-    services: ServiceContainer = Depends(get_services),
+    ctx: ServiceContext = Depends(get_ctx_no_tags),
 ):
     """Get block transactions"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, [])
-
     result = await service.list_block_txs(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         height=height,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -91,17 +79,12 @@ async def get_block_by_date(
     date: str = Path(
         ..., description="The date (YYYY-MM-DD)", examples=["2017-07-21T17:32:28Z"]
     ),
-    services: ServiceContainer = Depends(get_services),
+    ctx: ServiceContext = Depends(get_ctx_no_tags),
 ):
     """Get block by date"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, [])
-
     result = await service.get_block_by_date(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         date=parse_datetime(date),
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

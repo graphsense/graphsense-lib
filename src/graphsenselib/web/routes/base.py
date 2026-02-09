@@ -3,7 +3,6 @@
 import logging
 import re
 from datetime import datetime
-from functools import wraps
 from typing import Annotated, Any, Optional
 
 from fastapi import Depends, Header, Request
@@ -99,6 +98,26 @@ def get_tagstore_access_groups(
     return groups
 
 
+async def get_ctx(
+    request: Request,
+    services: ServiceContainer = Depends(get_services),
+    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+) -> ServiceContext:
+    return make_ctx(request, services, tagstore_groups)
+
+
+async def get_ctx_no_tags(
+    request: Request,
+    services: ServiceContainer = Depends(get_services),
+) -> ServiceContext:
+    return make_ctx(request, services, [])
+
+
+def respond(request: Request, result):
+    apply_plugin_hooks(request, result)
+    return to_json_response(result)
+
+
 def should_obfuscate_private_tags(request: Request) -> bool:
     """Check if private tags should be obfuscated"""
     from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -121,30 +140,6 @@ def parse_datetime(dt_str: Optional[str]) -> Optional[datetime]:
     from dateutil import parser
 
     return parser.parse(dt_str)
-
-
-def with_plugin_response_hooks(func):
-    """Decorator to apply plugin before_response hooks to route handlers.
-
-    This decorator must wrap async route handlers that need plugin response processing.
-    The route handler must accept a 'request: Request' parameter.
-    """
-
-    @wraps(func)
-    async def wrapper(*args, request: Request, **kwargs):
-        result = await func(*args, request=request, **kwargs)
-
-        plugins = getattr(request.app.state, "plugins", [])
-        plugin_contexts = getattr(request.app.state, "plugin_contexts", {})
-
-        for plugin in plugins:
-            if hasattr(plugin, "before_response"):
-                ctx = plugin_contexts.get(plugin.__module__, {})
-                plugin.before_response(ctx, request, result)
-
-        return result
-
-    return wrapper
 
 
 def to_json_response(result: Any) -> dict:

@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
     Address,
     AddressTags,
@@ -16,15 +16,12 @@ from graphsenselib.web.models import (
     TagSummary,
 )
 from graphsenselib.web.routes.base import (
-    apply_plugin_hooks,
-    get_services,
-    get_tagstore_access_groups,
-    make_ctx,
+    get_ctx,
     normalize_page,
     parse_comma_separated_strings,
     parse_datetime,
+    respond,
     should_obfuscate_private_tags,
-    to_json_response,
 )
 import graphsenselib.web.service.addresses_service as service
 
@@ -51,22 +48,16 @@ async def get_address(
     include_actors: bool = Query(
         True, description="Whether to include actor information", examples=[True]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an address"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_address(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         include_actors=include_actors,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -89,22 +80,16 @@ async def get_address_entity(
     include_actors: bool = Query(
         True, description="Whether to include actor information", examples=[True]
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get the entity of an address"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.get_address_entity(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         include_actors=include_actors,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -128,27 +113,18 @@ async def get_tag_summary_by_address(
         None,
         description="If the best cluster tag should be inherited to the address level",
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get attribution tag summary for a given address"""
-    currency = currency.lower()
-    ctx = make_ctx(
-        request,
-        services,
-        tagstore_groups,
-        obfuscate_private_tags=should_obfuscate_private_tags(request),
-    )
+    ctx.obfuscate_private_tags = should_obfuscate_private_tags(request)
 
     result = await service.get_tag_summary_by_address(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         include_best_cluster_tag=include_best_cluster_tag,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -181,24 +157,18 @@ async def list_tags_by_address(
         None,
         description="If the best cluster tag should be inherited to the address level",
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get attribution tags for a given address"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_tags_by_address(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         page=normalize_page(page),
         pagesize=pagesize,
         include_best_cluster_tag=include_best_cluster_tag,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -250,33 +220,24 @@ async def list_address_txs(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get all transactions an address has been involved in"""
-    currency = currency.lower()
-    min_date_parsed = parse_datetime(min_date)
-    max_date_parsed = parse_datetime(max_date)
-
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_address_txs(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         direction=direction,
         min_height=min_height,
         max_height=max_height,
-        min_date=min_date_parsed,
-        max_date=max_date_parsed,
+        min_date=parse_datetime(min_date),
+        max_date=parse_datetime(max_date),
         order=order,
         token_currency=token_currency,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -319,16 +280,12 @@ async def list_address_neighbors(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an address's neighbors in the address graph"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_address_neighbors(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         direction=direction,
         only_ids=parse_comma_separated_strings(only_ids),
@@ -337,9 +294,7 @@ async def list_address_neighbors(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -393,33 +348,24 @@ async def list_address_links(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get outgoing transactions between two addresses"""
-    currency = currency.lower()
-    min_date_parsed = parse_datetime(min_date)
-    max_date_parsed = parse_datetime(max_date)
-
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_address_links(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         neighbor=neighbor,
         min_height=min_height,
         max_height=max_height,
-        min_date=min_date_parsed,
-        max_date=max_date_parsed,
+        min_date=parse_datetime(min_date),
+        max_date=parse_datetime(max_date),
         order=order,
         token_currency=token_currency,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)
 
 
 @router.get(
@@ -453,21 +399,15 @@ async def list_related_addresses(
         description="Number of items returned in a single page",
         examples=[10],
     ),
-    services: ServiceContainer = Depends(get_services),
-    tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
+    ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get related addresses to the input address"""
-    currency = currency.lower()
-    ctx = make_ctx(request, services, tagstore_groups)
-
     result = await service.list_related_addresses(
         ctx,
-        currency=currency,
+        currency=currency.lower(),
         address=address,
         address_relation_type=address_relation_type,
         page=normalize_page(page),
         pagesize=pagesize,
     )
-
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
+    return respond(request, result)

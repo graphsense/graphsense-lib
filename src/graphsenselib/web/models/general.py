@@ -2,33 +2,33 @@
 
 from typing import Literal, Optional
 
-from pydantic import ConfigDict
-
-from graphsenselib.web.models.base import APIModel
+from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.common import LabeledItemRef
-from graphsenselib.web.models.values import Rate
+from graphsenselib.web.models.values import RATE_EXAMPLE, Rate
+
+CURRENCY_STATS_EXAMPLE = {
+    "name": "btc",
+    "no_blocks": 750000,
+    "no_address_relations": 1000000,
+    "no_addresses": 500000,
+    "no_entities": 200000,
+    "no_txs": 800000,
+    "no_labels": 10000,
+    "no_tagged_addresses": 5000,
+    "timestamp": 1625703347,
+}
+
+TOKEN_CONFIG_EXAMPLE = {
+    "ticker": "USDT",
+    "decimals": 6,
+    "peg_currency": "USD",
+}
 
 
 class CurrencyStats(APIModel):
     """Currency statistics model."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "name": "btc",
-                "no_blocks": 750000,
-                "no_address_relations": 1000000,
-                "no_addresses": 500000,
-                "no_entities": 200000,
-                "no_txs": 800000,
-                "no_labels": 10000,
-                "no_tagged_addresses": 5000,
-                "timestamp": 1625703347,
-            }
-        },
-    )
+    model_config = api_model_config(CURRENCY_STATS_EXAMPLE)
 
     name: str
     no_blocks: int
@@ -44,27 +44,11 @@ class CurrencyStats(APIModel):
 class Stats(APIModel):
     """API statistics model."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "currencies": [
-                    {
-                        "name": "btc",
-                        "no_blocks": 750000,
-                        "no_address_relations": 1000000,
-                        "no_addresses": 500000,
-                        "no_entities": 200000,
-                        "no_txs": 800000,
-                        "no_labels": 10000,
-                        "no_tagged_addresses": 5000,
-                        "timestamp": 1625703347,
-                    }
-                ],
-                "version": "1.0.0",
-            }
-        },
+    model_config = api_model_config(
+        {
+            "currencies": [CURRENCY_STATS_EXAMPLE],
+            "version": "1.0.0",
+        }
     )
 
     currencies: list[CurrencyStats]
@@ -75,18 +59,11 @@ class Stats(APIModel):
 class Rates(APIModel):
     """Exchange rates model."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "rates": [
-                    {"code": "eur", "value": 0.1234},
-                    {"code": "usd", "value": 0.2345},
-                ],
-                "height": 47,
-            }
-        },
+    model_config = api_model_config(
+        {
+            "rates": [RATE_EXAMPLE, {"code": "usd", "value": 0.2345}],
+            "height": 47,
+        }
     )
 
     rates: Optional[list[Rate]] = None
@@ -138,17 +115,7 @@ class Actor(APIModel):
 class TokenConfig(APIModel):
     """Token configuration model."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "ticker": "USDT",
-                "decimals": 6,
-                "peg_currency": "USD",
-            }
-        },
-    )
+    model_config = api_model_config(TOKEN_CONFIG_EXAMPLE)
 
     ticker: str
     decimals: int
@@ -159,17 +126,13 @@ class TokenConfig(APIModel):
 class TokenConfigs(APIModel):
     """List of token configurations."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "token_configs": [
-                    {"ticker": "USDT", "decimals": 6, "peg_currency": "USD"},
-                    {"ticker": "WETH", "decimals": 18, "peg_currency": "ETH"},
-                ]
-            }
-        },
+    model_config = api_model_config(
+        {
+            "token_configs": [
+                TOKEN_CONFIG_EXAMPLE,
+                {"ticker": "WETH", "decimals": 18, "peg_currency": "ETH"},
+            ]
+        }
     )
 
     token_configs: list[TokenConfig]

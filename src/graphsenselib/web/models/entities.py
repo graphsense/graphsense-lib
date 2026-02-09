@@ -2,41 +2,35 @@
 
 from typing import Optional, Union
 
-from pydantic import ConfigDict
-
 from graphsenselib.web.models.addresses import Address
-from graphsenselib.web.models.base import APIModel
+from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.tags import AddressTag
 from graphsenselib.web.models.transactions import TX_SUMMARY_EXAMPLE, TxSummary
 from graphsenselib.web.models.values import VALUES_EXAMPLE, Values
 
+ENTITY_EXAMPLE = {
+    "currency": "btc",
+    "entity": 264711,
+    "root_address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+    "balance": VALUES_EXAMPLE,
+    "total_received": VALUES_EXAMPLE,
+    "total_spent": VALUES_EXAMPLE,
+    "first_tx": TX_SUMMARY_EXAMPLE,
+    "last_tx": TX_SUMMARY_EXAMPLE,
+    "in_degree": 100,
+    "out_degree": 50,
+    "no_addresses": 25,
+    "no_incoming_txs": 200,
+    "no_outgoing_txs": 100,
+    "no_address_tags": 3,
+}
+
 
 class Entity(APIModel):
     """Entity model."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "currency": "btc",
-                "entity": 264711,
-                "root_address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
-                "balance": VALUES_EXAMPLE,
-                "total_received": VALUES_EXAMPLE,
-                "total_spent": VALUES_EXAMPLE,
-                "first_tx": TX_SUMMARY_EXAMPLE,
-                "last_tx": TX_SUMMARY_EXAMPLE,
-                "in_degree": 100,
-                "out_degree": 50,
-                "no_addresses": 25,
-                "no_incoming_txs": 200,
-                "no_outgoing_txs": 100,
-                "no_address_tags": 3,
-            }
-        },
-    )
+    model_config = api_model_config(ENTITY_EXAMPLE)
 
     currency: str
     entity: int
@@ -62,32 +56,13 @@ class Entity(APIModel):
 class NeighborEntity(APIModel):
     """Neighbor entity model."""
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "value": VALUES_EXAMPLE,
-                "no_txs": 5,
-                "entity": {
-                    "currency": "btc",
-                    "entity": 264711,
-                    "root_address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
-                    "balance": VALUES_EXAMPLE,
-                    "total_received": VALUES_EXAMPLE,
-                    "total_spent": VALUES_EXAMPLE,
-                    "first_tx": TX_SUMMARY_EXAMPLE,
-                    "last_tx": TX_SUMMARY_EXAMPLE,
-                    "in_degree": 100,
-                    "out_degree": 50,
-                    "no_addresses": 25,
-                    "no_incoming_txs": 200,
-                    "no_outgoing_txs": 100,
-                    "no_address_tags": 3,
-                },
-                "labels": ["internet archive"],
-            }
-        },
+    model_config = api_model_config(
+        {
+            "value": VALUES_EXAMPLE,
+            "no_txs": 5,
+            "entity": ENTITY_EXAMPLE,
+            "labels": ["internet archive"],
+        }
     )
 
     value: Values
