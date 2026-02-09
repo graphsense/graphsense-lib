@@ -589,14 +589,10 @@ def _register_exception_handlers(app: FastAPI):
 def _register_routers(app: FastAPI):
     """Register all API routers on the app.
 
-    Security is applied at the router level for all endpoints except /stats.
-    The general router has mixed security: /stats is public, /search requires api_key.
+    All routers require api_key authentication.
     """
-    # General router has special handling - /stats is public, /search requires auth
-    app.include_router(general.router, tags=["general"])
-
-    # All other routers require api_key authentication
     api_key_dep = [Depends(get_api_key)]
+    app.include_router(general.router, tags=["general"])
     app.include_router(tags.router, tags=["tags"], dependencies=api_key_dep)
     app.include_router(
         addresses.router,

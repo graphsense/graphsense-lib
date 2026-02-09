@@ -22,6 +22,7 @@ router = APIRouter()
     operation_id="get_statistics",
     response_model=Stats,
     response_model_exclude_none=True,
+    dependencies=[Depends(get_api_key)],
 )
 async def get_statistics(
     request: Request,
