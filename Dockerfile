@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 FROM  python:3.11-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 LABEL org.opencontainers.image.title="graphsense-lib"
@@ -40,7 +41,7 @@ RUN apt-get purge -y gcc g++ make cmake && apt-get autoremove -y
 RUN rm -rf /opt/graphsense/
 
 # Inline gunicorn config for REST API
-RUN cat > /opt/gunicorn-conf.py << 'EOF'
+COPY <<EOF /opt/gunicorn-conf.py
 import multiprocessing
 import os
 
