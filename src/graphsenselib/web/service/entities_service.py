@@ -18,13 +18,13 @@ from graphsenselib.web.models import (
 )
 from graphsenselib.web.service.tags_service import parse_page_int_optional
 from graphsenselib.web.translators import (
-    pydantic_address_tag_result_to_openapi,
-    pydantic_address_to_openapi,
-    pydantic_address_txs_to_openapi,
-    pydantic_entity_addresses_to_openapi,
-    pydantic_entity_to_openapi,
-    pydantic_links_to_openapi,
-    pydantic_neighbor_entities_to_openapi,
+    to_api_address,
+    to_api_address_tag_result,
+    to_api_address_txs,
+    to_api_entity,
+    to_api_entity_addresses,
+    to_api_links,
+    to_api_neighbor_entities,
 )
 
 # Mapping from level to SearchResult class
@@ -41,7 +41,6 @@ MAX_DEPTH = 7
 SEARCH_TIMEOUT = 300
 
 
-# Updated functions using new service layer
 async def get_entity(
     request, currency, entity, exclude_best_address_tag=False, include_actors=False
 ):
@@ -52,7 +51,7 @@ async def get_entity(
         currency, entity, exclude_best_address_tag, include_actors, tagstore_groups
     )
 
-    return pydantic_entity_to_openapi(pydantic_result)
+    return to_api_entity(pydantic_result)
 
 
 async def list_entity_addresses(request, currency, entity, page=None, pagesize=None):
@@ -63,7 +62,7 @@ async def list_entity_addresses(request, currency, entity, page=None, pagesize=N
         currency, entity, tagstore_groups, page, pagesize
     )
 
-    return pydantic_entity_addresses_to_openapi(pydantic_result)
+    return to_api_entity_addresses(pydantic_result)
 
 
 async def list_entity_neighbors(
@@ -96,7 +95,7 @@ async def list_entity_neighbors(
         pagesize,
     )
 
-    return pydantic_neighbor_entities_to_openapi(pydantic_result)
+    return to_api_neighbor_entities(pydantic_result)
 
 
 async def list_entity_links(
@@ -129,7 +128,7 @@ async def list_entity_links(
         pagesize,
     )
 
-    return pydantic_links_to_openapi(pydantic_result)
+    return to_api_links(pydantic_result)
 
 
 async def list_address_tags_by_entity(
@@ -144,7 +143,7 @@ async def list_address_tags_by_entity(
         currency, entity, tagstore_groups, page, pagesize
     )
 
-    return pydantic_address_tag_result_to_openapi(pydantic_result)
+    return to_api_address_tag_result(pydantic_result)
 
 
 async def list_entity_txs(
@@ -177,7 +176,7 @@ async def list_entity_txs(
         pagesize,
     )
 
-    return pydantic_address_txs_to_openapi(pydantic_result)
+    return to_api_address_txs(pydantic_result)
 
 
 async def get_address(request, currency, address, include_actors=True):
@@ -188,7 +187,7 @@ async def get_address(request, currency, address, include_actors=True):
         currency, address, tagstore_groups, include_actors
     )
 
-    return pydantic_address_to_openapi(pydantic_result)
+    return to_api_address(pydantic_result)
 
 
 # Search Implementations using the new service layer

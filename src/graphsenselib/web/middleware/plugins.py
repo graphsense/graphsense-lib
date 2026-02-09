@@ -1,9 +1,3 @@
-"""Plugin middleware for FastAPI.
-
-This middleware adapts the existing plugin system (before_request/before_response hooks)
-to work with FastAPI's middleware pattern.
-"""
-
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 

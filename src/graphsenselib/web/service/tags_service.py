@@ -9,20 +9,19 @@ from graphsenselib.web.dependencies import (
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.models import UserTagReportResponse
 from graphsenselib.web.translators import (
-    pydantic_actor_to_openapi,
-    pydantic_address_tag_result_to_openapi,
-    pydantic_concept_to_openapi,
-    pydantic_taxonomy_to_openapi,
+    to_api_actor,
+    to_api_address_tag_result,
+    to_api_concept,
+    to_api_taxonomy,
 )
 
 
-# Updated functions using new service layer
 async def get_actor(request, actor):
     services = get_service_container(request)
 
     pydantic_result = await services.tags_service.get_actor(actor)
 
-    return pydantic_actor_to_openapi(pydantic_result)
+    return to_api_actor(pydantic_result)
 
 
 async def get_actor_tags(request, actor, page=None, pagesize=None):
@@ -35,7 +34,7 @@ async def get_actor_tags(request, actor, page=None, pagesize=None):
         actor, tagstore_groups, page, pagesize
     )
 
-    return pydantic_address_tag_result_to_openapi(pydantic_result)
+    return to_api_address_tag_result(pydantic_result)
 
 
 async def list_address_tags(request, label, page=None, pagesize=None):
@@ -48,7 +47,7 @@ async def list_address_tags(request, label, page=None, pagesize=None):
         label, tagstore_groups, page, pagesize
     )
 
-    return pydantic_address_tag_result_to_openapi(pydantic_result)
+    return to_api_address_tag_result(pydantic_result)
 
 
 async def list_concepts(request, taxonomy):
@@ -56,7 +55,7 @@ async def list_concepts(request, taxonomy):
 
     pydantic_results = await services.tags_service.list_concepts(taxonomy)
 
-    return [pydantic_concept_to_openapi(concept) for concept in pydantic_results]
+    return [to_api_concept(concept) for concept in pydantic_results]
 
 
 async def list_taxonomies(request):
@@ -64,7 +63,7 @@ async def list_taxonomies(request):
 
     pydantic_results = await services.tags_service.list_taxonomies()
 
-    return [pydantic_taxonomy_to_openapi(taxonomy) for taxonomy in pydantic_results]
+    return [to_api_taxonomy(taxonomy) for taxonomy in pydantic_results]
 
 
 async def report_tag(request, body):

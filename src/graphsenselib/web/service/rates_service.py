@@ -1,6 +1,6 @@
 from graphsenselib.web.dependencies import get_service_container
 from graphsenselib.web.models import Rates
-from graphsenselib.web.translators import pydantic_rates_to_openapi
+from graphsenselib.web.translators import to_api_rates
 
 
 async def get_exchange_rates(request, currency, height) -> Rates:
@@ -8,7 +8,7 @@ async def get_exchange_rates(request, currency, height) -> Rates:
 
     pydantic_result = await services.rates_service.get_rates(currency, height)
 
-    return pydantic_rates_to_openapi(pydantic_result)
+    return to_api_rates(pydantic_result)
 
 
 async def get_rates(request, currency, height=None):

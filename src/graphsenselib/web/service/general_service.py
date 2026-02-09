@@ -5,9 +5,9 @@ from graphsenselib.web.dependencies import (
     get_tagstore_access_groups,
 )
 from graphsenselib.web.translators import (
-    pydantic_search_result_by_currency_to_openapi,
-    pydantic_search_result_to_openapi,
-    pydantic_stats_to_openapi,
+    to_api_search_result,
+    to_api_search_result_by_currency,
+    to_api_stats,
 )
 
 
@@ -18,7 +18,7 @@ async def get_statistics(request):
 
     pydantic_result = await services.general_service.get_statistics(version)
 
-    return pydantic_stats_to_openapi(pydantic_result)
+    return to_api_stats(pydantic_result)
 
 
 async def search_by_currency(request, currency, q, limit=10):
@@ -28,7 +28,7 @@ async def search_by_currency(request, currency, q, limit=10):
         currency, q, limit
     )
 
-    return pydantic_search_result_by_currency_to_openapi(pydantic_result)
+    return to_api_search_result_by_currency(pydantic_result)
 
 
 async def search(
@@ -61,4 +61,4 @@ async def search(
         config=search_config,
     )
 
-    return pydantic_search_result_to_openapi(pydantic_result)
+    return to_api_search_result(pydantic_result)

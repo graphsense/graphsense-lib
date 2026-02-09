@@ -1,0 +1,28 @@
+title: GraphSense Private
+creator: GraphSense Core Team
+is_cluster_definer: false
+is_public: false
+confidence: ownership
+description: this is for testing
+category: organization
+currency: BTC
+lastmod: 2019-07-03
+source: https://archive.org/donate/cryptocurrency
+tags:
+- address: addressA
+  label: Internet Archive 2
+  is_cluster_definer: true
+  confidence: web_crawl
+  abuse: scam
+- address: address2818641
+  label: labelY
+  is_cluster_definer: true
+  source: https://source
+- address: addressE
+  label: labelY
+  is_cluster_definer: true
+  source: https://source
+- address: addressY
+  label: isolinks
+  is_cluster_definer: true
+  source: Unspecified

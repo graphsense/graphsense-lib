@@ -1,0 +1,3 @@
+ {"dst_address_id_group": 705, "dst_address_id": 17642138, "src_address_id": 67065, "estimated_value": {"value": 1091, "fiat_values": [0.0, 0.01]}, "no_transactions": 1}
+ {"dst_address_id_group": 705, "dst_address_id": 17642138, "src_address_id": 144534, "estimated_value": {"value": 50000000, "fiat_values": [295.7, 404.02]}, "no_transactions": 1}
+ {"dst_address_id_group": 404, "dst_address_id": 10102718, "src_address_id": 17642138, "estimated_value": {"value": 50000000, "fiat_values": [295.7, 404.02]}, "no_transactions": 1}

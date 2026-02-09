@@ -1,0 +1,92 @@
+title: GraphSense
+creator: GraphSense Core Team
+is_cluster_definer: false
+confidence: ownership
+description: this is for testing
+category: organization
+currency: BTC
+lastmod: 2019-07-03
+source: https://archive.org/donate/cryptocurrency
+tags:
+- address: addressA
+  label: Internet, Archive
+  is_cluster_definer: true
+- address: addressA
+  label: addressTag1
+  confidence: forensic
+- address: addressH
+  label: addressTag2
+- address: a123456
+  label: labelABC
+  category: exchange
+  source: https://source
+  is_cluster_definer: true
+- address: address2818641
+  label: labelX
+  source: https://source
+  is_cluster_definer: true
+- address: abcdefg
+  label: abcdefgLabel
+  source: https://source
+  actor: actorX
+- address: addressE
+  label: labelX
+  source: https://source
+  actor: actorY
+- address: addressX
+  label: isolinks
+  category: exchange
+  source: Unspecified
+  is_cluster_definer: true
+- address: addressY
+  label: cimedy
+  source: Unspecified
+- address: tag_addressA
+  label: x
+  source: Unspecified
+- address: tag_addressB
+  label: y
+  source: Unspecified
+- address: tag_addressC
+  label: x
+  source: Unspecified
+  is_cluster_definer: true
+- address: tag_addressD
+  label: x
+  source: Unspecified
+- address: tag_addressE
+  label: x
+  source: Unspecified
+  is_cluster_definer: true
+- address: tag_addressF
+  label: y
+  source: Unspecified
+  confidence: forensic
+  is_cluster_definer: true
+- address: tag_addressG
+  label: z
+  source: Unspecified
+  confidence: web_crawl
+  is_cluster_definer: true
+- address: tag_addressH
+  label: x
+  source: Unspecified
+- address: tag_addressI
+  label: x
+  source: Unspecified
+- address: tag_addressI
+  label: y
+  source: Unspecified
+- address: tag_addressI
+  label: z
+  source: Unspecified
+- address: addressA
+  label: cimedy
+  category: exchange
+  currency: LTC
+  source: source
+- address: addressB
+  label: coinbase
+  category: exchange
+  currency: LTC
+  source: Team

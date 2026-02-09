@@ -1,5 +1,5 @@
 from graphsenselib.web.dependencies import get_service_container
-from graphsenselib.web.translators import pydantic_currency_stats_to_openapi
+from graphsenselib.web.translators import to_api_currency_stats
 
 
 async def get_currency_statistics(request, currency):
@@ -7,7 +7,7 @@ async def get_currency_statistics(request, currency):
 
     pydantic_result = await services.stats_service.get_currency_statistics(currency)
 
-    return pydantic_currency_stats_to_openapi(pydantic_result)
+    return to_api_currency_stats(pydantic_result)
 
 
 async def get_no_blocks(request, currency):

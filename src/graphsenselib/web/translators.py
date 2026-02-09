@@ -143,6 +143,11 @@ def to_api_values(pydantic_values: PydanticValues) -> Values:
     return Values.model_validate(pydantic_values.model_dump())
 
 
+def to_api_tx_ref(tx_ref) -> dict:
+    """Convert service TxRef to dict."""
+    return tx_ref.model_dump()
+
+
 def to_api_tx_summary(data: dict) -> TxSummary:
     """Convert dict to API TxSummary."""
     return TxSummary.model_validate(data)
@@ -571,50 +576,3 @@ def pydantic_to_openapi(pydantic_obj: Any) -> Any:
         return converters[type_name](pydantic_obj)
 
     raise NotImplementedError(f"No converter found for type: {type_name}")
-
-
-# Backward compatibility aliases (old function names)
-pydantic_values_to_openapi = to_api_values
-pydantic_address_to_openapi = to_api_address
-pydantic_entity_to_openapi = to_api_entity
-pydantic_address_tag_to_openapi = to_api_address_tag
-pydantic_address_tag_result_to_openapi = to_api_address_tag_result
-pydantic_neighbor_address_to_openapi = to_api_neighbor_address
-pydantic_neighbor_addresses_to_openapi = to_api_neighbor_addresses
-pydantic_neighbor_entity_to_openapi = to_api_neighbor_entity
-pydantic_neighbor_entities_to_openapi = to_api_neighbor_entities
-pydantic_entity_addresses_to_openapi = to_api_entity_addresses
-pydantic_tx_utxo_to_openapi = to_api_tx_utxo
-pydantic_tx_account_to_openapi = to_api_tx_account
-pydantic_tx_to_openapi = to_api_tx
-pydantic_txs_to_openapi = to_api_txs
-pydantic_address_tx_utxo_to_openapi = to_api_address_tx_utxo
-pydantic_address_txs_to_openapi = to_api_address_txs
-pydantic_link_utxo_to_openapi = to_api_link_utxo
-pydantic_links_to_openapi = to_api_links
-pydantic_block_to_openapi = to_api_block
-pydantic_block_at_date_to_openapi = to_api_block_at_date
-pydantic_stats_to_openapi = to_api_stats
-pydantic_currency_stats_to_openapi = to_api_currency_stats
-pydantic_rates_to_openapi = to_api_rates
-pydantic_taxonomy_to_openapi = to_api_taxonomy
-pydantic_concept_to_openapi = to_api_concept
-pydantic_actor_to_openapi = to_api_actor
-pydantic_actor_context_to_openapi = to_api_actor_context
-pydantic_tag_cloud_entry_to_openapi = to_api_tag_cloud_entry
-pydantic_label_summary_to_openapi = to_api_label_summary
-pydantic_tag_summary_to_openapi = to_api_tag_summary
-pydantic_search_result_to_openapi = to_api_search_result
-pydantic_search_result_by_currency_to_openapi = to_api_search_result_by_currency
-pydantic_token_configs_to_openapi = to_api_token_configs
-pydantic_external_conversion_to_openapi = to_api_external_conversion
-pydantic_cross_chain_pubkey_related_address_to_openapi = (
-    to_api_cross_chain_pubkey_related_address
-)
-pydantic_cross_chain_pubkey_related_addresses_to_openapi = (
-    to_api_cross_chain_pubkey_related_addresses
-)
-pydantic_tx_ref_to_openapi = lambda x: x.model_dump()  # noqa: E731
-pydantic_tx_summary_to_openapi = lambda x: x.model_dump()  # noqa: E731
-pydantic_labeled_item_ref_to_openapi = lambda x: x.model_dump()  # noqa: E731
-pydantic_tx_value_to_openapi = to_api_tx_value

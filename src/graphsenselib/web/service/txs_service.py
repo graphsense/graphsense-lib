@@ -3,12 +3,12 @@ from typing import Optional
 from graphsenselib.web.dependencies import get_service_container
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
-    pydantic_external_conversion_to_openapi,
     pydantic_to_openapi,
-    pydantic_tx_account_to_openapi,
-    pydantic_tx_ref_to_openapi,
-    pydantic_tx_to_openapi,
-    pydantic_tx_value_to_openapi,
+    to_api_external_conversion,
+    to_api_tx,
+    to_api_tx_account,
+    to_api_tx_ref,
+    to_api_tx_value,
 )
 
 
@@ -31,7 +31,7 @@ async def get_tx(
         include_nonstandard_io,
         include_io_index,
     )
-    return pydantic_tx_to_openapi(result)
+    return to_api_tx(result)
 
 
 async def get_tx_io(
@@ -41,13 +41,13 @@ async def get_tx_io(
     result = await services.txs_service.get_tx_io(
         currency, tx_hash, io, include_nonstandard_io, include_io_index
     )
-    return [pydantic_tx_value_to_openapi(tx_value) for tx_value in result or []]
+    return [to_api_tx_value(tx_value) for tx_value in result or []]
 
 
 async def list_token_txs(request, currency, tx_hash, token_tx_id=None):
     services = get_service_container(request)
     results = await services.txs_service.list_token_txs(currency, tx_hash, token_tx_id)
-    return [pydantic_tx_account_to_openapi(tx) for tx in results]
+    return [to_api_tx_account(tx) for tx in results]
 
 
 async def get_spent_in_txs(
@@ -55,7 +55,7 @@ async def get_spent_in_txs(
 ):
     services = get_service_container(request)
     results = await services.txs_service.get_spent_in_txs(currency, tx_hash, io_index)
-    return [pydantic_tx_ref_to_openapi(tx_ref) for tx_ref in results]
+    return [to_api_tx_ref(tx_ref) for tx_ref in results]
 
 
 async def get_spending_txs(
@@ -63,7 +63,7 @@ async def get_spending_txs(
 ):
     services = get_service_container(request)
     results = await services.txs_service.get_spending_txs(currency, tx_hash, io_index)
-    return [pydantic_tx_ref_to_openapi(tx_ref) for tx_ref in results]
+    return [to_api_tx_ref(tx_ref) for tx_ref in results]
 
 
 async def list_matching_txs(request, currency, expression):
@@ -77,7 +77,7 @@ async def get_tx_conversions(request, currency, tx_hash):
     result = await services.txs_service.get_conversions(
         currency, tx_hash, included_bridges=included_bridges
     )
-    return [pydantic_external_conversion_to_openapi(conv) for conv in result]
+    return [to_api_external_conversion(conv) for conv in result]
 
 
 async def list_tx_flows(

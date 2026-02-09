@@ -14,8 +14,6 @@ from graphsenselib.web.translators import (
     pydantic_to_openapi,
 )
 
-# Updated functions using new service layer
-
 
 async def list_related_addresses(
     request,
