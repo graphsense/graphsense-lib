@@ -13,10 +13,10 @@ from graphsenselib.web.models import (
     TxValue,
 )
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
+    make_ctx,
     normalize_page,
     to_json_response,
 )
@@ -48,10 +48,10 @@ async def list_token_txs(
 ):
     """Returns all token transactions in a given transaction"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_token_txs(
-        adapted_request,
+        ctx,
         currency=currency,
         tx_hash=tx_hash,
     )
@@ -94,10 +94,10 @@ async def get_tx(
 ):
     """Get a transaction by its hash"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_tx(
-        adapted_request,
+        ctx,
         currency=currency,
         tx_hash=tx_hash,
         token_tx_id=token_tx_id,
@@ -135,10 +135,10 @@ async def get_spent_in(
 ):
     """Get transactions that spent outputs from this transaction"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_spent_in_txs(
-        adapted_request,
+        ctx,
         currency=currency,
         tx_hash=tx_hash,
         io_index=io_index,
@@ -173,10 +173,10 @@ async def get_spending(
 ):
     """Get transactions that this transaction is spending from"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_spending_txs(
-        adapted_request,
+        ctx,
         currency=currency,
         tx_hash=tx_hash,
         io_index=io_index,
@@ -208,10 +208,10 @@ async def get_tx_conversions(
 ):
     """Get DeFi conversions for a transaction"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_tx_conversions(
-        adapted_request,
+        ctx,
         currency=currency,
         tx_hash=tx_hash,
     )
@@ -258,10 +258,10 @@ async def list_tx_flows(
 ):
     """Get asset flows within a transaction"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_tx_flows(
-        adapted_request,
+        ctx,
         currency=currency,
         tx_hash=tx_hash,
         strip_zero_value_txs=strip_zero_value_txs or False,
@@ -310,10 +310,10 @@ async def get_tx_io(
 ):
     """Get transaction inputs or outputs"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_tx_io(
-        adapted_request,
+        ctx,
         currency=currency,
         tx_hash=tx_hash,
         io=io,

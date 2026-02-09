@@ -14,12 +14,12 @@ from graphsenselib.web.models import (
     UserTagReportResponse,
 )
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
     get_show_private_tags,
     get_tagstore_access_groups,
     get_username,
+    make_ctx,
     normalize_page,
     to_json_response,
 )
@@ -62,12 +62,10 @@ async def list_address_tags(
     show_private: bool = Depends(get_show_private_tags),
 ):
     """Get address tags by label"""
-    adapted_request = RequestAdapter(
-        request, services, tagstore_groups, show_private_tags=show_private
-    )
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_address_tags(
-        adapted_request,
+        ctx,
         label=label,
         page=normalize_page(page),
         pagesize=pagesize,
@@ -92,12 +90,10 @@ async def get_actor(
     show_private: bool = Depends(get_show_private_tags),
 ):
     """Get an actor by ID"""
-    adapted_request = RequestAdapter(
-        request, services, tagstore_groups, show_private_tags=show_private
-    )
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_actor(
-        adapted_request,
+        ctx,
         actor=actor,
     )
 
@@ -129,12 +125,10 @@ async def get_actor_tags(
     show_private: bool = Depends(get_show_private_tags),
 ):
     """Get tags associated with an actor"""
-    adapted_request = RequestAdapter(
-        request, services, tagstore_groups, show_private_tags=show_private
-    )
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_actor_tags(
-        adapted_request,
+        ctx,
         actor=actor,
         page=normalize_page(page),
         pagesize=pagesize,
@@ -158,11 +152,9 @@ async def list_taxonomies(
     show_private: bool = Depends(get_show_private_tags),
 ):
     """List all taxonomies"""
-    adapted_request = RequestAdapter(
-        request, services, tagstore_groups, show_private_tags=show_private
-    )
+    ctx = make_ctx(request, services, tagstore_groups)
 
-    result = await service.list_taxonomies(adapted_request)
+    result = await service.list_taxonomies(ctx)
 
     apply_plugin_hooks(request, result)
     return to_json_response(result)
@@ -183,12 +175,10 @@ async def list_concepts(
     show_private: bool = Depends(get_show_private_tags),
 ):
     """List concepts for a taxonomy"""
-    adapted_request = RequestAdapter(
-        request, services, tagstore_groups, show_private_tags=show_private
-    )
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_concepts(
-        adapted_request,
+        ctx,
         taxonomy=taxonomy,
     )
 
@@ -212,16 +202,10 @@ async def report_tag(
     username: Optional[str] = Depends(get_username),
 ):
     """Report a new tag"""
-    adapted_request = RequestAdapter(
-        request,
-        services,
-        tagstore_groups,
-        show_private_tags=show_private,
-        username=username,
-    )
+    ctx = make_ctx(request, services, tagstore_groups, username=username)
 
     result = await service.report_tag(
-        adapted_request,
+        ctx,
         body=body,
     )
 

@@ -16,13 +16,14 @@ from graphsenselib.web.models import (
     TagSummary,
 )
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
+    make_ctx,
     normalize_page,
     parse_comma_separated_strings,
     parse_datetime,
+    should_obfuscate_private_tags,
     to_json_response,
 )
 import graphsenselib.web.service.addresses_service as service
@@ -55,10 +56,10 @@ async def get_address(
 ):
     """Get an address"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_address(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         include_actors=include_actors,
@@ -93,10 +94,10 @@ async def get_address_entity(
 ):
     """Get the entity of an address"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_address_entity(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         include_actors=include_actors,
@@ -132,10 +133,15 @@ async def get_tag_summary_by_address(
 ):
     """Get attribution tag summary for a given address"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(
+        request,
+        services,
+        tagstore_groups,
+        obfuscate_private_tags=should_obfuscate_private_tags(request),
+    )
 
     result = await service.get_tag_summary_by_address(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         include_best_cluster_tag=include_best_cluster_tag,
@@ -180,10 +186,10 @@ async def list_tags_by_address(
 ):
     """Get attribution tags for a given address"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_tags_by_address(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         page=normalize_page(page),
@@ -252,10 +258,10 @@ async def list_address_txs(
     min_date_parsed = parse_datetime(min_date)
     max_date_parsed = parse_datetime(max_date)
 
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_address_txs(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         direction=direction,
@@ -318,10 +324,10 @@ async def list_address_neighbors(
 ):
     """Get an address's neighbors in the address graph"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_address_neighbors(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         direction=direction,
@@ -395,10 +401,10 @@ async def list_address_links(
     min_date_parsed = parse_datetime(min_date)
     max_date_parsed = parse_datetime(max_date)
 
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_address_links(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         neighbor=neighbor,
@@ -452,10 +458,10 @@ async def list_related_addresses(
 ):
     """Get related addresses to the input address"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_related_addresses(
-        adapted_request,
+        ctx,
         currency=currency,
         address=address,
         address_relation_type=address_relation_type,

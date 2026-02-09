@@ -10,61 +10,23 @@ from fastapi import Depends, Header, Request
 
 from graphsenselib.web.config import GSRestConfig
 from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.service import ServiceContext
 
 logger = logging.getLogger(__name__)
 
 
-class RequestAdapter:
-    """Adapter to make FastAPI Request compatible with existing service layer.
-
-    This adapter provides a unified interface that the service layer expects,
-    bridging FastAPI's Request object with the dict-style access patterns
-    used by the service layer.
-    """
-
-    def __init__(
-        self,
-        fastapi_request: Request,
-        services: ServiceContainer,
-        tagstore_groups: list[str],
-        show_private_tags: bool = None,
-        username: Optional[str] = None,
-    ):
-        self._fastapi_request = fastapi_request
-        self._services = services
-        self._tagstore_groups = tagstore_groups
-        self._username = username
-        self._cache = {}
-        self.logger = logger
-
-        # Auto-detect show_private_tags from tagstore_groups if not explicitly set
-        if show_private_tags is None:
-            self._show_private_tags = "private" in tagstore_groups
-        else:
-            self._show_private_tags = show_private_tags
-
-    @property
-    def app(self):
-        return self
-
-    def __getitem__(self, key):
-        if key == "services":
-            return self._services
-        elif key == "config":
-            return self._fastapi_request.app.state.config
-        elif key == "request_config":
-            return {"show_private_tags": self._show_private_tags}
-        elif key == "version":
-            return self._fastapi_request.app.version
-        raise KeyError(key)
-
-    @property
-    def headers(self):
-        return self._fastapi_request.headers
-
-    @property
-    def state(self):
-        return self._fastapi_request.state
+def make_ctx(
+    request: Request,
+    services: ServiceContainer,
+    tagstore_groups: list[str],
+    **kwargs,
+) -> ServiceContext:
+    return ServiceContext(
+        services=services,
+        tagstore_groups=tagstore_groups,
+        config=request.app.state.config,
+        **kwargs,
+    )
 
 
 def apply_plugin_hooks(request: Request, result):
@@ -89,13 +51,6 @@ def get_config(request: Request) -> GSRestConfig:
 def get_services(request: Request) -> ServiceContainer:
     """Get service container"""
     return request.app.state.services
-
-
-def get_request_cache(request: Request) -> dict:
-    """Get or create request-scoped cache"""
-    if not hasattr(request.state, "cache"):
-        request.state.cache = {}
-    return request.state.cache
 
 
 def get_username(

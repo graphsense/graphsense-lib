@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, Query, Request
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.models import SearchResult, Stats
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
     get_show_private_tags,
     get_tagstore_access_groups,
+    make_ctx,
     to_json_response,
 )
 from graphsenselib.web.security import get_api_key
@@ -34,12 +34,9 @@ async def get_statistics(
     show_private: bool = Depends(get_show_private_tags),
 ):
     """Get statistics of supported currencies"""
-    # Create adapter for service layer
-    adapted_request = RequestAdapter(
-        request, services, tagstore_groups, show_private_tags=show_private
-    )
+    ctx = make_ctx(request, services, tagstore_groups)
 
-    result = await service.get_statistics(adapted_request)
+    result = await service.get_statistics(ctx, version=request.app.version)
     apply_plugin_hooks(request, result)
     return to_json_response(result)
 
@@ -92,13 +89,10 @@ async def search(
     if currency is not None:
         currency = currency.lower()
 
-    # Create adapter for service layer
-    adapted_request = RequestAdapter(
-        request, services, tagstore_groups, show_private_tags=show_private
-    )
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.search(
-        adapted_request,
+        ctx,
         q=q,
         currency=currency,
         limit=limit,

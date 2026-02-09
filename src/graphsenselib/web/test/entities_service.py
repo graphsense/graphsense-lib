@@ -1,7 +1,8 @@
 import copy
 
 import graphsenselib.web.test.tags_service as ts
-from graphsenselib.web.service.rates_service import list_rates
+from graphsenselib.web.service import ServiceContext
+from graphsenselib.web.service.rates_service import list_rates as _list_rates
 from graphsenselib.web.test.addresses_service import (
     addressD,
     addressE,
@@ -708,7 +709,12 @@ async def list_entity_txs(test_case):
     """
     path = "/{currency}/entities/{entity}/txs"
     path_with_pagesize = path + "?pagesize={pagesize}&page={page}"
-    rates = await list_rates(test_case, currency="btc", heights=[2])
+    ctx = ServiceContext(
+        services=test_case.app_state.services,
+        tagstore_groups=["public"],
+        config=test_case.app_state.config,
+    )
+    rates = await _list_rates(ctx, currency="btc", heights=[2])
     txs = [
         AddressTxUtxo(
             tx_hash="123456",

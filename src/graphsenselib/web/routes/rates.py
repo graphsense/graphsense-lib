@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, Path, Request
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.models import Rates
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
+    make_ctx,
     to_json_response,
 )
 import graphsenselib.web.service.rates_service as service
@@ -34,10 +34,10 @@ async def get_exchange_rates(
 ):
     """Get exchange rates for a given block height"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_exchange_rates(
-        adapted_request,
+        ctx,
         currency=currency,
         height=height,
     )

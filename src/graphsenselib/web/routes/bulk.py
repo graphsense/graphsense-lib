@@ -18,9 +18,9 @@ from graphsenselib.errors import BadUserInputException, NotFoundException
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.models import AddressTag, Entity, Values
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     get_services,
     get_tagstore_access_groups,
+    make_ctx,
 )
 
 router = APIRouter()
@@ -86,7 +86,7 @@ def flatten(item, name="", flat_dict=None, format=None):
 
 
 async def wrap(
-    request,
+    ctx,
     operation,
     currency,
     params,
@@ -100,7 +100,7 @@ async def wrap(
         params[k] = v
     try:
         async with max_concurrency_sem_context:
-            result = await operation(request, currency, **params)
+            result = await operation(ctx, currency, **params)
     except NotFoundException:
         result = {error_field: "not found"}
     except BadUserInputException as e:
@@ -144,7 +144,7 @@ async def wrap(
     if num_pages > 0 and page_state:
         params["page"] = page_state
         more = await wrap(
-            request,
+            ctx,
             operation,
             currency,
             params,
@@ -158,7 +158,7 @@ async def wrap(
     return flat
 
 
-def stack(request, currency, operation, body, num_pages, format):
+def stack(ctx, currency, operation, body, num_pages, format):
     operation_name = operation
     operation_func = None
     for api in apis:
@@ -179,14 +179,14 @@ def stack(request, currency, operation, body, num_pages, format):
     operation = operation_func
     aws = []
 
-    max_concurrency_bulk_operation = request.app["config"].get_max_concurrency_bulk(
+    max_concurrency_bulk_operation = ctx.config.get_max_concurrency_bulk(
         operation_name,
         default_concurrency_by_operation.get(operation_name, 10),
     )
 
     params = {}
     keys = {}
-    check = {"request": None, "currency": currency}
+    check = {"ctx": None, "currency": currency}
     ln = 0
     for attr, a in body.items():
         if a is None:
@@ -211,7 +211,7 @@ def stack(request, currency, operation, body, num_pages, format):
         for k, v in keys.items():
             the_keys[k] = v[i]
         aw = wrap(
-            request, operation, currency, params, the_keys, num_pages, format, context
+            ctx, operation, currency, params, the_keys, num_pages, format, context
         )
 
         aws.append(aw)
@@ -335,10 +335,10 @@ async def bulk_csv(
 ):
     """Get data as CSV in bulk"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     try:
-        the_stack = stack(adapted_request, currency, operation, body, num_pages, "csv")
+        the_stack = stack(ctx, currency, operation, body, num_pages, "csv")
     except TypeError as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         text = (
@@ -378,10 +378,10 @@ async def bulk_json(
 ):
     """Get data as JSON in bulk"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     try:
-        the_stack = stack(adapted_request, currency, operation, body, num_pages, "json")
+        the_stack = stack(ctx, currency, operation, body, num_pages, "json")
     except TypeError as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         text = (

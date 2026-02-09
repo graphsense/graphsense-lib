@@ -3,10 +3,6 @@ import time
 
 from graphsenselib.errors import BadUserInputException
 
-from graphsenselib.web.dependencies import (
-    get_service_container,
-    get_tagstore_access_groups,
-)
 from graphsenselib.web.models import (
     SearchResultLeaf,
     SearchResultLevel1,
@@ -42,31 +38,25 @@ SEARCH_TIMEOUT = 300
 
 
 async def get_entity(
-    request, currency, entity, exclude_best_address_tag=False, include_actors=False
+    ctx, currency, entity, exclude_best_address_tag=False, include_actors=False
 ):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
-    pydantic_result = await services.entities_service.get_entity(
-        currency, entity, exclude_best_address_tag, include_actors, tagstore_groups
+    pydantic_result = await ctx.services.entities_service.get_entity(
+        currency, entity, exclude_best_address_tag, include_actors, ctx.tagstore_groups
     )
 
     return to_api_entity(pydantic_result)
 
 
-async def list_entity_addresses(request, currency, entity, page=None, pagesize=None):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
-    pydantic_result = await services.entities_service.list_entity_addresses(
-        currency, entity, tagstore_groups, page, pagesize
+async def list_entity_addresses(ctx, currency, entity, page=None, pagesize=None):
+    pydantic_result = await ctx.services.entities_service.list_entity_addresses(
+        currency, entity, ctx.tagstore_groups, page, pagesize
     )
 
     return to_api_entity_addresses(pydantic_result)
 
 
 async def list_entity_neighbors(
-    request,
+    ctx,
     currency,
     entity,
     direction,
@@ -78,14 +68,11 @@ async def list_entity_neighbors(
     exclude_best_address_tag=False,
     include_actors=False,
 ):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
-    pydantic_result = await services.entities_service.list_entity_neighbors(
+    pydantic_result = await ctx.services.entities_service.list_entity_neighbors(
         currency,
         entity,
         direction,
-        tagstore_groups,
+        ctx.tagstore_groups,
         only_ids,
         include_labels,
         include_actors,
@@ -99,7 +86,7 @@ async def list_entity_neighbors(
 
 
 async def list_entity_links(
-    request,
+    ctx,
     currency,
     entity,
     neighbor,
@@ -112,9 +99,7 @@ async def list_entity_links(
     page=None,
     pagesize=None,
 ):
-    services = get_service_container(request)
-
-    pydantic_result = await services.entities_service.list_entity_links(
+    pydantic_result = await ctx.services.entities_service.list_entity_links(
         currency,
         entity,
         neighbor,
@@ -131,23 +116,18 @@ async def list_entity_links(
     return to_api_links(pydantic_result)
 
 
-async def list_address_tags_by_entity(
-    request, currency, entity, page=None, pagesize=None
-):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
+async def list_address_tags_by_entity(ctx, currency, entity, page=None, pagesize=None):
     page = parse_page_int_optional(page)
 
-    pydantic_result = await services.entities_service.list_address_tags_by_entity(
-        currency, entity, tagstore_groups, page, pagesize
+    pydantic_result = await ctx.services.entities_service.list_address_tags_by_entity(
+        currency, entity, ctx.tagstore_groups, page, pagesize
     )
 
     return to_api_address_tag_result(pydantic_result)
 
 
 async def list_entity_txs(
-    request,
+    ctx,
     currency,
     entity,
     min_height=None,
@@ -160,9 +140,7 @@ async def list_entity_txs(
     page=None,
     pagesize=None,
 ):
-    services = get_service_container(request)
-
-    pydantic_result = await services.entities_service.list_entity_txs(
+    pydantic_result = await ctx.services.entities_service.list_entity_txs(
         currency,
         entity,
         min_height,
@@ -179,12 +157,9 @@ async def list_entity_txs(
     return to_api_address_txs(pydantic_result)
 
 
-async def get_address(request, currency, address, include_actors=True):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
-    pydantic_result = await services.addresses_service.get_address(
-        currency, address, tagstore_groups, include_actors
+async def get_address(ctx, currency, address, include_actors=True):
+    pydantic_result = await ctx.services.addresses_service.get_address(
+        currency, address, ctx.tagstore_groups, include_actors
     )
 
     return to_api_address(pydantic_result)
@@ -192,7 +167,7 @@ async def get_address(request, currency, address, include_actors=True):
 
 # Search Implementations using the new service layer
 async def search_entity_neighbors(
-    request,
+    ctx,
     currency,
     entity,
     direction,
@@ -252,7 +227,7 @@ async def search_entity_neighbors(
             )
 
     elif "addresses" in key:
-        aws = [get_address(request, currency, address) for address in value]
+        aws = [get_address(ctx, currency, address) for address in value]
         addresses = await asyncio.gather(*aws)
         addresses_list = [
             {"address": a.address, "entity": a.entity}
@@ -262,7 +237,7 @@ async def search_entity_neighbors(
 
         targets = [id["entity"] for id in addresses_list]
 
-        request.app.logger.debug(f"addresses_list {addresses_list}")
+        ctx.logger.debug(f"addresses_list {addresses_list}")
 
         def match_neighbor(neighbor):
             matching_addresses = [
@@ -270,7 +245,7 @@ async def search_entity_neighbors(
                 for id in addresses_list
                 if id["entity"] == neighbor.entity.entity
             ]
-            request.app.logger.debug(f"matching addresses {matching_addresses}")
+            ctx.logger.debug(f"matching addresses {matching_addresses}")
             return len(matching_addresses) > 0
 
     elif "entities" in key:
@@ -282,7 +257,7 @@ async def search_entity_neighbors(
     async def list_neighbors(entity):
         pagesize = max(breadth, len(targets)) if targets else breadth
         result = await list_entity_neighbors(
-            request,
+            ctx,
             currency,
             entity,
             direction,
@@ -292,7 +267,7 @@ async def search_entity_neighbors(
         )
         if targets and not result.neighbors:
             result = await list_entity_neighbors(
-                request,
+                ctx,
                 currency,
                 entity,
                 direction,
@@ -307,7 +282,7 @@ async def search_entity_neighbors(
         return neighbor.entity.entity
 
     result = await bfs(
-        request,
+        ctx,
         entity,
         key_accessor,
         list_neighbors,
@@ -319,9 +294,7 @@ async def search_entity_neighbors(
 
     async def resolve(neighbor):
         if not with_tag:
-            neighbor.entity = await get_entity(
-                request, currency, neighbor.entity.entity
-            )
+            neighbor.entity = await get_entity(ctx, currency, neighbor.entity.entity)
         return neighbor
 
     async def resolve_path(path):
@@ -351,7 +324,7 @@ async def search_entity_neighbors(
 
 
 async def bfs(
-    request,
+    ctx,
     node,
     key_accessor,
     list_neighbors,
@@ -376,9 +349,9 @@ async def bfs(
 
     start_time = time.time()
 
-    request.app.logger.debug(f"start_time {start_time}")
+    ctx.logger.debug(f"start_time {start_time}")
 
-    request.app.logger.debug(f"seed node {node}")
+    ctx.logger.debug(f"seed node {node}")
 
     pop = 100
 
@@ -398,7 +371,7 @@ async def bfs(
 
         run_time = time.time() - start_time
 
-        request.app.logger.debug(
+        ctx.logger.debug(
             f"No requests: {no_requests}, "
             + f"Queue size: {len(queue)}, "
             + f"path length: {len(paths[0])}, "
@@ -422,23 +395,23 @@ async def bfs(
 
                 # found path
                 if match_neighbor(neighbor):
-                    request.app.logger.debug(f"MATCH {id}")
+                    ctx.logger.debug(f"MATCH {id}")
                     matching_paths.append(new_path)
                     continue
 
                 # stop if max depth is reached
                 if len(new_path) == max_depth:
-                    request.app.logger.debug("STOP | max depth")
+                    ctx.logger.debug("STOP | max depth")
                     continue
 
                 # stop if stop criteria fulfilled
                 if stop_neighbor(neighbor):
-                    request.app.logger.debug(f"STOP {id}")
+                    ctx.logger.debug(f"STOP {id}")
                     continue
 
                 # stop if node was already visited
                 if id in visited:
-                    request.app.logger.debug(f"ALREADY VISITED {id}")
+                    ctx.logger.debug(f"ALREADY VISITED {id}")
                     continue
 
                 if skip_visited:
@@ -451,7 +424,7 @@ async def bfs(
 
 
 async def recursive_search(
-    request,
+    ctx,
     currency,
     entity,
     params,
@@ -482,7 +455,7 @@ async def recursive_search(
     async def list_neighbors(entity, only_ids=None):
         first = (
             await list_entity_neighbors(
-                request,
+                ctx,
                 currency,
                 entity,
                 direction,
@@ -563,7 +536,7 @@ async def recursive_search(
             and neighbor.entity.no_addresses <= skip_num_addresses
         ):
             subpaths = await recursive_search(
-                request,
+                ctx,
                 currency,
                 int(entity),
                 params,
@@ -595,7 +568,7 @@ async def recursive_search(
         obj = levelClass(neighbor=result["neighbor"], matching_addresses=[])
         if result["subpaths"] is True:
             aws = [
-                get_address(request, currency, address)
+                get_address(ctx, currency, address)
                 for address in result["matching_addresses"]
             ]
             addresses = await asyncio.gather(*aws)

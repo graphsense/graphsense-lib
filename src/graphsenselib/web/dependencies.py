@@ -16,10 +16,6 @@ from graphsenselib.db.asynchronous.services.txs_service import TxsService
 from graphsenselib.tagstore.db import TagstoreDbAsync
 from graphsenselib.tagstore.db.queries import TagPublic
 
-from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
-    GROUPS_HEADER_NAME,
-    OBFUSCATION_MARKER_GROUP,
-)
 from graphsenselib.web.config import GSRestConfig
 
 
@@ -199,42 +195,3 @@ class ServiceContainer:
     @property
     def entities_service(self) -> EntitiesService:
         return self._entities_service
-
-
-def get_service_container(request) -> ServiceContainer:
-    """Extract service container from request"""
-    return request.app["services"]
-
-
-def get_request_cache(request):
-    if not hasattr(request, "_cache"):
-        request._cache = {}
-    return request._cache
-
-
-def get_user_tags_acl_group(request) -> str:
-    return request.app["config"].user_tag_reporting_acl_group
-
-
-def get_tagstore_access_groups(request):
-    return (
-        ["public"]
-        if not request.app["request_config"]["show_private_tags"]
-        else ["public", "private"]
-    ) + [get_user_tags_acl_group(request)]
-
-
-def get_username(request) -> Optional[str]:
-    """Extract username from request, if available"""
-    return request.headers.get("X-Consumer-Username", None)
-
-
-def should_obfuscate_private_tags(request) -> bool:
-    # Check header modifications from plugin middleware first
-    state = getattr(request, "state", None)
-    if state is not None:
-        header_mods = getattr(state, "header_modifications", {})
-        if header_mods.get(GROUPS_HEADER_NAME) == OBFUSCATION_MARKER_GROUP:
-            return True
-    # Fall back to checking actual headers
-    return request.headers.get(GROUPS_HEADER_NAME, "") == OBFUSCATION_MARKER_GROUP

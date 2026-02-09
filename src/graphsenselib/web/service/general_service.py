@@ -1,9 +1,5 @@
 from graphsenselib.db.asynchronous.services.models import SearchRequestConfig
 
-from graphsenselib.web.dependencies import (
-    get_service_container,
-    get_tagstore_access_groups,
-)
 from graphsenselib.web.translators import (
     to_api_search_result,
     to_api_search_result_by_currency,
@@ -11,20 +7,15 @@ from graphsenselib.web.translators import (
 )
 
 
-async def get_statistics(request):
+async def get_statistics(ctx, version=None):
     """Returns summary statistics on all available currencies"""
-    services = get_service_container(request)
-    version = request.app["version"]
-
-    pydantic_result = await services.general_service.get_statistics(version)
+    pydantic_result = await ctx.services.general_service.get_statistics(version)
 
     return to_api_stats(pydantic_result)
 
 
-async def search_by_currency(request, currency, q, limit=10):
-    services = get_service_container(request)
-
-    pydantic_result = await services.general_service.search_by_currency(
+async def search_by_currency(ctx, currency, q, limit=10):
+    pydantic_result = await ctx.services.general_service.search_by_currency(
         currency, q, limit
     )
 
@@ -32,7 +23,7 @@ async def search_by_currency(request, currency, q, limit=10):
 
 
 async def search(
-    request,
+    ctx,
     q,
     currency=None,
     limit=10,
@@ -42,9 +33,6 @@ async def search(
     include_txs=True,
     include_addresses=True,
 ):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
     search_config = SearchRequestConfig(
         include_sub_tx_identifiers=include_sub_tx_identifiers,
         include_labels=include_labels,
@@ -53,9 +41,9 @@ async def search(
         include_addresses=include_addresses,
     )
 
-    pydantic_result = await services.general_service.search(
+    pydantic_result = await ctx.services.general_service.search(
         q,
-        tagstore_groups,
+        ctx.tagstore_groups,
         currency,
         limit,
         config=search_config,

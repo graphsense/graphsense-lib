@@ -3,12 +3,6 @@ from typing import Optional
 from graphsenselib.errors import BadUserInputException
 from graphsenselib.tagstore.algorithms.obfuscate import obfuscate_tag_if_not_public
 
-from graphsenselib.web.dependencies import (
-    get_request_cache,
-    get_service_container,
-    get_tagstore_access_groups,
-    should_obfuscate_private_tags,
-)
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
     pydantic_to_openapi,
@@ -16,22 +10,20 @@ from graphsenselib.web.translators import (
 
 
 async def list_related_addresses(
-    request,
+    ctx,
     currency: str,
     address: str,
     address_relation_type: str,
     page: Optional[int] = None,
     pagesize: Optional[int] = None,
 ):
-    services = get_service_container(request)
-
     page = parse_page_int_optional(page)
 
     if address_relation_type not in ["pubkey"]:
         raise BadUserInputException("Invalid address_relation_type. Must be 'pubkey'")
 
     pydantic_result = (
-        await services.addresses_service.get_cross_chain_pubkey_related_addresses(
+        await ctx.services.addresses_service.get_cross_chain_pubkey_related_addresses(
             address, network=currency, page=page, pagesize=pagesize
         )
     )
@@ -40,57 +32,46 @@ async def list_related_addresses(
 
 
 async def get_tag_summary_by_address(
-    request, currency, address, include_best_cluster_tag=False
+    ctx, currency, address, include_best_cluster_tag=False
 ):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-    config = request.app["config"]
-    include_pubkey_derived_tags = config.include_pubkey_derived_tags
+    include_pubkey_derived_tags = ctx.config.include_pubkey_derived_tags
     tag_summary_only_propagate_high_confidence_actors = (
-        config.tag_summary_only_propagate_high_confidence_actors
+        ctx.config.tag_summary_only_propagate_high_confidence_actors
     )
 
-    pydantic_result = await services.addresses_service.get_tag_summary_by_address(
+    pydantic_result = await ctx.services.addresses_service.get_tag_summary_by_address(
         currency,
         address,
-        tagstore_groups,
+        ctx.tagstore_groups,
         include_best_cluster_tag,
         include_pubkey_derived_tags=include_pubkey_derived_tags,
         only_propagate_high_confidence_actors=tag_summary_only_propagate_high_confidence_actors,
         tag_transformer=(
-            None
-            if not should_obfuscate_private_tags(request)
-            else obfuscate_tag_if_not_public
+            None if not ctx.obfuscate_private_tags else obfuscate_tag_if_not_public
         ),
     )
 
     return pydantic_to_openapi(pydantic_result)
 
 
-async def get_address(request, currency, address, include_actors=True):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
-    pydantic_result = await services.addresses_service.get_address(
-        currency, address, tagstore_groups, include_actors
+async def get_address(ctx, currency, address, include_actors=True):
+    pydantic_result = await ctx.services.addresses_service.get_address(
+        currency, address, ctx.tagstore_groups, include_actors
     )
 
     return pydantic_to_openapi(pydantic_result)
 
 
 async def list_tags_by_address(
-    request, currency, address, page=None, pagesize=None, include_best_cluster_tag=False
+    ctx, currency, address, page=None, pagesize=None, include_best_cluster_tag=False
 ):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-    cache = get_request_cache(request)
-    include_pubkey_derived_tags = request.app["config"].include_pubkey_derived_tags
+    include_pubkey_derived_tags = ctx.config.include_pubkey_derived_tags
 
-    pydantic_result = await services.addresses_service.list_tags_by_address(
+    pydantic_result = await ctx.services.addresses_service.list_tags_by_address(
         currency,
         address,
-        tagstore_groups,
-        cache,
+        ctx.tagstore_groups,
+        ctx.cache,
         page,
         pagesize,
         include_best_cluster_tag,
@@ -101,7 +82,7 @@ async def list_tags_by_address(
 
 
 async def list_address_txs(
-    request,
+    ctx,
     currency,
     address,
     min_height=None,
@@ -114,9 +95,7 @@ async def list_address_txs(
     page=None,
     pagesize=None,
 ):
-    services = get_service_container(request)
-
-    pydantic_result = await services.addresses_service.list_address_txs(
+    pydantic_result = await ctx.services.addresses_service.list_address_txs(
         currency,
         address,
         min_height,
@@ -134,7 +113,7 @@ async def list_address_txs(
 
 
 async def list_address_neighbors(
-    request,
+    ctx,
     currency,
     address,
     direction,
@@ -144,14 +123,11 @@ async def list_address_neighbors(
     page=None,
     pagesize=None,
 ):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
-    pydantic_result = await services.addresses_service.list_address_neighbors(
+    pydantic_result = await ctx.services.addresses_service.list_address_neighbors(
         currency,
         address,
         direction,
-        tagstore_groups,
+        ctx.tagstore_groups,
         only_ids,
         include_labels,
         include_actors,
@@ -163,7 +139,7 @@ async def list_address_neighbors(
 
 
 async def list_address_links(
-    request,
+    ctx,
     currency,
     address,
     neighbor,
@@ -176,10 +152,9 @@ async def list_address_links(
     page=None,
     pagesize=None,
 ):
-    services = get_service_container(request)
-    request_timeout = request.app["config"].address_links_request_timeout
+    request_timeout = ctx.config.address_links_request_timeout
 
-    pydantic_result = await services.addresses_service.list_address_links(
+    pydantic_result = await ctx.services.addresses_service.list_address_links(
         currency,
         address,
         neighbor,
@@ -197,12 +172,9 @@ async def list_address_links(
     return pydantic_to_openapi(pydantic_result)
 
 
-async def get_address_entity(request, currency, address, include_actors=True):
-    services = get_service_container(request)
-    tagstore_groups = get_tagstore_access_groups(request)
-
-    pydantic_result = await services.addresses_service.get_address_entity(
-        currency, address, include_actors, tagstore_groups
+async def get_address_entity(ctx, currency, address, include_actors=True):
+    pydantic_result = await ctx.services.addresses_service.get_address_entity(
+        currency, address, include_actors, ctx.tagstore_groups
     )
 
     return pydantic_to_openapi(pydantic_result)

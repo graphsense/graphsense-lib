@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, Path, Request
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.models import Block, BlockAtDate, TxAccount, TxUtxo
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
+    make_ctx,
     parse_datetime,
     to_json_response,
 )
@@ -35,11 +35,10 @@ async def get_block(
 ):
     """Get a block by its height"""
     currency = currency.lower()
-    # Blocks don't have tags - skip tagstore_groups dependency overhead
-    adapted_request = RequestAdapter(request, services, [])
+    ctx = make_ctx(request, services, [])
 
     result = await service.get_block(
-        adapted_request,
+        ctx,
         currency=currency,
         height=height,
     )
@@ -65,11 +64,10 @@ async def list_block_txs(
 ):
     """Get block transactions"""
     currency = currency.lower()
-    # Blocks don't have tags - skip tagstore_groups dependency overhead
-    adapted_request = RequestAdapter(request, services, [])
+    ctx = make_ctx(request, services, [])
 
     result = await service.list_block_txs(
-        adapted_request,
+        ctx,
         currency=currency,
         height=height,
     )
@@ -97,11 +95,10 @@ async def get_block_by_date(
 ):
     """Get block by date"""
     currency = currency.lower()
-    # Blocks don't have tags - skip tagstore_groups dependency overhead
-    adapted_request = RequestAdapter(request, services, [])
+    ctx = make_ctx(request, services, [])
 
     result = await service.get_block_by_date(
-        adapted_request,
+        ctx,
         currency=currency,
         date=parse_datetime(date),
     )

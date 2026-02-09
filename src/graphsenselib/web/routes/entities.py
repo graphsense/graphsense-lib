@@ -1,5 +1,6 @@
 """Entity API routes"""
 
+import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request
@@ -15,10 +16,10 @@ from graphsenselib.web.models import (
     SearchResultLevel1,
 )
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
+    make_ctx,
     normalize_page,
     parse_comma_separated_ints,
     parse_comma_separated_strings,
@@ -54,10 +55,10 @@ async def get_entity(
 ):
     """Get an entity"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.get_entity(
-        adapted_request,
+        ctx,
         currency=currency,
         entity=entity,
         exclude_best_address_tag=exclude_best_address_tag,
@@ -95,10 +96,10 @@ async def list_entity_addresses(
 ):
     """Get an entity's addresses"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_entity_addresses(
-        adapted_request,
+        ctx,
         currency=currency,
         entity=entity,
         page=normalize_page(page),
@@ -155,10 +156,10 @@ async def list_entity_neighbors(
 ):
     """Get an entity's neighbors in the entity graph"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_entity_neighbors(
-        adapted_request,
+        ctx,
         currency=currency,
         entity=entity,
         direction=direction,
@@ -227,10 +228,10 @@ async def list_entity_links(
     min_date_parsed = parse_datetime(min_date)
     max_date_parsed = parse_datetime(max_date)
 
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_entity_links(
-        adapted_request,
+        ctx,
         currency=currency,
         entity=entity,
         neighbor=neighbor,
@@ -276,10 +277,10 @@ async def list_address_tags_by_entity(
 ):
     """Get address tags for a given entity"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_address_tags_by_entity(
-        adapted_request,
+        ctx,
         currency=currency,
         entity=entity,
         page=normalize_page(page),
@@ -344,10 +345,10 @@ async def list_entity_txs(
     min_date_parsed = parse_datetime(min_date)
     max_date_parsed = parse_datetime(max_date)
 
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_entity_txs(
-        adapted_request,
+        ctx,
         currency=currency,
         entity=entity,
         min_height=min_height,
@@ -395,14 +396,15 @@ async def search_entity_neighbors(
 ):
     """Search neighbors of an entity"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
-    # Add logger for search service
-    import logging
-
-    adapted_request.logger = logging.getLogger(__name__)
+    ctx = make_ctx(
+        request,
+        services,
+        tagstore_groups,
+        logger=logging.getLogger(__name__),
+    )
 
     result = await service.search_entity_neighbors(
-        adapted_request,
+        ctx,
         currency=currency,
         entity=entity,
         direction=direction,

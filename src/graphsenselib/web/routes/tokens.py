@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, Path, Request
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.models import TokenConfigs
 from graphsenselib.web.routes.base import (
-    RequestAdapter,
     apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
+    make_ctx,
     to_json_response,
 )
 import graphsenselib.web.service.tokens_service as service
@@ -33,10 +33,10 @@ async def list_supported_tokens(
 ):
     """Get supported tokens for a currency"""
     currency = currency.lower()
-    adapted_request = RequestAdapter(request, services, tagstore_groups)
+    ctx = make_ctx(request, services, tagstore_groups)
 
     result = await service.list_supported_tokens(
-        adapted_request,
+        ctx,
         currency=currency,
     )
 

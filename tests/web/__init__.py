@@ -60,30 +60,6 @@ class HTTPResponseShim:
         return self._response.headers
 
 
-class AppStateShim:
-    """Shim to make FastAPI app.state accessible via app[key] syntax for backward compatibility."""
-
-    def __init__(self, app_state, config):
-        self._state = app_state
-        self._config = config
-
-    def __getitem__(self, key):
-        if key == "services":
-            return self._state.services
-        elif key == "config":
-            return self._config
-        elif key == "request_config":
-            # Default to showing private tags for tests with auth="x"
-            return {"show_private_tags": True}
-        elif key == "openapi":
-            return {"info": {"version": "1.16.0rc2"}}
-        elif key == "taxonomy-cache":
-            return self._state.taxonomy_cache
-        elif key == "db":
-            return self._state.db
-        raise KeyError(key)
-
-
 class BaseTestCase:
     """Base test case for FastAPI tests using httpx."""
 
@@ -104,9 +80,8 @@ class BaseTestCase:
 
         # Use LifespanManager to properly trigger startup/shutdown events
         async with LifespanManager(fastapi_app) as manager:
-            # Create app shim for backward compatibility with test services
-            # Note: manager.app is the ASGI callable, use fastapi_app for state
-            self.app = AppStateShim(fastapi_app.state, fastapi_app.state.config)
+            # Store app state for test access
+            self.app_state = fastapi_app.state
             self._fastapi_app = fastapi_app
 
             transport = ASGITransport(app=manager.app)

@@ -8,7 +8,7 @@ from tests.web import BaseTestCase
 class TestCassandra(BaseTestCase):
     @pytest.mark.asyncio
     async def test_concurrent_with_args(self):
-        db = self.app["db"]
+        db = self.app_state.db
 
         query = "select tx_id from transaction where tx_id_group = %s"
         params = [[0], [1]]
