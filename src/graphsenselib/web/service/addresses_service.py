@@ -65,6 +65,7 @@ async def get_address(ctx, currency, address, include_actors=True):
 async def list_tags_by_address(
     ctx, currency, address, page=None, pagesize=None, include_best_cluster_tag=False
 ):
+    page = parse_page_int_optional(page)
     include_pubkey_derived_tags = ctx.config.include_pubkey_derived_tags
 
     pydantic_result = await ctx.services.addresses_service.list_tags_by_address(

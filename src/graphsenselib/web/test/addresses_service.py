@@ -972,6 +972,17 @@ async def list_tags_by_address(test_case):
     )
     assert len(result["address_tags"]) == 2
 
+    # Test that page parameter as string is handled correctly (regression test)
+    path_with_page = path + "?pagesize={pagesize}&page={page}"
+    result = await test_case.request(
+        path_with_page,
+        currency="btc",
+        address=addressWithTags.address,
+        pagesize=100,
+        page=1,
+    )
+    assert "address_tags" in result
+
 
 async def list_address_neighbors(test_case):
     path = (
