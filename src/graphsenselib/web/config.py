@@ -96,6 +96,11 @@ class GSRestConfig(BaseSettings):
         description="Use linear search for block by date queries",
     )
 
+    disable_auth: bool = Field(
+        default=False,
+        description="Disable API key authentication (removes security scheme from OpenAPI spec)",
+    )
+
     plugins: List[str] = Field(
         default_factory=list, description="List of plugin modules to load"
     )

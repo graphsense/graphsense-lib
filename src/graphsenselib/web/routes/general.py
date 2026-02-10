@@ -10,7 +10,6 @@ from graphsenselib.web.routes.base import (
     PluginRoute,
     get_ctx,
 )
-from graphsenselib.web.security import get_api_key
 import graphsenselib.web.service.general_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -22,7 +21,6 @@ router = APIRouter(route_class=PluginRoute)
     operation_id="get_statistics",
     response_model=Stats,
     response_model_exclude_none=True,
-    dependencies=[Depends(get_api_key)],
 )
 async def get_statistics(
     request: Request,
@@ -39,7 +37,6 @@ async def get_statistics(
     operation_id="search",
     response_model=SearchResult,
     response_model_exclude_none=True,
-    dependencies=[Depends(get_api_key)],
 )
 async def search(
     request: Request,

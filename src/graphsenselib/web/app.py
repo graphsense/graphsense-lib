@@ -589,10 +589,11 @@ def _register_exception_handlers(app: FastAPI):
 def _register_routers(app: FastAPI):
     """Register all API routers on the app.
 
-    All routers require api_key authentication.
+    All routers require api_key authentication unless disable_auth is set.
     """
-    api_key_dep = [Depends(get_api_key)]
-    app.include_router(general.router, tags=["general"])
+    config = app.state.config
+    api_key_dep = [] if config.disable_auth else [Depends(get_api_key)]
+    app.include_router(general.router, tags=["general"], dependencies=api_key_dep)
     app.include_router(tags.router, tags=["tags"], dependencies=api_key_dep)
     app.include_router(
         addresses.router,
