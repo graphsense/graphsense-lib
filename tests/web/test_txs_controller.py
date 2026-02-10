@@ -1,43 +1,122 @@
-# coding: utf-8
+from tests.web.helpers import get_json, raw_request
+from tests.web.testdata.txs import (
+    token_tx1_eth,
+    token_tx2_eth,
+    tx1,
+    tx1_eth_with_identifier,
+)
 
-from tests.web import BaseTestCase
-import graphsenselib.web.test.txs_service as test_service
+
+async def test_get_tx(client):
+    path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
+    result = await get_json(
+        client, path, currency="btc", tx_hash="ab1880", include_io=True
+    )
+    assert tx1.to_dict() == result
+    result = await get_json(
+        client, path, currency="btc", tx_hash="ab1880", include_io=False
+    )
+    tx = tx1.to_dict()
+    tx.pop("inputs")
+    tx.pop("outputs")
+    assert tx == result
+
+    result = await get_json(
+        client, path, currency="eth", tx_hash="af6e0000", include_io=True
+    )
+    assert tx1_eth_with_identifier.to_dict() == result
+
+    result = await get_json(
+        client, path, currency="eth", tx_hash="af6e0000_I0", include_io=True
+    )
+    assert tx1_eth_with_identifier.to_dict() == result
+
+    path = "/{currency}/txs/{tx_hash}?token_tx_id=1"
+    result = await get_json(client, path, currency="eth", tx_hash="0xaf6e0003")
+    assert token_tx1_eth.to_dict() == result
+
+    path = "/{currency}/txs/{tx_hash}?token_tx_id=2"
+    result = await get_json(client, path, currency="eth", tx_hash="0xaf6e0003")
+    assert token_tx2_eth.to_dict() == result
+
+    invalid_hash = "abcdefg"
+    path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
+    status, body = await raw_request(
+        client, path, currency="eth", tx_hash=invalid_hash, include_io=False
+    )
+    assert status == 400
+    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
+
+    status, body = await raw_request(
+        client, path, currency="btc", tx_hash=invalid_hash, include_io=False
+    )
+    assert status == 400
+    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
+
+    invalid_hash = "L"
+    path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
+    status, body = await raw_request(
+        client, path, currency="eth", tx_hash=invalid_hash, include_io=False
+    )
+    assert status == 400
+    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
+
+    status, body = await raw_request(
+        client, path, currency="btc", tx_hash=invalid_hash, include_io=False
+    )
+    assert status == 400
+    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
 
 
-class TestTxsController(BaseTestCase):
-    """TxsController integration test stubs"""
+async def test_list_token_txs(client):
+    path = "/{currency}/token_txs/{tx_hash}"
+    results = await get_json(client, path, currency="eth", tx_hash="0xaf6e0003")
 
-    async def test_get_spending_txs(self):
-        """Test case for get_spending_txs
+    assert len(results) == 2
+    assert [token_tx1_eth.to_dict(), token_tx2_eth.to_dict()] == results
 
-        Returns in which other transaction's outputs the asked transaction spent. Think backwards references is the transaction graph. This endpoint is only available for utxo like currencies.
-        """
-        await test_service.get_spending_txs(self)
 
-    async def test_get_spent_in_txs(self):
-        """Test case for get_spent_in_txs
+async def test_get_tx_io(client):
+    path = "/{currency}/txs/{tx_hash}/{io}"
+    result = await get_json(
+        client, path, currency="btc", tx_hash="ab1880", io="inputs"
+    )
+    assert tx1.to_dict()["inputs"] == result
 
-        Returns in which other transactions, outputs from the asked transaction are spent. Think forward references in the transaction graph. This endpoint is only available for utxo like currencies.
-        """
-        await test_service.get_spent_in_txs(self)
+    result = await get_json(
+        client, path, currency="btc", tx_hash="ab1880", io="outputs"
+    )
+    assert tx1.to_dict()["outputs"] == result
 
-    async def test_get_tx(self):
-        """Test case for get_tx
 
-        Returns details of a specific transaction identified by its hash.
-        """
-        await test_service.get_tx(self)
+async def test_get_spending_txs(client):
+    path = "/{currency}/txs/{tx_hash}/spending"
+    result = await get_json(client, path, currency="btc", tx_hash="ab1880")
+    assert [{"input_index": 0, "output_index": 0, "tx_hash": "ab"}] == result
 
-    async def test_get_tx_io(self):
-        """Test case for get_tx_io
+    result = await get_json(client, path, currency="btc", tx_hash="ab188013")
+    assert [{"input_index": 0, "output_index": 0, "tx_hash": "ab1880"}] == result
 
-        Returns input/output values of a specific transaction identified by its hash.
-        """
-        await test_service.get_tx_io(self)
+    result = await get_json(client, path, currency="btc", tx_hash="00ab188013")
+    assert [{"input_index": 0, "output_index": 0, "tx_hash": "ab188013"}] == result
 
-    async def test_list_token_txs(self):
-        """Test case for list_token_txs
+    status, body = await raw_request(client, path, currency="eth", tx_hash="ab")
+    assert status == 400
+    assert "does not support transaction level linking" in body
 
-        Returns all token transactions in a given transaction
-        """
-        await test_service.list_token_txs(self)
+
+async def test_get_spent_in_txs(client):
+    path = "/{currency}/txs/{tx_hash}/spent_in"
+
+    result = await get_json(client, path, currency="btc", tx_hash="ab1880")
+    assert [{"input_index": 0, "output_index": 0, "tx_hash": "ab188013"}] == result
+
+    result = await get_json(client, path, currency="btc", tx_hash="ab188013")
+    assert [{"input_index": 0, "output_index": 0, "tx_hash": "00ab188013"}] == result
+
+    result = await get_json(client, path, currency="btc", tx_hash="00ab188013")
+    assert [{"input_index": 0, "output_index": 0, "tx_hash": "000000"}] == result
+
+    status, body = await raw_request(client, path, currency="eth", tx_hash="ab")
+    assert status == 400
+    assert "does not support transaction level linking" in body

@@ -1,11 +1,16 @@
+import logging
 from os import environ
 
 import pytest
+import pytest_asyncio
+from asgi_lifespan import LifespanManager
 from docker.errors import ImageNotFound, NotFound
+from httpx import ASGITransport, AsyncClient
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
-from tests.web import BaseTestCase
+from graphsenselib.web.app import create_app
+from graphsenselib.web.config import GSRestConfig
 from tests.web.cassandra.insert import load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 
@@ -110,9 +115,6 @@ def gs_rest_db_setup(request):
         "tag_access_logger": {"redis_url": redis_url},
     }
 
-    # Ugly hack to pass parameters
-    BaseTestCase.config = config
-
     # Create schemas if using vanilla Cassandra (slow mode)
     if not USE_FAST_CASSANDRA:
         create_web_schemas(cas_host, cas_port)
@@ -122,6 +124,22 @@ def gs_rest_db_setup(request):
     tags_load_test_data(postgres_sync_url.replace("+psycopg2", ""))
 
     return config
+
+
+@pytest_asyncio.fixture
+async def client(gs_rest_db_setup):
+    config = gs_rest_db_setup
+    logging.getLogger("uvicorn.error").setLevel("ERROR")
+    logging.getLogger("uvicorn.access").setLevel("ERROR")
+    fastapi_app = create_app(
+        config=GSRestConfig.from_dict(config),
+        validate_responses=True,
+    )
+    async with LifespanManager(fastapi_app) as manager:
+        transport = ASGITransport(app=manager.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            c.app_state = fastapi_app.state
+            yield c
 
 
 # NOTE: Regression test fixtures (baseline_server_url) moved to iknaio-tests-nightly

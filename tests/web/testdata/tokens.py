@@ -23,16 +23,3 @@ eth_tokens = TokenConfigs(
         ),
     ]
 )
-
-
-async def list_supported_tokens(test_case):
-    """Test case for list_supported_tokens"""
-    path = "/{currency}/supported_tokens"
-    result = await test_case.request(path, currency="btc")
-
-    assert result == btc_tokens.to_dict()
-
-    path = "/{currency}/supported_tokens"
-    result = await test_case.request(path, currency="eth")
-
-    assert result == eth_tokens.to_dict()

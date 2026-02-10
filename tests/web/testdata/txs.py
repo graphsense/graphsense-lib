@@ -176,16 +176,6 @@ tx4_eth_with_identifier = TxAccount(**tx4_eth.to_dict())
 tx4_eth_with_identifier.identifier = "123456_I0"
 tx4_eth_with_identifier.contract_creation = False
 
-# {'tx_type': 'account',
-# 'token_tx_id': 1,
-# 'currency': 'weth',
-# 'tx_hash': 'af6e0000',
-# 'height': 1,
-# 'timestamp': 15,
-# 'value': {'fiat_values': [{'code': 'eur', 'value': 6.82},
-# {'code': 'usd', 'value': 13.64}], 'value': 6818627949560085517},
-# 'from_address': '0x06729eb2424da47898f935267bd4a62940de5105',
-# 'to_address': '0xbeefbabeea323f07c59926295205d3b7a17e8638'}
 token_tx1_eth = TxAccount(
     tx_hash="af6e0003",
     identifier="af6e0003_T1",
@@ -200,16 +190,6 @@ token_tx1_eth = TxAccount(
     value=make_values(eur=6.82, usd=13.64, value=6818627949560085517),
 )
 
-# {'tx_type': 'account',
-# 'token_tx_id': 2,
-# 'currency': 'usdt',
-# 'tx_hash': 'af6e0000',
-# 'height': 1,
-# 'timestamp': 15,
-# 'value': {'fiat_values': [{'code': 'usd', 'value': 3360.49},
-# {'code': 'eur', 'value': 1680.24}], 'value': 3360488227},
-# 'from_address': '0x45225d3536ac02928f16071ab05066bce95c2cd5',
-# 'to_address': '0xcaf7ce56598e8588c9bf471e08b53e8a8d9541b3'}
 token_tx2_eth = TxAccount(
     tx_hash="af6e0003",
     identifier="af6e0003_T2",
@@ -223,141 +203,3 @@ token_tx2_eth = TxAccount(
     to_address="0xcaf7ce56598e8588c9bf471e08b53e8a8d9541b3",
     value=make_values(eur=1680.24, usd=3360.49, value=3360488227),
 )
-
-
-async def get_tx(test_case):
-    path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
-    result = await test_case.request(
-        path, currency="btc", tx_hash="ab1880", include_io=True
-    )
-    test_case.assertEqual(tx1.to_dict(), result)
-    result = await test_case.request(
-        path, currency="btc", tx_hash="ab1880", include_io=False
-    )
-    tx = tx1.to_dict()
-    tx.pop("inputs")
-    tx.pop("outputs")
-
-    test_case.assertEqual(tx, result)
-
-    result = await test_case.request(
-        path, currency="eth", tx_hash="af6e0000", include_io=True
-    )
-    test_case.assertEqual(tx1_eth_with_identifier.to_dict(), result)
-
-    result = await test_case.request(
-        path, currency="eth", tx_hash="af6e0000_I0", include_io=True
-    )
-    test_case.assertEqual(tx1_eth_with_identifier.to_dict(), result)
-
-    path = "/{currency}/txs/{tx_hash}?token_tx_id=1"
-    result = await test_case.request(path, currency="eth", tx_hash="0xaf6e0003")
-
-    test_case.assertEqual(token_tx1_eth.to_dict(), result)
-
-    path = "/{currency}/txs/{tx_hash}?token_tx_id=2"
-    result = await test_case.request(path, currency="eth", tx_hash="0xaf6e0003")
-
-    test_case.assertEqual(token_tx2_eth.to_dict(), result)
-
-    invalid_hash = "abcdefg"
-    path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
-    result, body = await test_case.requestOnly(
-        path, None, currency="eth", tx_hash=invalid_hash, include_io=False
-    )
-
-    assert result.status == 400
-    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
-
-    result, body = await test_case.requestOnly(
-        path, None, currency="btc", tx_hash=invalid_hash, include_io=False
-    )
-    assert result.status == 400
-    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
-
-    invalid_hash = "L"
-    path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
-    result, body = await test_case.requestOnly(
-        path, None, currency="eth", tx_hash=invalid_hash, include_io=False
-    )
-
-    assert result.status == 400
-    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
-
-    result, body = await test_case.requestOnly(
-        path, None, currency="btc", tx_hash=invalid_hash, include_io=False
-    )
-    assert result.status == 400
-    assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
-
-
-async def list_token_txs(test_case):
-    path = "/{currency}/token_txs/{tx_hash}"
-    results = await test_case.request(path, currency="eth", tx_hash="0xaf6e0003")
-
-    assert len(results) == 2
-    test_case.assertEqual([token_tx1_eth.to_dict(), token_tx2_eth.to_dict()], results)
-
-
-async def get_tx_io(test_case):
-    path = "/{currency}/txs/{tx_hash}/{io}"
-    result = await test_case.request(
-        path, currency="btc", tx_hash="ab1880", io="inputs"
-    )
-
-    test_case.assertEqual(tx1.to_dict()["inputs"], result)
-    result = await test_case.request(
-        path, currency="btc", tx_hash="ab1880", io="outputs"
-    )
-    test_case.assertEqual(tx1.to_dict()["outputs"], result)
-
-
-async def get_spending_txs(test_case):
-    path = "/{currency}/txs/{tx_hash}/spending"
-    result = await test_case.request(path, currency="btc", tx_hash="ab1880")
-
-    test_case.assertEqual(
-        [{"input_index": 0, "output_index": 0, "tx_hash": "ab"}], result
-    )
-
-    result = await test_case.request(path, currency="btc", tx_hash="ab188013")
-
-    test_case.assertEqual(
-        [{"input_index": 0, "output_index": 0, "tx_hash": "ab1880"}], result
-    )
-
-    result = await test_case.request(path, currency="btc", tx_hash="00ab188013")
-
-    test_case.assertEqual(
-        [{"input_index": 0, "output_index": 0, "tx_hash": "ab188013"}], result
-    )
-
-    result, body = await test_case.requestOnly(path, None, currency="eth", tx_hash="ab")
-    assert result.status == 400
-    assert "does not support transaction level linking" in body
-
-
-async def get_spent_in_txs(test_case):
-    path = "/{currency}/txs/{tx_hash}/spent_in"
-
-    result = await test_case.request(path, currency="btc", tx_hash="ab1880")
-
-    test_case.assertEqual(
-        [{"input_index": 0, "output_index": 0, "tx_hash": "ab188013"}], result
-    )
-
-    result = await test_case.request(path, currency="btc", tx_hash="ab188013")
-
-    test_case.assertEqual(
-        [{"input_index": 0, "output_index": 0, "tx_hash": "00ab188013"}], result
-    )
-
-    result = await test_case.request(path, currency="btc", tx_hash="00ab188013")
-
-    test_case.assertEqual(
-        [{"input_index": 0, "output_index": 0, "tx_hash": "000000"}], result
-    )
-
-    result, body = await test_case.requestOnly(path, None, currency="eth", tx_hash="ab")
-    assert result.status == 400
-    assert "does not support transaction level linking" in body
