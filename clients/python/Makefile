@@ -14,7 +14,6 @@ generate-openapi-client:
 	@API_VERSION=$$(jq -r '.info.version' openapi.json.tmp) && \
 	echo "Generating client with $(GENERATOR_VERSION) (API version: $$API_VERSION)..." && \
 	docker run --rm \
-		--user $(shell id -u):$(shell id -g) \
 		-v "${PWD}:/build:Z" \
 		-v "${PWD}/$(TEMPLATES_DIR):/templates:Z" \
 		openapitools/openapi-generator-cli:$(GENERATOR_VERSION) \
@@ -30,17 +29,17 @@ generate-openapi-client:
 	sed -i 's/^name = "graphsense"/name = "graphsense-python"/' pyproject.toml && \
 	sed -i "s/^version = .*/version = \"$$API_VERSION\"/" pyproject.toml
 	@echo "Applying backward compatibility patches..."
-	python $(COMPAT_DIR)/patch_compat.py .
+	uv run $(COMPAT_DIR)/patch_compat.py .
 	@echo "Verifying backward compatibility..."
-	python $(COMPAT_DIR)/test_compat.py .
+	uv run $(COMPAT_DIR)/test_compat.py .
 	@echo "Cleaning up temporary files..."
 	rm -f openapi.json.tmp openapi.json.modified
 
 # Just run the compatibility tests (useful during development)
 test-compat:
-	python $(COMPAT_DIR)/test_compat.py .
+	uv run $(COMPAT_DIR)/test_compat.py .
 
 run-examples:
-	API_KEY=$(API_KEY) python test_examples.py
+	API_KEY=$(API_KEY) uv run test_examples.py
 
 .PHONY: generate-openapi-client test-compat run-examples
