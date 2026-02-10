@@ -671,25 +671,29 @@ def create_app(
         validate_responses: Whether to validate responses (for testing)
         config: Pre-built GSRestConfig object (for testing, overrides config_file)
     """
-    if config is None:
-        if not config_file:
-            config_file = CONFIG_FILE
-        raw_config = load_config(config_file)
-        config = GSRestConfig.from_dict(raw_config)
-
-    # Load graphsense-lib config for slack hooks
+    # Load gslib config (always needed for slack hooks)
     gslib_config = AppConfig()
-    gslib_config.load()
+    gslib_config.load_partial()
 
-    if gslib_config is not None:
-        slack_exception_hook = gslib_config.get_slack_hooks_by_topic("exceptions")
-        slack_info_hook = gslib_config.get_slack_hooks_by_topic("info")
-        default_environment = config.environment or gslib_config.default_environment
-    else:
-        slack_exception_hook = None
-        slack_info_hook = None
-        default_environment = config.environment
+    # Resolve REST config with fallback chain
+    if config is None:
+        if config_file:
+            raw_config = load_config(config_file)
+            config = GSRestConfig.from_dict(raw_config)
+        else:
+            config_file_from_env = os.environ.get("CONFIG_FILE")
+            if config_file_from_env and os.path.exists(config_file_from_env):
+                raw_config = load_config(config_file_from_env)
+                config = GSRestConfig.from_dict(raw_config)
+            elif os.path.exists(CONFIG_FILE):
+                raw_config = load_config(CONFIG_FILE)
+                config = GSRestConfig.from_dict(raw_config)
+            else:
+                config = GSRestConfig()
 
+    slack_exception_hook = gslib_config.get_slack_hooks_by_topic("exceptions")
+    slack_info_hook = gslib_config.get_slack_hooks_by_topic("info")
+    default_environment = config.environment or gslib_config.default_environment
     config.slack_info_hook = slack_info_hook
 
     setup_logging(logger, slack_exception_hook, default_environment, config.logging)

@@ -14,9 +14,20 @@ class CurrencyConfig(BaseSettings):
 class CassandraConfig(BaseSettings):
     """Configuration for Cassandra database connection and settings."""
 
-    # Required fields
+    # Driver field (accessed by setup_database)
+    driver: str = Field(default="cassandra", description="Database driver")
+
+    # Connection fields
     currencies: Dict[str, Optional[CurrencyConfig]] = Field(
-        ..., description="Dictionary of currency configurations"
+        default={
+            "btc": None,
+            "bch": None,
+            "ltc": None,
+            "zec": None,
+            "eth": None,
+            "trx": None,
+        },
+        description="Dictionary of currency configurations",
     )
     nodes: List[str] = Field(..., description="List of Cassandra node addresses")
 
