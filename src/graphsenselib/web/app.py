@@ -659,6 +659,45 @@ def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
         )
 
 
+def resolve_rest_config(
+    config_file: str = None,
+    config: Optional[GSRestConfig] = None,
+    gslib_config: Optional[AppConfig] = None,
+) -> GSRestConfig:
+    """Resolve REST config with fallback chain.
+
+    Priority:
+    1. config object passed via create_app(config=...) (tests)
+    2. Explicit config_file parameter
+    3. CONFIG_FILE env var
+    4. Default path (./instance/config.yaml)
+    5. .graphsense.yaml 'web' key
+    6. Pure env vars (GSRestConfig())
+    """
+    if config is not None:
+        return config
+
+    if config_file:
+        raw_config = load_config(config_file)
+        return GSRestConfig.from_dict(raw_config)
+
+    config_file_from_env = os.environ.get("CONFIG_FILE")
+    if config_file_from_env and os.path.exists(config_file_from_env):
+        raw_config = load_config(config_file_from_env)
+        return GSRestConfig.from_dict(raw_config)
+
+    if os.path.exists(CONFIG_FILE):
+        raw_config = load_config(CONFIG_FILE)
+        return GSRestConfig.from_dict(raw_config)
+
+    if gslib_config and gslib_config.underlying_file:
+        raw_config = load_config(gslib_config.underlying_file)
+        if "web" in raw_config:
+            return GSRestConfig.from_dict(raw_config["web"])
+
+    return GSRestConfig()
+
+
 def create_app(
     config_file: str = None,
     validate_responses: bool = False,
@@ -675,21 +714,7 @@ def create_app(
     gslib_config = AppConfig()
     gslib_config.load_partial()
 
-    # Resolve REST config with fallback chain
-    if config is None:
-        if config_file:
-            raw_config = load_config(config_file)
-            config = GSRestConfig.from_dict(raw_config)
-        else:
-            config_file_from_env = os.environ.get("CONFIG_FILE")
-            if config_file_from_env and os.path.exists(config_file_from_env):
-                raw_config = load_config(config_file_from_env)
-                config = GSRestConfig.from_dict(raw_config)
-            elif os.path.exists(CONFIG_FILE):
-                raw_config = load_config(CONFIG_FILE)
-                config = GSRestConfig.from_dict(raw_config)
-            else:
-                config = GSRestConfig()
+    config = resolve_rest_config(config_file, config, gslib_config)
 
     slack_exception_hook = gslib_config.get_slack_hooks_by_topic("exceptions")
     slack_info_hook = gslib_config.get_slack_hooks_by_topic("info")
