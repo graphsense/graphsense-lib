@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, Path, Request
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import Rates
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx,
-    respond,
 )
 import graphsenselib.web.service.rates_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 @router.get(
@@ -34,4 +34,4 @@ async def get_exchange_rates(
         currency=currency.lower(),
         height=height,
     )
-    return respond(request, result)
+    return result

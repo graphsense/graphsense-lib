@@ -13,13 +13,13 @@ from graphsenselib.web.models import (
     TxValue,
 )
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx,
     normalize_page,
-    respond,
 )
 import graphsenselib.web.service.txs_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 @router.get(
@@ -48,7 +48,7 @@ async def list_token_txs(
         currency=currency.lower(),
         tx_hash=tx_hash,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -92,7 +92,7 @@ async def get_tx(
         include_nonstandard_io=include_nonstandard_io,
         include_io_index=include_io_index,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -124,7 +124,7 @@ async def get_spent_in(
         tx_hash=tx_hash,
         io_index=io_index,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -156,7 +156,7 @@ async def get_spending(
         tx_hash=tx_hash,
         io_index=io_index,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -184,7 +184,7 @@ async def get_tx_conversions(
         currency=currency.lower(),
         tx_hash=tx_hash,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -233,7 +233,7 @@ async def list_tx_flows(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 # NOTE: This route MUST be defined AFTER all other /txs/{tx_hash}/... routes
@@ -277,4 +277,4 @@ async def get_tx_io(
         include_nonstandard_io=include_nonstandard_io,
         include_io_index=include_io_index,
     )
-    return respond(request, result)
+    return result

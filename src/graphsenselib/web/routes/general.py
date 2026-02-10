@@ -7,13 +7,13 @@ from fastapi import APIRouter, Depends, Query, Request
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import SearchResult, Stats
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx,
-    respond,
 )
 from graphsenselib.web.security import get_api_key
 import graphsenselib.web.service.general_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 @router.get(
@@ -30,7 +30,7 @@ async def get_statistics(
 ):
     """Get statistics of supported currencies"""
     result = await service.get_statistics(ctx, version=request.app.version)
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -89,4 +89,4 @@ async def search(
         include_txs=include_txs,
         include_addresses=include_addresses,
     )
-    return respond(request, result)
+    return result

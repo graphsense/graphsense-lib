@@ -1,17 +1,43 @@
 """Base utilities for FastAPI routes"""
 
+import functools
 import logging
 import re
 from datetime import datetime
 from typing import Annotated, Any, Optional
 
 from fastapi import Depends, Header, Request
+from fastapi.routing import APIRoute
+from starlette.responses import Response
 
 from graphsenselib.web.config import GSRestConfig
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.service import ServiceContext
 
 logger = logging.getLogger(__name__)
+
+
+class PluginRoute(APIRoute):
+    """Custom route class that automatically applies plugin before_response hooks.
+
+    Routes return raw result objects; this class applies hooks and serializes.
+    StreamingResponse (bulk routes) passes through untouched.
+    """
+
+    def __init__(self, path: str, endpoint, **kwargs):
+        original_endpoint = endpoint
+
+        @functools.wraps(original_endpoint)
+        async def plugin_endpoint(**deps):
+            result = await original_endpoint(**deps)
+            if isinstance(result, Response):
+                return result
+            request = deps.get("request")
+            if request:
+                apply_plugin_hooks(request, result)
+            return to_json_response(result)
+
+        super().__init__(path, plugin_endpoint, **kwargs)
 
 
 def make_ctx(
@@ -70,7 +96,7 @@ def get_show_private_tags(
         return False
 
     # Get header modifications from plugin middleware (if any)
-    header_mods = getattr(request.state, "header_modifications", {})
+    header_mods = getattr(request.state, "plugin_state", {})
 
     show_private_tags = True
     for k, v in show_private_tags_conf.get("on_header", {}).items():
@@ -113,11 +139,6 @@ async def get_ctx_no_tags(
     return make_ctx(request, services, [])
 
 
-def respond(request: Request, result):
-    apply_plugin_hooks(request, result)
-    return to_json_response(result)
-
-
 def should_obfuscate_private_tags(request: Request) -> bool:
     """Check if private tags should be obfuscated"""
     from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -126,7 +147,7 @@ def should_obfuscate_private_tags(request: Request) -> bool:
     )
 
     # Check header modifications from middleware
-    header_mods = getattr(request.state, "header_modifications", {})
+    header_mods = getattr(request.state, "plugin_state", {})
     if header_mods.get(GROUPS_HEADER_NAME) == OBFUSCATION_MARKER_GROUP:
         return True
 

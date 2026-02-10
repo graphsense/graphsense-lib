@@ -22,7 +22,7 @@ class PluginMiddleware:
 
             # Initialize request state for plugin data
             scope["state"]["show_private_tags"] = False
-            scope["state"]["header_modifications"] = {}
+            scope["state"]["plugin_state"] = {}
 
             # Create a Request object to access app.state
             request = Request(scope)
@@ -37,6 +37,6 @@ class PluginMiddleware:
                     ctx = plugin_contexts.get(plugin.__module__, {})
                     header_mods = plugin.before_request(ctx, request)
                     if header_mods:
-                        scope["state"]["header_modifications"].update(header_mods)
+                        scope["state"]["plugin_state"].update(header_mods)
 
         await self.app(scope, receive, send)

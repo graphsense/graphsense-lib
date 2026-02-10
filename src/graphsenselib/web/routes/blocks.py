@@ -7,13 +7,13 @@ from fastapi import APIRouter, Depends, Path, Request
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import Block, BlockAtDate, TxAccount, TxUtxo
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx_no_tags,
     parse_datetime,
-    respond,
 )
 import graphsenselib.web.service.blocks_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 @router.get(
@@ -37,7 +37,7 @@ async def get_block(
         currency=currency.lower(),
         height=height,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -61,7 +61,7 @@ async def list_block_txs(
         currency=currency.lower(),
         height=height,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -87,4 +87,4 @@ async def get_block_by_date(
         currency=currency.lower(),
         date=parse_datetime(date),
     )
-    return respond(request, result)
+    return result

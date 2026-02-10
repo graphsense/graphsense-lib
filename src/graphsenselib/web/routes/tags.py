@@ -14,14 +14,14 @@ from graphsenselib.web.models import (
     UserTagReportResponse,
 )
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx,
     get_username,
     normalize_page,
-    respond,
 )
 import graphsenselib.web.service.tags_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 class UserReportedTag(BaseModel):
@@ -62,7 +62,7 @@ async def list_address_tags(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -82,7 +82,7 @@ async def get_actor(
         ctx,
         actor=actor,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -113,7 +113,7 @@ async def get_actor_tags(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -129,7 +129,7 @@ async def list_taxonomies(
 ):
     """List all taxonomies"""
     result = await service.list_taxonomies(ctx)
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -149,7 +149,7 @@ async def list_concepts(
         ctx,
         taxonomy=taxonomy,
     )
-    return respond(request, result)
+    return result
 
 
 @router.post(
@@ -172,4 +172,4 @@ async def report_tag(
         ctx,
         body=body,
     )
-    return respond(request, result)
+    return result

@@ -95,7 +95,7 @@ class ObfuscateTags(Plugin):
     @classmethod
     def before_response(cls, context: dict, request: Request, result: Any) -> None:
         # Get groups from headers (check for header modifications first)
-        header_mods = getattr(request.state, "header_modifications", {})
+        header_mods = getattr(request.state, "plugin_state", {})
         if GROUPS_HEADER_NAME in header_mods:
             groups = [header_mods[GROUPS_HEADER_NAME]]
         else:

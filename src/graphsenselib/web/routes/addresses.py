@@ -16,16 +16,16 @@ from graphsenselib.web.models import (
     TagSummary,
 )
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx,
     normalize_page,
     parse_comma_separated_strings,
     parse_datetime,
-    respond,
     should_obfuscate_private_tags,
 )
 import graphsenselib.web.service.addresses_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 @router.get(
@@ -57,7 +57,7 @@ async def get_address(
         address=address,
         include_actors=include_actors,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -89,7 +89,7 @@ async def get_address_entity(
         address=address,
         include_actors=include_actors,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -124,7 +124,7 @@ async def get_tag_summary_by_address(
         address=address,
         include_best_cluster_tag=include_best_cluster_tag,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -168,7 +168,7 @@ async def list_tags_by_address(
         pagesize=pagesize,
         include_best_cluster_tag=include_best_cluster_tag,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -237,7 +237,7 @@ async def list_address_txs(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -294,7 +294,7 @@ async def list_address_neighbors(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -365,7 +365,7 @@ async def list_address_links(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -410,4 +410,4 @@ async def list_related_addresses(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result

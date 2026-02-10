@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, Path, Request
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import TokenConfigs
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx,
-    respond,
 )
 import graphsenselib.web.service.tokens_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 @router.get(
@@ -32,4 +32,4 @@ async def list_supported_tokens(
         ctx,
         currency=currency.lower(),
     )
-    return respond(request, result)
+    return result

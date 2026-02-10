@@ -16,16 +16,16 @@ from graphsenselib.web.models import (
     SearchResultLevel1,
 )
 from graphsenselib.web.routes.base import (
+    PluginRoute,
     get_ctx,
     normalize_page,
     parse_comma_separated_ints,
     parse_comma_separated_strings,
     parse_datetime,
-    respond,
 )
 import graphsenselib.web.service.entities_service as service
 
-router = APIRouter()
+router = APIRouter(route_class=PluginRoute)
 
 
 @router.get(
@@ -57,7 +57,7 @@ async def get_entity(
         exclude_best_address_tag=exclude_best_address_tag,
         include_actors=include_actors,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -92,7 +92,7 @@ async def list_entity_addresses(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -152,7 +152,7 @@ async def list_entity_neighbors(
         exclude_best_address_tag=exclude_best_address_tag,
         include_actors=include_actors,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -216,7 +216,7 @@ async def list_entity_links(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -252,7 +252,7 @@ async def list_address_tags_by_entity(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -318,7 +318,7 @@ async def list_entity_txs(
         page=normalize_page(page),
         pagesize=pagesize,
     )
-    return respond(request, result)
+    return result
 
 
 @router.get(
@@ -362,4 +362,4 @@ async def search_entity_neighbors(
         breadth=breadth,
         skip_num_addresses=skip_num_addresses,
     )
-    return respond(request, result)
+    return result

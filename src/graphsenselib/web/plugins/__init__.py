@@ -13,16 +13,14 @@ class Plugin(abc.ABC):
     """
 
     @classmethod
-    @abc.abstractmethod
     def before_request(cls, context: dict, request: Request) -> dict | None:
         """Called before request processing.
 
-        Returns None to skip modifications, or a dict of header modifications.
+        Returns None to skip modifications, or a dict of plugin state updates.
         """
         return None
 
     @classmethod
-    @abc.abstractmethod
     def before_response(cls, context: dict, request: Request, result: Any) -> None:
         """Called after response is prepared but before serialization.
 
