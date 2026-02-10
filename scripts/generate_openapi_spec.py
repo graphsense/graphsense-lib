@@ -27,26 +27,6 @@ from graphsenselib.web.security import get_api_key
 from graphsenselib.web.version import __api_version__
 
 
-def _convert_examples_to_example(obj):
-    """Convert OpenAPI 3.1 'examples' arrays to OpenAPI 3.0 'example' values.
-
-    OpenAPI Generator doesn't fully support 3.1's examples in schemas,
-    so we convert examples: [value] to example: value for compatibility.
-    """
-    if isinstance(obj, dict):
-        # If this dict has 'examples' array, convert to 'example'
-        if "examples" in obj and isinstance(obj["examples"], list) and obj["examples"]:
-            obj["example"] = obj["examples"][0]
-            del obj["examples"]
-        # Recurse into all values
-        for value in obj.values():
-            _convert_examples_to_example(value)
-    elif isinstance(obj, list):
-        for item in obj:
-            _convert_examples_to_example(item)
-    return obj
-
-
 def create_minimal_app() -> FastAPI:
     """Create a minimal FastAPI app just for OpenAPI schema generation.
 
@@ -127,9 +107,6 @@ def main():
 
     # Apply snake_case conversion for backward compatibility
     schema = _convert_schema_names_to_snake_case(schema)
-
-    # Convert examples arrays to example for OpenAPI Generator compatibility
-    schema = _convert_examples_to_example(schema)
 
     print(json.dumps(schema, indent=2))
 

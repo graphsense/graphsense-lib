@@ -132,7 +132,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.TagsApi(api_client)
     actor = 'binance' # str | The actor ID
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 56 # int | Number of items returned in a single page (optional)
+    pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
         # Get tags associated with an actor
@@ -216,7 +216,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.TagsApi(api_client)
     label = 'cimedy' # str | The label to search for
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 56 # int | Number of items returned in a single page (optional)
+    pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
         # Get address tags by label

@@ -78,7 +78,6 @@ class Tag(BaseModel):
                 if _item_concepts:
                     _items.append(_item_concepts.to_dict())
             _dict['concepts'] = _items
-
         return _dict
 
     @classmethod

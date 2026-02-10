@@ -100,7 +100,7 @@ with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.GeneralApi(api_client)
     q = 'foo' # str | Search query (address, transaction, or label)
-    currency = 'currency_example' # str | The cryptocurrency (e.g., btc) (optional)
+    currency = 'btc' # str | The cryptocurrency (e.g., btc) (optional)
     limit = 10 # int | Maximum number of search results (optional) (default to 10)
     include_sub_tx_identifiers = False # bool | Whether to include sub-transaction identifiers (optional) (default to False)
     include_labels = True # bool | Whether to include labels (optional) (default to True)

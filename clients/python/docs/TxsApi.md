@@ -53,7 +53,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.TxsApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
-    io_index = 56 # int | Input index to check (optional)
+    io_index = 0 # int | Input index to check (optional)
 
     try:
         # Get transactions that this transaction is spending from
@@ -137,7 +137,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.TxsApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
-    io_index = 56 # int | Output index to check (optional)
+    io_index = 0 # int | Output index to check (optional)
 
     try:
         # Get transactions that spent outputs from this transaction
@@ -563,10 +563,10 @@ with graphsense.ApiClient(configuration) as api_client:
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     strip_zero_value_txs = True # bool | Strip zero value transactions (optional)
-    only_token_txs = True # bool | Only return token transactions (optional)
-    token_currency = 'token_currency_example' # str | Return transactions of given token or base currency (optional)
+    only_token_txs = false # bool | Only return token transactions (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
-    pagesize = 56 # int | Number of items returned in a single page (optional)
+    pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
         # Get asset flows within a transaction

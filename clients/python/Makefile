@@ -7,11 +7,13 @@ COMPAT_DIR ?= compat
 
 # v7 generator with backward compatibility patches (offline - no server needed)
 generate-openapi-client:
-	@echo "Generating openapi.json offline..."
+	@echo "Generating OpenAPI 3.1 spec offline..."
 	cd ../.. && uv run python scripts/generate_openapi_spec.py > clients/python/openapi.json.tmp
+	@echo "Converting to OpenAPI 3.0.3 for generator compatibility..."
+	cd ../.. && uv run python scripts/convert_openapi_31_to_30.py < clients/python/openapi.json.tmp > clients/python/openapi.json.30.tmp
 	@echo "Modifying server URL to production..."
-	jq '.servers[0].url = "https://api.iknaio.com"' openapi.json.tmp > openapi.json.modified
-	@API_VERSION=$$(jq -r '.info.version' openapi.json.tmp) && \
+	jq '.servers[0].url = "https://api.iknaio.com"' openapi.json.30.tmp > openapi.json.modified
+	@API_VERSION=$$(jq -r '.info.version' openapi.json.30.tmp) && \
 	echo "Generating client with $(GENERATOR_VERSION) (API version: $$API_VERSION)..." && \
 	docker run --rm \
 		-v "${PWD}:/build:Z" \
@@ -33,7 +35,7 @@ generate-openapi-client:
 	@echo "Verifying backward compatibility..."
 	uv run $(COMPAT_DIR)/test_compat.py .
 	@echo "Cleaning up temporary files..."
-	rm -f openapi.json.tmp openapi.json.modified
+	rm -f openapi.json.tmp openapi.json.30.tmp openapi.json.modified
 
 # Just run the compatibility tests (useful during development)
 test-compat:
