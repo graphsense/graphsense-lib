@@ -7,10 +7,10 @@ repos:
   hooks:
     # Run the linter.
     - id: ruff
-      exclude: ^(src/tagpack/|src/tagstore/|clients/)
+      exclude: ^(src/tagpack/|src/tagstore/|clients/|tests/regressions/)
     # Run the formatter.
     - id: ruff-format
-      exclude: ^(src/tagpack/|src/tagstore/|clients/)
+      exclude: ^(src/tagpack/|src/tagstore/|clients/|tests/regressions/)
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -30,7 +30,7 @@ repos:
     -
         id: name-tests-test
         args: [--pytest-test-first]
-        exclude: (helpers\.py|tests/web/)
+        exclude: (helpers\.py|tests/web/|tests/regressions/)
     -
         id: debug-statements
         exclude: postmortemdebug.py

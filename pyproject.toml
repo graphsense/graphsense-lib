@@ -191,6 +191,7 @@ namespaces = true
 norecursedirs = [
     "dist",
     "build",
+    "tests/regressions",
 ]
 testpaths = ["tests"]
 # Use pytest markers to select/deselect specific tests
@@ -236,7 +237,8 @@ exclude = [
     "setup.py",
     "src/graphsenselib/ingest/tron/grpc*",
     "src/tagpack",
-    "src/tagstore"
+    "src/tagstore",
+    "tests/regressions"
 ]
 
 [tool.ruff.lint]

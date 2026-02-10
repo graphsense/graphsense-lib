@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Test reports
+reports/
+*.json
+
+# Config files (may contain secrets)
+config.yaml
+config.yml
+*.env
+.env
+
+# Auto-generated Loki tests (regenerate with: make generate-loki)
+tests/rest/test_loki_generated.py
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# UV lock
+uv.lock

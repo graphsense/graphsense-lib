@@ -38,7 +38,7 @@ test-fast: install-dev
 build-fast-cassandra:
 	docker build -t graphsense/cassandra-test:4.1.4 tests/web/cassandra/
 
-# NOTE: REST regression tests have moved to iknaio-tests-nightly repository
+# NOTE: REST regression tests live in tests/regressions/ (separate project with own Makefile)
 
 install-dev:
 	uv sync --dev --all-packages --force-reinstall --all-extras
