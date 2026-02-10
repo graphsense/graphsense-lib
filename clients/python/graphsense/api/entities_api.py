@@ -1506,7 +1506,7 @@ class EntitiesApi:
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         direction: Annotated[StrictStr, Field(description="Incoming or outgoing neighbors")],
         only_ids: Annotated[Optional[StrictStr], Field(description="Restrict result to given set of comma separated IDs")] = None,
-        include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels")] = None,
+        include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels of first page of address tags")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         relations_only: Annotated[Optional[StrictBool], Field(description="Return only relations without entity details")] = None,
@@ -1537,7 +1537,7 @@ class EntitiesApi:
         :type direction: str
         :param only_ids: Restrict result to given set of comma separated IDs
         :type only_ids: str
-        :param include_labels: Whether to include labels
+        :param include_labels: Whether to include labels of first page of address tags
         :type include_labels: bool
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1611,7 +1611,7 @@ class EntitiesApi:
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         direction: Annotated[StrictStr, Field(description="Incoming or outgoing neighbors")],
         only_ids: Annotated[Optional[StrictStr], Field(description="Restrict result to given set of comma separated IDs")] = None,
-        include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels")] = None,
+        include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels of first page of address tags")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         relations_only: Annotated[Optional[StrictBool], Field(description="Return only relations without entity details")] = None,
@@ -1642,7 +1642,7 @@ class EntitiesApi:
         :type direction: str
         :param only_ids: Restrict result to given set of comma separated IDs
         :type only_ids: str
-        :param include_labels: Whether to include labels
+        :param include_labels: Whether to include labels of first page of address tags
         :type include_labels: bool
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1716,7 +1716,7 @@ class EntitiesApi:
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         direction: Annotated[StrictStr, Field(description="Incoming or outgoing neighbors")],
         only_ids: Annotated[Optional[StrictStr], Field(description="Restrict result to given set of comma separated IDs")] = None,
-        include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels")] = None,
+        include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels of first page of address tags")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         relations_only: Annotated[Optional[StrictBool], Field(description="Return only relations without entity details")] = None,
@@ -1747,7 +1747,7 @@ class EntitiesApi:
         :type direction: str
         :param only_ids: Restrict result to given set of comma separated IDs
         :type only_ids: str
-        :param include_labels: Whether to include labels
+        :param include_labels: Whether to include labels of first page of address tags
         :type include_labels: bool
         :param page: Resumption token for retrieving the next page
         :type page: str

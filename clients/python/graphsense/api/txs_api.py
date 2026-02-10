@@ -1062,7 +1062,7 @@ class TxsApi:
     @validate_call_compat
     def get_tx_conversions(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         _request_timeout: Union[
             None,
@@ -1081,7 +1081,7 @@ class TxsApi:
 
         Get DeFi conversions for a transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -1134,7 +1134,7 @@ class TxsApi:
     @validate_call_compat
     def get_tx_conversions_with_http_info(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         _request_timeout: Union[
             None,
@@ -1153,7 +1153,7 @@ class TxsApi:
 
         Get DeFi conversions for a transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -1206,7 +1206,7 @@ class TxsApi:
     @validate_call_compat
     def get_tx_conversions_without_preload_content(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         _request_timeout: Union[
             None,
@@ -1225,7 +1225,7 @@ class TxsApi:
 
         Get DeFi conversions for a transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -1669,7 +1669,7 @@ class TxsApi:
     @validate_call_compat
     def list_token_txs(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         _request_timeout: Union[
             None,
@@ -1688,7 +1688,7 @@ class TxsApi:
 
         Returns all token transactions in a given transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -1742,7 +1742,7 @@ class TxsApi:
     @validate_call_compat
     def list_token_txs_with_http_info(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         _request_timeout: Union[
             None,
@@ -1761,7 +1761,7 @@ class TxsApi:
 
         Returns all token transactions in a given transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -1815,7 +1815,7 @@ class TxsApi:
     @validate_call_compat
     def list_token_txs_without_preload_content(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         _request_timeout: Union[
             None,
@@ -1834,7 +1834,7 @@ class TxsApi:
 
         Returns all token transactions in a given transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -1951,11 +1951,11 @@ class TxsApi:
     @validate_call_compat
     def list_tx_flows(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         strip_zero_value_txs: Annotated[Optional[StrictBool], Field(description="Strip zero value transactions")] = None,
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Filter by token currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1975,7 +1975,7 @@ class TxsApi:
 
         Get asset flows within a transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -1983,7 +1983,7 @@ class TxsApi:
         :type strip_zero_value_txs: bool
         :param only_token_txs: Only return token transactions
         :type only_token_txs: bool
-        :param token_currency: Filter by token currency
+        :param token_currency: Return transactions of given token or base currency
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -2043,11 +2043,11 @@ class TxsApi:
     @validate_call_compat
     def list_tx_flows_with_http_info(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         strip_zero_value_txs: Annotated[Optional[StrictBool], Field(description="Strip zero value transactions")] = None,
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Filter by token currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2067,7 +2067,7 @@ class TxsApi:
 
         Get asset flows within a transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -2075,7 +2075,7 @@ class TxsApi:
         :type strip_zero_value_txs: bool
         :param only_token_txs: Only return token transactions
         :type only_token_txs: bool
-        :param token_currency: Filter by token currency
+        :param token_currency: Return transactions of given token or base currency
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -2135,11 +2135,11 @@ class TxsApi:
     @validate_call_compat
     def list_tx_flows_without_preload_content(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[StrictStr, Field(description="The transaction hash")],
         strip_zero_value_txs: Annotated[Optional[StrictBool], Field(description="Strip zero value transactions")] = None,
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Filter by token currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2159,7 +2159,7 @@ class TxsApi:
 
         Get asset flows within a transaction
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: The transaction hash (required)
         :type tx_hash: str
@@ -2167,7 +2167,7 @@ class TxsApi:
         :type strip_zero_value_txs: bool
         :param only_token_txs: Only return token transactions
         :type only_token_txs: bool
-        :param token_currency: Filter by token currency
+        :param token_currency: Return transactions of given token or base currency
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str

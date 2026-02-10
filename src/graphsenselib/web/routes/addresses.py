@@ -2,7 +2,7 @@
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
@@ -23,6 +23,23 @@ from graphsenselib.web.routes.base import (
     parse_datetime,
     should_obfuscate_private_tags,
 )
+from graphsenselib.web.routes.params import (
+    AddressPath,
+    CurrencyPath,
+    DirectionQuery,
+    IncludeActorsQuery,
+    IncludeBestClusterTagQuery,
+    IncludeLabelsQuery,
+    MaxDateQuery,
+    MaxHeightQuery,
+    MinDateQuery,
+    MinHeightQuery,
+    OptionalDirectionQuery,
+    OrderQuery,
+    PageQuery,
+    PagesizeQuery,
+    TokenCurrencyQuery,
+)
 import graphsenselib.web.service.addresses_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -37,17 +54,9 @@ router = APIRouter(route_class=PluginRoute)
 )
 async def get_address(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
-    include_actors: bool = Query(
-        True, description="Whether to include actor information", examples=[True]
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
+    include_actors: IncludeActorsQuery = True,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an address"""
@@ -69,17 +78,9 @@ async def get_address(
 )
 async def get_address_entity(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
-    include_actors: bool = Query(
-        True, description="Whether to include actor information", examples=[True]
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
+    include_actors: IncludeActorsQuery = True,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get the entity of an address"""
@@ -101,18 +102,9 @@ async def get_address_entity(
 )
 async def get_tag_summary_by_address(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
-    include_best_cluster_tag: Optional[bool] = Query(
-        None,
-        description="If the best cluster tag should be inherited to the address level",
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
+    include_best_cluster_tag: IncludeBestClusterTagQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get attribution tag summary for a given address"""
@@ -136,27 +128,11 @@ async def get_tag_summary_by_address(
 )
 async def list_tags_by_address(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
-    include_best_cluster_tag: Optional[bool] = Query(
-        None,
-        description="If the best cluster tag should be inherited to the address level",
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
+    include_best_cluster_tag: IncludeBestClusterTagQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get attribution tags for a given address"""
@@ -180,46 +156,17 @@ async def list_tags_by_address(
 )
 async def list_address_txs(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
-    direction: Optional[str] = Query(
-        None, description="Incoming or outgoing transactions", examples=["out"]
-    ),
-    min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height", examples=[1]
-    ),
-    max_height: Optional[int] = Query(
-        None,
-        description="Return transactions up to (including) given height",
-        examples=[2],
-    ),
-    min_date: Optional[str] = Query(
-        None, description="Min date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    max_date: Optional[str] = Query(
-        None, description="Max date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    order: Optional[str] = Query(None, description="Sorting order", examples=["desc"]),
-    token_currency: Optional[str] = Query(
-        None,
-        description="Return transactions of given token or base currency",
-        examples=["WETH"],
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
+    direction: OptionalDirectionQuery = None,
+    min_height: MinHeightQuery = None,
+    max_height: MaxHeightQuery = None,
+    min_date: MinDateQuery = None,
+    max_date: MaxDateQuery = None,
+    order: OrderQuery = None,
+    token_currency: TokenCurrencyQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get all transactions an address has been involved in"""
@@ -249,37 +196,16 @@ async def list_address_txs(
 )
 async def list_address_neighbors(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
-    direction: Literal["in", "out"] = Query(
-        ..., description="Incoming or outgoing neighbors", examples=["out"]
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
+    direction: DirectionQuery,
     only_ids: Optional[str] = Query(
         None, description="Restrict result to given set of comma separated addresses"
     ),
-    include_labels: Optional[bool] = Query(
-        None,
-        description="Whether to include labels of first page of address tags",
-        examples=[True],
-    ),
-    include_actors: bool = Query(
-        True, description="Whether to include actor information", examples=[True]
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    include_labels: IncludeLabelsQuery = None,
+    include_actors: IncludeActorsQuery = True,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an address's neighbors in the address graph"""
@@ -306,48 +232,21 @@ async def list_address_neighbors(
 )
 async def list_address_links(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
     neighbor: str = Query(
         ...,
         description="Neighbor address",
         examples=["1FKCzy3BEtiZDhRDtivp7Y7RVb9edg5BH7"],
     ),
-    min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height", examples=[1]
-    ),
-    max_height: Optional[int] = Query(
-        None,
-        description="Return transactions up to (including) given height",
-        examples=[2],
-    ),
-    min_date: Optional[str] = Query(
-        None, description="Min date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    max_date: Optional[str] = Query(
-        None, description="Max date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    order: Optional[str] = Query(None, description="Sorting order", examples=["desc"]),
-    token_currency: Optional[str] = Query(
-        None,
-        description="Return transactions of given token or base currency",
-        examples=["WETH"],
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    min_height: MinHeightQuery = None,
+    max_height: MaxHeightQuery = None,
+    min_date: MinDateQuery = None,
+    max_date: MaxDateQuery = None,
+    order: OrderQuery = None,
+    token_currency: TokenCurrencyQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get outgoing transactions between two addresses"""
@@ -377,28 +276,15 @@ async def list_address_links(
 )
 async def list_related_addresses(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    address: str = Path(
-        ...,
-        description="The cryptocurrency address",
-        examples=["1Archive1n2C579dMsAu3iC6tWzuQJz8dN"],
-    ),
+    currency: CurrencyPath,
+    address: AddressPath,
     address_relation_type: Literal["pubkey"] = Query(
         "pubkey",
         description="What type of related addresses to return",
         examples=["pubkey"],
     ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get related addresses to the input address"""

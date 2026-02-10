@@ -309,7 +309,7 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
 
     try:
@@ -328,7 +328,7 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., eth) | 
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
  **tx_hash** | **str**| The transaction hash | 
 
 ### Return type
@@ -479,7 +479,7 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
 
     try:
@@ -498,7 +498,7 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., eth) | 
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
  **tx_hash** | **str**| The transaction hash | 
 
 ### Return type
@@ -560,11 +560,11 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TxsApi(api_client)
-    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     strip_zero_value_txs = True # bool | Strip zero value transactions (optional)
     only_token_txs = True # bool | Only return token transactions (optional)
-    token_currency = 'token_currency_example' # str | Filter by token currency (optional)
+    token_currency = 'token_currency_example' # str | Return transactions of given token or base currency (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
     pagesize = 56 # int | Number of items returned in a single page (optional)
 
@@ -584,11 +584,11 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., eth) | 
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
  **tx_hash** | **str**| The transaction hash | 
  **strip_zero_value_txs** | **bool**| Strip zero value transactions | [optional] 
  **only_token_txs** | **bool**| Only return token transactions | [optional] 
- **token_currency** | **str**| Filter by token currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 

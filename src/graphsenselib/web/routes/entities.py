@@ -1,9 +1,9 @@
 """Entity API routes"""
 
 import logging
-from typing import Literal, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
@@ -23,6 +23,23 @@ from graphsenselib.web.routes.base import (
     parse_comma_separated_strings,
     parse_datetime,
 )
+from graphsenselib.web.routes.params import (
+    CurrencyPath,
+    DirectionQuery,
+    EntityPath,
+    ExcludeBestAddressTagQuery,
+    IncludeActorsQuery,
+    IncludeLabelsQuery,
+    MaxDateQuery,
+    MaxHeightQuery,
+    MinDateQuery,
+    MinHeightQuery,
+    OptionalDirectionQuery,
+    OrderQuery,
+    PageQuery,
+    PagesizeQuery,
+    TokenCurrencyQuery,
+)
 import graphsenselib.web.service.entities_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -37,16 +54,10 @@ router = APIRouter(route_class=PluginRoute)
 )
 async def get_entity(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    entity: int = Path(..., description="The entity ID", examples=[67065]),
-    exclude_best_address_tag: Optional[bool] = Query(
-        None, description="Whether to exclude best address tag"
-    ),
-    include_actors: bool = Query(
-        False, description="Whether to include actor information", examples=[True]
-    ),
+    currency: CurrencyPath,
+    entity: EntityPath,
+    exclude_best_address_tag: ExcludeBestAddressTagQuery = None,
+    include_actors: IncludeActorsQuery = False,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an entity"""
@@ -69,19 +80,10 @@ async def get_entity(
 )
 async def list_entity_addresses(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    entity: int = Path(..., description="The entity ID", examples=[67065]),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    currency: CurrencyPath,
+    entity: EntityPath,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an entity's addresses"""
@@ -105,37 +107,20 @@ async def list_entity_addresses(
 )
 async def list_entity_neighbors(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    entity: int = Path(..., description="The entity ID", examples=[67065]),
-    direction: Literal["in", "out"] = Query(
-        ..., description="Incoming or outgoing neighbors", examples=["out"]
-    ),
+    currency: CurrencyPath,
+    entity: EntityPath,
+    direction: DirectionQuery,
     only_ids: Optional[str] = Query(
         None, description="Restrict result to given set of comma separated IDs"
     ),
-    include_labels: Optional[bool] = Query(
-        None, description="Whether to include labels", examples=[True]
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    include_labels: IncludeLabelsQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     relations_only: Optional[bool] = Query(
         None, description="Return only relations without entity details"
     ),
-    exclude_best_address_tag: Optional[bool] = Query(
-        None, description="Whether to exclude best address tag"
-    ),
-    include_actors: bool = Query(
-        False, description="Whether to include actor information", examples=[True]
-    ),
+    exclude_best_address_tag: ExcludeBestAddressTagQuery = None,
+    include_actors: IncludeActorsQuery = False,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get an entity's neighbors in the entity graph"""
@@ -165,40 +150,17 @@ async def list_entity_neighbors(
 )
 async def list_entity_links(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    entity: int = Path(..., description="The entity ID", examples=[67065]),
+    currency: CurrencyPath,
+    entity: EntityPath,
     neighbor: int = Query(..., description="Neighbor entity ID", examples=[123456]),
-    min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height", examples=[1]
-    ),
-    max_height: Optional[int] = Query(
-        None,
-        description="Return transactions up to (including) given height",
-        examples=[2],
-    ),
-    min_date: Optional[str] = Query(
-        None, description="Min date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    max_date: Optional[str] = Query(
-        None, description="Max date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    order: Optional[str] = Query(None, description="Sorting order", examples=["desc"]),
-    token_currency: Optional[str] = Query(
-        None,
-        description="Return transactions of given token or base currency",
-        examples=["WETH"],
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    min_height: MinHeightQuery = None,
+    max_height: MaxHeightQuery = None,
+    min_date: MinDateQuery = None,
+    max_date: MaxDateQuery = None,
+    order: OrderQuery = None,
+    token_currency: TokenCurrencyQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get transactions between two entities"""
@@ -229,19 +191,10 @@ async def list_entity_links(
 )
 async def list_address_tags_by_entity(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    entity: int = Path(..., description="The entity ID", examples=[67065]),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    currency: CurrencyPath,
+    entity: EntityPath,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get address tags for a given entity"""
@@ -265,42 +218,17 @@ async def list_address_tags_by_entity(
 )
 async def list_entity_txs(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    entity: int = Path(..., description="The entity ID", examples=[67065]),
-    direction: Optional[str] = Query(
-        None, description="Incoming or outgoing transactions", examples=["out"]
-    ),
-    min_height: Optional[int] = Query(
-        None, description="Return transactions starting from given height", examples=[1]
-    ),
-    max_height: Optional[int] = Query(
-        None,
-        description="Return transactions up to (including) given height",
-        examples=[2],
-    ),
-    min_date: Optional[str] = Query(
-        None, description="Min date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    max_date: Optional[str] = Query(
-        None, description="Max date of txs", examples=["2017-07-21T17:32:28Z"]
-    ),
-    order: Optional[str] = Query(None, description="Sorting order", examples=["desc"]),
-    token_currency: Optional[str] = Query(
-        None,
-        description="Return transactions of given token or base currency",
-        examples=["WETH"],
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    currency: CurrencyPath,
+    entity: EntityPath,
+    direction: OptionalDirectionQuery = None,
+    min_height: MinHeightQuery = None,
+    max_height: MaxHeightQuery = None,
+    min_date: MinDateQuery = None,
+    max_date: MaxDateQuery = None,
+    order: OrderQuery = None,
+    token_currency: TokenCurrencyQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get all transactions an entity has been involved in"""
@@ -330,13 +258,9 @@ async def list_entity_txs(
 )
 async def search_entity_neighbors(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    entity: int = Path(..., description="The entity ID", examples=[67065]),
-    direction: Literal["in", "out"] = Query(
-        ..., description="Incoming or outgoing neighbors", examples=["out"]
-    ),
+    currency: CurrencyPath,
+    entity: EntityPath,
+    direction: DirectionQuery,
     key: str = Query(..., description="Search key", examples=["category"]),
     value: str = Query(
         ..., description="Comma separated search values", examples=["Miner"]

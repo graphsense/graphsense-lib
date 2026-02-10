@@ -45,7 +45,7 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TokensApi(api_client)
-    currency = 'eth' # str | The cryptocurrency code (e.g., eth)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
 
     try:
         # Get supported tokens for a currency
@@ -63,7 +63,7 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., eth) | 
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
 
 ### Return type
 

@@ -19,6 +19,10 @@ from graphsenselib.web.routes.base import (
     get_username,
     normalize_page,
 )
+from graphsenselib.web.routes.params import (
+    PageQuery,
+    PagesizeQuery,
+)
 import graphsenselib.web.service.tags_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -44,15 +48,8 @@ class UserReportedTag(BaseModel):
 async def list_address_tags(
     request: Request,
     label: str = Query(..., description="The label to search for", examples=["cimedy"]),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get address tags by label"""
@@ -95,15 +92,8 @@ async def get_actor(
 async def get_actor_tags(
     request: Request,
     actor: str = Path(..., description="The actor ID", examples=["binance"]),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get tags associated with an actor"""

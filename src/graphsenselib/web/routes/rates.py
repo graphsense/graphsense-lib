@@ -1,12 +1,16 @@
 """Rate API routes"""
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Request
 
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import Rates
 from graphsenselib.web.routes.base import (
     PluginRoute,
     get_ctx,
+)
+from graphsenselib.web.routes.params import (
+    CurrencyPath,
+    HeightPath,
 )
 import graphsenselib.web.service.rates_service as service
 
@@ -22,10 +26,8 @@ router = APIRouter(route_class=PluginRoute)
 )
 async def get_exchange_rates(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    height: int = Path(..., description="The block height", examples=[1]),
+    currency: CurrencyPath,
+    height: HeightPath,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get exchange rates for a given block height"""

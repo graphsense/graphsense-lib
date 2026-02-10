@@ -17,6 +17,13 @@ from graphsenselib.web.routes.base import (
     get_ctx,
     normalize_page,
 )
+from graphsenselib.web.routes.params import (
+    CurrencyPath,
+    PageQuery,
+    PagesizeQuery,
+    TokenCurrencyQuery,
+    TxHashPath,
+)
 import graphsenselib.web.service.txs_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -32,14 +39,8 @@ router = APIRouter(route_class=PluginRoute)
 )
 async def list_token_txs(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., eth)", examples=["eth"]
-    ),
-    tx_hash: str = Path(
-        ...,
-        description="The transaction hash",
-        examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
-    ),
+    currency: CurrencyPath,
+    tx_hash: TxHashPath,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Returns all token transactions in a given transaction"""
@@ -60,14 +61,8 @@ async def list_token_txs(
 )
 async def get_tx(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    tx_hash: str = Path(
-        ...,
-        description="The transaction hash",
-        examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
-    ),
+    currency: CurrencyPath,
+    tx_hash: TxHashPath,
     token_tx_id: Optional[int] = Query(
         None, description="Token transaction ID for account-model currencies"
     ),
@@ -104,14 +99,8 @@ async def get_tx(
 )
 async def get_spent_in(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    tx_hash: str = Path(
-        ...,
-        description="The transaction hash",
-        examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
-    ),
+    currency: CurrencyPath,
+    tx_hash: TxHashPath,
     io_index: Optional[int] = Query(
         None, description="Output index to check", examples=[0]
     ),
@@ -136,14 +125,8 @@ async def get_spent_in(
 )
 async def get_spending(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    tx_hash: str = Path(
-        ...,
-        description="The transaction hash",
-        examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
-    ),
+    currency: CurrencyPath,
+    tx_hash: TxHashPath,
     io_index: Optional[int] = Query(
         None, description="Input index to check", examples=[0]
     ),
@@ -168,14 +151,8 @@ async def get_spending(
 )
 async def get_tx_conversions(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., eth)", examples=["eth"]
-    ),
-    tx_hash: str = Path(
-        ...,
-        description="The transaction hash",
-        examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
-    ),
+    currency: CurrencyPath,
+    tx_hash: TxHashPath,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get DeFi conversions for a transaction"""
@@ -194,32 +171,17 @@ async def get_tx_conversions(
 )
 async def list_tx_flows(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., eth)", examples=["eth"]
-    ),
-    tx_hash: str = Path(
-        ...,
-        description="The transaction hash",
-        examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
-    ),
+    currency: CurrencyPath,
+    tx_hash: TxHashPath,
     strip_zero_value_txs: Optional[bool] = Query(
         None, description="Strip zero value transactions"
     ),
     only_token_txs: Optional[bool] = Query(
         None, description="Only return token transactions", examples=[False]
     ),
-    token_currency: Optional[str] = Query(
-        None, description="Filter by token currency", examples=["WETH"]
-    ),
-    page: Optional[str] = Query(
-        None, description="Resumption token for retrieving the next page"
-    ),
-    pagesize: Optional[int] = Query(
-        None,
-        ge=1,
-        description="Number of items returned in a single page",
-        examples=[10],
-    ),
+    token_currency: TokenCurrencyQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get asset flows within a transaction"""
@@ -247,14 +209,8 @@ async def list_tx_flows(
 )
 async def get_tx_io(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    tx_hash: str = Path(
-        ...,
-        description="The transaction hash",
-        examples=["04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd"],
-    ),
+    currency: CurrencyPath,
+    tx_hash: TxHashPath,
     io: str = Path(
         ...,
         description="Input or output values of a transaction (inputs or outputs)",

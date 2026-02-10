@@ -118,7 +118,7 @@ class TokensApi:
     @validate_call_compat
     def list_supported_tokens(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -136,7 +136,7 @@ class TokensApi:
 
         Get supported tokens for a currency
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -186,7 +186,7 @@ class TokensApi:
     @validate_call_compat
     def list_supported_tokens_with_http_info(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -204,7 +204,7 @@ class TokensApi:
 
         Get supported tokens for a currency
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -254,7 +254,7 @@ class TokensApi:
     @validate_call_compat
     def list_supported_tokens_without_preload_content(
         self,
-        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., eth)")],
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -272,7 +272,7 @@ class TokensApi:
 
         Get supported tokens for a currency
 
-        :param currency: The cryptocurrency code (e.g., eth) (required)
+        :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request

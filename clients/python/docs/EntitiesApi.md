@@ -413,7 +413,7 @@ with graphsense.ApiClient(configuration) as api_client:
     entity = 67065 # int | The entity ID
     direction = 'out' # str | Incoming or outgoing neighbors
     only_ids = 'only_ids_example' # str | Restrict result to given set of comma separated IDs (optional)
-    include_labels = True # bool | Whether to include labels (optional)
+    include_labels = True # bool | Whether to include labels of first page of address tags (optional)
     page = 'page_example' # str | Resumption token for retrieving the next page (optional)
     pagesize = 56 # int | Number of items returned in a single page (optional)
     relations_only = True # bool | Return only relations without entity details (optional)
@@ -440,7 +440,7 @@ Name | Type | Description  | Notes
  **entity** | **int**| The entity ID | 
  **direction** | **str**| Incoming or outgoing neighbors | 
  **only_ids** | **str**| Restrict result to given set of comma separated IDs | [optional] 
- **include_labels** | **bool**| Whether to include labels | [optional] 
+ **include_labels** | **bool**| Whether to include labels of first page of address tags | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
  **relations_only** | **bool**| Return only relations without entity details | [optional] 

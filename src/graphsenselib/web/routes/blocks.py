@@ -11,6 +11,10 @@ from graphsenselib.web.routes.base import (
     get_ctx_no_tags,
     parse_datetime,
 )
+from graphsenselib.web.routes.params import (
+    CurrencyPath,
+    HeightPath,
+)
 import graphsenselib.web.service.blocks_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -25,10 +29,8 @@ router = APIRouter(route_class=PluginRoute)
 )
 async def get_block(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    height: int = Path(..., description="The block height", examples=[1]),
+    currency: CurrencyPath,
+    height: HeightPath,
     ctx: ServiceContext = Depends(get_ctx_no_tags),
 ):
     """Get a block by its height"""
@@ -49,10 +51,8 @@ async def get_block(
 )
 async def list_block_txs(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
-    height: int = Path(..., description="The block height", examples=[1]),
+    currency: CurrencyPath,
+    height: HeightPath,
     ctx: ServiceContext = Depends(get_ctx_no_tags),
 ):
     """Get block transactions"""
@@ -73,9 +73,7 @@ async def list_block_txs(
 )
 async def get_block_by_date(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., btc)", examples=["btc"]
-    ),
+    currency: CurrencyPath,
     date: str = Path(
         ..., description="The date (YYYY-MM-DD)", examples=["2017-07-21T17:32:28Z"]
     ),

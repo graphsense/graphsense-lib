@@ -1,6 +1,6 @@
 """Token API routes"""
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Request
 
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import TokenConfigs
@@ -8,6 +8,7 @@ from graphsenselib.web.routes.base import (
     PluginRoute,
     get_ctx,
 )
+from graphsenselib.web.routes.params import CurrencyPath
 import graphsenselib.web.service.tokens_service as service
 
 router = APIRouter(route_class=PluginRoute)
@@ -22,9 +23,7 @@ router = APIRouter(route_class=PluginRoute)
 )
 async def list_supported_tokens(
     request: Request,
-    currency: str = Path(
-        ..., description="The cryptocurrency code (e.g., eth)", examples=["eth"]
-    ),
+    currency: CurrencyPath,
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get supported tokens for a currency"""
