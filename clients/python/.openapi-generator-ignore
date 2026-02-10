@@ -34,3 +34,5 @@ requirements.txt
 test-requirements.txt
 setup.py
 pyproject.toml
+compat/*
+templates/*

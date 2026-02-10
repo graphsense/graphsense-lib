@@ -1,8 +1,8 @@
 -include .env
 
 GENERATOR_VERSION ?= v7.19.0
-TEMPLATES_DIR ?= ../python-templates
-COMPAT_DIR ?= ../python-compat
+TEMPLATES_DIR ?= templates
+COMPAT_DIR ?= compat
 
 
 # v7 generator with backward compatibility patches (offline - no server needed)

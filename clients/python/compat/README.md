@@ -30,9 +30,9 @@ make generate-openapi-client
 To run just the compatibility tests:
 
 ```bash
-python clients/python-compat/test_compat.py
+python clients/python/compat/test_compat.py
 # Or specify a client directory:
-python clients/python-compat/test_compat.py clients/python
+python clients/python/compat/test_compat.py clients/python
 ```
 
 ## What Gets Patched
