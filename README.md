@@ -475,7 +475,7 @@ if parsed:
 
 ## Development
 
-**Important:** Requires Python >=3.9, <3.12.
+**Important:** Requires Python >=3.10, <3.13.
 
 ### Setup Development Environment
 
@@ -533,7 +533,7 @@ Some components use OpenSSL hash functions that aren't available by default in O
 1. **Connection Refused**: Verify Cassandra is running and accessible
 2. **Schema Validation Errors**: Ensure database schema matches expected version
 3. **Import Errors**: Install with `[all]` option for complete feature set
-4. **Python Version**: Requires Python >=3.9, <3.12
+4. **Python Version**: Requires Python >=3.10, <3.13
 
 ### Getting Help
 

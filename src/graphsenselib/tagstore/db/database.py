@@ -1,15 +1,10 @@
 import contextlib
-import sys
 from datetime import datetime
 from functools import cache, partial
+from importlib.resources import files as imprtlb_files
 
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import Session, SQLModel, create_engine, create_mock_engine, text
-
-if sys.version_info >= (3, 9):
-    from importlib.resources import files as imprtlb_files
-else:
-    from importlib_resources import files as imprtlb_files
 
 from .. import db as db
 from .models import (

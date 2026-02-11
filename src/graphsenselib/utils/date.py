@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import re
 
 logger = logging.getLogger(__name__)
@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 def parse_timestamp(timestamp: int) -> datetime:
     check_timestamp(timestamp)
-    return datetime.utcfromtimestamp(timestamp)  # ty: ignore[deprecated]
+    return datetime.fromtimestamp(timestamp, timezone.utc)
 
 
 def check_timestamp(timestamp: int) -> None:

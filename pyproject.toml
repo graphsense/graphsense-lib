@@ -9,16 +9,15 @@ authors = [{name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@ikna.io
 license-files = ["LICENSE"]
 classifiers = [
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Intended Audience :: Developers",
     "Topic :: Utilities",
 ]
-requires-python = ">=3.9, <3.12"
+requires-python = ">=3.10, <3.13"
 dependencies = [
     'setuptools>=80.0.0, <80.9',
-    'importlib-metadata; python_version<"3.8"',
     "filelock>=3.8.0",
     "click>=8.0.3",
     "pandas>=1.4.1",

@@ -1,10 +1,5 @@
 import re
-import sys
-
-if sys.version_info >= (3, 9):
-    from importlib.resources import files as imprtlb_files
-else:
-    from importlib_resources import files as imprtlb_files
+from importlib.resources import files as imprtlb_files
 
 import os
 from urllib.parse import urlparse
