@@ -18,6 +18,7 @@ stats = Stats(
             no_labels=13,
             no_tagged_addresses=79,
             no_address_relations=1230,
+            network_type="utxo",
         ),
         CurrencyStats(
             name="eth",
@@ -29,6 +30,7 @@ stats = Stats(
             no_labels=4,
             no_tagged_addresses=90,
             no_address_relations=2,
+            network_type="account",
         ),
         CurrencyStats(
             name="ltc",
@@ -40,6 +42,7 @@ stats = Stats(
             no_labels=2,
             no_tagged_addresses=20,
             no_address_relations=123,
+            network_type="utxo",
         ),
         CurrencyStats(
             name="trx",
@@ -51,6 +54,7 @@ stats = Stats(
             no_labels=0,
             no_tagged_addresses=0,
             no_address_relations=2,
+            network_type="account",
         ),
     ]
 )

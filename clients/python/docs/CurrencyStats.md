@@ -15,6 +15,7 @@ Name | Type | Description | Notes
 **no_labels** | **int** |  | 
 **no_tagged_addresses** | **int** |  | 
 **timestamp** | **int** |  | 
+**network_type** | **str** |  | 
 
 ## Example
 

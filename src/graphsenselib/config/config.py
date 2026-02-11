@@ -20,6 +20,10 @@ currency_to_schema_type = {
     cur: "account_trx" if cur == "trx" else "account" if cur == "eth" else "utxo"
     for cur in supported_base_currencies
 }
+currency_to_public_schema_type = {
+    cur: "account" if cur in ["eth", "trx"] else "utxo"
+    for cur in supported_base_currencies
+}
 supported_fiat_currencies = ["USD", "EUR"]
 avg_blocktimes_by_currencies = {
     "trx": 7,
@@ -46,6 +50,10 @@ GRAPHSENSE_VERBOSE_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 )
+
+
+def is_account_based_currency(currency: str) -> bool:
+    return currency_to_public_schema_type.get(currency.lower()) == "account"
 
 
 def get_reorg_backoff_blocks(network: str) -> int:
