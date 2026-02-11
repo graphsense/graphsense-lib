@@ -12,13 +12,76 @@ A comprehensive Python library for the GraphSense crypto-analytics platform. It 
 
 ```bash
 # Install with all features
-pip install graphsense-lib[all]
+uv add graphsense-lib[all]
 
 # Install from source
 git clone https://github.com/graphsense/graphsense-lib.git
 cd graphsense-lib
 make install
 ```
+
+### Serving the REST API locally
+
+The web API requires two backend connections: a **Cassandra** cluster (blockchain data) and a **TagStore** (PostgreSQL). You can configure them via environment variables or a YAML config file.
+
+#### Option A: Environment variables only
+
+```bash
+GS_CASSANDRA_ASYNC_NODES='["<cassandra-host>"]' \
+GRAPHSENSE_TAGSTORE_READ_URL='postgresql+asyncpg://<user>:<password>@<host>:<port>/tagstore' \
+uv run --extra web uvicorn graphsenselib.web.app:create_app --factory --host localhost --port 9000 --reload
+```
+
+#### Option B: YAML config file
+
+Point `CONFIG_FILE` to a REST-specific config (see `instance/config.yaml` for a full example):
+
+```bash
+CONFIG_FILE=./instance/config.yaml make serve-web
+```
+
+Or without Make:
+
+```bash
+CONFIG_FILE=./instance/config.yaml \
+uv run --extra web uvicorn graphsenselib.web.app:create_app --factory --host localhost --port 9000 --reload
+```
+
+#### Option C: `.graphsense.yaml` with a `web` key
+
+If you already have a `.graphsense.yaml` (or `~/.graphsense.yaml`) for the CLI, you can add a `web` key containing the REST config. The app will pick it up automatically without setting `CONFIG_FILE`:
+
+```yaml
+# .graphsense.yaml
+environments:
+  # ... your existing CLI config ...
+
+web:
+  database:
+    nodes: ["<cassandra-host>"]
+    currencies:
+      btc:
+      eth:
+  gs-tagstore:
+    url: "postgresql+asyncpg://<user>:<password>@<host>:<port>/tagstore"
+```
+
+```bash
+make serve-web
+```
+
+**Config resolution order:** explicit `config_file` param > `CONFIG_FILE` env var > `./instance/config.yaml` > `.graphsense.yaml` `web` key > env vars only.
+
+#### Optional REST settings (env vars)
+
+| Variable | Default | Description |
+|---|---|---|
+| `GSREST_DISABLE_AUTH` | `false` | Disable API key authentication |
+| `GSREST_ALLOWED_ORIGINS` | `*` | CORS allowed origins |
+| `GSREST_LOGGING_LEVEL` | — | Logging level (DEBUG, INFO, …) |
+| `GS_CASSANDRA_ASYNC_PORT` | `9042` | Cassandra port |
+| `GS_CASSANDRA_ASYNC_USERNAME` | — | Cassandra username |
+| `GS_CASSANDRA_ASYNC_PASSWORD` | — | Cassandra password |
 
 ### Basic Usage
 
@@ -55,25 +118,22 @@ with DbFactory().from_name(
 
 #### Async Database Services
 
+The async services are used internally by the REST API and can also be used standalone. `AddressesService` depends on several other services:
+
 ```python
-import asyncio
-from graphsenselib.db.asynchronous.services import BlocksService, AddressesService
+from graphsenselib.db.asynchronous.services import (
+    BlocksService, AddressesService, TagsService,
+    EntitiesService, RatesService,
+)
 
-async def analyze_address():
-    # Initialize services with database connection
-    blocks_service = BlocksService(db, rates_service, config, logger)
-    addresses_service = AddressesService(db, rates_service, config, logger)
+# Services are initialized with their dependencies
+blocks_service = BlocksService(db, rates_service, config, logger)
+addresses_service = AddressesService(
+    db, tags_service, entities_service, blocks_service, rates_service, logger
+)
 
-    # Get address information
-    address = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
-    address_info = await addresses_service.get_address("btc", address)
-    print(f"Address balance: {address_info.balance}")
-
-    # Get address transactions
-    txs = await addresses_service.list_address_txs("btc", address)
-    print(f"Transaction count: {len(txs)}")
-
-asyncio.run(analyze_address())
+address_info = await addresses_service.get_address("btc", "1A1zP1...")
+txs = await addresses_service.list_address_txs("btc", "1A1zP1...")
 ```
 
 ## Command Line Interface
@@ -382,18 +442,13 @@ graphsense-cli tagstore get-create-sql
 ### Cross-chain Analysis
 
 ```python
-from graphsenselib.db.asynchronous.services import AddressesService
+# Using an initialized AddressesService (see above for setup)
+related = await addresses_service.get_cross_chain_pubkey_related_addresses(
+    "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+)
 
-async def cross_chain_analysis():
-    addresses_service = AddressesService(db, rates_service, config, logger)
-
-    # Get cross-chain related addresses
-    related = await addresses_service.get_cross_chain_pubkey_related_addresses(
-        "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
-    )
-
-    for addr in related:
-        print(f"Network: {addr.network}, Address: {addr.address}")
+for addr in related:
+    print(f"Network: {addr.network}, Address: {addr.address}")
 ```
 
 ### Function Call Parsing
@@ -418,44 +473,17 @@ if parsed:
     print(f"Parameters: {parsed['parameters']}")
 ```
 
-## Installation
-
-### From PyPI
-
-```bash
-# Install with all features
-pip install graphsense-lib[all]
-```
-
-### From Source
-
-```bash
-# Clone and install
-git clone https://github.com/graphsense/graphsense-lib.git
-cd graphsense-lib
-make install
-
-# Or using pip directly
-pip install .
-```
-
 ## Development
 
-**Important:** Python 3.12 is currently not supported. Please use Python 3.11.
+**Important:** Requires Python >=3.9, <3.12.
 
 ### Setup Development Environment
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv
-
-# Activate virtual environment
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Initialize development environment
+# Initialize development environment (installs deps + pre-commit hooks)
 make dev
 
-# Install in development mode
+# Or install dev dependencies only
 make install-dev
 ```
 
@@ -484,15 +512,6 @@ For comprehensive testing:
 make test-all
 ```
 
-### Documentation
-
-```bash
-# Generate documentation
-make docs
-```
-
-**Note:** Building docs requires Python development headers. See [this StackOverflow answer](https://stackoverflow.com/questions/21530577/fatal-error-python-h-no-such-file-or-directory) for installation instructions.
-
 ### Release Process
 
 1. Update CHANGELOG.md with new features and fixes
@@ -514,7 +533,7 @@ Some components use OpenSSL hash functions that aren't available by default in O
 1. **Connection Refused**: Verify Cassandra is running and accessible
 2. **Schema Validation Errors**: Ensure database schema matches expected version
 3. **Import Errors**: Install with `[all]` option for complete feature set
-4. **Python Version**: Use Python 3.11 (3.12 not currently supported)
+4. **Python Version**: Requires Python >=3.9, <3.12
 
 ### Getting Help
 

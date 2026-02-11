@@ -19,6 +19,8 @@ the service model (use simple) or requires nested conversions/transformations
 (use manual).
 """
 
+from __future__ import annotations
+
 from typing import Any, Union
 
 from graphsenselib.db.asynchronous.services.models import Actor as PydanticActor
