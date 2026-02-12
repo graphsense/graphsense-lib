@@ -509,7 +509,7 @@ For comprehensive testing:
 
 ```bash
 # Run complete test suite (including slow tests)
-make test-all
+make test
 ```
 
 ### Release Process
