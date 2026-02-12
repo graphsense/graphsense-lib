@@ -8,7 +8,7 @@ authors = [
 ]
 readme = "README.md"
 keywords = ["OpenAPI", "OpenAPI-Generator", "GraphSense API"]
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 
 dependencies = [
   "urllib3 (>=2.1.0,<3.0.0)",
