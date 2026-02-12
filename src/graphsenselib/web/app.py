@@ -6,6 +6,7 @@ import os
 import re
 import traceback
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import yaml
@@ -797,6 +798,19 @@ def _setup_custom_openapi(app: FastAPI) -> None:
         return app.openapi_schema
 
     app.openapi = custom_openapi
+
+
+def create_spec_app() -> FastAPI:
+    """Create a minimal FastAPI app for OpenAPI spec generation (no DB/config needed)."""
+    app = FastAPI(
+        title="GraphSense API",
+        description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
+        version=__api_version__,
+    )
+    app.state.config = SimpleNamespace(disable_auth=False)
+    _register_routers(app)
+    _setup_custom_openapi(app)
+    return app
 
 
 def create_app_from_dict(config_dict: dict) -> FastAPI:

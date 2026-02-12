@@ -31,6 +31,14 @@ except ImportError:
     logger.debug("Tagpack tool or tagstore CLI not available.")
     tagpacktool_cli_available = False
 
+try:
+    from ..web.cli import web_cli
+
+    web_cli_available = True
+except ImportError:
+    logger.debug("Web CLI not available.")
+    web_cli_available = False
+
 __author__ = "iknaio"
 __copyright__ = "iknaio"
 __license__ = "MIT"
@@ -64,6 +72,7 @@ def version_cmd():
             version,
         ]
         + ([tagpacktool_cli, tagstore_cli] if tagpacktool_cli_available else [])
+        + ([web_cli] if web_cli_available else [])
     ),
     epilog="GraphSense - https://graphsense.github.io/",
 )
