@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from tests.deltalake.config import DeltaTestConfig
+from tests.deltalake.config import SCHEMA_TYPE_MAP, DeltaTestConfig
 
 
 def _build_gs_config(
@@ -17,17 +17,21 @@ def _build_gs_config(
     minio_endpoint: str,
     minio_access_key: str,
     minio_secret_key: str,
+    secondary_node_references: list[str] | None = None,
 ) -> dict:
     """Build a minimal .graphsense.yaml config dict for delta-lake ingestion."""
-    schema_type_map = {
-        "btc": "utxo",
-        "ltc": "utxo",
-        "bch": "utxo",
-        "zec": "utxo",
-        "eth": "account",
-        "trx": "account_trx",
+    schema_type = SCHEMA_TYPE_MAP.get(currency, "utxo")
+
+    ingest_config: dict = {
+        "node_reference": node_url,
+        "raw_keyspace_file_sinks": {
+            "delta": {
+                "directory": delta_directory,
+            },
+        },
     }
-    schema_type = schema_type_map.get(currency, "utxo")
+    if secondary_node_references:
+        ingest_config["secondary_node_references"] = secondary_node_references
 
     return {
         "environments": {
@@ -38,14 +42,7 @@ def _build_gs_config(
                         "raw_keyspace_name": f"{currency}_raw_dev",
                         "transformed_keyspace_name": f"{currency}_transformed_dev",
                         "schema_type": schema_type,
-                        "ingest_config": {
-                            "node_reference": node_url,
-                            "raw_keyspace_file_sinks": {
-                                "delta": {
-                                    "directory": delta_directory,
-                                },
-                            },
-                        },
+                        "ingest_config": ingest_config,
                     },
                 },
             },
@@ -86,6 +83,7 @@ def run_ingest(
         minio_endpoint=minio_endpoint,
         minio_access_key=minio_access_key,
         minio_secret_key=minio_secret_key,
+        secondary_node_references=config.secondary_node_references,
     )
 
     with tempfile.NamedTemporaryFile(

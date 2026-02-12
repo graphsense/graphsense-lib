@@ -177,14 +177,13 @@ rest-clean: rest-stop
 # ============================================================================
 
 DELTA_REF_VERSION ?= v25.11.18
-DELTA_CURRENCY ?= eth
+DELTA_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
 
 test-deltalake:
 	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
-	DELTA_CURRENCY=$(DELTA_CURRENCY) \
-	NODE_URL=$(NODE_URL) \
+	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
 	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/deltalake/ -v -m deltalake
+	uv run pytest tests/deltalake/ -v -s -m deltalake
 
 clean-deltalake:
 	rm -rf /tmp/gslib-deltalake-testvenvs

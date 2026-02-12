@@ -1,5 +1,7 @@
 """Compare two IngestionSnapshots and produce a structured diff report."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 from tests.deltalake.snapshot import IngestionSnapshot
@@ -116,12 +118,56 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
     return report
 
 
-def format_report(report: ComparisonReport) -> str:
+def _format_environment_section(ref: IngestionSnapshot, current: IngestionSnapshot) -> list[str]:
+    """Format environment context as header lines."""
+    lines = []
+
+    # Block range (same for both)
+    lines.append(f"  Currency:     {ref.environment.currency or 'n/a'}")
+    lines.append(f"  Node URL:     {ref.environment.node_url or 'n/a'}")
+    lines.append(f"  Block range:  {ref.block_range[0]} - {ref.block_range[1]}")
+    lines.append("")
+
+    # Package versions side by side
+    all_pkgs = sorted(
+        set(ref.environment.package_versions) | set(current.environment.package_versions)
+    )
+    if all_pkgs:
+        lines.append(f"  {'Package':<20s} {'Reference':<25s} {'Current':<25s}")
+        lines.append(f"  {'-' * 20} {'-' * 25} {'-' * 25}")
+        for pkg in all_pkgs:
+            ref_ver = ref.environment.package_versions.get(pkg, "n/a")
+            cur_ver = current.environment.package_versions.get(pkg, "n/a")
+            marker = " *" if ref_ver != cur_ver else ""
+            lines.append(f"  {pkg:<20s} {ref_ver:<25s} {cur_ver:<25s}{marker}")
+
+    return lines
+
+
+def format_report(
+    report: ComparisonReport,
+    ref_snapshot: IngestionSnapshot | None = None,
+    current_snapshot: IngestionSnapshot | None = None,
+) -> str:
     """Human-readable summary of a ComparisonReport."""
     lines = [
         f"Delta Lake Cross-Version Comparison: {report.reference_label} vs {report.current_label}",
         "=" * 80,
     ]
+
+    # Environment context
+    if (
+        ref_snapshot
+        and current_snapshot
+        and ref_snapshot.environment
+        and current_snapshot.environment
+    ):
+        lines.append("")
+        lines.extend(_format_environment_section(ref_snapshot, current_snapshot))
+
+    lines.append("")
+    lines.append("Table comparison:")
+    lines.append("-" * 80)
 
     for name, diff in sorted(report.table_diffs.items()):
         status = "IDENTICAL" if diff.is_identical else "DIFFERS"

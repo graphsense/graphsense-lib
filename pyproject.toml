@@ -102,7 +102,7 @@ ingest = [
     "graphsense-bitcoin-etl>=1.5.5",
     "lz4>=4.3.2",
     "pyarrow>=23.0.0",
-    "deltalake>=1.2.1",
+    "deltalake>=1.4.2",
     "duckdb>=1.0.0",
     "grpcio>=1.49.0",
 ]

@@ -22,12 +22,23 @@ class TableSnapshot:
 
 
 @dataclass
+class EnvironmentInfo:
+    """Package versions and configuration used for an ingestion run."""
+
+    version_label: str
+    package_versions: dict[str, str] = field(default_factory=dict)
+    currency: str = ""
+    node_url: str = ""
+
+
+@dataclass
 class IngestionSnapshot:
     """Snapshot of all tables produced by an ingestion run."""
 
     version_label: str
     tables: dict[str, TableSnapshot] = field(default_factory=dict)
     block_range: tuple[int, int] = (0, 0)
+    environment: EnvironmentInfo | None = None
 
 
 def _sortable_type(t: pa.DataType) -> bool:

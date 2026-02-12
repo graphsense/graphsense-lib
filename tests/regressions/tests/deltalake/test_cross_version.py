@@ -11,13 +11,16 @@ Test flow
 2. **Mixed** (cross-version):
    ref ingests same base blocks, *current* appends same blocks → snapshot B
 3. **Compare**: A vs B — schema, row counts, content hashes, file metadata
+
+The test is parametrized over all currencies configured in .graphsense.yaml
+(filterable via ``DELTA_CURRENCIES`` env var).
 """
 
 import pytest
 
 from tests.deltalake.comparison import compare_snapshots, format_report
 from tests.deltalake.ingest_runner import run_ingest
-from tests.deltalake.snapshot import capture_snapshot
+from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
 
 
 @pytest.mark.deltalake
@@ -32,6 +35,8 @@ class TestCrossVersionCompatibility:
         delta_config,
         reference_venv,
         current_venv,
+        ref_package_versions,
+        current_package_versions,
     ):
         bucket = minio_config["bucket"]
         currency = delta_config.currency
@@ -41,6 +46,19 @@ class TestCrossVersionCompatibility:
             minio_endpoint=minio_config["endpoint"],
             minio_access_key=minio_config["access_key"],
             minio_secret_key=minio_config["secret_key"],
+        )
+
+        ref_env = EnvironmentInfo(
+            version_label=f"reference ({delta_config.ref_version})",
+            package_versions=ref_package_versions,
+            currency=delta_config.currency,
+            node_url=delta_config.node_url,
+        )
+        cur_env = EnvironmentInfo(
+            version_label="current (dev)",
+            package_versions=current_package_versions,
+            currency=delta_config.currency,
+            node_url=delta_config.node_url,
         )
 
         # ------------------------------------------------------------------
@@ -69,6 +87,7 @@ class TestCrossVersionCompatibility:
             storage_options, path_ref, tables, f"reference ({delta_config.ref_version})",
             block_range=(delta_config.start_block, delta_config.append_end_block),
         )
+        snapshot_ref.environment = ref_env
 
         # ------------------------------------------------------------------
         # Scenario B: reference base + current append (cross-version)
@@ -96,6 +115,7 @@ class TestCrossVersionCompatibility:
             storage_options, path_mixed, tables, "current (dev)",
             block_range=(delta_config.start_block, delta_config.append_end_block),
         )
+        snapshot_mixed.environment = cur_env
 
         # ------------------------------------------------------------------
         # Compare
@@ -103,7 +123,7 @@ class TestCrossVersionCompatibility:
         report = compare_snapshots(snapshot_ref, snapshot_mixed)
 
         # Print report for CI visibility
-        print("\n" + format_report(report))
+        print("\n" + format_report(report, snapshot_ref, snapshot_mixed))
 
         # Assertions with clear messages per table
         for name, diff in report.table_diffs.items():
