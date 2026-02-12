@@ -33,7 +33,8 @@ class CurrencyStats(BaseModel):
     no_labels: StrictInt
     no_tagged_addresses: StrictInt
     timestamp: StrictInt
-    __properties: ClassVar[List[str]] = ["name", "no_blocks", "no_address_relations", "no_addresses", "no_entities", "no_txs", "no_labels", "no_tagged_addresses", "timestamp"]
+    network_type: StrictStr
+    __properties: ClassVar[List[str]] = ["name", "no_blocks", "no_address_relations", "no_addresses", "no_entities", "no_txs", "no_labels", "no_tagged_addresses", "timestamp", "network_type"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -94,7 +95,8 @@ class CurrencyStats(BaseModel):
             "no_txs": obj.get("no_txs"),
             "no_labels": obj.get("no_labels"),
             "no_tagged_addresses": obj.get("no_tagged_addresses"),
-            "timestamp": obj.get("timestamp")
+            "timestamp": obj.get("timestamp"),
+            "network_type": obj.get("network_type")
         })
         return _obj
 
