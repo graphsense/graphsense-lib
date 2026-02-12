@@ -10,29 +10,29 @@ from tests.web.testdata.txs import (
 )
 
 
-async def test_get_block(client):
+def test_get_block(client):
     path = "/{currency}/blocks/{height}"
-    result = await get_json(client, path, currency="btc", height=1)
+    result = get_json(client, path, currency="btc", height=1)
     assert block == Block.from_dict(result)
-    result = await get_json(client, path, currency="btc", height=2)
+    result = get_json(client, path, currency="btc", height=2)
     assert block2 == Block.from_dict(result)
 
-    result = await get_json(client, path, currency="eth", height=1)
+    result = get_json(client, path, currency="eth", height=1)
     assert eth_block == Block.from_dict(result)
-    result = await get_json(client, path, currency="eth", height=2300001)
+    result = get_json(client, path, currency="eth", height=2300001)
     assert eth_block2 == Block.from_dict(result)
 
-    await request_with_status(client, path, 404, currency="btc", height="0")
-    await request_with_status(client, path, 404, currency="eth", height="0")
+    request_with_status(client, path, 404, currency="btc", height="0")
+    request_with_status(client, path, 404, currency="eth", height="0")
 
 
-async def test_list_block_txs(client):
+def test_list_block_txs(client):
     path = "/{currency}/blocks/{height}/txs"
     block_txs = [tx1.to_dict()]
-    result = await get_json(client, path, currency="btc", height=1)
+    result = get_json(client, path, currency="btc", height=1)
     assert block_txs == result
 
-    result = await get_json(client, path, currency="eth", height=2)
+    result = get_json(client, path, currency="eth", height=2)
 
     tx22_eth = TxAccount(**tx1_eth.to_dict())
     tx22_eth.tx_hash = "af6e0001"
@@ -45,7 +45,7 @@ async def test_list_block_txs(client):
         token_tx2_eth.to_dict(),
     ]
 
-    result = await get_json(client, path, currency="eth", height=2300001)
+    result = get_json(client, path, currency="eth", height=2300001)
     eth_txs = [tx1_eth.to_dict(), tx22_eth.to_dict()]
 
     assert eth_txs == result

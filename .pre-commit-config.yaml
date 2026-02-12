@@ -49,6 +49,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+    -   id: type-check
+        name: type-check
+        entry: make type-check
+        language: system
+        pass_filenames: false
+        always_run: true
     -   id: codegen
         name: Ensure Generated Code is up to date
         entry: make run-codegen
@@ -65,12 +71,6 @@ repos:
     -   id: pytest-check
         name: pytest-check
         entry: make test
-        language: system
-        pass_filenames: false
-        always_run: true
-    -   id: type-check
-        name: type-check
-        entry: make type-check
         language: system
         pass_filenames: false
         always_run: true

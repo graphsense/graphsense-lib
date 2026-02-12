@@ -10,11 +10,11 @@ from tests.web.testdata.tags import (
 )
 
 
-async def test_get_actor_tags(client):
-    result = await get_json(client, "/tags/actors/actorX/tags")
+def test_get_actor_tags(client):
+    result = get_json(client, "/tags/actors/actorX/tags")
     assert [btc_tag_actorX.to_dict(), eth_tag_actor.to_dict()] == result["address_tags"]
 
-    result = await get_json(client, "/tags/actors/actorY/tags")
+    result = get_json(client, "/tags/actors/actorY/tags")
 
     expected_result = [
         {
@@ -58,12 +58,12 @@ async def test_get_actor_tags(client):
     ]
     assert expected_result == result["address_tags"]
 
-    result = await get_json(client, "/tags/actors/actorZ/tags")
+    result = get_json(client, "/tags/actors/actorZ/tags")
     assert [] == result["address_tags"]
 
 
-async def test_get_actor(client):
-    result = await get_json(client, "/tags/actors/actorX")
+def test_get_actor(client):
+    result = get_json(client, "/tags/actors/actorX")
     assert {
         "categories": [
             {"id": "organization", "label": "Organization"},
@@ -79,7 +79,7 @@ async def test_get_actor(client):
         "uri": "http://actorX",
     } == result
 
-    result = await get_json(client, "/tags/actors/actorY")
+    result = get_json(client, "/tags/actors/actorY")
     assert {
         "categories": [{"id": "defi_dex", "label": "Decentralized Exchange (DEX)"}],
         "id": "actorY",
@@ -89,13 +89,13 @@ async def test_get_actor(client):
         "uri": "http://actorY",
     } == result
 
-    result = await request_with_status(client, "/tags/actors/actorZ", 404)
+    result = request_with_status(client, "/tags/actors/actorZ", 404)
     assert result is None
 
 
-async def test_list_address_tags(client):
+def test_list_address_tags(client):
     path = "/tags?label={label}"
-    result = await get_json(client, path, label="isolinks")
+    result = get_json(client, path, label="isolinks")
     t1 = tag5.to_dict()
     t2 = {**t1}
     t2["address"] = "addressY"
@@ -107,33 +107,33 @@ async def test_list_address_tags(client):
     t2["entity"] = 456
     assert [t1, t2] == result["address_tags"]
 
-    result = await get_json(client, path, auth="unauthorized", label="isolinks")
+    result = get_json(client, path, auth="unauthorized", label="isolinks")
     assert [t1] == result["address_tags"]
 
-    result = await get_json(client, path, label="cimedy")
+    result = get_json(client, path, label="cimedy")
     assert [tag6.to_dict(), tag7.to_dict()] == result["address_tags"]
 
     # test paging
     path_with_page = path + "&pagesize={pagesize}"
-    result = await get_json(
+    result = get_json(
         client, path_with_page, label="isolinks", pagesize=1, page=None
     )
     assert [t1] == result["address_tags"]
     path_with_page2 = path + "&pagesize={pagesize}&page={page}"
-    result = await get_json(
+    result = get_json(
         client, path_with_page2, label="isolinks", pagesize=1, page=result["next_page"]
     )
     assert [t2] == result["address_tags"]
 
     assert result.get("next_page") is None
 
-    result = await get_json(client, path, label="TagA")
+    result = get_json(client, path, label="TagA")
     assert [eth_tag3.to_dict()] == result["address_tags"]
 
 
-async def test_list_concepts(client):
+def test_list_concepts(client):
     path = "/tags/taxonomies/{taxonomy}/concepts"
-    result = await get_json(client, path, taxonomy="entity")
+    result = get_json(client, path, taxonomy="entity")
     entity_ids = {e["id"] for e in result}
     taxonomies = {e["taxonomy"] for e in result}
     assert taxonomies == {"concept"}
@@ -141,13 +141,13 @@ async def test_list_concepts(client):
     assert "exchange" in entity_ids
     assert "organization" in entity_ids
 
-    result = await get_json(client, path, taxonomy="abuse")
+    result = get_json(client, path, taxonomy="abuse")
     abuse_ids = {e["id"] for e in result}
     taxonomies = {e["taxonomy"] for e in result}
     assert len(entity_ids.intersection(abuse_ids)) == len(abuse_ids)
     assert taxonomies == {"concept"}
 
 
-async def test_list_taxonomies(client):
-    result = await get_json(client, "/tags/taxonomies")
+def test_list_taxonomies(client):
+    result = get_json(client, "/tags/taxonomies")
     assert len(result) == 5

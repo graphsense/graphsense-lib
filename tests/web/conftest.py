@@ -3,9 +3,8 @@ from os import environ
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
-from docker.errors import ImageNotFound, NotFound
-from httpx import ASGITransport, AsyncClient
+from docker.errors import NotFound
+from starlette.testclient import TestClient
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
@@ -14,12 +13,10 @@ from graphsenselib.web.config import GSRestConfig
 from tests.web.cassandra.insert import load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 
-# Import shared Cassandra container and utilities from root conftest
-# NOTE: postgres is NOT shared because web tests use different tagstore data
 from tests.conftest import (
     cassandra,
-    USE_FAST_CASSANDRA,
-    FAST_CASSANDRA_IMAGE,
+    gs_db_setup,  # noqa: F811 - re-export so pytest sees the dependency
+    DANGEROUSLY_ACCELERATE_TESTS,
     create_web_schemas,
 )
 
@@ -28,35 +25,19 @@ postgres = PostgresContainer("postgres:16-alpine")
 redis = RedisContainer("redis:7-alpine")
 
 
-@pytest.fixture(scope="session", autouse=True)
-def gs_rest_db_setup(request):
+@pytest.fixture(scope="session")
+def gs_rest_db_setup(gs_db_setup, request):
+    """Set up all web test infrastructure. Depends on gs_db_setup for Cassandra."""
     SKIP_REST_CONTAINER_SETUP = environ.get("SKIP_REST_CONTAINER_SETUP", False)
     if SKIP_REST_CONTAINER_SETUP:
         return
 
-    # Track if we started cassandra (it may already be running from root conftest)
-    started_cassandra = False
+    cas_host, cas_port = gs_db_setup
 
-    # Start Cassandra (shared with root tests, may already be running)
-    if not cassandra._container:
-        try:
-            cassandra.start()
-            started_cassandra = True
-        except ImageNotFound as e:
-            if USE_FAST_CASSANDRA and "graphsense/cassandra-test" in str(e):
-                raise RuntimeError(
-                    f"Fast Cassandra image not found: {FAST_CASSANDRA_IMAGE}\n"
-                    "You need to build it first with: make build-fast-cassandra\n"
-                    "Or run tests with vanilla Cassandra: make test-web (slower)"
-                ) from e
-            raise
-
-    # Start web-specific containers
     postgres.start()
     redis.start()
 
     def remove_containers():
-        # Always stop web-specific containers
         try:
             redis.stop()
         except NotFound:
@@ -65,17 +46,8 @@ def gs_rest_db_setup(request):
             postgres.stop()
         except NotFound:
             pass
-        # Only stop cassandra if we started it
-        if started_cassandra and cassandra._container:
-            try:
-                cassandra.stop()
-            except NotFound:
-                pass
 
     request.addfinalizer(remove_containers)
-
-    cas_host = cassandra.get_container_host_ip()
-    cas_port = cassandra.get_exposed_port(9042)
 
     postgres_sync_url = postgres.get_connection_url()
     portgres_async_url = postgres_sync_url.replace("psycopg2", "asyncpg")
@@ -115,19 +87,18 @@ def gs_rest_db_setup(request):
         "tag_access_logger": {"redis_url": redis_url},
     }
 
-    # Create schemas if using vanilla Cassandra (slow mode)
-    if not USE_FAST_CASSANDRA:
+    if not DANGEROUSLY_ACCELERATE_TESTS:
         create_web_schemas(cas_host, cas_port)
 
     cas_load_test_data(cas_host, cas_port)
-
     tags_load_test_data(postgres_sync_url.replace("+psycopg2", ""))
 
     return config
 
 
-@pytest_asyncio.fixture
-async def client(gs_rest_db_setup):
+@pytest.fixture(scope="session")
+def client(gs_rest_db_setup):
+    """Session-scoped sync test client. Created once, reused across all web tests."""
     config = gs_rest_db_setup
     logging.getLogger("uvicorn.error").setLevel("ERROR")
     logging.getLogger("uvicorn.access").setLevel("ERROR")
@@ -135,17 +106,15 @@ async def client(gs_rest_db_setup):
         config=GSRestConfig.from_dict(config),
         validate_responses=True,
     )
-    async with LifespanManager(fastapi_app) as manager:
-        transport = ASGITransport(app=manager.app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
-            c.app_state = fastapi_app.state
-            yield c
+    with TestClient(fastapi_app) as c:
+        c.app_state = fastapi_app.state
+        yield c
 
 
 # NOTE: Regression test fixtures (baseline_server_url) moved to iknaio-tests-nightly
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def redis_client(gs_rest_db_setup):
     """Provide an async Redis client for tests."""
     from redis import asyncio as aioredis

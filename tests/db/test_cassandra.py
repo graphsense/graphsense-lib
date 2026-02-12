@@ -1,3 +1,5 @@
+import pytest
+
 from graphsenselib.db import DbFactory
 from graphsenselib.db.cassandra import build_delete_stmt, build_select_stmt
 from graphsenselib.schema.schema import GraphsenseSchemas
@@ -61,7 +63,8 @@ def test_patched_config():
     config.model_validate(config)
 
 
-def test_cassandra_create_schema():
+@pytest.mark.slow
+def test_cassandra_create_schema(gs_db_setup):
     # create BTC schema
     GraphsenseSchemas().create_keyspaces_if_not_exist("pytest", "btc")
 

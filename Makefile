@@ -17,8 +17,18 @@ tag-version:
 dev: install-dev
 	 uv run pre-commit install
 
+DANGEROUSLY_ACCELERATE_TESTS ?= 0
+
+ifeq ($(DANGEROUSLY_ACCELERATE_TESTS),1)
+PYTEST_OPTS := -x -rx -vv --capture=no -W error
+PYTEST_MARK := -m "not slow"
+else
+PYTEST_OPTS := -x -rx -vv --cov=src --capture=no -W error --cov-report term-missing
+PYTEST_MARK :=
+endif
+
 test: install-dev
-	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
+	DANGEROUSLY_ACCELERATE_TESTS=$(DANGEROUSLY_ACCELERATE_TESTS) uv run --exact --all-extras pytest $(PYTEST_OPTS) $(PYTEST_MARK)
 
 test-ci:
 	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
@@ -26,12 +36,6 @@ test-ci:
 test-with-base-dependencies-ci:
 	uv run --exact --no-dev --group testing --extra conversions --extra tagpacks pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
 
-test-all:
-	uv run --dev --all-groups  pytest --cov=src -W error --cov-report term-missing
-
-# Fast tests (requires pre-built Cassandra image, run build-fast-cassandra first)
-test-fast: install-dev
-	USE_FAST_CASSANDRA=1 uv run --exact --all-extras pytest -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
 
 # Build pre-baked Cassandra image with all test schemas (resttest_* + pytest_*)
 # This speeds up test startup significantly by avoiding runtime schema creation
@@ -128,4 +132,4 @@ package-ui:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build pre-commit test-all test-fast type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version

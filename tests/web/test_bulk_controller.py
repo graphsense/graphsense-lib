@@ -3,9 +3,9 @@ from tests.web.testdata.blocks import block, block2
 from tests.web.testdata.bulk import block_path, error_bodies, headers
 
 
-async def test_bulk_csv(client):
+def test_bulk_csv(client):
     body = {"height": [1, 2]}
-    response = await client.request(
+    response = client.request(
         "POST",
         block_path.format(form="csv", currency="btc"),
         json=body,
@@ -23,7 +23,7 @@ async def test_bulk_csv(client):
     # get_address
     path = "/{currency}/bulk.{form}/get_address?num_pages=1"
     body = {"address": ["a123456", "2"]}
-    response = await client.request(
+    response = client.request(
         "POST",
         path.format(form="csv", currency="btc"),
         json=body,
@@ -39,7 +39,7 @@ async def test_bulk_csv(client):
 
     # no data
     body = {"height": [100, 200]}
-    response = await client.request(
+    response = client.request(
         "POST",
         block_path.format(form="csv", currency="btc"),
         json=body,
@@ -55,7 +55,7 @@ async def test_bulk_csv(client):
 
     # error bodies:
     for body in error_bodies:
-        response = await client.request(
+        response = client.request(
             "POST",
             block_path.format(form="csv", currency="btc"),
             json=body,
@@ -64,9 +64,9 @@ async def test_bulk_csv(client):
         assert 400 == response.status_code, "response is " + response.text
 
 
-async def test_bulk_json(client):
+def test_bulk_json(client):
     body = {"height": [1, 2]}
-    result = await request_with_status(
+    result = request_with_status(
         client,
         block_path.format(form="json", currency="btc"),
         200,

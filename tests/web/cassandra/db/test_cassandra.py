@@ -11,7 +11,7 @@ async def test_concurrent_with_args(client):
     result = await db.concurrent_with_args(
         "btc", "raw", query, params, return_one=False
     )
-    pprint.pprint(result)
+    #pprint.pprint(result)
     txs = [
         [
             {"tx_id": 345},

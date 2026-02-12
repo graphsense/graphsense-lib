@@ -198,7 +198,6 @@ markers = [
     "slow: mark tests as slow (deselect with '-m \"not slow\"')",
     "vcr:",
 ]
-addopts = "-m 'not slow'"
 asyncio_mode = "auto"
 
 [tool.ruff]

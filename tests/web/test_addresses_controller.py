@@ -8,8 +8,6 @@ from graphsenselib.web.models import (
     AddressTxs,
     TxAccount,
 )
-from graphsenselib.web.service import ServiceContext
-from graphsenselib.web.service.rates_service import list_rates as _list_rates
 from graphsenselib.web.util.values_legacy import convert_value
 from tests.web.helpers import get_json, raw_request
 from tests.web.testdata.addresses import (
@@ -33,23 +31,23 @@ from tests.web.testdata.tags import tag1, tag3
 from tests.web.testdata.txs import tx1_eth, tx2_eth, tx4_eth, tx22_eth
 
 
-async def test_get_address(client):
+def test_get_address(client):
     basepath = "/{currency}/addresses/{address}"
     path = basepath + "?include_tags={include_tags}"
-    result = await get_json(
+    result = get_json(
         client, path, currency="btc", address=addressWithoutTags.address, include_tags=True
     )
 
     assert addressWithoutTags.to_dict() == result
 
-    result = await get_json(
+    result = get_json(
         client, path, currency="btc", address=addressWithTags.address, include_tags=True
     )
     awt = addressWithTags.to_dict()
     assert awt == result
     awt_public = Address(**awt)
     awt_public.tags = [tag1, tag3]
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="btc",
@@ -59,18 +57,18 @@ async def test_get_address(client):
     )
     assert awt_public.to_dict() == result
 
-    result = await get_json(
+    result = get_json(
         client, basepath, currency="btc", address=addressWithTotalSpent0.address
     )
     assert addressWithTotalSpent0.to_dict() == result
 
     # ETH
-    result = await get_json(
+    result = get_json(
         client, basepath, currency="eth", address=eth_addressWithTags.address
     )
     assert eth_address.to_dict() == result
 
-    status, body = await raw_request(
+    status, body = raw_request(
         client,
         "/{currency}/addresses/{address}",
         currency="eth",
@@ -80,7 +78,7 @@ async def test_get_address(client):
     assert "The address provided does not look like a ETH address" in body
 
     # non supported currency
-    status, body = await raw_request(
+    status, body = raw_request(
         client,
         "/{currency}/addresses/{address}",
         currency="DOGE",
@@ -89,7 +87,7 @@ async def test_get_address(client):
     assert status == 404
     assert "Network doge not supported" in body
 
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="trx",
@@ -99,7 +97,7 @@ async def test_get_address(client):
 
     assert result["address"] == evm_to_tron_address_string("0xabcdef")
 
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="trx",
@@ -110,20 +108,15 @@ async def test_get_address(client):
     assert result["address"] == evm_to_tron_address_string("0x123456")
 
 
-async def test_list_address_txs(client):
+def test_list_address_txs(client):
     path = "/{currency}/addresses/{address}/txs"
     path_with_pagesize = path + "?pagesize={pagesize}&page={page}"
-    ctx = ServiceContext(
-        services=client.app_state.services,
-        tagstore_groups=["public"],
-        config=client.app_state.config,
-    )
-    rates = await _list_rates(ctx, currency="btc", heights=[2])
+    rate_data = get_json(client, "/btc/rates/2")
     txs = [
         AddressTxUtxo(
             tx_hash="123456",
             currency="btc",
-            value=convert_value("btc", 1260000, rates[2]),
+            value=convert_value("btc", 1260000, rate_data),
             height=3,
             coinbase=False,
             timestamp=1510347493,
@@ -131,7 +124,7 @@ async def test_list_address_txs(client):
         AddressTxUtxo(
             tx_hash="abcdef",
             currency="btc",
-            value=convert_value("btc", -1260000, rates[2]),
+            value=convert_value("btc", -1260000, rate_data),
             height=2,
             coinbase=False,
             timestamp=1511153263,
@@ -139,14 +132,14 @@ async def test_list_address_txs(client):
         AddressTxUtxo(
             tx_hash="ab1880",
             currency="btc",
-            value=convert_value("btc", -1, rates[2]),
+            value=convert_value("btc", -1, rate_data),
             height=1,
             coinbase=False,
             timestamp=1434554207,
         ),
     ]
     address_txs = AddressTxs(next_page=None, address_txs=txs)
-    result = await get_json(
+    result = get_json(
         client,
         path_with_pagesize,
         currency="btc",
@@ -157,7 +150,7 @@ async def test_list_address_txs(client):
     assert address_txs.to_dict()["address_txs"][0:2] == result["address_txs"]
     assert result.get("next_page", None) is not None
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_pagesize,
         currency="btc",
@@ -171,13 +164,13 @@ async def test_list_address_txs(client):
 
     path_with_order = path + "?order={order}"
     _reversed = list(reversed(address_txs.to_dict()["address_txs"]))
-    result = await get_json(
+    result = get_json(
         client, path_with_order, currency="btc", address=address2.address, order="asc"
     )
     assert _reversed == result["address_txs"]
 
     path_with_order_and_page = path_with_order + "&pagesize={pagesize}&page={page}"
-    result = await get_json(
+    result = get_json(
         client,
         path_with_order_and_page,
         currency="btc",
@@ -189,7 +182,7 @@ async def test_list_address_txs(client):
     assert _reversed[0:2] == result["address_txs"]
     assert result.get("next_page", None) is not None
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_order_and_page,
         currency="btc",
@@ -203,7 +196,7 @@ async def test_list_address_txs(client):
     assert result.get("next_page", None) is None
 
     path_with_direction = path + "?direction={direction}"
-    result = await get_json(
+    result = get_json(
         client,
         path_with_direction,
         currency="btc",
@@ -215,7 +208,7 @@ async def test_list_address_txs(client):
     path_with_range = (
         path_with_direction + "&min_height={min_height}&max_height={max_height}"
     )
-    result = await get_json(
+    result = get_json(
         client,
         path_with_range,
         currency="btc",
@@ -227,7 +220,7 @@ async def test_list_address_txs(client):
     address_txs.address_txs = txs[2:3]
     assert address_txs.to_dict()["address_txs"] == result["address_txs"]
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_range,
         currency="btc",
@@ -239,7 +232,7 @@ async def test_list_address_txs(client):
     address_txs.address_txs = txs[1:2]
     assert address_txs.to_dict()["address_txs"] == result["address_txs"]
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_direction,
         currency="btc",
@@ -259,12 +252,12 @@ async def test_list_address_txs(client):
     tx2_eth_r = reverse(tx2_eth)
     tx22_eth_r = reverse(tx22_eth)
     txs_eth = AddressTxs(address_txs=[tx4_eth, tx22_eth_r, tx2_eth_r, tx1_eth])
-    result = await get_json(
+    result = get_json(
         client, path, currency="eth", address=eth_address.address
     )
 
     assert txs_eth.to_dict()["address_txs"] == result["address_txs"]
-    result = await get_json(
+    result = get_json(
         client,
         path_with_direction,
         currency="eth",
@@ -274,7 +267,7 @@ async def test_list_address_txs(client):
     assert txs_eth.to_dict()["address_txs"][1:3] == result["address_txs"]
 
     path_with_range_and_tc = path_with_range + "&token_currency={token_currency}"
-    result = await get_json(
+    result = get_json(
         client,
         path_with_range_and_tc,
         currency="eth",
@@ -286,7 +279,7 @@ async def test_list_address_txs(client):
     )
     assert txs_eth.to_dict()["address_txs"][0:2] == result["address_txs"]
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_range_and_tc,
         currency="eth",
@@ -299,7 +292,7 @@ async def test_list_address_txs(client):
 
     assert txs_eth.to_dict()["address_txs"][2:4] == result["address_txs"]
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_range_and_tc,
         currency="eth",
@@ -311,7 +304,7 @@ async def test_list_address_txs(client):
     )
     assert txs_eth.to_dict()["address_txs"][1:4] == result["address_txs"]
 
-    result = await get_json(
+    result = get_json(
         client, path, currency="eth", address=eth_address2.address
     )
     assert len(result["address_txs"]) == 5
@@ -333,14 +326,14 @@ async def test_list_address_txs(client):
     assert [x["height"] for x in result["address_txs"]] == [3, 2, 2, 2, 1]
 
     path_tc = path + "?token_currency={token_currency}"
-    result = await get_json(
+    result = get_json(
         client, path_tc, currency="eth", address=eth_address2.address, token_currency="weth"
     )
 
     assert len(result["address_txs"]) == 1
     assert [x["currency"] for x in result["address_txs"]] == ["weth"]
 
-    result = await get_json(
+    result = get_json(
         client, path_tc, currency="eth", address=eth_address2.address, token_currency="eth"
     )
 
@@ -348,7 +341,7 @@ async def test_list_address_txs(client):
     assert [x["currency"] for x in result["address_txs"]] == ["eth", "eth", "eth"]
     assert [x["timestamp"] for x in result["address_txs"]] == [17, 16, 15]
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_range_and_tc,
         currency="eth",
@@ -363,7 +356,7 @@ async def test_list_address_txs(client):
     assert [x["currency"] for x in result["address_txs"]] == ["eth", "weth", "usdt"]
     assert [x["height"] for x in result["address_txs"]] == [2, 2, 2]
 
-    result = await get_json(
+    result = get_json(
         client,
         path_with_range_and_tc,
         currency="eth",
@@ -379,7 +372,7 @@ async def test_list_address_txs(client):
     assert [x["height"] for x in result["address_txs"]] == [2]
 
     path_with_pagesize2 = path + "?pagesize={pagesize}"
-    result1 = await get_json(
+    result1 = get_json(
         client, path_with_pagesize2, currency="btc", address="addressE", pagesize=1
     )
 
@@ -387,7 +380,7 @@ async def test_list_address_txs(client):
     assert result1["next_page"] == "13168304:1"
 
     path_with_pagesize3 = path + "?pagesize={pagesize}&page={page}"
-    result2 = await get_json(
+    result2 = get_json(
         client,
         path_with_pagesize3,
         currency="btc",
@@ -399,7 +392,7 @@ async def test_list_address_txs(client):
     assert result1 != result2
     assert result2["next_page"] == "13168303:1"
 
-    result3 = await get_json(
+    result3 = get_json(
         client,
         path_with_pagesize3,
         currency="btc",
@@ -411,7 +404,7 @@ async def test_list_address_txs(client):
     assert result2 != result3
     assert result3["next_page"] == "13168302:1"
 
-    result4 = await get_json(
+    result4 = get_json(
         client,
         path_with_pagesize3,
         currency="btc",
@@ -430,14 +423,14 @@ async def test_list_address_txs(client):
         + result4["address_txs"]
     )
 
-    result_total = await get_json(
+    result_total = get_json(
         client, path_with_pagesize2, currency="btc", address="addressE", pagesize=4
     )
 
     assert result_total["address_txs"] == addr_txs_total
 
     path_with_pagesize_direction = path + "?pagesize={pagesize}&direction={direction}"
-    result = await get_json(
+    result = get_json(
         client,
         path_with_pagesize_direction,
         currency="btc",
@@ -449,7 +442,7 @@ async def test_list_address_txs(client):
     assert len(result["address_txs"]) == 1
     assert result.get("next_page", None) is not None
 
-    result1 = await get_json(
+    result1 = get_json(
         client,
         path_with_pagesize_direction,
         currency="btc",
@@ -464,7 +457,7 @@ async def test_list_address_txs(client):
     path_with_pagesize_and_page = path + (
         "?pagesize={pagesize}&page={page}&direction={direction}"
     )
-    result2 = await get_json(
+    result2 = get_json(
         client,
         path_with_pagesize_and_page,
         currency="btc",
@@ -477,7 +470,7 @@ async def test_list_address_txs(client):
     assert len(result2["address_txs"]) == 1
     assert result2.get("next_page", None) is not None
 
-    result3 = await get_json(
+    result3 = get_json(
         client,
         path_with_pagesize_and_page,
         currency="btc",
@@ -494,7 +487,7 @@ async def test_list_address_txs(client):
         result1["address_txs"] + result2["address_txs"] + result3["address_txs"]
     )
 
-    result4 = await get_json(
+    result4 = get_json(
         client,
         path_with_pagesize_direction,
         currency="btc",
@@ -506,21 +499,21 @@ async def test_list_address_txs(client):
     assert addr_txs_total == result4["address_txs"]
 
 
-async def test_list_tags_by_address(client):
+def test_list_tags_by_address(client):
     path = "/{currency}/addresses/{address}/tags"
-    result = await get_json(
+    result = get_json(
         client, path, currency="btc", address=addressWithTags.address
     )
     tags = [tag.to_dict() for tag in addressWithTags.tags]
     assert tags == result["address_tags"]
 
-    result = await get_json(
+    result = get_json(
         client, path, auth="unauthorized", currency="btc", address=addressWithTags.address
     )
     tags_public = [tag for tag in tags if tag["tagpack_is_public"]]
     assert tags_public == result["address_tags"]
 
-    result = await get_json(
+    result = get_json(
         client, path, currency="eth", address=eth_addressWithTags.address
     )
 
@@ -531,25 +524,25 @@ async def test_list_tags_by_address(client):
     assert expected == result["address_tags"]
 
     # Casing of the address does not matter for ethereum
-    result = await get_json(
+    result = get_json(
         client, path, currency="eth", address=eth_addressWithTags.address.upper()
     )
     assert expected == result["address_tags"]
 
     # Adding trailing whitespace is handled gracefully
-    result = await get_json(
+    result = get_json(
         client, path, currency="eth", address=eth_addressWithTags.address.upper() + "   "
     )
     assert expected == result["address_tags"]
 
-    result = await get_json(
+    result = get_json(
         client, path, currency="abcd", address=eth_addressWithTags.address
     )
     assert len(result["address_tags"]) == 2
 
     # Test that page parameter as string is handled correctly (regression test)
     path_with_page = path + "?pagesize={pagesize}&page={page}"
-    result = await get_json(
+    result = get_json(
         client,
         path_with_page,
         currency="btc",
@@ -560,13 +553,13 @@ async def test_list_tags_by_address(client):
     assert "address_tags" in result
 
 
-async def test_list_address_neighbors(client):
+def test_list_address_neighbors(client):
     path = (
         "/{currency}/addresses/{address}/neighbors"
         "?include_labels={include_labels}&direction={direction}"
     )
 
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="btc",
@@ -577,7 +570,7 @@ async def test_list_address_neighbors(client):
     awton = addressWithTagsOutNeighbors.to_dict()
     assert awton == result
 
-    result = await get_json(
+    result = get_json(
         client,
         path + "&only_ids={only_ids}",
         currency="btc",
@@ -590,7 +583,7 @@ async def test_list_address_neighbors(client):
     awton2["neighbors"] = awton2["neighbors"][1:2]
     assert awton2 == result
 
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="btc",
@@ -602,7 +595,7 @@ async def test_list_address_neighbors(client):
     awton["neighbors"][0]["labels"] = ["labelX"]
     assert awton == result
 
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="btc",
@@ -612,7 +605,7 @@ async def test_list_address_neighbors(client):
     )
     assert addressWithTagsInNeighbors.to_dict() == result
 
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="eth",
@@ -624,7 +617,7 @@ async def test_list_address_neighbors(client):
         n.address.address for n in eth_addressWithTagsOutNeighbors.neighbors
     ]
 
-    result = await get_json(
+    result = get_json(
         client,
         path,
         currency="eth",
@@ -635,7 +628,7 @@ async def test_list_address_neighbors(client):
     assert eth_address2WithTokenFlows.to_dict() == result
 
     # correct handling pages in wrong format.
-    status, body = await raw_request(
+    status, body = raw_request(
         client,
         (
             "/{currency}/addresses/{address}/neighbors?"
@@ -651,14 +644,14 @@ async def test_list_address_neighbors(client):
     assert "is not formatted correctly" in body
 
 
-async def test_get_address_entity(client):
+def test_get_address_entity(client):
     path = "/{currency}/addresses/{address}/entity"
-    result = await get_json(
+    result = get_json(
         client, path, currency="btc", address=address.address, include_tags=True
     )
     assert entityWithTags.to_dict() == result
 
-    result = await get_json(
+    result = get_json(
         client, path, currency="eth", address=eth_address.address, include_tags=True
     )
 
@@ -667,7 +660,7 @@ async def test_get_address_entity(client):
     assert ewt == result
 
     non_existent_address = "0x40a197b01CDeF4C77196045EaFFaC80F25Be00FE"
-    status, body = await raw_request(
+    status, body = raw_request(
         client, path, currency="eth", address=non_existent_address, include_tags=True
     )
     assert status == 404
