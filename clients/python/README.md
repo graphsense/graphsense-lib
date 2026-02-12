@@ -211,6 +211,6 @@ Authentication schemes defined for the API:
 
 ## Author
 
-contact@ikna.io
+contact@iknaio.com
 
 

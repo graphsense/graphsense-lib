@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graphsense-lib"
 description = "Graphsense backend lib and automation cli"
-authors = [{name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@ikna.io"}]
+authors = [{name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@iknaio.com"}]
 license-files = ["LICENSE"]
 classifiers = [
     "Programming Language :: Python",

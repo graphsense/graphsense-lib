@@ -2,8 +2,8 @@
 FROM  python:3.11-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 LABEL org.opencontainers.image.title="graphsense-lib"
-LABEL org.opencontainers.image.maintainer="contact@ikna.io"
-LABEL org.opencontainers.image.url="https://www.ikna.io/"
+LABEL org.opencontainers.image.maintainer="contact@iknaio.com"
+LABEL org.opencontainers.image.url="https://www.iknaio.com/"
 LABEL org.opencontainers.image.description="Dockerized Graphsense library for general purpose"
 LABEL org.opencontainers.image.source="https://github.com/graphsense/graphsense-lib"
 

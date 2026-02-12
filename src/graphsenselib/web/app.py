@@ -779,7 +779,7 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
         # Add contact info for backward compatibility
         openapi_schema["info"]["contact"] = {
-            "email": "contact@ikna.io",
+            "email": "contact@iknaio.com",
             "name": "Iknaio Cryptoasset Analytics GmbH",
         }
         openapi_schema["info"]["description"] = (
