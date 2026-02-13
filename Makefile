@@ -123,7 +123,7 @@ check-api-version:
 
 # Docker targets for REST API
 serve-docker:
-	docker run --rm -it --network='host' -e NUM_THREADS=1 -e NUM_WORKERS=1 -v "${PWD}/instance/config.yaml:/config.yaml:Z" -e CONFIG_FILE=/config.yaml graphsense-lib:latest
+	docker run --rm -it --network='host' -e NUM_THREADS=1 -e NUM_WORKERS=1 -v "${PWD}/instance/config.yaml:/srv/graphsense-rest/instance/config.yaml:Z" graphsense-lib:latest
 
 package-ui:
 	- rm -rf tagpack/admin-ui/dist

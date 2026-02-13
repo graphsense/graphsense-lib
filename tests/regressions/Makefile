@@ -82,8 +82,8 @@ rest-ensure-servers: rest-ensure-baseline
 	if ! docker ps --format '{{.Names}}' | grep -q '^gs-current$$'; then \
 		echo "Starting current server on port $(REST_CURRENT_PORT)..."; \
 		docker run -d --name gs-current --rm --network=host \
-			-v "$$REAL_CONFIG:/config.yaml:ro" \
-			-e CONFIG_FILE=/config.yaml -e NUM_WORKERS=1 -e NUM_THREADS=1 \
+			-v "$$REAL_CONFIG:/srv/graphsense-rest/instance/config.yaml:ro" \
+			-e NUM_WORKERS=1 -e NUM_THREADS=1 \
 			$(IMAGE_CURRENT) \
 			sh -c 'gunicorn -c /opt/gunicorn-conf.py --bind 0.0.0.0:$(REST_CURRENT_PORT) "graphsenselib.web.app:create_app(\"$$CONFIG_FILE\")" --worker-class uvicorn.workers.UvicornWorker'; \
 	fi && \

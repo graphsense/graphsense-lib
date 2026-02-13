@@ -12,7 +12,7 @@ ENV UV_ONLY_BINARY=1
 # REST API environment variables
 ENV NUM_WORKERS=
 ENV NUM_THREADS=
-ENV CONFIG_FILE=/config.yaml
+ENV CONFIG_FILE=./instance/config.yaml
 ENV GIT_PYTHON_REFRESH=quiet
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -81,9 +81,11 @@ def when_ready(server):
 EOF
 
 RUN adduser --system --uid 1000 --home /home/graphsense graphsense
+RUN mkdir -p /srv/graphsense-rest/instance && chown -R graphsense /srv/graphsense-rest
 USER graphsense
-WORKDIR /home/graphsense/
+WORKDIR /srv/graphsense-rest/
 
 # Default: run REST API with gunicorn
 # Override with: docker run ... graphsense-cli --help
-CMD ["sh", "-c", "gunicorn -c /opt/gunicorn-conf.py 'graphsenselib.web.app:create_app()' --worker-class uvicorn.workers.UvicornWorker"]
+# Support both ./instance/config.yaml (legacy graphsense-rest) and /config.yaml (new)
+CMD ["sh", "-c", "if [ ! -f ./instance/config.yaml ] && [ -f /config.yaml ]; then ln -s /config.yaml ./instance/config.yaml; fi && gunicorn -c /opt/gunicorn-conf.py 'graphsenselib.web.app:create_app()' --worker-class uvicorn.workers.UvicornWorker"]
