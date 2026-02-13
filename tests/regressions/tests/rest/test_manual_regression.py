@@ -35,11 +35,9 @@ BASELINE_SERVER = os.environ.get("BASELINE_SERVER", "http://localhost:9001")
 
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
-# Headers to simulate authenticated access (what API gateway provides)
 AUTHENTICATED_HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json",
-    "X-Consumer-Groups": "tags-private",
 }
 
 

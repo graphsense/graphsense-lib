@@ -39,11 +39,9 @@ BASELINE_SERVER = os.environ.get("BASELINE_SERVER", "http://localhost:9001")
 
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
-# Headers that simulate authenticated access with private tags permission
 AUTHENTICATED_HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json",
-    "X-Consumer-Groups": "tags-private",
 }
 
 # Test data constants - these should exist in the test database
