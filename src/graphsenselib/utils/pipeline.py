@@ -310,7 +310,11 @@ class Process:
                     self.put_all(
                         sinks,
                         PipelineError(
-                            e, traceback.TracebackException.from_exception(e), self.name
+                            e,
+                            "".join(
+                                traceback.TracebackException.from_exception(e).format()
+                            ),
+                            self.name,
                         ),
                     )
         finally:
