@@ -1,0 +1,3 @@
+ {"block_id_group": 0, "block_id": 1, "txs": [{"tx_id": 25001, "no_inputs": 0, "no_outputs": 1, "total_input": 0, "total_output": 5000000000}]}
+ {"block_id_group": 0, "block_id": 2, "txs": [{"tx_id": 25002, "no_inputs": 0, "no_outputs": 1, "total_input": 0, "total_output": 5000000000}]}
+ {"block_id_group": 0, "block_id": 3, "txs": [{"tx_id": 270320193, "no_inputs": 2, "no_outputs": 2, "total_input": 75147389, "total_output": 75137389}]}

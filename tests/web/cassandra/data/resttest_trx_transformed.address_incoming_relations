@@ -1,0 +1,2 @@
+ {"dst_address_id_group": 4317, "dst_address_id_secondary_group": 0, "dst_address_id": 107925001, "src_address_id": 107925000, "no_transactions": 3, "value": {"value": 10000000000000000000, "fiat_values": [10.0, 20.0]}}
+ {"dst_address_id_group": 4317, "dst_address_id_secondary_group": 0, "dst_address_id": 107925001, "src_address_id": 107925002, "no_transactions": 2, "value": {"value": 0, "fiat_values": [0, 0]}, "token_values": {"USDT": {"value": 450, "fiat_values": [450, 500]}, "WETH": {"value": 345000000000000000000, "fiat_values": [50.555, 60.666]}}}

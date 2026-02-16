@@ -78,7 +78,7 @@ create_parser = seq(
 
 
 def remove_eol_comments(statement: str) -> str:
-    return re.sub(r"\s*?--.*?$", "", statement, 0, re.MULTILINE)
+    return re.sub(r"\s*?--.*?$", "", statement, count=0, flags=re.MULTILINE)
 
 
 class CreateTableStatement:

@@ -1,7 +1,5 @@
 """Module functions and classes for tagpack-tool"""
 
-import sys
-
 try:
     from yaml import CSafeLoader as SafeLoader
 except ImportError:
@@ -11,12 +9,7 @@ import warnings
 
 import re
 
-
-if sys.version_info[:2] >= (3, 8):
-    # TODO: Import directly (no need for conditional) when `python_requires = >= 3.8`
-    from importlib.metadata import PackageNotFoundError, version  # pragma: no cover
-else:
-    from importlib_metadata import PackageNotFoundError, version  # pragma: no cover
+from importlib.metadata import PackageNotFoundError, version  # pragma: no cover
 
 try:
     # Use the graphsense-lib version since tagpack is now part of it

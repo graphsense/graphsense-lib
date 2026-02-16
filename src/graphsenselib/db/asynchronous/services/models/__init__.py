@@ -32,6 +32,7 @@ class CurrencyStats(BaseModel):
     no_labels: int
     no_tagged_addresses: int
     timestamp: int
+    network_type: str
 
 
 class FiatValue(BaseModel):

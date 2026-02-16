@@ -54,7 +54,7 @@ class BinaryInterpreter:
 
 
 class DeltaTableConnector:
-    def __init__(self, base_directory: str, s3_credentials: str):
+    def __init__(self, base_directory: str, s3_credentials: dict | None):
         if not _has_delta_dependencies:
             raise ImportError(
                 "The Connector needs duckdb and deltalake installed. Please install gslib with ingest dependencies."
@@ -72,9 +72,7 @@ class DeltaTableConnector:
         # takes about 1s locally accessing MINIO on cluster
         storage_options = self.get_storage_options()
         delta_table = deltalake.DeltaTable(table_path, storage_options=storage_options)
-        files = delta_table.files()
-        files = [f"{table_path}/{file}" for file in files]
-        return files
+        return delta_table.file_uris()
 
     def get_last_completed_vacuum_date(self, table: str) -> Optional[datetime]:
         storage_options = self.get_storage_options()

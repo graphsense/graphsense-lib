@@ -1,0 +1,57 @@
+# This file contains instance specific configuration options.
+# Copy to config.yaml and adjust values for your environment.
+
+logging:
+    level: INFO # see https://docs.python.org/3/library/logging.html#logging-levels
+    # smtp:  # Optional email notifications for errors
+    #     level: CRITICAL
+    #     host: "SMTP_HOST"
+    #     port: 587
+    #     username: "SMTP_USERNAME"
+    #     password: "SMTP_PASSWORD"
+    #     from: "from@example.com"
+    #     to:
+    #         - "admin@example.com"
+    #     subject: "GraphSense REST API Error"
+    #     secure: true
+    #     timeout: 10
+
+database:
+    retry_interval: 10
+    max_concurrency_bulk_list_entity_txs: 10
+    driver: cassandra
+    consistency_level: LOCAL_QUORUM
+    nodes: ["localhost"]
+    currencies:
+        btc:
+            raw: "btc_raw"
+            transformed: "btc_transformed"
+        # Add other currencies as needed:
+        # eth:
+        #     raw: "eth_raw"
+        #     transformed: "eth_transformed"
+        # bch:
+        #     raw: "bch_raw"
+        #     transformed: "bch_transformed"
+
+gs-tagstore:
+    url: 'postgresql+asyncpg://graphsense:password@localhost:5432/tagstore'
+    pool_size: 5
+    max_overflow: 10
+    pool_timeout: 30
+    pool_recycle: 1800
+
+# Restrict allowed origins for CORS
+# Default: '*' (all origins)
+# ALLOWED_ORIGINS:
+#   - 'https://app.example.com'
+
+# Optional: Tag access logging via Redis
+# tag_access_logger:
+#     enabled: true
+#     prefix: "tag_access"
+#     redis_url: "redis://localhost:6379"
+
+# Optional: Plugins
+# plugins:
+#   - "graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags"

@@ -5,28 +5,28 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graphsense-lib"
 description = "Graphsense backend lib and automation cli"
-authors = [{name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@ikna.io"}]
+authors = [{name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@iknaio.com"}]
 license-files = ["LICENSE"]
 classifiers = [
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Intended Audience :: Developers",
     "Topic :: Utilities",
 ]
-requires-python = ">=3.9, <3.12"
+requires-python = ">=3.10, <3.14"
 dependencies = [
     'setuptools>=80.0.0, <80.9',
-    'importlib-metadata; python_version<"3.8"',
     "filelock>=3.8.0",
     "click>=8.0.3",
-    "pandas>=1.4.1",
+    "pandas>=2.3.3",
     "methodtools>=0.4",
     "simplejson>=3.17.6",
     "goodconf[yaml]>=3.0.0",
     "pydantic>=2.0.0",
-    "requests>=2.28.1",
+    "requests>=2.32.5",
     "parsy>=2.0, <3.0",
     "rich>=12.6.0",
     "cashaddress>=1.0.6",
@@ -81,7 +81,7 @@ dev = [
     "setuptools>=80.0.0, <80.9",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
-    "ruff>=0.9.2",
+    "ruff>=0.15.1",
     "pre-commit>=4.1.0",
     "setuptools_scm>=8.1.0",
     "pdbpp>=0.10.3",
@@ -102,8 +102,8 @@ ingest = [
     "chainside-btcpy>=0.6",
     "graphsense-bitcoin-etl>=1.5.5",
     "lz4>=4.3.2",
-    "pyarrow>=16.0.0",
-    "deltalake>=1.2.1",
+    "pyarrow>=23.0.0",
+    "deltalake>=1.4.2",
     "duckdb>=1.0.0",
     "grpcio>=1.49.0",
 ]
@@ -135,10 +135,21 @@ tagpacks = [
     "rapidfuzz>=3.13.0",
 ]
 
+web = [
+    "graphsense-lib[conversions,tagstore]",
+    "asgi-lifespan>=2.1.0",
+    "fastapi>=0.115.0",
+    "python-dateutil>=2.9.0",
+    "redis>=5.0.0",
+    "uvicorn[standard]>=0.32.0",
+    "gunicorn>=23.0.0",
+]
+
 all = [
     "graphsense-lib[ingest]",
     "graphsense-lib[conversions]",
     "graphsense-lib[tagpacks]",
+    "graphsense-lib[web]",
 ]
 
 [project.scripts]
@@ -180,6 +191,7 @@ namespaces = true
 norecursedirs = [
     "dist",
     "build",
+    "tests/regressions",
 ]
 testpaths = ["tests"]
 # Use pytest markers to select/deselect specific tests
@@ -187,6 +199,7 @@ markers = [
     "slow: mark tests as slow (deselect with '-m \"not slow\"')",
     "vcr:",
 ]
+asyncio_mode = "auto"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -218,10 +231,13 @@ exclude = [
     "venv",
     "openapi_server",
     "tests/test_*.py",
+    "tests/web",
+    "clients",
     "setup.py",
     "src/graphsenselib/ingest/tron/grpc*",
     "src/tagpack",
-    "src/tagstore"
+    "src/tagstore",
+    "tests/regressions"
 ]
 
 [tool.ruff.lint]

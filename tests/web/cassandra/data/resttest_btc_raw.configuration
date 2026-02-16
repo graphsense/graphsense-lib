@@ -1,0 +1,1 @@
+{"id": "ltc_raw", "block_bucket_size": 25000, "tx_bucket_size": 25000, "tx_prefix_length": 5}

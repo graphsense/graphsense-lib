@@ -1,0 +1,41 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+name: Upload Python Client Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - v[0-9].[0-9]+.[0-9]+
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10"]
+
+    defaults:
+      run:
+        working-directory: clients/python
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        version: "latest"
+    - name: Install requirements
+      run: uv sync --python=${{ matrix.python }}
+    - name: Build wheel
+      run: uv build
+    - name: Publish package
+      run: uv publish --token ${{ secrets.PYPI_API_TOKEN }}

@@ -1,0 +1,7 @@
+ {"src_cluster_id_group": 705, "src_cluster_id": 17642138, "dst_cluster_id": 2818641, "no_transactions": 1, "estimated_value": {"value": 48610000000, "fiat_values": [2411.06, 3074.92]}}
+ {"src_cluster_id_group": 705, "src_cluster_id": 17642138, "dst_cluster_id": 8361735, "no_transactions": 3, "estimated_value": {"value": 3375700000, "fiat_values": [1078.04, 1397.54]}}
+ {"src_cluster_id_group": 112, "src_cluster_id": 2818641, "dst_cluster_id": 123, "no_transactions": 3, "estimated_value": {"value": 3375700000, "fiat_values": [1078.04, 1397.54]}}
+ {"src_cluster_id_group": 112, "src_cluster_id": 2818641, "dst_cluster_id": 456, "no_transactions": 3, "estimated_value": {"value": 3375700000, "fiat_values": [1078.04, 1397.54]}}
+ {"src_cluster_id_group": 112, "src_cluster_id": 2818641, "dst_cluster_id": 789, "no_transactions": 3, "estimated_value": {"value": 3375700000, "fiat_values": [1078.04, 1397.54]}}
+ {"src_cluster_id_group": 5, "src_cluster_id": 144534, "dst_cluster_id": 10102718, "no_transactions": 3, "estimated_value": {"value": 3375700000, "fiat_values": [1078.04, 1397.54]}}
+ {"src_cluster_id_group": 404, "src_cluster_id": 10102718, "dst_cluster_id": 144534, "no_transactions": 10, "estimated_value": {"value": 190000, "fiat_values": [0.72, 0.96]}}

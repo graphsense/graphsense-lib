@@ -7,15 +7,17 @@ repos:
   hooks:
     # Run the linter.
     - id: ruff
-      exclude: ^(src/tagpack/|src/tagstore/)
+      exclude: ^(src/tagpack/|src/tagstore/|clients/|tests/regressions/)
     # Run the formatter.
     - id: ruff-format
-      exclude: ^(src/tagpack/|src/tagstore/)
+      exclude: ^(src/tagpack/|src/tagstore/|clients/|tests/regressions/)
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
     -   id: trailing-whitespace
+        exclude: ^clients/
     -   id: end-of-file-fixer
+        exclude: ^clients/
     -
         id: check-yaml
         exclude: tests/testfiles
@@ -28,13 +30,37 @@ repos:
     -
         id: name-tests-test
         args: [--pytest-test-first]
-        exclude: helpers.py
+        exclude: (helpers\.py|tests/web/|tests/regressions/)
     -
         id: debug-statements
         exclude: postmortemdebug.py
     -   id: check-docstring-first
+        exclude: ^clients/
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.7.1
+  hooks:
+    # Update the uv lockfile
+    - id: uv-lock
 -   repo: local
     hooks:
+    -   id: update-api-version
+        name: Sync API version from Makefile to version.py
+        entry: make update-api-version
+        language: system
+        pass_filenames: false
+        always_run: true
+    -   id: type-check
+        name: type-check
+        entry: make type-check
+        language: system
+        pass_filenames: false
+        always_run: true
+    -   id: codegen
+        name: Ensure Generated Code is up to date
+        entry: make run-codegen
+        language: system
+        pass_filenames: false
+        always_run: true
     -   id: ensure-env
         name: Ensure UV environment is ready
         entry: uv sync --dev --all-packages --all-extras
@@ -45,12 +71,6 @@ repos:
     -   id: pytest-check
         name: pytest-check
         entry: make test
-        language: system
-        pass_filenames: false
-        always_run: true
-    -   id: type-check
-        name: type-check
-        entry: make type-check
         language: system
         pass_filenames: false
         always_run: true
