@@ -76,3 +76,5 @@ target/
 examples/config.json
 
 .env
+
+openapi.json.tmp

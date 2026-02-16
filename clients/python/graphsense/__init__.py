@@ -12,7 +12,7 @@
 """
 
 
-__version__ = "2.8.19+devweb5"
+__version__ = "2.9.0rc1"
 
 # Define package exports
 __all__ = [
