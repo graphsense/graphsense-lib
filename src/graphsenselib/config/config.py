@@ -199,7 +199,7 @@ class AppConfig(GoodConf):
     )
 
     slack_topics: Dict[str, SlackTopic] = Field(
-        default_factory=lambda: {"exceptions": SlackTopic(hooks=[])}
+        default_factory=lambda: {"exceptions": {"hooks": []}}
     )
 
     cache_directory: str = Field(
