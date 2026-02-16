@@ -132,8 +132,8 @@ addresses_service = AddressesService(
     db, tags_service, entities_service, blocks_service, rates_service, logger
 )
 
-address_info = await addresses_service.get_address("btc", "1A1zP1...")
-txs = await addresses_service.list_address_txs("btc", "1A1zP1...")
+address_info = await addresses_service.get_address("btc", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+txs = await addresses_service.list_address_txs("btc", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
 ```
 
 ## Command Line Interface

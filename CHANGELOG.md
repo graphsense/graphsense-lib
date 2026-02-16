@@ -3,6 +3,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.9.0rc1] 2026-02-16
+
+### added
+- Added Python 3.12 and 3.13 support
+- Added FastAPI-based graphsense-REST API module
+- GSREST_DISABLE_AUTH env var to skip API key auth in openapi.json
+- Added slow running regression tests
+
+### changed
+- Dropped support for Python 3.9 (EOL)
+- web: Upgraded openapi generator v5 -> v7
+- web: Added option to config web via graphsense.yaml
+- Updated dependencies: ruff, pandas, requests, pyarrow, deltalake
+
+### fixed
+- Fix pagination page string conversion bug
+
 ## [2.8.19] 2026-02-05
 
 ### added
