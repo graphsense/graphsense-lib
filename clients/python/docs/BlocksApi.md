@@ -1,0 +1,257 @@
+# graphsense.BlocksApi
+
+All URIs are relative to *https://api.iknaio.com*
+
+Method | HTTP request | Description
+------------- | ------------- | -------------
+[**get_block**](BlocksApi.md#get_block) | **GET** /{currency}/blocks/{height} | Get a block by its height
+[**get_block_by_date**](BlocksApi.md#get_block_by_date) | **GET** /{currency}/block_by_date/{date} | Get block by date
+[**list_block_txs**](BlocksApi.md#list_block_txs) | **GET** /{currency}/blocks/{height}/txs | Get block transactions
+
+
+# **get_block**
+> Block get_block(currency, height)
+
+Get a block by its height
+
+Get a block by its height
+
+### Example
+
+* Api Key Authentication (api_key):
+
+```python
+import graphsense
+from graphsense.models.block import Block
+from graphsense.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to https://api.iknaio.com
+# See configuration.py for a list of all supported configuration parameters.
+configuration = graphsense.Configuration(
+    host = "https://api.iknaio.com"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
+
+# Enter a context with an instance of the API client
+with graphsense.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = graphsense.BlocksApi(api_client)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    height = 1 # int | The block height
+
+    try:
+        # Get a block by its height
+        api_response = api_instance.get_block(currency, height)
+        print("The response of BlocksApi->get_block:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BlocksApi->get_block: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **height** | **int**| The block height | 
+
+### Return type
+
+[**Block**](Block.md)
+
+### Authorization
+
+[api_key](../README.md#api_key)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Successful Response |  -  |
+**422** | Validation Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **get_block_by_date**
+> BlockAtDate get_block_by_date(currency, var_date)
+
+Get block by date
+
+Get block by date
+
+### Example
+
+* Api Key Authentication (api_key):
+
+```python
+import graphsense
+from graphsense.models.block_at_date import BlockAtDate
+from graphsense.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to https://api.iknaio.com
+# See configuration.py for a list of all supported configuration parameters.
+configuration = graphsense.Configuration(
+    host = "https://api.iknaio.com"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
+
+# Enter a context with an instance of the API client
+with graphsense.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = graphsense.BlocksApi(api_client)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    var_date = '2017-07-21T17:32:28Z' # str | The date (YYYY-MM-DD)
+
+    try:
+        # Get block by date
+        api_response = api_instance.get_block_by_date(currency, var_date)
+        print("The response of BlocksApi->get_block_by_date:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BlocksApi->get_block_by_date: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **var_date** | **str**| The date (YYYY-MM-DD) | 
+
+### Return type
+
+[**BlockAtDate**](BlockAtDate.md)
+
+### Authorization
+
+[api_key](../README.md#api_key)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Successful Response |  -  |
+**422** | Validation Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **list_block_txs**
+> List[Tx] list_block_txs(currency, height)
+
+Get block transactions
+
+Get block transactions
+
+### Example
+
+* Api Key Authentication (api_key):
+
+```python
+import graphsense
+from graphsense.models.tx import Tx
+from graphsense.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to https://api.iknaio.com
+# See configuration.py for a list of all supported configuration parameters.
+configuration = graphsense.Configuration(
+    host = "https://api.iknaio.com"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
+
+# Enter a context with an instance of the API client
+with graphsense.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = graphsense.BlocksApi(api_client)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    height = 1 # int | The block height
+
+    try:
+        # Get block transactions
+        api_response = api_instance.list_block_txs(currency, height)
+        print("The response of BlocksApi->list_block_txs:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling BlocksApi->list_block_txs: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **height** | **int**| The block height | 
+
+### Return type
+
+[**List[Tx]**](Tx.md)
+
+### Authorization
+
+[api_key](../README.md#api_key)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Successful Response |  -  |
+**422** | Validation Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+

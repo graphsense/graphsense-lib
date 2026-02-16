@@ -1,0 +1,1 @@
+{"id": "eth_raw", "block_bucket_size": 100000, "tx_prefix_length": 4}

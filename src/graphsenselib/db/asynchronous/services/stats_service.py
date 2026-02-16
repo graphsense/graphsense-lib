@@ -2,6 +2,8 @@ from typing import Any, Dict, Optional, Protocol
 
 from .models import CurrencyStats
 
+from graphsenselib.config import currency_to_public_schema_type
+
 
 class DatabaseProtocol(Protocol):
     async def get_currency_statistics(
@@ -65,6 +67,9 @@ class StatsService:
             no_labels=int(no_labels),
             no_tagged_addresses=int(no_tagged_addresses),
             timestamp=result["timestamp"],
+            network_type=currency_to_public_schema_type.get(
+                currency.lower(), "unknown"
+            ),
         )
 
     async def get_no_blocks(self, currency: str) -> int:

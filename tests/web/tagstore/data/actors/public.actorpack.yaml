@@ -1,0 +1,14 @@
+title: Graphsense Actors
+creator: Graphsense Core Team
+description: A curated list of cryptocurrency actors.
+lastmod: '2023-02-17'
+actors:
+- id: actorX
+  label: Actor X
+  jurisdictions:
+  - SC
+  - VU
+  categories:
+  - organization
+  - exchange
+  uri: http://actorX

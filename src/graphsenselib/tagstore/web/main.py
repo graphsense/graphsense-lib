@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Web API for the GraphSense Tagstore",
     lifespan=lifespan,
-    contact={"email": "contact@ikna.io"},
+    contact={"email": "contact@iknaio.com"},
 )
 
 

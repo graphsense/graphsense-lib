@@ -1,0 +1,18 @@
+title: Graphsense Actors
+creator: Graphsense Core Team
+description: A curated list of cryptocurrency actors.
+lastmod: '2023-02-17'
+actors:
+- id: actorY
+  label: Actor Y
+  jurisdictions:
+  - AT
+  categories:
+  - defi_dex
+  uri: http://actorY
+- id: anotherActor
+  label: Another Actor Y
+  jurisdictions: []
+  categories:
+  - defi_dex
+  uri: http://anotherActor

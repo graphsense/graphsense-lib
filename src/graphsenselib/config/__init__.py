@@ -8,6 +8,7 @@ from .config import (
     IngestConfig,
     avg_blocktimes_by_currencies,
     currency_to_schema_type,
+    currency_to_public_schema_type,
     default_environments,
     get_config,
     get_reorg_backoff_blocks,

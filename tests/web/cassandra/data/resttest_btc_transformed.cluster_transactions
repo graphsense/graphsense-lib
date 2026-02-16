@@ -1,0 +1,6 @@
+ {"cluster_id_group": 5, "cluster_id": 144534, "is_outgoing": false, "tx_id": 270320193, "value": 1260000}
+ {"cluster_id_group": 5, "cluster_id": 144534, "is_outgoing": true, "tx_id": 25002, "value": -1260000}
+ {"cluster_id_group": 5, "cluster_id": 144534, "is_outgoing": true, "tx_id": 25001, "value": -1}
+ {"cluster_id_group": 705, "cluster_id": 17642138, "is_outgoing": true, "tx_id": 13168302, "value": -10000000}
+ {"cluster_id_group": 404, "cluster_id": 10102718, "is_outgoing": true, "tx_id": 270320193, "value": -1260000}
+ {"cluster_id_group": 404, "cluster_id": 10102718, "is_outgoing": false, "tx_id": 25002, "value": 1260000}

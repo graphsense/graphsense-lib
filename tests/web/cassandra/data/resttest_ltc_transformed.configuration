@@ -1,0 +1,1 @@
+ {"keyspace_name": "ltc_transformed", "bech_32_prefix": "ltc1", "bucket_size": 25000, "coinjoin_filtering": true, "fiat_currencies": ["EUR", "USD"], "address_prefix_length": 5}}

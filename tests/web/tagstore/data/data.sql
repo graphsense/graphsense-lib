@@ -1,0 +1,18 @@
+INSERT INTO address_cluster_mapping (network, address, gs_cluster_id, gs_cluster_def_addr, gs_cluster_no_addr) VALUES
+    ('BTC', 'addressX', 123, '', 10),
+    ('BTC', 'addressY', 456, '', 10),
+    ('BTC', 'addressA', 17642138, '', 20),
+    ('BTC', 'addressH', 17642138, '', 20),
+    ('BTC', 'address2818641', 2818641, '', 30),
+    ('BTC', 'tag_addressA', 12, '', 2),
+    ('BTC', 'tag_addressB', 12, '', 2),
+    ('BTC', 'tag_addressC', 14, '', 2),
+    ('BTC', 'tag_addressD', 14, '', 2),
+    ('BTC', 'tag_addressE', 16, '', 3),
+    ('BTC', 'tag_addressF', 16, '', 3),
+    ('BTC', 'tag_addressG', 16, '', 3),
+    ('BTC', 'tag_addressH', 19, '', 1),
+    ('BTC', 'tag_addressI', 20, '', 1),
+    ('LTC', 'addressA', 1234, '', 20),
+    ('ETH', '0xabcdef', 107925000, '', 40),
+    ('ETH', '0x123456', 107925001, '', 50);

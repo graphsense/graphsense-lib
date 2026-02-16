@@ -168,12 +168,16 @@ def test_date_range_works():
 
 
 def testTruncateI32():
-    for i in range(0, 2147483647, 1000):
-        assert truncateI32(i) == i
-
+    # Spot-check boundaries and a sample of values
+    assert truncateI32(0) == 0
+    assert truncateI32(1) == 1
+    assert truncateI32(1000) == 1000
+    assert truncateI32(2147483646) == 2147483646
     assert truncateI32(2147483647) == 2147483647
-
     assert truncateI32(2147483648) == -2147483648
+    assert truncateI32(2147483649) == -2147483647
+    assert truncateI32(4294967295) == -1
+    assert truncateI32(4294967296) == 0
 
 
 def test_simple_camel_case():

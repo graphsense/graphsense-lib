@@ -28,8 +28,9 @@ class MockLogger:
         pass
 
 
+@pytest.mark.slow
 @pytest.mark.vcr(**vcr_default_params)
-def test_pipeline():
+def test_pipeline(gs_db_setup):
     runner = CliRunner()
     result = runner.invoke(
         ingest,

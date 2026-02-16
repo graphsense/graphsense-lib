@@ -1,0 +1,5 @@
+ {"address_id_group": 4317, "address_id": 107925000, "balance": 111000000000000000000, "currency": "ETH"}
+ {"address_id_group": 4317, "address_id": 107925001, "balance": 111000000000000000000, "currency": "ETH"}
+ {"address_id_group": 4317, "address_id": 107925002, "balance": 111000000000000000000, "currency": "ETH"}
+ {"address_id_group": 4317, "address_id": 107925002, "balance": 345000000000000000000, "currency": "WETH"}
+ {"address_id_group": 4317, "address_id": 107925002, "balance": 450000000, "currency": "USDT"}

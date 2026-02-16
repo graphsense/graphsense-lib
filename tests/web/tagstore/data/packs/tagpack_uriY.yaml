@@ -1,0 +1,16 @@
+title: GraphSense uriY
+creator: GraphSense Core Team
+is_cluster_definer: false
+is_public: true
+confidence: ownership
+description: this is for testing
+category: organization
+currency: ETH
+lastmod: 2019-07-03
+source: sourceY
+tags:
+- address: '0xabcdef'
+  label: TagB
+- address: '0x123456'
+  label: LabelY
+  actor: actorY

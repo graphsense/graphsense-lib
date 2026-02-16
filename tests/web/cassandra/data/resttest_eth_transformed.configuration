@@ -1,0 +1,1 @@
+ {"keyspace_name": "eth_transformed_20210326_fxr", "bucket_size": 25000, "address_prefix_length": 4, "tx_prefix_length": 4, "fiat_currencies": ["EUR", "USD"], "block_bucket_size_address_txs": 150000}

@@ -293,7 +293,7 @@ def test_address_converter_inject_nonencodable_char():
 
 def test_address_converter_testset():
     tests = 0
-    pct = 0.8
+    pct = 0.98
     networks = ["bch", "btc", "ltc", "zec"]
     addresses_per_network = 100000
     pct_error = len(networks) * addresses_per_network * (0.01)

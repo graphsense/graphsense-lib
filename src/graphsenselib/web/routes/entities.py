@@ -1,0 +1,289 @@
+"""Entity API routes"""
+
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Request
+
+from graphsenselib.web.service import ServiceContext
+from graphsenselib.web.models import (
+    AddressTags,
+    AddressTxs,
+    Entity,
+    EntityAddresses,
+    Links,
+    NeighborEntities,
+    SearchResultLevel1,
+)
+from graphsenselib.web.routes.base import (
+    PluginRoute,
+    get_ctx,
+    normalize_page,
+    parse_comma_separated_ints,
+    parse_comma_separated_strings,
+    parse_datetime,
+)
+from graphsenselib.web.routes.params import (
+    CurrencyPath,
+    DirectionQuery,
+    EntityPath,
+    ExcludeBestAddressTagQuery,
+    IncludeActorsQuery,
+    IncludeLabelsQuery,
+    MaxDateQuery,
+    MaxHeightQuery,
+    MinDateQuery,
+    MinHeightQuery,
+    OptionalDirectionQuery,
+    OrderQuery,
+    PageQuery,
+    PagesizeQuery,
+    TokenCurrencyQuery,
+)
+import graphsenselib.web.service.entities_service as service
+
+router = APIRouter(route_class=PluginRoute)
+
+
+@router.get(
+    "/entities/{entity}",
+    summary="Get an entity",
+    operation_id="get_entity",
+    response_model=Entity,
+    response_model_exclude_none=True,
+)
+async def get_entity(
+    request: Request,
+    currency: CurrencyPath,
+    entity: EntityPath,
+    exclude_best_address_tag: ExcludeBestAddressTagQuery = None,
+    include_actors: IncludeActorsQuery = False,
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Get an entity"""
+    result = await service.get_entity(
+        ctx,
+        currency=currency.lower(),
+        entity=entity,
+        exclude_best_address_tag=exclude_best_address_tag,
+        include_actors=include_actors,
+    )
+    return result
+
+
+@router.get(
+    "/entities/{entity}/addresses",
+    summary="Get an entity's addresses",
+    operation_id="list_entity_addresses",
+    response_model=EntityAddresses,
+    response_model_exclude_none=True,
+)
+async def list_entity_addresses(
+    request: Request,
+    currency: CurrencyPath,
+    entity: EntityPath,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Get an entity's addresses"""
+    result = await service.list_entity_addresses(
+        ctx,
+        currency=currency.lower(),
+        entity=entity,
+        page=normalize_page(page),
+        pagesize=pagesize,
+    )
+    return result
+
+
+@router.get(
+    "/entities/{entity}/neighbors",
+    summary="Get an entity's neighbors in the entity graph",
+    operation_id="list_entity_neighbors",
+    deprecated=True,
+    response_model=NeighborEntities,
+    response_model_exclude_none=True,
+)
+async def list_entity_neighbors(
+    request: Request,
+    currency: CurrencyPath,
+    entity: EntityPath,
+    direction: DirectionQuery,
+    only_ids: Optional[str] = Query(
+        None, description="Restrict result to given set of comma separated IDs"
+    ),
+    include_labels: IncludeLabelsQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
+    relations_only: Optional[bool] = Query(
+        None, description="Return only relations without entity details"
+    ),
+    exclude_best_address_tag: ExcludeBestAddressTagQuery = None,
+    include_actors: IncludeActorsQuery = False,
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Get an entity's neighbors in the entity graph"""
+    result = await service.list_entity_neighbors(
+        ctx,
+        currency=currency.lower(),
+        entity=entity,
+        direction=direction,
+        only_ids=parse_comma_separated_ints(only_ids),
+        include_labels=include_labels,
+        page=normalize_page(page),
+        pagesize=pagesize,
+        relations_only=relations_only,
+        exclude_best_address_tag=exclude_best_address_tag,
+        include_actors=include_actors,
+    )
+    return result
+
+
+@router.get(
+    "/entities/{entity}/links",
+    summary="Get transactions between two entities",
+    operation_id="list_entity_links",
+    deprecated=True,
+    response_model=Links,
+    response_model_exclude_none=True,
+)
+async def list_entity_links(
+    request: Request,
+    currency: CurrencyPath,
+    entity: EntityPath,
+    neighbor: int = Query(..., description="Neighbor entity ID", examples=[123456]),
+    min_height: MinHeightQuery = None,
+    max_height: MaxHeightQuery = None,
+    min_date: MinDateQuery = None,
+    max_date: MaxDateQuery = None,
+    order: OrderQuery = None,
+    token_currency: TokenCurrencyQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Get transactions between two entities"""
+    result = await service.list_entity_links(
+        ctx,
+        currency=currency.lower(),
+        entity=entity,
+        neighbor=neighbor,
+        min_height=min_height,
+        max_height=max_height,
+        min_date=parse_datetime(min_date),
+        max_date=parse_datetime(max_date),
+        order=order,
+        token_currency=token_currency,
+        page=normalize_page(page),
+        pagesize=pagesize,
+    )
+    return result
+
+
+@router.get(
+    "/entities/{entity}/tags",
+    summary="Get address tags for a given entity",
+    operation_id="list_address_tags_by_entity",
+    deprecated=True,
+    response_model=AddressTags,
+    response_model_exclude_none=True,
+)
+async def list_address_tags_by_entity(
+    request: Request,
+    currency: CurrencyPath,
+    entity: EntityPath,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Get address tags for a given entity"""
+    result = await service.list_address_tags_by_entity(
+        ctx,
+        currency=currency.lower(),
+        entity=entity,
+        page=normalize_page(page),
+        pagesize=pagesize,
+    )
+    return result
+
+
+@router.get(
+    "/entities/{entity}/txs",
+    summary="Get all transactions an entity has been involved in",
+    operation_id="list_entity_txs",
+    deprecated=True,
+    response_model=AddressTxs,
+    response_model_exclude_none=True,
+)
+async def list_entity_txs(
+    request: Request,
+    currency: CurrencyPath,
+    entity: EntityPath,
+    direction: OptionalDirectionQuery = None,
+    min_height: MinHeightQuery = None,
+    max_height: MaxHeightQuery = None,
+    min_date: MinDateQuery = None,
+    max_date: MaxDateQuery = None,
+    order: OrderQuery = None,
+    token_currency: TokenCurrencyQuery = None,
+    page: PageQuery = None,
+    pagesize: PagesizeQuery = None,
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Get all transactions an entity has been involved in"""
+    result = await service.list_entity_txs(
+        ctx,
+        currency=currency.lower(),
+        entity=entity,
+        min_height=min_height,
+        max_height=max_height,
+        min_date=parse_datetime(min_date),
+        max_date=parse_datetime(max_date),
+        direction=direction,
+        order=order,
+        token_currency=token_currency,
+        page=normalize_page(page),
+        pagesize=pagesize,
+    )
+    return result
+
+
+@router.get(
+    "/entities/{entity}/search",
+    summary="Search neighbors of an entity",
+    operation_id="search_entity_neighbors",
+    response_model=list[SearchResultLevel1],
+    response_model_exclude_none=True,
+)
+async def search_entity_neighbors(
+    request: Request,
+    currency: CurrencyPath,
+    entity: EntityPath,
+    direction: DirectionQuery,
+    key: str = Query(..., description="Search key", examples=["category"]),
+    value: str = Query(
+        ..., description="Comma separated search values", examples=["Miner"]
+    ),
+    depth: int = Query(..., description="Search depth", examples=[2]),
+    breadth: int = Query(..., description="Search breadth", examples=[16]),
+    skip_num_addresses: Optional[int] = Query(
+        None, description="Skip entities with more than N addresses"
+    ),
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Search neighbors of an entity"""
+    ctx.logger = logging.getLogger(__name__)
+
+    result = await service.search_entity_neighbors(
+        ctx,
+        currency=currency.lower(),
+        entity=entity,
+        direction=direction,
+        key=key,
+        value=parse_comma_separated_strings(value) or [],
+        depth=depth,
+        breadth=breadth,
+        skip_num_addresses=skip_num_addresses,
+    )
+    return result

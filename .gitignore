@@ -1,273 +1,132 @@
+# GraphSense-lib specific
 .graphsense.yaml
 .env
-dist
-build
+instance/*
+!instance/config.yaml.template
+local/
+tester.py
+.implementation_summary.md
 
-# Temporary and binary files
-*~
-*.py[cod]
-*.so
-*.cfg
-!.isort.cfg
-!setup.cfg
-*.orig
-*.log
-*.pot
-__pycache__/*
-.cache/*
-.*.swp
-*/.ipynb_checkpoints/*
-.DS_Store
+# Tagpack tool specific
+ks_map.json
+tagpack-repos*.config
+postgres-conf.sql
+tagpack/test-tagpacks/
 
-# Project files
-.ropeproject
-.project
-.pydevproject
-.settings
-.idea
-.vscode
-tags
-
-# Package files
-*.egg
-*.eggs/
-.installed.cfg
-*.egg-info
-
-# Unittest and coverage
-htmlcov/*
-.coverage
-.coverage.*
-junit*.xml
-coverage.xml
-.pytest_cache/
-
-# Build and docs folder/files
-build/*
-dist/*
-sdist/*
-docs/api/*
-docs/_rst/*
-docs/_build/*
-cover/*
-MANIFEST
-
-# Per-project virtualenvs
-.venv*/
-.conda*/
-
-# Byte-compiled / optimized / DLL files
+# Python bytecode
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
 
 # Distribution / packaging
-.Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
 sdist/
-var/
+*.egg
+*.eggs/
+*.egg-info/
+.installed.cfg
+MANIFEST
 wheels/
 pip-wheel-metadata/
 share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+.Python
+develop-eggs/
+downloads/
+lib/
+lib64/
+parts/
+var/
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Virtual environments
+.venv*/
+.conda*/
+venv*/
+env/
+ENV/
+env.bak/
+venv.bak/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.nox/
+# Testing and coverage
+.pytest_cache/
 .coverage
 .coverage.*
+htmlcov/
 .cache
+.nox/
 nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
-.pytest_cache/
+junit*.xml
+.tox
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
+# IDE and editors
+.idea/
+.vscode/
+.project
+.pydevproject
+.settings/
+.ropeproject/
 .spyderproject
 .spyproject
+*.sublime-project
+*.sublime-workspace
+tags
+*~
+*.swp
+.*.swp
 
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
+# Documentation
+docs/api/
+docs/_rst/
+docs/_build/
 /site
 
-# mypy
+# Jupyter
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# Logs
+logs.txt
+
+# OS files
+.DS_Store
+
+# Type checkers
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
-tester.py
 
-local/
+# PyInstaller
+*.manifest
+*.spec
 
-venv*/
-
-# Implementation summary file (private tracking)
-.implementation_summary.md
-
-
-
-##### tagpack tool
-tagpack_tool.egg-info/
-/venv
-/.pytest_cache
-**__pycache__
-.coverage
-*.sublime-project
-*.sublime-workspace
-config.yaml
-/.env
-/ks_map.json
-build
-.DS_Store
-data
-docker-compose.override.yml
-tagpack-repos*.config
-
-postgres-conf.sql
-
-# Temporary and binary files
-*~
-*.py[cod]
-*.so
+# Misc
+*.orig
+*.pot
+*.mo
 *.cfg
 !.isort.cfg
 !setup.cfg
-*.orig
-*.log
-*.pot
-__pycache__/*
-.cache/*
-.*.swp
-*/.ipynb_checkpoints/*
-.DS_Store
-
-# Project files
-.ropeproject
-.project
-.pydevproject
-.settings
-.idea
-.vscode
-tags
-
-# Package files
-*.egg
-*.eggs/
-.installed.cfg
-*.egg-info
-
-# Unittest and coverage
-htmlcov/*
-.coverage
-.coverage.*
-.tox
-junit*.xml
-coverage.xml
-.pytest_cache/
-
-# Build and docs folder/files
-build/*
-dist/*
-sdist/*
-docs/api/*
-docs/_rst/*
-docs/_build/*
-cover/*
-MANIFEST
-
-# Per-project virtualenvs
-.venv*/
-.conda*/
+pip-log.txt
+pip-delete-this-directory.txt
 .python-version
+celerybeat-schedule
+celerybeat.pid
+*.sage.py
+__pypackages__/
+profile_default/
+ipython_config.py
+docker-compose.override.yml
+
+
+# Claude Code
 .claude/
-tagpack/test-tagpacks/
-logs.txt
+
+# Ralph agent
+.ralph/
+PRD.md

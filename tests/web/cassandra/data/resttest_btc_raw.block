@@ -1,0 +1,3 @@
+ {"block_id_group": 0, "block_id": 1, "block_hash": "0x00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048", "no_transactions": 1, "timestamp": 1231469665}
+ {"block_id_group": 0, "block_id": 2, "block_hash": "0x000000006a625f06636b8bb6ac7b960a8d03705d1ace08b1a19da3fdcc99ddbd", "no_transactions": 1, "timestamp": 1231469744}
+ {"block_id_group": 1, "block_id": 25000, "block_hash": "0x000000006a625f06636b8bb6ac7b960a8d03705d1ace08b1a19da3fdcc99ddbd", "no_transactions": 1, "timestamp": 1231469744}

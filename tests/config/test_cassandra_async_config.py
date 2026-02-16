@@ -76,14 +76,20 @@ class TestCassandraConfig:
         assert config.retry_interval == 10
         assert config.list_address_txs_ordered_legacy is True
 
-    def test_missing_required_fields(self):
-        """Test validation errors for missing required fields."""
-        # Missing currencies
-        with pytest.raises(ValidationError) as exc_info:
-            CassandraConfig(nodes=["127.0.0.1"])
-        assert "currencies" in str(exc_info.value)
+    def test_default_currencies(self):
+        """Test that currencies has a sensible default."""
+        config = CassandraConfig(nodes=["127.0.0.1"])
+        assert set(config.currencies.keys()) == {
+            "btc",
+            "bch",
+            "ltc",
+            "zec",
+            "eth",
+            "trx",
+        }
 
-        # Missing nodes
+    def test_missing_nodes(self):
+        """Test validation error for missing nodes."""
         with pytest.raises(ValidationError) as exc_info:
             CassandraConfig(currencies={"btc": None})
         assert "nodes" in str(exc_info.value)
