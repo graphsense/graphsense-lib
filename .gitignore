@@ -130,3 +130,5 @@ docker-compose.override.yml
 # Ralph agent
 .ralph/
 PRD.md
+
+openapi.json.30.tmp
