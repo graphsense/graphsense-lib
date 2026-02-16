@@ -25,7 +25,7 @@ IMAGE_CURRENT := gslib-test:current
 IMAGE_BASELINE := gslib-test:baseline
 
 # Config (graphsense-REST format, mounted into container)
-REST_CONFIG_FILE ?= $(PWD)/config.yaml
+REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 
 .PHONY: rest-build-local rest-build-develop rest-build-baseline rest-serve rest-stop \
 	test-rest-local test-rest-dev-branch rest-run-tests \
@@ -59,6 +59,7 @@ rest-build-baseline:
 	@rm -rf /tmp/gslib-baseline && \
 	git clone $(GSLIB_REPO) /tmp/gslib-baseline && \
 	cd /tmp/gslib-baseline && git checkout $(REST_BASELINE) && \
+	cd /tmp/gslib-baseline && sed -i 's/"pydantic>=2.0.0"/"pydantic>=2.0.0",\n    "pydantic-settings>=2.0.0,<2.13.0"/' pyproject.toml && uv lock && \
 	docker build -t $(IMAGE_BASELINE) /tmp/gslib-baseline
 
 # Ensure baseline image exists
@@ -144,7 +145,11 @@ rest-info:
 	@echo "========================================================================"
 
 rest-run-tests: rest-info
-	@$(MAKE) test-rest-fuzz test-rest-manual test-rest-loki
+	@ret=0; \
+	$(MAKE) test-rest-fuzz || ret=1; \
+	$(MAKE) test-rest-manual || ret=1; \
+	$(MAKE) test-rest-loki || ret=1; \
+	exit $$ret
 
 test-rest-fuzz: rest-ensure-servers
 	CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
@@ -157,9 +162,13 @@ test-rest-manual: rest-ensure-servers
 	uv run pytest tests/rest/test_manual_regression.py -v -m regression
 
 test-rest-loki: rest-ensure-servers
-	CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
-	BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
-	uv run pytest tests/rest/test_loki_generated.py -v -m loki_generated
+	@if [ -f tests/rest/test_loki_generated.py ]; then \
+		CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
+		BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
+		uv run pytest tests/rest/test_loki_generated.py -v -m loki_generated; \
+	else \
+		echo "Skipping loki tests: tests/rest/test_loki_generated.py not found (run 'make generate-loki' to create)"; \
+	fi
 
 test-rest-all: rest-ensure-servers
 	@$(MAKE) test-rest-fuzz test-rest-manual test-rest-loki; ret=$$?; $(MAKE) rest-stop; exit $$ret

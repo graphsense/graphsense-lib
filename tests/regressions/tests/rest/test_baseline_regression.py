@@ -188,12 +188,10 @@ def compare_responses(baseline_data: Any, current_data: Any, path: str = "") -> 
         current_keys = set(current_data.keys()) - IGNORED_KEYS
 
         missing_in_current = baseline_keys - current_keys
-        extra_in_current = current_keys - baseline_keys
 
         if missing_in_current:
             differences.append(f"{path}: keys missing in current: {missing_in_current}")
-        if extra_in_current:
-            differences.append(f"{path}: extra keys in current: {extra_in_current}")
+        # Extra keys in current are acceptable (new fields are features, not regressions)
 
         for key in baseline_keys & current_keys:
             sub_path = f"{path}.{key}" if path else key

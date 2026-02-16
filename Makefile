@@ -34,7 +34,7 @@ test-ci:
 	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
 
 test-with-base-dependencies-ci:
-	uv run --exact --no-dev --group testing --extra conversions --extra tagpacks --extra web pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
+	uv run --exact --no-dev --group testing --extra conversions --extra ingest --extra tagpacks --extra web pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
 
 
 # Build pre-baked Cassandra image with all test schemas (resttest_* + pytest_*)
