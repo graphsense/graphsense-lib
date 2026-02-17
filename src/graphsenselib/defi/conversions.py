@@ -16,7 +16,6 @@ from graphsenselib.defi.bridging.symbiosis import (
     get_bridges_from_symbiosis_decoded_logs,
 )
 from graphsenselib.datatypes.abi import decode_logs_dict
-from ..defi.swaps import get_swap_from_decoded_logs
 from graphsenselib.defi.bridging.models import Bridge, BridgeStrategy
 from graphsenselib.defi.swapping.models import ExternalSwap
 from graphsenselib.db.asynchronous.cassandra import Cassandra
@@ -178,6 +177,8 @@ async def get_conversions_from_db(
         included_bridges,
     )
     conversions += bridge_result
+
+    from graphsenselib.defi.swaps import get_swap_from_decoded_logs
 
     swap_results = get_swap_from_decoded_logs(
         decoded_log_data, tx_logs_raw_filtered, tx_traces, visualize
