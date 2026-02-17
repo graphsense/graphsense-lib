@@ -1,16 +1,14 @@
 # flake8: noqa: T201
-import contextlib
 import logging
 import sys
 import time
 from typing import Dict
 
 import click
-from filelock import FileLock
-from filelock import Timeout as LockFileTimeout
 
 from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
 from graphsenselib.utils.date import parse_older_than_run_spec
+from graphsenselib.utils.locking import LockAcquisitionError, create_lock
 
 from ..cli.common import require_currency, require_environment
 from ..config import get_config
@@ -60,6 +58,17 @@ def ingesting():
 @ingesting.command("from-node")
 @require_environment()
 @require_currency(required=True)
+@click.option(
+    "--no-lock",
+    is_flag=True,
+    help="Do not acquire a lock to avoid conflicting processes.",
+)
+@click.option(
+    "--no-file-lock",
+    is_flag=True,
+    hidden=True,
+    help="Deprecated alias for --no-lock.",
+)
 @click.option(
     "--sinks",
     type=click.Choice(INGEST_SINKS, case_sensitive=False),
@@ -135,14 +144,11 @@ def ingesting():
     help="Which version of the ingest to use, 1: legacy (sequential), 2:parallel"
     "(default: 1)",
 )
-@click.option(
-    "--no-file-lock",
-    is_flag=True,
-    help="Do not set file lock to avoid conflicting ingests.",
-)
 def ingest(
     env,
     currency,
+    no_file_lock,
+    no_lock,
     sinks,
     start_block,
     end_block,
@@ -153,7 +159,6 @@ def ingest(
     create_schema,
     mode,
     version,
-    no_file_lock,
 ):
     """Ingests cryptocurrency data form the client/node to the graphsense db
     \f
@@ -190,17 +195,10 @@ def ingest(
     sink_configs = [(k, create_sink_config(k, currency, ks_config)) for k in sinks]
 
     with DbFactory().from_config(env, currency) as db:
+        lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
+        lock_disabled = no_lock or no_file_lock
         try:
-            lockfile_name = (
-                f"/tmp/{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}.lock"
-            )
-            if not no_file_lock:
-                logger.info(f"Try acquiring lockfile {lockfile_name}")
-            with (
-                contextlib.nullcontext()
-                if no_file_lock
-                else FileLock(lockfile_name, timeout=1)
-            ):
+            with create_lock(lock_name, disabled=lock_disabled):
                 IngestFactory().from_config(env, currency, version).ingest(
                     db=db,
                     currency=currency,
@@ -214,11 +212,8 @@ def ingest(
                     provider_timeout=timeout,
                     mode=mode,
                 )
-        except LockFileTimeout:
-            logger.error(
-                f"Lockfile {lockfile_name} could not be acquired. "
-                "Is another ingest running? If not delete the lockfile."
-            )
+        except LockAcquisitionError as e:
+            logger.error(str(e))
             sys.exit(911)
 
 
@@ -312,10 +307,9 @@ def dump_rawdata(
 
     parquet_directory = parquet_directory_config.directory
 
+    lock_name = f"delta_ingest_{currency}"
     try:
-        lockfile_name = f"/tmp/delta_ingest_{currency}.lock"
-        logger.info(f"Try acquiring lockfile {lockfile_name}")
-        with FileLock(lockfile_name, timeout=1):
+        with create_lock(lock_name):
             export_delta(
                 currency=currency,
                 sources=sources,
@@ -354,11 +348,8 @@ def dump_rawdata(
                         f"Auto-compaction conditions not met, last compaction was {last_vaccum_time}, skipping compaction"
                     )
 
-    except LockFileTimeout:
-        logger.error(
-            f"Lockfile {lockfile_name} could not be acquired. "
-            "Is another delta-ingest running? If not delete the lockfile."
-        )
+    except LockAcquisitionError as e:
+        logger.error(str(e))
         sys.exit(911)
 
 

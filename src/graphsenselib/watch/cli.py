@@ -2,10 +2,9 @@ import logging
 import sys
 
 import click
-from filelock import FileLock
-from filelock import Timeout as LockFileTimeout
 
 from ..cli.common import require_currency, require_environment
+from ..utils.locking import LockAcquisitionError, create_lock
 from .factory import FlowWatcherFactory
 
 logger = logging.getLogger(__name__)
@@ -45,18 +44,13 @@ def watchflows(env, currency, state_file, watchpoints_file):
         env (str): Environment to work on
         currency (str): currency to work on.
     """
-    lockfile_name = f"/tmp/gscli_{env}_{currency}_watcher.lock"
-    logger.info(f"Try acquiring lockfile {lockfile_name}")
+    lock_name = f"gscli_{env}_{currency}_watcher"
     try:
-        with FileLock(lockfile_name, timeout=1):
+        with create_lock(lock_name):
             with FlowWatcherFactory().file_based_from_config(
                 env, currency, state_file, watchpoints_file
             ) as watcher:
                 watcher.watch()
-    except LockFileTimeout:
-        logger.error(
-            f"Lockfile {lockfile_name} could not be acquired. "
-            "Is another watcher running for the environment?"
-            " If not delete the lockfile."
-        )
+    except LockAcquisitionError as e:
+        logger.error(str(e))
         sys.exit(911)

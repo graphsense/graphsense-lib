@@ -219,6 +219,16 @@ class AppConfig(GoodConf):
 
     s3_credentials: Optional[Dict[str, str]] = Field(default_factory=lambda: None)
 
+    use_redis_locks: bool = Field(
+        default=False,
+        description="Use Redis for distributed locking instead of file locks.",
+    )
+
+    redis_url: Optional[str] = Field(
+        default=None,
+        description="Redis URL for distributed locking (e.g. redis://localhost:6379).",
+    )
+
     def __init__(
         self, load: bool = False, config_file: str | None = None, **kwargs
     ) -> None:

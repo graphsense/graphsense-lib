@@ -2,13 +2,11 @@ import logging
 import sys
 from typing import Optional
 
-from filelock import FileLock
-from filelock import Timeout as LockFileTimeout
-
 from ..config import get_config
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.console import console
+from ..utils.locking import LockAcquisitionError, create_lock
 from ..utils.signals import graceful_ctlc_shutdown
 from .update import AbstractUpdateStrategy, Action, UpdaterFactory
 
@@ -219,21 +217,18 @@ def update(
     forward_fill_rates: bool,
     disable_safety_checks: bool = False,
 ):
-    try:
-        with DbFactory().from_config(env, currency) as db:
-            config = get_config()
-            if config.get_keyspace_config(env, currency).disable_delta_updates:
-                logger.error(
-                    f"Delta updates are disabled for {env} - {currency} in the "
-                    f"configuration at {config.path()}"
-                )
-                sys.exit(125)
-
-            lockfile_name = (
-                f"/tmp/{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}.lock"
+    with DbFactory().from_config(env, currency) as db:
+        config = get_config()
+        if config.get_keyspace_config(env, currency).disable_delta_updates:
+            logger.error(
+                f"Delta updates are disabled for {env} - {currency} in the "
+                f"configuration at {config.path()}"
             )
-            logger.info(f"Try acquiring lockfile {lockfile_name}")
-            with FileLock(lockfile_name, timeout=1):
+            sys.exit(125)
+
+        lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
+        try:
+            with create_lock(lock_name):
                 start_block, end_block, patch_mode = find_import_range(
                     db,
                     start_block,
@@ -304,12 +299,9 @@ def update(
                         f"start {start_block}, end {end_block}"
                     )
 
-    except LockFileTimeout:
-        logger.error(
-            f"Lockfile {lockfile_name} could not be acquired. "
-            "Is another ingest running? If not delete the lockfile."
-        )
-        sys.exit(911)
+        except LockAcquisitionError as e:
+            logger.error(str(e))
+            sys.exit(911)
 
 
 def patch_exchange_rates(env: str, currency: str, block: int):

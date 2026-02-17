@@ -1,9 +1,6 @@
 import sys
 from typing import List, Optional
 
-from filelock import FileLock
-from filelock import Timeout as LockFileTimeout
-
 from graphsenselib.ingest.account import logger
 from graphsenselib.ingest.delta.sink import DeltaDumpSinkFactory
 from graphsenselib.ingest.ingestrunner import IngestRunner
@@ -147,15 +144,4 @@ def export_delta(
         f"file batch size: {file_batch_size}"
     )
 
-    lockfile_name = f"/tmp/rawdatadump_{currency}.lock"
-    logger.info(f"Try acquiring lockfile {lockfile_name}")
-    try:
-        with FileLock(lockfile_name, timeout=1):
-            logger.info(f"Lockfile {lockfile_name} acquired.")
-            runner.run(start_block, end_block)
-    except LockFileTimeout:
-        logger.error(
-            f"Lockfile {lockfile_name} could not be acquired. "
-            "Is another ingest running? If not delete the lockfile."
-        )
-        sys.exit(911)
+    runner.run(start_block, end_block)
