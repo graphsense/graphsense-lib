@@ -107,6 +107,7 @@ ingest = [
     "deltalake>=1.4.2",
     "duckdb>=1.0.0",
     "grpcio>=1.49.0",
+    "redis>=5.0.0",
 ]
 conversions = [
     "networkx>=3.2.1",

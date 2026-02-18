@@ -4,4 +4,4 @@ The version is maintained in the Makefile (RELEASESEM) and synced here
 using `make update-api-version`. Do not edit manually.
 """
 
-__api_version__ = "2.9.2"
+__api_version__ = "2.9.3"
