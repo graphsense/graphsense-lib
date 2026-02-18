@@ -139,7 +139,15 @@ def parse_time_period(period_str):
         raise ValueError(f"Unknown time unit: {unit}")
 
 
-def is_date_older_than(date_to_check, period_str, now=datetime.now()):
+def _resolve_now(reference_date, now):
+    if now is not None:
+        return now
+    if reference_date is not None and reference_date.tzinfo is not None:
+        return datetime.now(reference_date.tzinfo)
+    return datetime.now()
+
+
+def is_date_older_than(date_to_check, period_str, now=None):
     """
     Check if a given date is older than the specified time period.
 
@@ -153,13 +161,14 @@ def is_date_older_than(date_to_check, period_str, now=datetime.now()):
     if date_to_check is None:
         return True  # Consider None as "very old"
 
+    now = _resolve_now(date_to_check, now)
     time_delta = parse_time_period(period_str)
     threshold_date = now - time_delta
 
     return date_to_check < threshold_date
 
 
-def parse_older_than_run_spec(spec: str, to_compare, now=datetime.now()) -> bool:
+def parse_older_than_run_spec(spec: str, to_compare, now=None) -> bool:
     """
     Parse a specification string for "older than" run checks.
 
@@ -176,6 +185,7 @@ def parse_older_than_run_spec(spec: str, to_compare, now=datetime.now()) -> bool
             "Specification string cannot be empty or longer than two parts separated by ';'"
         )
 
+    now = _resolve_now(to_compare, now)
     period_str = parts[0].strip()
 
     is_older = is_date_older_than(to_compare, period_str, now=now)

@@ -419,3 +419,9 @@ def test_weekly_schedule_mixed_with_regular_format():
     recent_date = reference_time - timedelta(hours=12)
     result = parse_older_than_run_spec("1d", recent_date, now=reference_time)
     assert result is False
+
+
+def test_parse_older_than_run_spec_uses_aware_now_by_default():
+    """Default `now` should be timezone-aware when comparing aware datetimes."""
+    old_date = datetime.now(timezone.utc) - timedelta(hours=2)
+    assert parse_older_than_run_spec("1h", old_date) is True

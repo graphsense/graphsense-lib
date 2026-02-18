@@ -81,7 +81,8 @@ def is_raw_behind_schedule(
 
         last_ts = hb_ts  # dt.fromtimestamp(hb_ts)
         last_ts_str = last_ts.strftime("%F %H:%M:%S")
-        diff_hours = (dt.now() - last_ts).total_seconds() / 3600
+        now = dt.now(last_ts.tzinfo) if last_ts.tzinfo is not None else dt.now()
+        diff_hours = (now - last_ts).total_seconds() / 3600
 
         # print(type(dt.datetime.now() - last_ts))
         # print(rs, last_ts_str, diff_hours)
