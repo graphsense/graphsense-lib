@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10, <3.14"
 resolution-markers = [
     "python_full_version >= '3.11' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
@@ -1503,6 +1503,15 @@ wheels = [
 ]
 
 [[package]]
+name = "fsspec"
+version = "2026.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47cc4ddb8f7720d2dcdc8888c8e5ad84c73ea4531cc5b/fsspec-2026.2.0.tar.gz", hash = "sha256:6544e34b16869f5aacd5b90bdf1a71acb37792ea3ddf6125ee69a22a53fb8bff", size = 313441, upload-time = "2026-02-05T21:50:53.743Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
+]
+
+[[package]]
 name = "geomet"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1821,7 +1830,7 @@ requires-dist = [
     { name = "python-dateutil", marker = "extra == 'web'", specifier = ">=2.9.0" },
     { name = "python-dotenv", marker = "extra == 'tagstore'", specifier = ">=1.0.1" },
     { name = "pyyaml", marker = "extra == 'tagstore'", specifier = ">=6.0" },
-    { name = "pyyaml-include", marker = "extra == 'tagstore'", specifier = "~=1.3" },
+    { name = "pyyaml-include", marker = "extra == 'tagstore'", specifier = ">=1.3,<3.0" },
     { name = "rapidfuzz", marker = "extra == 'tagpacks'", specifier = ">=3.13.0" },
     { name = "rapidyaml", marker = "extra == 'tagpacks'", specifier = ">=0.10.0" },
     { name = "redis", marker = "extra == 'ingest'", specifier = ">=5.0.0" },
@@ -3706,14 +3715,16 @@ wheels = [
 
 [[package]]
 name = "pyyaml-include"
-version = "1.4.1"
+version = "2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "fsspec" },
     { name = "pyyaml" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/be/2d07ad85e3d593d69640876a8686eae2c533db8cb7bf298d25c421b4d2d5/pyyaml-include-1.4.1.tar.gz", hash = "sha256:1a96e33a99a3e56235f5221273832464025f02ff3d8539309a3bf00dec624471", size = 20592, upload-time = "2024-03-25T14:56:43.748Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/8c/4bdc1bd9676e9eb49237b3750562e9794b7585281448909fa1837c92ca27/pyyaml_include-2.2.tar.gz", hash = "sha256:6f0c7e2ac56cdd9cc305b04122817b55514e6ce8584869fae2bc2a4ef2e0d40f", size = 29854, upload-time = "2024-11-09T09:36:16.915Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/ca/6a2cc3a73170d10b5af1f1613baa2ed1f8f46f62dd0bfab2bffd2c2fe260/pyyaml_include-1.4.1-py3-none-any.whl", hash = "sha256:323c7f3a19c82fbc4d73abbaab7ef4f793e146a13383866831631b26ccc7fb00", size = 19079, upload-time = "2024-03-25T14:56:41.274Z" },
+    { url = "https://files.pythonhosted.org/packages/56/1f/ae83ff547e70cd3aeefe2ebaeeef41c4e1fd5ed2453396d249d17c3a7ead/pyyaml_include-2.2-py3-none-any.whl", hash = "sha256:489fff69f78bad8b9509d006297a0140fd91382a66775b8b1da0ce7e126c1815", size = 29565, upload-time = "2024-11-09T09:36:15.241Z" },
 ]
 
 [[package]]
