@@ -1,0 +1,14 @@
+title: Context Duplicate Test TagPack
+creator: GraphSense Team
+source: http://example.com/context_duplicates
+confidence: web_crawl
+is_cluster_definer: true
+currency: BTC
+lastmod: 2021-04-21
+tags:
+- address: 1bacdeddg32dsfk5692dmn23
+  label: contexttag
+  context: source-a
+- address: 1bacdeddg32dsfk5692dmn23
+  label: contexttag
+  context: source-b

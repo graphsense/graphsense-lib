@@ -509,7 +509,7 @@ def test_simple_file_collection():
     h_files = collect_tagpack_files(prefix)
     header_dir, files = h_files.popitem()
 
-    assert len(files) == 5
+    assert len(files) == 6
     assert f"{prefix}/ex_addr_tagpack.yaml" in files
     assert f"{prefix}/duplicate_tag.yaml" in files
     assert f"{prefix}/empty_tag_list.yaml" in files
@@ -683,6 +683,24 @@ def test_duplicate_does_not_raise_only_inform(caplog, taxonomies):
 
     assert "1 duplicate(s) found" in log_text
     assert len(tagpack.get_unique_tags()) == 2
+
+
+def test_same_tag_with_different_context_is_not_deduplicated(taxonomies):
+    tagpack = TagPack.load_from_file(
+        "http://example.com/packs",
+        "tests/testfiles/simple/duplicate_tag_with_context.yaml",
+        TagPackSchema(),
+        taxonomies,
+    )
+
+    tagpack.validate()
+    unique_tags = tagpack.get_unique_tags()
+
+    assert len(unique_tags) == 2
+    assert {tag.all_fields.get("context") for tag in unique_tags} == {
+        "source-a",
+        "source-b",
+    }
 
 
 def test_conf_level_mandatory_if_not_set_default(tagpack):

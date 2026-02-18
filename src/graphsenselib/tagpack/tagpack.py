@@ -397,7 +397,7 @@ class TagPack(object):
         if self._unique_tags:
             return self._unique_tags
 
-        keys = ("address", "currency", "network", "label", "source")
+        keys = ("address", "currency", "network", "label", "source", "context")
         seen = set()
         duplicates = []
         self._unique_tags = []

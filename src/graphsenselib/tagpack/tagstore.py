@@ -625,6 +625,7 @@ class TagStore(object):
                                 t.asset,
                                 t.network,
                                 t.confidence,
+                                COALESCE(LOWER(TRIM(t.context)), ''),
                                 tp.creator ORDER BY t.id DESC)
                                     AS duplicate_count
                         FROM

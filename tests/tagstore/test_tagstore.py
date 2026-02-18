@@ -447,3 +447,113 @@ tags:
         "orphaned tagpack header was left in DB after failed tag insertion. "
         "Transaction should have been rolled back atomically."
     )
+
+
+def test_remove_duplicates_keeps_tags_with_different_context(db_setup):
+    ts = TagStore(db_setup["db_connection_string"], "public")
+    tagpack_id_a = "tests/context/duplicate-with-context-a"
+    tagpack_id_b = "tests/context/duplicate-with-context-b"
+    source = "http://example.com/context_duplicates"
+
+    tag_a = SimpleNamespace(
+        all_fields={
+            "label": "contexttag",
+            "source": source,
+            "address": "1bacdeddg32dsfk5692dmn23",
+            "currency": "BTC",
+            "network": "BTC",
+            "is_cluster_definer": True,
+            "confidence": "web_crawl",
+            "context": "source-a",
+            "tag_type": "actor",
+            "concepts": ["exchange"],
+        }
+    )
+
+    tag_b = SimpleNamespace(
+        all_fields={
+            "label": "contexttag",
+            "source": source,
+            "address": "1bacdeddg32dsfk5692dmn23",
+            "currency": "BTC",
+            "network": "BTC",
+            "is_cluster_definer": True,
+            "confidence": "web_crawl",
+            "context": "source-b",
+            "tag_type": "actor",
+            "concepts": ["exchange"],
+        }
+    )
+
+    tagpack_a = SimpleNamespace(
+        contents={
+            "title": "Context Duplicate Test TagPack A",
+            "creator": "GraphSense Team",
+            "description": "Regression fixture",
+        },
+        uri="http://example.com/context_dup_pack_a",
+        get_unique_tags=lambda: [tag_a],
+    )
+
+    tagpack_b = SimpleNamespace(
+        contents={
+            "title": "Context Duplicate Test TagPack B",
+            "creator": "GraphSense Team",
+            "description": "Regression fixture",
+        },
+        uri="http://example.com/context_dup_pack_b",
+        get_unique_tags=lambda: [tag_b],
+    )
+
+    ts.insert_tagpack(
+        tagpack=tagpack_a,
+        is_public=True,
+        tag_type_default="actor",
+        force_insert=True,
+        lastmod=None,
+        prefix="",
+        rel_path=tagpack_id_a,
+        batch=100,
+        actor_resolve_mapping=None,
+    )
+
+    ts.insert_tagpack(
+        tagpack=tagpack_b,
+        is_public=True,
+        tag_type_default="actor",
+        force_insert=True,
+        lastmod=None,
+        prefix="",
+        rel_path=tagpack_id_b,
+        batch=100,
+        actor_resolve_mapping=None,
+    )
+
+    ts.cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM tag t
+        JOIN tagpack tp ON t.tagpack = tp.id
+        WHERE tp.id IN (%s, %s)
+        """,
+        (tagpack_id_a, tagpack_id_b),
+    )
+    before_count = ts.cursor.fetchone()[0]
+
+    ts.remove_duplicates()
+
+    ts.cursor.execute(
+        """
+        SELECT COUNT(*), ARRAY_AGG(t.context ORDER BY t.context)
+        FROM tag t
+        JOIN tagpack tp ON t.tagpack = tp.id
+        WHERE tp.id IN (%s, %s)
+        """,
+        (tagpack_id_a, tagpack_id_b),
+    )
+    after_count, contexts = ts.cursor.fetchone()
+    ts.conn.close()
+
+    assert before_count == 2
+    assert after_count == 2
+    assert contexts == ["source-a", "source-b"]
