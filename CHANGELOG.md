@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.9.2] 2026-02-18
+
+### added
+- Added Redis-based locking support via new config options `use_redis_locks` and `redis_url`
+
+### fixed
+- Fixed import chain in conversions to avoid unintended dependency from tagpacks to swaps by moving swap import to runtime
+
 ## [2.9.0] 2026-02-16
 
 ### added
