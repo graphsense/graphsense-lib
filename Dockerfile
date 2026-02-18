@@ -21,9 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     cmake \
     git \
+    git-lfs \
     openssh-client \
     libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git lfs install
 
 RUN mkdir -p /opt/graphsense/
 ADD ./src/ /opt/graphsense/lib/src
