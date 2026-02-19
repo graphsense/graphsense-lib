@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
-## 2026-02-19
+## [2.9.5] 2026-02-19
 
 ### Library (v2.9.5)
 
