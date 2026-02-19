@@ -14,7 +14,7 @@ generate-openapi-client:
 	@echo "Modifying server URL to production..."
 	jq '.servers[0].url = "https://api.iknaio.com"' openapi.json.30.tmp > openapi.json.modified
 	@API_VERSION=$$(jq -r '.info.version' openapi.json.30.tmp) && \
-	echo "Generating client with $(GENERATOR_VERSION) (API version: $$API_VERSION)..." && \
+	echo "Generating client with $(GENERATOR_VERSION) (API version: $$API_VERSION, package version: $$API_VERSION)..." && \
 	docker run --rm \
 		-v "${PWD}:/build:Z" \
 		-v "${PWD}/$(TEMPLATES_DIR):/templates:Z" \

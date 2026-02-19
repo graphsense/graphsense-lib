@@ -514,12 +514,47 @@ make test
 
 ### Release Process
 
+This repository uses two source-of-truth versions in the root `Makefile`:
+
+- **Library version**: `RELEASESEM` (released with `vX.Y.Z` tags)
+- **OpenAPI/API version**: `WEBAPISEM` (written to `src/graphsenselib/web/version.py`)
+
+The Python client package version is derived from the API version and should match it.
+
+Use the root Makefile helpers:
+
+```bash
+# Show all current versions
+make show-versions
+
+# Update and validate OpenAPI contract version
+make update-api-version WEBAPISEM=v2.10.0
+make check-api-version WEBAPISEM=v2.10.0
+
+# Sync client version from API version and validate
+make sync-client-version WEBAPISEM=v2.10.0
+make check-client-version WEBAPISEM=v2.10.0
+
+# Generate Python client (package version = OpenAPI info.version)
+make generate-python-client
+
+# Create both release tags from Makefile versions
+make tag-version
+```
+
+Tagging behavior:
+
+- Library release tag: `vX.Y.Z` (from `RELEASESEM`)
+- Client release tag: `webapi-vA.B.C` (from `WEBAPISEM`)
+
 1. Update CHANGELOG.md with new features and fixes
-2. Update version numbers (RELEASESEM and RELEASE) in the main Makefile
-3. Create and push tag:
+2. Update relevant versions (library/API/client) based on what changed
+3. Sync API/client versions if needed (`make update-api-version` + `make sync-client-version`)
+4. Create and push tags:
 
 ```bash
 make tag-version
+git push origin --tags
 ```
 
 ## Troubleshooting

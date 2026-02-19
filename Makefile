@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-# RELEASE := 'v25.11.19+devweb5'
 RELEASESEM := 'v2.9.4'
+WEBAPISEM := 'v2.9.4'
 
 -include .env
 
@@ -11,8 +11,17 @@ gs_tagstore_db_url ?= 'postgresql+asyncpg://${POSTGRES_USER_TAGSTORE}:${POSTGRES
 all: format lint test build
 
 tag-version:
-	-git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASESEM) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
-#	git diff --exit-code && git diff --staged --exit-code && git tag -a $(RELEASE) -m 'Release $(RELEASE)' || (echo "Repo is dirty please commit first" && exit 1)
+	@set -e; \
+	git diff --exit-code; \
+	git diff --staged --exit-code; \
+	lib_tag=v$$(echo $(RELEASESEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	api_ver=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	client_tag=webapi-v$$api_ver; \
+	if git rev-parse "$$lib_tag" >/dev/null 2>&1; then echo "Tag $$lib_tag already exists"; exit 1; fi; \
+	if git rev-parse "$$client_tag" >/dev/null 2>&1; then echo "Tag $$client_tag already exists"; exit 1; fi; \
+	git tag -a "$$lib_tag" -m "Library release $$lib_tag"; \
+	git tag -a "$$client_tag" -m "Python client release $$client_tag (API $$api_ver)"; \
+	echo "Created tags: $$lib_tag and $$client_tag"
 
 dev: install-dev
 	 uv run pre-commit install
@@ -102,23 +111,52 @@ serve-web:
 run-codegen: generate-python-client
 
 generate-python-client:
-	cd clients/python && make generate-openapi-client
+	cd clients/python && $(MAKE) generate-openapi-client
+
+show-versions:
+	@lib_version=$$(echo $(RELEASESEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	api_cfg=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	api_version=$$(grep -oP '__api_version__ = "\K[^"]+' src/graphsenselib/web/version.py); \
+	client_version=$$(grep -oP '^version = "\K[^"]+' clients/python/pyproject.toml); \
+	echo "Library version: $$lib_version"; \
+	echo "OpenAPI API version (Makefile): $$api_cfg"; \
+	echo "OpenAPI API version (code): $$api_version"; \
+	echo "Python client version: $$client_version"
 
 # API version management
 update-api-version:
-	@version=$$(echo $(RELEASESEM) | sed "s/^['\"]\\?v\\?//" | sed "s/['\"]$$//"); \
+	@version=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
 	sed -i 's/__api_version__ = .*/__api_version__ = "'$$version'"/' src/graphsenselib/web/version.py; \
 	echo "Updated API version to $$version"
 
 check-api-version:
-	@version=$$(echo $(RELEASESEM) | sed "s/^['\"]\\?v\\?//" | sed "s/['\"]$$//"); \
+	@version=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
 	file_version=$$(grep -oP '__api_version__ = "\K[^"]+' src/graphsenselib/web/version.py); \
 	if [ "$$version" != "$$file_version" ]; then \
-		echo "Version mismatch: Makefile has $$version, version.py has $$file_version"; \
-		echo "Run 'make update-api-version' to fix"; \
+		echo "API version mismatch: Makefile WEBAPISEM=$$version, version.py has $$file_version"; \
+		echo "Run 'make update-api-version WEBAPISEM=<x.y.z|vX.Y.Z>' to fix"; \
 		exit 1; \
 	else \
 		echo "API version aligned: $$version"; \
+	fi
+
+sync-client-version:
+	@version=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	sed -i 's/^version = ".*"/version = "'$$version'"/' clients/python/pyproject.toml; \
+	echo "Synced Python client version to API version $$version"
+
+update-client-version:
+	@$(MAKE) sync-client-version WEBAPISEM=$(WEBAPISEM)
+
+check-client-version:
+	@version=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	file_version=$$(grep -oP '^version = "\K[^"]+' clients/python/pyproject.toml); \
+	if [ "$$version" != "$$file_version" ]; then \
+		echo "Client version mismatch: WEBAPISEM=$$version, pyproject has $$file_version"; \
+		echo "Run 'make sync-client-version WEBAPISEM=<x.y.z|vX.Y.Z>' to fix"; \
+		exit 1; \
+	else \
+		echo "Client version aligned to API: $$version"; \
 	fi
 
 # Docker targets for REST API
@@ -132,4 +170,4 @@ package-ui:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version
+.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions

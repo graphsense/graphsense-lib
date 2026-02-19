@@ -3,6 +3,55 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## Version Tracks
+
+- `vX.Y.Z` tags track **Library** releases.
+- `webapi-vA.B.C` tags track **Web API + Python client** releases.
+
+Use one changelog file, but separate entries by track in each release window.
+
+## [Unreleased]
+
+### Library (vNext)
+
+#### added
+-
+
+#### changed
+-
+
+#### fixed
+-
+
+#### deprecated
+-
+
+#### removed
+-
+
+#### security
+-
+
+### Web API + Python client (webapi-vNext)
+
+#### added
+-
+
+#### changed
+-
+
+#### fixed
+-
+
+#### deprecated
+-
+
+#### removed
+-
+
+#### security
+-
+
 ## [2.9.2] 2026-02-18
 
 ### added

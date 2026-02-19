@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - v[0-9].[0-9]+.[0-9]+
+      - webapi-v[0-9]+.[0-9]+.[0-9]+
 
 permissions:
   contents: read
@@ -29,6 +29,23 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+    - name: Validate tag/version alignment
+      run: |
+        TAG_VERSION="${GITHUB_REF#refs/tags/webapi-v}"
+        CLIENT_VERSION=$(grep -oP '^version = "\K[^"]+' pyproject.toml)
+        API_VERSION=$(grep -oP '__api_version__ = "\K[^"]+' ../../src/graphsenselib/web/version.py)
+
+        if [ "$TAG_VERSION" != "$CLIENT_VERSION" ]; then
+          echo "Client tag version mismatch: tag=$TAG_VERSION, clients/python/pyproject.toml=$CLIENT_VERSION"
+          exit 1
+        fi
+
+        if [ "$API_VERSION" != "$CLIENT_VERSION" ]; then
+          echo "API/client version mismatch: api=$API_VERSION, client=$CLIENT_VERSION"
+          exit 1
+        fi
+
+        echo "Client release versions aligned (tag=$TAG_VERSION, api=$API_VERSION, client=$CLIENT_VERSION)"
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@v6
       with:

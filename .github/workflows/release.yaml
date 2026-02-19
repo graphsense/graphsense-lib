@@ -18,7 +18,17 @@ jobs:
         uses: actions/checkout@v3
       - name: Filter CHANGELOG
         run: |
-          sed  '1,/## \[/d;/## \[/Q' CHANGELOG.md > CHANGELOG_LATEST.md
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { in_section=1; print; next }
+            in_section && $0 ~ "^## \\[" { exit }
+            in_section { print }
+          ' CHANGELOG.md > CHANGELOG_LATEST.md
+
+          if [ ! -s CHANGELOG_LATEST.md ]; then
+            echo "No changelog section found for version $VERSION in CHANGELOG.md"
+            exit 1
+          fi
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
