@@ -1,3 +1,4 @@
+import os
 from typing import Iterable, List, Tuple
 
 try:
@@ -117,8 +118,6 @@ class DeltaTableConnector:
 
             # Enhanced HTTP settings for reliability
             auth_query = f"""
-            INSTALL httpfs;
-            LOAD httpfs;
             SET s3_url_style='path';
             SET s3_use_ssl=0;
             SET s3_region='us-east-1';
@@ -142,6 +141,18 @@ class DeltaTableConnector:
             """
 
         return auth_query
+
+    def ensure_httpfs_loaded(self, con):
+        extension_directory = (
+            os.getenv("DUCKDB_EXTENSION_DIRECTORY") or "/opt/duckdb/extensions"
+        )
+        con.execute(f"SET extension_directory='{extension_directory}';")
+        # Prefer already-installed extension; only install at runtime as fallback.
+        try:
+            con.execute("LOAD httpfs;")
+        except Exception:
+            con.execute("INSTALL httpfs;")
+            con.execute("LOAD httpfs;")
 
     def get_storage_options(self):
         if self.s3_credentials:
@@ -206,6 +217,8 @@ class DeltaTableConnector:
         query = auth_query + content_query
 
         with duckdb.connect() as con:
+            if self.s3_credentials:
+                self.ensure_httpfs_loaded(con)
             con.execute(query)
             data = con.fetchdf()
 

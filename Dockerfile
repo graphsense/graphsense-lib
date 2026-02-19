@@ -38,6 +38,8 @@ WORKDIR /opt/graphsense/lib/
 RUN make build
 RUN uv pip install $(ls dist/graphsense_lib-*.whl)[all] --system
 RUN uv pip install gunicorn --system
+RUN mkdir -p /opt/duckdb/extensions \
+    && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')"
 
 RUN apt-get purge -y gcc g++ make cmake && apt-get autoremove -y
 RUN rm -rf /opt/graphsense/
@@ -83,6 +85,7 @@ def when_ready(server):
 EOF
 
 RUN adduser --system --uid 1000 --home /home/graphsense graphsense
+RUN chown -R graphsense /opt/duckdb/extensions
 RUN mkdir -p /srv/graphsense-rest/instance && chown -R graphsense /srv/graphsense-rest
 USER graphsense
 WORKDIR /srv/graphsense-rest/
