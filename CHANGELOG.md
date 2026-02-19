@@ -10,47 +10,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
 
-### Library (vNext)
+## 2026-02-19
 
-#### added
--
-
-#### changed
--
-
-#### fixed
--
-
-#### deprecated
--
-
-#### removed
--
-
-#### security
--
-
-### Web API + Python client (webapi-vNext)
+### Library (v2.9.5)
 
 #### added
--
+- Add git lfs to docker image
 
 #### changed
--
+- Docker image now bakes DuckDB `httpfs` extension and delta update loads `httpfs` reliably in containerized runs.~
 
 #### fixed
--
+- Tagstore ingest: Fix duplicate removal with different contexts
 
-#### deprecated
--
+### Web API + Python client (webapi-2.9.5)
 
-#### removed
--
+#### changed
+- Changed versioning scheme
 
-#### security
--
+## [2.9.4] 2026-02-18
+
+### fixed
+- Fixed datetime-related regression in monitoring
+
+## [2.9.3] 2026-02-18
+
+### added
+- Added Redis to ingest dependency group
 
 ## [2.9.2] 2026-02-18
 
@@ -59,6 +46,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### fixed
 - Fixed import chain in conversions to avoid unintended dependency from tagpacks to swaps by moving swap import to runtime
+
+## [2.9.1] 2026-02-16
+
+### fixed
+- Fixed Python client PyPI publish action variable name
 
 ## [2.9.0] 2026-02-16
 
