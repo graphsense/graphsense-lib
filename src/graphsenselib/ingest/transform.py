@@ -95,6 +95,12 @@ class TransformerTRX(Transformer):
 
         t0 = time.monotonic()
         txs = enrich_txs_with_vrs(txs, receipts)
+        # For gRPC-sourced transactions, gas_price is 0 (not in protobuf).
+        # On Tron, gas_price == effective_gas_price, so copy from receipt.
+        for tx in txs:
+            egp = tx.get("receipt_effective_gas_price")
+            if egp is not None:
+                tx["gas_price"] = egp
         t_enrich_vrs = time.monotonic() - t0
 
         t0 = time.monotonic()

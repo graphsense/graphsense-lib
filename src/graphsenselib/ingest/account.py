@@ -122,6 +122,13 @@ class AccountStreamerAdapter:
             start_block, end_block
         )
 
+    def export_block_headers(self, start_block: int, end_block: int) -> Iterable:
+        """Export block headers (without transactions) for a block range.
+
+        Uses detailed=false which is much faster than detailed=true.
+        """
+        return self._block_exporter.export_block_headers(start_block, end_block)
+
     def export_receipts_and_logs(
         self, transactions: Iterable
     ) -> Tuple[Iterable, Iterable]:

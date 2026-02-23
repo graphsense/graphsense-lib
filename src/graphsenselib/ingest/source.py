@@ -12,6 +12,7 @@ from graphsenselib.ingest.account import (
 from graphsenselib.ingest.common import BlockRangeContent, Source
 from graphsenselib.ingest.fast_btc import FastBtcBlockExporter
 from graphsenselib.ingest.fast_traces import FastTraceExporter
+from graphsenselib.ingest.tron.grpc_exporter import TronCombinedGrpcExporter
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,10 @@ class SourceTRX(Source):
             batch_size_receiptslogs=100,
             max_workers_receiptslogs=20,
         )
+        self.grpc_exporter = TronCombinedGrpcExporter(
+            grpc_endpoint=grpc_provider_uri,
+            max_workers=30,
+        )
 
     def read_blockrange(self, start_block, end_block):
         if start_block == 0:
@@ -50,67 +55,61 @@ class SourceTRX(Source):
                 "don't have logs and cause issues."
             )
 
-        # Run blocks, receipts, and traces concurrently.
-        # Blocks + receipts use HTTP (thread-local sessions, no contention).
-        # Traces + hash_to_type use gRPC (separate connection).
+        # gRPC provides everything: txs, types, traces, fees, receipts, logs.
+        # HTTP only needed for lightweight block headers (logs_bloom, state_root, etc.).
         #
-        # Main thread:  blocks (HTTP)
-        # Worker 1:     traces+fees (gRPC) — starts immediately
-        # Worker 2:     receipts (HTTP) — starts immediately
-        # Worker 3:     hash_to_type (gRPC) — starts after blocks finish
+        # Worker 1:     ALL tx data via gRPC combined
+        # Main thread:  block headers via HTTP (detailed=false, ~0.3s)
         t_total = time.monotonic()
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            # Start traces immediately (gRPC, independent of blocks)
-            trace_future = executor.submit(
-                self.adapter.export_traces_parallel, start_block, end_block
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            # Start gRPC combined (txs + types + traces + fees + receipts + logs)
+            grpc_future = executor.submit(
+                self.grpc_exporter.export, start_block, end_block
             )
 
-            # Start receipts immediately (HTTP, independent of blocks)
-            receipt_future = executor.submit(
-                self.adapter.export_receipts_and_logs_by_block,
-                start_block,
-                end_block,
-            )
-
-            # Blocks via HTTP in main thread
+            # Block headers via HTTP lightweight (detailed=false) in main thread
             t0 = time.monotonic()
-            blocks, txs = self.adapter.export_blocks_and_transactions(
-                start_block, end_block
-            )
+            blocks = self.adapter.export_block_headers(start_block, end_block)
             t_blocks = time.monotonic() - t0
 
-            # Start hash_to_type now that we have blocks (gRPC)
-            type_future = executor.submit(
-                self.adapter.export_hash_to_type_mappings_parallel,
-                blocks,
-                "number",
+            # Collect gRPC results
+            t0 = time.monotonic()
+            txs, hash_to_type, traces, fees, receipts, logs = grpc_future.result()
+            t_grpc = time.monotonic() - t0
+
+        # Fallback: if energy_price couldn't be derived from gRPC data
+        # (no tx in the batch paid energy, e.g. genesis blocks), fetch
+        # one block's receipts via HTTP to get the actual energy price.
+        # Use the block of the first receipt (not start_block, which may
+        # be empty).
+        t_fallback = 0.0
+        if receipts and receipts[0]["effective_gas_price"] == 0:
+            t0 = time.monotonic()
+            sample_block = receipts[0]["block_number"]
+            http_rcpts, _ = self.adapter.export_receipts_and_logs_by_block(
+                sample_block, sample_block
             )
-
-            # Collect results
-            t0 = time.monotonic()
-            receipts, logs = receipt_future.result()
-            t_receipts = time.monotonic() - t0
-
-            t0 = time.monotonic()
-            traces, fees = trace_future.result()
-            t_traces_wait = time.monotonic() - t0
-
-            t0 = time.monotonic()
-            hash_to_type = type_future.result()
-            t_types_wait = time.monotonic() - t0
+            if http_rcpts and http_rcpts[0].get("effective_gas_price", 0) > 0:
+                real_price = http_rcpts[0]["effective_gas_price"]
+                for r in receipts:
+                    r["effective_gas_price"] = real_price
+                logger.info(
+                    f"[source-timing] energy_price fallback: "
+                    f"derived=0, http={real_price}"
+                )
+            t_fallback = time.monotonic() - t0
 
         t_source_total = time.monotonic() - t_total
         n_blocks = end_block - start_block + 1
         logger.info(
             f"[source-timing] TRX {n_blocks} blocks ({start_block}-{end_block}): "
             f"total={t_source_total:.2f}s  "
-            f"blocks={t_blocks:.2f}s  "
-            f"receipts={t_receipts:.2f}s ({len(receipts)} rcpts, {len(logs)} logs)  "
-            f"traces_wait={t_traces_wait:.2f}s ({len(traces)} traces, "
-            f"{len(fees) if fees else 0} fees)  "
-            f"types_wait={t_types_wait:.2f}s  "
-            f"txs={len(txs)}"
+            f"block_headers={t_blocks:.2f}s  "
+            f"grpc_all={t_grpc:.2f}s ({len(txs)} txs, {len(traces)} traces, "
+            f"{len(fees) if fees else 0} fees, "
+            f"{len(receipts)} rcpts, {len(logs)} logs)"
+            + (f"  fallback={t_fallback:.2f}s" if t_fallback > 0 else "")
         )
 
         data = {
