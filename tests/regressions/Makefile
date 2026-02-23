@@ -221,9 +221,11 @@ clean-deltalake:
 # Cassandra ingest regression tests
 # ============================================================================
 
-CASSANDRA_CURRENCIES ?= btc,eth
+CASSANDRA_REF_VERSION ?= v25.11.18
+CASSANDRA_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
 
 test-cassandra-ingest:
+	CASSANDRA_REF_VERSION=$(CASSANDRA_REF_VERSION) \
 	CASSANDRA_CURRENCIES=$(CASSANDRA_CURRENCIES) \
 	GSLIB_PATH=$$(cd ../.. && pwd) \
 	uv run pytest tests/cassandra/ -v -s -m cassandra
