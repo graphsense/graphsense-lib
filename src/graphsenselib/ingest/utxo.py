@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from json import JSONDecodeError
 from operator import itemgetter
 from typing import Dict, List, Optional, Tuple
 
@@ -15,41 +14,7 @@ except ImportError:
 else:
     _has_btcpy = True
 
-try:
-    from bitcoinetl.enumeration.chain import Chain
-    from bitcoinetl.jobs.export_blocks_job import ExportBlocksJob
-    from bitcoinetl.rpc.bitcoin_rpc import BitcoinRpc
-    from bitcoinetl.service.btc_service import BtcService
-    from blockchainetl.jobs.exporters.in_memory_item_exporter import (
-        InMemoryItemExporter,
-    )
-    from blockchainetl.thread_local_proxy import ThreadLocalProxy
-
-    CHAIN_MAPPING = {
-        "btc": Chain.BITCOIN,
-        "ltc": Chain.LITECOIN,
-        # Use the new api for btc (in btc etl jargon), this is
-        # required for bitcoin cash, otherwise the index field in the transactions
-        # is not filled correctly.
-        "bch": Chain.BITCOIN,
-        "zec": Chain.ZCASH,
-    }
-
-
-except ImportError:
-    _has_ingest_dependencies = False
-    CHAIN_MAPPING = {}
-else:
-    _has_ingest_dependencies = True
-
 from methodtools import lru_cache as mlru_cache
-from requests.exceptions import ConnectionError as RequestsConnectionError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..db import AnalyticsDb
@@ -57,9 +22,9 @@ from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_
 from ..utils.account import get_id_group
 from ..utils.address import address_to_bytes
 from ..utils.bch import bch_address_to_legacy
-from ..utils.logging import suppress_log_level
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
+from .fast_btc import FastBtcBlockExporter
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
@@ -130,96 +95,6 @@ def drop_columns(elem, cols):
     for col in cols:
         elem.pop(col, None)
     return elem
-
-
-class BtcStreamerAdapter:
-    def __init__(self, bitcoin_rpc, chain=None, batch_size=2, max_workers=5):
-        """Summary
-
-        Args:
-            bitcoin_rpc (TYPE): Description
-            chain (TYPE, optional): Description
-            batch_size (int, optional): Description
-            max_workers (int, optional): Description
-        """
-        if not _has_ingest_dependencies:
-            raise ImportError(
-                "The ingest.utxo needs bitcoinetl installed. Please install gslib with ingest dependencies."
-            )
-
-        if chain is None:
-            chain = Chain.BITCOIN
-
-        self.bitcoin_rpc = bitcoin_rpc
-        self.chain = chain
-        self.btc_service = BtcService(bitcoin_rpc, chain)
-        self.batch_size = batch_size
-        self.max_workers = max_workers
-
-    def open(self):  # noqa
-        self.item_exporter.open()
-
-    def get_current_block_number(self):
-        return int(self.btc_service.get_latest_block().number)
-
-    @retry(
-        retry=retry_if_exception_type(RequestsConnectionError)
-        | retry_if_exception_type(JSONDecodeError)
-        | retry_if_exception_type(ValueError),
-        stop=stop_after_attempt(10),
-        wait=wait_exponential(multiplier=1, min=4, max=20),
-    )
-    def export_transactions(self, start_block, end_block):
-        transactions_item_exporter = InMemoryItemExporter(item_types=["transaction"])
-
-        transactions_job = ExportBlocksJob(
-            start_block=start_block,
-            end_block=end_block,
-            batch_size=self.batch_size,
-            bitcoin_rpc=self.bitcoin_rpc,
-            max_workers=self.max_workers,
-            item_exporter=transactions_item_exporter,
-            chain=self.chain,
-            export_blocks=False,
-            export_transactions=True,
-        )
-        transactions_job.run()
-
-        transactions = transactions_item_exporter.get_items("transaction")
-
-        return transactions
-
-    @retry(
-        retry=retry_if_exception_type(RequestsConnectionError)
-        | retry_if_exception_type(JSONDecodeError)
-        | retry_if_exception_type(ValueError),
-        stop=stop_after_attempt(10),
-        wait=wait_exponential(multiplier=1, min=4, max=20),
-    )
-    def export_blocks_and_transactions(self, start_block, end_block):
-        blocks_and_transactions_item_exporter = InMemoryItemExporter(
-            item_types=["block", "transaction"]
-        )
-
-        blocks_and_transactions_job = ExportBlocksJob(
-            start_block=start_block,
-            end_block=end_block,
-            batch_size=self.batch_size,
-            bitcoin_rpc=self.bitcoin_rpc,
-            max_workers=self.max_workers,
-            item_exporter=blocks_and_transactions_item_exporter,
-            chain=self.chain,
-            export_blocks=True,
-            export_transactions=True,
-        )
-        blocks_and_transactions_job.run()
-        blocks = blocks_and_transactions_item_exporter.get_items("block")
-        transactions = blocks_and_transactions_item_exporter.get_items("transaction")
-
-        return blocks, transactions
-
-    def close(self):
-        self.item_exporter.close()
 
 
 class OutputResolverBase(ABC):
@@ -311,73 +186,6 @@ class CassandraOutputResolver(OutputResolverBase):
             f"Frontend and DB cache: {self.get_output.cache_info()}, "
             f"Run Local Cache: {len(self.cache)} items"
         )
-
-
-def get_last_block_yesterday(
-    btc_adapter: BtcStreamerAdapter, last_synced_block: int
-) -> int:
-    until_date = datetime.utcnow().replace(
-        hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc
-    )
-    until_timestamp = until_date.timestamp()
-
-    block_id = last_synced_block
-    block = btc_adapter.btc_service.get_block(block_id)
-    while block.timestamp >= until_timestamp:
-        block_id -= 1
-        block = btc_adapter.btc_service.get_block(block_id)
-
-    block_number = block.number
-    timestamp = parse_timestamp(block.timestamp)
-    logger.info(
-        f"Determining latest block before {until_date.isoformat()} "
-        f"its {block_number:,} at {timestamp.isoformat()}",
-    )
-    return block_number
-
-
-def preprocess_block_transactions(items: Iterable, block_bucket_size: int) -> List:
-    mapping = {}
-    for tx in items:
-        mapping.setdefault(tx["block_id"], []).append(tx)
-
-    items = []
-    for block, block_txs in mapping.items():
-        items.append(
-            {
-                "block_id_group": get_id_group(block, block_bucket_size),
-                "block_id": block,
-                "txs": [tx_stats(x) for x in block_txs],
-            }
-        )
-    return items
-
-
-def ingest_block_transactions(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-    block_bucket_size: int,
-) -> None:
-    items = preprocess_block_transactions(items, block_bucket_size)
-    write_to_sinks(db, sink_config, "block_transactions", items)
-
-
-def ingest_blocks(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-) -> None:
-    write_to_sinks(db, sink_config, "block", items)
-
-
-def ingest_tx_refs(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-) -> None:
-    write_to_sinks(db, sink_config, "transaction_spent_in", items)
-    write_to_sinks(db, sink_config, "transaction_spending", items)
 
 
 def prepare_blocks_inplace(
@@ -502,7 +310,7 @@ def parse_script(s: str) -> Tuple[List[str], str]:
     """
     if not _has_btcpy:
         raise ImportError(
-            "The ingest.utxo needs btcpy installed. Please install gslib with ingest dependencies."
+            "parse_script requires btcpy. Please install gslib with ingest dependencies."
         )
 
     script = ScriptBuilder.identify(s)
@@ -703,28 +511,6 @@ def get_tx_refs(spending_tx_hash: str, raw_inputs: Iterable, tx_hash_prefix_len:
     return tx_refs
 
 
-def ingest_transactions(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-) -> None:
-    write_to_sinks(db, sink_config, "transaction", items)
-
-
-def preprocess_transaction_lookups(items: Iterable) -> List[Dict]:
-    res = [{k: tx[k] for k in ("tx_prefix", "tx_hash", "tx_id")} for tx in items]
-    return res
-
-
-def ingest_transaction_lookups(
-    items: Iterable,
-    db: AnalyticsDb,
-    sink_config: dict,
-) -> None:
-    res = preprocess_transaction_lookups(items)
-    write_to_sinks(db, sink_config, "transaction_by_tx_prefix", res)
-
-
 def is_coinjoin(tx) -> bool:
     # https://github.com/citp/BlockSci/blob/14ccc9358443b2eb5730bb2902c4b11ab7928abf/src/heuristics/tx_identification.cpp#L48
     if tx["input_count"] < 2 or tx["output_count"] < 3:
@@ -763,21 +549,104 @@ def is_coinjoin(tx) -> bool:
     return True
 
 
+SUPPORTED_UTXO_CURRENCIES = {"btc", "ltc", "bch", "zec"}
+
+
 def print_block_info(
     last_synced_block: int, last_ingested_block: Optional[int]
 ) -> None:
-    """Display information about number of synced/ingested blocks.
-
-    Args:
-        last_synced_block (int): Description
-        last_ingested_block (Optional[int]): Description
-    """
-
     logger.warning(f"Last synced block: {last_synced_block:,}")
     if last_ingested_block is None:
         logger.warning("Last ingested block: None")
     else:
         logger.warning(f"Last ingested block: {last_ingested_block:,}")
+
+
+def get_last_block_yesterday(
+    exporter: FastBtcBlockExporter, last_synced_block: int
+) -> int:
+    until_date = datetime.utcnow().replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc
+    )
+    until_timestamp = until_date.timestamp()
+
+    block_id = last_synced_block
+    blocks, _ = exporter.export_blocks_and_transactions(block_id, block_id)
+    while blocks[0]["timestamp"] >= until_timestamp:
+        block_id -= 1
+        blocks, _ = exporter.export_blocks_and_transactions(block_id, block_id)
+
+    timestamp = parse_timestamp(blocks[0]["timestamp"])
+    logger.info(
+        f"Determining latest block before {until_date.isoformat()} "
+        f"its {block_id:,} at {timestamp.isoformat()}",
+    )
+    return block_id
+
+
+def preprocess_block_transactions(items: Iterable, block_bucket_size: int) -> List:
+    mapping = {}
+    for tx in items:
+        mapping.setdefault(tx["block_id"], []).append(tx)
+
+    items = []
+    for block, block_txs in mapping.items():
+        items.append(
+            {
+                "block_id_group": get_id_group(block, block_bucket_size),
+                "block_id": block,
+                "txs": [tx_stats(x) for x in block_txs],
+            }
+        )
+    return items
+
+
+def ingest_block_transactions(
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+    block_bucket_size: int,
+) -> None:
+    items = preprocess_block_transactions(items, block_bucket_size)
+    write_to_sinks(db, sink_config, "block_transactions", items)
+
+
+def ingest_blocks(
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+) -> None:
+    write_to_sinks(db, sink_config, "block", items)
+
+
+def ingest_tx_refs(
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+) -> None:
+    write_to_sinks(db, sink_config, "transaction_spent_in", items)
+    write_to_sinks(db, sink_config, "transaction_spending", items)
+
+
+def ingest_transactions(
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+) -> None:
+    write_to_sinks(db, sink_config, "transaction", items)
+
+
+def preprocess_transaction_lookups(items: Iterable) -> List[Dict]:
+    return [{k: tx[k] for k in ("tx_prefix", "tx_hash", "tx_id")} for tx in items]
+
+
+def ingest_transaction_lookups(
+    items: Iterable,
+    db: AnalyticsDb,
+    sink_config: dict,
+) -> None:
+    res = preprocess_transaction_lookups(items)
+    write_to_sinks(db, sink_config, "transaction_by_tx_prefix", res)
 
 
 def ingest_summary_statistics_cassandra(
@@ -786,14 +655,6 @@ def ingest_summary_statistics_cassandra(
     total_blocks: int,
     total_txs: int,
 ) -> None:
-    """Summary
-
-    Args:
-        db (AnalyticsDb): Description
-        timestamp (int): Description
-        total_blocks (int): Description
-        total_txs (int): Description
-    """
     cassandra_ingest(
         db,
         "summary_statistics",
@@ -814,14 +675,6 @@ def ingest_configuration_cassandra(
     tx_hash_prefix_len: int,
     tx_bucket_size: int,
 ) -> None:
-    """Store configuration details in Cassandra table.
-
-    Args:
-        db (AnalyticsDb): Description
-        block_bucket_size (int): Description
-        tx_hash_prefix_len (int): Description
-        tx_bucket_size (int): Description
-    """
     cassandra_ingest(
         db,
         "configuration",
@@ -833,21 +686,6 @@ def ingest_configuration_cassandra(
                 "tx_bucket_size": tx_bucket_size,
             }
         ],
-    )
-
-
-def get_connection_from_url(
-    provider_uri: str, provider_timeout: int
-) -> "ThreadLocalProxy":
-    return ThreadLocalProxy(lambda: BitcoinRpc(provider_uri, timeout=provider_timeout))
-
-
-def get_stream_adapter(
-    currency: str, provider_uri: str, batch_size: int, provider_timeout: int
-) -> BtcStreamerAdapter:
-    proxy = get_connection_from_url(provider_uri, provider_timeout)
-    return BtcStreamerAdapter(
-        proxy, chain=CHAIN_MAPPING.get(currency, None), batch_size=batch_size
     )
 
 
@@ -864,10 +702,10 @@ def ingest(
     provider_timeout: int,
     mode: str,
 ):
-    if currency not in CHAIN_MAPPING:
+    if currency not in SUPPORTED_UTXO_CURRENCIES:
         raise ValueError(
             f"{currency} not supported by ingest module,"
-            f" supported {list(CHAIN_MAPPING.keys())}"
+            f" supported {list(SUPPORTED_UTXO_CURRENCIES)}"
         )
 
     import_refs = mode == "utxo_only_tx_graph" or mode == "utxo_with_tx_graph"
@@ -879,9 +717,7 @@ def ingest(
         f"Importing base data: {import_base_data}, import tx refs {import_refs}"
     )
 
-    btc_adapter = get_stream_adapter(
-        currency, provider_uri, batch_size=batch_size, provider_timeout=provider_timeout
-    )
+    exporter = FastBtcBlockExporter(provider_uri, timeout=provider_timeout)
 
     resolver = CassandraOutputResolver(
         db,
@@ -889,7 +725,7 @@ def ingest(
         tx_prefix_length=TX_HASH_PREFIX_LENGTH,
     )
 
-    last_synced_block = btc_adapter.get_current_block_number()
+    last_synced_block = exporter.get_current_block_number()
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
@@ -905,13 +741,12 @@ def ingest(
         end_block = user_end_block
 
     if previous_day:
-        end_block = get_last_block_yesterday(btc_adapter, last_synced_block)
+        end_block = get_last_block_yesterday(exporter, last_synced_block)
 
     if start_block > end_block:
         logger.warning("No blocks to ingest")
         return
 
-    # if info then only print block info and exit
     if info:
         logger.info(
             f"Would ingest block range "
@@ -941,10 +776,9 @@ def ingest(
         for block_id in range(start_block, end_block + 1, batch_size):
             current_end_block = min(end_block, block_id + batch_size - 1)
 
-            with suppress_log_level(logging.INFO):
-                blocks, txs = btc_adapter.export_blocks_and_transactions(
-                    block_id, current_end_block
-                )
+            blocks, txs = exporter.export_blocks_and_transactions(
+                block_id, current_end_block
+            )
 
             tx_refs = flatten(
                 [
@@ -956,8 +790,6 @@ def ingest(
             prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
 
             if import_base_data:
-                # until bitcoin-etl progresses
-                # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
                 enrich_txs(txs, resolver, ignore_missing_outputs=False)
 
                 latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
@@ -967,11 +799,7 @@ def ingest(
                 )
 
                 ingest_blocks(blocks, db, sink_config)
-                ingest_transaction_lookups(
-                    txs,
-                    db,
-                    sink_config,
-                )
+                ingest_transaction_lookups(txs, db, sink_config)
                 ingest_transactions(txs, db, sink_config)
                 ingest_block_transactions(txs, db, sink_config, BLOCK_BUCKET_SIZE)
 
@@ -1005,7 +833,6 @@ def ingest(
         f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
     )
 
-    # store configuration details
     if "cassandra" in sink_config.keys() and import_base_data:
         last_block = blocks[-1]
         last_tx = txs[-1]

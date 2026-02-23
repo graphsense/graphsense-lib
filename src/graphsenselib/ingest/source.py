@@ -12,7 +12,7 @@ from graphsenselib.ingest.account import (
 )
 from graphsenselib.ingest.common import BlockRangeContent, Source
 from graphsenselib.ingest.fast_traces import FastTraceExporter
-from graphsenselib.ingest.utxo import get_stream_adapter
+from graphsenselib.ingest.fast_btc import FastBtcBlockExporter
 
 logger = logging.getLogger(__name__)
 
@@ -163,12 +163,17 @@ class SourceETH(Source):
 
 class SourceUTXO(Source):
     def __init__(self, provider_uri, network, provider_timeout):
-        self.adapter = get_stream_adapter(
-            network, provider_uri, batch_size=10, provider_timeout=provider_timeout
+        self.fast_exporter = FastBtcBlockExporter(
+            provider_uri=provider_uri,
+            max_workers=10,
+            timeout=provider_timeout,
         )
+        # Keep legacy adapter for get_last_synced_block (uses getblockcount)
+        self._provider_uri = provider_uri
+        self._provider_timeout = provider_timeout
 
     def read_blockrange(self, start_block, end_block):
-        blocks, txs = self.adapter.export_blocks_and_transactions(
+        blocks, txs = self.fast_exporter.export_blocks_and_transactions(
             start_block, end_block
         )
         data = {"blocks": blocks, "txs": txs}
@@ -181,4 +186,4 @@ class SourceUTXO(Source):
         return BlockRangeContent(table_contents={})
 
     def get_last_synced_block(self):
-        return self.adapter.get_current_block_number()
+        return self.fast_exporter.get_current_block_number()

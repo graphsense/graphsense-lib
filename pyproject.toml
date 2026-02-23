@@ -101,7 +101,6 @@ dev = [
 ingest = [
     "web3>=6.0.0",
     "chainside-btcpy>=0.6",
-    "graphsense-bitcoin-etl>=1.5.5",
     "lz4>=4.3.2",
     "pyarrow>=23.0.0",
     "deltalake>=1.4.2",

@@ -1566,20 +1566,6 @@ yaml = [
 ]
 
 [[package]]
-name = "graphsense-bitcoin-etl"
-version = "1.5.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "python-dateutil" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/43/3d/9fc57ceb6ef872c1c4a41356e43d9f9523bd776dfe103f773c2b2d57b4a2/graphsense_bitcoin_etl-1.5.5.tar.gz", hash = "sha256:95b587319722ce9b7e9308405520c035be8548a38eff50dffed1c0f1ddff5eb8", size = 46808, upload-time = "2025-09-11T08:09:10.468Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/21/a9ba1db7db43643391922e26b2c37eb9f316c3279c677f23cb63a60b1cbd/graphsense_bitcoin_etl-1.5.5-py3-none-any.whl", hash = "sha256:de0d1b76582f3698c5abf40be42eb66481418c35ce0e810793bb261b92e2a8a7", size = 92630, upload-time = "2025-09-11T08:09:08.458Z" },
-]
-
-[[package]]
 name = "graphsense-lib"
 source = { editable = "." }
 dependencies = [
@@ -1623,7 +1609,6 @@ all = [
     { name = "fastapi", extra = ["all"] },
     { name = "gitpython" },
     { name = "giturlparse" },
-    { name = "graphsense-bitcoin-etl" },
     { name = "grpcio" },
     { name = "gunicorn" },
     { name = "httpx" },
@@ -1655,7 +1640,6 @@ ingest = [
     { name = "chainside-btcpy" },
     { name = "deltalake" },
     { name = "duckdb" },
-    { name = "graphsense-bitcoin-etl" },
     { name = "grpcio" },
     { name = "lz4" },
     { name = "protobuf" },
@@ -1777,7 +1761,6 @@ requires-dist = [
     { name = "gitpython", marker = "extra == 'tagstore'", specifier = ">=3.1" },
     { name = "giturlparse", marker = "extra == 'tagstore'", specifier = ">=0.10" },
     { name = "goodconf", extras = ["yaml"], specifier = ">=3.0.0" },
-    { name = "graphsense-bitcoin-etl", marker = "extra == 'ingest'", specifier = ">=1.5.5" },
     { name = "graphsense-lib", extras = ["conversions"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["conversions", "tagstore"], marker = "extra == 'web'" },
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
