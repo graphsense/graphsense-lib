@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa: T201
 import json
+import math
 import textwrap
 import time
 from datetime import datetime
@@ -23,6 +24,16 @@ import logging
 register_adapter(np.int64, AsIs)
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_db_value(value):
+    if isinstance(value, np.generic):
+        value = value.item()
+
+    if isinstance(value, float) and math.isnan(value):
+        return None
+
+    return value
 
 
 class InsertTagpackWorker:
@@ -699,7 +710,10 @@ class TagStore(object):
                 "cluster_defining_address",
                 "no_addresses",
             ]
-            data = clusters[cols].to_records(index=False)
+            data = [
+                tuple(_normalize_db_value(v) for v in row)
+                for row in clusters[cols].itertuples(index=False, name=None)
+            ]
 
             execute_batch(self.cursor, q, data)
 

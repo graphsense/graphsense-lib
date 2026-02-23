@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
+## [2.9.6] 2026-02-23
+
+### Library (v2.9.6)
+
+#### fixed
+- Tagstore cluster mapping import: normalize pandas/numpy scalar values before PostgreSQL batch insert, preventing SQL errors like `psycopg2.errors.InvalidSchemaName: schema "np" does not exist` when `np.float64` values are present.
+- Tagpack GraphSense query execution: replace warning-only handling of failed concurrent Cassandra statements with tenacity retries and hard-fail after retry exhaustion.
+
+### Web API + Python client (webapi-2.9.5)
+no changes
+
 ## [2.9.5] 2026-02-19
 
 ### Library (v2.9.5)

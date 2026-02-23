@@ -9,6 +9,13 @@ from cassandra.concurrent import execute_concurrent_with_args
 from cassandra.query import dict_factory
 from pandas import DataFrame
 from pandas import pandas as pd
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+)
+from tenacity.wait import wait_exponential
 
 from graphsenselib.utils.tron import tron_address_to_evm, evm_to_tron_address_string
 from graphsenselib.utils.rest_utils import is_eth_like
@@ -59,6 +66,11 @@ def eth_address_from_hex(address):
 
 
 _CONCURRENCY = 100
+_MAX_QUERY_EXECUTION_ATTEMPTS = 3
+
+
+class QueryExecutionError(Exception):
+    pass
 
 
 class GraphSense(object):
@@ -84,21 +96,39 @@ class GraphSense(object):
         self.cluster.shutdown()
         logger.info(f"Disconnected from {self.hosts}")
 
-    def _execute_query(self, statement, parameters):
-        """Generic query execution"""
+    @retry(
+        retry=retry_if_exception_type(QueryExecutionError),
+        wait=wait_exponential(multiplier=0.2, min=0.2, max=2),
+        stop=stop_after_attempt(_MAX_QUERY_EXECUTION_ATTEMPTS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    def _execute_query_with_retry(self, statement, parameters):
         results = execute_concurrent_with_args(
             self.session, statement, parameters, concurrency=_CONCURRENCY
         )
 
-        i = 0
+        failed_results = []
         all_results = []
         for success, result in results:
             if not success:
-                logger.warning("failed" + result)
-            else:
-                for row in result:
-                    i = i + 1
-                    all_results.append(row)
+                failed_results.append(result)
+                continue
+
+            for row in result:
+                all_results.append(row)
+
+        if failed_results:
+            first_error = failed_results[0]
+            raise QueryExecutionError(
+                f"{len(failed_results)} statement(s) failed; first error: {first_error}"
+            )
+
+        return all_results
+
+    def _execute_query(self, statement, parameters):
+        """Generic query execution"""
+        all_results = self._execute_query_with_retry(statement, list(parameters))
         return pd.DataFrame.from_dict(all_results)
 
     def contains_keyspace_mapping(self, network: str) -> bool:
