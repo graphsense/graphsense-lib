@@ -31,6 +31,7 @@ from .common import (
 from .fast_rpc import (
     BatchRpcClient,
     FastBlockExporter,
+    FastBlockReceiptExporter,
     FastReceiptExporter,
     enrich_transactions as _enrich_transactions,
     get_block_range_for_date,
@@ -98,6 +99,11 @@ class AccountStreamerAdapter:
             batch_size=batch_size_receiptslogs or 50,
             max_workers=max_workers_receiptslogs or 20,
         )
+        self._block_receipt_exporter = FastBlockReceiptExporter(
+            client,
+            batch_size=batch_size_blockstransactions or 20,
+            max_workers=max_workers_blockstransactions or 10,
+        )
         self._trace_exporter = FastTraceExporter(
             client=client,
             trace_batch_size=batch_size or 10,
@@ -122,6 +128,18 @@ class AccountStreamerAdapter:
         """Export receipts and logs for specified transaction hashes."""
         tx_hashes = [transaction["hash"] for transaction in transactions]
         return self._receipt_exporter.export_receipts_and_logs(tx_hashes)
+
+    def export_receipts_and_logs_by_block(
+        self, start_block: int, end_block: int
+    ) -> Tuple[Iterable, Iterable]:
+        """Export receipts and logs for a block range using eth_getBlockReceipts.
+
+        This is faster than per-transaction receipt fetching since it uses
+        1 RPC call per block instead of 1 per transaction.
+        """
+        return self._block_receipt_exporter.export_receipts_and_logs(
+            start_block, end_block
+        )
 
     def export_traces(
         self,
@@ -498,9 +516,9 @@ def prepare_transactions_inplace_trx(
         items, tx_hash_prefix_len, block_bucket_size, partition_size
     )
 
+    type_transformer = TxTypeTransformer()
     for tx in items:
-        type_transformer = TxTypeTransformer()
-        tx = type_transformer.transform(tx)
+        type_transformer.transform(tx)
         check_timestamp(tx["block_timestamp"])
 
 
@@ -758,7 +776,9 @@ def ingest(
                 blocks, txs = adapter.export_blocks_and_transactions(
                     block_id, current_end_block
                 )
-                receipts, logs = adapter.export_receipts_and_logs(txs)
+                receipts, logs = adapter.export_receipts_and_logs_by_block(
+                    block_id, current_end_block
+                )
                 traces, fees = adapter.export_traces(
                     block_id, current_end_block, True, True
                 )

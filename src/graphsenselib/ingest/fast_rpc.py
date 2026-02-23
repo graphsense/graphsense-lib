@@ -271,10 +271,9 @@ def enrich_transactions(transactions, receipts):
         receipt = receipt_by_hash.get(tx["hash"])
         if receipt is None:
             raise ValueError(f"Receipt not found for transaction {tx['hash']}")
-        enriched = dict(tx)
         for src_field, dst_field in _RECEIPT_FIELDS:
-            enriched[dst_field] = receipt.get(src_field)
-        result.append(enriched)
+            tx[dst_field] = receipt.get(src_field)
+        result.append(tx)
 
     if len(result) != len(transactions):
         raise ValueError(
@@ -435,6 +434,88 @@ class FastReceiptExporter:
             futures = {
                 executor.submit(self._fetch_batch, batch_hashes): batch_hashes
                 for batch_hashes in batches
+            }
+            for future in as_completed(futures):
+                batch_receipts, batch_logs = future.result()
+                all_receipts.extend(batch_receipts)
+                all_logs.extend(batch_logs)
+
+        # Sort receipts by (block_number, transaction_index)
+        all_receipts.sort(key=lambda r: (r["block_number"], r["transaction_index"]))
+        # Sort logs by (block_number, log_index)
+        all_logs.sort(key=lambda lg: (lg["block_number"], lg["log_index"]))
+
+        return all_receipts, all_logs
+
+
+class FastBlockReceiptExporter:
+    """Export receipts and logs via batch eth_getBlockReceipts calls.
+
+    Uses 1 RPC call per block instead of 1 per transaction, which is
+    significantly faster for blocks with many transactions.
+    """
+
+    def __init__(self, client, batch_size=20, max_workers=10):
+        self.client = client
+        self.batch_size = batch_size
+        self.max_workers = max_workers
+
+    def _fetch_batch(self, block_numbers):
+        """Fetch receipts for a batch of blocks."""
+        rpc_requests = [
+            {
+                "jsonrpc": "2.0",
+                "method": "eth_getBlockReceipts",
+                "params": [hex(bn)],
+                "id": bn,
+            }
+            for bn in block_numbers
+        ]
+        results = self.client.make_batch_request(rpc_requests)
+        result_map = {r["id"]: r for r in results}
+
+        receipts = []
+        logs = []
+        for bn in block_numbers:
+            r = result_map.get(bn)
+            if r is None:
+                raise ValueError(f"Missing response for block receipts {bn}")
+            if "error" in r:
+                raise ValueError(f"RPC error for block receipts {bn}: {r['error']}")
+            block_receipts = r["result"]
+            if block_receipts is None:
+                # Empty block or block not found — treat as no receipts
+                continue
+
+            for json_receipt in block_receipts:
+                receipt = parse_receipt_json(json_receipt)
+                receipts.append(receipt)
+
+                for json_log in json_receipt.get("logs") or []:
+                    logs.append(parse_log_json(json_log))
+
+        return receipts, logs
+
+    def export_receipts_and_logs(self, start_block, end_block):
+        """Export receipts and logs for a block range.
+
+        Returns (receipts, logs) with the same dict format as
+        FastReceiptExporter.export_receipts_and_logs().
+        """
+        block_numbers = list(range(start_block, end_block + 1))
+
+        batches = [
+            block_numbers[i : i + self.batch_size]
+            for i in range(0, len(block_numbers), self.batch_size)
+        ]
+
+        all_receipts = []
+        all_logs = []
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._fetch_batch, batch_bns): batch_bns
+                for batch_bns in batches
             }
             for future in as_completed(futures):
                 batch_receipts, batch_logs = future.result()

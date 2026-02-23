@@ -1,18 +1,17 @@
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Generator, Tuple
 
 from graphsenselib.ingest.account import (
-    WEB3_QUERY_BATCH_SIZE,
-    WEB3_QUERY_WORKERS,
     EthStreamerAdapter,
     TronStreamerAdapter,
     get_connection_from_url,
     get_last_synced_block,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Source
-from graphsenselib.ingest.fast_traces import FastTraceExporter
 from graphsenselib.ingest.fast_btc import FastBtcBlockExporter
+from graphsenselib.ingest.fast_traces import FastTraceExporter
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +38,8 @@ class SourceTRX(Source):
             grpc_endpoint=grpc_provider_uri,
             batch_size_blockstransactions=20,
             max_workers_blockstransactions=10,
-            batch_size_receiptslogs=600,
-            max_workers_receiptslogs=30,
+            batch_size_receiptslogs=100,
+            max_workers_receiptslogs=20,
         )
 
     def read_blockrange(self, start_block, end_block):
@@ -50,17 +49,68 @@ class SourceTRX(Source):
                 "Start was set to 1 since genesis blocks "
                 "don't have logs and cause issues."
             )
-        logger.debug("Reading blocks and transactions...")
-        blocks, txs = self.adapter.export_blocks_and_transactions(
-            start_block, end_block
-        )
-        logger.debug("Reading receipts and logs...")
-        receipts, logs = self.adapter.export_receipts_and_logs(txs)
-        logger.debug("Reading traces and fees...")
-        traces, fees = self.adapter.export_traces_parallel(start_block, end_block)
-        logger.debug("Reading types...")
-        hash_to_type = self.adapter.export_hash_to_type_mappings_parallel(
-            blocks, block_id_name="number"
+
+        # Run blocks, receipts, and traces concurrently.
+        # Blocks + receipts use HTTP (thread-local sessions, no contention).
+        # Traces + hash_to_type use gRPC (separate connection).
+        #
+        # Main thread:  blocks (HTTP)
+        # Worker 1:     traces+fees (gRPC) — starts immediately
+        # Worker 2:     receipts (HTTP) — starts immediately
+        # Worker 3:     hash_to_type (gRPC) — starts after blocks finish
+        t_total = time.monotonic()
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # Start traces immediately (gRPC, independent of blocks)
+            trace_future = executor.submit(
+                self.adapter.export_traces_parallel, start_block, end_block
+            )
+
+            # Start receipts immediately (HTTP, independent of blocks)
+            receipt_future = executor.submit(
+                self.adapter.export_receipts_and_logs_by_block,
+                start_block,
+                end_block,
+            )
+
+            # Blocks via HTTP in main thread
+            t0 = time.monotonic()
+            blocks, txs = self.adapter.export_blocks_and_transactions(
+                start_block, end_block
+            )
+            t_blocks = time.monotonic() - t0
+
+            # Start hash_to_type now that we have blocks (gRPC)
+            type_future = executor.submit(
+                self.adapter.export_hash_to_type_mappings_parallel,
+                blocks,
+                "number",
+            )
+
+            # Collect results
+            t0 = time.monotonic()
+            receipts, logs = receipt_future.result()
+            t_receipts = time.monotonic() - t0
+
+            t0 = time.monotonic()
+            traces, fees = trace_future.result()
+            t_traces_wait = time.monotonic() - t0
+
+            t0 = time.monotonic()
+            hash_to_type = type_future.result()
+            t_types_wait = time.monotonic() - t0
+
+        t_source_total = time.monotonic() - t_total
+        n_blocks = end_block - start_block + 1
+        logger.info(
+            f"[source-timing] TRX {n_blocks} blocks ({start_block}-{end_block}): "
+            f"total={t_source_total:.2f}s  "
+            f"blocks={t_blocks:.2f}s  "
+            f"receipts={t_receipts:.2f}s ({len(receipts)} rcpts, {len(logs)} logs)  "
+            f"traces_wait={t_traces_wait:.2f}s ({len(traces)} traces, "
+            f"{len(fees) if fees else 0} fees)  "
+            f"types_wait={t_types_wait:.2f}s  "
+            f"txs={len(txs)}"
         )
 
         data = {
@@ -72,7 +122,6 @@ class SourceTRX(Source):
             "fees": fees,
             "hash_to_type": hash_to_type,
         }
-        logger.debug(f"Finished reading blockrange from {start_block} to {end_block}")
         return BlockRangeContent(
             table_contents=data, start_block=start_block, end_block=end_block
         )
@@ -92,13 +141,15 @@ class SourceETH(Source):
         self.client = get_connection_from_url(provider_uri, provider_timeout)
         self.adapter = EthStreamerAdapter(
             self.client,
-            batch_size=WEB3_QUERY_BATCH_SIZE,
-            max_workers=WEB3_QUERY_WORKERS,
+            batch_size_blockstransactions=20,
+            max_workers_blockstransactions=10,
+            batch_size_receiptslogs=100,
+            max_workers_receiptslogs=10,
         )
         self.fast_trace_exporter = FastTraceExporter(
             client=self.client,
             trace_batch_size=10,
-            max_workers=20,
+            max_workers=10,
         )
 
     def read_blockrange(self, start_block, end_block):
@@ -110,11 +161,47 @@ class SourceETH(Source):
         )
 
         if includes_special_trace_windows:
-            blocks, txs = self.adapter.export_blocks_and_transactions(
-                start_block, end_block
+            t_total = time.monotonic()
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                trace_future = executor.submit(
+                    self.adapter.export_traces,
+                    start_block,
+                    end_block,
+                    True,
+                    True,
+                )
+                receipt_future = executor.submit(
+                    self.adapter.export_receipts_and_logs_by_block,
+                    start_block,
+                    end_block,
+                )
+
+                t0 = time.monotonic()
+                blocks, txs = self.adapter.export_blocks_and_transactions(
+                    start_block, end_block
+                )
+                t_blocks = time.monotonic() - t0
+
+                t0 = time.monotonic()
+                receipts, logs = receipt_future.result()
+                t_receipts = time.monotonic() - t0
+
+                t0 = time.monotonic()
+                traces, _ = trace_future.result()
+                t_traces = time.monotonic() - t0
+
+            t_source_total = time.monotonic() - t_total
+            n_blocks = end_block - start_block + 1
+            logger.info(
+                f"[source-timing] {n_blocks} blocks ({start_block}-{end_block}) "
+                f"[special-trace path]: "
+                f"total={t_source_total:.2f}s  "
+                f"blocks={t_blocks:.2f}s  "
+                f"receipts={t_receipts:.2f}s ({len(receipts)} rcpts, {len(logs)} logs)  "
+                f"traces={t_traces:.2f}s ({len(traces)} traces)  "
+                f"txs={len(txs)}"
             )
-            receipts, logs = self.adapter.export_receipts_and_logs(txs)
-            traces, _ = self.adapter.export_traces(start_block, end_block, True, True)
 
             data = {
                 "blocks": blocks,
@@ -128,19 +215,44 @@ class SourceETH(Source):
                 table_contents=data, start_block=start_block, end_block=end_block
             )
 
-        # Traces only depend on block range, not on tx data, so we can
-        # fetch them concurrently with blocks+receipts.
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        # Blocks, receipts, and traces are all independent — run concurrently.
+        # BatchRpcClient uses thread-local sessions so HTTP calls are safe.
+        t_total = time.monotonic()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
             trace_future = executor.submit(
                 self.fast_trace_exporter.export_traces, start_block, end_block
             )
+            receipt_future = executor.submit(
+                self.adapter.export_receipts_and_logs_by_block,
+                start_block,
+                end_block,
+            )
 
+            t0 = time.monotonic()
             blocks, txs = self.adapter.export_blocks_and_transactions(
                 start_block, end_block
             )
-            receipts, logs = self.adapter.export_receipts_and_logs(txs)
+            t_blocks = time.monotonic() - t0
 
+            t0 = time.monotonic()
+            receipts, logs = receipt_future.result()
+            t_receipts = time.monotonic() - t0
+
+            t0 = time.monotonic()
             traces, _ = trace_future.result()
+            t_traces_wait = time.monotonic() - t0
+
+        t_source_total = time.monotonic() - t_total
+        n_blocks = end_block - start_block + 1
+        logger.info(
+            f"[source-timing] {n_blocks} blocks ({start_block}-{end_block}): "
+            f"total={t_source_total:.2f}s  "
+            f"blocks={t_blocks:.2f}s  "
+            f"receipts={t_receipts:.2f}s ({len(receipts)} rcpts, {len(logs)} logs)  "
+            f"traces_wait={t_traces_wait:.2f}s ({len(traces)} traces)  "
+            f"txs={len(txs)}"
+        )
 
         data = {
             "blocks": blocks,

@@ -9,6 +9,7 @@ import pytest
 from graphsenselib.ingest.fast_rpc import (
     BatchRpcClient,
     FastBlockExporter,
+    FastBlockReceiptExporter,
     FastReceiptExporter,
     enrich_transactions,
     hex_to_dec,
@@ -598,3 +599,234 @@ class TestFastReceiptExporter:
         assert logs[0]["log_index"] == 0
         assert logs[0]["address"] == "0xcontract"
         assert logs[0]["topics"] == ["0xtopic0"]
+
+
+# ---------------------------------------------------------------------------
+# FastBlockReceiptExporter
+# ---------------------------------------------------------------------------
+
+
+def _make_block_receipts_response(block_number, receipts_data):
+    """Helper to build a mock eth_getBlockReceipts RPC response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": block_number,
+        "result": receipts_data,
+    }
+
+
+class TestFastBlockReceiptExporter:
+    def test_single_block_with_receipts_and_logs(self):
+        mock_client = MagicMock()
+        mock_client.make_batch_request.return_value = [
+            _make_block_receipts_response(
+                100,
+                [
+                    {
+                        "transactionHash": "0xtx1",
+                        "transactionIndex": "0x0",
+                        "blockHash": "0xblockhash100",
+                        "blockNumber": "0x64",
+                        "cumulativeGasUsed": "0x5208",
+                        "gasUsed": "0x5208",
+                        "contractAddress": None,
+                        "root": None,
+                        "status": "0x1",
+                        "effectiveGasPrice": "0x3b9aca00",
+                        "logs": [
+                            {
+                                "logIndex": "0x0",
+                                "transactionHash": "0xtx1",
+                                "transactionIndex": "0x0",
+                                "blockHash": "0xblockhash100",
+                                "blockNumber": "0x64",
+                                "address": "0xcontract1",
+                                "data": "0xdata1",
+                                "topics": ["0xtopic0", "0xtopic1"],
+                            },
+                            {
+                                "logIndex": "0x1",
+                                "transactionHash": "0xtx1",
+                                "transactionIndex": "0x0",
+                                "blockHash": "0xblockhash100",
+                                "blockNumber": "0x64",
+                                "address": "0xcontract2",
+                                "data": "0xdata2",
+                                "topics": ["0xtopic0"],
+                            },
+                        ],
+                    }
+                ],
+            )
+        ]
+
+        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        receipts, logs = exporter.export_receipts_and_logs(100, 100)
+
+        assert len(receipts) == 1
+        assert receipts[0]["transaction_hash"] == "0xtx1"
+        assert receipts[0]["block_number"] == 100
+        assert receipts[0]["gas_used"] == 21000
+        assert receipts[0]["status"] == 1
+        assert receipts[0]["effective_gas_price"] == 1000000000
+
+        assert len(logs) == 2
+        assert logs[0]["log_index"] == 0
+        assert logs[0]["address"] == "0xcontract1"
+        assert logs[0]["topics"] == ["0xtopic0", "0xtopic1"]
+        assert logs[1]["log_index"] == 1
+        assert logs[1]["address"] == "0xcontract2"
+
+    def test_multiple_blocks_ordering(self):
+        """Receipts and logs are returned sorted by block_number."""
+        mock_client = MagicMock()
+        # Return in reverse order to test sorting
+        mock_client.make_batch_request.return_value = [
+            _make_block_receipts_response(
+                101,
+                [
+                    {
+                        "transactionHash": "0xtx_b101",
+                        "transactionIndex": "0x0",
+                        "blockHash": "0xbh101",
+                        "blockNumber": "0x65",
+                        "cumulativeGasUsed": "0x5208",
+                        "gasUsed": "0x5208",
+                        "contractAddress": None,
+                        "root": None,
+                        "status": "0x1",
+                        "effectiveGasPrice": "0x1",
+                        "logs": [
+                            {
+                                "logIndex": "0x0",
+                                "transactionHash": "0xtx_b101",
+                                "transactionIndex": "0x0",
+                                "blockHash": "0xbh101",
+                                "blockNumber": "0x65",
+                                "address": "0xaddr101",
+                                "data": "0x",
+                                "topics": [],
+                            }
+                        ],
+                    }
+                ],
+            ),
+            _make_block_receipts_response(
+                100,
+                [
+                    {
+                        "transactionHash": "0xtx_b100",
+                        "transactionIndex": "0x0",
+                        "blockHash": "0xbh100",
+                        "blockNumber": "0x64",
+                        "cumulativeGasUsed": "0x5208",
+                        "gasUsed": "0x5208",
+                        "contractAddress": None,
+                        "root": None,
+                        "status": "0x1",
+                        "effectiveGasPrice": "0x1",
+                        "logs": [
+                            {
+                                "logIndex": "0x0",
+                                "transactionHash": "0xtx_b100",
+                                "transactionIndex": "0x0",
+                                "blockHash": "0xbh100",
+                                "blockNumber": "0x64",
+                                "address": "0xaddr100",
+                                "data": "0x",
+                                "topics": [],
+                            }
+                        ],
+                    }
+                ],
+            ),
+        ]
+
+        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        receipts, logs = exporter.export_receipts_and_logs(100, 101)
+
+        assert len(receipts) == 2
+        # Sorted by block_number
+        assert receipts[0]["block_number"] == 100
+        assert receipts[0]["transaction_hash"] == "0xtx_b100"
+        assert receipts[1]["block_number"] == 101
+        assert receipts[1]["transaction_hash"] == "0xtx_b101"
+
+        assert len(logs) == 2
+        assert logs[0]["block_number"] == 100
+        assert logs[1]["block_number"] == 101
+
+    def test_empty_block(self):
+        """Block with no transactions returns empty receipts and logs."""
+        mock_client = MagicMock()
+        mock_client.make_batch_request.return_value = [
+            _make_block_receipts_response(100, []),
+        ]
+
+        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        receipts, logs = exporter.export_receipts_and_logs(100, 100)
+
+        assert receipts == []
+        assert logs == []
+
+    def test_null_result_treated_as_empty(self):
+        """Some nodes return null instead of [] for empty blocks."""
+        mock_client = MagicMock()
+        mock_client.make_batch_request.return_value = [
+            _make_block_receipts_response(100, None),
+        ]
+
+        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        receipts, logs = exporter.export_receipts_and_logs(100, 100)
+
+        assert receipts == []
+        assert logs == []
+
+    def test_format_compatibility_with_parse_receipt(self):
+        """Output format matches parse_receipt_json / parse_log_json output."""
+        raw_receipt = {
+            "transactionHash": "0xabc",
+            "transactionIndex": "0x2",
+            "blockHash": "0xbh",
+            "blockNumber": "0xa",
+            "cumulativeGasUsed": "0x100",
+            "gasUsed": "0x80",
+            "contractAddress": "0xAbCd0000000000000000000000000000000000FF",
+            "root": "0xroot",
+            "status": "0x1",
+            "effectiveGasPrice": "0x3b9aca00",
+            "l1Fee": "0x10",
+            "l1GasUsed": "0x20",
+            "l1GasPrice": "0x30",
+            "l1FeeScalar": "1.5",
+            "blobGasPrice": "0x40",
+            "blobGasUsed": "0x50",
+            "logs": [
+                {
+                    "logIndex": "0x5",
+                    "transactionHash": "0xabc",
+                    "transactionIndex": "0x2",
+                    "blockHash": "0xbh",
+                    "blockNumber": "0xa",
+                    "address": "0xlogaddr",
+                    "data": "0xlogdata",
+                    "topics": ["0xt0", "0xt1"],
+                }
+            ],
+        }
+
+        # Direct parse
+        expected_receipt = parse_receipt_json(raw_receipt)
+        expected_log = parse_log_json(raw_receipt["logs"][0])
+
+        # Via FastBlockReceiptExporter
+        mock_client = MagicMock()
+        mock_client.make_batch_request.return_value = [
+            _make_block_receipts_response(10, [raw_receipt]),
+        ]
+
+        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        receipts, logs = exporter.export_receipts_and_logs(10, 10)
+
+        assert receipts[0] == expected_receipt
+        assert logs[0] == expected_log
