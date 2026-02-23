@@ -13,10 +13,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from graphsenselib.ingest.tron.export_traces_job import (
-    decode_block_to_traces,
-    decode_fees,
-)
+from graphsenselib.ingest.tron.export_traces_job import decode_block_to_traces
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +305,22 @@ class TronCombinedGrpcExporter:
             )
         self.grpc_endpoint = grpc_endpoint
         self.max_workers = max_workers
+        self._channel = None
+        self._stub = None
+
+    def close(self):
+        """Close the persistent gRPC channel."""
+        if self._channel is not None:
+            self._channel.close()
+            self._channel = None
+            self._stub = None
+
+    def _reset_channel(self):
+        """Reset channel so next export() creates a fresh connection."""
+        if self._channel is not None:
+            self._channel.close()
+        self._channel = None
+        self._stub = None
 
     def _fetch_and_decode_block(self, block_num, wallet_stub, retries=5, timeout=180):
         """Fetch and decode a single block via gRPC with retry logic."""
@@ -357,29 +370,31 @@ class TronCombinedGrpcExporter:
 
         def _run():
             t_channel = time.monotonic()
-            with get_channel(self.grpc_endpoint) as channel:
-                wallet_stub = WalletStub(channel)
 
-                # Warm up the gRPC connection with a single call.
-                # gRPC channels are lazy — the first call establishes
-                # the HTTP/2 connection. Without this, 30 workers all
-                # try to connect simultaneously, causing contention.
-                wallet_stub.GetBlockByNum2(
+            # Reuse persistent channel across export() calls to avoid
+            # ~0.04s warmup overhead per batch.
+            if self._channel is None:
+                self._channel = get_channel(self.grpc_endpoint).__enter__()
+                self._stub = WalletStub(self._channel)
+                # Warm up: first call establishes the HTTP/2 connection.
+                self._stub.GetBlockByNum2(
                     NumberMessage(num=start_block), timeout=30
                 )
-                t_channel_ready = time.monotonic() - t_channel
+            t_channel_ready = time.monotonic() - t_channel
 
-                def fetch_block(bn):
-                    return self._fetch_and_decode_block(bn, wallet_stub)
+            wallet_stub = self._stub
 
-                t_fetch = time.monotonic()
-                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    results = list(
-                        executor.map(
-                            fetch_block, range(start_block, end_block + 1)
-                        )
+            def fetch_block(bn):
+                return self._fetch_and_decode_block(bn, wallet_stub)
+
+            t_fetch = time.monotonic()
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                results = list(
+                    executor.map(
+                        fetch_block, range(start_block, end_block + 1)
                     )
-                t_fetch_done = time.monotonic() - t_fetch
+                )
+            t_fetch_done = time.monotonic() - t_fetch
 
             # Derive energy_price from the first tx with paid energy.
             # The energy price is a chain-wide parameter (getEnergyFee),
@@ -474,10 +489,10 @@ class TronCombinedGrpcExporter:
                     all_txs.append(tx_dict)
                     hash_to_type[tx_hash] = contract.type
 
-                    # Build receipt from TransactionInfo
+                    # Build receipt and fee from TransactionInfo
                     if tx_info is not None:
-                        receipt = tx_info.receipt
-                        gas_used = receipt.energy_usage_total
+                        ti_receipt = tx_info.receipt
+                        gas_used = ti_receipt.energy_usage_total
                         cumulative_gas_used += gas_used
 
                         # contract_address: only for contract creation txs
@@ -508,6 +523,22 @@ class TronCombinedGrpcExporter:
                             "blob_gas_used": None,
                         }
                         all_receipts.append(receipt_dict)
+
+                        # Fee dict (merged from decode_fees to avoid
+                        # redundant TransactionInfo iteration)
+                        all_fees.append({
+                            "block_id": block_num,
+                            "fee": tx_info.fee,
+                            "tx_hash": tx_hash,
+                            "energy_usage": ti_receipt.energy_usage,
+                            "energy_fee": ti_receipt.energy_fee,
+                            "origin_energy_usage": ti_receipt.origin_energy_usage,
+                            "energy_usage_total": ti_receipt.energy_usage_total,
+                            "net_usage": ti_receipt.net_usage,
+                            "net_fee": ti_receipt.net_fee,
+                            "result": ti_receipt.result,
+                            "energy_penalty_total": ti_receipt.net_fee,
+                        })
 
                         # Build logs from TransactionInfo
                         for log_entry in tx_info.log:
@@ -555,11 +586,24 @@ class TronCombinedGrpcExporter:
                         }
                         all_receipts.append(receipt_dict)
 
-                # Extract traces and fees from TransactionInfoList
+                        # Zero-fee entry for tx without TransactionInfo
+                        all_fees.append({
+                            "block_id": block_num,
+                            "fee": 0,
+                            "tx_hash": tx_hash,
+                            "energy_usage": 0,
+                            "energy_fee": 0,
+                            "origin_energy_usage": 0,
+                            "energy_usage_total": 0,
+                            "net_usage": 0,
+                            "net_fee": 0,
+                            "result": 0,
+                            "energy_penalty_total": 0,
+                        })
+
+                # Extract traces from TransactionInfoList
                 traces = decode_block_to_traces(block_num, tx_info_list)
-                fees = decode_fees(block_num, tx_info_list)
                 all_traces.extend(traces)
-                all_fees.extend(fees)
 
             t_decode_done = time.monotonic() - t_fetch - t_fetch_done
             logger.info(
@@ -588,6 +632,8 @@ class TronCombinedGrpcExporter:
                 return _run()
             except Exception as e:
                 attempt += 1
+                # Reset channel so next attempt gets a fresh connection
+                self._reset_channel()
                 if attempt >= retries:
                     raise Exception(
                         f"Failed to export block range {start_block}-{end_block} "
