@@ -17,11 +17,24 @@ tag-version:
 	lib_tag=v$$(echo $(RELEASESEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
 	api_ver=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
 	client_tag=webapi-v$$api_ver; \
-	if git rev-parse "$$lib_tag" >/dev/null 2>&1; then echo "Tag $$lib_tag already exists"; exit 1; fi; \
-	if git rev-parse "$$client_tag" >/dev/null 2>&1; then echo "Tag $$client_tag already exists"; exit 1; fi; \
-	git tag -a "$$lib_tag" -m "Library release $$lib_tag"; \
-	git tag -a "$$client_tag" -m "Python client release $$client_tag (API $$api_ver)"; \
-	echo "Created tags: $$lib_tag and $$client_tag"
+	created_tags=""; \
+	if git rev-parse "$$lib_tag" >/dev/null 2>&1; then \
+		echo "Tag $$lib_tag already exists (skipping)"; \
+	else \
+		git tag -a "$$lib_tag" -m "Library release $$lib_tag"; \
+		created_tags="$$created_tags $$lib_tag"; \
+	fi; \
+	if git rev-parse "$$client_tag" >/dev/null 2>&1; then \
+		echo "Tag $$client_tag already exists (skipping)"; \
+	else \
+		git tag -a "$$client_tag" -m "Python client release $$client_tag (API $$api_ver)"; \
+		created_tags="$$created_tags $$client_tag"; \
+	fi; \
+	if [ -n "$$created_tags" ]; then \
+		echo "Created tags:$$created_tags"; \
+	else \
+		echo "No new tags created; both tags already exist"; \
+	fi
 
 dev: install-dev
 	 uv run pre-commit install
