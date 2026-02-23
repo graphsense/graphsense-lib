@@ -4,13 +4,13 @@ Replaces ethereum-etl's ExportBlocksJob and ExportReceiptsJob with direct
 batch JSON-RPC calls. Output dict format is identical to ethereum-etl's mappers.
 """
 
-import json
 import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
+import orjson
 import requests
 
 logger = logging.getLogger(__name__)
@@ -72,12 +72,12 @@ class BatchRpcClient:
             try:
                 response = session.post(
                     self.provider_uri,
-                    data=json.dumps(rpc_requests),
+                    data=orjson.dumps(rpc_requests),
                     headers={"Content-Type": "application/json"},
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
-                result = response.json()
+                result = orjson.loads(response.content)
                 if not isinstance(result, list):
                     result = [result]
                 return result
@@ -103,12 +103,12 @@ class BatchRpcClient:
         }
         response = session.post(
             self.provider_uri,
-            data=json.dumps(payload),
+            data=orjson.dumps(payload),
             headers={"Content-Type": "application/json"},
             timeout=self.timeout,
         )
         response.raise_for_status()
-        data = response.json()
+        data = orjson.loads(response.content)
         if data.get("error") is not None:
             raise ValueError(f"RPC error for {method}: {data['error']}")
         return data["result"]
@@ -351,7 +351,7 @@ class FastBlockExporter:
             r = result_map.get(bn)
             if r is None:
                 raise ValueError(f"Missing response for block {bn}")
-            if "error" in r:
+            if r.get("error") is not None:
                 raise ValueError(f"RPC error for block {bn}: {r['error']}")
             json_block = r["result"]
             if json_block is None:
@@ -534,7 +534,7 @@ class FastBlockReceiptExporter:
             r = result_map.get(bn)
             if r is None:
                 raise ValueError(f"Missing response for block receipts {bn}")
-            if "error" in r:
+            if r.get("error") is not None:
                 raise ValueError(f"RPC error for block receipts {bn}: {r['error']}")
             block_receipts = r["result"]
             if block_receipts is None:

@@ -421,14 +421,14 @@ class TestEnrichTransactions:
 
 class TestBatchRpcClient:
     def test_get_latest_block_number(self):
+        import orjson
+
         client = BatchRpcClient("http://fake:8545")
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": "0x100",
-        }
+        mock_response.content = orjson.dumps(
+            {"jsonrpc": "2.0", "id": 1, "result": "0x100"}
+        )
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(client, "_get_session") as mock_session:
@@ -438,12 +438,16 @@ class TestBatchRpcClient:
         assert result == 256
 
     def test_make_batch_request(self):
+        import orjson
+
         client = BatchRpcClient("http://fake:8545")
         mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {"jsonrpc": "2.0", "id": 1, "result": "0x1"},
-            {"jsonrpc": "2.0", "id": 2, "result": "0x2"},
-        ]
+        mock_response.content = orjson.dumps(
+            [
+                {"jsonrpc": "2.0", "id": 1, "result": "0x1"},
+                {"jsonrpc": "2.0", "id": 2, "result": "0x2"},
+            ]
+        )
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(client, "_get_session") as mock_session:

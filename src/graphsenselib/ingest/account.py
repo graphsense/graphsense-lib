@@ -13,7 +13,6 @@ from ..utils import (
     batch,
     check_timestamp,
     first_or_default,
-    hex_to_bytes,
     parse_timestamp,
     strip_0x,
 )
@@ -44,6 +43,16 @@ BLOCK_BUCKET_SIZE = 1_000
 TX_HASH_PREFIX_LEN = 5
 
 PARQUET_PARTITION_SIZE = 100_000
+
+
+def _fast_hex_to_bytes(s):
+    """Fast hex-to-bytes for ingest pipeline data.
+
+    All values from JSON-RPC are 0x-prefixed hex strings or None.
+    Skips the is_hex_string/strip_0x/remove_prefix chain in hex_to_bytes.
+    """
+    return bytes.fromhex(s[2:]) if s is not None else None
+
 
 WEB3_QUERY_BATCH_SIZE = 50
 WEB3_QUERY_WORKERS = 40
@@ -390,26 +399,13 @@ def prepare_logs_inplace(
             # key columns in cassandra and can not be filtered
             item["topic0"] = tpcs[0] if len(tpcs) > 0 else "0x"
 
-        item["topics"] = [hex_to_bytes(t) for t in tpcs]
-
-        # if topics contain duplicates
-        if (
-            len(item["topics"]) % 2 == 0 and len(item["topics"]) > 0
-        ):  # todo may be removed if we are that there are no duplicates
-            if (
-                item["topics"][: len(item["topics"]) // 2]
-                == item["topics"][len(item["topics"]) // 2 :]
-            ):
-                logger.warning(
-                    f"duplicate found; hash: {item['tx_hash']};"
-                    f" topics: {item['topics']}"
-                )
+        item["topics"] = [_fast_hex_to_bytes(t) for t in tpcs]
 
         if "transaction_hash" in item:
             item.pop("transaction_hash")
 
         for elem in blob_colums:
-            item[elem] = hex_to_bytes(item[elem])
+            item[elem] = _fast_hex_to_bytes(item[elem])
 
 
 def ingest_logs(
@@ -454,7 +450,7 @@ def prepare_blocks_inplace_eth(
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytes(item[elem])
+            item[elem] = _fast_hex_to_bytes(item[elem])
 
         ws = item["withdrawals"]
         for w in ws:
@@ -504,10 +500,10 @@ def prepare_transactions_inplace_eth(
 
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytes(item[elem])
+            item[elem] = _fast_hex_to_bytes(item[elem])
 
         item["blob_versioned_hashes"] = [
-            hex_to_bytes(t) for t in item["blob_versioned_hashes"]
+            _fast_hex_to_bytes(t) for t in item["blob_versioned_hashes"]
         ]  # todo probably not needed for tron?
 
 
@@ -554,7 +550,7 @@ def prepare_traces_inplace_eth(
         )
         # convert hex strings to byte arrays (blob in Cassandra)
         for elem in blob_colums:
-            item[elem] = hex_to_bytes(item[elem])
+            item[elem] = _fast_hex_to_bytes(item[elem])
 
 
 def prepare_traces_inplace_trx(

@@ -236,21 +236,25 @@ class FastBtcBlockExporter:
     (BTC, LTC, BCH, ZEC). Uses getblock(hash, verbosity=2) which returns
     blocks with full decoded transaction data in a single RPC call.
 
-    Two RPC roundtrips per batch: getblockhash → getblock.
-    Multiple batches run concurrently via ThreadPoolExecutor.
+    Two-phase design:
+      Phase 1: getblockhash for all blocks in one batch (fast, ~15ms).
+      Phase 2: getblock for each block individually via ThreadPoolExecutor.
+
+    Individual getblock requests (not batched) allow Bitcoin Core to
+    parallelize across its RPC threads. Batched requests are processed
+    sequentially within a single connection, which is slower for heavy blocks.
     """
 
-    def __init__(self, provider_uri, batch_size=20, max_workers=10, timeout=300):
+    def __init__(self, provider_uri, max_workers=10, timeout=300):
         self.client = BatchRpcClient(provider_uri, timeout=timeout)
-        self.batch_size = batch_size
         self.max_workers = max_workers
 
     def get_current_block_number(self):
         """Get the current block height from the node."""
         return self.client.make_request("getblockcount", [])
 
-    def _fetch_block_hashes(self, block_numbers):
-        """Batch getblockhash for a list of block numbers."""
+    def _fetch_all_hashes(self, block_numbers):
+        """Batch getblockhash for all block numbers in one RPC call."""
         rpc_requests = [
             {
                 "jsonrpc": "2.0",
@@ -273,47 +277,22 @@ class FastBtcBlockExporter:
             hashes.append(r["result"])
         return hashes
 
-    def _fetch_blocks_by_hashes(self, block_hashes):
-        """Batch getblock(hash, 2) for a list of block hashes."""
-        rpc_requests = [
-            {
-                "jsonrpc": "2.0",
-                "method": "getblock",
-                "params": [bh, 2],
-                "id": idx,
-            }
-            for idx, bh in enumerate(block_hashes)
-        ]
-        results = self.client.make_batch_request(rpc_requests)
-        result_map = {r["id"]: r for r in results}
-
-        blocks = []
-        all_txs = []
-        for idx in range(len(block_hashes)):
-            r = result_map.get(idx)
-            if r is None:
-                raise ValueError(f"Missing response for getblock({block_hashes[idx]})")
-            if "error" in r and r["error"] is not None:
-                raise ValueError(
-                    f"RPC error for getblock({block_hashes[idx]}): {r['error']}"
-                )
-            raw_block = r["result"]
-            if raw_block is None:
-                raise ValueError(f"Block not found for hash {block_hashes[idx]}")
-
-            block, txs = _parse_btc_block_and_txs(raw_block)
-            blocks.append(block)
-            all_txs.extend(txs)
-
-        return blocks, all_txs
-
-    def _fetch_batch(self, block_numbers):
-        """Fetch blocks with full tx data for a batch of block numbers.
-
-        Two RPC roundtrips: getblockhash (batch) then getblock (batch).
-        """
-        hashes = self._fetch_block_hashes(block_numbers)
-        return self._fetch_blocks_by_hashes(hashes)
+    def _fetch_single_block(self, block_hash):
+        """Fetch a single block via getblock(hash, 2) and parse it."""
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "method": "getblock",
+            "params": [block_hash, 2],
+            "id": 0,
+        }
+        results = self.client.make_batch_request([rpc_request])
+        r = results[0]
+        if "error" in r and r["error"] is not None:
+            raise ValueError(f"RPC error for getblock({block_hash}): {r['error']}")
+        raw_block = r["result"]
+        if raw_block is None:
+            raise ValueError(f"Block not found for hash {block_hash}")
+        return _parse_btc_block_and_txs(raw_block)
 
     def export_blocks_and_transactions(self, start_block, end_block):
         """Export blocks and transactions for a block range.
@@ -324,23 +303,22 @@ class FastBtcBlockExporter:
         t0 = time.monotonic()
         block_numbers = list(range(start_block, end_block + 1))
 
-        batches = [
-            block_numbers[i : i + self.batch_size]
-            for i in range(0, len(block_numbers), self.batch_size)
-        ]
+        # Phase 1: fetch all block hashes in one batch (fast)
+        hashes = self._fetch_all_hashes(block_numbers)
 
+        # Phase 2: fetch each block individually for maximum node parallelism
         all_blocks_by_num = {}
         all_txs_by_block = {}
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
-                executor.submit(self._fetch_batch, batch): batch for batch in batches
+                executor.submit(self._fetch_single_block, bh): bn
+                for bn, bh in zip(block_numbers, hashes)
             }
             for future in as_completed(futures):
-                batch_blocks, batch_txs = future.result()
-                for b in batch_blocks:
-                    all_blocks_by_num[b["number"]] = b
-                for tx in batch_txs:
+                block, txs = future.result()
+                all_blocks_by_num[block["number"]] = block
+                for tx in txs:
                     all_txs_by_block.setdefault(tx["block_number"], []).append(tx)
 
         # Reassemble in block order

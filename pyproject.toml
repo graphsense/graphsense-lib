@@ -41,6 +41,7 @@ dependencies = [
     "coincurve>=21.0.0",
     "bech32>=1.2.0",
     "httpx>=0.28.1",
+    "orjson>=3.9.0",
     "ecdsa>=0.13",
     "eth-account>=0.13.7",
 ]

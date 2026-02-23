@@ -15,11 +15,9 @@ from graphsenselib.ingest.account import (
     prepare_transactions_inplace_trx,
     prepare_trc10_tokens_inplace,
     prepare_blocks_inplace_eth,
-    to_bytes,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Transformer
 from graphsenselib.ingest.utxo import (
-    drop_columns_from_list,
     enrich_txs,
     prepare_blocks_inplace,
     prepare_transactions_inplace_parquet,
@@ -35,17 +33,34 @@ from graphsenselib.utils.constants import TRON_DUMMY_REPLACEMENT_ADDRESS
 logger = logging.getLogger(__name__)
 
 
+def _finalize_inplace(items, int_cols):
+    """Drop block_id_group and convert int columns to big-endian bytes in one pass.
+
+    Replaces separate drop_columns_from_list + to_bytes calls.
+    """
+    for item in items:
+        item.pop("block_id_group", None)
+        for col in int_cols:
+            v = item[col]
+            if v is not None:
+                item[col] = v.to_bytes((v.bit_length() + 7) // 8, "big")
+
+
 class TransformerUTXO(Transformer):
     def transform(self, block_range_content: BlockRangeContent) -> BlockRangeContent:
+        t_total = time.monotonic()
         data = block_range_content.table_contents
 
         blocks = data["blocks"]
         txs = data["txs"]
 
+        t0 = time.monotonic()
         prepare_blocks_inplace(
             blocks, BLOCK_BUCKET_SIZE, process_fields=False, drop_fields=False
         )
+        t_prep_blocks = time.monotonic() - t0
 
+        t0 = time.monotonic()
         # until bitcoin-etl progresses
         # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
         enrich_txs(
@@ -54,21 +69,36 @@ class TransformerUTXO(Transformer):
             ignore_missing_outputs=True,
             input_reference_only=True,
         )
+        t_enrich = time.monotonic() - t0
 
+        t0 = time.monotonic()
         prepare_transactions_inplace_parquet(txs, self.network)
+        t_prep_txs = time.monotonic() - t0
 
         partition = (
             blocks[0]["block_id"] // self.partition_batch_size
         )  # todo this can be a problem if the there are multiple partitions
 
-        def with_partition(items: list) -> list:
-            for item in items:
-                item["partition"] = partition
-            return items
+        t0 = time.monotonic()
+        for item in blocks:
+            item["partition"] = partition
+        for item in txs:
+            item["partition"] = partition
+        t_partition = time.monotonic() - t0
+
+        t_transform_total = time.monotonic() - t_total
+        logger.info(
+            f"[transform-timing] UTXO: "
+            f"total={t_transform_total:.3f}s  "
+            f"prep_blocks={t_prep_blocks:.3f}s ({len(blocks)} blks)  "
+            f"enrich={t_enrich:.3f}s ({len(txs)} txs)  "
+            f"prep_txs={t_prep_txs:.3f}s  "
+            f"partition={t_partition:.3f}s"
+        )
 
         block_range_content.table_contents = {
-            "block": with_partition(blocks),
-            "transaction": with_partition(txs),
+            "block": blocks,
+            "transaction": txs,
         }
         return block_range_content
 
@@ -135,34 +165,27 @@ class TransformerTRX(Transformer):
         t_prep_logs = time.monotonic() - t0
 
         t0 = time.monotonic()
-        blocks = drop_columns_from_list(blocks, ["block_id_group"])
-        txs = drop_columns_from_list(txs, ["block_id_group"])
-        traces = drop_columns_from_list(traces, ["block_id_group"])
-        logs = drop_columns_from_list(logs, ["block_id_group"])
-        t_drop_cols = time.monotonic() - t0
-
-        def fix_transferToAddress(item):
-            if len(item["transferto_address"]) == 0:
-                dummy_address = TRON_DUMMY_REPLACEMENT_ADDRESS  # noqa
-                item["transferto_address"] = dummy_address
-            return item
-
-        t0 = time.monotonic()
-        traces = [fix_transferToAddress(trace) for trace in traces]
-        t_fix_addr = time.monotonic() - t0
-
-        t0 = time.monotonic()
-        txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["transaction"])
-        blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["block"])
-        traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"])
-        logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["log"])
-        t_to_bytes = time.monotonic() - t0
+        _finalize_inplace(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["block"])
+        _finalize_inplace(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["transaction"])
+        _finalize_inplace(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["log"])
+        # Traces: finalize + fix empty transferto_address in one pass
+        trace_int_cols = BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"]
+        dummy_address = TRON_DUMMY_REPLACEMENT_ADDRESS
+        for trace in traces:
+            trace.pop("block_id_group", None)
+            if len(trace["transferto_address"]) == 0:
+                trace["transferto_address"] = dummy_address
+            for col in trace_int_cols:
+                v = trace[col]
+                if v is not None:
+                    trace[col] = v.to_bytes((v.bit_length() + 7) // 8, "big")
+        t_finalize = time.monotonic() - t0
 
         t0 = time.monotonic()
-        txs = sorted(txs, key=lambda x: (x["block_id"], x["transaction_index"]))
-        blocks = sorted(blocks, key=lambda x: x["block_id"])
-        traces = sorted(traces, key=lambda x: (x["block_id"], x["trace_index"]))
-        logs = sorted(logs, key=lambda x: (x["block_id"], x["log_index"]))
+        txs.sort(key=lambda x: (x["block_id"], x["transaction_index"]))
+        blocks.sort(key=lambda x: x["block_id"])
+        traces.sort(key=lambda x: (x["block_id"], x["trace_index"]))
+        logs.sort(key=lambda x: (x["block_id"], x["log_index"]))
         t_sort = time.monotonic() - t0
 
         t_transform_total = time.monotonic() - t_total
@@ -176,9 +199,7 @@ class TransformerTRX(Transformer):
             f"prep_txs={t_prep_txs:.3f}s ({len(txs)} txs)  "
             f"prep_traces={t_prep_traces:.3f}s ({len(traces)} traces)  "
             f"prep_logs={t_prep_logs:.3f}s ({len(logs)} logs)  "
-            f"drop_cols={t_drop_cols:.3f}s  "
-            f"fix_addr={t_fix_addr:.3f}s  "
-            f"to_bytes={t_to_bytes:.3f}s  "
+            f"finalize={t_finalize:.3f}s  "
             f"sort={t_sort:.3f}s"
         )
 
@@ -238,24 +259,17 @@ class TransformerETH(Transformer):
         t_prep_logs = time.monotonic() - t0
 
         t0 = time.monotonic()
-        blocks = drop_columns_from_list(blocks, ["block_id_group"])
-        txs = drop_columns_from_list(txs, ["block_id_group"])
-        traces = drop_columns_from_list(traces, ["block_id_group"])
-        logs = drop_columns_from_list(logs, ["block_id_group"])
-        t_drop_cols = time.monotonic() - t0
+        _finalize_inplace(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT["block"])
+        _finalize_inplace(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT["transaction"])
+        _finalize_inplace(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT["trace"])
+        _finalize_inplace(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT["log"])
+        t_finalize = time.monotonic() - t0
 
         t0 = time.monotonic()
-        txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT["transaction"])
-        blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT["block"])
-        traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT["trace"])
-        logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT["log"])
-        t_to_bytes = time.monotonic() - t0
-
-        t0 = time.monotonic()
-        txs = sorted(txs, key=lambda x: (x["block_id"], x["transaction_index"]))
-        blocks = sorted(blocks, key=lambda x: x["block_id"])
-        traces = sorted(traces, key=lambda x: (x["block_id"], x["trace_index"]))
-        logs = sorted(logs, key=lambda x: (x["block_id"], x["log_index"]))
+        txs.sort(key=lambda x: (x["block_id"], x["transaction_index"]))
+        blocks.sort(key=lambda x: x["block_id"])
+        traces.sort(key=lambda x: (x["block_id"], x["trace_index"]))
+        logs.sort(key=lambda x: (x["block_id"], x["log_index"]))
         t_sort = time.monotonic() - t0
 
         t_transform_total = time.monotonic() - t_total
@@ -267,8 +281,7 @@ class TransformerETH(Transformer):
             f"prep_txs={t_prep_txs:.3f}s ({len(txs)} txs)  "
             f"prep_traces={t_prep_traces:.3f}s ({len(traces)} traces)  "
             f"prep_logs={t_prep_logs:.3f}s ({len(logs)} logs)  "
-            f"drop_cols={t_drop_cols:.3f}s  "
-            f"to_bytes={t_to_bytes:.3f}s  "
+            f"finalize={t_finalize:.3f}s  "
             f"sort={t_sort:.3f}s"
         )
 
