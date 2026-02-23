@@ -99,7 +99,7 @@ dev = [
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies
 ingest = [
-    "graphsense-ethereum-etl>=2.4.6",
+    "web3>=6.0.0",
     "chainside-btcpy>=0.6",
     "graphsense-bitcoin-etl>=1.5.5",
     "lz4>=4.3.2",

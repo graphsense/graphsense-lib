@@ -8,6 +8,14 @@ from operator import itemgetter
 from typing import Dict, List, Optional, Tuple
 
 try:
+    from btcpy.structs.address import P2pkhAddress
+    from btcpy.structs.script import ScriptBuilder
+except ImportError:
+    _has_btcpy = False
+else:
+    _has_btcpy = True
+
+try:
     from bitcoinetl.enumeration.chain import Chain
     from bitcoinetl.jobs.export_blocks_job import ExportBlocksJob
     from bitcoinetl.rpc.bitcoin_rpc import BitcoinRpc
@@ -16,8 +24,6 @@ try:
         InMemoryItemExporter,
     )
     from blockchainetl.thread_local_proxy import ThreadLocalProxy
-    from btcpy.structs.address import P2pkhAddress
-    from btcpy.structs.script import ScriptBuilder
 
     CHAIN_MAPPING = {
         "btc": Chain.BITCOIN,
@@ -494,9 +500,9 @@ def parse_script(s: str) -> Tuple[List[str], str]:
         P2pkParserException: if P2PK script can't be parsed
         UnknownScriptType: On unknown script type
     """
-    if not _has_ingest_dependencies:
+    if not _has_btcpy:
         raise ImportError(
-            "The ingest.utxo needs bitcoinetl installed. Please install gslib with ingest dependencies."
+            "The ingest.utxo needs btcpy installed. Please install gslib with ingest dependencies."
         )
 
     script = ScriptBuilder.identify(s)

@@ -6,33 +6,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
-try:
-    from ethereumetl.jobs.export_blocks_job import ExportBlocksJob
-    from ethereumetl.jobs.export_receipts_job import ExportReceiptsJob
-    from ethereumetl.jobs.export_traces_job import (
-        ExportTracesJob as EthereumExportTracesJob,
-    )
-    from ethereumetl.providers.auto import get_provider_from_uri
-    from ethereumetl.service.eth_service import EthService
-    from ethereumetl.streaming.enrich import enrich_transactions
-    from ethereumetl.streaming.eth_item_id_calculator import EthItemIdCalculator
-    from ethereumetl.streaming.eth_item_timestamp_calculator import (
-        EthItemTimestampCalculator,
-    )
-    from ethereumetl.thread_local_proxy import ThreadLocalProxy
-    from web3 import Web3
-
-    from .tron.export_traces_job import TronExportTracesJob
-    from .tron.grpc.api.tron_api_pb2 import EmptyMessage, NumberMessage
-    from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
-    from .tron.txTypeTransformer import TxTypeTransformer
-    from graphsenselib.utils.grpc import get_channel
-except ImportError:
-    _has_ingest_dependencies = False
-else:
-    _has_ingest_dependencies = True
-
-
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
@@ -55,6 +28,14 @@ from .common import (
     cassandra_ingest,
     write_to_sinks,
 )
+from .fast_rpc import (
+    BatchRpcClient,
+    FastBlockExporter,
+    FastReceiptExporter,
+    enrich_transactions as _enrich_transactions,
+    get_block_range_for_date,
+)
+from .fast_traces import FastTraceExporter
 
 logger = logging.getLogger(__name__)
 
@@ -70,60 +51,18 @@ WEB3_QUERY_WORKERS = 40
 def enrich_txs_with_vrs(
     txs: Iterable[Dict], receipts: Iterable[Dict]
 ) -> Iterable[Dict]:
-    # enrich tx strips v, r, s from txs so we add them back
-    tx_hash_to_vrs = {tx["hash"]: (tx.get("v"), tx.get("r"), tx.get("s")) for tx in txs}
-
-    enriched_txs = enrich_transactions(txs, receipts)
-
-    for etx in enriched_txs:
-        v, r, s = tx_hash_to_vrs[etx["hash"]]
-        etx["v"] = v
-        etx["r"] = r
-        etx["s"] = s
-
-    return enriched_txs
-
-
-class InMemoryItemExporter:
-    """In-memory item exporter for EthStreamerAdapter export jobs."""
-
-    def __init__(self, item_types: Iterable) -> None:
-        self.item_types = item_types
-        self.items: Dict[str, List] = {}
-
-    def open(self) -> None:  # noqa
-        """Open item exporter."""
-        for item_type in self.item_types:
-            self.items[item_type] = []
-
-    def export_item(self, item) -> None:
-        """Export single item."""
-        item_type = item.get("type", None)
-        if item_type is None:
-            raise ValueError(f"type key is not found in item {item}")
-
-        self.items[item_type].append(item)
-
-    def close(self) -> None:
-        """Close item exporter."""
-
-    def get_items(self, item_type) -> Iterable:
-        """Get items from exporter."""
-        return self.items[item_type]
+    # Our enrich_transactions preserves all fields including v, r, s,
+    # unlike ethereumetl's version which stripped them.
+    return _enrich_transactions(txs, receipts)
 
 
 class AccountStreamerAdapter:
     """Standard Ethereum API style streaming adapter to export blocks, transactions,
     receipts, logs and traces."""
 
-    # TODO: the adapter setup is sub optimal,
-    # currently we create a Exporter*Job per call/batch
-    # which in turn spins up a new thread pool for every call
-    # which is not efficient and unnecessary overhead
-
     def __init__(
         self,
-        batch_web3_provider: "ThreadLocalProxy",
+        client: BatchRpcClient,
         batch_size: int = None,
         max_workers: int = None,
         batch_size_blockstransactions: int = None,
@@ -131,15 +70,9 @@ class AccountStreamerAdapter:
         batch_size_receiptslogs: int = None,
         max_workers_receiptslogs: int = None,
     ) -> None:
-        if not _has_ingest_dependencies:
-            raise ImportError(
-                "The AccountStreamerAdapter needs ethereumetl installed. Please install gslib with ingest dependencies."
-            )
-        self.batch_web3_provider = batch_web3_provider
+        self.client = client
         self.batch_size = batch_size
         self.max_workers = max_workers
-        self.item_id_calculator = EthItemIdCalculator()
-        self.item_timestamp_calculator = EthItemTimestampCalculator()
 
         if batch_size_blockstransactions is None:
             batch_size_blockstransactions = batch_size
@@ -155,6 +88,22 @@ class AccountStreamerAdapter:
         self.batch_size_receiptslogs = batch_size_receiptslogs
         self.max_workers_receiptslogs = max_workers_receiptslogs
 
+        self._block_exporter = FastBlockExporter(
+            client,
+            batch_size=batch_size_blockstransactions or 50,
+            max_workers=max_workers_blockstransactions or 20,
+        )
+        self._receipt_exporter = FastReceiptExporter(
+            client,
+            batch_size=batch_size_receiptslogs or 50,
+            max_workers=max_workers_receiptslogs or 20,
+        )
+        self._trace_exporter = FastTraceExporter(
+            client=client,
+            trace_batch_size=batch_size or 10,
+            max_workers=max_workers or 20,
+        )
+
     def export_blocks_and_transactions(
         self,
         start_block: int,
@@ -163,48 +112,16 @@ class AccountStreamerAdapter:
         export_transactions: bool = True,
     ) -> Tuple[Iterable, Iterable]:
         """Export blocks and transactions for specified block range."""
-
-        blocks_and_transactions_item_exporter = InMemoryItemExporter(
-            item_types=["block", "transaction"]
+        return self._block_exporter.export_blocks_and_transactions(
+            start_block, end_block
         )
-        blocks_and_transactions_job = ExportBlocksJob(
-            start_block=start_block,
-            end_block=end_block,
-            batch_size=self.batch_size_blockstransactions,
-            batch_web3_provider=self.batch_web3_provider,
-            max_workers=self.max_workers_blockstransactions,
-            item_exporter=blocks_and_transactions_item_exporter,
-            export_blocks=export_blocks,
-            export_transactions=export_transactions,
-        )
-
-        blocks_and_transactions_job.run()
-        blocks = blocks_and_transactions_item_exporter.get_items("block")
-        transactions = blocks_and_transactions_item_exporter.get_items("transaction")
-        return blocks, transactions
 
     def export_receipts_and_logs(
         self, transactions: Iterable
     ) -> Tuple[Iterable, Iterable]:
         """Export receipts and logs for specified transaction hashes."""
-
-        exporter = InMemoryItemExporter(item_types=["receipt", "log"])
-        job = ExportReceiptsJob(
-            transaction_hashes_iterable=(
-                transaction["hash"] for transaction in transactions
-            ),
-            batch_size=self.batch_size_receiptslogs,
-            batch_web3_provider=self.batch_web3_provider,
-            max_workers=self.max_workers_receiptslogs,
-            item_exporter=exporter,
-            export_receipts=True,
-            export_logs=True,
-        )
-
-        job.run()
-        receipts = exporter.get_items("receipt")
-        logs = exporter.get_items("log")
-        return receipts, logs
+        tx_hashes = [transaction["hash"] for transaction in transactions]
+        return self._receipt_exporter.export_receipts_and_logs(tx_hashes)
 
     def export_traces(
         self,
@@ -214,21 +131,7 @@ class AccountStreamerAdapter:
         include_daofork_traces: bool = False,
     ) -> Iterable[Dict]:
         """Export traces for specified block range."""
-
-        exporter = InMemoryItemExporter(item_types=["trace"])
-        job = EthereumExportTracesJob(
-            start_block=start_block,
-            end_block=end_block,
-            batch_size=self.batch_size,
-            web3=ThreadLocalProxy(lambda: Web3(self.batch_web3_provider)),
-            max_workers=self.max_workers,
-            item_exporter=exporter,
-            include_genesis_traces=include_genesis_traces,
-            include_daofork_traces=include_daofork_traces,
-        )
-        job.run()
-        traces = exporter.get_items("trace")
-        return traces, None
+        return self._trace_exporter.export_traces(start_block, end_block)
 
 
 class EthStreamerAdapter(AccountStreamerAdapter):
@@ -243,7 +146,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
 
     def __init__(
         self,
-        batch_web3_provider: "ThreadLocalProxy",
+        client: BatchRpcClient,
         grpc_endpoint: str,
         batch_size: int = None,
         max_workers: int = None,
@@ -253,7 +156,7 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         max_workers_receiptslogs: int = None,
     ) -> None:
         super().__init__(
-            batch_web3_provider,
+            client,
             batch_size,
             max_workers,
             batch_size_blockstransactions,
@@ -271,8 +174,8 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         include_daofork_traces: bool = False,
     ) -> Iterable[Dict]:
         """Export traces for specified block range."""
+        from .tron.export_traces_job import TronExportTracesJob
 
-        # exporter = InMemoryItemExporter(item_types=["trace"])
         job = TronExportTracesJob(
             start_block=start_block,
             end_block=end_block,
@@ -287,8 +190,8 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         self, start_block: int, end_block: int
     ) -> Iterable[Dict]:
         """Export traces for specified block range."""
+        from .tron.export_traces_job import TronExportTracesJob
 
-        # exporter = InMemoryItemExporter(item_types=["trace"])
         job = TronExportTracesJob(
             start_block=start_block,
             end_block=end_block,
@@ -302,6 +205,10 @@ class TronStreamerAdapter(AccountStreamerAdapter):
     def export_hash_to_type_mappings(
         self, transactions: Iterable, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
+        from .tron.grpc.api.tron_api_pb2 import NumberMessage
+        from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
+        from graphsenselib.utils.grpc import get_channel
+
         grpc_endpoint = self.grpc_endpoint
         channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
@@ -328,6 +235,10 @@ class TronStreamerAdapter(AccountStreamerAdapter):
     def export_hash_to_type_mappings_parallel(
         self, blocks: Iterable, block_id_name="block_id"
     ) -> Dict:
+        from .tron.grpc.api.tron_api_pb2 import NumberMessage
+        from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
+        from graphsenselib.utils.grpc import get_channel
+
         grpc_endpoint = self.grpc_endpoint
         channel = get_channel(grpc_endpoint)
         wallet_stub = WalletStub(channel)
@@ -361,6 +272,9 @@ class TronStreamerAdapter(AccountStreamerAdapter):
 
     def get_trc10_token_infos(self) -> Iterable[Dict]:
         """Get all trc10 tokens from a grpc endpoint"""
+        from .tron.grpc.api.tron_api_pb2 import EmptyMessage
+        from .tron.grpc.api.tron_api_pb2_grpc import WalletStub
+        from graphsenselib.utils.grpc import get_channel
 
         grpc_endpoint = self.grpc_endpoint
 
@@ -380,24 +294,21 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         return list_of_dicts
 
 
-def get_last_block_yesterday(batch_web3_provider: "ThreadLocalProxy") -> int:
+def get_last_block_yesterday(client: BatchRpcClient) -> int:
     """Return last block number of previous day from Ethereum client."""
 
-    web3 = Web3(batch_web3_provider)
-    eth_service = EthService(web3)
-
     prev_date = datetime.date(datetime.today()) - timedelta(days=1)
-    _, end_block = eth_service.get_block_range_for_date(prev_date)
+    _, end_block = get_block_range_for_date(client, prev_date)
     logger.info(
         f"Determining latest block before {prev_date.isoformat()} its {end_block:,}",
     )
     return end_block
 
 
-def get_last_synced_block(batch_web3_provider: "ThreadLocalProxy") -> int:
+def get_last_synced_block(client: BatchRpcClient) -> int:
     """Return last synchronized block number from Ethereum client."""
 
-    return int(Web3(batch_web3_provider).eth.get_block("latest").number)
+    return client.get_latest_block_number()
 
 
 def ingest_configuration_cassandra(
@@ -581,6 +492,8 @@ def prepare_transactions_inplace_trx(
     block_bucket_size: int,
     partition_size: int = PARQUET_PARTITION_SIZE,
 ):
+    from .tron.txTypeTransformer import TxTypeTransformer
+
     prepare_transactions_inplace_eth(
         items, tx_hash_prefix_len, block_bucket_size, partition_size
     )
@@ -724,11 +637,7 @@ def print_block_info(
 
 
 def get_connection_from_url(provider_uri: str, provider_timeout=600):
-    return ThreadLocalProxy(
-        lambda: get_provider_from_uri(
-            provider_uri, timeout=provider_timeout, batch=True
-        )
-    )
+    return BatchRpcClient(provider_uri, timeout=provider_timeout)
 
 
 def ingest(
@@ -759,8 +668,8 @@ def ingest(
     if http_provider_uri is None:
         raise BadUserInputError("No http provider (node url) is configured.")
 
-    thread_proxy = get_connection_from_url(http_provider_uri, provider_timeout)
-    last_synced_block = get_last_synced_block(thread_proxy)
+    client = get_connection_from_url(http_provider_uri, provider_timeout)
+    last_synced_block = get_last_synced_block(client)
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
@@ -777,7 +686,7 @@ def ingest(
             raise BadUserInputError("No grpc provider (node url) is configured.")
 
         adapter = TronStreamerAdapter(
-            thread_proxy,
+            client,
             grpc_endpoint=grpc_provider_uri,
             batch_size=WEB3_QUERY_BATCH_SIZE,
             max_workers=WEB3_QUERY_WORKERS,
@@ -794,7 +703,7 @@ def ingest(
 
     elif currency == "eth":
         adapter = EthStreamerAdapter(
-            thread_proxy,
+            client,
             batch_size=WEB3_QUERY_BATCH_SIZE,
             max_workers=WEB3_QUERY_WORKERS,
         )
@@ -816,7 +725,7 @@ def ingest(
         end_block = user_end_block
 
     if previous_day:
-        end_block = get_last_block_yesterday(thread_proxy)
+        end_block = get_last_block_yesterday(client)
 
     if start_block > end_block:
         logger.warning("No blocks to ingest")
@@ -1149,8 +1058,8 @@ def ingest_async(
     if http_provider_uri is None:
         raise BadUserInputError("No http provider (node url) is configured.")
 
-    thread_proxy = get_connection_from_url(http_provider_uri, provider_timeout)
-    last_synced_block = get_last_synced_block(thread_proxy)
+    client = get_connection_from_url(http_provider_uri, provider_timeout)
+    last_synced_block = get_last_synced_block(client)
     last_ingested_block = db.raw.get_highest_block()
     print_block_info(last_synced_block, last_ingested_block)
 
@@ -1200,7 +1109,7 @@ def ingest_async(
         end_block = user_end_block
 
     if previous_day:
-        end_block = get_last_block_yesterday(thread_proxy)
+        end_block = get_last_block_yesterday(client)
 
     if start_block > end_block:
         logger.warning("No blocks to ingest")

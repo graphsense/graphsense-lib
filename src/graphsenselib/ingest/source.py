@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Generator, Tuple
 
 from graphsenselib.ingest.account import (
@@ -10,6 +11,7 @@ from graphsenselib.ingest.account import (
     get_last_synced_block,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Source
+from graphsenselib.ingest.fast_traces import FastTraceExporter
 from graphsenselib.ingest.utxo import get_stream_adapter
 
 logger = logging.getLogger(__name__)
@@ -31,9 +33,9 @@ class SourceTRX(Source):
         self.provider_uri = provider_uri
         self.grpc_provider_uri = grpc_provider_uri
         self.provider_timeout = provider_timeout
-        self.thread_proxy = get_connection_from_url(provider_uri, provider_timeout)
+        self.client = get_connection_from_url(provider_uri, provider_timeout)
         self.adapter = TronStreamerAdapter(
-            self.thread_proxy,
+            self.client,
             grpc_endpoint=grpc_provider_uri,
             batch_size_blockstransactions=20,
             max_workers_blockstransactions=10,
@@ -80,26 +82,65 @@ class SourceTRX(Source):
         return BlockRangeContent(table_contents={"token_infos": token_infos})
 
     def get_last_synced_block(self):
-        return get_last_synced_block(self.thread_proxy)
+        return get_last_synced_block(self.client)
 
 
 class SourceETH(Source):
     def __init__(self, provider_uri, provider_timeout):
         self.provider_uri = provider_uri
         self.provider_timeout = provider_timeout
-        self.thread_proxy = get_connection_from_url(provider_uri, provider_timeout)
+        self.client = get_connection_from_url(provider_uri, provider_timeout)
         self.adapter = EthStreamerAdapter(
-            self.thread_proxy,
+            self.client,
             batch_size=WEB3_QUERY_BATCH_SIZE,
             max_workers=WEB3_QUERY_WORKERS,
         )
+        self.fast_trace_exporter = FastTraceExporter(
+            client=self.client,
+            trace_batch_size=10,
+            max_workers=20,
+        )
 
     def read_blockrange(self, start_block, end_block):
-        blocks, txs = self.adapter.export_blocks_and_transactions(
-            start_block, end_block
+        # ethereum-etl injects special traces for genesis and DAO fork blocks.
+        # Fall back to the legacy exporter when those windows are included so
+        # output stays byte-compatible with historical snapshots.
+        includes_special_trace_windows = (
+            start_block <= 0 <= end_block or start_block <= 1_920_000 <= end_block
         )
-        receipts, logs = self.adapter.export_receipts_and_logs(txs)
-        traces, _ = self.adapter.export_traces(start_block, end_block, True, True)
+
+        if includes_special_trace_windows:
+            blocks, txs = self.adapter.export_blocks_and_transactions(
+                start_block, end_block
+            )
+            receipts, logs = self.adapter.export_receipts_and_logs(txs)
+            traces, _ = self.adapter.export_traces(start_block, end_block, True, True)
+
+            data = {
+                "blocks": blocks,
+                "txs": txs,
+                "receipts": receipts,
+                "logs": logs,
+                "traces": traces,
+            }
+
+            return BlockRangeContent(
+                table_contents=data, start_block=start_block, end_block=end_block
+            )
+
+        # Traces only depend on block range, not on tx data, so we can
+        # fetch them concurrently with blocks+receipts.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            trace_future = executor.submit(
+                self.fast_trace_exporter.export_traces, start_block, end_block
+            )
+
+            blocks, txs = self.adapter.export_blocks_and_transactions(
+                start_block, end_block
+            )
+            receipts, logs = self.adapter.export_receipts_and_logs(txs)
+
+            traces, _ = trace_future.result()
 
         data = {
             "blocks": blocks,
@@ -117,7 +158,7 @@ class SourceETH(Source):
         return BlockRangeContent(table_contents={})
 
     def get_last_synced_block(self):
-        return get_last_synced_block(self.thread_proxy)
+        return get_last_synced_block(self.client)
 
 
 class SourceUTXO(Source):

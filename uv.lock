@@ -1580,26 +1580,6 @@ wheels = [
 ]
 
 [[package]]
-name = "graphsense-ethereum-etl"
-version = "2.4.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "base58" },
-    { name = "click" },
-    { name = "eth-abi" },
-    { name = "eth-typing" },
-    { name = "eth-utils" },
-    { name = "python-dateutil" },
-    { name = "requests" },
-    { name = "urllib3" },
-    { name = "web3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/02/eb/500acc00b53a09a28f2666bed636707a832b8a75b617f8f32961bdf4d560/graphsense_ethereum_etl-2.4.6.tar.gz", hash = "sha256:eb2d857dcef39a4af82256a551ef0e536490f160ad0f7668c5b04771b9e1f9eb", size = 342794, upload-time = "2025-09-11T09:18:12.892Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/e2/380d9fadecd384e91883c8c9406bd308aa2987185cfcb184be1b8504c9d1/graphsense_ethereum_etl-2.4.6-py3-none-any.whl", hash = "sha256:ed08902ee7aba4d0daf235c0768c656a49345fa19beec00b813d0c63335cc7ab", size = 441394, upload-time = "2025-09-11T09:18:11.617Z" },
-]
-
-[[package]]
 name = "graphsense-lib"
 source = { editable = "." }
 dependencies = [
@@ -1644,7 +1624,6 @@ all = [
     { name = "gitpython" },
     { name = "giturlparse" },
     { name = "graphsense-bitcoin-etl" },
-    { name = "graphsense-ethereum-etl" },
     { name = "grpcio" },
     { name = "gunicorn" },
     { name = "httpx" },
@@ -1665,6 +1644,7 @@ all = [
     { name = "sqlmodel" },
     { name = "tabulate" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "web3" },
 ]
 conversions = [
     { name = "matplotlib" },
@@ -1676,12 +1656,12 @@ ingest = [
     { name = "deltalake" },
     { name = "duckdb" },
     { name = "graphsense-bitcoin-etl" },
-    { name = "graphsense-ethereum-etl" },
     { name = "grpcio" },
     { name = "lz4" },
     { name = "protobuf" },
     { name = "pyarrow" },
     { name = "redis" },
+    { name = "web3" },
 ]
 tagpacks = [
     { name = "anytree" },
@@ -1798,7 +1778,6 @@ requires-dist = [
     { name = "giturlparse", marker = "extra == 'tagstore'", specifier = ">=0.10" },
     { name = "goodconf", extras = ["yaml"], specifier = ">=3.0.0" },
     { name = "graphsense-bitcoin-etl", marker = "extra == 'ingest'", specifier = ">=1.5.5" },
-    { name = "graphsense-ethereum-etl", marker = "extra == 'ingest'", specifier = ">=2.4.6" },
     { name = "graphsense-lib", extras = ["conversions"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["conversions", "tagstore"], marker = "extra == 'web'" },
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
@@ -1837,6 +1816,7 @@ requires-dist = [
     { name = "tabulate", marker = "extra == 'tagstore'", specifier = ">=0.9.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.32.0" },
+    { name = "web3", marker = "extra == 'ingest'", specifier = ">=6.0.0" },
 ]
 provides-extras = ["ingest", "conversions", "tagstore", "tagpacks", "web", "all"]
 
