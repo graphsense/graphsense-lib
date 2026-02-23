@@ -1652,6 +1652,7 @@ all = [
     { name = "matplotlib" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "protobuf" },
     { name = "psycopg2-binary" },
     { name = "pyarrow" },
     { name = "python-dateutil" },
@@ -1678,6 +1679,7 @@ ingest = [
     { name = "graphsense-ethereum-etl" },
     { name = "grpcio" },
     { name = "lz4" },
+    { name = "protobuf" },
     { name = "pyarrow" },
     { name = "redis" },
 ]
@@ -1814,6 +1816,7 @@ requires-dist = [
     { name = "networkx", marker = "extra == 'conversions'", specifier = ">=3.2.1" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "parsy", specifier = ">=2.0,<3.0" },
+    { name = "protobuf", marker = "extra == 'ingest'", specifier = ">=4.21.0" },
     { name = "psycopg2-binary", marker = "extra == 'tagstore'", specifier = ">=2.9.3" },
     { name = "pyarrow", marker = "extra == 'ingest'", specifier = ">=23.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },

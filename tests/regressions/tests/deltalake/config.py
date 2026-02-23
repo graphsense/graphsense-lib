@@ -5,18 +5,214 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+from graphsenselib.schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
+from graphsenselib.schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
+from graphsenselib.schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
 
 
-NETWORK_DEFAULTS: dict[str, dict] = {
-    "btc": {"start_block": 200000, "base_blocks": 50, "append_blocks": 50},
-    "eth": {"start_block": 2000000, "base_blocks": 50, "append_blocks": 50},
-    "ltc": {"start_block": 500000, "base_blocks": 50, "append_blocks": 50},
-    "bch": {"start_block": 200000, "base_blocks": 50, "append_blocks": 50},
-    "zec": {"start_block": 500000, "base_blocks": 50, "append_blocks": 50},
-    "trx": {"start_block": 50000000, "base_blocks": 50, "append_blocks": 50},
+@dataclass(frozen=True)
+class BlockRangeProfile:
+    """Block range profile for a currency regression scenario."""
+
+    profile_id: str
+    start_block: int
+    base_blocks: int = 5
+    append_blocks: int = 5
+    category: str = "mid"
+    note: str = ""
+    perf_blocks: int | None = None
+
+
+GENESIS_PROFILE = BlockRangeProfile(
+    "genesis",
+    0,
+    base_blocks=50,
+    append_blocks=50,
+    category="genesis",
+    note="genesis era",
+    perf_blocks=1000,
+)
+
+
+NETWORK_RANGE_PROFILES: dict[str, list[BlockRangeProfile]] = {
+    "btc": [
+        GENESIS_PROFILE,
+        BlockRangeProfile("old", 210000, category="old", note="first halving era"),
+        BlockRangeProfile(
+            "mid",
+            600000,
+            category="mid",
+            note="post-segwit era",
+            perf_blocks=10,
+        ),
+        BlockRangeProfile(
+            "new",
+            840000,
+            category="new",
+            note="recent chain tip era",
+            perf_blocks=120,
+        ),
+        BlockRangeProfile(
+            "protocol-bip34",
+            227820,
+            category="protocol",
+            note="crosses BIP34 activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-segwit",
+            481810,
+            category="protocol",
+            note="crosses SegWit activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-taproot",
+            709620,
+            category="protocol",
+            note="crosses Taproot activation window",
+        ),
+    ],
+    "eth": [
+        GENESIS_PROFILE,
+        BlockRangeProfile("old", 3000000, category="old", note="early PoW era"),
+        BlockRangeProfile(
+            "mid",
+            11000000,
+            category="mid",
+            note="pre-merge PoW era",
+            perf_blocks=100,
+        ),
+        BlockRangeProfile(
+            "mid-24m",
+            24000000,
+            category="mid",
+            note="recent post-merge era",
+            perf_blocks=30,
+        ),
+        BlockRangeProfile("new", 19000000, category="new", note="post-merge era"),
+        BlockRangeProfile(
+            "protocol-byzantium",
+            4369990,
+            category="protocol",
+            note="crosses Byzantium activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-london",
+            12964990,
+            category="protocol",
+            note="crosses London activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-merge",
+            15537384,
+            category="protocol",
+            note="crosses Merge activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-shanghai",
+            17034860,
+            category="protocol",
+            note="crosses Shanghai activation window",
+        ),
+    ],
+    "ltc": [
+        GENESIS_PROFILE,
+        BlockRangeProfile("old", 700000, category="old", note="legacy era"),
+        BlockRangeProfile(
+            "mid",
+            1700000,
+            category="mid",
+            note="pre-MWEB era",
+            perf_blocks=100,
+        ),
+        BlockRangeProfile("new", 2800000, category="new", note="recent chain tip era"),
+        BlockRangeProfile(
+            "protocol-segwit",
+            1201526,
+            category="protocol",
+            note="crosses SegWit activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-mweb",
+            2265974,
+            category="protocol",
+            note="crosses MWEB activation window",
+        ),
+    ],
+    "bch": [
+        GENESIS_PROFILE,
+        BlockRangeProfile("old", 550000, category="old", note="early BCH era"),
+        BlockRangeProfile(
+            "mid",
+            700000,
+            category="mid",
+            note="mid-life chain era",
+            perf_blocks=10,
+        ),
+        BlockRangeProfile("new", 850000, category="new", note="recent chain tip era"),
+        BlockRangeProfile(
+            "protocol-schnorr",
+            582670,
+            category="protocol",
+            note="crosses Schnorr upgrade window",
+        ),
+        BlockRangeProfile(
+            "protocol-asert",
+            661638,
+            category="protocol",
+            note="crosses ASERT DAA activation window",
+        ),
+    ],
+    "zec": [
+        GENESIS_PROFILE,
+        BlockRangeProfile("old", 300000, category="old", note="pre-Sapling era"),
+        BlockRangeProfile(
+            "mid",
+            900000,
+            category="mid",
+            note="Sapling/Blossom era",
+            perf_blocks=100,
+        ),
+        BlockRangeProfile("new", 2300000, category="new", note="recent chain tip era"),
+        BlockRangeProfile(
+            "protocol-sapling",
+            419190,
+            category="protocol",
+            note="crosses Sapling activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-canopy",
+            1046390,
+            category="protocol",
+            note="crosses Canopy activation window",
+        ),
+        BlockRangeProfile(
+            "protocol-nu5",
+            1687094,
+            category="protocol",
+            note="crosses NU5 activation window",
+        ),
+    ],
+    "trx": [
+        GENESIS_PROFILE,
+        BlockRangeProfile("old", 20000000, category="old", note="early mainnet era"),
+        BlockRangeProfile(
+            "mid",
+            45000000,
+            category="mid",
+            note="mid-life chain era",
+            perf_blocks=100,
+        ),
+        BlockRangeProfile("new", 65000000, category="new", note="recent chain tip era"),
+        BlockRangeProfile(
+            "protocol-greatvoyage",
+            47500000,
+            category="protocol",
+            note="GreatVoyage upgrade era window",
+        ),
+    ],
 }
 
-ALL_CURRENCIES = list(NETWORK_DEFAULTS.keys())
+ALL_CURRENCIES = list(NETWORK_RANGE_PROFILES.keys())
 
 SCHEMA_TYPE_MAP = {
     "btc": "utxo",
@@ -25,6 +221,12 @@ SCHEMA_TYPE_MAP = {
     "zec": "utxo",
     "eth": "account",
     "trx": "account_trx",
+}
+
+SCHEMA_TABLES_MAP = {
+    "utxo": list(UTXO_SCHEMA_RAW.keys()),
+    "account": list(ACCOUNT_SCHEMA_RAW.keys()),
+    "account_trx": list(ACCOUNT_TRX_SCHEMA_RAW.keys()),
 }
 
 GRAPHSENSE_CONFIG_PATHS = [
@@ -79,11 +281,15 @@ class DeltaTestConfig:
     start_block: int = 2000000
     base_blocks: int = 50
     append_blocks: int = 50
+    range_id: str = "mid"
+    range_category: str = "mid"
+    range_note: str = ""
     node_url: str = ""
     secondary_node_references: list[str] = field(default_factory=list)
     gslib_path: Path = field(
         default_factory=lambda: Path(__file__).resolve().parents[4]
     )
+    perf_blocks: int = 200
 
     @property
     def base_end_block(self) -> int:
@@ -98,22 +304,52 @@ class DeltaTestConfig:
         return self.append_start_block + self.append_blocks - 1
 
     @property
+    def perf_end_block(self) -> int:
+        return self.start_block + self.perf_blocks
+
+    @property
     def tables(self) -> list[str]:
-        """Tables to compare — currency-dependent."""
-        if self.currency == "eth":
-            return ["block", "transaction", "log", "trace"]
-        elif self.currency == "trx":
-            return ["block", "transaction", "trace"]
-        else:
-            # UTXO currencies
-            return ["block", "transaction"]
+        """Tables to compare — all raw parquet tables for this currency."""
+        schema_type = SCHEMA_TYPE_MAP[self.currency]
+        return SCHEMA_TABLES_MAP[schema_type]
+
+    @property
+    def test_id(self) -> str:
+        """Stable pytest id segment."""
+        return f"{self.currency}-{self.range_id}"
+
+
+def _parse_range_categories() -> set[str]:
+    raw = os.environ.get("DELTA_RANGE_CATEGORIES", "old,mid,new,protocol")
+    return {token.strip() for token in raw.split(",") if token.strip()}
+
+
+def _profiles_for_currency(currency: str, categories: set[str]) -> list[BlockRangeProfile]:
+    profiles = NETWORK_RANGE_PROFILES.get(currency, [])
+    if not profiles:
+        return [
+            BlockRangeProfile(
+                "mid",
+                1000000,
+                base_blocks=25,
+                append_blocks=25,
+                category="mid",
+                note="fallback profile",
+            )
+        ]
+    selected = [
+        p for p in profiles if (p.profile_id == "genesis" or p.category in categories)
+    ]
+    return selected if selected else [profiles[0]]
 
 
 def build_delta_configs() -> list[DeltaTestConfig]:
     """Build a DeltaTestConfig per requested currency.
 
     Reads ``DELTA_CURRENCIES`` (comma-separated, default: all) and
-    resolves node URLs from ``.graphsense.yaml``.  Currencies without
+    ``DELTA_RANGE_CATEGORIES`` (default: ``old,mid,new,protocol``),
+    resolves node URLs from ``.graphsense.yaml``, and expands each
+    currency into multiple block-range scenarios. Currencies without
     a configured node URL are silently skipped.
     """
     ref_version = os.environ.get("DELTA_REF_VERSION", "v25.11.18")
@@ -122,6 +358,8 @@ def build_delta_configs() -> list[DeltaTestConfig]:
     gslib_path = Path(
         os.environ.get("GSLIB_PATH", str(Path(__file__).resolve().parents[4]))
     )
+    perf_blocks = int(os.environ.get("DELTA_PERF_BLOCKS", "200"))
+    categories = _parse_range_categories()
     ingest_configs = load_ingest_configs()
 
     configs = []
@@ -129,21 +367,27 @@ def build_delta_configs() -> list[DeltaTestConfig]:
         ic = ingest_configs.get(currency)
         if not ic:
             continue
-        defaults = NETWORK_DEFAULTS.get(
-            currency, {"start_block": 1000000, "base_blocks": 50, "append_blocks": 50}
-        )
-        configs.append(
-            DeltaTestConfig(
-                ref_version=ref_version,
-                currency=currency,
-                start_block=defaults["start_block"],
-                base_blocks=defaults["base_blocks"],
-                append_blocks=defaults["append_blocks"],
-                node_url=ic["node_url"],
-                secondary_node_references=ic.get("secondary_node_references", []),
-                gslib_path=gslib_path,
+        for profile in _profiles_for_currency(currency, categories):
+            configs.append(
+                DeltaTestConfig(
+                    ref_version=ref_version,
+                    currency=currency,
+                    start_block=profile.start_block,
+                    base_blocks=profile.base_blocks,
+                    append_blocks=profile.append_blocks,
+                    range_id=profile.profile_id,
+                    range_category=profile.category,
+                    range_note=profile.note,
+                    node_url=ic["node_url"],
+                    secondary_node_references=ic.get("secondary_node_references", []),
+                    gslib_path=gslib_path,
+                    perf_blocks=(
+                        profile.perf_blocks
+                        if profile.perf_blocks is not None
+                        else perf_blocks
+                    ),
+                )
             )
-        )
     return configs
 
 

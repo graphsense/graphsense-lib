@@ -31,7 +31,8 @@ REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 	test-rest-local test-rest-dev-branch rest-run-tests \
 	test-rest-fuzz test-rest-manual test-rest-loki test-rest-all \
 	rest-ensure-servers rest-ensure-baseline rest-info rest-clean \
-	generate-loki test-deltalake clean-deltalake clean
+	generate-loki test-deltalake test-deltalake-perf test-deltalake-all \
+	clean-deltalake clean
 
 # Build current from local path (requires GSLIB)
 rest-build-local:
@@ -187,15 +188,45 @@ rest-clean: rest-stop
 
 DELTA_REF_VERSION ?= v25.11.18
 DELTA_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
+DELTA_RANGE_CATEGORIES ?= old,mid,new,protocol
+DELTA_PERF_RANGE_CATEGORIES ?= mid
+DELTA_PERF_REPEATS ?= 3
 
 test-deltalake:
 	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
 	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
+	DELTA_RANGE_CATEGORIES=$(DELTA_RANGE_CATEGORIES) \
 	GSLIB_PATH=$$(cd ../.. && pwd) \
 	uv run pytest tests/deltalake/ -v -s -m deltalake
 
+test-deltalake-perf:
+	@echo "Installing local graphsense-lib[ingest] for in-process perf tests..."
+	uv pip install -e "$$(cd ../.. && pwd)[ingest]"
+	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
+	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
+	DELTA_RANGE_CATEGORIES=$(DELTA_PERF_RANGE_CATEGORIES) \
+	DELTA_PERF_REPEATS=$(DELTA_PERF_REPEATS) \
+	GSLIB_PATH=$$(cd ../.. && pwd) \
+	uv run pytest tests/deltalake/test_performance.py -v -s -m deltalake_perf
+
+test-deltalake-all:
+	@echo "Running Delta Lake compatibility + performance regression suite..."
+	@$(MAKE) test-deltalake
+	@$(MAKE) test-deltalake-perf
+
 clean-deltalake:
 	rm -rf /tmp/gslib-deltalake-testvenvs
+
+# ============================================================================
+# Cassandra ingest regression tests
+# ============================================================================
+
+CASSANDRA_CURRENCIES ?= btc,eth
+
+test-cassandra-ingest:
+	CASSANDRA_CURRENCIES=$(CASSANDRA_CURRENCIES) \
+	GSLIB_PATH=$$(cd ../.. && pwd) \
+	uv run pytest tests/cassandra/ -v -s -m cassandra
 
 # ============================================================================
 # Top-level

@@ -12,6 +12,7 @@ dependencies = [
     "pyyaml>=6.0",
     "docker>=7.0.0",
     "testcontainers>=4.0.0",
+    "cassandra-driver>=3.28.0",
 ]
 
 [dependency-groups]
@@ -28,6 +29,8 @@ markers = [
     "regression: mark test as regression test (baseline container vs current)",
     "loki_generated: mark test as auto-generated from Loki API logs (many tests, slower)",
     "deltalake: Delta Lake cross-version compatibility tests",
+    "deltalake_perf: Delta Lake ingest performance tests",
+    "cassandra: Cassandra ingest regression tests",
 ]
 asyncio_mode = "auto"
 

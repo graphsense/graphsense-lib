@@ -3,6 +3,7 @@
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import yaml
@@ -104,6 +105,8 @@ def run_ingest(
         "--end-block", str(end_block),
         "--write-mode", write_mode,
     ]
+    if write_mode == "overwrite":
+        cmd.append("--ignore-overwrite-safechecks")
 
     env = os.environ.copy()
     env.update({
@@ -129,3 +132,30 @@ def run_ingest(
             f"stdout: {result.stdout[-2000:]}\n"
             f"stderr: {result.stderr[-2000:]}"
         )
+
+
+def timed_run_ingest(
+    venv_dir: Path,
+    config: DeltaTestConfig,
+    delta_directory: str,
+    start_block: int,
+    end_block: int,
+    write_mode: str,
+    minio_endpoint: str,
+    minio_access_key: str,
+    minio_secret_key: str,
+) -> float:
+    """Run ingest via subprocess and return wall-clock seconds."""
+    t0 = time.perf_counter()
+    run_ingest(
+        venv_dir=venv_dir,
+        config=config,
+        delta_directory=delta_directory,
+        start_block=start_block,
+        end_block=end_block,
+        write_mode=write_mode,
+        minio_endpoint=minio_endpoint,
+        minio_access_key=minio_access_key,
+        minio_secret_key=minio_secret_key,
+    )
+    return time.perf_counter() - t0

@@ -13,7 +13,8 @@ Test flow
 3. **Compare**: A vs B — schema, row counts, content hashes, file metadata
 
 The test is parametrized over all currencies configured in .graphsense.yaml
-(filterable via ``DELTA_CURRENCIES`` env var).
+(filterable via ``DELTA_CURRENCIES`` env var) and over block-range profiles
+(filterable via ``DELTA_RANGE_CATEGORIES``).
 """
 
 import pytest
@@ -21,6 +22,18 @@ import pytest
 from tests.deltalake.comparison import compare_snapshots, format_report
 from tests.deltalake.ingest_runner import run_ingest
 from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
+
+# Known content divergences between the reference version (v25.11.18, using
+# graphsense-bitcoin-etl) and the current version (using fast_btc.py).
+# These are bug fixes in the current version, not regressions.
+#
+# ZEC/transaction: graphsense-bitcoin-etl swapped vpub_old and vpub_new in
+# join_split_mapper.py, causing shielded joinsplit inputs to be recorded as
+# outputs and vice versa. fast_btc.py has the correct mapping per the ZCash
+# protocol spec. Row counts and schemas still match; only content differs.
+KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = {
+    ("zec", "transaction"),
+}
 
 
 @pytest.mark.deltalake
@@ -40,7 +53,9 @@ class TestCrossVersionCompatibility:
     ):
         bucket = minio_config["bucket"]
         currency = delta_config.currency
+        range_id = delta_config.range_id
         tables = delta_config.tables
+        is_genesis = range_id == "genesis"
 
         minio_kw = dict(
             minio_endpoint=minio_config["endpoint"],
@@ -64,24 +79,37 @@ class TestCrossVersionCompatibility:
         # ------------------------------------------------------------------
         # Scenario A: reference-only (baseline truth)
         # ------------------------------------------------------------------
-        path_ref = f"s3://{bucket}/ref_only/{currency}"
+        path_ref = f"s3://{bucket}/ref_only/{currency}/{range_id}"
 
-        # Base ingestion (overwrite)
-        run_ingest(
-            reference_venv, delta_config, path_ref,
-            start_block=delta_config.start_block,
-            end_block=delta_config.base_end_block,
-            write_mode="overwrite",
-            **minio_kw,
-        )
-        # Append
-        run_ingest(
-            reference_venv, delta_config, path_ref,
-            start_block=delta_config.append_start_block,
-            end_block=delta_config.append_end_block,
-            write_mode="append",
-            **minio_kw,
-        )
+        if is_genesis:
+            # Genesis profile: compare both versions on identical overwrite
+            # ingestion from block 0, without base/append staging.
+            run_ingest(
+                reference_venv,
+                delta_config,
+                path_ref,
+                start_block=delta_config.start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="overwrite",
+                **minio_kw,
+            )
+        else:
+            # Base ingestion (overwrite)
+            run_ingest(
+                reference_venv, delta_config, path_ref,
+                start_block=delta_config.start_block,
+                end_block=delta_config.base_end_block,
+                write_mode="overwrite",
+                **minio_kw,
+            )
+            # Append
+            run_ingest(
+                reference_venv, delta_config, path_ref,
+                start_block=delta_config.append_start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="append",
+                **minio_kw,
+            )
 
         snapshot_ref = capture_snapshot(
             storage_options, path_ref, tables, f"reference ({delta_config.ref_version})",
@@ -92,24 +120,35 @@ class TestCrossVersionCompatibility:
         # ------------------------------------------------------------------
         # Scenario B: reference base + current append (cross-version)
         # ------------------------------------------------------------------
-        path_mixed = f"s3://{bucket}/mixed/{currency}"
+        path_mixed = f"s3://{bucket}/mixed/{currency}/{range_id}"
 
-        # Base ingestion with reference version
-        run_ingest(
-            reference_venv, delta_config, path_mixed,
-            start_block=delta_config.start_block,
-            end_block=delta_config.base_end_block,
-            write_mode="overwrite",
-            **minio_kw,
-        )
-        # Append with CURRENT version
-        run_ingest(
-            current_venv, delta_config, path_mixed,
-            start_block=delta_config.append_start_block,
-            end_block=delta_config.append_end_block,
-            write_mode="append",
-            **minio_kw,
-        )
+        if is_genesis:
+            run_ingest(
+                current_venv,
+                delta_config,
+                path_mixed,
+                start_block=delta_config.start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="overwrite",
+                **minio_kw,
+            )
+        else:
+            # Base ingestion with reference version
+            run_ingest(
+                reference_venv, delta_config, path_mixed,
+                start_block=delta_config.start_block,
+                end_block=delta_config.base_end_block,
+                write_mode="overwrite",
+                **minio_kw,
+            )
+            # Append with CURRENT version
+            run_ingest(
+                current_venv, delta_config, path_mixed,
+                start_block=delta_config.append_start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="append",
+                **minio_kw,
+            )
 
         snapshot_mixed = capture_snapshot(
             storage_options, path_mixed, tables, "current (dev)",
@@ -140,7 +179,14 @@ class TestCrossVersionCompatibility:
                 f"{name}: row count differs by {diff.row_count_diff} "
                 f"(ref={diff.row_count_ref}, cur={diff.row_count_current})"
             )
-            assert diff.content_hash_match, (
-                f"{name}: data content hash mismatch between reference-only "
-                f"and mixed (cross-version) runs"
-            )
+            if (currency, name) in KNOWN_CONTENT_DIVERGENCES:
+                if not diff.content_hash_match:
+                    print(
+                        f"  [{name}] KNOWN DIVERGENCE: content hash differs "
+                        f"(bug fix in current version, not a regression)"
+                    )
+            else:
+                assert diff.content_hash_match, (
+                    f"{name}: data content hash mismatch between reference-only "
+                    f"and mixed (cross-version) runs"
+                )

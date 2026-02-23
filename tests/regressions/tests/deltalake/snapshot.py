@@ -40,6 +40,11 @@ class IngestionSnapshot:
     block_range: tuple[int, int] = (0, 0)
     environment: EnvironmentInfo | None = None
 
+    @property
+    def total_file_size_bytes(self) -> int:
+        """Total output size across all captured tables."""
+        return sum(t.total_file_size_bytes for t in self.tables.values())
+
 
 def _sortable_type(t: pa.DataType) -> bool:
     """Return True if pyarrow can sort by this type."""
@@ -81,7 +86,26 @@ def capture_table_snapshot(
     storage_options: dict[str, str],
 ) -> TableSnapshot:
     """Read a Delta Lake table and capture its current state."""
-    dt = DeltaTable(table_path, storage_options=storage_options)
+    try:
+        dt = DeltaTable(table_path, storage_options=storage_options)
+    except Exception as exc:
+        # Genesis windows can legitimately produce no files for some tables.
+        # Return an explicit empty snapshot so both sides can still be compared.
+        if (
+            exc.__class__.__name__ == "TableNotFoundError"
+            or "No files in log segment" in str(exc)
+        ):
+            return TableSnapshot(
+                table_name=table_name,
+                row_count=0,
+                column_names=[],
+                schema={},
+                content_hash=hashlib.sha256(b"").hexdigest(),
+                file_names=[],
+                total_file_size_bytes=0,
+                delta_log_version=-1,
+            )
+        raise
     arrow_table = dt.to_pyarrow_table()
 
     schema = {

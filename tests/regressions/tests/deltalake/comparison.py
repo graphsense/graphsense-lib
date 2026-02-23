@@ -7,6 +7,19 @@ from dataclasses import dataclass, field
 from tests.deltalake.snapshot import IngestionSnapshot
 
 
+def _format_bytes(num_bytes: int) -> str:
+    """Format byte count in IEC units for readability."""
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    value = float(num_bytes)
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    return f"{int(num_bytes)} B"
+
+
 @dataclass
 class TableDiff:
     """Differences between two snapshots of the same table."""
@@ -23,6 +36,8 @@ class TableDiff:
     file_count_current: int = 0
     file_count_diff: int = 0
     file_names_changed: bool = False
+    file_size_ref_bytes: int = 0
+    file_size_current_bytes: int = 0
     file_size_diff_bytes: int = 0
 
     @property
@@ -111,6 +126,8 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
             file_count_current=len(cur_table.file_names),
             file_count_diff=len(cur_table.file_names) - len(ref_table.file_names),
             file_names_changed=(ref_table.file_names != cur_table.file_names),
+            file_size_ref_bytes=ref_table.total_file_size_bytes,
+            file_size_current_bytes=cur_table.total_file_size_bytes,
             file_size_diff_bytes=cur_table.total_file_size_bytes - ref_table.total_file_size_bytes,
         )
         report.table_diffs[name] = diff
@@ -121,11 +138,18 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
 def _format_environment_section(ref: IngestionSnapshot, current: IngestionSnapshot) -> list[str]:
     """Format environment context as header lines."""
     lines = []
+    size_diff = current.total_file_size_bytes - ref.total_file_size_bytes
+    size_diff_human = _format_bytes(abs(size_diff))
 
     # Block range (same for both)
     lines.append(f"  Currency:     {ref.environment.currency or 'n/a'}")
     lines.append(f"  Node URL:     {ref.environment.node_url or 'n/a'}")
     lines.append(f"  Block range:  {ref.block_range[0]} - {ref.block_range[1]}")
+    lines.append(
+        f"  Output size:  ref={_format_bytes(ref.total_file_size_bytes)} "
+        f"cur={_format_bytes(current.total_file_size_bytes)} "
+        f"(diff={size_diff:+,} B / {size_diff_human})"
+    )
     lines.append("")
 
     # Package versions side by side
@@ -175,6 +199,12 @@ def format_report(
         lines.append(f"    Rows: ref={diff.row_count_ref} cur={diff.row_count_current} (diff={diff.row_count_diff:+d})")
         lines.append(f"    Content hash match: {diff.content_hash_match}")
         lines.append(f"    Files: ref={diff.file_count_ref} cur={diff.file_count_current}")
+        lines.append(
+            "    Size: "
+            f"ref={_format_bytes(diff.file_size_ref_bytes)} "
+            f"cur={_format_bytes(diff.file_size_current_bytes)} "
+            f"(diff={diff.file_size_diff_bytes:+,} B)"
+        )
 
         if diff.schema_added_columns:
             lines.append(f"    + Added columns: {', '.join(diff.schema_added_columns)}")
