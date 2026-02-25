@@ -1,7 +1,14 @@
 import sys
 from typing import List, Optional
 
-from graphsenselib.ingest.account import logger
+from graphsenselib.db import AnalyticsDb
+from graphsenselib.ingest.account import (
+    BLOCK_BUCKET_SIZE,
+    TX_HASH_PREFIX_LEN,
+    ingest_configuration_cassandra,
+    logger,
+)
+from graphsenselib.ingest.cassandra.sink import CassandraSink
 from graphsenselib.ingest.delta.sink import DeltaDumpSinkFactory
 from graphsenselib.ingest.ingestrunner import IngestRunner
 from graphsenselib.ingest.source import SourceETH, SourceTRX, SourceUTXO
@@ -50,6 +57,7 @@ def export_delta(
     s3_credentials: Optional[str] = None,
     write_mode: str = "overwrite",
     ignore_overwrite_safechecks: bool = False,
+    db: Optional[AnalyticsDb] = None,
 ):
     if currency not in SUPPORTED:
         raise ValueError(f"{currency} not supported by ingest module")
@@ -108,6 +116,10 @@ def export_delta(
     runner.addTransformer(transformer)
     runner.addSink(delta_sink)
 
+    if db is not None:
+        cassandra_sink = CassandraSink(db)
+        runner.addSink(cassandra_sink)
+
     backoff = get_reorg_backoff_blocks(currency)
 
     if write_mode == "append":
@@ -145,3 +157,7 @@ def export_delta(
     )
 
     runner.run(start_block, end_block)
+
+    if db is not None:
+        logger.info("Writing Cassandra metadata tables...")
+        ingest_configuration_cassandra(db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN)

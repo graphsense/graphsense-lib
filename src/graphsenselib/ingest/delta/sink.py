@@ -2,7 +2,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional
 
 try:
     import deltalake as dl
@@ -16,10 +16,17 @@ else:
 
 import pydantic
 
-from ...schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
-from ...schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
+from ...schema.resources.parquet.account import (
+    ACCOUNT_SCHEMA_RAW,
+    BINARY_COL_CONVERSION_MAP_ACCOUNT,
+)
+from ...schema.resources.parquet.account_trx import (
+    ACCOUNT_TRX_SCHEMA_RAW,
+    BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
+)
 from ...schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
 from ..common import BlockRangeContent, Sink
+from ..transform import _finalize_inplace
 
 logger = logging.getLogger(__name__)
 
@@ -403,6 +410,7 @@ class DeltaDumpWriter(Sink):
         db_write_config: DBWriteConfig,
         s3_credentials: Optional[dict] = None,
         write_mode: str = "overwrite",
+        finalize_int_cols: Optional[dict] = None,
     ) -> None:
         if not _has_ingest_dependencies:
             raise ImportError(
@@ -412,6 +420,7 @@ class DeltaDumpWriter(Sink):
         self.db_write_config = db_write_config
         self.s3_credentials = s3_credentials
         self.write_mode = write_mode
+        self.finalize_int_cols = finalize_int_cols or {}
 
         self.writers = {
             # method instead the lookup we now have which is probably
@@ -435,13 +444,26 @@ class DeltaDumpWriter(Sink):
             s3_credentials=self.s3_credentials,
         )
 
-    def write_table(self, table_content: Tuple[str, List[dict]]):
-        writer = self.writers[table_content[0]]
-        writer.write_delta(table_content[1])
+    def write_table(self, table_name: str, rows: List[dict]):
+        writer = self.writers[table_name]
+        writer.write_delta(rows)
 
     def write(self, sink_content: BlockRangeContent):
-        for table_content in sink_content.table_contents.items():
-            self.write_table(table_content)
+        for table_name, rows in sink_content.table_contents.items():
+            if not rows:
+                continue
+            int_cols = self.finalize_int_cols.get(table_name, [])
+            if int_cols:
+                rows = [
+                    dict(r) for r in rows
+                ]  # shallow copy to avoid mutating shared data
+                _finalize_inplace(rows, int_cols)
+            else:
+                # Still need to pop block_id_group for Delta even when no int cols
+                rows = [dict(r) for r in rows]
+                for row in rows:
+                    row.pop("block_id_group", None)
+            self.write_table(table_name, rows)
 
     def highest_block(self):
         logger.debug("Getting highest block")
@@ -475,6 +497,12 @@ CONFIG_MAP = {
 }
 
 
+FINALIZE_INT_COLS_MAP = {
+    "eth": BINARY_COL_CONVERSION_MAP_ACCOUNT,
+    "trx": BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
+}
+
+
 class DeltaDumpSinkFactory:  # todo could be a function
     @staticmethod
     def create_writer(
@@ -484,9 +512,12 @@ class DeltaDumpSinkFactory:  # todo could be a function
         if not db_write_config:
             raise ValueError(f"Invalid network: {network}")
 
+        finalize_int_cols = FINALIZE_INT_COLS_MAP.get(network, {})
+
         return DeltaDumpWriter(
             db_write_config=db_write_config,
             s3_credentials=s3_credentials,
             write_mode=write_mode,
             directory=directory,
+            finalize_int_cols=finalize_int_cols,
         )

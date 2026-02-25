@@ -22,12 +22,6 @@ from graphsenselib.ingest.utxo import (
     prepare_blocks_inplace,
     prepare_transactions_inplace_parquet,
 )
-from graphsenselib.schema.resources.parquet.account import (
-    BINARY_COL_CONVERSION_MAP_ACCOUNT,
-)
-from graphsenselib.schema.resources.parquet.account_trx import (
-    BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
-)
 from graphsenselib.utils.constants import TRON_DUMMY_REPLACEMENT_ADDRESS
 
 logger = logging.getLogger(__name__)
@@ -125,12 +119,6 @@ class TransformerTRX(Transformer):
 
         t0 = time.monotonic()
         txs = enrich_txs_with_vrs(txs, receipts)
-        # For gRPC-sourced transactions, gas_price is 0 (not in protobuf).
-        # On Tron, gas_price == effective_gas_price, so copy from receipt.
-        for tx in txs:
-            egp = tx.get("receipt_effective_gas_price")
-            if egp is not None:
-                tx["gas_price"] = egp
         t_enrich_vrs = time.monotonic() - t0
 
         t0 = time.monotonic()
@@ -146,7 +134,7 @@ class TransformerTRX(Transformer):
             TX_HASH_PREFIX_LEN,
             partition,
             keep_block_ids=True,
-            drop_tx_hash_prefix=True,
+            drop_tx_hash_prefix=False,
         )
         t_prep_fees = time.monotonic() - t0
 
@@ -165,21 +153,12 @@ class TransformerTRX(Transformer):
         t_prep_logs = time.monotonic() - t0
 
         t0 = time.monotonic()
-        _finalize_inplace(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["block"])
-        _finalize_inplace(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["transaction"])
-        _finalize_inplace(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["log"])
-        # Traces: finalize + fix empty transferto_address in one pass
-        trace_int_cols = BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"]
+        # Fix empty transferto_address (semantic data correction, not format conversion)
         dummy_address = TRON_DUMMY_REPLACEMENT_ADDRESS
         for trace in traces:
-            trace.pop("block_id_group", None)
             if len(trace["transferto_address"]) == 0:
                 trace["transferto_address"] = dummy_address
-            for col in trace_int_cols:
-                v = trace[col]
-                if v is not None:
-                    trace[col] = v.to_bytes((v.bit_length() + 7) // 8, "big")
-        t_finalize = time.monotonic() - t0
+        t_fixup = time.monotonic() - t0
 
         t0 = time.monotonic()
         txs.sort(key=lambda x: (x["block_id"], x["transaction_index"]))
@@ -199,7 +178,7 @@ class TransformerTRX(Transformer):
             f"prep_txs={t_prep_txs:.3f}s ({len(txs)} txs)  "
             f"prep_traces={t_prep_traces:.3f}s ({len(traces)} traces)  "
             f"prep_logs={t_prep_logs:.3f}s ({len(logs)} logs)  "
-            f"finalize={t_finalize:.3f}s  "
+            f"fixup={t_fixup:.3f}s  "
             f"sort={t_sort:.3f}s"
         )
 
@@ -259,13 +238,6 @@ class TransformerETH(Transformer):
         t_prep_logs = time.monotonic() - t0
 
         t0 = time.monotonic()
-        _finalize_inplace(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT["block"])
-        _finalize_inplace(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT["transaction"])
-        _finalize_inplace(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT["trace"])
-        _finalize_inplace(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT["log"])
-        t_finalize = time.monotonic() - t0
-
-        t0 = time.monotonic()
         txs.sort(key=lambda x: (x["block_id"], x["transaction_index"]))
         blocks.sort(key=lambda x: x["block_id"])
         traces.sort(key=lambda x: (x["block_id"], x["trace_index"]))
@@ -281,7 +253,6 @@ class TransformerETH(Transformer):
             f"prep_txs={t_prep_txs:.3f}s ({len(txs)} txs)  "
             f"prep_traces={t_prep_traces:.3f}s ({len(traces)} traces)  "
             f"prep_logs={t_prep_logs:.3f}s ({len(logs)} logs)  "
-            f"finalize={t_finalize:.3f}s  "
             f"sort={t_sort:.3f}s"
         )
 

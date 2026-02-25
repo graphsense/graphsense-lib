@@ -2,6 +2,7 @@
 import logging
 import sys
 import time
+from contextlib import ExitStack
 from typing import Dict
 
 import click
@@ -142,7 +143,7 @@ def ingesting():
     type=int,
     default=1,
     help="Which version of the ingest to use, 1: legacy (sequential), 2:parallel"
-    "(default: 1)",
+    "(default: 1). Note: version 1 has been removed for account chains (ETH/TRX).",
 )
 def ingest(
     env,
@@ -271,6 +272,14 @@ def deltalake():
     default=None,
     help="Run autocompation, paramater controls age since last run and day the compaction should be run on, e.g. 7d;sunday means run on sundays iif the last compaction was more than 7 days ago days ago",
 )
+@click.option(
+    "--sinks",
+    type=click.Choice(["delta", "cassandra"], case_sensitive=False),
+    multiple=True,
+    default=["delta"],
+    help="Sinks to write to (default: delta). "
+    "Can be specified multiple times, e.g. --sinks delta --sinks cassandra.",
+)
 def dump_rawdata(
     env,
     currency,
@@ -280,6 +289,7 @@ def dump_rawdata(
     write_mode,
     ignore_overwrite_safechecks,
     auto_compact,
+    sinks,
 ):
     """Exports raw cryptocurrency data to parquet files either to s3
     or a local directory.
@@ -307,20 +317,39 @@ def dump_rawdata(
 
     parquet_directory = parquet_directory_config.directory
 
+    use_cassandra = "cassandra" in sinks
+    use_delta = "delta" in sinks
+
+    if not use_delta:
+        logger.error("Delta sink is currently required.")
+        sys.exit(11)
+
+    if use_cassandra:
+        schema_tools = GraphsenseSchemas()
+        schema_tools.create_keyspace_if_not_exist(env, currency, keyspace_type="raw")
+        logger.info("Apply migrations to raw keyspace if necessary")
+        schema_tools.apply_migrations(env, currency, keyspace_type="raw")
+
     lock_name = f"delta_ingest_{currency}"
     try:
         with create_lock(lock_name):
-            export_delta(
-                currency=currency,
-                sources=sources,
-                directory=parquet_directory,
-                start_block=start_block,
-                end_block=end_block,
-                provider_timeout=timeout,
-                s3_credentials=s3_credentials,
-                write_mode=write_mode,
-                ignore_overwrite_safechecks=ignore_overwrite_safechecks,
-            )
+            with ExitStack() as stack:
+                db = None
+                if use_cassandra:
+                    db = stack.enter_context(DbFactory().from_config(env, currency))
+
+                export_delta(
+                    currency=currency,
+                    sources=sources,
+                    directory=parquet_directory,
+                    start_block=start_block,
+                    end_block=end_block,
+                    provider_timeout=timeout,
+                    s3_credentials=s3_credentials,
+                    write_mode=write_mode,
+                    ignore_overwrite_safechecks=ignore_overwrite_safechecks,
+                    db=db,
+                )
 
             if auto_compact:
                 logger.info("Running auto-compaction check")

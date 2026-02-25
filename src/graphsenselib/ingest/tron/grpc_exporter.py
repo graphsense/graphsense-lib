@@ -450,14 +450,26 @@ class TronCombinedGrpcExporter:
                             # sig[64] may already be v (27/28) or recovery id (0/1)
                             v = v_byte if v_byte >= 27 else v_byte + 27
 
-                    # Look up TransactionInfo for gas_used
+                    # Look up TransactionInfo for gas_used and per-tx energy price
                     tx_info = tx_info_by_hash.get(tx_hash)
 
                     # Tron JSON-RPC returns gas = energy_usage_total (actual
                     # energy consumed), not the fee_limit. Match that behavior.
                     gas = 0
+                    tx_gas_price = energy_price  # batch-level fallback
                     if tx_info is not None:
-                        gas = tx_info.receipt.energy_usage_total
+                        ti_rcpt = tx_info.receipt
+                        gas = ti_rcpt.energy_usage_total
+                        # Derive per-tx energy price from receipt to match
+                        # what the HTTP JSON-RPC returns as gasPrice.
+                        if ti_rcpt.energy_fee > 0:
+                            paid = (
+                                ti_rcpt.energy_usage_total
+                                - ti_rcpt.energy_usage
+                                - ti_rcpt.origin_energy_usage
+                            )
+                            if paid > 0:
+                                tx_gas_price = ti_rcpt.energy_fee // paid
                         # WithdrawBalanceContract: value is the withdrawn
                         # amount from TransactionInfo, not the contract param.
                         if type_name == "protocol.WithdrawBalanceContract":
@@ -475,7 +487,7 @@ class TronCombinedGrpcExporter:
                         "to_address": to_addr,
                         "value": value,
                         "gas": gas,
-                        "gas_price": 0,  # Set from receipt in transform
+                        "gas_price": tx_gas_price,
                         "input": input_data,
                         "max_fee_per_gas": None,
                         "max_priority_fee_per_gas": None,
@@ -514,7 +526,7 @@ class TronCombinedGrpcExporter:
                             "contract_address": contract_addr,
                             "root": None,
                             "status": 1 if tx_info.result == 0 else 0,
-                            "effective_gas_price": energy_price,
+                            "effective_gas_price": tx_gas_price,
                             "l1_fee": None,
                             "l1_gas_used": None,
                             "l1_gas_price": None,
@@ -576,7 +588,7 @@ class TronCombinedGrpcExporter:
                             "contract_address": None,
                             "root": None,
                             "status": 1,
-                            "effective_gas_price": energy_price,
+                            "effective_gas_price": tx_gas_price,
                             "l1_fee": None,
                             "l1_gas_used": None,
                             "l1_gas_price": None,
