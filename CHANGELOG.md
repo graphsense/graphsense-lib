@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
+## [2.9.7] 2026-02-25
+
+### Library (v2.9.7)
+
+#### changed
+- CLI config loading now treats `web`, `tagpack-tool`, and `tagstore` as optional-config command groups, allowing these commands to run without a valid `.graphsense.yaml`.
+- Top-level command detection in CLI config loading now skips global options (including `--config-file`) before resolving command-specific loading behavior.
+
+#### added
+- Integration tests for `graphsense-cli web openapi`, `graphsense-cli tagpack-tool --version`, and `graphsense-cli tagstore version` to verify behavior without a loaded GraphSense config file.
+
+### Web API + Python client (webapi-2.9.5)
+no changes
+
 ## [2.9.6] 2026-02-23
 
 ### Library (v2.9.6)
