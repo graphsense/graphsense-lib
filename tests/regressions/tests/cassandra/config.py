@@ -21,15 +21,16 @@ class CassandraRange:
 
 
 # Block ranges per currency.
-# UTXO chains: only genesis ranges work for Cassandra because mid-chain ranges
-# require spent transaction outputs that aren't available in a fresh database.
-# Genesis blocks are coinbase-only so no spent-output lookups are needed.
-# We use larger ranges (100 blocks) for more meaningful coverage.
+# UTXO chains: must start from block 0 because mid-chain ranges require spent
+# transaction outputs that aren't available in a fresh database.
+# BTC 0-250 covers the first non-coinbase transaction (block 170, Satoshi→Hal
+# Finney spending an output from block 9) plus a handful more real transactions
+# in blocks 181-182+, giving us basic UTXO address resolution coverage.
 # Account chains (ETH/TRX): mid-chain ranges work because there's no UTXO
 # dependency.
 CASSANDRA_TEST_RANGES: dict[str, list[CassandraRange]] = {
     "btc": [
-        CassandraRange("genesis", 0, 99, "coinbase-only genesis blocks"),
+        CassandraRange("genesis", 0, 250, "first real txs + UTXO resolution"),
     ],
     "eth": [
         CassandraRange("mid", 2_000_000, 2_000_024, "early PoW era"),
