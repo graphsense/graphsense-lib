@@ -52,11 +52,33 @@ CASSANDRA_TEST_RANGES: dict[str, list[CassandraRange]] = {
 # Expected minimum row counts per table.
 # These are conservative lower bounds — actual values depend on chain activity.
 EXPECTED_MIN_ROWS = {
-    "btc": {"block": 1, "transaction": 1},
+    "btc": {
+        "block": 1,
+        "transaction": 1,
+        "block_transactions": 1,
+        "transaction_by_tx_prefix": 1,
+        "transaction_spent_in": 1,
+        "transaction_spending": 1,
+    },
     "eth": {"block": 1, "transaction": 1},
-    "ltc": {"block": 1, "transaction": 1},
-    "bch": {"block": 1, "transaction": 1},
-    "zec": {"block": 1, "transaction": 1},
+    "ltc": {
+        "block": 1,
+        "transaction": 1,
+        "block_transactions": 1,
+        "transaction_by_tx_prefix": 1,
+    },
+    "bch": {
+        "block": 1,
+        "transaction": 1,
+        "block_transactions": 1,
+        "transaction_by_tx_prefix": 1,
+    },
+    "zec": {
+        "block": 1,
+        "transaction": 1,
+        "block_transactions": 1,
+        "transaction_by_tx_prefix": 1,
+    },
     "trx": {"block": 1, "transaction": 1},
 }
 

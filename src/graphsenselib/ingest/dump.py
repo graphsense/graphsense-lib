@@ -8,6 +8,13 @@ from graphsenselib.ingest.account import (
     ingest_configuration_cassandra,
     logger,
 )
+from graphsenselib.ingest.utxo import (
+    BLOCK_BUCKET_SIZE as UTXO_BLOCK_BUCKET_SIZE,
+    TX_HASH_PREFIX_LENGTH as UTXO_TX_HASH_PREFIX_LENGTH,
+    TX_BUCKET_SIZE as UTXO_TX_BUCKET_SIZE,
+    ingest_configuration_cassandra as ingest_configuration_cassandra_utxo,
+    ingest_summary_statistics_cassandra as ingest_summary_statistics_cassandra_utxo,
+)
 from graphsenselib.ingest.cassandra.sink import CassandraSink
 from graphsenselib.ingest.delta.sink import DeltaDumpSinkFactory
 from graphsenselib.ingest.ingestrunner import IngestRunner
@@ -104,7 +111,7 @@ def export_delta(
             network=currency,
             provider_timeout=provider_timeout,
         )
-        transformer = TransformerUTXO(partition_batch_size, currency)
+        transformer = TransformerUTXO(partition_batch_size, currency, db=db)
     else:
         raise ValueError(f"{currency} not supported by ingest module")
 
@@ -156,8 +163,29 @@ def export_delta(
         f"file batch size: {file_batch_size}"
     )
 
+    # Write configuration BEFORE runner.run() — critical because UTXO
+    # get_latest_tx_id_before_block calls get_block_bucket_size() which
+    # reads from the configuration table.
+    if db is not None:
+        logger.info("Writing Cassandra configuration table...")
+        if currency in ["btc", "ltc", "bch", "zec"]:
+            ingest_configuration_cassandra_utxo(
+                db,
+                UTXO_BLOCK_BUCKET_SIZE,
+                UTXO_TX_HASH_PREFIX_LENGTH,
+                UTXO_TX_BUCKET_SIZE,
+            )
+        else:
+            ingest_configuration_cassandra(db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN)
+
     runner.run(start_block, end_block)
 
-    if db is not None:
-        logger.info("Writing Cassandra metadata tables...")
-        ingest_configuration_cassandra(db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN)
+    # Write summary statistics for UTXO chains after run
+    if db is not None and currency in ["btc", "ltc", "bch", "zec"]:
+        logger.info("Writing Cassandra summary statistics...")
+        ingest_summary_statistics_cassandra_utxo(
+            db,
+            timestamp=transformer._last_block_ts,
+            total_blocks=end_block + 1,
+            total_txs=transformer._next_tx_id,
+        )

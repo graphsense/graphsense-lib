@@ -3,7 +3,7 @@
 Supports two modes:
 - ``legacy``: uses ``ingest from-node --sinks cassandra`` (old pipeline)
 - ``delta``: uses ``ingest delta-lake ingest --sinks delta --sinks cassandra``
-  (new dual-sink pipeline, account chains only)
+  (new dual-sink pipeline, all chains)
 """
 
 import os
@@ -158,16 +158,12 @@ def run_cassandra_ingest(
 
     - ``"legacy"``: ``ingest from-node --sinks cassandra``
     - ``"delta"``: ``ingest delta-lake ingest --sinks delta --sinks cassandra``
-      (requires account chain; falls back to legacy for UTXO)
 
     If *keyspace_name* is not given, defaults to
     ``regtest_{currency}_{range_id}_raw``.
     """
     if keyspace_name is None:
         keyspace_name = f"regtest_{config.currency}_{config.range_id}_raw"
-
-    if mode == "delta" and config.schema_type == "utxo":
-        mode = "legacy"
 
     if mode == "delta":
         _run_delta_ingest(venv_dir, config, cassandra_host, cassandra_port, keyspace_name)
