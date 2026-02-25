@@ -1,6 +1,5 @@
 # flake8: noqa: T201
 import logging
-import os
 import sys
 import time
 from contextlib import ExitStack
@@ -172,12 +171,10 @@ def ingest(
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
 
-    is_utxo = ks_config.schema_type == "utxo"
-    use_legacy = os.environ.get("LEGACY_INGEST", "").lower() in ("1", "true", "yes")
-    use_new_pipeline = is_utxo and not use_legacy
+    use_legacy = ks_config.ingest_config.legacy_ingest
 
     # Mode validation only applies to legacy paths
-    if not use_new_pipeline:
+    if use_legacy:
         if (
             (
                 ks_config.schema_type in ["account", "account_trx"]
@@ -191,6 +188,9 @@ def ingest(
                 f"{ks_config.schema_type} type currencies. Exiting."
             )
             sys.exit(11)
+        # Account chains require --version 2 in legacy mode
+        if ks_config.schema_type in ["account", "account_trx"]:
+            version = 2
 
     schema_tools = GraphsenseSchemas()
     ks_type = "raw"
@@ -205,8 +205,8 @@ def ingest(
         lock_disabled = no_lock or no_file_lock
         try:
             with create_lock(lock_name, disabled=lock_disabled):
-                if use_new_pipeline:
-                    _run_new_utxo_ingest(
+                if not use_legacy:
+                    _run_new_ingest(
                         config,
                         ks_config,
                         db,
@@ -239,7 +239,7 @@ def ingest(
             sys.exit(911)
 
 
-def _run_new_utxo_ingest(
+def _run_new_ingest(
     config,
     ks_config,
     db,
@@ -250,7 +250,7 @@ def _run_new_utxo_ingest(
     end_block,
     timeout,
 ):
-    """Route UTXO from-node to the IngestRunner-based pipeline."""
+    """Route from-node to the IngestRunner-based pipeline."""
     delta_directory = None
     s3_credentials = None
     if "delta" in sinks:
