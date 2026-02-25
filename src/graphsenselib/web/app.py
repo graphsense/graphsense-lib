@@ -588,41 +588,62 @@ def _register_exception_handlers(app: FastAPI):
 
 
 def _register_routers(app: FastAPI):
-    """Register all API routers on the app.
-
-    All routers require api_key authentication unless disable_auth is set.
-    """
-    config = app.state.config
-    api_key_dep = [] if config.disable_auth else [Depends(get_api_key)]
-    app.include_router(general.router, tags=["general"], dependencies=api_key_dep)
-    app.include_router(tags.router, tags=["tags"], dependencies=api_key_dep)
+    """Register all API routers on the app."""
+    app.include_router(general.router, tags=["general"])
+    app.include_router(tags.router, tags=["tags"])
     app.include_router(
         addresses.router,
         prefix="/{currency}",
         tags=["addresses"],
-        dependencies=api_key_dep,
     )
-    app.include_router(
-        blocks.router, prefix="/{currency}", tags=["blocks"], dependencies=api_key_dep
-    )
+    app.include_router(blocks.router, prefix="/{currency}", tags=["blocks"])
     app.include_router(
         entities.router,
         prefix="/{currency}",
         tags=["entities"],
-        dependencies=api_key_dep,
     )
-    app.include_router(
-        txs.router, prefix="/{currency}", tags=["txs"], dependencies=api_key_dep
-    )
-    app.include_router(
-        rates.router, prefix="/{currency}", tags=["rates"], dependencies=api_key_dep
-    )
-    app.include_router(
-        tokens.router, prefix="/{currency}", tags=["tokens"], dependencies=api_key_dep
-    )
-    app.include_router(
-        bulk.router, prefix="/{currency}", tags=["bulk"], dependencies=api_key_dep
-    )
+    app.include_router(txs.router, prefix="/{currency}", tags=["txs"])
+    app.include_router(rates.router, prefix="/{currency}", tags=["rates"])
+    app.include_router(tokens.router, prefix="/{currency}", tags=["tokens"])
+    app.include_router(bulk.router, prefix="/{currency}", tags=["bulk"])
+
+
+def _get_api_dependencies(config: GSRestConfig) -> list:
+    return [] if config.disable_auth else [Depends(get_api_key)]
+
+
+def _promote_common_security_to_global(schema: dict[str, Any]) -> dict[str, Any]:
+    """Promote repeated operation-level security to top-level OpenAPI security."""
+    operation_security: list[Any] = []
+
+    for path_item in schema.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            if "security" in operation:
+                operation_security.append(operation["security"])
+
+    if not operation_security:
+        return schema
+
+    first_security = operation_security[0]
+    if not all(sec == first_security for sec in operation_security):
+        return schema
+
+    schema["security"] = first_security
+
+    for path_item in schema.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            if operation.get("security") == first_security:
+                operation.pop("security", None)
+
+    return schema
 
 
 def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
@@ -732,6 +753,7 @@ def create_app(
         docs_url="/ui",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        dependencies=_get_api_dependencies(config),
     )
 
     app.state.config = config
@@ -794,6 +816,9 @@ def _setup_custom_openapi(app: FastAPI) -> None:
         # Convert schema names to snake_case for backward compatibility
         openapi_schema = _convert_schema_names_to_snake_case(openapi_schema)
 
+        # Promote repeated operation security requirements to global OpenAPI security
+        openapi_schema = _promote_common_security_to_global(openapi_schema)
+
         app.openapi_schema = openapi_schema
         return app.openapi_schema
 
@@ -806,6 +831,7 @@ def create_spec_app() -> FastAPI:
         title="GraphSense API",
         description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
         version=__api_version__,
+        dependencies=[Depends(get_api_key)],
     )
     app.state.config = SimpleNamespace(disable_auth=False)
     _register_routers(app)
@@ -821,6 +847,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
         title="GraphSense API",
         version=__api_version__,
         lifespan=lifespan,
+        dependencies=_get_api_dependencies(config),
     )
 
     app.state.config = config
