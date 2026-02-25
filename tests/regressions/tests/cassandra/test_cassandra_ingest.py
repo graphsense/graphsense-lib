@@ -4,6 +4,12 @@ Ingests a small block range for each configured currency into a
 testcontainer Cassandra instance using both the reference and current
 versions of graphsense-lib, then compares the results row-by-row.
 
+The reference version always uses the legacy ``ingest from-node`` command.
+For account chains (ETH/TRX), the current version uses the new delta-lake
+dual-sink pipeline (``ingest delta-lake ingest --sinks delta --sinks cassandra``)
+to verify it produces identical Cassandra output.  UTXO chains still use
+the legacy command for both versions (Phase 2).
+
 Requires:
 - Docker (for Cassandra testcontainer)
 - Node URLs configured in .graphsense.yaml
@@ -74,10 +80,15 @@ class TestCassandraIngest:
         ref_ver = ref_package_versions.get("graphsense-lib", "?")
         cur_ver = current_package_versions.get("graphsense-lib", "?")
 
+        # Account chains use the new delta dual-sink pipeline for the
+        # current version; UTXO chains (Phase 2) still use legacy.
+        is_account = cassandra_config.schema_type in ("account", "account_trx")
+        cur_mode = "delta" if is_account else "legacy"
+
         print(f"\n{'=' * 68}")
         print(f"CASSANDRA INGEST: {currency.upper()} [{range_id}]")
-        print(f"  reference:       {ref_ver}")
-        print(f"  current:         {cur_ver}")
+        print(f"  reference:       {ref_ver} (legacy)")
+        print(f"  current:         {cur_ver} ({cur_mode})")
         print(
             f"  blocks:          "
             f"{cassandra_config.start_block:,}-{cassandra_config.end_block:,} "
@@ -87,7 +98,7 @@ class TestCassandraIngest:
             print(f"  note:            {cassandra_config.range_note}")
         print(f"  cassandra:       {host}:{port}")
 
-        # --- Run reference ingest ---
+        # --- Run reference ingest (always legacy) ---
         print(f"  ingesting ref    ({ref_ks}) ...", end=" ", flush=True)
         run_cassandra_ingest(
             venv_dir=reference_venv,
@@ -95,17 +106,19 @@ class TestCassandraIngest:
             cassandra_host=host,
             cassandra_port=port,
             keyspace_name=ref_ks,
+            mode="legacy",
         )
         print("done")
 
-        # --- Run current ingest ---
-        print(f"  ingesting cur    ({cur_ks}) ...", end=" ", flush=True)
+        # --- Run current ingest (delta for account, legacy for utxo) ---
+        print(f"  ingesting cur    ({cur_ks}, {cur_mode}) ...", end=" ", flush=True)
         run_cassandra_ingest(
             venv_dir=current_venv,
             config=cassandra_config,
             cassandra_host=host,
             cassandra_port=port,
             keyspace_name=cur_ks,
+            mode=cur_mode,
         )
         print("done")
 
@@ -209,12 +222,12 @@ class TestCassandraIngest:
         cluster.shutdown()
 
         if mismatches:
-            print(f"  result:          FAIL")
+            print("  result:          FAIL")
             print(f"{'=' * 68}")
             pytest.fail(
                 f"{currency}[{range_id}] Cassandra content mismatches:\n"
                 + "\n".join(f"  - {m}" for m in mismatches)
             )
         else:
-            print(f"  result:          PASS")
+            print("  result:          PASS")
             print(f"{'=' * 68}")

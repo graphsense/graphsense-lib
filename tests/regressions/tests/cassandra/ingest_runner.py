@@ -1,4 +1,10 @@
-"""Run graphsense-cli ingest from-node in a subprocess against a Cassandra container."""
+"""Run graphsense-cli ingest in a subprocess against a Cassandra container.
+
+Supports two modes:
+- ``legacy``: uses ``ingest from-node --sinks cassandra`` (old pipeline)
+- ``delta``: uses ``ingest delta-lake ingest --sinks delta --sinks cassandra``
+  (new dual-sink pipeline, account chains only)
+"""
 
 import os
 import subprocess
@@ -28,17 +34,81 @@ def _detect_no_lock_flag(cli_bin: str, env: dict) -> str:
     return "--no-lock"
 
 
-def _build_gs_config(
+def _detect_has_sinks_flag(cli_bin: str, env: dict) -> bool:
+    """Check if ``ingest delta-lake ingest`` supports ``--sinks``."""
+    result = subprocess.run(
+        [cli_bin, "ingest", "delta-lake", "ingest", "--help"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    help_text = result.stdout + result.stderr
+    return "--sinks" in help_text
+
+
+def _build_gs_config_legacy(
     config: CassandraTestConfig,
     cassandra_host: str,
     cassandra_port: int,
     keyspace_name: str,
 ) -> dict:
-    """Build a minimal .graphsense.yaml config dict for Cassandra ingestion."""
+    """Build a minimal .graphsense.yaml config dict for legacy Cassandra ingestion."""
     currency = config.currency
 
     ingest_config = {
         "node_reference": config.node_url,
+    }
+    if config.secondary_node_references:
+        ingest_config["secondary_node_references"] = config.secondary_node_references
+
+    return {
+        "environments": {
+            "test": {
+                "cassandra_nodes": [f"{cassandra_host}:{cassandra_port}"],
+                "keyspaces": {
+                    currency: {
+                        "raw_keyspace_name": keyspace_name,
+                        "transformed_keyspace_name": f"{keyspace_name}_transformed",
+                        "schema_type": config.schema_type,
+                        "ingest_config": ingest_config,
+                        "keyspace_setup_config": {
+                            "raw": {
+                                "replication_config": (
+                                    "{'class': 'SimpleStrategy',"
+                                    " 'replication_factor': 1}"
+                                ),
+                                "data_configuration": {
+                                    "id": keyspace_name,
+                                    "block_bucket_size": 100,
+                                    "tx_bucket_size": 25000,
+                                    "tx_prefix_length": 5,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
+def _build_gs_config_delta(
+    config: CassandraTestConfig,
+    cassandra_host: str,
+    cassandra_port: int,
+    keyspace_name: str,
+    delta_directory: str,
+) -> dict:
+    """Build config for delta-lake dual-sink ingestion (delta + cassandra)."""
+    currency = config.currency
+
+    ingest_config = {
+        "node_reference": config.node_url,
+        "raw_keyspace_file_sinks": {
+            "delta": {
+                "directory": delta_directory,
+            },
+        },
     }
     if config.secondary_node_references:
         ingest_config["secondary_node_references"] = config.secondary_node_references
@@ -80,11 +150,15 @@ def run_cassandra_ingest(
     cassandra_host: str,
     cassandra_port: int,
     keyspace_name: str | None = None,
+    mode: str = "legacy",
 ) -> None:
-    """Run ``graphsense-cli ingest from-node`` inside *venv_dir*.
+    """Run Cassandra ingestion inside *venv_dir*.
 
-    Creates a temporary ``.graphsense.yaml`` with the right Cassandra
-    settings, points ``GRAPHSENSE_CONFIG_YAML`` at it, then executes the CLI.
+    *mode* controls which pipeline is used:
+
+    - ``"legacy"``: ``ingest from-node --sinks cassandra``
+    - ``"delta"``: ``ingest delta-lake ingest --sinks delta --sinks cassandra``
+      (requires account chain; falls back to legacy for UTXO)
 
     If *keyspace_name* is not given, defaults to
     ``regtest_{currency}_{range_id}_raw``.
@@ -92,7 +166,24 @@ def run_cassandra_ingest(
     if keyspace_name is None:
         keyspace_name = f"regtest_{config.currency}_{config.range_id}_raw"
 
-    gs_config = _build_gs_config(
+    if mode == "delta" and config.schema_type == "utxo":
+        mode = "legacy"
+
+    if mode == "delta":
+        _run_delta_ingest(venv_dir, config, cassandra_host, cassandra_port, keyspace_name)
+    else:
+        _run_legacy_ingest(venv_dir, config, cassandra_host, cassandra_port, keyspace_name)
+
+
+def _run_legacy_ingest(
+    venv_dir: Path,
+    config: CassandraTestConfig,
+    cassandra_host: str,
+    cassandra_port: int,
+    keyspace_name: str,
+) -> None:
+    """Run ``graphsense-cli ingest from-node --sinks cassandra``."""
+    gs_config = _build_gs_config_legacy(
         config, cassandra_host, cassandra_port, keyspace_name
     )
 
@@ -110,11 +201,11 @@ def run_cassandra_ingest(
         "PATH": f"{venv_dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
     })
 
-    # UTXO currencies require utxo_with_tx_graph mode;
-    # account currencies use legacy mode.
-    mode = (
-        "utxo_with_tx_graph" if config.schema_type == "utxo" else "legacy"
-    )
+    is_utxo = config.schema_type == "utxo"
+    ingest_mode = "utxo_with_tx_graph" if is_utxo else "legacy"
+    # Account chains must use --version 2 (async) for correct transaction_type.
+    # UTXO only supports --version 1.
+    version = "1" if is_utxo else "2"
 
     no_lock_flag = _detect_no_lock_flag(cli_bin, env)
 
@@ -130,7 +221,8 @@ def run_cassandra_ingest(
         "--sinks", "cassandra",
         "--create-schema",
         no_lock_flag,
-        "--mode", mode,
+        "--mode", ingest_mode,
+        "--version", version,
     ]
 
     result = subprocess.run(
@@ -145,7 +237,72 @@ def run_cassandra_ingest(
 
     if result.returncode != 0:
         raise RuntimeError(
-            f"Cassandra ingestion failed (exit {result.returncode}):\n"
+            f"Legacy Cassandra ingestion failed (exit {result.returncode}):\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"stdout: {result.stdout[-2000:]}\n"
+            f"stderr: {result.stderr[-2000:]}"
+        )
+
+
+def _run_delta_ingest(
+    venv_dir: Path,
+    config: CassandraTestConfig,
+    cassandra_host: str,
+    cassandra_port: int,
+    keyspace_name: str,
+) -> None:
+    """Run ``graphsense-cli ingest delta-lake ingest --sinks delta --sinks cassandra``."""
+    delta_dir = tempfile.mkdtemp(prefix="gstest-delta-")
+
+    gs_config = _build_gs_config_delta(
+        config, cassandra_host, cassandra_port, keyspace_name, delta_dir
+    )
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", prefix="gsconfig-delta-cass-", delete=False
+    ) as f:
+        yaml.dump(gs_config, f)
+        config_path = f.name
+
+    cli_bin = str(venv_dir / "bin" / "graphsense-cli")
+
+    env = os.environ.copy()
+    env.update({
+        "GRAPHSENSE_CONFIG_YAML": config_path,
+        "PATH": f"{venv_dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+    })
+
+    cmd = [
+        cli_bin,
+        "ingest",
+        "delta-lake",
+        "ingest",
+        "-e", "test",
+        "-c", config.currency,
+        "--start-block", str(config.start_block),
+        "--end-block", str(config.end_block),
+        "--write-mode", "overwrite",
+        "--ignore-overwrite-safechecks",
+        "--sinks", "delta",
+        "--sinks", "cassandra",
+    ]
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=600,
+    )
+
+    Path(config_path).unlink(missing_ok=True)
+    # Clean up delta temp dir
+    import shutil
+    shutil.rmtree(delta_dir, ignore_errors=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Delta dual-sink ingestion failed (exit {result.returncode}):\n"
             f"cmd: {' '.join(cmd)}\n"
             f"stdout: {result.stdout[-2000:]}\n"
             f"stderr: {result.stderr[-2000:]}"
