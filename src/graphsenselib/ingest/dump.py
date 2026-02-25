@@ -57,7 +57,7 @@ PARTITIONSIZES = {
 def export_delta(
     currency: str,
     sources: List[str],
-    directory: str,
+    directory: Optional[str],
     start_block: Optional[int],
     end_block: Optional[int],
     provider_timeout: int,
@@ -72,17 +72,18 @@ def export_delta(
     file_batch_size = FILESIZES[currency]
     partition_batch_size = PARTITIONSIZES[currency]
 
-    if (write_mode == "overwrite") and not ignore_overwrite_safechecks:
-        is_start_of_partition = start_block % partition_batch_size == 0
-        left_partition_start = start_block - (start_block % partition_batch_size)
-        assert is_start_of_partition, (
-            f"Start block ({start_block:,}) must be a multiple of partition_batch_size "
-            f"({partition_batch_size:,}) for overwrite mode. "
-            f"Try {left_partition_start:,} or use flag ignore-overwrite-safechecks "
-            f" instead."
-        )
+    if directory is not None:
+        if (write_mode == "overwrite") and not ignore_overwrite_safechecks:
+            is_start_of_partition = start_block % partition_batch_size == 0
+            left_partition_start = start_block - (start_block % partition_batch_size)
+            assert is_start_of_partition, (
+                f"Start block ({start_block:,}) must be a multiple of partition_batch_size "
+                f"({partition_batch_size:,}) for overwrite mode. "
+                f"Try {left_partition_start:,} or use flag ignore-overwrite-safechecks "
+                f" instead."
+            )
 
-    logger.info(f"Writing data as parquet to {directory}")
+        logger.info(f"Writing data as parquet to {directory}")
 
     if partition_batch_size % file_batch_size != 0:
         logger.error("Error: partition_batch_size is not a multiple of file_batch_size")
@@ -115,21 +116,26 @@ def export_delta(
     else:
         raise ValueError(f"{currency} not supported by ingest module")
 
-    delta_sink = DeltaDumpSinkFactory.create_writer(
-        currency, s3_credentials, write_mode, directory
-    )
-
     runner.addSource(source)
     runner.addTransformer(transformer)
-    runner.addSink(delta_sink)
 
+    # Delta sink (optional — only when a directory is configured)
+    delta_sink = None
+    if directory is not None:
+        delta_sink = DeltaDumpSinkFactory.create_writer(
+            currency, s3_credentials, write_mode, directory
+        )
+        runner.addSink(delta_sink)
+
+    # Cassandra sink (optional — only when db is provided)
     if db is not None:
         cassandra_sink = CassandraSink(db)
         runner.addSink(cassandra_sink)
 
     backoff = get_reorg_backoff_blocks(currency)
 
-    if write_mode == "append":
+    # Auto-detect start_block
+    if write_mode == "append" and delta_sink is not None:
         highest_block = delta_sink.highest_block()
         highest_block_node = source.get_last_synced_block_bo(backoff)
 
@@ -154,10 +160,14 @@ def export_delta(
                 "for append mode if no data is present "
                 "yet."
             )
+    elif delta_sink is None and start_block is None and db is not None:
+        # No delta sink — auto-detect from Cassandra
+        highest_block = db.raw.get_highest_block()
+        start_block = (highest_block + 1) if highest_block is not None else 0
 
     start_block, end_block = source.validate_blockrange(start_block, end_block, backoff)
 
-    logger.info(f"Writing data from {start_block} to {end_block} in mode {write_mode}")
+    logger.info(f"Writing data from {start_block} to {end_block}")
     logger.info(
         f"Partition batch size: {partition_batch_size}, "
         f"file batch size: {file_batch_size}"

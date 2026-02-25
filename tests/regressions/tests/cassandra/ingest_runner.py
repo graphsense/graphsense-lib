@@ -1,9 +1,12 @@
 """Run graphsense-cli ingest in a subprocess against a Cassandra container.
 
-Supports two modes:
-- ``legacy``: uses ``ingest from-node --sinks cassandra`` (old pipeline)
+Supports three modes:
+- ``legacy``: uses ``ingest from-node`` with old pipeline flags
+  (--mode utxo_with_tx_graph / --version 2)
+- ``from-node``: uses ``ingest from-node --sinks cassandra``
+  (new IngestRunner-based pipeline, UTXO chains)
 - ``delta``: uses ``ingest delta-lake ingest --sinks delta --sinks cassandra``
-  (new dual-sink pipeline, all chains)
+  (new dual-sink pipeline, account chains)
 """
 
 import os
@@ -156,7 +159,8 @@ def run_cassandra_ingest(
 
     *mode* controls which pipeline is used:
 
-    - ``"legacy"``: ``ingest from-node --sinks cassandra``
+    - ``"legacy"``: ``ingest from-node`` with old pipeline flags
+    - ``"from-node"``: ``ingest from-node --sinks cassandra`` (new pipeline)
     - ``"delta"``: ``ingest delta-lake ingest --sinks delta --sinks cassandra``
 
     If *keyspace_name* is not given, defaults to
@@ -167,6 +171,10 @@ def run_cassandra_ingest(
 
     if mode == "delta":
         _run_delta_ingest(venv_dir, config, cassandra_host, cassandra_port, keyspace_name)
+    elif mode == "from-node":
+        _run_from_node_ingest(
+            venv_dir, config, cassandra_host, cassandra_port, keyspace_name
+        )
     else:
         _run_legacy_ingest(venv_dir, config, cassandra_host, cassandra_port, keyspace_name)
 
@@ -178,7 +186,7 @@ def _run_legacy_ingest(
     cassandra_port: int,
     keyspace_name: str,
 ) -> None:
-    """Run ``graphsense-cli ingest from-node --sinks cassandra``."""
+    """Run ``graphsense-cli ingest from-node --sinks cassandra`` (legacy pipeline)."""
     gs_config = _build_gs_config_legacy(
         config, cassandra_host, cassandra_port, keyspace_name
     )
@@ -234,6 +242,70 @@ def _run_legacy_ingest(
     if result.returncode != 0:
         raise RuntimeError(
             f"Legacy Cassandra ingestion failed (exit {result.returncode}):\n"
+            f"cmd: {' '.join(cmd)}\n"
+            f"stdout: {result.stdout[-2000:]}\n"
+            f"stderr: {result.stderr[-2000:]}"
+        )
+
+
+def _run_from_node_ingest(
+    venv_dir: Path,
+    config: CassandraTestConfig,
+    cassandra_host: str,
+    cassandra_port: int,
+    keyspace_name: str,
+) -> None:
+    """Run ``graphsense-cli ingest from-node --sinks cassandra`` (new pipeline).
+
+    For UTXO chains, from-node now uses the IngestRunner-based pipeline
+    by default (no --mode or --version flags needed).
+    """
+    gs_config = _build_gs_config_legacy(
+        config, cassandra_host, cassandra_port, keyspace_name
+    )
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", prefix="gsconfig-fromnode-", delete=False
+    ) as f:
+        yaml.dump(gs_config, f)
+        config_path = f.name
+
+    cli_bin = str(venv_dir / "bin" / "graphsense-cli")
+
+    env = os.environ.copy()
+    env.update({
+        "GRAPHSENSE_CONFIG_YAML": config_path,
+        "PATH": f"{venv_dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+    })
+
+    no_lock_flag = _detect_no_lock_flag(cli_bin, env)
+
+    cmd = [
+        cli_bin,
+        "ingest",
+        "from-node",
+        "-e", "test",
+        "-c", config.currency,
+        "--start-block", str(config.start_block),
+        "--end-block", str(config.end_block),
+        "--sinks", "cassandra",
+        "--create-schema",
+        no_lock_flag,
+    ]
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=600,
+    )
+
+    Path(config_path).unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"from-node ingestion failed (exit {result.returncode}):\n"
             f"cmd: {' '.join(cmd)}\n"
             f"stdout: {result.stdout[-2000:]}\n"
             f"stderr: {result.stderr[-2000:]}"

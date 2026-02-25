@@ -5,9 +5,9 @@ testcontainer Cassandra instance using both the reference and current
 versions of graphsense-lib, then compares the results row-by-row.
 
 The reference version always uses the legacy ``ingest from-node`` command.
-The current version uses the new delta-lake dual-sink pipeline
-(``ingest delta-lake ingest --sinks delta --sinks cassandra``) for all
-chains to verify it produces identical Cassandra output.
+The current version uses the new pipeline for all chains:
+- UTXO chains: ``ingest from-node --sinks cassandra``
+- Account chains: ``ingest delta-lake ingest --sinks delta --sinks cassandra``
 
 Requires:
 - Docker (for Cassandra testcontainer)
@@ -79,8 +79,9 @@ class TestCassandraIngest:
         ref_ver = ref_package_versions.get("graphsense-lib", "?")
         cur_ver = current_package_versions.get("graphsense-lib", "?")
 
-        # All chains use the new delta dual-sink pipeline for the current version.
-        cur_mode = "delta"
+        # UTXO: from-node (new IngestRunner pipeline), Account: delta dual-sink
+        is_utxo = cassandra_config.schema_type == "utxo"
+        cur_mode = "from-node" if is_utxo else "delta"
 
         print(f"\n{'=' * 68}")
         print(f"CASSANDRA INGEST: {currency.upper()} [{range_id}]")

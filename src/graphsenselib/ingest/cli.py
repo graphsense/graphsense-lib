@@ -1,5 +1,6 @@
 # flake8: noqa: T201
 import logging
+import os
 import sys
 import time
 from contextlib import ExitStack
@@ -72,11 +73,11 @@ def ingesting():
 )
 @click.option(
     "--sinks",
-    type=click.Choice(INGEST_SINKS, case_sensitive=False),
+    type=click.Choice(INGEST_SINKS + ["delta"], case_sensitive=False),
     multiple=True,
     default=["cassandra"],
-    help="Where the raw data is written to currently"
-    " either cassandra, parquet, or multiple (default: cassandra)",
+    help="Sinks to write to (default: cassandra). "
+    "Can be specified multiple times, e.g. --sinks cassandra --sinks delta.",
 )
 @click.option(
     "--start-block",
@@ -171,19 +172,25 @@ def ingest(
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
 
-    if (
-        (
-            ks_config.schema_type in ["account", "account_trx"]
-            and mode.startswith("utxo_")
-        )
-        or ks_config.schema_type == "utxo"
-        and not mode.startswith("utxo_")
-    ):
-        logger.error(
-            f"Mode {mode} is not available for "
-            f"{ks_config.schema_type} type currencies. Exiting."
-        )
-        sys.exit(11)
+    is_utxo = ks_config.schema_type == "utxo"
+    use_legacy = os.environ.get("LEGACY_INGEST", "").lower() in ("1", "true", "yes")
+    use_new_pipeline = is_utxo and not use_legacy
+
+    # Mode validation only applies to legacy paths
+    if not use_new_pipeline:
+        if (
+            (
+                ks_config.schema_type in ["account", "account_trx"]
+                and mode.startswith("utxo_")
+            )
+            or ks_config.schema_type == "utxo"
+            and not mode.startswith("utxo_")
+        ):
+            logger.error(
+                f"Mode {mode} is not available for "
+                f"{ks_config.schema_type} type currencies. Exiting."
+            )
+            sys.exit(11)
 
     schema_tools = GraphsenseSchemas()
     ks_type = "raw"
@@ -193,29 +200,82 @@ def ingest(
     logger.info("Apply migrations to raw keyspace if necessary")
     schema_tools.apply_migrations(env, currency, keyspace_type=ks_type)
 
-    sink_configs = [(k, create_sink_config(k, currency, ks_config)) for k in sinks]
-
     with DbFactory().from_config(env, currency) as db:
         lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
         lock_disabled = no_lock or no_file_lock
         try:
             with create_lock(lock_name, disabled=lock_disabled):
-                IngestFactory().from_config(env, currency, version).ingest(
-                    db=db,
-                    currency=currency,
-                    sources=sources,
-                    sink_config={k: v for k, v in sink_configs if v is not None},
-                    user_start_block=start_block,
-                    user_end_block=end_block,
-                    batch_size=batch_size,
-                    info=info,
-                    previous_day=previous_day,
-                    provider_timeout=timeout,
-                    mode=mode,
-                )
+                if use_new_pipeline:
+                    _run_new_utxo_ingest(
+                        config,
+                        ks_config,
+                        db,
+                        currency,
+                        sources,
+                        sinks,
+                        start_block,
+                        end_block,
+                        timeout,
+                    )
+                else:
+                    sink_configs = [
+                        (k, create_sink_config(k, currency, ks_config)) for k in sinks
+                    ]
+                    IngestFactory().from_config(env, currency, version).ingest(
+                        db=db,
+                        currency=currency,
+                        sources=sources,
+                        sink_config={k: v for k, v in sink_configs if v is not None},
+                        user_start_block=start_block,
+                        user_end_block=end_block,
+                        batch_size=batch_size,
+                        info=info,
+                        previous_day=previous_day,
+                        provider_timeout=timeout,
+                        mode=mode,
+                    )
         except LockAcquisitionError as e:
             logger.error(str(e))
             sys.exit(911)
+
+
+def _run_new_utxo_ingest(
+    config,
+    ks_config,
+    db,
+    currency,
+    sources,
+    sinks,
+    start_block,
+    end_block,
+    timeout,
+):
+    """Route UTXO from-node to the IngestRunner-based pipeline."""
+    delta_directory = None
+    s3_credentials = None
+    if "delta" in sinks:
+        pdc = ks_config.ingest_config.raw_keyspace_file_sinks.get("delta", None)
+        if pdc is None:
+            logger.error(
+                "Delta sink requested but no delta directory configured "
+                "(raw_keyspace_file_sinks.delta.directory)"
+            )
+            sys.exit(11)
+        delta_directory = pdc.directory
+        s3_credentials = config.get_s3_credentials()
+
+    export_delta(
+        currency=currency,
+        sources=sources,
+        directory=delta_directory,
+        start_block=start_block,
+        end_block=end_block,
+        provider_timeout=timeout,
+        s3_credentials=s3_credentials,
+        write_mode="overwrite",
+        ignore_overwrite_safechecks=True,
+        db=db if "cassandra" in sinks else None,
+    )
 
 
 @ingesting.group("delta-lake")
