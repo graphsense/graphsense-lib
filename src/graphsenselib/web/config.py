@@ -102,6 +102,12 @@ class GSRestConfig(BaseSettings):
         default=False,
         description="Disable API key authentication (removes security scheme from OpenAPI spec)",
     )
+    docs_logo_url: Optional[str] = Field(
+        default=None, description="Custom logo URL shown in Swagger UI and ReDoc"
+    )
+    docs_favicon_url: Optional[str] = Field(
+        default=None, description="Custom favicon URL shown in Swagger UI and ReDoc"
+    )
 
     plugins: List[str] = Field(
         default_factory=list, description="List of plugin modules to load"

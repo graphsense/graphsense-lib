@@ -12,8 +12,10 @@ from typing import Any, Optional
 import yaml
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from graphsenselib.config import AppConfig
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
@@ -49,6 +51,11 @@ from graphsenselib.web.routes import (
 from graphsenselib.web.security import get_api_key
 
 CONFIG_FILE = "./instance/config.yaml"
+DOCS_STATIC_DIR = "./docs/static"
+DOCS_STATIC_URL = "/_docs_assets"
+DEFAULT_DOCS_LOGO_URL = f"{DOCS_STATIC_URL}/logo.png"
+DEFAULT_DOCS_FAVICON_ICO_URL = f"{DOCS_STATIC_URL}/favicon.ico"
+DEFAULT_DOCS_FAVICON_PNG_URL = f"{DOCS_STATIC_URL}/favicon.png"
 logger = logging.getLogger(__name__)
 
 
@@ -750,8 +757,8 @@ def create_app(
         description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
         version=__api_version__,
         lifespan=lifespan,
-        docs_url="/ui",
-        redoc_url="/redoc",
+        docs_url=None,
+        redoc_url=None,
         openapi_url="/openapi.json",
         dependencies=_get_api_dependencies(config),
     )
@@ -770,6 +777,7 @@ def create_app(
     _register_exception_handlers(app)
     _register_routers(app)
     _setup_custom_openapi(app)
+    _setup_custom_docs_ui(app)
 
     return app
 
@@ -809,6 +817,12 @@ def _setup_custom_openapi(app: FastAPI) -> None:
             "addresses, entities, blocks, transactions and tags for automated "
             "and highly efficient forensics tasks."
         )
+        logo_url = _get_docs_logo_url(app)
+        if logo_url:
+            openapi_schema["info"]["x-logo"] = {
+                "url": logo_url,
+                "altText": app.title,
+            }
 
         # Promote schema-level examples to parameter-level for Swagger UI
         openapi_schema = _promote_schema_examples_to_parameter_level(openapi_schema)
@@ -823,6 +837,120 @@ def _setup_custom_openapi(app: FastAPI) -> None:
         return app.openapi_schema
 
     app.openapi = custom_openapi
+
+
+def _get_docs_logo_url(app: FastAPI) -> Optional[str]:
+    config = getattr(app.state, "config", None)
+    custom_logo_url = getattr(config, "docs_logo_url", None)
+    if custom_logo_url:
+        return custom_logo_url
+    if os.path.isfile(f"{DOCS_STATIC_DIR}/logo.png"):
+        return DEFAULT_DOCS_LOGO_URL
+    return None
+
+
+def _get_docs_favicon_url(app: FastAPI) -> Optional[str]:
+    config = getattr(app.state, "config", None)
+    custom_favicon_url = getattr(config, "docs_favicon_url", None)
+    if custom_favicon_url:
+        return custom_favicon_url
+    if os.path.isfile(f"{DOCS_STATIC_DIR}/favicon.ico"):
+        return DEFAULT_DOCS_FAVICON_ICO_URL
+    if os.path.isfile(f"{DOCS_STATIC_DIR}/favicon.png"):
+        return DEFAULT_DOCS_FAVICON_PNG_URL
+    return None
+
+
+def _setup_custom_docs_ui(app: FastAPI) -> None:
+    app.mount(
+        DOCS_STATIC_URL,
+        StaticFiles(directory=DOCS_STATIC_DIR, check_dir=False),
+        name="docs-assets",
+    )
+
+    @app.get("/ui", include_in_schema=False)
+    async def custom_swagger_ui() -> HTMLResponse:
+        favicon_url = _get_docs_favicon_url(app)
+        swagger_kwargs = {"swagger_favicon_url": favicon_url} if favicon_url else {}
+        response = get_swagger_ui_html(
+            openapi_url=app.openapi_url,
+            title=f"{app.title} - Swagger UI",
+            **swagger_kwargs,
+        )
+        logo_url = _get_docs_logo_url(app)
+        if not logo_url:
+            return response
+        swagger_ui_logo_inject = f"""
+<style>
+  .swagger-ui .gs-docs-logo-block {{
+    margin: 8px 0 16px 0;
+    padding: 6px 0;
+  }}
+  .swagger-ui .gs-docs-logo {{
+    display: block;
+    height: 40px;
+    width: auto;
+  }}
+</style>
+<script>
+  (function () {{
+    function applyLogo() {{
+      var infoContainer = document.querySelector(".swagger-ui div.information-container");
+      if (!infoContainer) return;
+      if (document.querySelector(".swagger-ui .gs-docs-logo-block")) return;
+
+      var section = infoContainer.nextElementSibling;
+      while (section && section.tagName !== "SECTION") {{
+        section = section.nextElementSibling;
+      }}
+
+      var target = section || infoContainer;
+      if (!target) return;
+
+      var wrapper = document.createElement("div");
+      wrapper.className = "gs-docs-logo-block";
+      var logo = document.createElement("img");
+      logo.src = "{logo_url}";
+      logo.alt = "{app.title}";
+      logo.className = "gs-docs-logo";
+      wrapper.appendChild(logo);
+      target.prepend(wrapper);
+    }}
+    var observer = new MutationObserver(applyLogo);
+    observer.observe(document.documentElement, {{ childList: true, subtree: true }});
+    window.addEventListener("load", applyLogo);
+    applyLogo();
+  }})();
+</script>
+"""
+        html = response.body.decode("utf-8").replace(
+            "</head>", f"{swagger_ui_logo_inject}</head>"
+        )
+        return HTMLResponse(content=html, status_code=response.status_code)
+
+    @app.get("/redoc", include_in_schema=False)
+    async def custom_redoc_ui() -> HTMLResponse:
+        favicon_url = _get_docs_favicon_url(app)
+        redoc_kwargs = {"redoc_favicon_url": favicon_url} if favicon_url else {}
+        response = get_redoc_html(
+            openapi_url=app.openapi_url,
+            title=f"{app.title} - ReDoc",
+            **redoc_kwargs,
+        )
+        logo_url = _get_docs_logo_url(app)
+        if not logo_url:
+            return response
+        redoc_logo_padding_css = """
+<style>
+  .redoc-wrap .menu-content img {
+    padding: 6px;
+  }
+</style>
+"""
+        html = response.body.decode("utf-8").replace(
+            "</head>", f"{redoc_logo_padding_css}</head>"
+        )
+        return HTMLResponse(content=html, status_code=response.status_code)
 
 
 def create_spec_app() -> FastAPI:
