@@ -34,6 +34,7 @@
 - Keep schema type aligned with currency semantics (`eth -> account`, `trx -> account_trx`, others mostly `utxo`) and preserve raw/transformed keyspace prefix consistency (validated in config models).
 - Web OpenAPI output is intentionally post-processed in `web/app.py` for backward compatibility (snake_case schema names, named union schemas, parameter example promotion) because client generation depends on it.
 - REST app config resolution order is intentional: explicit `config_file` parameter > `CONFIG_FILE` env var > `./instance/config.yaml` > `.graphsense.yaml` `web` key > env-only configuration.
+- For settings management, prefer Pydantic Settings models (`pydantic_settings.BaseSettings`) with typed fields and defaults, following existing patterns in `src/graphsenselib/web/config.py` and other config modules.
 - Tests rely on Testcontainers (`CassandraContainer`, `PostgresContainer`) from `tests/conftest.py`; accelerated mode uses `DANGEROUSLY_ACCELERATE_TESTS=1` with prebuilt `graphsense/cassandra-test:4.1.4`.
 - Release/version workflow uses two version tracks in `Makefile`: `RELEASESEM` (library tag `vX.Y.Z`, `vX.Y.Z-rc.N`, or `vX.Y.Z-dev.N`) and `WEBAPISEM` (API/client tag `webapi-vA.B.C`), with dedicated sync/check targets for client version alignment.
 - Library package version is dynamic via `setuptools_scm` (`version_scheme = "only-version"`); tags map as `vX.Y.Z -> X.Y.Z`, `vX.Y.Z-rc.N -> X.Y.ZrcN`, `vX.Y.Z-dev.N -> X.Y.Z.devN`.
