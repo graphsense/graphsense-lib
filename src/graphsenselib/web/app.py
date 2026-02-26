@@ -52,7 +52,7 @@ from graphsenselib.web.security import get_api_key
 
 CONFIG_FILE = "./instance/config.yaml"
 DOCS_STATIC_DIR = "./docs/static"
-DOCS_STATIC_URL = "/_docs_assets"
+DOCS_STATIC_URL = "/docs_assets"
 DEFAULT_DOCS_LOGO_URL = f"{DOCS_STATIC_URL}/logo.png"
 DEFAULT_DOCS_FAVICON_ICO_URL = f"{DOCS_STATIC_URL}/favicon.ico"
 DEFAULT_DOCS_FAVICON_PNG_URL = f"{DOCS_STATIC_URL}/favicon.png"
@@ -1021,7 +1021,7 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
             html = html.replace("</body>", f"{links_block}</body>")
         return HTMLResponse(content=html, status_code=response.status_code)
 
-    @app.get("/redoc", include_in_schema=False)
+    @app.get("/docs", include_in_schema=False)
     async def custom_redoc_ui() -> HTMLResponse:
         favicon_url = _get_docs_favicon_url(app)
         redoc_kwargs = {"redoc_favicon_url": favicon_url} if favicon_url else {}

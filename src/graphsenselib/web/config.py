@@ -109,7 +109,7 @@ class GSRestConfig(BaseSettings):
         default=None, description="Custom favicon URL shown in Swagger UI and ReDoc"
     )
     docs_swagger_crosslink_url: Optional[str] = Field(
-        default="/redoc",
+        default="/docs",
         description="URL linked from Swagger UI docs page",
     )
     docs_swagger_crosslink_label: str = Field(

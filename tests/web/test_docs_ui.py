@@ -29,9 +29,9 @@ def test_docs_ui_default_crosslinks_present():
     app = _build_test_app()
     with TestClient(app) as client:
         swagger_html = client.get("/ui").text
-        redoc_html = client.get("/redoc").text
+        redoc_html = client.get("/docs").text
 
-    assert 'href="/redoc"' in swagger_html
+    assert 'href="/docs"' in swagger_html
     assert ">ReDoc<" in swagger_html
     assert 'href="/ui"' in redoc_html
     assert ">Try the API<" in redoc_html
@@ -41,7 +41,7 @@ def test_docs_ui_default_python_client_link_present():
     app = _build_test_app()
     with TestClient(app) as client:
         swagger_html = client.get("/ui").text
-        redoc_html = client.get("/redoc").text
+        redoc_html = client.get("/docs").text
 
     assert 'href="https://github.com/graphsense/graphsense-lib/tree/master/clients/python"' in swagger_html
     assert ">Python Client Docs<" in swagger_html
@@ -58,7 +58,7 @@ def test_docs_ui_external_link_present_when_configured():
     )
     with TestClient(app) as client:
         swagger_html = client.get("/ui").text
-        redoc_html = client.get("/redoc").text
+        redoc_html = client.get("/docs").text
 
     assert 'href="https://docs.example.com"' in swagger_html
     assert ">Platform Docs<" in swagger_html
@@ -75,16 +75,16 @@ def test_docs_ui_crosslinks_can_be_disabled():
     )
     with TestClient(app) as client:
         swagger_html = client.get("/ui").text
-        redoc_html = client.get("/redoc").text
+        redoc_html = client.get("/docs").text
 
-    assert 'href="/redoc"' not in swagger_html
+    assert 'href="/docs"' not in swagger_html
     assert 'href="/ui"' not in redoc_html
 
 
 def test_docs_ui_accepts_mock_config_object():
     app = _build_test_app(
         SimpleNamespace(
-            docs_swagger_crosslink_url="/redoc",
+            docs_swagger_crosslink_url="/docs",
             docs_swagger_crosslink_label="ReDoc",
             docs_redoc_crosslink_url="/ui",
             docs_redoc_crosslink_label="Try the API",
@@ -98,7 +98,7 @@ def test_docs_ui_accepts_mock_config_object():
 
     with TestClient(app) as client:
         swagger_html = client.get("/ui").text
-        redoc_html = client.get("/redoc").text
+        redoc_html = client.get("/docs").text
 
     assert 'href="https://example.com/client-docs"' in swagger_html
     assert ">Client Docs<" in swagger_html
