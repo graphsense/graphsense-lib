@@ -172,7 +172,7 @@ platforms = ["any"]
 [tool.setuptools_scm]
 # For smarter version schemes and other configuration options,
 # check out https://github.com/pypa/setuptools_scm
-version_scheme = "no-guess-dev"
+version_scheme = "only-version"
 
 
 [tool.setuptools.packages.find]

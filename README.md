@@ -516,10 +516,17 @@ make test
 
 This repository uses two source-of-truth versions in the root `Makefile`:
 
-- **Library version**: `RELEASESEM` (released with `vX.Y.Z` tags)
+- **Library version**: `RELEASESEM` (released with `vX.Y.Z`, `vX.Y.Z-rc.N`, or `vX.Y.Z-dev.N` tags)
 - **OpenAPI/API version**: `WEBAPISEM` (written to `src/graphsenselib/web/version.py`)
 
 The Python client package version is derived from the API version and should match it.
+
+Library package versioning is dynamic via `setuptools_scm` (`pyproject.toml`):
+
+- Git tag `v2.9.8` -> package version `2.9.8`
+- Git tag `v2.9.8-rc.1` -> package version `2.9.8rc1`
+- Git tag `v2.9.8-dev.1` -> package version `2.9.8.dev1`
+- Commits after a tag append local metadata, for example `2.9.8.dev1+g<sha>.d<date>`
 
 Use the root Makefile helpers:
 
@@ -544,8 +551,25 @@ make tag-version
 
 Tagging behavior:
 
-- Library release tag: `vX.Y.Z` (from `RELEASESEM`)
+- Library release tag: `vX.Y.Z`, `vX.Y.Z-rc.N`, or `vX.Y.Z-dev.N` (from `RELEASESEM`)
 - Client release tag: `webapi-vA.B.C` (from `WEBAPISEM`)
+
+Recommended library versioning routine:
+
+1. For development prereleases, set `RELEASESEM` to `vX.Y.Z-dev.N` (for example `v2.10.0-dev.1`)
+2. For release candidates, set `RELEASESEM` to `vX.Y.Z-rc.N`
+3. For stable releases, set `RELEASESEM` to `vX.Y.Z`
+4. Create tags with `make tag-version`
+5. Push tags with `git push origin --tags`
+
+CI trigger background:
+
+- Stable library tags (`vX.Y.Z`) trigger:
+  - GitHub Release creation
+  - Python library package build/publish (`graphsense-lib`)
+  - Docker image build/publish
+- Client tags (`webapi-vA.B.C`) trigger Python client package build/publish (`clients/python`)
+- Other library tags (`vX.Y.Z-rc.N`, `vX.Y.Z-dev.N`) do not trigger GitHub Release or Python package publish; they only trigger Docker image build/publish
 
 1. Update CHANGELOG.md with new features and fixes
 2. Update relevant versions (library/API/client) based on what changed
