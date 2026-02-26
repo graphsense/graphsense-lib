@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
+## [2.9.8] 2026-02-26
+
+### Library (v2.9.8)
+
+#### added
+- OpenAPI style-able docs with logo and better descriptions.
+- Copilot repository instructions
+
+#### changed
+- `setuptools_scm` versioning scheme now uses `only-version` to support semver-style prerelease tags like `vX.Y.Z-dev.N` and avoid build-time `.dev` bump errors.
+- Improved api documentation text.
+
+
+### Web API + Python client (webapi-2.9.5)
+no changes
+
+
 ## [2.9.7] 2026-02-25
 
 ### Library (v2.9.7)
