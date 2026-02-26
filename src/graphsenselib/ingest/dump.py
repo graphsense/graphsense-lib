@@ -1,4 +1,5 @@
 import sys
+from contextlib import ExitStack
 from typing import List, Optional
 
 from graphsenselib.db import AnalyticsDb
@@ -25,6 +26,7 @@ from graphsenselib.ingest.transform import (
     TransformerUTXO,
 )
 from graphsenselib.utils import first_or_default
+from graphsenselib.utils.locking import create_lock
 
 from ..config import get_reorg_backoff_blocks
 
@@ -65,6 +67,7 @@ def export_delta(
     write_mode: str = "overwrite",
     ignore_overwrite_safechecks: bool = False,
     db: Optional[AnalyticsDb] = None,
+    lock_disabled: bool = False,
 ):
     if currency not in SUPPORTED:
         raise ValueError(f"{currency} not supported by ingest module")
@@ -132,70 +135,81 @@ def export_delta(
         cassandra_sink = CassandraSink(db)
         runner.addSink(cassandra_sink)
 
-    backoff = get_reorg_backoff_blocks(currency)
+    # Acquire locks from all sinks for the entire duration of the ingest
+    with ExitStack() as lock_stack:
+        for sink in runner.sinks:
+            name = sink.lock_name()
+            if name is not None:
+                lock_stack.enter_context(create_lock(name, disabled=lock_disabled))
 
-    # Auto-detect start_block
-    if write_mode == "append" and delta_sink is not None:
-        highest_block = delta_sink.highest_block()
-        highest_block_node = source.get_last_synced_block_bo(backoff)
+        backoff = get_reorg_backoff_blocks(currency)
 
-        if highest_block is not None:
-            if highest_block == highest_block_node:
-                logger.info(
-                    f"Data already present up to highest block {highest_block:,}, "
-                    f"no need to append."
-                )
-                sys.exit(12)
+        # Auto-detect start_block
+        if write_mode == "append" and delta_sink is not None:
+            highest_block = delta_sink.highest_block()
+            highest_block_node = source.get_last_synced_block_bo(backoff)
 
-            if start_block is None:
-                start_block = highest_block + 1
+            if highest_block is not None:
+                if highest_block == highest_block_node:
+                    logger.info(
+                        f"Data already present up to highest block {highest_block:,}, "
+                        f"no need to append."
+                    )
+                    sys.exit(12)
+
+                if start_block is None:
+                    start_block = highest_block + 1
+                else:
+                    assert start_block > highest_block, (
+                        f"Start block ({start_block:,}) must be higher than the highest "
+                        f"block already written ({highest_block:,})"
+                    )
             else:
-                assert start_block > highest_block, (
-                    f"Start block ({start_block:,}) must be higher than the highest "
-                    f"block already written ({highest_block:,})"
+                assert start_block is not None, (
+                    "Start block must be provided "
+                    "for append mode if no data is present "
+                    "yet."
                 )
-        else:
-            assert start_block is not None, (
-                "Start block must be provided "
-                "for append mode if no data is present "
-                "yet."
-            )
-    elif delta_sink is None and start_block is None and db is not None:
-        # No delta sink — auto-detect from Cassandra
-        highest_block = db.raw.get_highest_block()
-        start_block = (highest_block + 1) if highest_block is not None else 0
+        elif delta_sink is None and start_block is None and db is not None:
+            # No delta sink — auto-detect from Cassandra
+            highest_block = db.raw.get_highest_block()
+            start_block = (highest_block + 1) if highest_block is not None else 0
 
-    start_block, end_block = source.validate_blockrange(start_block, end_block, backoff)
-
-    logger.info(f"Writing data from {start_block} to {end_block}")
-    logger.info(
-        f"Partition batch size: {partition_batch_size}, "
-        f"file batch size: {file_batch_size}"
-    )
-
-    # Write configuration BEFORE runner.run() — critical because UTXO
-    # get_latest_tx_id_before_block calls get_block_bucket_size() which
-    # reads from the configuration table.
-    if db is not None:
-        logger.info("Writing Cassandra configuration table...")
-        if currency in ["btc", "ltc", "bch", "zec"]:
-            ingest_configuration_cassandra_utxo(
-                db,
-                UTXO_BLOCK_BUCKET_SIZE,
-                UTXO_TX_HASH_PREFIX_LENGTH,
-                UTXO_TX_BUCKET_SIZE,
-            )
-        else:
-            ingest_configuration_cassandra(db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN)
-
-    runner.run(start_block, end_block)
-
-    # Write summary statistics for UTXO chains after run
-    if db is not None and currency in ["btc", "ltc", "bch", "zec"]:
-        logger.info("Writing Cassandra summary statistics...")
-        ingest_summary_statistics_cassandra_utxo(
-            db,
-            timestamp=transformer._last_block_ts,
-            total_blocks=end_block + 1,
-            total_txs=transformer._next_tx_id,
+        start_block, end_block = source.validate_blockrange(
+            start_block, end_block, backoff
         )
+
+        logger.info(f"Writing data from {start_block} to {end_block}")
+        logger.info(
+            f"Partition batch size: {partition_batch_size}, "
+            f"file batch size: {file_batch_size}"
+        )
+
+        # Write configuration BEFORE runner.run() — critical because UTXO
+        # get_latest_tx_id_before_block calls get_block_bucket_size() which
+        # reads from the configuration table.
+        if db is not None:
+            logger.info("Writing Cassandra configuration table...")
+            if currency in ["btc", "ltc", "bch", "zec"]:
+                ingest_configuration_cassandra_utxo(
+                    db,
+                    UTXO_BLOCK_BUCKET_SIZE,
+                    UTXO_TX_HASH_PREFIX_LENGTH,
+                    UTXO_TX_BUCKET_SIZE,
+                )
+            else:
+                ingest_configuration_cassandra(
+                    db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN
+                )
+
+        runner.run(start_block, end_block)
+
+        # Write summary statistics for UTXO chains after run
+        if db is not None and currency in ["btc", "ltc", "bch", "zec"]:
+            logger.info("Writing Cassandra summary statistics...")
+            ingest_summary_statistics_cassandra_utxo(
+                db,
+                timestamp=transformer._last_block_ts,
+                total_blocks=end_block + 1,
+                total_txs=transformer._next_tx_id,
+            )

@@ -201,23 +201,24 @@ def ingest(
     schema_tools.apply_migrations(env, currency, keyspace_type=ks_type)
 
     with DbFactory().from_config(env, currency) as db:
-        lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
         lock_disabled = no_lock or no_file_lock
         try:
-            with create_lock(lock_name, disabled=lock_disabled):
-                if not use_legacy:
-                    _run_new_ingest(
-                        config,
-                        ks_config,
-                        db,
-                        currency,
-                        sources,
-                        sinks,
-                        start_block,
-                        end_block,
-                        timeout,
-                    )
-                else:
+            if not use_legacy:
+                _run_new_ingest(
+                    config,
+                    ks_config,
+                    db,
+                    currency,
+                    sources,
+                    sinks,
+                    start_block,
+                    end_block,
+                    timeout,
+                    lock_disabled,
+                )
+            else:
+                lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
+                with create_lock(lock_name, disabled=lock_disabled):
                     sink_configs = [
                         (k, create_sink_config(k, currency, ks_config)) for k in sinks
                     ]
@@ -249,6 +250,7 @@ def _run_new_ingest(
     start_block,
     end_block,
     timeout,
+    lock_disabled=False,
 ):
     """Route from-node to the IngestRunner-based pipeline."""
     delta_directory = None
@@ -275,6 +277,7 @@ def _run_new_ingest(
         write_mode="overwrite",
         ignore_overwrite_safechecks=True,
         db=db if "cassandra" in sinks else None,
+        lock_disabled=lock_disabled,
     )
 
 
@@ -390,30 +393,30 @@ def dump_rawdata(
         logger.info("Apply migrations to raw keyspace if necessary")
         schema_tools.apply_migrations(env, currency, keyspace_type="raw")
 
-    lock_name = f"delta_ingest_{currency}"
     try:
-        with create_lock(lock_name):
-            with ExitStack() as stack:
-                db = None
-                if use_cassandra:
-                    db = stack.enter_context(DbFactory().from_config(env, currency))
+        with ExitStack() as stack:
+            db = None
+            if use_cassandra:
+                db = stack.enter_context(DbFactory().from_config(env, currency))
 
-                export_delta(
-                    currency=currency,
-                    sources=sources,
-                    directory=parquet_directory,
-                    start_block=start_block,
-                    end_block=end_block,
-                    provider_timeout=timeout,
-                    s3_credentials=s3_credentials,
-                    write_mode=write_mode,
-                    ignore_overwrite_safechecks=ignore_overwrite_safechecks,
-                    db=db,
-                )
+            export_delta(
+                currency=currency,
+                sources=sources,
+                directory=parquet_directory,
+                start_block=start_block,
+                end_block=end_block,
+                provider_timeout=timeout,
+                s3_credentials=s3_credentials,
+                write_mode=write_mode,
+                ignore_overwrite_safechecks=ignore_overwrite_safechecks,
+                db=db,
+            )
 
-            if auto_compact:
-                logger.info("Running auto-compaction check")
+        if auto_compact:
+            logger.info("Running auto-compaction check")
 
+            lock_name = f"delta_ingest_{currency}"
+            with create_lock(lock_name):
                 # currently just check when last vacuum was run on block table to figure out if we should run compaction
                 last_vaccum_time = DeltaTableConnector(
                     parquet_directory, s3_credentials
@@ -436,7 +439,6 @@ def dump_rawdata(
                     logger.info(
                         f"Auto-compaction conditions not met, last compaction was {last_vaccum_time}, skipping compaction"
                     )
-
     except LockAcquisitionError as e:
         logger.error(str(e))
         sys.exit(911)
@@ -495,20 +497,30 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
     logger.info(f"Optimizing deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
     s3_credentials = config.get_s3_credentials()
-    if table is None:
-        optimize_tables(
-            currency,
-            parquet_directory,
-            s3_credentials,
-            mode=mode,
-            full_vacuum=full_vacuum,
-        )
-        logger.info(f"Optimized deltalake tables in {parquet_directory}")
-    else:
-        optimize_table(
-            parquet_directory, table, s3_credentials, mode=mode, full_vacuum=full_vacuum
-        )
-        logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
+    lock_name = f"delta_ingest_{currency}"
+    try:
+        with create_lock(lock_name):
+            if table is None:
+                optimize_tables(
+                    currency,
+                    parquet_directory,
+                    s3_credentials,
+                    mode=mode,
+                    full_vacuum=full_vacuum,
+                )
+                logger.info(f"Optimized deltalake tables in {parquet_directory}")
+            else:
+                optimize_table(
+                    parquet_directory,
+                    table,
+                    s3_credentials,
+                    mode=mode,
+                    full_vacuum=full_vacuum,
+                )
+                logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
+    except LockAcquisitionError as e:
+        logger.error(str(e))
+        sys.exit(911)
 
 
 # show data from the delta lake

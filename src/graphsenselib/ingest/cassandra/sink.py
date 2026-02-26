@@ -25,6 +25,9 @@ class CassandraSink(Sink):
         self.db = db
         self.concurrency = concurrency
 
+    def lock_name(self) -> str:
+        return f"{self.db.raw.get_keyspace()}_{self.db.transformed.get_keyspace()}"
+
     def write(self, block_range_content: BlockRangeContent):
         for table_name, rows in block_range_content.table_contents.items():
             if not rows:

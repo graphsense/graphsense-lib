@@ -465,6 +465,8 @@ class DeltaDumpWriter(Sink):
         self.write_mode = write_mode
         self.finalize_int_cols = finalize_int_cols or {}
 
+        self._lock_name = f"delta_ingest_{network}"
+
         self.writers = {
             # method instead the lookup we now have which is probably
             # better anyway (see WRITER_MAP)
@@ -490,6 +492,9 @@ class DeltaDumpWriter(Sink):
     def write_table(self, table_name: str, rows: List[dict]):
         writer = self.writers[table_name]
         writer.write_delta(rows)
+
+    def lock_name(self) -> str:
+        return self._lock_name
 
     def write(self, sink_content: BlockRangeContent):
         for table_name, rows in sink_content.table_contents.items():
