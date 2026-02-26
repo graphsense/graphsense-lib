@@ -4,21 +4,21 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**get_entity**](EntitiesApi.md#get_entity) | **GET** /{currency}/entities/{entity} | Get an entity
-[**list_address_tags_by_entity**](EntitiesApi.md#list_address_tags_by_entity) | **GET** /{currency}/entities/{entity}/tags | Get address tags for a given entity
-[**list_entity_addresses**](EntitiesApi.md#list_entity_addresses) | **GET** /{currency}/entities/{entity}/addresses | Get an entity&#39;s addresses
-[**list_entity_links**](EntitiesApi.md#list_entity_links) | **GET** /{currency}/entities/{entity}/links | Get transactions between two entities
-[**list_entity_neighbors**](EntitiesApi.md#list_entity_neighbors) | **GET** /{currency}/entities/{entity}/neighbors | Get an entity&#39;s neighbors in the entity graph
-[**list_entity_txs**](EntitiesApi.md#list_entity_txs) | **GET** /{currency}/entities/{entity}/txs | Get all transactions an entity has been involved in
-[**search_entity_neighbors**](EntitiesApi.md#search_entity_neighbors) | **GET** /{currency}/entities/{entity}/search | Search neighbors of an entity
+[**get_entity**](EntitiesApi.md#get_entity) | **GET** /{currency}/entities/{entity} | Get entity details
+[**list_address_tags_by_entity**](EntitiesApi.md#list_address_tags_by_entity) | **GET** /{currency}/entities/{entity}/tags | List entity address tags
+[**list_entity_addresses**](EntitiesApi.md#list_entity_addresses) | **GET** /{currency}/entities/{entity}/addresses | List entity addresses
+[**list_entity_links**](EntitiesApi.md#list_entity_links) | **GET** /{currency}/entities/{entity}/links | List transactions between entities
+[**list_entity_neighbors**](EntitiesApi.md#list_entity_neighbors) | **GET** /{currency}/entities/{entity}/neighbors | List neighboring entities
+[**list_entity_txs**](EntitiesApi.md#list_entity_txs) | **GET** /{currency}/entities/{entity}/txs | List entity transactions
+[**search_entity_neighbors**](EntitiesApi.md#search_entity_neighbors) | **GET** /{currency}/entities/{entity}/search | Search entity neighborhood
 
 
 # **get_entity**
 > Entity get_entity(currency, entity, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
 
-Get an entity
+Get entity details
 
-Get an entity
+Returns details for a single clustered entity.
 
 ### Example
 
@@ -57,7 +57,7 @@ with graphsense.ApiClient(configuration) as api_client:
     include_actors = False # bool | Whether to include actor information (optional) (default to False)
 
     try:
-        # Get an entity
+        # Get entity details
         api_response = api_instance.get_entity(currency, entity, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
         print("The response of EntitiesApi->get_entity:\n")
         pprint(api_response)
@@ -95,6 +95,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Entity not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -102,9 +103,9 @@ Name | Type | Description  | Notes
 # **list_address_tags_by_entity**
 > AddressTags list_address_tags_by_entity(currency, entity, page=page, pagesize=pagesize)
 
-Get address tags for a given entity
+List entity address tags
 
-Get address tags for a given entity
+Returns paginated attribution tags observed on addresses in the entity.
 
 ### Example
 
@@ -143,7 +144,7 @@ with graphsense.ApiClient(configuration) as api_client:
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get address tags for a given entity
+        # List entity address tags
         api_response = api_instance.list_address_tags_by_entity(currency, entity, page=page, pagesize=pagesize)
         print("The response of EntitiesApi->list_address_tags_by_entity:\n")
         pprint(api_response)
@@ -181,6 +182,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Entity not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -188,9 +190,9 @@ Name | Type | Description  | Notes
 # **list_entity_addresses**
 > EntityAddresses list_entity_addresses(currency, entity, page=page, pagesize=pagesize)
 
-Get an entity's addresses
+List entity addresses
 
-Get an entity's addresses
+Returns paginated addresses that belong to the entity.
 
 ### Example
 
@@ -229,7 +231,7 @@ with graphsense.ApiClient(configuration) as api_client:
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get an entity's addresses
+        # List entity addresses
         api_response = api_instance.list_entity_addresses(currency, entity, page=page, pagesize=pagesize)
         print("The response of EntitiesApi->list_entity_addresses:\n")
         pprint(api_response)
@@ -267,6 +269,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Entity not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -274,9 +277,9 @@ Name | Type | Description  | Notes
 # **list_entity_links**
 > Links list_entity_links(currency, entity, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
 
-Get transactions between two entities
+List transactions between entities
 
-Get transactions between two entities
+Returns paginated transaction links between the entity and a neighbor entity.
 
 ### Example
 
@@ -322,7 +325,7 @@ with graphsense.ApiClient(configuration) as api_client:
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get transactions between two entities
+        # List transactions between entities
         api_response = api_instance.list_entity_links(currency, entity, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
         print("The response of EntitiesApi->list_entity_links:\n")
         pprint(api_response)
@@ -367,6 +370,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Entity not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -374,9 +378,9 @@ Name | Type | Description  | Notes
 # **list_entity_neighbors**
 > NeighborEntities list_entity_neighbors(currency, entity, direction, only_ids=only_ids, include_labels=include_labels, page=page, pagesize=pagesize, relations_only=relations_only, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
 
-Get an entity's neighbors in the entity graph
+List neighboring entities
 
-Get an entity's neighbors in the entity graph
+Returns neighboring entities connected to the given entity in the entity graph.
 
 ### Example
 
@@ -421,7 +425,7 @@ with graphsense.ApiClient(configuration) as api_client:
     include_actors = False # bool | Whether to include actor information (optional) (default to False)
 
     try:
-        # Get an entity's neighbors in the entity graph
+        # List neighboring entities
         api_response = api_instance.list_entity_neighbors(currency, entity, direction, only_ids=only_ids, include_labels=include_labels, page=page, pagesize=pagesize, relations_only=relations_only, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
         print("The response of EntitiesApi->list_entity_neighbors:\n")
         pprint(api_response)
@@ -465,6 +469,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Entity not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -472,9 +477,9 @@ Name | Type | Description  | Notes
 # **list_entity_txs**
 > AddressTxs list_entity_txs(currency, entity, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
 
-Get all transactions an entity has been involved in
+List entity transactions
 
-Get all transactions an entity has been involved in
+Returns paginated transactions involving the entity, with optional height, date, direction, and token filters.
 
 ### Example
 
@@ -520,7 +525,7 @@ with graphsense.ApiClient(configuration) as api_client:
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get all transactions an entity has been involved in
+        # List entity transactions
         api_response = api_instance.list_entity_txs(currency, entity, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
         print("The response of EntitiesApi->list_entity_txs:\n")
         pprint(api_response)
@@ -565,6 +570,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Entity not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -572,9 +578,9 @@ Name | Type | Description  | Notes
 # **search_entity_neighbors**
 > List[SearchResultLevel1] search_entity_neighbors(currency, entity, direction, key, value, depth, breadth, skip_num_addresses=skip_num_addresses)
 
-Search neighbors of an entity
+Search entity neighborhood
 
-Search neighbors of an entity
+Returns matching neighboring entities found by key/value criteria within the specified search depth and breadth.
 
 ### Example
 
@@ -617,7 +623,7 @@ with graphsense.ApiClient(configuration) as api_client:
     skip_num_addresses = 56 # int | Skip entities with more than N addresses (optional)
 
     try:
-        # Search neighbors of an entity
+        # Search entity neighborhood
         api_response = api_instance.search_entity_neighbors(currency, entity, direction, key, value, depth, breadth, skip_num_addresses=skip_num_addresses)
         print("The response of EntitiesApi->search_entity_neighbors:\n")
         pprint(api_response)
@@ -659,6 +665,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Entity not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

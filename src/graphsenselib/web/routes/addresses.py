@@ -48,9 +48,14 @@ router = APIRouter(route_class=PluginRoute)
 @router.get(
     "/addresses/{address}",
     summary="Get an address",
+    description=(
+        "Returns details for a single address, including attribution and optional actor "
+        "information."
+    ),
     operation_id="get_address",
     response_model=Address,
     response_model_exclude_none=True,
+    responses={404: {"description": "Address not found for the selected currency."}},
 )
 async def get_address(
     request: Request,
@@ -71,10 +76,12 @@ async def get_address(
 
 @router.get(
     "/addresses/{address}/entity",
-    summary="Get the entity of an address",
+    summary="Get the entity for an address",
+    description="Returns the clustered entity that contains the given address.",
     operation_id="get_address_entity",
     response_model=Entity,
     response_model_exclude_none=True,
+    responses={404: {"description": "Address not found for the selected currency."}},
 )
 async def get_address_entity(
     request: Request,
@@ -95,10 +102,15 @@ async def get_address_entity(
 
 @router.get(
     "/addresses/{address}/tag_summary",
-    summary="Get attribution tag summary for a given address",
+    summary="Get address attribution tag summary",
+    description=(
+        "Returns a summary of attribution tags for the address, including best-cluster "
+        "tag information when requested."
+    ),
     operation_id="get_tag_summary_by_address",
     response_model=TagSummary,
     response_model_exclude_none=True,
+    responses={404: {"description": "Address not found for the selected currency."}},
 )
 async def get_tag_summary_by_address(
     request: Request,
@@ -121,10 +133,12 @@ async def get_tag_summary_by_address(
 
 @router.get(
     "/addresses/{address}/tags",
-    summary="Get attribution tags for a given address",
+    summary="List attribution tags for an address",
+    description="Returns attribution tags assigned to the address with pagination support.",
     operation_id="list_tags_by_address",
     response_model=AddressTags,
     response_model_exclude_none=True,
+    responses={404: {"description": "Address not found for the selected currency."}},
 )
 async def list_tags_by_address(
     request: Request,
@@ -135,7 +149,7 @@ async def list_tags_by_address(
     include_best_cluster_tag: IncludeBestClusterTagQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get attribution tags for a given address"""
+    """List attribution tags for an address."""
     result = await service.list_tags_by_address(
         ctx,
         currency=currency.lower(),
@@ -149,10 +163,18 @@ async def list_tags_by_address(
 
 @router.get(
     "/addresses/{address}/txs",
-    summary="Get all transactions an address has been involved in",
+    summary="List transactions involving an address",
+    description=(
+        "Lists transactions involving the address, with optional filtering by direction, "
+        "height, date range, and token."
+    ),
     operation_id="list_address_txs",
     response_model=AddressTxs,
     response_model_exclude_none=True,
+    responses={
+        400: {"description": "Invalid query parameter combination."},
+        404: {"description": "Address not found for the selected currency."},
+    },
 )
 async def list_address_txs(
     request: Request,
@@ -169,7 +191,7 @@ async def list_address_txs(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get all transactions an address has been involved in"""
+    """List transactions involving an address."""
     result = await service.list_address_txs(
         ctx,
         currency=currency.lower(),
@@ -189,10 +211,15 @@ async def list_address_txs(
 
 @router.get(
     "/addresses/{address}/neighbors",
-    summary="Get an address's neighbors in the address graph",
+    summary="List neighboring addresses",
+    description=(
+        "Returns neighboring addresses connected to the given address in the "
+        "transaction graph."
+    ),
     operation_id="list_address_neighbors",
     response_model=NeighborAddresses,
     response_model_exclude_none=True,
+    responses={404: {"description": "Address not found for the selected currency."}},
 )
 async def list_address_neighbors(
     request: Request,
@@ -208,7 +235,7 @@ async def list_address_neighbors(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get an address's neighbors in the address graph"""
+    """List neighboring addresses in the address graph."""
     result = await service.list_address_neighbors(
         ctx,
         currency=currency.lower(),
@@ -225,10 +252,15 @@ async def list_address_neighbors(
 
 @router.get(
     "/addresses/{address}/links",
-    summary="Get outgoing transactions between two addresses",
+    summary="List transactions between two addresses",
+    description=(
+        "Returns paginated links (transactions) between the address and a specified "
+        "neighbor address."
+    ),
     operation_id="list_address_links",
     response_model=Links,
     response_model_exclude_none=True,
+    responses={404: {"description": "Address not found for the selected currency."}},
 )
 async def list_address_links(
     request: Request,
@@ -249,7 +281,7 @@ async def list_address_links(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get outgoing transactions between two addresses"""
+    """List transactions between two addresses."""
     result = await service.list_address_links(
         ctx,
         currency=currency.lower(),
@@ -269,10 +301,14 @@ async def list_address_links(
 
 @router.get(
     "/addresses/{address}/related_addresses",
-    summary="Get related addresses to the input address",
+    summary="List related addresses",
+    description=(
+        "Returns addresses related to the input address by the selected relation type."
+    ),
     operation_id="list_related_addresses",
     response_model=RelatedAddresses,
     response_model_exclude_none=True,
+    responses={404: {"description": "Address not found for the selected currency."}},
 )
 async def list_related_addresses(
     request: Request,
@@ -287,7 +323,7 @@ async def list_related_addresses(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get related addresses to the input address"""
+    """List addresses related to the input address."""
     result = await service.list_related_addresses(
         ctx,
         currency=currency.lower(),

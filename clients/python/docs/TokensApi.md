@@ -4,15 +4,15 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**list_supported_tokens**](TokensApi.md#list_supported_tokens) | **GET** /{currency}/supported_tokens | Get supported tokens for a currency
+[**list_supported_tokens**](TokensApi.md#list_supported_tokens) | **GET** /{currency}/supported_tokens | List supported tokens for a currency
 
 
 # **list_supported_tokens**
 > TokenConfigs list_supported_tokens(currency)
 
-Get supported tokens for a currency
+List supported tokens for a currency
 
-Get supported tokens for a currency
+Returns token configurations supported for the requested base currency.
 
 ### Example
 
@@ -48,7 +48,7 @@ with graphsense.ApiClient(configuration) as api_client:
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
 
     try:
-        # Get supported tokens for a currency
+        # List supported tokens for a currency
         api_response = api_instance.list_supported_tokens(currency)
         print("The response of TokensApi->list_supported_tokens:\n")
         pprint(api_response)
@@ -82,8 +82,8 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | Supported token configurations for the currency. |  -  |
+**422** | Validation error in path/query parameters. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

@@ -317,8 +317,19 @@ async def to_json_generator(the_stack):
 
 @router.post(
     "/bulk.csv/{operation}",
-    summary="Get data as CSV in bulk",
+    summary="Stream bulk operation results as CSV",
+    description=(
+        "Executes a supported operation for multiple key values and streams "
+        "flattened result rows as CSV."
+    ),
     operation_id="bulk_csv",
+    responses={
+        200: {
+            "description": "Stream of flattened CSV rows for each requested key set."
+        },
+        400: {"description": "Invalid operation name or request body parameters."},
+        422: {"description": "Validation error in path/query/body input."},
+    },
 )
 async def bulk_csv(
     request: Request,
@@ -333,7 +344,7 @@ async def bulk_csv(
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):
-    """Get data as CSV in bulk"""
+    """Streams flattened CSV rows for a bulk operation."""
     currency = currency.lower()
     ctx = make_ctx(request, services, tagstore_groups)
 
@@ -360,8 +371,19 @@ async def bulk_csv(
 
 @router.post(
     "/bulk.json/{operation}",
-    summary="Get data as JSON in bulk",
+    summary="Stream bulk operation results as JSON",
+    description=(
+        "Executes a supported operation for multiple key values and streams "
+        "flattened result rows as JSON."
+    ),
     operation_id="bulk_json",
+    responses={
+        200: {
+            "description": "Stream of flattened JSON rows for each requested key set."
+        },
+        400: {"description": "Invalid operation name or request body parameters."},
+        422: {"description": "Validation error in path/query/body input."},
+    },
 )
 async def bulk_json(
     request: Request,
@@ -376,7 +398,7 @@ async def bulk_json(
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
 ):
-    """Get data as JSON in bulk"""
+    """Streams flattened JSON rows for a bulk operation."""
     currency = currency.lower()
     ctx = make_ctx(request, services, tagstore_groups)
 

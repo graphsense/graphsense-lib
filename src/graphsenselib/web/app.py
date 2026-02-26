@@ -6,7 +6,7 @@ import os
 import re
 import traceback
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
+from html import escape
 from typing import Any, Optional
 
 import yaml
@@ -56,6 +56,12 @@ DOCS_STATIC_URL = "/_docs_assets"
 DEFAULT_DOCS_LOGO_URL = f"{DOCS_STATIC_URL}/logo.png"
 DEFAULT_DOCS_FAVICON_ICO_URL = f"{DOCS_STATIC_URL}/favicon.ico"
 DEFAULT_DOCS_FAVICON_PNG_URL = f"{DOCS_STATIC_URL}/favicon.png"
+API_DESCRIPTION = (
+    "GraphSense API provides programmatic access to blockchain analytics data "
+    "across multiple ledgers. Use it to explore addresses, entities, blocks, "
+    "transactions, tags, token activity, and exchange-rate context, and to "
+    "integrate investigation workflows into your own applications and automation."
+)
 logger = logging.getLogger(__name__)
 
 
@@ -754,7 +760,7 @@ def create_app(
 
     app = FastAPI(
         title="GraphSense API",
-        description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
+        description=API_DESCRIPTION,
         version=__api_version__,
         lifespan=lifespan,
         docs_url=None,
@@ -807,16 +813,33 @@ def _setup_custom_openapi(app: FastAPI) -> None:
         # Add servers for client generator compatibility
         openapi_schema["servers"] = [{"url": ""}]
 
-        # Add contact info for backward compatibility
-        openapi_schema["info"]["contact"] = {
-            "email": "contact@iknaio.com",
-            "name": "Iknaio Cryptoasset Analytics GmbH",
+        info = openapi_schema["info"]
+        config = app.state.config
+
+        # Add documentation metadata for compatibility and richer docs rendering
+        info["contact"] = {
+            "name": config.docs_contact_name,
+            "email": config.docs_contact_email,
+            "url": config.docs_contact_url,
         }
-        openapi_schema["info"]["description"] = (
-            "GraphSense API provides programmatic access to various ledgers' "
-            "addresses, entities, blocks, transactions and tags for automated "
-            "and highly efficient forensics tasks."
-        )
+
+        openapi_schema["info"]["description"] = API_DESCRIPTION
+        external_docs_url = config.docs_external_url
+        if external_docs_url:
+            openapi_schema["externalDocs"] = {
+                "description": config.docs_external_label,
+                "url": external_docs_url,
+            }
+
+        python_client_docs_url = config.docs_python_client_url
+        if python_client_docs_url:
+            openapi_schema["x-relatedDocs"] = [
+                {
+                    "label": config.docs_python_client_label,
+                    "url": python_client_docs_url,
+                }
+            ]
+
         logo_url = _get_docs_logo_url(app)
         if logo_url:
             openapi_schema["info"]["x-logo"] = {
@@ -840,8 +863,8 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
 
 def _get_docs_logo_url(app: FastAPI) -> Optional[str]:
-    config = getattr(app.state, "config", None)
-    custom_logo_url = getattr(config, "docs_logo_url", None)
+    config = app.state.config
+    custom_logo_url = config.docs_logo_url
     if custom_logo_url:
         return custom_logo_url
     if os.path.isfile(f"{DOCS_STATIC_DIR}/logo.png"):
@@ -850,8 +873,8 @@ def _get_docs_logo_url(app: FastAPI) -> Optional[str]:
 
 
 def _get_docs_favicon_url(app: FastAPI) -> Optional[str]:
-    config = getattr(app.state, "config", None)
-    custom_favicon_url = getattr(config, "docs_favicon_url", None)
+    config = app.state.config
+    custom_favicon_url = config.docs_favicon_url
     if custom_favicon_url:
         return custom_favicon_url
     if os.path.isfile(f"{DOCS_STATIC_DIR}/favicon.ico"):
@@ -859,6 +882,71 @@ def _get_docs_favicon_url(app: FastAPI) -> Optional[str]:
     if os.path.isfile(f"{DOCS_STATIC_DIR}/favicon.png"):
         return DEFAULT_DOCS_FAVICON_PNG_URL
     return None
+
+
+def _get_docs_links(app: FastAPI, page: str) -> list[tuple[str, str]]:
+    config = app.state.config
+    links: list[tuple[str, str]] = []
+
+    if page == "swagger":
+        crosslink_url = config.docs_swagger_crosslink_url
+        crosslink_label = config.docs_swagger_crosslink_label
+    else:
+        crosslink_url = config.docs_redoc_crosslink_url
+        crosslink_label = config.docs_redoc_crosslink_label
+
+    if crosslink_url:
+        links.append((crosslink_label, crosslink_url))
+
+    python_client_url = config.docs_python_client_url
+    if python_client_url:
+        python_client_label = config.docs_python_client_label
+        links.append((python_client_label, python_client_url))
+
+    external_url = config.docs_external_url
+    if external_url:
+        external_label = config.docs_external_label
+        links.append((external_label, external_url))
+
+    return links
+
+
+def _build_docs_links_block(links: list[tuple[str, str]], class_name: str) -> str:
+    if not links:
+        return ""
+    anchors = "".join(
+        f'<a class="gs-docs-link" href="{escape(url, quote=True)}">{escape(label)}</a>'
+        for label, url in links
+    )
+    return f"""
+<style>
+  .{class_name} {{
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 1000;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 70vw;
+  }}
+  .{class_name} .gs-docs-link {{
+    display: inline-block;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    background: rgba(37, 50, 56, 0.9);
+    color: #fff;
+  }}
+  .{class_name} .gs-docs-link:hover {{
+    background: rgba(37, 50, 56, 1);
+  }}
+</style>
+<div class="{class_name}">{anchors}</div>
+"""
 
 
 def _setup_custom_docs_ui(app: FastAPI) -> None:
@@ -877,10 +965,15 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
             title=f"{app.title} - Swagger UI",
             **swagger_kwargs,
         )
+        links_block = _build_docs_links_block(
+            _get_docs_links(app, page="swagger"), class_name="gs-docs-links-swagger"
+        )
         logo_url = _get_docs_logo_url(app)
-        if not logo_url:
+        if not logo_url and not links_block:
             return response
-        swagger_ui_logo_inject = f"""
+        html = response.body.decode("utf-8")
+        if logo_url:
+            swagger_ui_logo_inject = f"""
 <style>
   .swagger-ui .gs-docs-logo-block {{
     margin: 8px 0 16px 0;
@@ -923,9 +1016,9 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
   }})();
 </script>
 """
-        html = response.body.decode("utf-8").replace(
-            "</head>", f"{swagger_ui_logo_inject}</head>"
-        )
+            html = html.replace("</head>", f"{swagger_ui_logo_inject}</head>")
+        if links_block:
+            html = html.replace("</body>", f"{links_block}</body>")
         return HTMLResponse(content=html, status_code=response.status_code)
 
     @app.get("/redoc", include_in_schema=False)
@@ -937,19 +1030,24 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
             title=f"{app.title} - ReDoc",
             **redoc_kwargs,
         )
+        links_block = _build_docs_links_block(
+            _get_docs_links(app, page="redoc"), class_name="gs-docs-links-redoc"
+        )
         logo_url = _get_docs_logo_url(app)
-        if not logo_url:
+        if not logo_url and not links_block:
             return response
-        redoc_logo_padding_css = """
+        html = response.body.decode("utf-8")
+        if logo_url:
+            redoc_logo_padding_css = """
 <style>
   .redoc-wrap .menu-content img {
     padding: 6px;
   }
 </style>
 """
-        html = response.body.decode("utf-8").replace(
-            "</head>", f"{redoc_logo_padding_css}</head>"
-        )
+            html = html.replace("</head>", f"{redoc_logo_padding_css}</head>")
+        if links_block:
+            html = html.replace("</body>", f"{links_block}</body>")
         return HTMLResponse(content=html, status_code=response.status_code)
 
 
@@ -957,11 +1055,19 @@ def create_spec_app() -> FastAPI:
     """Create a minimal FastAPI app for OpenAPI spec generation (no DB/config needed)."""
     app = FastAPI(
         title="GraphSense API",
-        description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
+        description=API_DESCRIPTION,
         version=__api_version__,
         dependencies=[Depends(get_api_key)],
     )
-    app.state.config = SimpleNamespace(disable_auth=False)
+    app.state.config = GSRestConfig.model_validate(
+        {
+            "disable_auth": False,
+            "database": {"nodes": ["localhost"]},
+            "gs-tagstore": {
+                "url": "postgresql+asyncpg://user:password@localhost:5432/tagstore"
+            },
+        }
+    )
     _register_routers(app)
     _setup_custom_openapi(app)
     return app

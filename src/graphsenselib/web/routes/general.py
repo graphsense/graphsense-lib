@@ -17,26 +17,38 @@ router = APIRouter(route_class=PluginRoute)
 
 @router.get(
     "/stats",
-    summary="Get statistics of supported currencies",
+    summary="Get platform statistics for supported currencies",
+    description="Returns per-currency platform statistics available in this API deployment.",
     operation_id="get_statistics",
     response_model=Stats,
     response_model_exclude_none=True,
+    responses={
+        200: {"description": "Statistics grouped by supported currency."},
+    },
 )
 async def get_statistics(
     request: Request,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get statistics of supported currencies"""
+    """Returns per-currency platform statistics."""
     result = await service.get_statistics(ctx, version=request.app.version)
     return result
 
 
 @router.get(
     "/search",
-    summary="Returns matching addresses, transactions and labels",
+    summary="Search addresses, transactions, actors, and labels",
+    description=(
+        "Returns matching addresses, transactions, actors, and labels for the query "
+        "with optional currency and result-type filters."
+    ),
     operation_id="search",
     response_model=SearchResult,
     response_model_exclude_none=True,
+    responses={
+        200: {"description": "Search results grouped by requested result types."},
+        422: {"description": "Validation error in query parameters."},
+    },
 )
 async def search(
     request: Request,
@@ -71,7 +83,7 @@ async def search(
     ),
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Returns matching addresses, transactions and labels"""
+    """Returns matching addresses, transactions, actors, and labels."""
     if currency is not None:
         currency = currency.lower()
 

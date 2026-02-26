@@ -4,17 +4,17 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**get_block**](BlocksApi.md#get_block) | **GET** /{currency}/blocks/{height} | Get a block by its height
-[**get_block_by_date**](BlocksApi.md#get_block_by_date) | **GET** /{currency}/block_by_date/{date} | Get block by date
-[**list_block_txs**](BlocksApi.md#list_block_txs) | **GET** /{currency}/blocks/{height}/txs | Get block transactions
+[**get_block**](BlocksApi.md#get_block) | **GET** /{currency}/blocks/{height} | Get block details by height
+[**get_block_by_date**](BlocksApi.md#get_block_by_date) | **GET** /{currency}/block_by_date/{date} | Get block at or before a date
+[**list_block_txs**](BlocksApi.md#list_block_txs) | **GET** /{currency}/blocks/{height}/txs | List transactions in a block
 
 
 # **get_block**
 > Block get_block(currency, height)
 
-Get a block by its height
+Get block details by height
 
-Get a block by its height
+Returns block metadata for the given block height.
 
 ### Example
 
@@ -51,7 +51,7 @@ with graphsense.ApiClient(configuration) as api_client:
     height = 1 # int | The block height
 
     try:
-        # Get a block by its height
+        # Get block details by height
         api_response = api_instance.get_block(currency, height)
         print("The response of BlocksApi->get_block:\n")
         pprint(api_response)
@@ -87,6 +87,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Block not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -94,9 +95,9 @@ Name | Type | Description  | Notes
 # **get_block_by_date**
 > BlockAtDate get_block_by_date(currency, var_date)
 
-Get block by date
+Get block at or before a date
 
-Get block by date
+Returns the closest block for the provided timestamp and selected currency.
 
 ### Example
 
@@ -133,7 +134,7 @@ with graphsense.ApiClient(configuration) as api_client:
     var_date = '2017-07-21T17:32:28Z' # str | The date (YYYY-MM-DD)
 
     try:
-        # Get block by date
+        # Get block at or before a date
         api_response = api_instance.get_block_by_date(currency, var_date)
         print("The response of BlocksApi->get_block_by_date:\n")
         pprint(api_response)
@@ -169,6 +170,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | No block found for the provided date. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -176,9 +178,9 @@ Name | Type | Description  | Notes
 # **list_block_txs**
 > List[Tx] list_block_txs(currency, height)
 
-Get block transactions
+List transactions in a block
 
-Get block transactions
+Returns all transactions contained in the block at the given height.
 
 ### Example
 
@@ -215,7 +217,7 @@ with graphsense.ApiClient(configuration) as api_client:
     height = 1 # int | The block height
 
     try:
-        # Get block transactions
+        # List transactions in a block
         api_response = api_instance.list_block_txs(currency, height)
         print("The response of BlocksApi->list_block_txs:\n")
         pprint(api_response)
@@ -251,6 +253,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Block not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

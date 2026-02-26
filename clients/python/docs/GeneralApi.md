@@ -4,16 +4,16 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**get_statistics**](GeneralApi.md#get_statistics) | **GET** /stats | Get statistics of supported currencies
-[**search**](GeneralApi.md#search) | **GET** /search | Returns matching addresses, transactions and labels
+[**get_statistics**](GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
+[**search**](GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
 
 
 # **get_statistics**
 > Stats get_statistics()
 
-Get statistics of supported currencies
+Get platform statistics for supported currencies
 
-Get statistics of supported currencies
+Returns per-currency platform statistics available in this API deployment.
 
 ### Example
 
@@ -48,7 +48,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.GeneralApi(api_client)
 
     try:
-        # Get statistics of supported currencies
+        # Get platform statistics for supported currencies
         api_response = api_instance.get_statistics()
         print("The response of GeneralApi->get_statistics:\n")
         pprint(api_response)
@@ -79,16 +79,16 @@ This endpoint does not need any parameter.
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
+**200** | Statistics grouped by supported currency. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **search**
 > SearchResult search(q, currency=currency, limit=limit, include_sub_tx_identifiers=include_sub_tx_identifiers, include_labels=include_labels, include_actors=include_actors, include_txs=include_txs, include_addresses=include_addresses)
 
-Returns matching addresses, transactions and labels
+Search addresses, transactions, actors, and labels
 
-Returns matching addresses, transactions and labels
+Returns matching addresses, transactions, actors, and labels for the query with optional currency and result-type filters.
 
 ### Example
 
@@ -131,7 +131,7 @@ with graphsense.ApiClient(configuration) as api_client:
     include_addresses = True # bool | Whether to include addresses (optional) (default to True)
 
     try:
-        # Returns matching addresses, transactions and labels
+        # Search addresses, transactions, actors, and labels
         api_response = api_instance.search(q, currency=currency, limit=limit, include_sub_tx_identifiers=include_sub_tx_identifiers, include_labels=include_labels, include_actors=include_actors, include_txs=include_txs, include_addresses=include_addresses)
         print("The response of GeneralApi->search:\n")
         pprint(api_response)
@@ -172,8 +172,8 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | Search results grouped by requested result types. |  -  |
+**422** | Validation error in query parameters. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

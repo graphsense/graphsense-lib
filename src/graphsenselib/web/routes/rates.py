@@ -19,10 +19,18 @@ router = APIRouter(route_class=PluginRoute)
 
 @router.get(
     "/rates/{height}",
-    summary="Get exchange rates for a given block height",
+    summary="Get fiat exchange rates at a block height",
+    description=(
+        "Returns fiat exchange rates for the requested currency at the given "
+        "block height."
+    ),
     operation_id="get_exchange_rates",
     response_model=Rates,
     response_model_exclude_none=True,
+    responses={
+        200: {"description": "Fiat exchange rates at the requested block height."},
+        422: {"description": "Validation error in path/query parameters."},
+    },
 )
 async def get_exchange_rates(
     request: Request,
@@ -30,7 +38,7 @@ async def get_exchange_rates(
     height: HeightPath,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get exchange rates for a given block height"""
+    """Returns fiat exchange rates for a given block height."""
     result = await service.get_exchange_rates(
         ctx,
         currency=currency.lower(),

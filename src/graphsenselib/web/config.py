@@ -108,6 +108,50 @@ class GSRestConfig(BaseSettings):
     docs_favicon_url: Optional[str] = Field(
         default=None, description="Custom favicon URL shown in Swagger UI and ReDoc"
     )
+    docs_swagger_crosslink_url: Optional[str] = Field(
+        default="/redoc",
+        description="URL linked from Swagger UI docs page",
+    )
+    docs_swagger_crosslink_label: str = Field(
+        default="ReDoc",
+        description="Label for cross-link shown on Swagger UI docs page",
+    )
+    docs_redoc_crosslink_url: Optional[str] = Field(
+        default="/ui",
+        description="URL linked from ReDoc docs page",
+    )
+    docs_redoc_crosslink_label: str = Field(
+        default="Try the API",
+        description="Label for cross-link shown on ReDoc docs page",
+    )
+    docs_external_url: Optional[str] = Field(
+        default=None,
+        description="External docs URL linked from Swagger UI and ReDoc pages",
+    )
+    docs_external_label: str = Field(
+        default="External Docs",
+        description="Label for external docs URL shown on docs pages",
+    )
+    docs_python_client_url: Optional[str] = Field(
+        default="https://github.com/graphsense/graphsense-lib/tree/master/clients/python",
+        description="Python client docs URL linked from Swagger UI and ReDoc pages",
+    )
+    docs_python_client_label: str = Field(
+        default="Python Client Docs",
+        description="Label for Python client docs URL shown on docs pages",
+    )
+    docs_contact_name: str = Field(
+        default="Iknaio Cryptoasset Analytics GmbH",
+        description="Contact name shown in OpenAPI info.contact",
+    )
+    docs_contact_email: str = Field(
+        default="contact@iknaio.com",
+        description="Contact email shown in OpenAPI info.contact",
+    )
+    docs_contact_url: str = Field(
+        default="https://www.iknaio.com/",
+        description="Contact website shown in OpenAPI info.contact",
+    )
 
     plugins: List[str] = Field(
         default_factory=list, description="List of plugin modules to load"

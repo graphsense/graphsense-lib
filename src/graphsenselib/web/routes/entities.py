@@ -47,10 +47,12 @@ router = APIRouter(route_class=PluginRoute)
 
 @router.get(
     "/entities/{entity}",
-    summary="Get an entity",
+    summary="Get entity details",
+    description="Returns details for a single clustered entity.",
     operation_id="get_entity",
     response_model=Entity,
     response_model_exclude_none=True,
+    responses={404: {"description": "Entity not found for the selected currency."}},
 )
 async def get_entity(
     request: Request,
@@ -73,10 +75,12 @@ async def get_entity(
 
 @router.get(
     "/entities/{entity}/addresses",
-    summary="Get an entity's addresses",
+    summary="List entity addresses",
+    description="Returns paginated addresses that belong to the entity.",
     operation_id="list_entity_addresses",
     response_model=EntityAddresses,
     response_model_exclude_none=True,
+    responses={404: {"description": "Entity not found for the selected currency."}},
 )
 async def list_entity_addresses(
     request: Request,
@@ -86,7 +90,7 @@ async def list_entity_addresses(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get an entity's addresses"""
+    """List addresses that belong to an entity."""
     result = await service.list_entity_addresses(
         ctx,
         currency=currency.lower(),
@@ -99,11 +103,16 @@ async def list_entity_addresses(
 
 @router.get(
     "/entities/{entity}/neighbors",
-    summary="Get an entity's neighbors in the entity graph",
+    summary="List neighboring entities",
+    description=(
+        "Returns neighboring entities connected to the given entity in the entity "
+        "graph."
+    ),
     operation_id="list_entity_neighbors",
     deprecated=True,
     response_model=NeighborEntities,
     response_model_exclude_none=True,
+    responses={404: {"description": "Entity not found for the selected currency."}},
 )
 async def list_entity_neighbors(
     request: Request,
@@ -123,7 +132,7 @@ async def list_entity_neighbors(
     include_actors: IncludeActorsQuery = False,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get an entity's neighbors in the entity graph"""
+    """List neighboring entities in the entity graph."""
     result = await service.list_entity_neighbors(
         ctx,
         currency=currency.lower(),
@@ -142,11 +151,15 @@ async def list_entity_neighbors(
 
 @router.get(
     "/entities/{entity}/links",
-    summary="Get transactions between two entities",
+    summary="List transactions between entities",
+    description=(
+        "Returns paginated transaction links between the entity and a neighbor entity."
+    ),
     operation_id="list_entity_links",
     deprecated=True,
     response_model=Links,
     response_model_exclude_none=True,
+    responses={404: {"description": "Entity not found for the selected currency."}},
 )
 async def list_entity_links(
     request: Request,
@@ -163,7 +176,7 @@ async def list_entity_links(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get transactions between two entities"""
+    """List transactions between two entities."""
     result = await service.list_entity_links(
         ctx,
         currency=currency.lower(),
@@ -183,11 +196,15 @@ async def list_entity_links(
 
 @router.get(
     "/entities/{entity}/tags",
-    summary="Get address tags for a given entity",
+    summary="List entity address tags",
+    description=(
+        "Returns paginated attribution tags observed on addresses in the entity."
+    ),
     operation_id="list_address_tags_by_entity",
     deprecated=True,
     response_model=AddressTags,
     response_model_exclude_none=True,
+    responses={404: {"description": "Entity not found for the selected currency."}},
 )
 async def list_address_tags_by_entity(
     request: Request,
@@ -197,7 +214,7 @@ async def list_address_tags_by_entity(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get address tags for a given entity"""
+    """List address tags for an entity."""
     result = await service.list_address_tags_by_entity(
         ctx,
         currency=currency.lower(),
@@ -210,11 +227,16 @@ async def list_address_tags_by_entity(
 
 @router.get(
     "/entities/{entity}/txs",
-    summary="Get all transactions an entity has been involved in",
+    summary="List entity transactions",
+    description=(
+        "Returns paginated transactions involving the entity, with optional height, "
+        "date, direction, and token filters."
+    ),
     operation_id="list_entity_txs",
     deprecated=True,
     response_model=AddressTxs,
     response_model_exclude_none=True,
+    responses={404: {"description": "Entity not found for the selected currency."}},
 )
 async def list_entity_txs(
     request: Request,
@@ -231,7 +253,7 @@ async def list_entity_txs(
     pagesize: PagesizeQuery = None,
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Get all transactions an entity has been involved in"""
+    """List transactions involving an entity."""
     result = await service.list_entity_txs(
         ctx,
         currency=currency.lower(),
@@ -251,10 +273,15 @@ async def list_entity_txs(
 
 @router.get(
     "/entities/{entity}/search",
-    summary="Search neighbors of an entity",
+    summary="Search entity neighborhood",
+    description=(
+        "Returns matching neighboring entities found by key/value criteria within the "
+        "specified search depth and breadth."
+    ),
     operation_id="search_entity_neighbors",
     response_model=list[SearchResultLevel1],
     response_model_exclude_none=True,
+    responses={404: {"description": "Entity not found for the selected currency."}},
 )
 async def search_entity_neighbors(
     request: Request,
