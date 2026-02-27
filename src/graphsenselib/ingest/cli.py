@@ -213,7 +213,7 @@ def ingest(
                     mode=mode,
                 )
         except LockAcquisitionError as e:
-            logger.error(str(e))
+            logger.warning(str(e))
             sys.exit(911)
 
 
@@ -349,7 +349,7 @@ def dump_rawdata(
                     )
 
     except LockAcquisitionError as e:
-        logger.error(str(e))
+        logger.warning(str(e))
         sys.exit(911)
 
 
