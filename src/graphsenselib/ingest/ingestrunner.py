@@ -79,6 +79,9 @@ class IngestRunner:
         )
         avg_blocktime = AVG_BLOCKTIME[self.transformers[0].network]
 
+        last_block_id = start_block
+        last_block_date = None
+
         with graceful_ctlc_shutdown() as check_shutdown_initialized:
             for partition in partitions:
                 file_chunks = list(split_blockrange(partition, self.file_batch_size))
@@ -149,11 +152,19 @@ class IngestRunner:
                     f"Processed partition {partition_start:,} - {partition[1]:,}"
                 )
 
-            logger.info(
-                f"Processed block range "
-                f"{start_block:,} - {last_block_id:,} "
-                f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
-            )
-        self.ingest_blockindep()
+            if last_block_date is not None:
+                logger.info(
+                    f"Processed block range "
+                    f"{start_block:,} - {last_block_id:,} "
+                    f" ({last_block_date.strftime(GRAPHSENSE_DEFAULT_DATETIME_FORMAT)})"
+                )
+            else:
+                logger.info("No blocks were processed.")
 
-        logger.info("Ingested block independent data. Finished")
+        if last_block_date is not None:
+            self.ingest_blockindep()
+            logger.info("Ingested block independent data. Finished")
+        else:
+            logger.info("Skipping block-independent data (no blocks were processed).")
+
+        return last_block_id if last_block_date is not None else None

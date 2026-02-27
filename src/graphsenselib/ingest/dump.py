@@ -68,11 +68,16 @@ def export_delta(
     ignore_overwrite_safechecks: bool = False,
     db: Optional[AnalyticsDb] = None,
     lock_disabled: bool = False,
+    previous_day: bool = False,
+    info: bool = False,
+    file_batch_size: Optional[int] = None,
 ):
     if currency not in SUPPORTED:
         raise ValueError(f"{currency} not supported by ingest module")
 
-    file_batch_size = FILESIZES[currency]
+    file_batch_size = (
+        file_batch_size if file_batch_size is not None else FILESIZES[currency]
+    )
     partition_batch_size = PARTITIONSIZES[currency]
 
     if directory is not None:
@@ -179,6 +184,28 @@ def export_delta(
             start_block, end_block, backoff
         )
 
+        if previous_day:
+            last_block_yesterday = source.get_last_block_yesterday()
+            if end_block > last_block_yesterday:
+                logger.info(
+                    f"--previous-day: capping end_block from {end_block:,} "
+                    f"to {last_block_yesterday:,}"
+                )
+                end_block = last_block_yesterday
+            if end_block < start_block:
+                logger.info(
+                    f"--previous-day: nothing to ingest "
+                    f"(start_block {start_block:,} > last_block_yesterday {end_block:,})"
+                )
+                return
+
+        if info:
+            logger.info(
+                f"Block range: {start_block:,} - {end_block:,} "
+                f"({end_block - start_block + 1:,} blocks)"
+            )
+            return
+
         logger.info(f"Writing data from {start_block} to {end_block}")
         logger.info(
             f"Partition batch size: {partition_batch_size}, "
@@ -202,14 +229,18 @@ def export_delta(
                     db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN
                 )
 
-        runner.run(start_block, end_block)
+        actual_last_block = runner.run(start_block, end_block)
 
         # Write summary statistics for UTXO chains after run
-        if db is not None and currency in ["btc", "ltc", "bch", "zec"]:
+        if (
+            actual_last_block is not None
+            and db is not None
+            and currency in ["btc", "ltc", "bch", "zec"]
+        ):
             logger.info("Writing Cassandra summary statistics...")
             ingest_summary_statistics_cassandra_utxo(
                 db,
                 timestamp=transformer._last_block_ts,
-                total_blocks=end_block + 1,
+                total_blocks=actual_last_block + 1,
                 total_txs=transformer._next_tx_id,
             )

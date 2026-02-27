@@ -115,6 +115,11 @@ class Source(ABC):
     def get_last_synced_block_bo(self, backoffblocks=0):
         return self.get_last_synced_block() - backoffblocks
 
+    def get_last_block_yesterday(self) -> int:
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_last_block_yesterday"
+        )
+
     def validate_blockrange(
         self, start_block: int, end_block: int, backoff: int
     ) -> Tuple[int, int]:

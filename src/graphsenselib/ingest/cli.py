@@ -173,6 +173,16 @@ def ingest(
 
     use_legacy = ks_config.ingest_config.legacy_ingest
 
+    LEGACY_ONLY_MODES = {
+        "utxo_only_tx_graph",
+        "account_traces_only",
+        "account_fees_only",
+        "trx_update_transactions",
+    }
+    if not use_legacy and mode in LEGACY_ONLY_MODES:
+        logger.error(f"Mode '{mode}' requires legacy_ingest: true in config.")
+        sys.exit(11)
+
     # Mode validation only applies to legacy paths
     if use_legacy:
         if (
@@ -215,6 +225,9 @@ def ingest(
                     end_block,
                     timeout,
                     lock_disabled,
+                    previous_day=previous_day,
+                    info=info,
+                    batch_size=batch_size,
                 )
             else:
                 lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
@@ -251,6 +264,9 @@ def _run_new_ingest(
     end_block,
     timeout,
     lock_disabled=False,
+    previous_day=False,
+    info=False,
+    batch_size=None,
 ):
     """Route from-node to the IngestRunner-based pipeline."""
     delta_directory = None
@@ -278,6 +294,9 @@ def _run_new_ingest(
         ignore_overwrite_safechecks=True,
         db=db if "cassandra" in sinks else None,
         lock_disabled=lock_disabled,
+        previous_day=previous_day,
+        info=info,
+        file_batch_size=batch_size,
     )
 
 

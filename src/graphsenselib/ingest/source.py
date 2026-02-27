@@ -7,7 +7,11 @@ from graphsenselib.ingest.account import (
     EthStreamerAdapter,
     TronStreamerAdapter,
     get_connection_from_url,
+    get_last_block_yesterday as account_get_last_block_yesterday,
     get_last_synced_block,
+)
+from graphsenselib.ingest.utxo import (
+    get_last_block_yesterday as utxo_get_last_block_yesterday,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Source
 from graphsenselib.ingest.fast_btc import FastBtcBlockExporter
@@ -46,6 +50,9 @@ class SourceTRX(Source):
             grpc_endpoint=grpc_provider_uri,
             max_workers=30,
         )
+
+    def get_last_block_yesterday(self) -> int:
+        return account_get_last_block_yesterday(self.client)
 
     def read_blockrange(self, start_block, end_block):
         if start_block == 0:
@@ -150,6 +157,9 @@ class SourceETH(Source):
             trace_batch_size=10,
             max_workers=10,
         )
+
+    def get_last_block_yesterday(self) -> int:
+        return account_get_last_block_yesterday(self.client)
 
     def read_blockrange(self, start_block, end_block):
         # ethereum-etl injects special traces for genesis and DAO fork blocks.
@@ -282,6 +292,11 @@ class SourceUTXO(Source):
         # Keep legacy adapter for get_last_synced_block (uses getblockcount)
         self._provider_uri = provider_uri
         self._provider_timeout = provider_timeout
+
+    def get_last_block_yesterday(self) -> int:
+        return utxo_get_last_block_yesterday(
+            self.fast_exporter, self.get_last_synced_block()
+        )
 
     def read_blockrange(self, start_block, end_block):
         blocks, txs = self.fast_exporter.export_blocks_and_transactions(
