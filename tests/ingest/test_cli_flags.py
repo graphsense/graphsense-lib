@@ -1,5 +1,6 @@
 """Tests for CLI flag forwarding and crash-safety in the new IngestRunner pipeline."""
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -204,3 +205,43 @@ def test_unsupported_mode_rejected():
             ["--env", "test", "--currency", "btc", "--mode", "utxo_only_tx_graph"],
         )
         assert result.exit_code == 11
+
+
+def test_sigint_after_first_partition_returns_partial():
+    """Simulated SIGINT after the first partition must return partial progress.
+
+    The shutdown check runs after each partition. Returning True on the first
+    check means partition 0-99 has been fully processed and written, then the
+    loop breaks before partition 100-199 starts.
+    """
+
+    @contextmanager
+    def fake_graceful_shutdown():
+        yield lambda: True  # signal shutdown immediately after first partition
+
+    sink = MagicMock()
+    sink.lock_name.return_value = None
+
+    runner = IngestRunner(partition_batch_size=100, file_batch_size=100)
+    runner.addSource(FakeSource(max_block=300))
+    runner.addTransformer(MagicMock(network="eth", transform=lambda d: d))
+    runner.addSink(sink)
+
+    with patch(
+        "graphsenselib.ingest.ingestrunner.graceful_ctlc_shutdown",
+        fake_graceful_shutdown,
+    ):
+        result = runner.run(0, 299)
+
+    # Only the first partition (0-99) should have been processed
+    assert result == 99
+
+    # Sink received writes for the first partition only
+    written_blocks = set()
+    for call in sink.write.call_args_list:
+        content = call[0][0]
+        for b in content.table_contents["block"]:
+            written_blocks.add(b["block_id"])
+
+    assert written_blocks == set(range(100))
+    assert 100 not in written_blocks
