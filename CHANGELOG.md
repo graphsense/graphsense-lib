@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
+## [2.9.9] unreleased
+
+### Library (v2.9.9)
+
+#### Fixed
+- `graphsense-cli db block get-nr --date` no longer fails with `TypeError: can't compare offset-naive and offset-aware datetimes` when using the documented `%Y-%m-%d %H:%M:%S` input format.
+- `graphsense-cli db block get-nr --date` now also accepts timezone-aware input in `%Y-%m-%d %H:%M:%S%z` format (e.g. `+00:00`).
+
+### Web API + Python client (webapi-2.9.5)
+no changes
+
 ## [2.9.8] 2026-02-26
 
 ### Library (v2.9.8)

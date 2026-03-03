@@ -11,7 +11,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache, partial
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -37,6 +37,23 @@ DATE_FORMAT = "%Y-%m-%d"
 FIRST_BLOCK = defaultdict(lambda: 0)
 FIRST_BLOCK["trx"] = 1
 logger = logging.getLogger(__name__)
+
+
+def _align_datetime_timezones(
+    left: datetime, right: datetime
+) -> tuple[datetime, datetime]:
+    left_tz = left.tzinfo
+    right_tz = right.tzinfo
+
+    if left_tz is None and right_tz is not None:
+        left = left.replace(tzinfo=right_tz)
+    elif left_tz is not None and right_tz is None:
+        right = right.replace(tzinfo=left_tz)
+    elif left_tz is None and right_tz is None:
+        left = left.replace(tzinfo=timezone.utc)
+        right = right.replace(tzinfo=timezone.utc)
+
+    return left, right
 
 
 @dataclass
@@ -426,6 +443,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         def get_item(date, index):
             daq = self.get_block_timestamp(index)
+            daq, date = _align_datetime_timezones(daq, date)
             return 0 if daq <= date else 1
 
         get_item_date = partial(get_item, date)
