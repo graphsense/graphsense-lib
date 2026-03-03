@@ -191,9 +191,8 @@ def test_unsupported_mode_rejected():
     from graphsenselib.ingest.cli import ingest
 
     mock_config = MagicMock()
-    mock_ks_config = MagicMock()
-    mock_ks_config.ingest_config.legacy_ingest = False
-    mock_config.get_keyspace_config.return_value = mock_ks_config
+    mock_config.legacy_ingest = False
+    mock_config.get_keyspace_config.return_value = MagicMock()
 
     with (
         patch("graphsenselib.ingest.cli.get_config", return_value=mock_config),

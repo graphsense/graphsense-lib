@@ -76,7 +76,6 @@ class IngestConfig(BaseModel):
     node_reference: str = Field(default_factory=lambda: "")
     secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
-    legacy_ingest: bool = False
 
     @property
     def all_node_references(self) -> List[str]:
@@ -219,6 +218,11 @@ class AppConfig(GoodConf):
     )
 
     s3_credentials: Optional[Dict[str, str]] = Field(default_factory=lambda: None)
+
+    legacy_ingest: bool = Field(
+        default=False,
+        description="Use the legacy ingest pipeline instead of the new IngestRunner pipeline.",
+    )
 
     use_redis_locks: bool = Field(
         default=False,

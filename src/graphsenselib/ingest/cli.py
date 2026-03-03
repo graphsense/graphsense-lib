@@ -171,7 +171,7 @@ def ingest(
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
 
-    use_legacy = ks_config.ingest_config.legacy_ingest
+    use_legacy = config.legacy_ingest
 
     LEGACY_ONLY_MODES = {
         "utxo_only_tx_graph",
@@ -180,18 +180,17 @@ def ingest(
         "trx_update_transactions",
     }
     if not use_legacy and mode in LEGACY_ONLY_MODES:
-        logger.error(f"Mode '{mode}' requires legacy_ingest: true in config.")
+        logger.error(f"Mode '{mode}' requires GRAPHSENSE_LEGACY_INGEST=true.")
         sys.exit(11)
 
     # Mode validation only applies to legacy paths
     if use_legacy:
-        if (
+        if mode != "legacy" and (
             (
                 ks_config.schema_type in ["account", "account_trx"]
                 and mode.startswith("utxo_")
             )
-            or ks_config.schema_type == "utxo"
-            and not mode.startswith("utxo_")
+            or (ks_config.schema_type == "utxo" and not mode.startswith("utxo_"))
         ):
             logger.error(
                 f"Mode {mode} is not available for "
@@ -230,6 +229,11 @@ def ingest(
                     batch_size=batch_size,
                 )
             else:
+                logger.warning(
+                    "DEPRECATED: The legacy ingest pipeline is deprecated and will be "
+                    "removed in a future release. Unset GRAPHSENSE_LEGACY_INGEST to "
+                    "use the new pipeline."
+                )
                 lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
                 with create_lock(lock_name, disabled=lock_disabled):
                     sink_configs = [
