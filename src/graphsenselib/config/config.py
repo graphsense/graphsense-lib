@@ -229,6 +229,11 @@ class AppConfig(GoodConf):
         description="Redis URL for distributed locking (e.g. redis://localhost:6379).",
     )
 
+    web: Optional[Dict] = Field(
+        default=None,
+        description="Optional REST API (gsrest) configuration. Read by the web app.",
+    )
+
     def __init__(
         self, load: bool = False, config_file: str | None = None, **kwargs
     ) -> None:
