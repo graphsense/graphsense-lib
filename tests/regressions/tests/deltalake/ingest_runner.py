@@ -1,4 +1,4 @@
-"""Run graphsense-cli ingest in a specific virtual environment via subprocess."""
+"""Run graphsense-cli ingest via subprocess."""
 
 import os
 import subprocess
@@ -159,3 +159,17 @@ def timed_run_ingest(
         minio_secret_key=minio_secret_key,
     )
     return time.perf_counter() - t0
+
+
+def copy_s3_prefix(s3_client, bucket: str, src_prefix: str, dst_prefix: str) -> None:
+    """Copy all objects under src_prefix to dst_prefix within the same bucket."""
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=src_prefix):
+        for obj in page.get("Contents", []):
+            src_key = obj["Key"]
+            dst_key = src_key.replace(src_prefix, dst_prefix, 1)
+            s3_client.copy_object(
+                Bucket=bucket,
+                CopySource={"Bucket": bucket, "Key": src_key},
+                Key=dst_key,
+            )

@@ -3,7 +3,7 @@
 import time
 
 from tests.deltalake.config import DeltaTestConfig
-from tests.deltalake.timing import ChunkTiming, IngestTimingResult, TableWriteTiming
+from tests.deltalake.timing import ChunkTiming, IngestTimingResult
 
 
 def run_timed_ingest(
@@ -98,7 +98,6 @@ def run_timed_ingest(
 
     # Run timed ingest
     chunk_timings = []
-    table_write_timings = []
 
     overall_start = time.perf_counter()
 
@@ -122,21 +121,7 @@ def run_timed_ingest(
 
             # Sink phase — with per-table timing
             sink_start = time.perf_counter()
-            for table_name, table_data in data.table_contents.items():
-                if table_name not in delta_sink.writers:
-                    continue
-                t_table = time.perf_counter()
-                writer = delta_sink.writers[table_name]
-                writer.write_delta(table_data)
-                table_dur = time.perf_counter() - t_table
-                rows = len(table_data) if isinstance(table_data, list) else 0
-                table_write_timings.append(
-                    TableWriteTiming(
-                        table_name=table_name,
-                        rows_written=rows,
-                        duration_s=table_dur,
-                    )
-                )
+            delta_sink.write(data)
             sink_s = time.perf_counter() - sink_start
 
             chunk_timings.append(
@@ -153,11 +138,7 @@ def run_timed_ingest(
     # Ingest block-independent data (e.g. trc10 tokens)
     blockindep_data = source.read_blockindep()
     blockindep_data = transformer.transform_blockindep(blockindep_data)
-    for table_name, table_data in blockindep_data.table_contents.items():
-        if table_name not in delta_sink.writers:
-            continue
-        writer = delta_sink.writers[table_name]
-        writer.write_delta(table_data)
+    delta_sink.write(blockindep_data)
 
     overall_s = time.perf_counter() - overall_start
 
@@ -167,5 +148,5 @@ def run_timed_ingest(
         start_block=start_block,
         end_block=end_block,
         chunk_timings=chunk_timings,
-        table_write_timings=table_write_timings,
+        table_write_timings=[],
     )

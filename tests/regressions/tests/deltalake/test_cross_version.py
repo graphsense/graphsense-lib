@@ -9,39 +9,38 @@ Test flow
 1. **Reference-only** (baseline truth):
    ref ingests base blocks, ref appends more blocks → snapshot A
 2. **Mixed** (cross-version):
-   ref ingests same base blocks, *current* appends same blocks → snapshot B
+   ref ingests same base blocks (copied via S3), *current* appends same blocks → snapshot B
 3. **Compare**: A vs B — schema, row counts, content hashes, file metadata
 
-The test is parametrized over all currencies configured in .graphsense.yaml
-(filterable via ``DELTA_CURRENCIES`` env var) and over block-range profiles
-(filterable via ``DELTA_RANGE_CATEGORIES``).
+Performance notes:
+- Current version uses the project's .venv directly (no venv creation)
+- Base ingestion is done once and copied for the mixed path
+- Default range categories: ``mid`` only (set ``DELTA_RANGE_CATEGORIES=old,mid,new,protocol`` for full suite)
 """
 
 import pytest
 
 from tests.deltalake.comparison import compare_snapshots, format_report
-from tests.deltalake.ingest_runner import run_ingest
+from tests.deltalake.ingest_runner import copy_s3_prefix, run_ingest
 from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
 
 # Known content divergences between the reference version (v25.11.18, using
 # graphsense-bitcoin-etl) and the current version (using fast_btc.py).
 # These are bug fixes in the current version, not regressions.
-#
-# ZEC joinsplit mapping: the old bitcoin-etl correctly mapped vpub_new
-# (z→t) as INPUT and vpub_old (t→z) as OUTPUT, matching the Sapling
-# valueBalance convention. fast_btc.py uses the same mapping.
-# No content divergence is expected for ZEC.
 KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = set()
 
 # Schema additions in the current version that the reference version lacks.
-# The input struct now includes type, addresses, and value columns for all
-# UTXO chains (populated via verbosity 3 or getrawtransaction resolution).
-# Content in shared columns is identical — only the struct has new fields.
 KNOWN_SCHEMA_ADDITIONS: set[tuple[str, str]] = {
     ("btc", "transaction"),
     ("bch", "transaction"),
     ("ltc", "transaction"),
     ("zec", "transaction"),
+    ("eth", "transaction"),  # y_parity, access_list
+    ("eth", "block"),  # parent_beacon_block_root, uncles
+    ("eth", "trace"),  # creation_method
+    ("trx", "transaction"),  # y_parity, access_list (shared account schema)
+    ("trx", "block"),  # parent_beacon_block_root, uncles (shared account schema)
+    ("trx", "trace"),  # creation_method (shared account schema)
 }
 
 
@@ -57,6 +56,7 @@ class TestCrossVersionCompatibility:
         delta_config,
         reference_venv,
         current_venv,
+        s3_client,
         ref_package_versions,
         current_package_versions,
     ):
@@ -91,8 +91,6 @@ class TestCrossVersionCompatibility:
         path_ref = f"s3://{bucket}/ref_only/{currency}/{range_id}"
 
         if is_genesis:
-            # Genesis profile: compare both versions on identical overwrite
-            # ingestion from block 0, without base/append staging.
             run_ingest(
                 reference_venv,
                 delta_config,
@@ -103,7 +101,7 @@ class TestCrossVersionCompatibility:
                 **minio_kw,
             )
         else:
-            # Base ingestion (overwrite)
+            # Base ingestion (overwrite) — done once, reused for mixed path
             run_ingest(
                 reference_venv, delta_config, path_ref,
                 start_block=delta_config.start_block,
@@ -111,7 +109,13 @@ class TestCrossVersionCompatibility:
                 write_mode="overwrite",
                 **minio_kw,
             )
-            # Append
+
+            # Copy base data to mixed path before appending to either
+            ref_prefix = f"ref_only/{currency}/{range_id}/"
+            mixed_prefix = f"mixed/{currency}/{range_id}/"
+            copy_s3_prefix(s3_client, bucket, ref_prefix, mixed_prefix)
+
+            # Append to reference path
             run_ingest(
                 reference_venv, delta_config, path_ref,
                 start_block=delta_config.append_start_block,
@@ -132,6 +136,7 @@ class TestCrossVersionCompatibility:
         path_mixed = f"s3://{bucket}/mixed/{currency}/{range_id}"
 
         if is_genesis:
+            # Genesis: current version does full overwrite
             run_ingest(
                 current_venv,
                 delta_config,
@@ -142,17 +147,12 @@ class TestCrossVersionCompatibility:
                 **minio_kw,
             )
         else:
-            # Base ingestion with reference version
+            # Base data already copied above via copy_s3_prefix.
+            # Append with current version.
             run_ingest(
-                reference_venv, delta_config, path_mixed,
-                start_block=delta_config.start_block,
-                end_block=delta_config.base_end_block,
-                write_mode="overwrite",
-                **minio_kw,
-            )
-            # Append with CURRENT version
-            run_ingest(
-                current_venv, delta_config, path_mixed,
+                current_venv,
+                delta_config,
+                path_mixed,
                 start_block=delta_config.append_start_block,
                 end_block=delta_config.append_end_block,
                 write_mode="append",
@@ -203,8 +203,6 @@ class TestCrossVersionCompatibility:
                 f"(ref={diff.row_count_ref}, cur={diff.row_count_current})"
             )
             if (currency, name) in KNOWN_SCHEMA_ADDITIONS:
-                # Content hash includes schema, so it will always differ
-                # when new struct fields are added. Not a content issue.
                 if not diff.content_hash_match:
                     print(
                         f"  [{name}] EXPECTED: content hash differs due to "

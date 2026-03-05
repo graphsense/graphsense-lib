@@ -31,7 +31,7 @@ REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 	test-rest-local test-rest-dev-branch rest-run-tests \
 	test-rest-fuzz test-rest-manual test-rest-loki test-rest-all \
 	rest-ensure-servers rest-ensure-baseline rest-info rest-clean \
-	generate-loki test-deltalake test-deltalake-perf test-deltalake-all \
+	generate-loki test-deltalake test-deltalake-comprehensive test-deltalake-perf test-deltalake-all \
 	clean-deltalake clean
 
 # Build current from local path (requires GSLIB)
@@ -188,9 +188,8 @@ rest-clean: rest-stop
 
 DELTA_REF_VERSION ?= v25.11.18
 DELTA_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
-DELTA_RANGE_CATEGORIES ?= old,mid,new,protocol
+DELTA_RANGE_CATEGORIES ?= mid
 DELTA_PERF_RANGE_CATEGORIES ?= mid
-DELTA_PERF_REPEATS ?= 3
 
 test-deltalake:
 	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
@@ -199,13 +198,17 @@ test-deltalake:
 	GSLIB_PATH=$$(cd ../.. && pwd) \
 	uv run pytest tests/deltalake/ -v -s -m deltalake
 
+test-deltalake-comprehensive:
+	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
+	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
+	DELTA_RANGE_CATEGORIES=genesis,old,mid,new,protocol \
+	GSLIB_PATH=$$(cd ../.. && pwd) \
+	uv run pytest tests/deltalake/ -v -s -m deltalake
+
 test-deltalake-perf:
-	@echo "Installing local graphsense-lib[ingest] for in-process perf tests..."
-	uv pip install -e "$$(cd ../.. && pwd)[ingest]"
 	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
 	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
 	DELTA_RANGE_CATEGORIES=$(DELTA_PERF_RANGE_CATEGORIES) \
-	DELTA_PERF_REPEATS=$(DELTA_PERF_REPEATS) \
 	GSLIB_PATH=$$(cd ../.. && pwd) \
 	uv run pytest tests/deltalake/test_performance.py -v -s -m deltalake_perf
 

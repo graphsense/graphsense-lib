@@ -320,7 +320,7 @@ class DeltaTestConfig:
 
 
 def _parse_range_categories() -> set[str]:
-    raw = os.environ.get("DELTA_RANGE_CATEGORIES", "old,mid,new,protocol")
+    raw = os.environ.get("DELTA_RANGE_CATEGORIES", "mid")
     return {token.strip() for token in raw.split(",") if token.strip()}
 
 

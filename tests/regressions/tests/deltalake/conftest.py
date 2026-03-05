@@ -148,6 +148,18 @@ def current_venv():
 
 
 @pytest.fixture(scope="session")
+def s3_client(minio_config):
+    """Session-scoped boto3 S3 client for MinIO."""
+    return boto3.client(
+        "s3",
+        endpoint_url=minio_config["endpoint"],
+        aws_access_key_id=minio_config["access_key"],
+        aws_secret_access_key=minio_config["secret_key"],
+        region_name="us-east-1",
+    )
+
+
+@pytest.fixture(scope="session")
 def ref_package_versions(reference_venv) -> dict[str, str]:
     """Package versions from the reference venv (shared across currencies)."""
     return get_venv_package_versions(reference_venv)
