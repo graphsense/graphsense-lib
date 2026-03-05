@@ -91,6 +91,8 @@ When enabling `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP=true`, keep in mind:
 - Startup may be slower because schema checks and potential initialization run before the app serves traffic.
 - In multi-replica deployments, initialize schema once (migration/init job) to avoid startup races.
 
+If TagStore is not configured (`gs-tagstore` missing) or the TagStore URL is unreachable, the REST app now falls back to a mock TagStore so endpoints still work. In this mode, tag-specific responses (labels, actors, taxonomies, tag counts) are empty.
+
 ### Basic Usage
 
 #### Database Access with Configuration File

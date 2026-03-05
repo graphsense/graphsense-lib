@@ -51,9 +51,9 @@ class GSRestConfig(BaseSettings):
         default_factory=CassandraConfig, description="Database configuration"
     )
     tagstore: Optional[TagStoreReaderConfig] = Field(
-        default_factory=TagStoreReaderConfig,
+        default=None,
         alias="gs-tagstore",
-        description="Tagstore configuration",
+        description="Tagstore configuration (optional)",
     )
     ALLOWED_ORIGINS: Union[str, List[str]] = Field(
         default="*", description="CORS allowed origins"
