@@ -26,6 +26,7 @@ class IngestRunner:
         self.sinks = []
         self.partition_batch_size = partition_batch_size
         self.file_batch_size = file_batch_size
+        self._sink_last_block: dict[str, int] = {}
 
     def addSource(self, source: Source):
         self.source = source
@@ -65,12 +66,32 @@ class IngestRunner:
 
         return data
 
-    def _transform_and_write(self, data):
-        """Apply transformers and write to sinks."""
+    def _transform_and_write(self, data, file_chunk):
+        """Apply transformers and write to sinks.
+
+        Tracks which sinks succeeded per chunk. If a sink fails, reports
+        which sinks already committed so operators can diagnose inconsistencies.
+        """
         for transformer in self.transformers:
             data = transformer.transform(data)
+
+        committed_sinks = []
         for sink in self.sinks:
-            sink.write(data)
+            sink_name = type(sink).__name__
+            try:
+                sink.write(data)
+            except Exception:
+                if committed_sinks:
+                    logger.error(
+                        f"Sink {sink_name} failed for blocks "
+                        f"{file_chunk[0]:,}–{file_chunk[1]:,}. "
+                        f"Already committed to: {committed_sinks}. "
+                        f"Per-sink state: {self._sink_last_block}"
+                    )
+                raise
+            committed_sinks.append(sink_name)
+            self._sink_last_block[sink_name] = file_chunk[1]
+
         return data
 
     def run(self, start_block, end_block):
@@ -117,7 +138,7 @@ class IngestRunner:
                             prefetch_future = None
 
                         # Transform + write current chunk
-                        data = self._transform_and_write(data)
+                        data = self._transform_and_write(data, file_chunk)
 
                         blocks = data.table_contents["block"]
                         last_block = sorted(blocks, key=lambda x: x["block_id"])[-1]
@@ -163,6 +184,8 @@ class IngestRunner:
 
         if last_block_date is not None:
             self.ingest_blockindep()
+            if self._sink_last_block:
+                logger.info(f"Sink checkpoint: {self._sink_last_block}")
             logger.info("Ingested block independent data. Finished")
         else:
             logger.info("Skipping block-independent data (no blocks were processed).")

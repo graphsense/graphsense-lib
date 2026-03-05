@@ -231,10 +231,11 @@ def export_delta(
             f"file batch size: {file_batch_size}"
         )
 
-        # Write configuration BEFORE runner.run() — critical because UTXO
-        # get_latest_tx_id_before_block calls get_block_bucket_size() which
-        # reads from the configuration table.
-        if db is not None:
+        actual_last_block = runner.run(start_block, end_block)
+
+        # Write Cassandra configuration and summary statistics AFTER data
+        # so that a crash mid-ingest doesn't leave stale metadata.
+        if db is not None and actual_last_block is not None:
             logger.info("Writing Cassandra configuration table...")
             if currency in ["btc", "ltc", "bch", "zec"]:
                 ingest_configuration_cassandra_utxo(
@@ -243,23 +244,14 @@ def export_delta(
                     UTXO_TX_HASH_PREFIX_LENGTH,
                     UTXO_TX_BUCKET_SIZE,
                 )
+                logger.info("Writing Cassandra summary statistics...")
+                ingest_summary_statistics_cassandra_utxo(
+                    db,
+                    timestamp=transformer._last_block_ts,
+                    total_blocks=actual_last_block + 1,
+                    total_txs=transformer._next_tx_id,
+                )
             else:
                 ingest_configuration_cassandra(
                     db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN
                 )
-
-        actual_last_block = runner.run(start_block, end_block)
-
-        # Write summary statistics for UTXO chains after run
-        if (
-            actual_last_block is not None
-            and db is not None
-            and currency in ["btc", "ltc", "bch", "zec"]
-        ):
-            logger.info("Writing Cassandra summary statistics...")
-            ingest_summary_statistics_cassandra_utxo(
-                db,
-                timestamp=transformer._last_block_ts,
-                total_blocks=actual_last_block + 1,
-                total_txs=transformer._next_tx_id,
-            )

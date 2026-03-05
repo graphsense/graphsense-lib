@@ -136,9 +136,8 @@ class TransformerUTXO(Transformer):
         prepare_transactions_inplace_parquet(txs, self.network)
         t_prep_txs = time.monotonic() - t0
 
-        partition = (
-            blocks[0]["block_id"] // self.partition_batch_size
-        )  # todo this can be a problem if the there are multiple partitions
+        partition = blocks[0]["block_id"] // self.partition_batch_size
+        assert partition == blocks[-1]["block_id"] // self.partition_batch_size
 
         t0 = time.monotonic()
         for item in blocks:
@@ -234,6 +233,7 @@ class TransformerUTXO(Transformer):
 
         # 9. Add partition to blocks and txs
         partition = blocks[0]["block_id"] // self.partition_batch_size
+        assert partition == blocks[-1]["block_id"] // self.partition_batch_size
         t0 = time.monotonic()
         for item in blocks:
             item["partition"] = partition
@@ -296,8 +296,8 @@ class TransformerTRX(Transformer):
         txs = enrich_transactions_with_type(txs, hash_to_type)
         t_enrich_type = time.monotonic() - t0
 
-        # todo this can be a problem if the there are multiple partitions
         partition = blocks[0]["block_id"] // self.partition_batch_size
+        assert partition == blocks[-1]["block_id"] // self.partition_batch_size
 
         t0 = time.monotonic()
         prepare_fees_inplace(

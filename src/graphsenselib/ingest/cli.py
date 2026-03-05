@@ -122,6 +122,22 @@ def ingesting():
     help="Create database schema if it does not exist",
 )
 @click.option(
+    "--write-mode",
+    type=click.Choice(
+        ["overwrite", "append"],
+        case_sensitive=False,
+    ),
+    help="Write mode for delta sink (default: append).",
+    default="append",
+    multiple=False,
+)
+@click.option(
+    "--ignore-overwrite-safechecks",
+    is_flag=True,
+    help="Ignore check in the overwrite mode that only lets you start at the "
+    "beginning of a partition.",
+)
+@click.option(
     "--mode",
     type=click.Choice(
         [
@@ -158,6 +174,8 @@ def ingest(
     info,
     previous_day,
     create_schema,
+    write_mode,
+    ignore_overwrite_safechecks,
     mode,
     version,
 ):
@@ -227,6 +245,8 @@ def ingest(
                     previous_day=previous_day,
                     info=info,
                     batch_size=batch_size,
+                    write_mode=write_mode,
+                    ignore_overwrite_safechecks=ignore_overwrite_safechecks,
                 )
             else:
                 logger.warning(
@@ -271,6 +291,8 @@ def _run_new_ingest(
     previous_day=False,
     info=False,
     batch_size=None,
+    write_mode="append",
+    ignore_overwrite_safechecks=False,
 ):
     """Route from-node to the IngestRunner-based pipeline."""
     delta_directory = None
@@ -294,8 +316,8 @@ def _run_new_ingest(
         end_block=end_block,
         provider_timeout=timeout,
         s3_credentials=s3_credentials,
-        write_mode="overwrite",
-        ignore_overwrite_safechecks=True,
+        write_mode=write_mode,
+        ignore_overwrite_safechecks=ignore_overwrite_safechecks,
         db=db if "cassandra" in sinks else None,
         lock_disabled=lock_disabled,
         previous_day=previous_day,
