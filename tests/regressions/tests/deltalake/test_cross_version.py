@@ -35,11 +35,11 @@ KNOWN_SCHEMA_ADDITIONS: set[tuple[str, str]] = {
     ("bch", "transaction"),
     ("ltc", "transaction"),
     ("zec", "transaction"),
-    ("eth", "transaction"),  # y_parity, access_list
-    ("eth", "block"),  # parent_beacon_block_root, uncles
+    ("eth", "transaction"),  # y_parity, access_list, authorization_list
+    ("eth", "block"),  # parent_beacon_block_root, uncles, requests_hash
     ("eth", "trace"),  # creation_method
-    ("trx", "transaction"),  # y_parity, access_list (shared account schema)
-    ("trx", "block"),  # parent_beacon_block_root, uncles (shared account schema)
+    ("trx", "transaction"),  # y_parity, access_list, authorization_list (shared schema)
+    ("trx", "block"),  # parent_beacon_block_root, uncles, requests_hash (shared schema)
     ("trx", "trace"),  # creation_method (shared account schema)
 }
 

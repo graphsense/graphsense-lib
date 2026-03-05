@@ -436,6 +436,7 @@ def prepare_blocks_inplace_eth(
         "miner",
         "extra_data",
         "parent_beacon_block_root",
+        "requests_hash",
     ]
     for item in items:
         # remove column

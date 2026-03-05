@@ -84,6 +84,7 @@ else:
                 ("blob_gas_used", pa.int64()),
                 ("parent_beacon_block_root", pa.binary(32)),
                 ("uncles", pa.list_(pa.binary(32))),
+                ("requests_hash", pa.binary(32)),
             ]
         ),
         "transaction": pa.schema(
@@ -139,6 +140,21 @@ else:
                             [
                                 ("address", pa.string()),
                                 ("storageKeys", pa.list_(pa.string())),
+                            ]
+                        )
+                    ),
+                ),
+                (
+                    "authorization_list",
+                    pa.list_(
+                        pa.struct(
+                            [
+                                ("chainId", pa.string()),
+                                ("address", pa.string()),
+                                ("nonce", pa.string()),
+                                ("yParity", pa.string()),
+                                ("r", pa.string()),
+                                ("s", pa.string()),
                             ]
                         )
                     ),
