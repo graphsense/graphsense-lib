@@ -29,6 +29,7 @@ The web API requires two backend connections: a **Cassandra** cluster (blockchai
 ```bash
 GS_CASSANDRA_ASYNC_NODES='["<cassandra-host>"]' \
 GRAPHSENSE_TAGSTORE_READ_URL='postgresql+asyncpg://<user>:<password>@<host>:<port>/tagstore' \
+GS_CASSANDRA_ASYNC_CURRENCIES='{"btc":{"raw": "btc_raw", "transformed": "btc_transformed"},"eth":{}}' \
 uv run --extra web uvicorn graphsenselib.web.app:create_app --factory --host localhost --port 9000 --reload
 ```
 
