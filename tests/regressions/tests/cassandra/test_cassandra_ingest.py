@@ -198,6 +198,34 @@ class TestCassandraIngest:
             )
 
             if not match and not known:
+                # Debug: show first differing rows
+                ref_rows = list(session.execute(
+                    f"SELECT * FROM {ref_ks}.{table}"  # noqa: S608
+                ))
+                cur_rows = list(session.execute(
+                    f"SELECT * FROM {cur_ks}.{table}"  # noqa: S608
+                ))
+                ref_by_key = {
+                    str(sorted(r._asdict().items())): r._asdict()
+                    for r in ref_rows
+                }
+                cur_by_key = {
+                    str(sorted(r._asdict().items())): r._asdict()
+                    for r in cur_rows
+                }
+                ref_set = set(ref_by_key.keys())
+                cur_set = set(cur_by_key.keys())
+                only_ref = ref_set - cur_set
+                only_cur = cur_set - ref_set
+                if only_ref:
+                    sample = list(only_ref)[:2]
+                    for s in sample:
+                        print(f"      REF ONLY: {ref_by_key[s]}")
+                if only_cur:
+                    sample = list(only_cur)[:2]
+                    for s in sample:
+                        print(f"      CUR ONLY: {cur_by_key[s]}")
+
                 mismatches.append(
                     f"{table}: content differs "
                     f"(ref={ref_count} rows hash={ref_hash[:12]}... "

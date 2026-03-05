@@ -398,6 +398,37 @@ def enrich_txs(
                 if not input_reference_only:
                     resolver.add_output(tx["hash"], o)
 
+    # Normalize prevout-resolved input addresses (verbosity 3 / getrawtransaction).
+    # Always pop prevout_script_hex to clean up; only normalize when inputs
+    # won't be overwritten by the resolver below.
+    for tx in txs:
+        for i in tx["inputs"]:
+            prevout_hex = i.pop("prevout_script_hex", None)
+            if not input_reference_only or i.get("value") is None:
+                continue
+            # BCH cashaddr → legacy conversion
+            if (
+                i.get("addresses")
+                and i["addresses"][0]
+                and i["addresses"][0].startswith("bitcoincash:")
+            ):
+                i["addresses"] = [bch_address_to_legacy(a) for a in i["addresses"]]
+            # Nonstandard (P2PK etc.) → parse via prevout scriptPubKey
+            if prevout_hex and i.get("type") == "nonstandard":
+                try:
+                    address_list, scripttype = parse_script(prevout_hex)
+                    i["addresses"] = address_list if address_list else i["addresses"]
+                    i["type"] = scripttype
+                except (
+                    UnknownScriptType,
+                    UnknownAddressType,
+                    P2pkParserException,
+                ) as exception:
+                    logger.warning(
+                        f"{exception}: cannot parse prevout script for"
+                        f" input {i} in tx {tx.get('hash')}"
+                    )
+
     if input_reference_only:
         pass
     else:
@@ -862,6 +893,12 @@ def prepare_transactions_inplace_parquet(txs, currency):
             input["spent_transaction_hash"] = hex_to_bytes(
                 input["spent_transaction_hash"]
             )
+            input.pop("script_asm", None)
+            input.pop("required_signatures", None)
+            if input.get("addresses"):
+                input["addresses"] = [
+                    address_to_bytes(currency, addr) for addr in input["addresses"]
+                ]
 
         for output in tx["outputs"]:
             output["addresses"] = [

@@ -283,11 +283,20 @@ class SourceETH(Source):
 
 
 class SourceUTXO(Source):
-    def __init__(self, provider_uri, network, provider_timeout):
+    def __init__(
+        self,
+        provider_uri,
+        network,
+        provider_timeout,
+        verbosity=2,
+        resolve_inputs=True,
+    ):
         self.fast_exporter = FastBtcBlockExporter(
             provider_uri=provider_uri,
             max_workers=10,
             timeout=provider_timeout,
+            verbosity=verbosity,
+            resolve_inputs=resolve_inputs,
         )
         # Keep legacy adapter for get_last_synced_block (uses getblockcount)
         self._provider_uri = provider_uri

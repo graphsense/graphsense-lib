@@ -33,19 +33,24 @@ CASSANDRA_TEST_RANGES: dict[str, list[CassandraRange]] = {
         CassandraRange("genesis", 0, 250, "first real txs + UTXO resolution"),
     ],
     "eth": [
+        CassandraRange("genesis", 0, 24, "genesis allocations + special traces"),
+        CassandraRange("dao_fork", 1_920_000, 1_920_024, "DAO fork special traces"),
         CassandraRange("mid", 2_000_000, 2_000_024, "early PoW era"),
+        CassandraRange("post_merge", 18_000_000, 18_000_024, "PoS era post-merge"),
     ],
     "ltc": [
-        CassandraRange("genesis", 0, 99, "coinbase-only genesis blocks"),
+        CassandraRange("genesis", 0, 600, "first spending tx at block 448"),
     ],
     "bch": [
-        CassandraRange("genesis", 0, 99, "coinbase-only genesis blocks"),
+        CassandraRange("genesis", 0, 250, "shares BTC history, first spending at 170"),
     ],
     "zec": [
-        CassandraRange("genesis", 0, 99, "coinbase-only genesis blocks"),
+        CassandraRange("genesis", 0, 500, "first spending at 396, good density"),
     ],
     "trx": [
+        CassandraRange("genesis", 1, 25, "genesis blocks (block 0 skipped)"),
         CassandraRange("mid", 50_000_001, 50_000_025, "mid-chain era"),
+        CassandraRange("recent", 65_000_001, 65_000_025, "recent blocks"),
     ],
 }
 
@@ -60,26 +65,32 @@ EXPECTED_MIN_ROWS = {
         "transaction_spent_in": 1,
         "transaction_spending": 1,
     },
-    "eth": {"block": 1, "transaction": 1},
+    "eth": {"block": 1, "trace": 1},
     "ltc": {
         "block": 1,
         "transaction": 1,
         "block_transactions": 1,
         "transaction_by_tx_prefix": 1,
+        "transaction_spent_in": 1,
+        "transaction_spending": 1,
     },
     "bch": {
         "block": 1,
         "transaction": 1,
         "block_transactions": 1,
         "transaction_by_tx_prefix": 1,
+        "transaction_spent_in": 1,
+        "transaction_spending": 1,
     },
     "zec": {
         "block": 1,
         "transaction": 1,
         "block_transactions": 1,
         "transaction_by_tx_prefix": 1,
+        "transaction_spent_in": 1,
+        "transaction_spending": 1,
     },
-    "trx": {"block": 1, "transaction": 1},
+    "trx": {"block": 1},
 }
 
 ALL_CASSANDRA_CURRENCIES = list(CASSANDRA_TEST_RANGES.keys())

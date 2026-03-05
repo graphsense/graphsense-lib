@@ -224,6 +224,23 @@ class AppConfig(GoodConf):
         description="Use the legacy ingest pipeline instead of the new IngestRunner pipeline.",
     )
 
+    resolve_inputs_via_cassandra: bool = Field(
+        default=False,
+        description=(
+            "Use Cassandra to resolve UTXO input values instead of RPC verbosity 3 "
+            "or explicit transaction fetching for LTC and ZEC."
+        ),
+    )
+
+    fill_unresolved_inputs: bool = Field(
+        default=False,
+        description=(
+            "Fill unresolved UTXO inputs with dummy values (value=0, type=nonstandard) "
+            "instead of failing. Useful for mid-chain delta-only ingests where the "
+            "node lacks txindex and no Cassandra is available."
+        ),
+    )
+
     use_redis_locks: bool = Field(
         default=False,
         description="Use Redis for distributed locking instead of file locks.",

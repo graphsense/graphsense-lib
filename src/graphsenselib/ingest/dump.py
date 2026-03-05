@@ -29,8 +29,11 @@ from graphsenselib.utils import first_or_default
 from graphsenselib.utils.locking import create_lock
 
 from ..config import get_reorg_backoff_blocks
+from ..config.config import get_config
 
 SUPPORTED = ["trx", "eth", "btc", "ltc", "bch", "zec"]
+
+_DEFAULT_VERBOSITY = {"btc": 3, "bch": 3, "ltc": 2, "zec": 2}
 
 
 # filesizes should be between 100 and 1000 MB and partitions > 1000MB
@@ -115,12 +118,28 @@ def export_delta(
         transformer = TransformerETH(partition_batch_size, "eth")
 
     elif currency in ["btc", "ltc", "bch", "zec"]:
+        config = get_config()
+        use_cassandra_resolver = config.resolve_inputs_via_cassandra
+        verbosity = 2 if use_cassandra_resolver else _DEFAULT_VERBOSITY[currency]
+        # When Cassandra resolves inputs, skip RPC resolution in the exporter.
+        # When verbosity=3 (BTC/BCH), prevout data is inline — no RPC needed.
+        # When verbosity=2 (LTC/ZEC) without Cassandra, resolve via getrawtransaction.
+        resolve_inputs = not use_cassandra_resolver
+
         source = SourceUTXO(
             provider_uri=provider_uri,
             network=currency,
             provider_timeout=provider_timeout,
+            verbosity=verbosity,
+            resolve_inputs=resolve_inputs,
         )
-        transformer = TransformerUTXO(partition_batch_size, currency, db=db)
+        transformer = TransformerUTXO(
+            partition_batch_size,
+            currency,
+            db=db,
+            resolve_inputs_via_cassandra=use_cassandra_resolver,
+            fill_unresolved_inputs=config.fill_unresolved_inputs,
+        )
     else:
         raise ValueError(f"{currency} not supported by ingest module")
 

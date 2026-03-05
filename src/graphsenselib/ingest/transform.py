@@ -50,10 +50,19 @@ def _finalize_inplace(items, int_cols):
 
 
 class TransformerUTXO(Transformer):
-    def __init__(self, partition_batch_size, network, db=None):
+    def __init__(
+        self,
+        partition_batch_size,
+        network,
+        db=None,
+        resolve_inputs_via_cassandra=False,
+        fill_unresolved_inputs=False,
+    ):
         super().__init__(partition_batch_size, network)
         self.db = db
         self._has_cassandra = db is not None
+        self._resolve_via_cassandra = resolve_inputs_via_cassandra
+        self._fill_unresolved = fill_unresolved_inputs
         if self._has_cassandra:
             self._resolver = CassandraOutputResolver(
                 db,
@@ -67,6 +76,35 @@ class TransformerUTXO(Transformer):
         if self._has_cassandra:
             return self._transform_with_cassandra(block_range_content)
         return self._transform_delta_only(block_range_content)
+
+    def _fill_unresolved_inputs(self, txs):
+        """Fill unresolved inputs (type=None) with dummy values.
+
+        When inputs can't be resolved (no txindex, mid-chain start, no
+        Cassandra), this prevents the pipeline from crashing. Logs a
+        warning for each unresolved input.
+        """
+        n_filled = 0
+        for tx in txs:
+            for inp in tx["inputs"]:
+                if inp["type"] is None and inp["spent_transaction_hash"]:
+                    logger.warning(
+                        f"Unresolved input in tx {tx.get('hash')}: "
+                        f"spent_tx={inp['spent_transaction_hash']}, "
+                        f"idx={inp['spent_output_index']} — "
+                        f"filling with dummy values"
+                    )
+                    inp["type"] = "nonstandard"
+                    inp["value"] = 0
+                    if not inp.get("addresses"):
+                        inp["addresses"] = ["nonstandard" + "0" * 40]
+                    n_filled += 1
+        if n_filled > 0:
+            logger.warning(
+                f"Filled {n_filled} unresolved inputs with dummy values. "
+                f"Data is incomplete — consider enabling txindex on the node "
+                f"or using resolve_inputs_via_cassandra=true."
+            )
 
     def _transform_delta_only(
         self, block_range_content: BlockRangeContent
@@ -84,14 +122,14 @@ class TransformerUTXO(Transformer):
         t_prep_blocks = time.monotonic() - t0
 
         t0 = time.monotonic()
-        # until bitcoin-etl progresses
-        # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
         enrich_txs(
             txs,
             resolver=None,
             ignore_missing_outputs=True,
             input_reference_only=True,
         )
+        if self._fill_unresolved:
+            self._fill_unresolved_inputs(txs)
         t_enrich = time.monotonic() - t0
 
         t0 = time.monotonic()
@@ -147,13 +185,24 @@ class TransformerUTXO(Transformer):
         t_prep_blocks = time.monotonic() - t0
 
         # 3. enrich_txs — resolves inputs via CassandraOutputResolver
+        #    (skipped when inputs are already resolved at the source)
         t0 = time.monotonic()
-        enrich_txs(
-            txs,
-            self._resolver,
-            ignore_missing_outputs=False,
-            input_reference_only=False,
-        )
+        if self._resolve_via_cassandra:
+            enrich_txs(
+                txs,
+                self._resolver,
+                ignore_missing_outputs=False,
+                input_reference_only=False,
+            )
+        else:
+            enrich_txs(
+                txs,
+                resolver=None,
+                ignore_missing_outputs=True,
+                input_reference_only=True,
+            )
+            if self._fill_unresolved:
+                self._fill_unresolved_inputs(txs)
         t_enrich = time.monotonic() - t0
 
         # 4. Init _next_tx_id from DB on first batch

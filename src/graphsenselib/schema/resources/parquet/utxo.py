@@ -63,14 +63,12 @@ else:
                                     pa.uint16(),
                                 ),
                                 ("index", pa.int32()),
-                                # ("script_asm", pa.string()),
                                 ("sequence", pa.uint64()),
                                 ("script_hex", pa.string()),
                                 ("txinwitness", pa.list_(pa.binary())),
-                                # ("required_signatures", pa.int8()),
-                                # ("type", pa.string()),  # Optional, can be None
-                                # ("addresses", pa.list_(pa.string())),
-                                # ("value", pa.int64()),
+                                ("type", pa.string()),
+                                ("addresses", pa.list_(pa.binary())),
+                                ("value", pa.int64()),
                             ]
                         )
                     ),

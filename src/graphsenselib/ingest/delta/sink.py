@@ -421,13 +421,16 @@ def _finalize_utxo_tx_for_parquet(rows, currency):
         "block_id_group",
     )
     for row in rows:
-        # Restore raw inputs (strip enrichment fields, convert spent_tx_hash)
+        # Restore raw inputs (convert spent_tx_hash, addresses to bytes)
         raw_inputs = row.pop("inputs_raw")
         for inp in raw_inputs:
-            inp.pop("addresses", None)
-            inp.pop("type", None)
-            inp.pop("value", None)
             inp["spent_transaction_hash"] = hex_to_bytes(inp["spent_transaction_hash"])
+            inp.pop("script_asm", None)
+            inp.pop("required_signatures", None)
+            if inp.get("addresses"):
+                inp["addresses"] = [
+                    address_to_bytes(currency, addr) for addr in inp["addresses"]
+                ]
         row["inputs"] = raw_inputs
 
         # Restore raw outputs (convert addresses to bytes, pop script_asm)
