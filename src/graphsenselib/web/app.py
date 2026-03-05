@@ -1,4 +1,5 @@
 import importlib
+import asyncio
 import json
 import logging
 import logging.handlers
@@ -26,7 +27,10 @@ from graphsenselib.errors import (
     NotFoundException,
 )
 from graphsenselib.tagstore.db import TagstoreDbAsync, Taxonomies
-from graphsenselib.tagstore.db.database import get_db_engine_async
+from graphsenselib.tagstore.db.database import (
+    ensure_database_initialized,
+    get_db_engine_async,
+)
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -368,6 +372,21 @@ async def setup_database(app: FastAPI):
     app.state.db = cls(db_config, logger)
 
     ts_conf = config.tagstore
+
+    if config.ensure_tagstore_schema_on_startup:
+        logger.info(
+            "TagStore schema auto-init is enabled; checking required tables/views"
+        )
+        initialized = await asyncio.to_thread(
+            ensure_database_initialized,
+            ts_conf.url,
+            False,
+        )
+        if initialized:
+            logger.info("TagStore schema initialized during REST startup")
+        else:
+            logger.info("TagStore schema already initialized")
+
     max_conn = ts_conf.pool_size
     max_pool_time = ts_conf.pool_timeout
     mo = ts_conf.max_overflow

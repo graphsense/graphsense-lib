@@ -78,11 +78,18 @@ make serve-web
 | Variable | Default | Description |
 |---|---|---|
 | `GSREST_DISABLE_AUTH` | `false` | Disable API key authentication |
+| `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP` | `false` | Auto-initialize TagStore tables/views at startup when missing |
 | `GSREST_ALLOWED_ORIGINS` | `*` | CORS allowed origins |
 | `GSREST_LOGGING_LEVEL` | — | Logging level (DEBUG, INFO, …) |
 | `GS_CASSANDRA_ASYNC_PORT` | `9042` | Cassandra port |
 | `GS_CASSANDRA_ASYNC_USERNAME` | — | Cassandra username |
 | `GS_CASSANDRA_ASYNC_PASSWORD` | — | Cassandra password |
+
+When enabling `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP=true`, keep in mind:
+
+- The DB user must have DDL privileges (create tables/views/indexes/extensions/procedures).
+- Startup may be slower because schema checks and potential initialization run before the app serves traffic.
+- In multi-replica deployments, initialize schema once (migration/init job) to avoid startup races.
 
 ### Basic Usage
 
