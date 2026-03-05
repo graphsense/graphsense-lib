@@ -435,6 +435,7 @@ def prepare_blocks_inplace_eth(
         "receipts_root",
         "miner",
         "extra_data",
+        "parent_beacon_block_root",
     ]
     for item in items:
         # remove column
@@ -456,6 +457,8 @@ def prepare_blocks_inplace_eth(
         for w in ws:
             w["amount"] = single_int_to_bytes(w["amount"])
         item["withdrawals"] = ws
+
+        item["uncles"] = [_fast_hex_to_bytes(u) for u in item.get("uncles", [])]
 
 
 def prepare_blocks_inplace_trx(

@@ -42,14 +42,14 @@ _TRACE_BLACKLIST = frozenset()
 
 _ACTION_KEYS = {
     "call": frozenset({"callType", "from", "gas", "input", "to", "value"}),
-    "create": frozenset({"from", "gas", "init", "value"}),
+    "create": frozenset({"from", "gas", "init", "value", "creationMethod"}),
     "suicide": frozenset({"address", "refundAddress", "balance"}),
     "reward": frozenset({"author", "value", "rewardType"}),
 }
 
 _ACTION_BLACKLIST = {
     "call": frozenset(),
-    "create": frozenset({"creationMethod"}),  # not stored
+    "create": frozenset(),
     "suicide": frozenset(),
     "reward": frozenset(),
 }
@@ -107,6 +107,7 @@ def parse_raw_trace(json_trace, block_number):
         "gas_used": None,
         "input": None,
         "output": None,
+        "creation_method": None,
     }
 
     if trace_type in _ACTION_KEYS:
@@ -141,6 +142,7 @@ def parse_raw_trace(json_trace, block_number):
         trace["input"] = action.get("init")
         trace["gas_used"] = hex_to_dec(result.get("gasUsed"))
         trace["output"] = result.get("code")
+        trace["creation_method"] = action.get("creationMethod")
     elif trace_type == "suicide":
         trace["from_address"] = _to_normalized_address(action.get("address"))
         trace["to_address"] = _to_normalized_address(action.get("refundAddress"))

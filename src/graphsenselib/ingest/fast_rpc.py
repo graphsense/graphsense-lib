@@ -173,14 +173,15 @@ _BLOCK_KNOWN_KEYS = frozenset(
         "withdrawals",
         "blobGasUsed",
         "excessBlobGas",
+        "parentBeaconBlockRoot",
+        "uncles",
     }
 )
 
 _BLOCK_BLACKLIST = frozenset(
     {
         "mixHash",  # PoW-era, post-merge repurposed as prevRandao
-        "parentBeaconBlockRoot",  # EIP-4788 (Dencun), beacon chain reference
-        "uncles",  # always empty post-merge
+        "requestsHash",  # EIP-7685 (Pectra), EL→CL request hash
     }
 )
 
@@ -208,13 +209,14 @@ _TX_KNOWN_KEYS = frozenset(
         "yParity",
         "r",
         "s",
+        "accessList",
     }
 )
 
 _TX_BLACKLIST = frozenset(
     {
-        "accessList",  # EIP-2930 access list, variable-size
         "chainId",  # EIP-155, always 0x1 on mainnet
+        "authorizationList",  # EIP-7702 (Pectra), EOA code delegation
     }
 )
 
@@ -339,6 +341,8 @@ def parse_block_json(json_block):
         "withdrawals": withdrawals,
         "blob_gas_used": hex_to_dec(json_block.get("blobGasUsed")),
         "excess_blob_gas": hex_to_dec(json_block.get("excessBlobGas")),
+        "parent_beacon_block_root": json_block.get("parentBeaconBlockRoot"),
+        "uncles": json_block.get("uncles") or [],
     }
 
 
@@ -369,6 +373,7 @@ def parse_transaction_json(json_tx, block_timestamp):
         "y_parity": hex_to_dec(json_tx.get("yParity")),
         "r": hex_to_dec(json_tx.get("r")),
         "s": hex_to_dec(json_tx.get("s")),
+        "access_list": json_tx.get("accessList") or [],
     }
 
 

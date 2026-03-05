@@ -40,6 +40,7 @@ else:
                 ("status", pa.int16()),
                 ("trace_id", pa.string()),
                 ("trace_index", pa.int32()),
+                ("creation_method", pa.string()),
             ]
         ),
         "block": pa.schema(
@@ -81,6 +82,8 @@ else:
                 ("excess_blob_gas", pa.int64()),
                 ("withdrawals_root", pa.string()),
                 ("blob_gas_used", pa.int64()),
+                ("parent_beacon_block_root", pa.binary(32)),
+                ("uncles", pa.list_(pa.binary(32))),
             ]
         ),
         "transaction": pa.schema(
@@ -129,6 +132,17 @@ else:
                 ("r", pa.binary()),
                 ("s", pa.binary()),
                 ("y_parity", pa.int16()),
+                (
+                    "access_list",
+                    pa.list_(
+                        pa.struct(
+                            [
+                                ("address", pa.string()),
+                                ("storageKeys", pa.list_(pa.string())),
+                            ]
+                        )
+                    ),
+                ),
             ]
         ),
     }
