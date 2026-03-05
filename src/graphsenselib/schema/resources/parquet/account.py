@@ -128,6 +128,7 @@ else:
                 ("v", pa.int32()),
                 ("r", pa.binary()),
                 ("s", pa.binary()),
+                ("y_parity", pa.int16()),
             ]
         ),
     }

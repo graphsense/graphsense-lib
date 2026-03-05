@@ -120,6 +120,175 @@ class BatchRpcClient:
 
 
 # ---------------------------------------------------------------------------
+# Field validation at parse level
+# ---------------------------------------------------------------------------
+
+
+def validate_rpc_fields(json_keys, known_keys, blacklist, context):
+    """Raise if the RPC response contains fields we neither parse nor blacklist.
+
+    Parameters
+    ----------
+    json_keys : iterable of str
+        Keys present in the raw JSON-RPC response object.
+    known_keys : frozenset of str
+        camelCase keys that the parse function actively reads.
+    blacklist : frozenset of str
+        camelCase keys we intentionally ignore (e.g. derived / redundant fields).
+    context : str
+        Human-readable label used in the error message (e.g. "block", "transaction").
+    """
+    unknown = set(json_keys) - known_keys - blacklist
+    if unknown:
+        raise ValueError(
+            f"Unknown RPC fields {sorted(unknown)} in {context}. "
+            f"Add them to the parser (known_keys) or to the field blacklist."
+        )
+
+
+# -- Block -------------------------------------------------------------------
+
+_BLOCK_KNOWN_KEYS = frozenset(
+    {
+        "number",
+        "hash",
+        "parentHash",
+        "nonce",
+        "sha3Uncles",
+        "logsBloom",
+        "transactionsRoot",
+        "stateRoot",
+        "receiptsRoot",
+        "miner",
+        "difficulty",
+        "totalDifficulty",
+        "size",
+        "extraData",
+        "gasLimit",
+        "gasUsed",
+        "timestamp",
+        "transactions",
+        "baseFeePerGas",
+        "withdrawalsRoot",
+        "withdrawals",
+        "blobGasUsed",
+        "excessBlobGas",
+    }
+)
+
+_BLOCK_BLACKLIST = frozenset(
+    {
+        "mixHash",  # PoW-era, post-merge repurposed as prevRandao
+        "parentBeaconBlockRoot",  # EIP-4788 (Dencun), beacon chain reference
+        "uncles",  # always empty post-merge
+    }
+)
+
+# -- Transaction -------------------------------------------------------------
+
+_TX_KNOWN_KEYS = frozenset(
+    {
+        "hash",
+        "nonce",
+        "blockHash",
+        "blockNumber",
+        "transactionIndex",
+        "from",
+        "to",
+        "value",
+        "gas",
+        "gasPrice",
+        "input",
+        "maxFeePerGas",
+        "maxPriorityFeePerGas",
+        "type",
+        "maxFeePerBlobGas",
+        "blobVersionedHashes",
+        "v",
+        "yParity",
+        "r",
+        "s",
+    }
+)
+
+_TX_BLACKLIST = frozenset(
+    {
+        "accessList",  # EIP-2930 access list, variable-size
+        "chainId",  # EIP-155, always 0x1 on mainnet
+    }
+)
+
+# -- Receipt -----------------------------------------------------------------
+
+_RECEIPT_KNOWN_KEYS = frozenset(
+    {
+        "transactionHash",
+        "transactionIndex",
+        "blockHash",
+        "blockNumber",
+        "cumulativeGasUsed",
+        "gasUsed",
+        "contractAddress",
+        "root",
+        "status",
+        "effectiveGasPrice",
+        "l1Fee",
+        "l1GasUsed",
+        "l1GasPrice",
+        "l1FeeScalar",
+        "blobGasPrice",
+        "blobGasUsed",
+    }
+)
+
+_RECEIPT_BLACKLIST = frozenset(
+    {
+        "from",  # redundant with transaction
+        "to",  # redundant with transaction
+        "type",  # tx type, redundant with transaction
+        "logs",  # parsed separately via parse_log_json
+        "logsBloom",  # bloom filter, not stored
+    }
+)
+
+# -- Log ---------------------------------------------------------------------
+
+_LOG_KNOWN_KEYS = frozenset(
+    {
+        "logIndex",
+        "transactionHash",
+        "transactionIndex",
+        "blockHash",
+        "blockNumber",
+        "address",
+        "data",
+        "topics",
+    }
+)
+
+_LOG_BLACKLIST = frozenset(
+    {
+        "type",  # always "log", not useful
+        "removed",  # reorg flag, not stored
+        "blockTimestamp",  # redundant with block-level timestamp
+    }
+)
+
+# -- Withdrawal (nested in block) -------------------------------------------
+
+_WITHDRAWAL_KNOWN_KEYS = frozenset(
+    {
+        "index",
+        "validatorIndex",
+        "address",
+        "amount",
+    }
+)
+
+_WITHDRAWAL_BLACKLIST = frozenset()
+
+
+# ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
 
@@ -127,11 +296,15 @@ class BatchRpcClient:
 def parse_block_json(json_block):
     """Convert eth_getBlockByNumber JSON response to dict matching
     ethereum-etl's EthBlockMapper.block_to_dict() output."""
+    validate_rpc_fields(json_block.keys(), _BLOCK_KNOWN_KEYS, _BLOCK_BLACKLIST, "block")
     transactions = json_block.get("transactions") or []
 
     withdrawals_raw = json_block.get("withdrawals") or []
     withdrawals = []
     for w in withdrawals_raw:
+        validate_rpc_fields(
+            w.keys(), _WITHDRAWAL_KNOWN_KEYS, _WITHDRAWAL_BLACKLIST, "withdrawal"
+        )
         withdrawals.append(
             {
                 "index": hex_to_dec(w.get("index")),
@@ -172,6 +345,7 @@ def parse_block_json(json_block):
 def parse_transaction_json(json_tx, block_timestamp):
     """Convert transaction from eth_getBlockByNumber(bn, true) response to
     dict matching ethereum-etl's EthTransactionMapper.transaction_to_dict()."""
+    validate_rpc_fields(json_tx.keys(), _TX_KNOWN_KEYS, _TX_BLACKLIST, "transaction")
     return {
         "type": "transaction",
         "hash": json_tx.get("hash"),
@@ -192,6 +366,7 @@ def parse_transaction_json(json_tx, block_timestamp):
         "max_fee_per_blob_gas": hex_to_dec(json_tx.get("maxFeePerBlobGas")),
         "blob_versioned_hashes": json_tx.get("blobVersionedHashes") or [],
         "v": hex_to_dec(json_tx.get("v")),
+        "y_parity": hex_to_dec(json_tx.get("yParity")),
         "r": hex_to_dec(json_tx.get("r")),
         "s": hex_to_dec(json_tx.get("s")),
     }
@@ -200,6 +375,9 @@ def parse_transaction_json(json_tx, block_timestamp):
 def parse_receipt_json(json_receipt):
     """Convert eth_getTransactionReceipt response to dict matching
     ethereum-etl's EthReceiptMapper.receipt_to_dict()."""
+    validate_rpc_fields(
+        json_receipt.keys(), _RECEIPT_KNOWN_KEYS, _RECEIPT_BLACKLIST, "receipt"
+    )
     return {
         "type": "receipt",
         "transaction_hash": json_receipt.get("transactionHash"),
@@ -224,6 +402,7 @@ def parse_receipt_json(json_receipt):
 def parse_log_json(json_log):
     """Convert log from receipt response to dict matching
     ethereum-etl's EthReceiptLogMapper.receipt_log_to_dict()."""
+    validate_rpc_fields(json_log.keys(), _LOG_KNOWN_KEYS, _LOG_BLACKLIST, "log")
     return {
         "type": "log",
         "log_index": hex_to_dec(json_log.get("logIndex")),

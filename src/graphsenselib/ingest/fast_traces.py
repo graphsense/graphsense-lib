@@ -12,9 +12,61 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from graphsenselib.ingest.fast_rpc import BatchRpcClient, hex_to_dec
+from graphsenselib.ingest.fast_rpc import (
+    BatchRpcClient,
+    hex_to_dec,
+    validate_rpc_fields,
+)
 
 logger = logging.getLogger(__name__)
+
+# Top-level keys in a trace_block response item
+_TRACE_KNOWN_KEYS = frozenset(
+    {
+        "action",
+        "result",
+        "type",
+        "subtraces",
+        "traceAddress",
+        "transactionHash",
+        "transactionPosition",
+        "error",
+        "blockHash",
+        "blockNumber",
+    }
+)
+
+_TRACE_BLACKLIST = frozenset()
+
+# -- Trace action/result keys per trace_type --------------------------------
+
+_ACTION_KEYS = {
+    "call": frozenset({"callType", "from", "gas", "input", "to", "value"}),
+    "create": frozenset({"from", "gas", "init", "value"}),
+    "suicide": frozenset({"address", "refundAddress", "balance"}),
+    "reward": frozenset({"author", "value", "rewardType"}),
+}
+
+_ACTION_BLACKLIST = {
+    "call": frozenset(),
+    "create": frozenset({"creationMethod"}),  # not stored
+    "suicide": frozenset(),
+    "reward": frozenset(),
+}
+
+_RESULT_KEYS = {
+    "call": frozenset({"gasUsed", "output"}),
+    "create": frozenset({"address", "code", "gasUsed"}),
+    "suicide": frozenset(),
+    "reward": frozenset(),
+}
+
+_RESULT_BLACKLIST = {
+    "call": frozenset(),
+    "create": frozenset(),
+    "suicide": frozenset(),
+    "reward": frozenset(),
+}
 
 
 def trace_address_to_str(trace_address):
@@ -32,6 +84,7 @@ def _to_normalized_address(address):
 def parse_raw_trace(json_trace, block_number):
     """Convert raw trace_block JSON response item to the dict format
     matching ethereum-etl's trace_mapper.trace_to_dict()."""
+    validate_rpc_fields(json_trace.keys(), _TRACE_KNOWN_KEYS, _TRACE_BLACKLIST, "trace")
     action = json_trace.get("action") or {}
     result = json_trace.get("result") or {}
     trace_type = json_trace.get("type")
@@ -55,6 +108,21 @@ def parse_raw_trace(json_trace, block_number):
         "input": None,
         "output": None,
     }
+
+    if trace_type in _ACTION_KEYS:
+        validate_rpc_fields(
+            action.keys(),
+            _ACTION_KEYS[trace_type],
+            _ACTION_BLACKLIST[trace_type],
+            f"trace.action ({trace_type})",
+        )
+        if result:
+            validate_rpc_fields(
+                result.keys(),
+                _RESULT_KEYS[trace_type],
+                _RESULT_BLACKLIST[trace_type],
+                f"trace.result ({trace_type})",
+            )
 
     if trace_type == "call":
         trace["from_address"] = _to_normalized_address(action.get("from"))
