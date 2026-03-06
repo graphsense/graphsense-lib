@@ -450,9 +450,13 @@ class TxsService:
             currency.lower() in UTXO_NETWORKS and "thorchain" in included_bridges
         )
         if not is_eth_like(currency) and not is_utxo_thorchain:
-            raise BadUserInputException(
-                f"Swap extraction is only supported for EVM-like networks, not {currency}"
-            )
+            # currently we only support swap/bridge extraction for EVM-like networks and UTXO
+            # networks with thorchain bridging, so if it's not that, return empty list (instead of raising)
+            # since this is an optional endpoint and we don't want to break anything by raising errors for unsupported networks
+            return []
+            # raise BadUserInputException(
+            #     f"Swap extraction is only supported for EVM-like networks, not {currency}"
+            # )
 
         tx_obj = SubTransactionIdentifier.from_string(identifier)
         tx_hash = tx_obj.tx_hash
