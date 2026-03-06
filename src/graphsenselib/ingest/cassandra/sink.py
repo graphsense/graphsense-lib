@@ -32,4 +32,11 @@ class CassandraSink(Sink):
         for table_name, rows in block_range_content.table_contents.items():
             if not rows:
                 continue
+            # UTXO transactions carry Cassandra-specific io fields alongside
+            # the neutral parquet format. Swap them in for Cassandra's schema.
+            if table_name == "transaction" and "inputs_cassandra" in rows[0]:
+                rows = [dict(r) for r in rows]
+                for row in rows:
+                    row["inputs"] = row.pop("inputs_cassandra")
+                    row["outputs"] = row.pop("outputs_cassandra")
             cassandra_ingest(self.db, table_name, rows, self.concurrency)

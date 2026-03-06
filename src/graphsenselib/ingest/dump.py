@@ -1,6 +1,6 @@
 import sys
 from contextlib import ExitStack
-from typing import List, Optional
+from typing import Callable, Dict, List, Optional
 
 from graphsenselib.db import AnalyticsDb
 from graphsenselib.ingest.account import (
@@ -31,9 +31,60 @@ from graphsenselib.utils.locking import create_lock
 from ..config import get_reorg_backoff_blocks
 from ..config.config import get_config
 
-SUPPORTED = ["trx", "eth", "btc", "ltc", "bch", "zec"]
-
 _DEFAULT_VERBOSITY = {"btc": 3, "bch": 3, "ltc": 2, "zec": 2}
+
+
+def _create_trx(
+    provider_uri, grpc_provider_uri, provider_timeout, partition_batch_size, **kw
+):
+    source = SourceTRX(
+        provider_uri=provider_uri,
+        grpc_provider_uri=grpc_provider_uri,
+        provider_timeout=provider_timeout,
+    )
+    transformer = TransformerTRX(partition_batch_size, "trx")
+    return source, transformer
+
+
+def _create_eth(provider_uri, provider_timeout, partition_batch_size, **kw):
+    source = SourceETH(provider_uri=provider_uri, provider_timeout=provider_timeout)
+    transformer = TransformerETH(partition_batch_size, "eth")
+    return source, transformer
+
+
+def _create_utxo(
+    provider_uri, provider_timeout, partition_batch_size, currency, db, **kw
+):
+    config = get_config()
+    use_cassandra_resolver = config.resolve_inputs_via_cassandra
+    verbosity = 2 if use_cassandra_resolver else _DEFAULT_VERBOSITY[currency]
+    resolve_inputs = not use_cassandra_resolver
+
+    source = SourceUTXO(
+        provider_uri=provider_uri,
+        network=currency,
+        provider_timeout=provider_timeout,
+        verbosity=verbosity,
+        resolve_inputs=resolve_inputs,
+    )
+    transformer = TransformerUTXO(
+        partition_batch_size,
+        currency,
+        db=db,
+        resolve_inputs_via_cassandra=use_cassandra_resolver,
+        fill_unresolved_inputs=config.fill_unresolved_inputs,
+    )
+    return source, transformer
+
+
+PIPELINE_REGISTRY: Dict[str, Callable] = {
+    "trx": _create_trx,
+    "eth": _create_eth,
+    "btc": _create_utxo,
+    "ltc": _create_utxo,
+    "bch": _create_utxo,
+    "zec": _create_utxo,
+}
 
 
 # filesizes should be between 100 and 1000 MB and partitions > 1000MB
@@ -75,7 +126,7 @@ def export_delta(
     info: bool = False,
     file_batch_size: Optional[int] = None,
 ):
-    if currency not in SUPPORTED:
+    if currency not in PIPELINE_REGISTRY:
         raise ValueError(f"{currency} not supported by ingest module")
 
     file_batch_size = (
@@ -105,43 +156,15 @@ def export_delta(
 
     runner = IngestRunner(partition_batch_size, file_batch_size)
 
-    if currency == "trx":
-        source = SourceTRX(
-            provider_uri=provider_uri,
-            grpc_provider_uri=grpc_provider_uri,
-            provider_timeout=provider_timeout,
-        )
-        transformer = TransformerTRX(partition_batch_size, "trx")
-
-    elif currency == "eth":
-        source = SourceETH(provider_uri=provider_uri, provider_timeout=provider_timeout)
-        transformer = TransformerETH(partition_batch_size, "eth")
-
-    elif currency in ["btc", "ltc", "bch", "zec"]:
-        config = get_config()
-        use_cassandra_resolver = config.resolve_inputs_via_cassandra
-        verbosity = 2 if use_cassandra_resolver else _DEFAULT_VERBOSITY[currency]
-        # When Cassandra resolves inputs, skip RPC resolution in the exporter.
-        # When verbosity=3 (BTC/BCH), prevout data is inline — no RPC needed.
-        # When verbosity=2 (LTC/ZEC), resolve via getrawtransaction (needs txindex).
-        resolve_inputs = not use_cassandra_resolver
-
-        source = SourceUTXO(
-            provider_uri=provider_uri,
-            network=currency,
-            provider_timeout=provider_timeout,
-            verbosity=verbosity,
-            resolve_inputs=resolve_inputs,
-        )
-        transformer = TransformerUTXO(
-            partition_batch_size,
-            currency,
-            db=db,
-            resolve_inputs_via_cassandra=use_cassandra_resolver,
-            fill_unresolved_inputs=config.fill_unresolved_inputs,
-        )
-    else:
-        raise ValueError(f"{currency} not supported by ingest module")
+    factory = PIPELINE_REGISTRY[currency]
+    source, transformer = factory(
+        provider_uri=provider_uri,
+        grpc_provider_uri=grpc_provider_uri,
+        provider_timeout=provider_timeout,
+        partition_batch_size=partition_batch_size,
+        currency=currency,
+        db=db,
+    )
 
     runner.addSource(source)
     runner.addTransformer(transformer)

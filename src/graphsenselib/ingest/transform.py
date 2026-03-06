@@ -24,12 +24,14 @@ from graphsenselib.ingest.utxo import (
     CassandraOutputResolver,
     enrich_txs,
     get_tx_refs,
+    is_coinjoin,
     prepare_blocks_inplace,
-    prepare_transactions_inplace,
     prepare_transactions_inplace_parquet,
     preprocess_block_transactions,
     preprocess_transaction_lookups,
+    tx_io_summary,
 )
+from graphsenselib.utils.account import get_id_group
 from graphsenselib.utils import flatten
 from graphsenselib.utils.constants import TRON_DUMMY_REPLACEMENT_ADDRESS
 
@@ -210,28 +212,51 @@ class TransformerUTXO(Transformer):
             latest_tx_id = self.db.raw.get_latest_tx_id_before_block(first_block_id)
             self._next_tx_id = latest_tx_id + 1
 
-        # 5. prepare_transactions_inplace — adds tx_id, tx_id_group, tx_prefix,
-        #    coinjoin, tx_io_summary, casts blobs
+        # 5. Sort txs to ensure tx_ids are assigned in deterministic order
+        txs.sort(key=lambda tx: (tx["block_number"], tx["index"]))
+
+        # 6. Pre-compute Cassandra-specific fields from raw (pre-parquet) data
         t0 = time.monotonic()
-        prepare_transactions_inplace(
-            txs, self._next_tx_id, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE
-        )
+        next_tx_id = self._next_tx_id
+        cassandra_extras = []
+        for tx in txs:
+            cassandra_extras.append(
+                {
+                    "coinjoin": is_coinjoin(tx),
+                    "inputs_cassandra": [tx_io_summary(x) for x in tx["inputs"]],
+                    "outputs_cassandra": [tx_io_summary(x) for x in tx["outputs"]],
+                    "tx_id": next_tx_id,
+                    "tx_id_group": get_id_group(next_tx_id, TX_BUCKET_SIZE),
+                    "tx_prefix": tx["hash"][:TX_HASH_PREFIX_LENGTH],
+                    "block_hash": tx.get("block_hash"),
+                }
+            )
+            next_tx_id += 1
+        t_cassandra_fields = time.monotonic() - t0
+
+        # 7. Neutral parquet transform (renames fields, converts to bytes)
+        t0 = time.monotonic()
+        prepare_transactions_inplace_parquet(txs, self.network)
         t_prep_txs = time.monotonic() - t0
 
-        # 6. Update _next_tx_id
-        self._next_tx_id = txs[-1]["tx_id"] + 1
+        # 8. Attach Cassandra extras to each tx
+        for tx, extras in zip(txs, cassandra_extras):
+            tx.update(extras)
 
-        # 7. preprocess_block_transactions → block_transactions table
+        # 9. Update _next_tx_id
+        self._next_tx_id = next_tx_id
+
+        # 10. preprocess_block_transactions → block_transactions table
         t0 = time.monotonic()
         block_transactions = preprocess_block_transactions(txs, UTXO_BLOCK_BUCKET_SIZE)
         t_block_txs = time.monotonic() - t0
 
-        # 8. preprocess_transaction_lookups → transaction_by_tx_prefix table
+        # 11. preprocess_transaction_lookups → transaction_by_tx_prefix table
         t0 = time.monotonic()
         tx_lookups = preprocess_transaction_lookups(txs)
         t_lookups = time.monotonic() - t0
 
-        # 9. Add partition to blocks and txs
+        # 12. Add partition to blocks and txs
         partition = blocks[0]["block_id"] // self.partition_batch_size
         assert partition == blocks[-1]["block_id"] // self.partition_batch_size
         t0 = time.monotonic()
@@ -241,7 +266,7 @@ class TransformerUTXO(Transformer):
             item["partition"] = partition
         t_partition = time.monotonic() - t0
 
-        # 10. Store _last_block_ts for summary statistics
+        # 13. Store _last_block_ts for summary statistics
         self._last_block_ts = blocks[-1]["timestamp"]
 
         t_transform_total = time.monotonic() - t_total
@@ -251,6 +276,7 @@ class TransformerUTXO(Transformer):
             f"tx_refs={t_refs:.3f}s  "
             f"prep_blocks={t_prep_blocks:.3f}s ({len(blocks)} blks)  "
             f"enrich={t_enrich:.3f}s ({len(txs)} txs)  "
+            f"cassandra_fields={t_cassandra_fields:.3f}s  "
             f"prep_txs={t_prep_txs:.3f}s  "
             f"block_txs={t_block_txs:.3f}s  "
             f"lookups={t_lookups:.3f}s  "

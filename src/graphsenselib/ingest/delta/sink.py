@@ -25,8 +25,6 @@ from ...schema.resources.parquet.account_trx import (
     BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
 )
 from ...schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
-from ...utils import hex_to_bytes
-from ...utils.address import address_to_bytes
 from ..common import BlockRangeContent, Sink
 from ..transform import _finalize_inplace
 
@@ -150,9 +148,9 @@ class DeltaTableWriter:
 
         fields_not_covered = unique_fields - set(table.column_names)
         if fields_not_covered:
-            logger.warning(
+            logger.debug(
                 f"Fields {fields_not_covered} in table {self.table_name}"
-                f" not covered by schema. "
+                f" not covered by schema (ignored)."
             )
 
         if self.s3_credentials:
@@ -390,61 +388,12 @@ UTXO_DBWRITE_CONFIG = DBWriteConfig(
             partition_cols=("partition",),
             primary_keys=["block_id", "index"],
         ),
-        # TableWriteConfig(
-        #     table_name="transaction_spending",
-        #     table_schema=UTXO_SCHEMA_RAW["transaction_spending"],
-        #     partition_cols=("partition",),
-        #     primary_keys=[
-        #         "spending_tx_hash",
-        #         "spent_tx_hash",
-        #         "spending_input_index",
-        #         "spent_output_index",
-        #     ],
-        # ),
+        # transaction_spending, transaction_spent_in, block_transactions,
+        # transaction_by_tx_prefix are derived/processed data computed from
+        # raw transactions for Cassandra's query patterns. They are not stored
+        # in the Delta Lake which holds only raw blockchain data.
     ]
 )
-
-
-def _finalize_utxo_tx_for_parquet(rows, currency):
-    """Convert UTXO transaction rows from Cassandra shape back to parquet format.
-
-    When cassandra is a sink, transactions carry both Cassandra fields
-    (tx_id, tx_io_summary inputs/outputs) and raw fields (inputs_raw,
-    outputs_raw). This strips Cassandra-only fields and restores the raw
-    dicts for parquet.
-    """
-    cassandra_only_fields = (
-        "tx_id",
-        "tx_id_group",
-        "tx_prefix",
-        "block_hash",
-        "block_id_group",
-    )
-    for row in rows:
-        # Restore raw inputs (convert spent_tx_hash, addresses to bytes)
-        raw_inputs = row.pop("inputs_raw")
-        for inp in raw_inputs:
-            inp["spent_transaction_hash"] = hex_to_bytes(inp["spent_transaction_hash"])
-            inp.pop("script_asm", None)
-            inp.pop("required_signatures", None)
-            if inp.get("addresses"):
-                inp["addresses"] = [
-                    address_to_bytes(currency, addr) for addr in inp["addresses"]
-                ]
-        row["inputs"] = raw_inputs
-
-        # Restore raw outputs (convert addresses to bytes, pop script_asm)
-        raw_outputs = row.pop("outputs_raw")
-        for out in raw_outputs:
-            out["addresses"] = [
-                address_to_bytes(currency, addr) for addr in out["addresses"]
-            ]
-            out.pop("script_asm", None)
-        row["outputs"] = raw_outputs
-
-        # Strip Cassandra-only fields (keep coinjoin — it's in the parquet schema)
-        for field in cassandra_only_fields:
-            row.pop(field, None)
 
 
 class DeltaDumpWriter(Sink):
@@ -508,9 +457,6 @@ class DeltaDumpWriter(Sink):
                 continue
             # Shallow copy to avoid mutating shared data
             rows = [dict(r) for r in rows]
-            # When cassandra is a sink, convert Cassandra-shaped txs back to parquet
-            if table_name == "transaction" and rows and "inputs_raw" in rows[0]:
-                _finalize_utxo_tx_for_parquet(rows, self.network)
             int_cols = self.finalize_int_cols.get(table_name, [])
             if int_cols:
                 _finalize_inplace(rows, int_cols)
