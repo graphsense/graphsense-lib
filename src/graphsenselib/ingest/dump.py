@@ -123,11 +123,8 @@ def export_delta(
         verbosity = 2 if use_cassandra_resolver else _DEFAULT_VERBOSITY[currency]
         # When Cassandra resolves inputs, skip RPC resolution in the exporter.
         # When verbosity=3 (BTC/BCH), prevout data is inline — no RPC needed.
-        # TODO: enable input resolution for verbosity 2 chains (LTC/ZEC) once
-        # validated — produces correct total_input/fee via getrawtransaction
-        # but diverges from reference version output.
-        # resolve_inputs = not use_cassandra_resolver
-        resolve_inputs = verbosity >= 3 and not use_cassandra_resolver
+        # When verbosity=2 (LTC/ZEC), resolve via getrawtransaction (needs txindex).
+        resolve_inputs = not use_cassandra_resolver
 
         source = SourceUTXO(
             provider_uri=provider_uri,

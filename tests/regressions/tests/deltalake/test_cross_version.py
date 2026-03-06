@@ -33,6 +33,8 @@ from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
 KNOWN_COLUMN_DIVERGENCES: dict[tuple[str, str], set[str]] = {
     ("btc", "transaction"): {"total_input", "fee"},
     ("bch", "transaction"): {"total_input", "fee"},
+    ("ltc", "transaction"): {"total_input", "fee"},
+    ("zec", "transaction"): {"total_input", "fee"},
 }
 
 # Schema additions in the current version that the reference version lacks.
