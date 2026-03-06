@@ -189,6 +189,12 @@ def ingest(
     ks_config = config.get_keyspace_config(env, currency)
     sources = ks_config.ingest_config.all_node_references
 
+    if batch_size != 10:
+        logger.warning(
+            "--batch-size is ignored by the new ingest pipeline. "
+            "File batch size is fixed per currency."
+        )
+
     use_legacy = config.legacy_ingest
 
     LEGACY_ONLY_MODES = {
@@ -219,17 +225,25 @@ def ingest(
         if ks_config.schema_type in ["account", "account_trx"]:
             version = 2
 
+    use_cassandra = "cassandra" in sinks
+
     schema_tools = GraphsenseSchemas()
     ks_type = "raw"
-    if create_schema:
-        schema_tools.create_keyspace_if_not_exist(env, currency, keyspace_type=ks_type)
+    if use_cassandra:
+        if create_schema:
+            schema_tools.create_keyspace_if_not_exist(
+                env, currency, keyspace_type=ks_type
+            )
+        logger.info("Apply migrations to raw keyspace if necessary")
+        schema_tools.apply_migrations(env, currency, keyspace_type=ks_type)
 
-    logger.info("Apply migrations to raw keyspace if necessary")
-    schema_tools.apply_migrations(env, currency, keyspace_type=ks_type)
+    lock_disabled = no_lock or no_file_lock
+    try:
+        with ExitStack() as stack:
+            db = None
+            if use_cassandra:
+                db = stack.enter_context(DbFactory().from_config(env, currency))
 
-    with DbFactory().from_config(env, currency) as db:
-        lock_disabled = no_lock or no_file_lock
-        try:
             if not use_legacy:
                 _run_new_ingest(
                     config,
@@ -249,6 +263,11 @@ def ingest(
                     ignore_overwrite_safechecks=ignore_overwrite_safechecks,
                 )
             else:
+                if db is None:
+                    logger.error(
+                        "Legacy ingest requires Cassandra. Add --sinks cassandra."
+                    )
+                    sys.exit(11)
                 logger.warning(
                     "DEPRECATED: The legacy ingest pipeline is deprecated and will be "
                     "removed in a future release. Unset GRAPHSENSE_LEGACY_INGEST to "
@@ -272,9 +291,9 @@ def ingest(
                         provider_timeout=timeout,
                         mode=mode,
                     )
-        except LockAcquisitionError as e:
-            logger.error(str(e))
-            sys.exit(911)
+    except LockAcquisitionError as e:
+        logger.error(str(e))
+        sys.exit(911)
 
 
 def _run_new_ingest(
@@ -322,7 +341,6 @@ def _run_new_ingest(
         lock_disabled=lock_disabled,
         previous_day=previous_day,
         info=info,
-        file_batch_size=batch_size,
     )
 
 
