@@ -1,3 +1,4 @@
+import logging
 from os import environ
 from pathlib import Path
 
@@ -5,12 +6,28 @@ import pytest
 import pytest_asyncio
 from docker.errors import ImageNotFound, NotFound
 from goodconf import GoodConfConfigDict
-from testcontainers.cassandra import CassandraContainer
-from testcontainers.postgres import PostgresContainer
 
-from click.testing import CliRunner
-from graphsenselib.config import AppConfig, Environment, KeyspaceConfig, IngestConfig
-from graphsenselib.config.config import KeyspaceSetupConfig, set_config
+
+def _is_podman_runtime() -> bool:
+    docker_host = environ.get("DOCKER_HOST", "")
+    return "podman.sock" in docker_host
+
+
+if _is_podman_runtime():
+    # Rootless Podman does not support Ryuk reliably; rely on explicit fixture cleanup.
+    environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
+
+from testcontainers.cassandra import CassandraContainer  # noqa: E402
+from testcontainers.postgres import PostgresContainer  # noqa: E402
+
+from click.testing import CliRunner  # noqa: E402
+from graphsenselib.config import (  # noqa: E402
+    AppConfig,
+    Environment,
+    IngestConfig,
+    KeyspaceConfig,
+)
+from graphsenselib.config.config import KeyspaceSetupConfig, set_config  # noqa: E402
 
 
 # Import tagstore dependencies for test setup
@@ -27,6 +44,8 @@ except ImportError:
 # =============================================================================
 # Container Configuration
 # =============================================================================
+
+logger = logging.getLogger(__name__)
 
 VANILLA_CASSANDRA_IMAGE = "cassandra:4.1.4"
 FAST_CASSANDRA_IMAGE = environ.get(
@@ -161,12 +180,33 @@ def insert_test_data(db_setup):
             engine.dispose()
 
 
+def _stop_container(container, name: str) -> None:
+    try:
+        container.stop()
+    except NotFound:
+        return
+    except Exception:
+        wrapped = None
+        try:
+            wrapped = container.get_wrapped_container()
+        except Exception:
+            wrapped = None
+
+        container_id = getattr(wrapped, "id", None)
+        logger.exception(
+            "Failed to stop %s test container%s",
+            name,
+            f" ({container_id[:12]})" if container_id else "",
+        )
+        raise
+
+
 # Updated by gs_db_setup when Cassandra starts; used by patch_config automatically.
 _cassandra_coords = ("localhost", "9042")
 
 
 @pytest.fixture(scope="session")
-def gs_db_setup(request):
+def gs_db_setup():
     """Start Cassandra container. Only tests requesting this fixture pay the cost."""
     global _cassandra_coords
     try:
@@ -180,35 +220,22 @@ def gs_db_setup(request):
             ) from e
         raise
 
-    def cleanup():
-        try:
-            cassandra.stop()
-        except (NotFound, Exception):
-            pass
-
-    request.addfinalizer(cleanup)
-
     cas_host = cassandra.get_container_host_ip()
     cas_port = cassandra.get_exposed_port(9042)
     _cassandra_coords = (cas_host, cas_port)
-    return (cas_host, cas_port)
+    try:
+        yield (cas_host, cas_port)
+    finally:
+        _stop_container(cassandra, "cassandra")
 
 
 @pytest.fixture(scope="session")
-def db_setup(request):
+def db_setup():
     """PostgreSQL database setup for tagstore tests."""
     if not TAGSTORE_AVAILABLE:
         pytest.skip("Tagstore dependencies not available")
 
     postgres.start()
-
-    def cleanup():
-        try:
-            postgres.stop()
-        except Exception:
-            pass
-
-    request.addfinalizer(cleanup)
 
     postgres_sync_url = postgres.get_connection_url()
     portgres_async_url = postgres_sync_url.replace("psycopg2", "asyncpg")
@@ -221,7 +248,10 @@ def db_setup(request):
 
     insert_test_data(setup)
 
-    return setup
+    try:
+        yield setup
+    finally:
+        _stop_container(postgres, "postgres")
 
 
 @pytest_asyncio.fixture

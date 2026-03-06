@@ -522,6 +522,16 @@ For comprehensive testing:
 make test
 ```
 
+#### Podman Notes
+
+If you run the test suite with Podman, make sure your shell points at the Podman socket:
+
+```bash
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+```
+
+The test fixtures automatically disable Ryuk when `DOCKER_HOST` contains `podman.sock` and rely on explicit fixture cleanup instead.
+
 ### Release Process
 
 This repository uses two source-of-truth versions in the root `Makefile`:
