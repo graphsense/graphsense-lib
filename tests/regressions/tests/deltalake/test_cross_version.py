@@ -24,10 +24,16 @@ from tests.deltalake.comparison import compare_snapshots, format_report
 from tests.deltalake.ingest_runner import copy_s3_prefix, run_ingest
 from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
 
-# Known content divergences between the reference version (v25.11.18, using
-# graphsense-bitcoin-etl) and the current version (using fast_btc.py).
-# These are bug fixes in the current version, not regressions.
-KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = set()
+# Column-level content divergences between the reference version (v25.11.18)
+# and the current version. Maps (currency, table) → set of column names that
+# are allowed to differ. Any column NOT listed here will fail the test.
+# BTC/BCH use verbosity 3 (prevout inline) → total_input and fee are now
+# correct. The reference version (verbosity 2) left total_input=0 and
+# fee=negative because inputs were never resolved.
+KNOWN_COLUMN_DIVERGENCES: dict[tuple[str, str], set[str]] = {
+    ("btc", "transaction"): {"total_input", "fee"},
+    ("bch", "transaction"): {"total_input", "fee"},
+}
 
 # Schema additions in the current version that the reference version lacks.
 KNOWN_SCHEMA_ADDITIONS: set[tuple[str, str]] = {
@@ -202,18 +208,27 @@ class TestCrossVersionCompatibility:
                 f"{name}: row count differs by {diff.row_count_diff} "
                 f"(ref={diff.row_count_ref}, cur={diff.row_count_current})"
             )
+            allowed_cols = KNOWN_COLUMN_DIVERGENCES.get((currency, name), set())
             if (currency, name) in KNOWN_SCHEMA_ADDITIONS:
                 if not diff.content_hash_match:
                     print(
                         f"  [{name}] EXPECTED: content hash differs due to "
                         f"schema additions in input struct"
                     )
-            elif (currency, name) in KNOWN_CONTENT_DIVERGENCES:
-                if not diff.content_hash_match:
-                    print(
-                        f"  [{name}] KNOWN DIVERGENCE: content hash differs "
-                        f"(bug fix in current version, not a regression)"
-                    )
+                # Verify data on common columns — only allowed columns may differ
+                if diff.common_columns_content_hash_match is not None:
+                    if not diff.common_columns_content_hash_match:
+                        unexpected = set(diff.differing_common_columns) - allowed_cols
+                        if diff.differing_common_columns:
+                            print(
+                                f"  [{name}] Differing common columns: "
+                                f"{diff.differing_common_columns}"
+                            )
+                        assert not unexpected, (
+                            f"{name}: unexpected column-level content divergence "
+                            f"on {sorted(unexpected)} — only {sorted(allowed_cols)} "
+                            f"are allowed to differ"
+                        )
             else:
                 assert diff.content_hash_match, (
                     f"{name}: data content hash mismatch between reference-only "

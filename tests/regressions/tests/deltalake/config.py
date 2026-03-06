@@ -36,7 +36,15 @@ GENESIS_PROFILE = BlockRangeProfile(
 
 NETWORK_RANGE_PROFILES: dict[str, list[BlockRangeProfile]] = {
     "btc": [
-        GENESIS_PROFILE,
+        BlockRangeProfile(
+            "genesis",
+            0,
+            base_blocks=125,
+            append_blocks=125,
+            category="genesis",
+            note="genesis era (first real tx at block 170)",
+            perf_blocks=1000,
+        ),
         BlockRangeProfile("old", 210000, category="old", note="first halving era"),
         BlockRangeProfile(
             "mid",

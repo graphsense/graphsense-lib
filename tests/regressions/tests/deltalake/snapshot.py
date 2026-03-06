@@ -19,6 +19,7 @@ class TableSnapshot:
     file_names: list[str]  # parquet part files
     total_file_size_bytes: int
     delta_log_version: int
+    _arrow_table: pa.Table | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -129,6 +130,7 @@ def capture_table_snapshot(
         file_names=sorted(files),
         total_file_size_bytes=file_sizes,
         delta_log_version=dt.version(),
+        _arrow_table=arrow_table,
     )
 
 
