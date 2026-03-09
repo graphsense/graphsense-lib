@@ -35,25 +35,43 @@ _DEFAULT_VERBOSITY = {"btc": 3, "bch": 3, "ltc": 2, "zec": 2}
 
 
 def _create_trx(
-    provider_uri, grpc_provider_uri, provider_timeout, partition_batch_size, **kw
+    provider_uri,
+    grpc_provider_uri,
+    provider_timeout,
+    partition_batch_size,
+    source_max_workers=None,
+    **kw,
 ):
     source = SourceTRX(
         provider_uri=provider_uri,
         grpc_provider_uri=grpc_provider_uri,
         provider_timeout=provider_timeout,
+        max_workers=source_max_workers,
     )
     transformer = TransformerTRX(partition_batch_size, "trx")
     return source, transformer
 
 
-def _create_eth(provider_uri, provider_timeout, partition_batch_size, **kw):
-    source = SourceETH(provider_uri=provider_uri, provider_timeout=provider_timeout)
+def _create_eth(
+    provider_uri, provider_timeout, partition_batch_size, source_max_workers=None, **kw
+):
+    source = SourceETH(
+        provider_uri=provider_uri,
+        provider_timeout=provider_timeout,
+        max_workers=source_max_workers,
+    )
     transformer = TransformerETH(partition_batch_size, "eth")
     return source, transformer
 
 
 def _create_utxo(
-    provider_uri, provider_timeout, partition_batch_size, currency, db, **kw
+    provider_uri,
+    provider_timeout,
+    partition_batch_size,
+    currency,
+    db,
+    source_max_workers=None,
+    **kw,
 ):
     config = get_config()
     use_cassandra_resolver = config.resolve_inputs_via_cassandra
@@ -66,6 +84,7 @@ def _create_utxo(
         provider_timeout=provider_timeout,
         verbosity=verbosity,
         resolve_inputs=resolve_inputs,
+        max_workers=source_max_workers,
     )
     transformer = TransformerUTXO(
         partition_batch_size,
@@ -125,6 +144,7 @@ def export_delta(
     previous_day: bool = False,
     info: bool = False,
     file_batch_size: Optional[int] = None,
+    source_max_workers: Optional[int] = None,
 ):
     if currency not in PIPELINE_REGISTRY:
         raise ValueError(f"{currency} not supported by ingest module")
@@ -164,6 +184,7 @@ def export_delta(
         partition_batch_size=partition_batch_size,
         currency=currency,
         db=db,
+        source_max_workers=source_max_workers,
     )
 
     runner.addSource(source)

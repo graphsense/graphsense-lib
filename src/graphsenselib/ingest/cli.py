@@ -327,6 +327,10 @@ def _run_new_ingest(
         delta_directory = pdc.directory
         s3_credentials = config.get_s3_credentials()
 
+    source_max_workers = None
+    if ks_config.ingest_config is not None:
+        source_max_workers = ks_config.ingest_config.source_max_workers
+
     export_delta(
         currency=currency,
         sources=sources,
@@ -341,6 +345,7 @@ def _run_new_ingest(
         lock_disabled=lock_disabled,
         previous_day=previous_day,
         info=info,
+        source_max_workers=source_max_workers,
     )
 
 
@@ -473,6 +478,7 @@ def dump_rawdata(
                 write_mode=write_mode,
                 ignore_overwrite_safechecks=ignore_overwrite_safechecks,
                 db=db,
+                source_max_workers=ks_config.ingest_config.source_max_workers,
             )
 
         if auto_compact:

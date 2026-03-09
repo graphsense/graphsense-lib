@@ -33,22 +33,25 @@ def split_blockrange(
 
 
 class SourceTRX(Source):
-    def __init__(self, provider_uri, grpc_provider_uri, provider_timeout):
+    def __init__(
+        self, provider_uri, grpc_provider_uri, provider_timeout, max_workers=None
+    ):
         self.provider_uri = provider_uri
         self.grpc_provider_uri = grpc_provider_uri
         self.provider_timeout = provider_timeout
+        w = max_workers or 10
         self.client = get_connection_from_url(provider_uri, provider_timeout)
         self.adapter = TronStreamerAdapter(
             self.client,
             grpc_endpoint=grpc_provider_uri,
             batch_size_blockstransactions=20,
-            max_workers_blockstransactions=10,
+            max_workers_blockstransactions=w,
             batch_size_receiptslogs=100,
-            max_workers_receiptslogs=20,
+            max_workers_receiptslogs=w * 2,
         )
         self.grpc_exporter = TronCombinedGrpcExporter(
             grpc_endpoint=grpc_provider_uri,
-            max_workers=30,
+            max_workers=w * 3,
         )
 
     def get_last_block_yesterday(self) -> int:
@@ -141,21 +144,22 @@ class SourceTRX(Source):
 
 
 class SourceETH(Source):
-    def __init__(self, provider_uri, provider_timeout):
+    def __init__(self, provider_uri, provider_timeout, max_workers=None):
         self.provider_uri = provider_uri
         self.provider_timeout = provider_timeout
+        w = max_workers or 10
         self.client = get_connection_from_url(provider_uri, provider_timeout)
         self.adapter = EthStreamerAdapter(
             self.client,
             batch_size_blockstransactions=20,
-            max_workers_blockstransactions=10,
+            max_workers_blockstransactions=w,
             batch_size_receiptslogs=100,
-            max_workers_receiptslogs=10,
+            max_workers_receiptslogs=w,
         )
         self.fast_trace_exporter = FastTraceExporter(
             client=self.client,
             trace_batch_size=10,
-            max_workers=10,
+            max_workers=w,
         )
 
     def get_last_block_yesterday(self) -> int:
@@ -290,10 +294,11 @@ class SourceUTXO(Source):
         provider_timeout,
         verbosity=2,
         resolve_inputs=True,
+        max_workers=None,
     ):
         self.fast_exporter = FastBtcBlockExporter(
             provider_uri=provider_uri,
-            max_workers=10,
+            max_workers=max_workers or 10,
             timeout=provider_timeout,
             verbosity=verbosity,
             resolve_inputs=resolve_inputs,
