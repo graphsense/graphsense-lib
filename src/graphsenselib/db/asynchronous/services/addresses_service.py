@@ -197,6 +197,8 @@ class AddressesService:
                 )
             ]
 
+            raw_query_results = results_trx
+
         forked_addresses = await self._handle_fork_address_overlap(
             raw_query_results, address, network=network
         )
