@@ -95,7 +95,7 @@ DirectionQuery = Annotated[
 ]
 
 OptionalDirectionQuery = Annotated[
-    Optional[str],
+    Optional[Literal["in", "out"]],
     Query(description="Incoming or outgoing transactions", examples=["out"]),
 ]
 
