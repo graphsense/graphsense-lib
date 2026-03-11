@@ -168,6 +168,7 @@ class AppConfig(GoodConf):
     default_environment: Optional[str] = None
 
     model_config = GoodConfConfigDict(
+        extra="ignore",
         env_prefix="GRAPHSENSE_",
         file_env_var="GRAPHSENSE_CONFIG_YAML",
         default_files=[".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")],
