@@ -161,6 +161,7 @@ class TxUtxo(APIModel):
     total_output: Values
     inputs: Optional[list[TxValue]] = None
     outputs: Optional[list[TxValue]] = None
+    heuristics: Optional[dict] = None
 
 
 class TxAccount(APIModel):

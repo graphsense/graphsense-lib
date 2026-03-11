@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Protocol, Union, Tuple
 
 from graphsenselib.defi import Bridge, ExternalSwap
@@ -19,7 +20,7 @@ from graphsenselib.utils.transactions import (
 )
 from graphsenselib.utils.rest_utils import is_eth_like
 
-from .common import std_tx_from_row
+from .common import std_tx_from_row, cannonicalize_address
 from .models import (
     ExternalConversion,
     TxAccount,
@@ -92,6 +93,114 @@ async def _raw_trace_to_std_tx(
     return await std_tx_from_row(currency, result, rates.rates, tokenConfig)
 
 
+async def _one_time_change_heuristic(tx, currency, list_address_txs) -> Optional[dict]:
+    if tx.get("coinbase") or len(tx.get("outputs", [])) > 10 or len(tx.get("outputs", [])) < 2:
+        summary = {}
+        for outp in tx.get("outputs", []):
+            if outp is None or not outp.address:
+                continue
+            summary[outp.address[0]] = False
+        return {
+            "summary": summary,
+            "details": {
+                "same_script_type": [],
+                "not_nicely_divisible": [],
+                "output_less_than_input": [],
+                "not_reused": [],
+            },
+        }
+
+    cond_same_script = set()  # all inputs need to be the same as the output
+    cond_not_nicely_divisible = set()
+    cond_out_less_than_in = set()
+
+    min_input_value = min([inp.value for inp in tx.get("inputs", []) if inp is not None])
+
+    script_type_input = None
+    for inp in tx.get("inputs", []):
+        if inp is None:
+            continue
+        if script_type_input is None:
+            script_type_input = inp.address_type
+        elif inp.address_type != script_type_input:
+            script_type_input = False
+
+        if not script_type_input:
+            break
+
+    counts = defaultdict(int)
+    for outp in tx.get("outputs", []):
+        # safety guard since outputs sometimes are None
+        if outp is None or not outp.address:
+            continue
+
+        if len(outp.address) >= 1:
+            outp_addr = outp.address[0]
+            counts[outp_addr] += 1
+
+            if script_type_input == outp.address_type:
+                cond_same_script.add(outp_addr)
+
+            if not outp.value % 1000 == 0:
+                cond_not_nicely_divisible.add(outp_addr)
+
+            if outp.value < min_input_value:
+                cond_out_less_than_in.add(outp_addr)
+
+    # check addresses for reuse
+    change_candidates = cond_same_script.intersection(cond_not_nicely_divisible).intersection(cond_out_less_than_in)
+    not_change = set()
+    for cand in change_candidates:
+        cand_txs = await list_address_txs(currency, cannonicalize_address(currency, cand), direction=None)
+        out_counter = 0
+        in_counter = 0
+        for entry in cand_txs[0]:
+            # any prior use (incoming or outgoing) disqualifies a one-time change address
+            if entry["height"] < tx["block_id"]:
+                not_change.add(cand)
+                break
+
+            # only one outgoing after tx
+            if entry["height"] >= tx["block_id"] and entry["is_outgoing"]:
+                out_counter += 1
+                if out_counter > 1:
+                    not_change.add(cand)
+                    break
+
+            # just one incoming
+            if not entry["is_outgoing"]:
+                in_counter += 1
+                if in_counter > 1:
+                    not_change.add(cand)
+                    break
+
+    same_addr_more_than_once = set(addr for addr, count in counts.items() if count > 1)
+    all_candidates = change_candidates.copy()
+    change_candidates = change_candidates.difference(not_change).difference(same_addr_more_than_once)
+    if len(change_candidates) != 1:
+        change_candidates = set()
+
+    result = {
+        "summary": {},
+        "details": {
+            "same_script_type": list(cond_same_script.difference(not_change)),
+            "not_nicely_divisible": list(cond_not_nicely_divisible.difference(not_change)),
+            "output_less_than_input": list(cond_out_less_than_in.difference(not_change)),
+            "not_reused": list(all_candidates.difference(not_change)),
+        }}
+
+    for outp in tx.get("outputs", []):
+        if outp is None or not outp.address:
+            continue
+        outp_addr = outp.address[0]
+        if outp_addr in change_candidates:
+            result["summary"][outp_addr] = True
+        else:
+            result["summary"][outp_addr] = False
+
+    return result
+
+
 class DatabaseProtocol(Protocol):
     async def get_tx_by_hash(
         self, currency: str, tx_hash_bytes: bytes
@@ -121,6 +230,19 @@ class DatabaseProtocol(Protocol):
         self, currency: str, tx: Dict[str, Any], trace_index: Optional[int]
     ) -> Optional[Dict[str, Any]]: ...
 
+    async def list_address_txs(
+        self,
+        currency: str,
+        address: str,
+        direction: Optional[str],
+        min_height: Optional[int],
+        max_height: Optional[int],
+        order: str,
+        token_currency: Optional[str],
+        page: Optional[str],
+        pagesize: Optional[int],
+    ) -> Any: ...
+
 
 class TxsService:
     def __init__(
@@ -141,6 +263,7 @@ class TxsService:
         include_io: bool = False,
         include_nonstandard_io: bool = False,
         include_io_index: bool = False,
+        include_heuristics: bool = False,
     ) -> Union[TxAccount, TxUtxo]:
         trace_index = None
         tx_ident = tx_hash
@@ -191,6 +314,9 @@ class TxsService:
 
             if result:
                 result["type"] = "external"
+
+            if include_heuristics:
+                result["heuristics"] = await self._calculate_heuristics(result, currency)
 
             return await std_tx_from_row(
                 currency,
@@ -397,6 +523,13 @@ class TxsService:
             )
         else:
             return None
+
+
+    async def _calculate_heuristics(self, tx, currency) -> dict[Any, Any]:
+        heuristics = {}
+        heuristics["change"] = await _one_time_change_heuristic(tx, currency, self.db.list_address_txs)
+        return heuristics
+
 
     def _conversion_from_external_swap(
         self, network: str, swap: ExternalSwap

@@ -256,6 +256,7 @@ class TxUtxo(BaseModel):
     timestamp: int
     total_input: Values
     total_output: Values
+    heuristics: Optional[dict] = None
 
 
 class Block(BaseModel):

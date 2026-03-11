@@ -86,6 +86,9 @@ async def get_tx(
     include_io_index: Optional[bool] = Query(
         None, description="Include input/output indices"
     ),
+    include_heuristics: Optional[bool] = Query(
+      None, description="Include heuristics"
+    ),
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get a transaction by its hash"""
@@ -97,6 +100,7 @@ async def get_tx(
         include_io=include_io,
         include_nonstandard_io=include_nonstandard_io,
         include_io_index=include_io_index,
+        include_heuristics=include_heuristics,
     )
     return result
 
