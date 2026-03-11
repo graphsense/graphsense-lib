@@ -77,7 +77,7 @@ class IngestConfig(BaseModel):
     node_reference: str = Field(default_factory=lambda: "")
     secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
-    source_max_workers: Optional[int] = None
+    source_max_workers: int = 5
 
     @property
     def all_node_references(self) -> List[str]:
