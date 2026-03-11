@@ -68,12 +68,26 @@ def get_reorg_backoff_blocks(network: str) -> int:
     return reorg_backoff_blocks[network.lower()]
 
 
-class FileSink(BaseModel):
+class _WarnExtraModel(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_unknown_keys(cls, data):
+        if isinstance(data, dict):
+            known = set(cls.model_fields.keys())
+            unknown = set(data.keys()) - known
+            for key in sorted(unknown):
+                logger.warning(
+                    f"Unknown key '{key}' in {cls.__name__} config — ignoring"
+                )
+        return data
+
+
+class FileSink(_WarnExtraModel):
     directory: str
     s3_config: Optional[str] = None
 
 
-class IngestConfig(BaseModel):
+class IngestConfig(_WarnExtraModel):
     node_reference: str = Field(default_factory=lambda: "")
     secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
@@ -89,7 +103,7 @@ class IngestConfig(BaseModel):
         )
 
 
-class KeyspaceSetupConfig(BaseModel):
+class KeyspaceSetupConfig(_WarnExtraModel):
     replication_config: str = Field(
         default_factory=lambda: CASSANDRA_DEFAULT_REPLICATION_CONFIG
     )
@@ -102,7 +116,7 @@ class DeltaUpdaterConfig(BaseModel):
     s3_credentials: Optional[Dict[str, str]]
 
 
-class KeyspaceConfig(BaseModel):
+class KeyspaceConfig(_WarnExtraModel):
     raw_keyspace_name: str
     transformed_keyspace_name: str
     schema_type: str
@@ -144,7 +158,7 @@ class KeyspaceConfig(BaseModel):
         return v
 
 
-class Environment(BaseModel):
+class Environment(_WarnExtraModel):
     cassandra_nodes: List[str]
     username: Optional[str] = Field(default_factory=lambda: None)
     password: Optional[str] = Field(default_factory=lambda: None)
@@ -159,7 +173,7 @@ class Environment(BaseModel):
         return self.keyspaces[currency]
 
 
-class SlackTopic(BaseModel):
+class SlackTopic(_WarnExtraModel):
     hooks: List[str] = Field(default_factory=lambda: [])
 
 
