@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
 from goodconf import _load_config
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from ..utils import first_or_default, flatten
 
@@ -167,6 +167,16 @@ class AppConfig(GoodConf):
     """Graphsenselib config file"""
 
     default_environment: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_unknown_keys(cls, data):
+        if isinstance(data, dict):
+            known = set(cls.model_fields.keys())
+            unknown = set(data.keys()) - known
+            for key in sorted(unknown):
+                logger.warning(f"Unknown key '{key}' in config — ignoring")
+        return data
 
     model_config = GoodConfConfigDict(
         extra="ignore",
