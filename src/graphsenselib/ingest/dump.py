@@ -106,10 +106,9 @@ PIPELINE_REGISTRY: Dict[str, Callable] = {
 }
 
 
-# filesizes should be between 100 and 1000 MB and partitions > 1000MB
-# therefore we try to write files that are between 100 and 1000 MB and
-# partitions that are between 1000 and 10000 MB
-# TODO check this is for the entire deltalake not per table. review
+# These large filesizes are actually not necessary 
+# anymore since compaction takes care of that.
+# Could potentially be lowered if performance doesnt take a hit.
 FILESIZES = {
     "zec": 10000,
     "trx": 10000,
