@@ -129,6 +129,7 @@ class DeltaTableWriter:
         self,
         data: Iterable[dict],
     ) -> None:
+        time_write_start = time.time()
         logger.debug(f"Writing table {self.table_name}")
 
         if not data:
@@ -165,8 +166,6 @@ class DeltaTableWriter:
             storage_options = {}
 
         if self.mode in ["overwrite", "append"]:
-            time_ = time.time()
-
             unique_partitions = table.column("partition").unique()
 
             # only 1 partition is allowed to be written at once in overwrite mode
@@ -242,14 +241,12 @@ class DeltaTableWriter:
             logger.debug(
                 f"Writing {len(table)} records in mode {self.mode} "
                 f"took "
-                f"{time.time() - time_} seconds"
+                f"{time.time() - time_write_start} seconds"
             )
 
             return
 
         elif self.mode == "merge":
-            time_ = time.time()
-
             target = DeltaTable(table_path, storage_options=storage_options)
             # can either use overwrite with predicate; or try to merge,
             # as of 0.19 merge is faster and doesnt read the entire partition
@@ -275,7 +272,7 @@ class DeltaTableWriter:
             )
             logger.warning(
                 f"Delta merge of length {len(table)} on {self.table_name} "
-                f"took {time.time() - time_} seconds"
+                f"took {time.time() - time_write_start} seconds"
             )
             return
 

@@ -272,7 +272,8 @@ def export_delta(
         logger.info(f"Writing data from {start_block} to {end_block}")
         logger.info(
             f"Partition batch size: {partition_batch_size}, "
-            f"file batch size: {file_batch_size}"
+            f"file batch size: {file_batch_size}, "
+            f"source_max_workers: {source_max_workers or 10}"
         )
 
         actual_last_block = runner.run(start_block, end_block)

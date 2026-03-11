@@ -94,7 +94,8 @@ def ingesting():
     "--batch-size",
     type=int,
     default=10,
-    help="number of blocks to export (write) at a time (default: 10)",
+    help="[legacy only] number of blocks to export (write) at a time. "
+    "Ignored by the new pipeline (file batch size is fixed per currency).",
 )
 @click.option(
     "--timeout",

@@ -41,17 +41,20 @@ class SourceTRX(Source):
         self.provider_timeout = provider_timeout
         w = max_workers or 10
         self.client = get_connection_from_url(provider_uri, provider_timeout)
+        # The adapter is only used for export_block_headers (lightweight HTTP).
+        # All heavy lifting (txs, traces, fees, receipts, logs) goes through
+        # the gRPC combined exporter.
         self.adapter = TronStreamerAdapter(
             self.client,
             grpc_endpoint=grpc_provider_uri,
             batch_size_blockstransactions=20,
-            max_workers_blockstransactions=w,
+            max_workers_blockstransactions=5,
             batch_size_receiptslogs=100,
-            max_workers_receiptslogs=w * 2,
+            max_workers_receiptslogs=5,
         )
         self.grpc_exporter = TronCombinedGrpcExporter(
             grpc_endpoint=grpc_provider_uri,
-            max_workers=w * 3,
+            max_workers=w,
         )
 
     def get_last_block_yesterday(self) -> int:
@@ -74,6 +77,7 @@ class SourceTRX(Source):
 
         with ThreadPoolExecutor(max_workers=1) as executor:
             # Start gRPC combined (txs + types + traces + fees + receipts + logs)
+            t_grpc_start = time.monotonic()
             grpc_future = executor.submit(
                 self.grpc_exporter.export, start_block, end_block
             )
@@ -84,9 +88,8 @@ class SourceTRX(Source):
             t_blocks = time.monotonic() - t0
 
             # Collect gRPC results
-            t0 = time.monotonic()
             txs, hash_to_type, traces, fees, receipts, logs = grpc_future.result()
-            t_grpc = time.monotonic() - t0
+            t_grpc = time.monotonic() - t_grpc_start
 
         # Fallback: if energy_price couldn't be derived from gRPC data
         # (no tx in the batch paid energy, e.g. genesis blocks), fetch
