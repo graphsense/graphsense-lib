@@ -326,7 +326,7 @@ def _run_new_ingest(
             )
             sys.exit(11)
         delta_directory = pdc.directory
-        s3_credentials = config.get_s3_credentials()
+        s3_credentials = config.get_s3_credentials(pdc.s3_config)
 
     source_max_workers = None
     if ks_config.ingest_config is not None:
@@ -438,7 +438,6 @@ def dump_rawdata(
     parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
         "delta", None
     )
-    s3_credentials = config.get_s3_credentials()
 
     if parquet_directory_config is None:
         logger.error(
@@ -448,6 +447,7 @@ def dump_rawdata(
         sys.exit(11)
 
     parquet_directory = parquet_directory_config.directory
+    s3_credentials = config.get_s3_credentials(parquet_directory_config.s3_config)
 
     use_cassandra = "cassandra" in sinks
     use_delta = "delta" in sinks
@@ -566,7 +566,7 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
 
     logger.info(f"Optimizing deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
-    s3_credentials = config.get_s3_credentials()
+    s3_credentials = config.get_s3_credentials(parquet_directory_config.s3_config)
     lock_name = f"delta_ingest_{currency}"
     try:
         with create_lock(lock_name):
@@ -646,7 +646,7 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
 
     logger.info(f"Querying deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
-    s3_credentials = config.get_s3_credentials()
+    s3_credentials = config.get_s3_credentials(parquet_directory_config.s3_config)
 
     block_ids = list(range(start_block, end_block + 1))
 

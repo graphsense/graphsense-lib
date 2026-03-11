@@ -70,6 +70,7 @@ def get_reorg_backoff_blocks(network: str) -> int:
 
 class FileSink(BaseModel):
     directory: str
+    s3_config: Optional[str] = None
 
 
 class IngestConfig(BaseModel):
@@ -221,6 +222,8 @@ class AppConfig(GoodConf):
 
     s3_credentials: Optional[Dict[str, str]] = Field(default_factory=lambda: None)
 
+    s3_configs: Dict[str, Dict[str, str]] = Field(default_factory=lambda: {})
+
     legacy_ingest: bool = Field(
         default=False,
         description="Use the legacy ingest pipeline instead of the new IngestRunner pipeline.",
@@ -331,7 +334,17 @@ class AppConfig(GoodConf):
         else:
             return None
 
-    def get_s3_credentials(self) -> Optional[Dict[str, str]]:
+    def get_s3_credentials(
+        self, config_name: Optional[str] = None
+    ) -> Optional[Dict[str, str]]:
+        if config_name is not None:
+            creds = self.s3_configs.get(config_name)
+            if creds is None:
+                raise ValueError(
+                    f"s3_config '{config_name}' not found. "
+                    f"Available: {list(self.s3_configs.keys())}"
+                )
+            return creds
         return self.s3_credentials
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
@@ -384,10 +397,11 @@ class AppConfig(GoodConf):
         )
         if delta_sink is None:
             logger.debug(f"Delta sink not configured for {currency} in {env}")
+        s3_config_name = delta_sink.s3_config if delta_sink else None
         return DeltaUpdaterConfig(
             delta_sink=delta_sink,
             currency=currency,
-            s3_credentials=self.get_s3_credentials(),
+            s3_credentials=self.get_s3_credentials(s3_config_name),
         )
 
 
