@@ -373,7 +373,7 @@ class FastBtcBlockExporter:
                 {
                     "jsonrpc": "2.0",
                     "method": "getrawtransaction",
-                    "params": [h, True],
+                    "params": [h, 1],
                     "id": idx,
                 }
                 for idx, h in enumerate(chunk)
