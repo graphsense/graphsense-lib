@@ -43,7 +43,7 @@ else:
                                 ("index", pa.int32()),
                                 # ("script_asm", pa.string()),
                                 ("script_hex", pa.string()),
-                                ("addresses", pa.list_(pa.binary())),
+                                ("addresses", pa.list_(pa.string())),
                                 ("required_signatures", pa.int8()),
                                 ("type", pa.string()),
                                 ("value", pa.int64()),
@@ -67,7 +67,7 @@ else:
                                 ("script_hex", pa.string()),
                                 ("txinwitness", pa.list_(pa.binary())),
                                 ("type", pa.string()),
-                                ("addresses", pa.list_(pa.binary())),
+                                ("addresses", pa.list_(pa.string())),
                                 ("value", pa.int64()),
                             ]
                         )

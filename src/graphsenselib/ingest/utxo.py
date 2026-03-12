@@ -20,7 +20,6 @@ from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_block
 from ..db import AnalyticsDb
 from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_0x
 from ..utils.account import get_id_group
-from ..utils.address import address_to_bytes
 from ..utils.bch import bch_address_to_legacy
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
@@ -895,15 +894,8 @@ def prepare_transactions_inplace_parquet(txs, currency):
             )
             input.pop("script_asm", None)
             input.pop("required_signatures", None)
-            if input.get("addresses"):
-                input["addresses"] = [
-                    address_to_bytes(currency, addr) for addr in input["addresses"]
-                ]
 
         for output in tx["outputs"]:
-            output["addresses"] = [
-                address_to_bytes(currency, address) for address in output["addresses"]
-            ]
             output.pop("script_asm", None)
 
 
