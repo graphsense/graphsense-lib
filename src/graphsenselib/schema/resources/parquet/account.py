@@ -138,8 +138,8 @@ else:
                     pa.list_(
                         pa.struct(
                             [
-                                ("address", pa.string()),
-                                ("storageKeys", pa.list_(pa.string())),
+                                ("address", pa.binary()),
+                                ("storageKeys", pa.list_(pa.binary())),
                             ]
                         )
                     ),

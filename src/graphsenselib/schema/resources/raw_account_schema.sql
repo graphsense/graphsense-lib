@@ -40,6 +40,11 @@ CREATE TABLE log (
     PRIMARY KEY (block_id_group, block_id, topic0, log_index)
 ) WITH CLUSTERING ORDER BY (block_id ASC, topic0 ASC, log_index ASC);
 
+CREATE TYPE IF NOT EXISTS access_list_entry (
+    address blob,
+    storage_keys list<blob>
+);
+
 CREATE TABLE transaction (
     tx_hash_prefix text,
     tx_hash blob,
@@ -63,6 +68,9 @@ CREATE TABLE transaction (
     receipt_root blob,
     receipt_status bigint,
     receipt_effective_gas_price bigint,
+    max_fee_per_blob_gas bigint,
+    blob_versioned_hashes frozen<list<blob>>,
+    access_list frozen<list<frozen<access_list_entry>>>,
     v smallint,
     r varint,
     s varint,

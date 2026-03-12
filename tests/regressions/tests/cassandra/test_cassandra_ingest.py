@@ -29,6 +29,13 @@ pytestmark = pytest.mark.cassandra
 # Set of (currency, table_name) tuples.
 KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = set()
 
+# Columns added in the current version that the reference version lacks.
+# These are excluded from the content hash comparison.
+KNOWN_COLUMN_ADDITIONS: dict[tuple[str, str], set[str]] = {
+    ("eth", "transaction"): {"max_fee_per_blob_gas", "blob_versioned_hashes", "access_list"},
+    ("trx", "transaction"): {"max_fee_per_blob_gas", "blob_versioned_hashes", "access_list"},
+}
+
 # Tables that contain version-specific metadata (e.g. ingest timestamps,
 # software version strings). These are checked for existence and row count
 # but not for byte-identical content.
@@ -41,16 +48,25 @@ def _cassandra_release(session) -> str:
     return row.release_version if row else "unknown"
 
 
-def _table_content_hash(session, keyspace: str, table: str) -> tuple[int, str]:
+def _table_content_hash(
+    session, keyspace: str, table: str, exclude_cols: set[str] | None = None
+) -> tuple[int, str]:
     """Return (row_count, sha256_hex) for a table's full content.
 
     Rows are fetched, converted to sorted tuples, and hashed
     deterministically so that row ordering doesn't matter.
+    If *exclude_cols* is given, those columns are dropped before hashing.
     """
     rows = list(session.execute(f"SELECT * FROM {keyspace}.{table}"))  # noqa: S608
     count = len(rows)
     # Sort rows deterministically by converting each to a tuple of (col, val)
-    sorted_rows = sorted(str(sorted(row._asdict().items())) for row in rows)
+    if exclude_cols:
+        sorted_rows = sorted(
+            str(sorted((k, v) for k, v in row._asdict().items() if k not in exclude_cols))
+            for row in rows
+        )
+    else:
+        sorted_rows = sorted(str(sorted(row._asdict().items())) for row in rows)
     h = hashlib.sha256()
     for row_str in sorted_rows:
         h.update(row_str.encode())
@@ -175,8 +191,15 @@ class TestCassandraIngest:
                 )
                 continue
 
-            ref_count, ref_hash = _table_content_hash(session, ref_ks, table)
-            cur_count, cur_hash = _table_content_hash(session, cur_ks, table)
+            # Columns added in current that ref lacks — exclude from comparison
+            extra_cols = KNOWN_COLUMN_ADDITIONS.get((currency, table), set())
+
+            ref_count, ref_hash = _table_content_hash(
+                session, ref_ks, table, exclude_cols=extra_cols
+            )
+            cur_count, cur_hash = _table_content_hash(
+                session, cur_ks, table, exclude_cols=extra_cols
+            )
 
             if table in METADATA_TABLES:
                 status = f"META (ref={ref_count}, cur={cur_count})"
@@ -190,6 +213,8 @@ class TestCassandraIngest:
             match = ref_hash == cur_hash
             known = (currency, table) in KNOWN_CONTENT_DIVERGENCES
             status = "MATCH" if match else ("KNOWN DIVERGENCE" if known else "MISMATCH")
+            if extra_cols:
+                status += f" (excl {len(extra_cols)} new cols)"
 
             print(
                 f"    {table:30s} "
@@ -198,21 +223,21 @@ class TestCassandraIngest:
             )
 
             if not match and not known:
-                # Debug: show first differing rows
+                # Debug: show first differing rows (excluding new columns)
                 ref_rows = list(session.execute(
                     f"SELECT * FROM {ref_ks}.{table}"  # noqa: S608
                 ))
                 cur_rows = list(session.execute(
                     f"SELECT * FROM {cur_ks}.{table}"  # noqa: S608
                 ))
-                ref_by_key = {
-                    str(sorted(r._asdict().items())): r._asdict()
-                    for r in ref_rows
-                }
-                cur_by_key = {
-                    str(sorted(r._asdict().items())): r._asdict()
-                    for r in cur_rows
-                }
+                def _row_key(row):
+                    return str(sorted(
+                        (k, v) for k, v in row._asdict().items()
+                        if k not in extra_cols
+                    ))
+
+                ref_by_key = {_row_key(r): r._asdict() for r in ref_rows}
+                cur_by_key = {_row_key(r): r._asdict() for r in cur_rows}
                 ref_set = set(ref_by_key.keys())
                 cur_set = set(cur_by_key.keys())
                 only_ref = ref_set - cur_set
