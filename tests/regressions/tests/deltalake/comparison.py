@@ -34,6 +34,7 @@ class TableDiff:
     content_hash_match: bool = False
     common_columns_content_hash_match: bool | None = None  # None when schemas identical
     differing_common_columns: list[str] = field(default_factory=list)  # columns that differ
+    column_diff_samples: dict[str, list[tuple]] = field(default_factory=dict)  # col → [(row, ref, cur)]
     file_count_ref: int = 0
     file_count_current: int = 0
     file_count_diff: int = 0
@@ -64,6 +65,24 @@ class ComparisonReport:
     @property
     def all_identical(self) -> bool:
         return all(d.is_identical for d in self.table_diffs.values())
+
+
+MAX_DIFF_SAMPLES = 3
+
+
+def _truncate(s: str, maxlen: int = 120) -> str:
+    return s if len(s) <= maxlen else s[:maxlen - 3] + "..."
+
+
+def _collect_diff_samples(ref_col, cur_col, max_samples=MAX_DIFF_SAMPLES):
+    """Return up to max_samples (index, ref_value, cur_value) for differing elements."""
+    samples = []
+    for i in range(len(ref_col)):
+        if ref_col[i] != cur_col[i]:
+            samples.append((i, ref_col[i].as_py(), cur_col[i].as_py()))
+            if len(samples) >= max_samples:
+                break
+    return samples
 
 
 def _compare_schemas(
@@ -119,6 +138,7 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
         # data regressions even when new columns have been added.
         common_hash_match = None
         differing_cols = []
+        diff_samples = {}
         has_schema_diff = added or removed or type_changes
         if (
             has_schema_diff
@@ -163,6 +183,7 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
                         cc = cur_projected.column(c).take(pc.sort_indices(cur_projected.column(c)))
                         if rc != cc:
                             differing_cols.append(c)
+                            diff_samples[c] = _collect_diff_samples(rc, cc)
                         else:
                             matching_sortable.append(c)
 
@@ -175,6 +196,9 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
                         for c in non_sortable:
                             if ref_s.column(c) != cur_s.column(c):
                                 differing_cols.append(c)
+                                diff_samples[c] = _collect_diff_samples(
+                                    ref_s.column(c), cur_s.column(c),
+                                )
                     elif non_sortable:
                         # No stable sort keys — can't align, mark as differing
                         differing_cols.extend(non_sortable)
@@ -190,6 +214,7 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
             content_hash_match=(ref_table.content_hash == cur_table.content_hash),
             common_columns_content_hash_match=common_hash_match,
             differing_common_columns=differing_cols,
+            column_diff_samples=diff_samples,
             file_count_ref=len(ref_table.file_names),
             file_count_current=len(cur_table.file_names),
             file_count_diff=len(cur_table.file_names) - len(ref_table.file_names),
@@ -270,6 +295,15 @@ def format_report(
             lines.append(f"    Common-columns hash match: {diff.common_columns_content_hash_match}")
         if diff.differing_common_columns:
             lines.append(f"    Differing columns: {', '.join(diff.differing_common_columns)}")
+            for col in diff.differing_common_columns:
+                samples = diff.column_diff_samples.get(col, [])
+                if samples:
+                    lines.append(f"      {col}:")
+                    for row_idx, ref_val, cur_val in samples:
+                        ref_str = _truncate(repr(ref_val), 120)
+                        cur_str = _truncate(repr(cur_val), 120)
+                        lines.append(f"        row {row_idx}: ref={ref_str}")
+                        lines.append(f"        {' ' * len(str(row_idx))}  cur={cur_str}")
         lines.append(f"    Files: ref={diff.file_count_ref} cur={diff.file_count_current}")
         lines.append(
             "    Size: "

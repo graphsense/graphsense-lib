@@ -30,11 +30,13 @@ from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
 # BTC/BCH use verbosity 3 (prevout inline) → total_input and fee are now
 # correct. The reference version (verbosity 2) left total_input=0 and
 # fee=negative because inputs were never resolved.
+# outputs diverges because current version stores addresses as plain text
+# strings instead of the old binary encoding.
 KNOWN_COLUMN_DIVERGENCES: dict[tuple[str, str], set[str]] = {
-    ("btc", "transaction"): {"total_input", "fee"},
-    ("bch", "transaction"): {"total_input", "fee"},
-    ("ltc", "transaction"): {"total_input", "fee"},
-    ("zec", "transaction"): {"total_input", "fee"},
+    ("btc", "transaction"): {"total_input", "fee", "outputs"},
+    ("bch", "transaction"): {"total_input", "fee", "outputs"},
+    ("ltc", "transaction"): {"total_input", "fee", "outputs"},
+    ("zec", "transaction"): {"total_input", "fee", "outputs"},
 }
 
 # Schema additions in the current version that the reference version lacks.
