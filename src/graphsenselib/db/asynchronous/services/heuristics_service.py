@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from .common import cannonicalize_address
 from .models.heuristics import OneTimeChangeDetails, OneTimeChangeHeuristic, TxHeuristics
@@ -30,6 +30,7 @@ async def _one_time_change_heuristic(
     cond_same_script = set()
     cond_not_nicely_divisible = set()
     cond_out_less_than_in = set()
+    cond_not_reused = set()
 
     min_input_value = min([inp.value for inp in tx.get("inputs", []) if inp is not None])
 
@@ -70,26 +71,32 @@ async def _one_time_change_heuristic(
         .intersection(cond_out_less_than_in)
     )
     not_change = set()
-    for cand in change_candidates:
-        addr = await get_address(currency, cannonicalize_address(currency, cand))
-        if addr is None:
-            not_change.add(cand)
+    for cand in tx.get("outputs", []):
+        if cand is None or not cand.address:
             continue
 
-        first_tx_height = addr["first_tx"].height if addr.get("first_tx") else None
+        addr = cand.address[0]
+        addr_info = await get_address(currency, cannonicalize_address(currency, addr))
+        if addr_info is None:
+            cond_not_reused.add(addr)
+            continue
+
+        first_tx_height = addr_info["first_tx"].height if addr_info.get("first_tx") else None
 
         if (
-            addr.get("no_incoming_txs", 0) > 1
-            or addr.get("no_outgoing_txs", 0) > 1
+            addr_info.get("no_incoming_txs", 0) > 1
+            or addr_info.get("no_outgoing_txs", 0) > 1
             or (first_tx_height is not None and first_tx_height < tx["block_id"])
         ):
-            not_change.add(cand)
+            not_change.add(addr)
+        else:
+            cond_not_reused.add(addr)
 
     same_addr_more_than_once = set(addr for addr, count in counts.items() if count > 1)
-    all_candidates = change_candidates.copy()
-    change_candidates = change_candidates.difference(not_change).difference(
-        same_addr_more_than_once
-    )
+    change_candidates = (change_candidates
+                         .intersection(cond_not_reused)
+                         .difference(same_addr_more_than_once
+    ))
     if len(change_candidates) != 1:
         change_candidates = set()
 
@@ -103,10 +110,10 @@ async def _one_time_change_heuristic(
     return OneTimeChangeHeuristic(
         summary=summary,
         details=OneTimeChangeDetails(
-            same_script_type=list(cond_same_script.difference(not_change)),
-            not_nicely_divisible=list(cond_not_nicely_divisible.difference(not_change)),
-            output_less_than_input=list(cond_out_less_than_in.difference(not_change)),
-            not_reused=list(all_candidates.difference(not_change)),
+            same_script_type=list(cond_same_script),
+            not_nicely_divisible=list(cond_not_nicely_divisible),
+            output_less_than_input=list(cond_out_less_than_in),
+            not_reused=list(cond_not_reused),
         ),
     )
 
