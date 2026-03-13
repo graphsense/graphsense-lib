@@ -57,6 +57,10 @@ class SourceTRX(Source):
             max_workers=w,
         )
 
+    def close(self):
+        """Release held resources (gRPC channel)."""
+        self.grpc_exporter.close()
+
     def get_last_block_yesterday(self) -> int:
         return account_get_last_block_yesterday(self.client)
 

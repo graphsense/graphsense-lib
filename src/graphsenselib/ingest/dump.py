@@ -106,7 +106,7 @@ PIPELINE_REGISTRY: Dict[str, Callable] = {
 }
 
 
-# These large filesizes are actually not necessary 
+# These large filesizes are actually not necessary
 # anymore since compaction takes care of that.
 # Could potentially be lowered if performance doesnt take a hit.
 FILESIZES = {
@@ -276,6 +276,10 @@ def export_delta(
         )
 
         actual_last_block = runner.run(start_block, end_block)
+
+        # Close source to release any held resources (e.g., gRPC channels)
+        if hasattr(source, "close"):
+            source.close()
 
         # Write Cassandra configuration and summary statistics AFTER data
         # so that a crash mid-ingest doesn't leave stale metadata.
