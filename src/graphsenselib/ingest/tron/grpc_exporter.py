@@ -549,6 +549,9 @@ class TronCombinedGrpcExporter:
                             "net_usage": ti_receipt.net_usage,
                             "net_fee": ti_receipt.net_fee,
                             "result": ti_receipt.result,
+                            # Pre-existing mapping: energy_penalty_total is mapped
+                            # to net_fee (not ti_receipt.energy_penalty_total) to
+                            # match the original decode_fees in export_traces_job.py.
                             "energy_penalty_total": ti_receipt.net_fee,
                         })
 
