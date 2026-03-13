@@ -15,5 +15,5 @@ class OneTimeChangeHeuristic(BaseModel):
     details: OneTimeChangeDetails
 
 
-class TxHeuristics(BaseModel):
+class UtxoHeuristics(BaseModel):
     one_time_change: Optional[OneTimeChangeHeuristic] = None

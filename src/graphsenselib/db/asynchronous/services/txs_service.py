@@ -27,7 +27,7 @@ from .models import (
     TxRef,
     TxUtxo,
     TxValue,
-    Txs, TxHeuristics,
+    Txs,
 )
 from .rates_service import RatesService
 from graphsenselib.utils.constants import (
@@ -200,7 +200,7 @@ class TxsService:
                 result["type"] = "external"
 
             if len(include_heuristics) > 0:
-                result["heuristics"] = await self._calculate_heuristics(result, currency, include_heuristics)
+                result["heuristics"] = await calculate_heuristics(result, currency, self.db.get_address, include_heuristics)
 
             return await std_tx_from_row(
                 currency,
@@ -407,10 +407,6 @@ class TxsService:
             )
         else:
             return None
-
-
-    async def _calculate_heuristics(self, tx, currency, heuristics) -> TxHeuristics:
-        return await calculate_heuristics(tx, currency, self.db.get_address, heuristics)
 
 
     def _conversion_from_external_swap(

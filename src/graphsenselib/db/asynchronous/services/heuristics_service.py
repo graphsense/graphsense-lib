@@ -2,7 +2,7 @@ from collections import defaultdict
 from typing import Any, Dict
 
 from .common import cannonicalize_address
-from .models.heuristics import OneTimeChangeDetails, OneTimeChangeHeuristic, TxHeuristics
+from graphsenselib.db.asynchronous.services.heuristics import OneTimeChangeDetails, OneTimeChangeHeuristic, UtxoHeuristics
 
 
 async def _one_time_change_heuristic(
@@ -118,8 +118,8 @@ async def _one_time_change_heuristic(
     )
 
 
-async def calculate_heuristics(tx: Any, currency: str, get_address, heuristics: list) -> TxHeuristics:
+async def calculate_heuristics(tx: Any, currency: str, get_address, heuristics: list) -> UtxoHeuristics:
     if "one_time_change" in heuristics:
-        return TxHeuristics(one_time_change=await _one_time_change_heuristic(tx, currency, get_address))
+        return UtxoHeuristics(one_time_change=await _one_time_change_heuristic(tx, currency, get_address))
     else:
-        return TxHeuristics()
+        return UtxoHeuristics()

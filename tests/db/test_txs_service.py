@@ -366,7 +366,10 @@ class TestTxsServiceHeuristicsRouting:
         """ETH returns early via the trace path — _calculate_heuristics must never be called."""
         raw_tx = make_raw_utxo_tx()
         svc = self.make_service("eth", raw_tx)
-        with patch.object(svc, "_calculate_heuristics", new=AsyncMock()) as mock_heuristics:
+        with patch(
+            "graphsenselib.db.asynchronous.services.txs_service.calculate_heuristics",
+            new=AsyncMock(),
+        ) as mock_heuristics:
             result = await svc.get_tx("eth", TX_HASH.hex(), include_heuristics=["one_time_change"])
             mock_heuristics.assert_not_called()
         assert not hasattr(result, "heuristics")
