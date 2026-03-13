@@ -67,7 +67,7 @@ class BatchRpcClient:
     def make_batch_request(self, rpc_requests, max_retries=3):
         """POST a JSON-RPC batch and return list of responses."""
         session = self._get_session()
-        last_error = None
+        last_error: Exception = Exception("no retries attempted")
         for attempt in range(max_retries):
             try:
                 response = session.post(

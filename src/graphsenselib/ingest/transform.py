@@ -66,6 +66,7 @@ class TransformerUTXO(Transformer):
         self._resolve_via_cassandra = resolve_inputs_via_cassandra
         self._fill_unresolved = fill_unresolved_inputs
         if self._has_cassandra:
+            assert db is not None
             self._resolver = CassandraOutputResolver(
                 db,
                 tx_bucket_size=TX_BUCKET_SIZE,

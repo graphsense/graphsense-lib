@@ -2,11 +2,12 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 try:
     import deltalake as dl
     import pyarrow as pa
+    import pyarrow.compute  # noqa: F401 — explicit import for type checkers
     from deltalake import DeltaTable
     from pyarrow.lib import ArrowInvalid
 except ImportError:
@@ -127,7 +128,7 @@ class DeltaTableWriter:
 
     def write_delta(
         self,
-        data: Iterable[dict],
+        data: List[dict],
     ) -> None:
         time_write_start = time.time()
         logger.debug(f"Writing table {self.table_name}")
@@ -212,7 +213,7 @@ class DeltaTableWriter:
                         table_path,
                         table,
                         partition_by=partition_by,
-                        mode=delta_write_mode,
+                        mode=delta_write_mode,  # ty: ignore[invalid-argument-type]
                         schema_mode="merge",
                         predicate=predicate,
                         storage_options=storage_options,
@@ -478,7 +479,7 @@ class DeltaDumpWriter(Sink):
         dataset = DeltaTable(
             f"{self.directory}/block", storage_options=storage_options
         ).to_pyarrow_dataset()
-        highest_block = pa.compute.max(
+        highest_block = pa.compute.max(  # ty: ignore[unresolved-attribute]
             dataset.to_table(columns=["block_id"])["block_id"]
         ).as_py()
         logger.info(f"Highest block: {highest_block}")
@@ -504,7 +505,7 @@ FINALIZE_INT_COLS_MAP = {
 class DeltaDumpSinkFactory:  # todo could be a function
     @staticmethod
     def create_writer(
-        network: str, s3_credentials: dict, write_mode: str, directory: str
+        network: str, s3_credentials: Optional[dict], write_mode: str, directory: str
     ) -> DeltaDumpWriter:
         db_write_config = CONFIG_MAP.get(network)
         if not db_write_config:

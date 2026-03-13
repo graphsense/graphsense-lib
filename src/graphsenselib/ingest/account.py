@@ -60,9 +60,7 @@ WEB3_QUERY_BATCH_SIZE = 50
 WEB3_QUERY_WORKERS = 40
 
 
-def enrich_txs_with_vrs(
-    txs: Iterable[Dict], receipts: Iterable[Dict]
-) -> Iterable[Dict]:
+def enrich_txs_with_vrs(txs: List[Dict], receipts: List[Dict]) -> List[Dict]:
     # Our enrich_transactions preserves all fields including v, r, s,
     # unlike ethereumetl's version which stripped them.
     return _enrich_transactions(txs, receipts)
@@ -75,12 +73,12 @@ class AccountStreamerAdapter:
     def __init__(
         self,
         client: BatchRpcClient,
-        batch_size: int = None,
-        max_workers: int = None,
-        batch_size_blockstransactions: int = None,
-        max_workers_blockstransactions: int = None,
-        batch_size_receiptslogs: int = None,
-        max_workers_receiptslogs: int = None,
+        batch_size: Optional[int] = None,
+        max_workers: Optional[int] = None,
+        batch_size_blockstransactions: Optional[int] = None,
+        max_workers_blockstransactions: Optional[int] = None,
+        batch_size_receiptslogs: Optional[int] = None,
+        max_workers_receiptslogs: Optional[int] = None,
     ) -> None:
         self.client = client
         self.batch_size = batch_size
@@ -127,13 +125,13 @@ class AccountStreamerAdapter:
         end_block: int,
         export_blocks: bool = True,
         export_transactions: bool = True,
-    ) -> Tuple[Iterable, Iterable]:
+    ) -> Tuple[List[dict], List[dict]]:
         """Export blocks and transactions for specified block range."""
         return self._block_exporter.export_blocks_and_transactions(
             start_block, end_block
         )
 
-    def export_block_headers(self, start_block: int, end_block: int) -> Iterable:
+    def export_block_headers(self, start_block: int, end_block: int) -> List[dict]:
         """Export block headers (without transactions) for a block range.
 
         Uses detailed=false which is much faster than detailed=true.
@@ -141,15 +139,15 @@ class AccountStreamerAdapter:
         return self._block_exporter.export_block_headers(start_block, end_block)
 
     def export_receipts_and_logs(
-        self, transactions: Iterable
-    ) -> Tuple[Iterable, Iterable]:
+        self, transactions: List[dict]
+    ) -> Tuple[List[dict], List[dict]]:
         """Export receipts and logs for specified transaction hashes."""
         tx_hashes = [transaction["hash"] for transaction in transactions]
         return self._receipt_exporter.export_receipts_and_logs(tx_hashes)
 
     def export_receipts_and_logs_by_block(
         self, start_block: int, end_block: int
-    ) -> Tuple[Iterable, Iterable]:
+    ) -> Tuple[List[dict], List[dict]]:
         """Export receipts and logs for a block range using eth_getBlockReceipts.
 
         This is faster than per-transaction receipt fetching since it uses
@@ -184,12 +182,12 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         self,
         client: BatchRpcClient,
         grpc_endpoint: str,
-        batch_size: int = None,
-        max_workers: int = None,
-        batch_size_blockstransactions: int = None,
-        max_workers_blockstransactions: int = None,
-        batch_size_receiptslogs: int = None,
-        max_workers_receiptslogs: int = None,
+        batch_size: Optional[int] = None,
+        max_workers: Optional[int] = None,
+        batch_size_blockstransactions: Optional[int] = None,
+        max_workers_blockstransactions: Optional[int] = None,
+        batch_size_receiptslogs: Optional[int] = None,
+        max_workers_receiptslogs: Optional[int] = None,
     ) -> None:
         super().__init__(
             client,
@@ -599,7 +597,7 @@ def prepare_traces_inplace_trx(
 
 
 def prepare_fees_inplace(
-    fees: Iterable,
+    fees: List[dict],
     tx_hash_prefix_len: int,
     partition=None,
     keep_block_ids=False,
@@ -608,7 +606,7 @@ def prepare_fees_inplace(
     blob_colums = ["tx_hash"]
     for item in fees:
         if not drop_tx_hash_prefix:
-            prefix = strip_0x(item["tx_hash"])[:tx_hash_prefix_len]
+            prefix = (strip_0x(item["tx_hash"]) or "")[:tx_hash_prefix_len]
             item["tx_hash_prefix"] = prefix
 
         if partition is not None:
@@ -813,7 +811,7 @@ def ingest(
             )
             prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
             if fees is not None:
-                prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN)
+                prepare_fees_inplace(fees, TX_HASH_PREFIX_LEN)  # ty: ignore[invalid-argument-type]
                 write_to_sinks(db, sink_config, "fee", fees)
 
             # ingest into Cassandra
@@ -869,7 +867,9 @@ class LoadLogsTask(AbstractTask):
 
 class LoadLogsAndTypeTask(AbstractTask):
     def __init__(
-        self, is_update_transactions_mode: bool = False, blocks: Iterable = None
+        self,
+        is_update_transactions_mode: bool = False,
+        blocks: Optional[Iterable] = None,
     ):
         self.is_update_transactions_mode = is_update_transactions_mode
         self.blocks = blocks
@@ -1252,7 +1252,7 @@ def ingest_async(
                 # Update UI
                 last_block_date_str = "Unknown"
                 if not is_trace_only_mode:
-                    last_block = blocks[-1]
+                    last_block = blocks[-1]  # ty: ignore[non-subscriptable]
                     last_block_ts = last_block["timestamp"]
                     last_blk_date = parse_timestamp(last_block_ts)
                     last_block_date_str = last_blk_date.strftime(

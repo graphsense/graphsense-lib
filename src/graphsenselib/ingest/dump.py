@@ -135,7 +135,7 @@ def export_delta(
     start_block: Optional[int],
     end_block: Optional[int],
     provider_timeout: int,
-    s3_credentials: Optional[str] = None,
+    s3_credentials: Optional[dict] = None,
     write_mode: str = "overwrite",
     ignore_overwrite_safechecks: bool = False,
     db: Optional[AnalyticsDb] = None,

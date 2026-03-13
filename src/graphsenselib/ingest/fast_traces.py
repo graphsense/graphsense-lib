@@ -290,7 +290,7 @@ class FastTraceExporter:
             for bn in block_numbers
         ]
 
-        last_error = None
+        last_error: Exception = Exception("no retries attempted")
         for attempt in range(max_retries):
             try:
                 results = self.client.make_batch_request(rpc_requests)

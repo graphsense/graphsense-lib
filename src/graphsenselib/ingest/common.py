@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import pydantic
 
@@ -41,7 +41,7 @@ def cassandra_ingest(
 
 class AbstractTask:
     def run(self, ctx, data) -> List[Tuple["AbstractTask", object]]:
-        pass
+        return []
 
 
 class AbstractETLStrategy:
@@ -63,17 +63,19 @@ class StoreTask(AbstractTask):
 
 
 class BlockRangeContent(pydantic.BaseModel):
-    table_contents: Dict[str, Union[List[dict], dict]]
+    table_contents: Dict[str, List[dict]]
     start_block: Optional[int] = None  # None in the blockindependent case
     end_block: Optional[int] = None  # None in the blockindependent case
 
     @staticmethod
     def merge(block_range_contents: List["BlockRangeContent"]) -> "BlockRangeContent":
+        for brc in block_range_contents:
+            assert brc.start_block is not None and brc.end_block is not None
         # sort block_range_contents by start_block
         block_range_contents = sorted(block_range_contents, key=lambda x: x.start_block)
         # make sure that there are no gaps in the block range
         assert all(
-            block_range_contents[i].end_block + 1
+            block_range_contents[i].end_block + 1  # ty: ignore[unsupported-operator]
             == block_range_contents[i + 1].start_block
             for i in range(len(block_range_contents) - 1)
         )

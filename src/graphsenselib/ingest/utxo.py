@@ -142,8 +142,8 @@ class CassandraOutputResolver(OutputResolverBase):
     def __init__(
         self,
         db: AnalyticsDb,
-        tx_bucket_size: int = None,
-        tx_prefix_length: int = None,
+        tx_bucket_size: Optional[int] = None,
+        tx_prefix_length: Optional[int] = None,
     ):
         self.db = db
         self.tx_bucket_size = tx_bucket_size
@@ -252,7 +252,7 @@ def addresstype_to_int(addr_type: str) -> int:
         return addr_type
 
     if addr_type in _address_types:
-        return _address_types.get(addr_type)
+        return _address_types[addr_type]
 
     raise UnknownAddressType(f"unknown address type {addr_type}")
 
@@ -294,7 +294,7 @@ def tx_stats(tx):
     )
 
 
-def parse_script(s: str) -> Tuple[List[str], str]:
+def parse_script(s: str) -> Tuple[Optional[List[str]], str]:
     """Parses the output addresses from a bitcoin-like locking script
 
     Args:
@@ -497,6 +497,7 @@ def prepare_transactions_inplace(
                 tx[newname] = tx.pop(oldname)
 
         if process_fields:
+            assert next_tx_id is not None and tx_bucket_size is not None
             tx["inputs_raw"] = tx["inputs"]
             tx["outputs_raw"] = tx["outputs"]
             tx["coinjoin"] = is_coinjoin(tx)
@@ -516,25 +517,27 @@ def prepare_transactions_inplace(
 
 def get_tx_refs(spending_tx_hash: str, raw_inputs: Iterable, tx_hash_prefix_len: int):
     tx_refs = []
-    spending_tx_hash = hex_to_bytes(spending_tx_hash)
+    spending_tx_hash_bytes = hex_to_bytes(spending_tx_hash)
     for inp in raw_inputs:
         spending_input_index = inp["index"]
-        spent_tx_hash = hex_to_bytes(inp["spent_transaction_hash"])
+        spent_tx_hash_bytes = hex_to_bytes(inp["spent_transaction_hash"])
         spent_output_index = inp["spent_output_index"]
-        if spending_tx_hash is not None and spent_tx_hash is not None:
+        if spending_tx_hash_bytes is not None and spent_tx_hash_bytes is not None:
             # in zcash refs can be None in case of shielded txs.
+            spending_prefix = (strip_0x(bytes_to_hex(spending_tx_hash_bytes)) or "")[
+                :tx_hash_prefix_len
+            ]
+            spent_prefix = (strip_0x(bytes_to_hex(spent_tx_hash_bytes)) or "")[
+                :tx_hash_prefix_len
+            ]
             tx_refs.append(
                 {
-                    "spending_tx_hash": spending_tx_hash,
+                    "spending_tx_hash": spending_tx_hash_bytes,
                     "spending_input_index": spending_input_index,
-                    "spent_tx_hash": spent_tx_hash,
+                    "spent_tx_hash": spent_tx_hash_bytes,
                     "spent_output_index": spent_output_index,
-                    "spending_tx_prefix": strip_0x(bytes_to_hex(spending_tx_hash))[
-                        :tx_hash_prefix_len
-                    ],
-                    "spent_tx_prefix": strip_0x(bytes_to_hex(spent_tx_hash))[
-                        :tx_hash_prefix_len
-                    ],
+                    "spending_tx_prefix": spending_prefix,
+                    "spent_tx_prefix": spent_prefix,
                 }
             )
 
@@ -822,7 +825,7 @@ def ingest(
             if import_base_data:
                 enrich_txs(txs, resolver, ignore_missing_outputs=False)
 
-                latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)
+                latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)  # ty: ignore[unresolved-attribute]
 
                 prepare_transactions_inplace(
                     txs, latest_tx_id + 1, TX_HASH_PREFIX_LENGTH, TX_BUCKET_SIZE

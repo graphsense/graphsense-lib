@@ -3,7 +3,6 @@ import logging
 import sys
 import time
 from contextlib import ExitStack
-from typing import Dict
 
 import click
 
@@ -13,6 +12,7 @@ from graphsenselib.utils.locking import LockAcquisitionError, create_lock
 
 from ..cli.common import require_currency, require_environment
 from ..config import get_config
+from ..config.config import KeyspaceConfig
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
@@ -24,7 +24,7 @@ from .factory import IngestFactory
 logger = logging.getLogger(__name__)
 
 
-def create_sink_config(sink: str, network: str, ks_config: Dict):
+def create_sink_config(sink: str, network: str, ks_config: KeyspaceConfig):
     sink_config = ks_config.ingest_config.model_dump().get(
         "raw_keyspace_file_sinks", None
     )
@@ -280,7 +280,7 @@ def ingest(
                         (k, create_sink_config(k, currency, ks_config)) for k in sinks
                     ]
                     IngestFactory().from_config(env, currency, version).ingest(
-                        db=db,
+                        db=db,  # ty: ignore[invalid-argument-type]
                         currency=currency,
                         sources=sources,
                         sink_config={k: v for k, v in sink_configs if v is not None},

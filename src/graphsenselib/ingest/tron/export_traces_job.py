@@ -1,7 +1,7 @@
-import concurrent
+import concurrent.futures
 import logging
 import time
-from typing import List
+from typing import Any, List
 
 try:
     import grpc
@@ -9,7 +9,7 @@ try:
 
     from .grpc.api.tron_api_pb2 import NumberMessage
     from .grpc.api.tron_api_pb2_grpc import WalletStub
-    from .grpc.core.response_pb2 import TransactionInfoList
+    from .grpc.core.response_pb2 import TransactionInfoList  # noqa: F401
     from graphsenselib.utils.grpc import get_channel
 except ImportError:
     _has_ingest_dependencies = False
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # / take note at the correct place that this is unchecked for now
 
 
-def decode_block_to_traces(block_number: int, block: "TransactionInfoList") -> List:
+def decode_block_to_traces(block_number: int, block: Any) -> List:
     """decode block of TransactionInfoList protobuf object to get a list of traces
 
     Args:
@@ -112,7 +112,7 @@ def decode_block_to_traces(block_number: int, block: "TransactionInfoList") -> L
     return traces_per_block
 
 
-def decode_fees(block_number: int, block: "TransactionInfoList") -> List:
+def decode_fees(block_number: int, block: Any) -> List:
     transactionInfo = block.transactionInfo
 
     return [
