@@ -421,20 +421,22 @@ class TxsService:
         )
 
     def _conversion_from_bridge(self, bridge: Bridge) -> ExternalConversion:
+        nnf_marker = "network not found"
         try:
             token_config_from = self.db.get_token_configuration(bridge.fromNetwork)
         except NetworkNotFoundException:
-            token_config_from = None
+            token_config_from = nnf_marker
         try:
             token_config_to = self.db.get_token_configuration(bridge.toNetwork)
         except NetworkNotFoundException:
-            token_config_to = None
+            token_config_to = nnf_marker
 
         # If a network has no token config, mark assets on that side as unsupported.
-        from_is_supported_asset = token_config_from is not None and is_supported_asset(
-            bridge.fromAsset, token_config_from
+        from_is_supported_asset = (
+            token_config_from != nnf_marker
+            and is_supported_asset(bridge.fromAsset, token_config_from)
         )
-        to_is_supported_asset = token_config_to is not None and is_supported_asset(
+        to_is_supported_asset = token_config_to != nnf_marker and is_supported_asset(
             bridge.toAsset, token_config_to
         )
 
