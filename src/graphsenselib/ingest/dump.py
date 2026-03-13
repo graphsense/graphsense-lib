@@ -275,14 +275,26 @@ def export_delta(
             f"source_max_workers: {source_max_workers or 10}"
         )
 
+        # Pre-write UTXO configuration so TransformerUTXO can read bucket
+        # sizes from the configuration table during the first-ever ingest.
+        # The configuration contains only constants (bucket sizes), so
+        # writing before and after is idempotent and safe.
+        if db is not None and currency in ["btc", "ltc", "bch", "zec"]:
+            ingest_configuration_cassandra_utxo(
+                db,
+                UTXO_BLOCK_BUCKET_SIZE,
+                UTXO_TX_HASH_PREFIX_LENGTH,
+                UTXO_TX_BUCKET_SIZE,
+            )
+
         actual_last_block = runner.run(start_block, end_block)
 
         # Close source to release any held resources (e.g., gRPC channels)
         if hasattr(source, "close"):
             source.close()
 
-        # Write Cassandra configuration and summary statistics AFTER data
-        # so that a crash mid-ingest doesn't leave stale metadata.
+        # Write/update Cassandra configuration and summary statistics AFTER
+        # data so that stats reflect the actual ingested range.
         if db is not None and actual_last_block is not None:
             logger.info("Writing Cassandra configuration table...")
             if currency in ["btc", "ltc", "bch", "zec"]:
