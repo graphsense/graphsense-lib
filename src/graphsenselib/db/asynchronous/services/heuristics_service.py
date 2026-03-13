@@ -6,7 +6,7 @@ from .models.heuristics import OneTimeChangeDetails, OneTimeChangeHeuristic, TxH
 
 
 async def _one_time_change_heuristic(
-    tx, currency, list_address_txs
+    tx, currency, get_address
 ) -> OneTimeChangeHeuristic:
     empty_details = OneTimeChangeDetails(
         same_script_type=[],
@@ -71,27 +71,19 @@ async def _one_time_change_heuristic(
     )
     not_change = set()
     for cand in change_candidates:
-        cand_txs = await list_address_txs(
-            currency, cannonicalize_address(currency, cand), direction=None, pagesize=3
-        )
-        out_counter = 0
-        in_counter = 0
-        for entry in cand_txs[0]:
-            if entry["height"] < tx["block_id"]:
-                not_change.add(cand)
-                break
+        addr = await get_address(currency, cannonicalize_address(currency, cand))
+        if addr is None:
+            not_change.add(cand)
+            continue
 
-            if entry["height"] >= tx["block_id"] and entry["is_outgoing"]:
-                out_counter += 1
-                if out_counter > 1:
-                    not_change.add(cand)
-                    break
+        first_tx_height = addr["first_tx"].height if addr.get("first_tx") else None
 
-            if not entry["is_outgoing"]:
-                in_counter += 1
-                if in_counter > 1:
-                    not_change.add(cand)
-                    break
+        if (
+            addr.get("no_incoming_txs", 0) > 1
+            or addr.get("no_outgoing_txs", 0) > 1
+            or (first_tx_height is not None and first_tx_height < tx["block_id"])
+        ):
+            not_change.add(cand)
 
     same_addr_more_than_once = set(addr for addr, count in counts.items() if count > 1)
     all_candidates = change_candidates.copy()
@@ -119,8 +111,8 @@ async def _one_time_change_heuristic(
     )
 
 
-async def calculate_heuristics(tx: Any, currency: str, list_address_txs, heuristics: list) -> TxHeuristics:
+async def calculate_heuristics(tx: Any, currency: str, get_address, heuristics: list) -> TxHeuristics:
     if "one_time_change" in heuristics:
-        return TxHeuristics(one_time_change=await _one_time_change_heuristic(tx, currency, list_address_txs))
+        return TxHeuristics(one_time_change=await _one_time_change_heuristic(tx, currency, get_address))
     else:
         return TxHeuristics()

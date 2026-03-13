@@ -123,18 +123,9 @@ class DatabaseProtocol(Protocol):
         self, currency: str, tx: Dict[str, Any], trace_index: Optional[int]
     ) -> Optional[Dict[str, Any]]: ...
 
-    async def list_address_txs(
-        self,
-        currency: str,
-        address: str,
-        direction: Optional[str],
-        min_height: Optional[int],
-        max_height: Optional[int],
-        order: str,
-        token_currency: Optional[str],
-        page: Optional[str],
-        pagesize: Optional[int],
-    ) -> Any: ...
+    async def get_address(
+        self, currency: str, address: str
+    ) -> Optional[Dict[str, Any]]: ...
 
 
 class TxsService:
@@ -419,7 +410,7 @@ class TxsService:
 
 
     async def _calculate_heuristics(self, tx, currency, heuristics) -> TxHeuristics:
-        return await calculate_heuristics(tx, currency, self.db.list_address_txs, heuristics)
+        return await calculate_heuristics(tx, currency, self.db.get_address, heuristics)
 
 
     def _conversion_from_external_swap(
