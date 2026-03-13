@@ -17,20 +17,21 @@ def parse_node_trace(trace) -> List[FlowEvent]:
     v = to_int(a.get("value", "0x0"))
     if atype == "reward":
         f = None
-        t = a["author"]
+        t = a.get("author")
     elif atype == "call":
         f = a.get("from", None)
         t = a.get("to", None)
     elif atype == "create":
         f = a.get("from", None)
-        t = trace["result"]["address"]
+        result = trace.get("result") or {}
+        t = result.get("address")
     elif atype == "suicide":
         f = a.get("address", None)
-        t = a["refundAddress"]
+        t = a.get("refundAddress")
         v = to_int(a.get("balance", "0x0"))
     else:
         raise Exception(f"Unknown trace type: {trace}")
-    tx = a.get("transactionHash", None)
+    tx = trace.get("transactionHash", None)
     b = trace["blockNumber"]
 
     return [
