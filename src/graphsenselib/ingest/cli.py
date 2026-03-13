@@ -462,32 +462,34 @@ def dump_rawdata(
         logger.info("Apply migrations to raw keyspace if necessary")
         schema_tools.apply_migrations(env, currency, keyspace_type="raw")
 
+    # Use a single lock for both ingest and auto-compact to prevent a
+    # concurrent process from starting between the two operations.
+    lock_name = f"delta_ingest_{currency}"
     try:
-        with ExitStack() as stack:
-            db = None
-            if use_cassandra:
-                db = stack.enter_context(DbFactory().from_config(env, currency))
+        with create_lock(lock_name):
+            with ExitStack() as stack:
+                db = None
+                if use_cassandra:
+                    db = stack.enter_context(DbFactory().from_config(env, currency))
 
-            export_delta(
-                currency=currency,
-                sources=sources,
-                directory=parquet_directory,
-                start_block=start_block,
-                end_block=end_block,
-                provider_timeout=timeout,
-                s3_credentials=s3_credentials,
-                write_mode=write_mode,
-                ignore_overwrite_safechecks=ignore_overwrite_safechecks,
-                db=db,
-                source_max_workers=ks_config.ingest_config.source_max_workers,
-            )
+                export_delta(
+                    currency=currency,
+                    sources=sources,
+                    directory=parquet_directory,
+                    start_block=start_block,
+                    end_block=end_block,
+                    provider_timeout=timeout,
+                    s3_credentials=s3_credentials,
+                    write_mode=write_mode,
+                    ignore_overwrite_safechecks=ignore_overwrite_safechecks,
+                    db=db,
+                    lock_disabled=True,
+                    source_max_workers=ks_config.ingest_config.source_max_workers,
+                )
 
-        if auto_compact:
-            logger.info("Running auto-compaction check")
+            if auto_compact:
+                logger.info("Running auto-compaction check")
 
-            lock_name = f"delta_ingest_{currency}"
-            with create_lock(lock_name):
-                # currently just check when last vacuum was run on block table to figure out if we should run compaction
                 last_vaccum_time = DeltaTableConnector(
                     parquet_directory, s3_credentials
                 ).get_last_completed_vacuum_date("block")

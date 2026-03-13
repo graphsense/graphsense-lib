@@ -413,7 +413,9 @@ class AppConfig(GoodConf):
 
         super().__init__(**defaults)
 
-    def get_deltaupdater_config(self, env: str, currency: str) -> DeltaUpdaterConfig:
+    def get_deltaupdater_config(
+        self, env: str, currency: str
+    ) -> Optional[DeltaUpdaterConfig]:
         delta_sink = (
             self.get_environment(env)
             .keyspaces[currency]
@@ -421,7 +423,8 @@ class AppConfig(GoodConf):
         )
         if delta_sink is None:
             logger.debug(f"Delta sink not configured for {currency} in {env}")
-        s3_config_name = delta_sink.s3_config if delta_sink else None
+            return None
+        s3_config_name = delta_sink.s3_config
         return DeltaUpdaterConfig(
             delta_sink=delta_sink,
             currency=currency,

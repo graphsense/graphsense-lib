@@ -273,6 +273,12 @@ def update(
                         db.transformed.ingest("configuration", [config_defaults])
 
                     du_config = config.get_deltaupdater_config(env, currency)
+                    if du_config is None:
+                        logger.error(
+                            f"Delta sink not configured for {currency} in {env}. "
+                            "Cannot run delta update."
+                        )
+                        sys.exit(11)
                     update_transformed(
                         start_block,
                         end_block,
