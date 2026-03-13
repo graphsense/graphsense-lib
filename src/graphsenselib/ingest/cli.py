@@ -24,10 +24,18 @@ from .factory import IngestFactory
 logger = logging.getLogger(__name__)
 
 
+def _require_ingest_config(ks_config: KeyspaceConfig, currency: str):
+    """Return the IngestConfig or exit if not configured."""
+    ic = ks_config.ingest_config
+    if ic is None:
+        logger.error(f"No ingest_config for {currency}. Check your graphsense.yaml.")
+        sys.exit(11)
+    return ic
+
+
 def create_sink_config(sink: str, network: str, ks_config: KeyspaceConfig):
-    sink_config = ks_config.ingest_config.model_dump().get(
-        "raw_keyspace_file_sinks", None
-    )
+    ic = ks_config.ingest_config
+    sink_config = ic.model_dump().get("raw_keyspace_file_sinks", None) if ic else None
     if sink == "parquet":
         file_sink_dir = subkey_get(sink_config, f"{sink}.directory".split("."))
         if file_sink_dir is None:
@@ -188,7 +196,8 @@ def ingest(
     """
     config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
-    sources = ks_config.ingest_config.all_node_references
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    sources = ingest_cfg.all_node_references
 
     if batch_size != 10:
         logger.warning(
@@ -269,6 +278,7 @@ def ingest(
                         "Legacy ingest requires Cassandra. Add --sinks cassandra."
                     )
                     sys.exit(11)
+                assert db is not None
                 logger.warning(
                     "DEPRECATED: The legacy ingest pipeline is deprecated and will be "
                     "removed in a future release. Unset GRAPHSENSE_LEGACY_INGEST to "
@@ -280,7 +290,7 @@ def ingest(
                         (k, create_sink_config(k, currency, ks_config)) for k in sinks
                     ]
                     IngestFactory().from_config(env, currency, version).ingest(
-                        db=db,  # ty: ignore[invalid-argument-type]
+                        db=db,
                         currency=currency,
                         sources=sources,
                         sink_config={k: v for k, v in sink_configs if v is not None},
@@ -315,10 +325,14 @@ def _run_new_ingest(
     ignore_overwrite_safechecks=False,
 ):
     """Route from-node to the IngestRunner-based pipeline."""
+    ic = ks_config.ingest_config
     delta_directory = None
     s3_credentials = None
     if "delta" in sinks:
-        pdc = ks_config.ingest_config.raw_keyspace_file_sinks.get("delta", None)
+        if ic is None:
+            logger.error("Delta sink requested but no ingest_config configured.")
+            sys.exit(11)
+        pdc = ic.raw_keyspace_file_sinks.get("delta", None)
         if pdc is None:
             logger.error(
                 "Delta sink requested but no delta directory configured "
@@ -328,9 +342,7 @@ def _run_new_ingest(
         delta_directory = pdc.directory
         s3_credentials = config.get_s3_credentials(pdc.s3_config)
 
-    source_max_workers = None
-    if ks_config.ingest_config is not None:
-        source_max_workers = ks_config.ingest_config.source_max_workers
+    source_max_workers = ic.source_max_workers if ic is not None else None
 
     export_delta(
         currency=currency,
@@ -434,10 +446,9 @@ def dump_rawdata(
     logger.info(f"Dumping raw data for {currency} in {env}")
 
     ks_config = config.get_keyspace_config(env, currency)
-    sources = ks_config.ingest_config.all_node_references
-    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "delta", None
-    )
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    sources = ingest_cfg.all_node_references
+    parquet_directory_config = ingest_cfg.raw_keyspace_file_sinks.get("delta", None)
 
     if parquet_directory_config is None:
         logger.error(
@@ -484,7 +495,7 @@ def dump_rawdata(
                     ignore_overwrite_safechecks=ignore_overwrite_safechecks,
                     db=db,
                     lock_disabled=True,
-                    source_max_workers=ks_config.ingest_config.source_max_workers,
+                    source_max_workers=ingest_cfg.source_max_workers,
                 )
 
             if auto_compact:
@@ -555,9 +566,8 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
     """
     config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
-    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "delta", None
-    )
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    parquet_directory_config = ingest_cfg.raw_keyspace_file_sinks.get("delta", None)
 
     if parquet_directory_config is None:
         logger.error(
@@ -635,9 +645,8 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
     """
     config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
-    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "delta", None
-    )
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    parquet_directory_config = ingest_cfg.raw_keyspace_file_sinks.get("delta", None)
 
     if parquet_directory_config is None:
         logger.error(

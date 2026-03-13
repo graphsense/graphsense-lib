@@ -395,6 +395,7 @@ def enrich_txs(
                             f" from tx {tx.get('hash')}"
                         )
                 if not input_reference_only:
+                    assert resolver is not None
                     resolver.add_output(tx["hash"], o)
 
     # Normalize prevout-resolved input addresses (verbosity 3 / getrawtransaction).
@@ -431,6 +432,7 @@ def enrich_txs(
     if input_reference_only:
         pass
     else:
+        assert resolver is not None
         for tx in txs:
             if not tx["is_coinbase"]:
                 # process inputs
@@ -598,8 +600,8 @@ def print_block_info(
 def get_last_block_yesterday(
     exporter: FastBtcBlockExporter, last_synced_block: int
 ) -> int:
-    until_date = datetime.utcnow().replace(
-        hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc
+    until_date = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
     )
     until_timestamp = until_date.timestamp()
 
