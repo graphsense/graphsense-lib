@@ -202,6 +202,7 @@ def _run_legacy_ingest(
     env = os.environ.copy()
     env.update({
         "GRAPHSENSE_CONFIG_YAML": config_path,
+        "GRAPHSENSE_LEGACY_INGEST": "true",
         "PATH": f"{venv_dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
     })
 

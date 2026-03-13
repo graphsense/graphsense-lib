@@ -51,7 +51,9 @@ def _fast_hex_to_bytes(s):
     All values from JSON-RPC are 0x-prefixed hex strings or None.
     Skips the is_hex_string/strip_0x/remove_prefix chain in hex_to_bytes.
     """
-    return bytes.fromhex(s[2:]) if s is not None else None
+    if s is None:
+        return None
+    return bytes.fromhex(s[2:]) if s[:2] == "0x" else bytes.fromhex(s)
 
 
 WEB3_QUERY_BATCH_SIZE = 50

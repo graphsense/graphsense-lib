@@ -184,6 +184,7 @@ class SourceETH(Source):
             t_total = time.monotonic()
 
             with ThreadPoolExecutor(max_workers=2) as executor:
+                t_trace_submit = time.monotonic()
                 trace_future = executor.submit(
                     self.adapter.export_traces,
                     start_block,
@@ -191,6 +192,7 @@ class SourceETH(Source):
                     True,
                     True,
                 )
+                t_receipt_submit = time.monotonic()
                 receipt_future = executor.submit(
                     self.adapter.export_receipts_and_logs_by_block,
                     start_block,
@@ -203,13 +205,11 @@ class SourceETH(Source):
                 )
                 t_blocks = time.monotonic() - t0
 
-                t0 = time.monotonic()
                 receipts, logs = receipt_future.result()
-                t_receipts = time.monotonic() - t0
+                t_receipts = time.monotonic() - t_receipt_submit
 
-                t0 = time.monotonic()
                 traces, _ = trace_future.result()
-                t_traces = time.monotonic() - t0
+                t_traces = time.monotonic() - t_trace_submit
 
             t_source_total = time.monotonic() - t_total
             n_blocks = end_block - start_block + 1
@@ -240,9 +240,11 @@ class SourceETH(Source):
         t_total = time.monotonic()
 
         with ThreadPoolExecutor(max_workers=2) as executor:
+            t_trace_submit = time.monotonic()
             trace_future = executor.submit(
                 self.fast_trace_exporter.export_traces, start_block, end_block
             )
+            t_receipt_submit = time.monotonic()
             receipt_future = executor.submit(
                 self.adapter.export_receipts_and_logs_by_block,
                 start_block,
@@ -255,13 +257,11 @@ class SourceETH(Source):
             )
             t_blocks = time.monotonic() - t0
 
-            t0 = time.monotonic()
             receipts, logs = receipt_future.result()
-            t_receipts = time.monotonic() - t0
+            t_receipts = time.monotonic() - t_receipt_submit
 
-            t0 = time.monotonic()
             traces, _ = trace_future.result()
-            t_traces_wait = time.monotonic() - t0
+            t_traces_wait = time.monotonic() - t_trace_submit
 
         t_source_total = time.monotonic() - t_total
         n_blocks = end_block - start_block + 1
