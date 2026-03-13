@@ -269,6 +269,7 @@ def _parse_btc_block_and_txs(raw_block):
 
 
 _GETRAWTX_BATCH_SIZE = 50
+_MAX_OUTPUT_CACHE_ENTRIES = 2**24  # ~16M txs, matching old LRUCache limit
 
 
 class FastBtcBlockExporter:
@@ -382,6 +383,15 @@ class FastBtcBlockExporter:
             chunk_map = {}
             for r in results:
                 if r.get("error") or not r.get("result"):
+                    tx_hash = (
+                        chunk[r["id"]]
+                        if r.get("id") is not None and r["id"] < len(chunk)
+                        else "unknown"
+                    )
+                    logger.warning(
+                        f"getrawtransaction failed for {tx_hash}: "
+                        f"error={r.get('error')}"
+                    )
                     continue
                 raw_tx = r["result"]
                 by_index = {}
@@ -478,6 +488,17 @@ class FastBtcBlockExporter:
                 if not by_idx:
                     del self._output_cache[sth]
 
+        # Trim cache if it exceeds the max size to prevent unbounded growth.
+        if len(self._output_cache) > _MAX_OUTPUT_CACHE_ENTRIES:
+            excess = len(self._output_cache) - _MAX_OUTPUT_CACHE_ENTRIES // 2
+            keys_to_remove = list(self._output_cache.keys())[:excess]
+            for k in keys_to_remove:
+                del self._output_cache[k]
+            logger.warning(
+                f"Output cache exceeded {_MAX_OUTPUT_CACHE_ENTRIES} entries, "
+                f"trimmed {excess} oldest entries"
+            )
+
         logger.info(
             f"[source-timing] input resolution: {len(unresolved)} txs fetched "
             f"in {t_fetch:.2f}s, {n_resolved} inputs resolved, "
@@ -533,11 +554,12 @@ class FastBtcBlockExporter:
         dt = t_blocks + t_resolve
         n_blocks = len(block_numbers)
         resolve_str = f"  resolve={t_resolve:.2f}s" if t_resolve > 0 else ""
+        blks_per_sec = f"{n_blocks / dt:.1f}" if dt > 0 else "inf"
         logger.info(
             f"[source-timing] UTXO {n_blocks} blocks ({start_block}-{end_block}): "
             f"total={dt:.2f}s  fetch={t_blocks:.2f}s{resolve_str}  "
             f"{len(transactions)} txs  "
-            f"({n_blocks / dt:.1f} blk/s)"
+            f"({blks_per_sec} blk/s)"
         )
 
         return blocks, transactions
