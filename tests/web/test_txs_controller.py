@@ -68,6 +68,41 @@ def test_get_tx(client):
     assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
 
 
+def test_get_tx_include_heuristics(client):
+    # valid heuristic name → 200
+    status, _ = raw_request(
+        client,
+        "/{currency}/txs/{tx_hash}?include_heuristics=one_time_change",
+        currency="btc",
+        tx_hash="ab1880",
+    )
+    assert status == 200
+
+    # unknown heuristic name → 422
+    status, _ = raw_request(
+        client,
+        "/{currency}/txs/{tx_hash}?include_heuristics=random_string",
+        currency="btc",
+        tx_hash="ab1880",
+    )
+    assert status == 422
+
+    # same heuristic repeated → 200
+    status, _ = raw_request(
+        client,
+        "/{currency}/txs/{tx_hash}?include_heuristics=one_time_change&include_heuristics=one_time_change",
+        currency="btc",
+        tx_hash="ab1880",
+    )
+    assert status == 200
+
+    # omitted → 200, no heuristics in response
+    result = get_json(
+        client, "/{currency}/txs/{tx_hash}", currency="btc", tx_hash="ab1880"
+    )
+    assert "heuristics" not in result
+
+
 def test_list_token_txs(client):
     path = "/{currency}/token_txs/{tx_hash}"
     results = get_json(client, path, currency="eth", tx_hash="0xaf6e0003")

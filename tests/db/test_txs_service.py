@@ -2,10 +2,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from graphsenselib.db.asynchronous.services.txs_service import (
-    TxsService,
+from graphsenselib.db.asynchronous.services.heuristics_service import (
     _one_time_change_heuristic,
 )
+from graphsenselib.db.asynchronous.services.txs_service import TxsService
 
 CURRENCY = "btc"
 TX_HASH = b"\xab\x12"
@@ -51,7 +51,7 @@ def make_tx(inputs, outputs, coinbase=False, block_id=BLOCK_ID):
 
 # patch cannonicalize_address to identity so tests don't need valid BTC addresses
 patcher = patch(
-    "graphsenselib.db.asynchronous.services.txs_service.cannonicalize_address",
+    "graphsenselib.db.asynchronous.services.heuristics_service.cannonicalize_address",
     side_effect=lambda currency, addr: addr,
 )
 
@@ -67,8 +67,13 @@ class TestOneTimeChangeHeuristic:
         """Coinbase transactions have no real inputs, heuristic does not apply."""
         tx = make_tx(inputs=[], outputs=[make_output("addr_A", 5000000)], coinbase=True)
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["summary"] == {"addr_A": False}
-        assert all(v == [] for v in result["details"].values())
+        assert result.summary == {"addr_A": False}
+        assert all(v == [] for v in [
+            result.details.same_script_type,
+            result.details.not_nicely_divisible,
+            result.details.output_less_than_input,
+            result.details.not_reused,
+        ])
 
     async def test_too_few_outputs_returns_all_false(self):
         tx = make_tx(
@@ -76,8 +81,13 @@ class TestOneTimeChangeHeuristic:
             outputs=[make_output("addr_A", 49000)],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["summary"] == {"addr_A": False}
-        assert all(v == [] for v in result["details"].values())
+        assert result.summary == {"addr_A": False}
+        assert all(v == [] for v in [
+            result.details.same_script_type,
+            result.details.not_nicely_divisible,
+            result.details.output_less_than_input,
+            result.details.not_reused,
+        ])
 
     async def test_too_many_outputs_returns_all_false(self):
         tx = make_tx(
@@ -85,8 +95,13 @@ class TestOneTimeChangeHeuristic:
             outputs=[make_output(f"addr_{i}", 1000) for i in range(11)],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert all(v is False for v in result["summary"].values())
-        assert all(v == [] for v in result["details"].values())
+        assert all(v is False for v in result.summary.values())
+        assert all(v == [] for v in [
+            result.details.same_script_type,
+            result.details.not_nicely_divisible,
+            result.details.output_less_than_input,
+            result.details.not_reused,
+        ])
 
     async def test_exactly_two_outputs_runs_heuristic(self):
         tx = make_tx(
@@ -94,7 +109,7 @@ class TestOneTimeChangeHeuristic:
             outputs=[make_output("addr_A", 49000), make_output("addr_B", 999)],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert "summary" in result
+        assert result.summary is not None
 
     async def test_exactly_ten_outputs_runs_heuristic(self):
         tx = make_tx(
@@ -102,7 +117,7 @@ class TestOneTimeChangeHeuristic:
             outputs=[make_output(f"addr_{i}", 1000) for i in range(10)],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert "summary" in result
+        assert result.summary is not None
 
     async def test_clear_change_address(self):
         """addr_change meets all 3 conditions (intersection) and is not reused — True.
@@ -119,8 +134,8 @@ class TestOneTimeChangeHeuristic:
             ],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["summary"]["addr_change"] is True
-        assert result["summary"]["addr_payment"] is False
+        assert result.summary["addr_change"] is True
+        assert result.summary["addr_payment"] is False
 
     async def test_meets_only_some_conditions_not_candidate(self):
         """With intersection, an address must meet ALL 3 conditions to be a candidate.
@@ -136,7 +151,7 @@ class TestOneTimeChangeHeuristic:
             ],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["summary"]["addr_partial"] is False
+        assert result.summary["addr_partial"] is False
 
     async def test_past_incoming_disqualified(self):
         """Address that meets all 3 conditions but received funds in a past block is excluded."""
@@ -151,8 +166,8 @@ class TestOneTimeChangeHeuristic:
             "addr_change": [{"tx_hash": b"\xcd\xef", "is_outgoing": False, "height": BLOCK_ID - 1}]
         }
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs(tx_history))
-        assert "addr_change" not in result["details"]["not_reused"]
-        assert result["summary"]["addr_change"] is False
+        assert "addr_change" not in result.details.not_reused
+        assert result.summary["addr_change"] is False
 
     async def test_past_outgoing_disqualified(self):
         """Address that meets all 3 conditions but spent funds in a past block is excluded."""
@@ -167,8 +182,8 @@ class TestOneTimeChangeHeuristic:
             "addr_change": [{"tx_hash": b"\xcd\xef", "is_outgoing": True, "height": BLOCK_ID - 1}]
         }
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs(tx_history))
-        assert "addr_change" not in result["details"]["not_reused"]
-        assert result["summary"]["addr_change"] is False
+        assert "addr_change" not in result.details.not_reused
+        assert result.summary["addr_change"] is False
 
     async def test_one_future_outgoing_still_valid(self):
         """One outgoing tx at or after the current block is allowed — the change being spent later."""
@@ -183,7 +198,7 @@ class TestOneTimeChangeHeuristic:
             "addr_change": [{"tx_hash": b"\xcd\xef", "is_outgoing": True, "height": BLOCK_ID + 1}]
         }
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs(tx_history))
-        assert result["summary"]["addr_change"] is True
+        assert result.summary["addr_change"] is True
 
     async def test_two_future_outgoing_disqualified(self):
         """Two outgoing txs at or after current block disqualify — change was re-spent more than once."""
@@ -201,8 +216,8 @@ class TestOneTimeChangeHeuristic:
             ]
         }
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs(tx_history))
-        assert "addr_change" not in result["details"]["not_reused"]
-        assert result["summary"]["addr_change"] is False
+        assert "addr_change" not in result.details.not_reused
+        assert result.summary["addr_change"] is False
 
     async def test_two_future_incoming_disqualified(self):
         """Two incoming txs at or after current block disqualify — address received funds twice."""
@@ -220,8 +235,8 @@ class TestOneTimeChangeHeuristic:
             ]
         }
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs(tx_history))
-        assert "addr_change" not in result["details"]["not_reused"]
-        assert result["summary"]["addr_change"] is False
+        assert "addr_change" not in result.details.not_reused
+        assert result.summary["addr_change"] is False
 
     async def test_mixed_input_script_types_no_candidates(self):
         """Mixed input script types → same_script condition is empty.
@@ -237,8 +252,8 @@ class TestOneTimeChangeHeuristic:
             ],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["details"]["same_script_type"] == []
-        assert all(v is False for v in result["summary"].values())
+        assert result.details.same_script_type == []
+        assert all(v is False for v in result.summary.values())
 
     async def test_duplicate_output_address_excluded(self):
         """An address appearing multiple times in outputs is never flagged as change,
@@ -254,7 +269,7 @@ class TestOneTimeChangeHeuristic:
             ],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["summary"].get("addr_dup") is False
+        assert result.summary.get("addr_dup") is False
 
     async def test_nonstandard_output_no_address_skipped(self):
         """OP_RETURN outputs (empty address list) must not crash and are excluded from summary."""
@@ -267,8 +282,8 @@ class TestOneTimeChangeHeuristic:
             ],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert "summary" in result
-        assert None not in result["summary"]
+        assert result.summary is not None
+        assert None not in result.summary
 
     async def test_all_outputs_divisible_no_candidates(self):
         """When all output values are multiples of 1000, not_nicely_divisible is empty.
@@ -281,8 +296,8 @@ class TestOneTimeChangeHeuristic:
             ],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["details"]["not_nicely_divisible"] == []
-        assert all(v is False for v in result["summary"].values())
+        assert result.details.not_nicely_divisible == []
+        assert all(v is False for v in result.summary.values())
 
     async def test_two_candidates_both_false(self):
         """Two outputs both meeting all 3 conditions → uniqueness check fires → both False."""
@@ -294,8 +309,8 @@ class TestOneTimeChangeHeuristic:
             ],
         )
         result = await _one_time_change_heuristic(tx, CURRENCY, make_list_address_txs({}))
-        assert result["summary"]["addr_A"] is False
-        assert result["summary"]["addr_B"] is False
+        assert result.summary["addr_A"] is False
+        assert result.summary["addr_B"] is False
 
 
 def make_raw_utxo_tx(block_id=BLOCK_ID):
@@ -355,24 +370,24 @@ class TestTxsServiceHeuristicsRouting:
         return TxsService(db=db, rates_service=make_rates_service(), logger=MagicMock())
 
     @patch(
-        "graphsenselib.db.asynchronous.services.txs_service.cannonicalize_address",
+        "graphsenselib.db.asynchronous.services.heuristics_service.cannonicalize_address",
         side_effect=lambda currency, addr: addr,
     )
     async def test_utxo_heuristics_present_when_requested(self, _patch):
         raw_tx = make_raw_utxo_tx()
         svc = self.make_service("btc", raw_tx)
-        result = await svc.get_tx("btc", TX_HASH.hex(), include_io=True, include_heuristics=True)
+        result = await svc.get_tx("btc", TX_HASH.hex(), include_io=True, include_heuristics=["one_time_change"])
         assert result.heuristics is not None
-        assert "change" in result.heuristics
+        assert result.heuristics.one_time_change is not None
 
     @patch(
-        "graphsenselib.db.asynchronous.services.txs_service.cannonicalize_address",
+        "graphsenselib.db.asynchronous.services.heuristics_service.cannonicalize_address",
         side_effect=lambda currency, addr: addr,
     )
     async def test_utxo_heuristics_absent_when_not_requested(self, _patch):
         raw_tx = make_raw_utxo_tx()
         svc = self.make_service("btc", raw_tx)
-        result = await svc.get_tx("btc", TX_HASH.hex(), include_io=True, include_heuristics=False)
+        result = await svc.get_tx("btc", TX_HASH.hex(), include_io=True, include_heuristics=[])
         assert result.heuristics is None
 
     async def test_eth_heuristics_never_computed(self):
@@ -380,7 +395,7 @@ class TestTxsServiceHeuristicsRouting:
         raw_tx = make_raw_utxo_tx()
         svc = self.make_service("eth", raw_tx)
         with patch.object(svc, "_calculate_heuristics", new=AsyncMock()) as mock_heuristics:
-            result = await svc.get_tx("eth", TX_HASH.hex(), include_heuristics=True)
+            result = await svc.get_tx("eth", TX_HASH.hex(), include_heuristics=["one_time_change"])
             mock_heuristics.assert_not_called()
         # ETH returns a TxAccount which has no heuristics field
         assert not hasattr(result, "heuristics")

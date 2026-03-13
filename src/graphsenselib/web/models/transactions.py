@@ -2,6 +2,9 @@
 
 from typing import Optional, Union
 
+from graphsenselib.db.asynchronous.services.models.heuristics import (
+    TxHeuristics,
+)
 from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.values import VALUES_EXAMPLE, Values
 
@@ -114,6 +117,7 @@ LINK_UTXO_EXAMPLE = {
 }
 
 
+
 class TxSummary(APIModel):
     """Transaction summary model."""
 
@@ -161,7 +165,7 @@ class TxUtxo(APIModel):
     total_output: Values
     inputs: Optional[list[TxValue]] = None
     outputs: Optional[list[TxValue]] = None
-    heuristics: Optional[dict] = None
+    heuristics: Optional[TxHeuristics] = None
 
 
 class TxAccount(APIModel):

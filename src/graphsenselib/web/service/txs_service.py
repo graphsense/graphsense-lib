@@ -19,7 +19,7 @@ async def get_tx(
     include_io=False,
     include_nonstandard_io=False,
     include_io_index=False,
-    include_heuristics=False,
+    include_heuristics=[],
 ):
     result = await ctx.services.txs_service.get_tx(
         currency,

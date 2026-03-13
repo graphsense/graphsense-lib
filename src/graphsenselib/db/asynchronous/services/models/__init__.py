@@ -2,6 +2,8 @@ from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from graphsenselib.db.asynchronous.services.models.heuristics import TxHeuristics  # noqa: F401
+
 
 class SearchRequestConfig(BaseModel):
     include_sub_tx_identifiers: bool = True
@@ -256,7 +258,7 @@ class TxUtxo(BaseModel):
     timestamp: int
     total_input: Values
     total_output: Values
-    heuristics: Optional[dict] = None
+    heuristics: Optional[TxHeuristics] = None
 
 
 class Block(BaseModel):
