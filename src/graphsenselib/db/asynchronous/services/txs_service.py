@@ -20,6 +20,7 @@ from graphsenselib.utils.transactions import (
 from graphsenselib.utils.rest_utils import is_eth_like
 
 from .common import std_tx_from_row
+from .heuristics_service import calculate_heuristics
 from .models import (
     ExternalConversion,
     TxAccount,
@@ -92,6 +93,7 @@ async def _raw_trace_to_std_tx(
     return await std_tx_from_row(currency, result, rates.rates, tokenConfig)
 
 
+
 class DatabaseProtocol(Protocol):
     async def get_tx_by_hash(
         self, currency: str, tx_hash_bytes: bytes
@@ -121,6 +123,10 @@ class DatabaseProtocol(Protocol):
         self, currency: str, tx: Dict[str, Any], trace_index: Optional[int]
     ) -> Optional[Dict[str, Any]]: ...
 
+    async def get_address(
+        self, currency: str, address: str
+    ) -> Optional[Dict[str, Any]]: ...
+
 
 class TxsService:
     def __init__(
@@ -141,6 +147,7 @@ class TxsService:
         include_io: bool = False,
         include_nonstandard_io: bool = False,
         include_io_index: bool = False,
+        include_heuristics: list[str] = [],
     ) -> Union[TxAccount, TxUtxo]:
         trace_index = None
         tx_ident = tx_hash
@@ -191,6 +198,9 @@ class TxsService:
 
             if result:
                 result["type"] = "external"
+
+            if len(include_heuristics) > 0:
+                result["heuristics"] = await calculate_heuristics(result, currency, self.db.get_address, include_heuristics)
 
             return await std_tx_from_row(
                 currency,
@@ -397,6 +407,7 @@ class TxsService:
             )
         else:
             return None
+
 
     def _conversion_from_external_swap(
         self, network: str, swap: ExternalSwap

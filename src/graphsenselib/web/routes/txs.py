@@ -1,6 +1,6 @@
 """Transaction API routes"""
 
-from typing import Optional, Union
+from typing import List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 
@@ -86,6 +86,9 @@ async def get_tx(
     include_io_index: Optional[bool] = Query(
         None, description="Include input/output indices"
     ),
+    include_heuristics: List[Literal["one_time_change"]] = Query(
+        default=[], description="Heuristics to compute (e.g. one_time_change)"
+    ),
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Get a transaction by its hash"""
@@ -97,6 +100,7 @@ async def get_tx(
         include_io=include_io,
         include_nonstandard_io=include_nonstandard_io,
         include_io_index=include_io_index,
+        include_heuristics=include_heuristics,
     )
     return result
 

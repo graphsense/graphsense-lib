@@ -282,6 +282,7 @@ def to_api_tx_utxo(pydantic_tx: PydanticTxUtxo) -> TxUtxo:
         outputs=[to_api_tx_value(out) for out in pydantic_tx.outputs]
         if pydantic_tx.outputs
         else None,
+        heuristics=pydantic_tx.heuristics,
     )
 
 

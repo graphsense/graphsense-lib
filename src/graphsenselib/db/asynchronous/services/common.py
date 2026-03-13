@@ -662,6 +662,8 @@ async def std_tx_from_row(
     if coinbase:
         total_input = total_output
 
+    heuristics = row.get("heuristics", None)
+
     return TxUtxo(
         currency=currency,
         tx_hash=row["tx_hash"].hex(),
@@ -683,4 +685,5 @@ async def std_tx_from_row(
         timestamp=row["timestamp"],
         total_input=total_input,
         total_output=total_output,
+        heuristics=heuristics,
     )
