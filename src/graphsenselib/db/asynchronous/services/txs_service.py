@@ -8,6 +8,7 @@ from graphsenselib.errors import (
     NotFoundException,
     TransactionNotFoundException,
 )
+from graphsenselib.errors.errors import NetworkNotFoundException
 from graphsenselib.utils.accountmodel import hex_to_bytes, strip_0x
 from graphsenselib.utils.function_call_parser import (
     parse_function_call,
@@ -420,8 +421,14 @@ class TxsService:
         )
 
     def _conversion_from_bridge(self, bridge: Bridge) -> ExternalConversion:
-        token_config_from = self.db.get_token_configuration(bridge.fromNetwork)
-        token_config_to = self.db.get_token_configuration(bridge.toNetwork)
+        try:
+            token_config_from = self.db.get_token_configuration(bridge.fromNetwork)
+        except NetworkNotFoundException:
+            token_config_from = None
+        try:
+            token_config_to = self.db.get_token_configuration(bridge.toNetwork)
+        except NetworkNotFoundException:
+            token_config_to = None
 
         return ExternalConversion(
             conversion_type="bridge",
@@ -446,10 +453,10 @@ class TxsService:
     ) -> List[ExternalConversion]:
         """Extract swap/bridge information from a single transaction hash."""
         # UTXO networks are supported for THORChain bridging (via OP_RETURN memo)
-        is_utxo_thorchain = (
+        supports_conversion_extraction = is_eth_like(currency) or (
             currency.lower() in UTXO_NETWORKS and "thorchain" in included_bridges
         )
-        if not is_eth_like(currency) and not is_utxo_thorchain:
+        if not supports_conversion_extraction:
             # currently we only support swap/bridge extraction for EVM-like networks and UTXO
             # networks with thorchain bridging, so if it's not that, return empty list (instead of raising)
             # since this is an optional endpoint and we don't want to break anything by raising errors for unsupported networks
