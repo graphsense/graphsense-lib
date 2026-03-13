@@ -56,6 +56,24 @@ def _grpc_addr_to_hex(addr_bytes):
 # ---------------------------------------------------------------------------
 
 
+def _read_varint_tag(data, pos):
+    """Read a protobuf varint-encoded tag starting at pos.
+
+    Returns (field_number, wire_type, new_pos).
+    Handles multi-byte tags for field numbers >= 16.
+    """
+    tag = 0
+    shift = 0
+    while pos < len(data):
+        b = data[pos]
+        pos += 1
+        tag |= (b & 0x7F) << shift
+        if (b & 0x80) == 0:
+            break
+        shift += 7
+    return tag >> 3, tag & 0x07, pos
+
+
 def _extract_owner_address_generic(param_bytes):
     """Extract owner_address from raw protobuf bytes using wire format.
 
@@ -65,9 +83,7 @@ def _extract_owner_address_generic(param_bytes):
     """
     pos = 0
     while pos < len(param_bytes):
-        tag_byte = param_bytes[pos]
-        wire_type = tag_byte & 0x07
-        pos += 1
+        _, wire_type, pos = _read_varint_tag(param_bytes, pos)
 
         if wire_type == 2:  # length-delimited
             length = 0
@@ -112,10 +128,7 @@ def _extract_all_addresses_generic(param_bytes):
     addresses = []
     pos = 0
     while pos < len(param_bytes):
-        tag_byte = param_bytes[pos]
-        field_number = tag_byte >> 3
-        wire_type = tag_byte & 0x07
-        pos += 1
+        field_number, wire_type, pos = _read_varint_tag(param_bytes, pos)
 
         if wire_type == 2:  # length-delimited
             length = 0
