@@ -430,6 +430,14 @@ class TxsService:
         except NetworkNotFoundException:
             token_config_to = None
 
+        # If a network has no token config, mark assets on that side as unsupported.
+        from_is_supported_asset = token_config_from is not None and is_supported_asset(
+            bridge.fromAsset, token_config_from
+        )
+        to_is_supported_asset = token_config_to is not None and is_supported_asset(
+            bridge.toAsset, token_config_to
+        )
+
         return ExternalConversion(
             conversion_type="bridge",
             from_address=bridge.fromAddress,
@@ -442,10 +450,8 @@ class TxsService:
             to_asset_transfer=bridge.toPayment,
             from_network=bridge.fromNetwork,
             to_network=bridge.toNetwork,
-            from_is_supported_asset=is_supported_asset(
-                bridge.fromAsset, token_config_from
-            ),
-            to_is_supported_asset=is_supported_asset(bridge.toAsset, token_config_to),
+            from_is_supported_asset=from_is_supported_asset,
+            to_is_supported_asset=to_is_supported_asset,
         )
 
     async def get_conversions(
