@@ -892,6 +892,10 @@ def prepare_transactions_inplace_parquet(txs, currency):
 
     for tx in txs:
         drop_columns(tx, ["block_hash"])
+        # coinjoin must be computed here (before inputs are transformed)
+        # so both delta-only and dual-sink paths produce the same value.
+        if "coinjoin" not in tx:
+            tx["coinjoin"] = is_coinjoin(tx)
 
         for input in tx["inputs"]:  # noqa
             input["spent_transaction_hash"] = hex_to_bytes(

@@ -32,11 +32,13 @@ from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
 # fee=negative because inputs were never resolved.
 # outputs diverges because current version stores addresses as plain text
 # strings instead of the old binary encoding.
+# coinjoin was always in the schema but the reference version left it null;
+# the current version computes it in prepare_transactions_inplace_parquet.
 KNOWN_COLUMN_DIVERGENCES: dict[tuple[str, str], set[str]] = {
-    ("btc", "transaction"): {"total_input", "fee", "outputs"},
-    ("bch", "transaction"): {"total_input", "fee", "outputs"},
-    ("ltc", "transaction"): {"total_input", "fee", "outputs"},
-    ("zec", "transaction"): {"total_input", "fee", "outputs"},
+    ("btc", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("bch", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("ltc", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("zec", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
 }
 
 # Schema additions in the current version that the reference version lacks.
