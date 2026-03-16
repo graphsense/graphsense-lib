@@ -31,8 +31,11 @@ REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 	test-rest-local test-rest-dev-branch rest-run-tests \
 	test-rest-fuzz test-rest-manual test-rest-loki test-rest-all \
 	rest-ensure-servers rest-ensure-baseline rest-info rest-clean \
-	generate-loki test-deltalake test-deltalake-comprehensive test-deltalake-perf test-deltalake-all \
-	clean-deltalake clean
+	generate-loki \
+	test-deltalake test-deltalake-comprehensive test-deltalake-perf test-deltalake-all \
+	clean-deltalake \
+	test-cassandra test-sink-consistency \
+	test-ingest test clean
 
 # Build current from local path (requires GSLIB)
 rest-build-local:
@@ -227,11 +230,36 @@ clean-deltalake:
 CASSANDRA_REF_VERSION ?= v25.11.18
 CASSANDRA_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
 
-test-cassandra-ingest:
+test-cassandra:
 	CASSANDRA_REF_VERSION=$(CASSANDRA_REF_VERSION) \
 	CASSANDRA_CURRENCIES=$(CASSANDRA_CURRENCIES) \
 	GSLIB_PATH=$$(cd ../.. && pwd) \
 	uv run pytest tests/cassandra/ -v -s -m cassandra
+
+# ============================================================================
+# Sink consistency tests (individual vs dual-sink)
+# ============================================================================
+
+SINK_CONSISTENCY_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
+
+test-sink-consistency:
+	SINK_CONSISTENCY_CURRENCIES=$(SINK_CONSISTENCY_CURRENCIES) \
+	GSLIB_PATH=$$(cd ../.. && pwd) \
+	uv run pytest tests/sink_consistency/ -v -s -m sink_consistency
+
+# ============================================================================
+# Combined ingest test suite
+# ============================================================================
+
+test-ingest:
+	@echo "========================================================================"
+	@echo "  Running all ingest regression tests"
+	@echo "========================================================================"
+	@ret=0; \
+	$(MAKE) test-cassandra || ret=1; \
+	$(MAKE) test-deltalake || ret=1; \
+	$(MAKE) test-sink-consistency || ret=1; \
+	exit $$ret
 
 # ============================================================================
 # Top-level
