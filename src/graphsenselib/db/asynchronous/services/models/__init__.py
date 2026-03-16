@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
-from graphsenselib.db.asynchronous.services.heuristics import UtxoHeuristics  # noqa: F401
+from graphsenselib.db.asynchronous.services.heuristics import UtxoHeuristics
 
 
 class SearchRequestConfig(BaseModel):
