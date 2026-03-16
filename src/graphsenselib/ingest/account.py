@@ -513,12 +513,10 @@ def prepare_transactions_inplace_eth(
         al = item.get("access_list")
         if al:
             item["access_list"] = [
-                {
-                    "address": _fast_hex_to_bytes(entry.get("address")),
-                    "storageKeys": [
-                        _fast_hex_to_bytes(k) for k in (entry.get("storageKeys") or [])
-                    ],
-                }
+                (
+                    _fast_hex_to_bytes(entry.get("address")),
+                    [_fast_hex_to_bytes(k) for k in (entry.get("storageKeys") or [])],
+                )
                 for entry in al
             ]
 

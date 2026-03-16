@@ -11,16 +11,6 @@ from graphsenselib.ingest.common import (
 logger = logging.getLogger(__name__)
 
 
-def _convert_access_list_for_cassandra(access_list):
-    """Convert access_list dicts to Cassandra UDT tuples (address, storage_keys).
-
-    Values are already bytes from the prepare step.
-    """
-    return [
-        (entry.get("address"), entry.get("storageKeys") or []) for entry in access_list
-    ]
-
-
 class CassandraSink(Sink):
     """Sink that writes block range data to Apache Cassandra.
 
@@ -49,11 +39,4 @@ class CassandraSink(Sink):
                 for row in rows:
                     row["inputs"] = row.pop("inputs_cassandra")
                     row["outputs"] = row.pop("outputs_cassandra")
-            # Convert access_list from RPC dicts to Cassandra UDT tuples
-            if table_name == "transaction" and rows and "access_list" in rows[0]:
-                rows = [dict(r) for r in rows]
-                for row in rows:
-                    al = row.get("access_list")
-                    if al:
-                        row["access_list"] = _convert_access_list_for_cassandra(al)
             cassandra_ingest(self.db, table_name, rows, self.concurrency)
