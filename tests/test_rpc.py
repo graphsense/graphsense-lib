@@ -1,4 +1,4 @@
-"""Unit tests for graphsenselib.ingest.fast_rpc parsers and enrichment."""
+"""Unit tests for graphsenselib.ingest.rpc parsers and enrichment."""
 
 import json
 import threading
@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from graphsenselib.ingest.fast_rpc import (
+from graphsenselib.ingest.rpc import (
     BatchRpcClient,
-    FastBlockExporter,
-    FastBlockReceiptExporter,
-    FastReceiptExporter,
+    BlockExporter,
+    BlockReceiptExporter,
+    ReceiptExporter,
     enrich_transactions,
     hex_to_dec,
     parse_block_json,
@@ -487,11 +487,11 @@ class TestBatchRpcClient:
 
 
 # ---------------------------------------------------------------------------
-# FastBlockExporter
+# BlockExporter
 # ---------------------------------------------------------------------------
 
 
-class TestFastBlockExporter:
+class TestBlockExporter:
     def test_export_single_block(self):
         mock_client = MagicMock()
         mock_client.make_batch_request.return_value = [
@@ -539,7 +539,7 @@ class TestFastBlockExporter:
             }
         ]
 
-        exporter = FastBlockExporter(mock_client, batch_size=10, max_workers=1)
+        exporter = BlockExporter(mock_client, batch_size=10, max_workers=1)
         blocks, txs = exporter.export_blocks_and_transactions(100, 100)
 
         assert len(blocks) == 1
@@ -553,11 +553,11 @@ class TestFastBlockExporter:
 
 
 # ---------------------------------------------------------------------------
-# FastReceiptExporter
+# ReceiptExporter
 # ---------------------------------------------------------------------------
 
 
-class TestFastReceiptExporter:
+class TestReceiptExporter:
     def test_export_single_receipt(self):
         mock_client = MagicMock()
         mock_client.make_batch_request.return_value = [
@@ -591,7 +591,7 @@ class TestFastReceiptExporter:
             }
         ]
 
-        exporter = FastReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        exporter = ReceiptExporter(mock_client, batch_size=10, max_workers=1)
         receipts, logs = exporter.export_receipts_and_logs(["0xtx1"])
 
         assert len(receipts) == 1
@@ -606,7 +606,7 @@ class TestFastReceiptExporter:
 
 
 # ---------------------------------------------------------------------------
-# FastBlockReceiptExporter
+# BlockReceiptExporter
 # ---------------------------------------------------------------------------
 
 
@@ -619,7 +619,7 @@ def _make_block_receipts_response(block_number, receipts_data):
     }
 
 
-class TestFastBlockReceiptExporter:
+class TestBlockReceiptExporter:
     def test_single_block_with_receipts_and_logs(self):
         mock_client = MagicMock()
         mock_client.make_batch_request.return_value = [
@@ -664,7 +664,7 @@ class TestFastBlockReceiptExporter:
             )
         ]
 
-        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        exporter = BlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
         receipts, logs = exporter.export_receipts_and_logs(100, 100)
 
         assert len(receipts) == 1
@@ -746,7 +746,7 @@ class TestFastBlockReceiptExporter:
             ),
         ]
 
-        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        exporter = BlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
         receipts, logs = exporter.export_receipts_and_logs(100, 101)
 
         assert len(receipts) == 2
@@ -767,7 +767,7 @@ class TestFastBlockReceiptExporter:
             _make_block_receipts_response(100, []),
         ]
 
-        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        exporter = BlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
         receipts, logs = exporter.export_receipts_and_logs(100, 100)
 
         assert receipts == []
@@ -780,7 +780,7 @@ class TestFastBlockReceiptExporter:
             _make_block_receipts_response(100, None),
         ]
 
-        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        exporter = BlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
         receipts, logs = exporter.export_receipts_and_logs(100, 100)
 
         assert receipts == []
@@ -823,13 +823,13 @@ class TestFastBlockReceiptExporter:
         expected_receipt = parse_receipt_json(raw_receipt)
         expected_log = parse_log_json(raw_receipt["logs"][0])
 
-        # Via FastBlockReceiptExporter
+        # Via BlockReceiptExporter
         mock_client = MagicMock()
         mock_client.make_batch_request.return_value = [
             _make_block_receipts_response(10, [raw_receipt]),
         ]
 
-        exporter = FastBlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
+        exporter = BlockReceiptExporter(mock_client, batch_size=10, max_workers=1)
         receipts, logs = exporter.export_receipts_and_logs(10, 10)
 
         assert receipts[0] == expected_receipt

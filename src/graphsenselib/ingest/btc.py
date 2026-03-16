@@ -21,12 +21,180 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from graphsenselib.ingest.fast_rpc import BatchRpcClient
+from graphsenselib.ingest.rpc import BatchRpcClient, validate_rpc_fields
 
 logger = logging.getLogger(__name__)
 
 # ZCash shielded address type (matches bitcoin-etl)
 ADDRESS_TYPE_SHIELDED = "shielded"
+
+
+# ---------------------------------------------------------------------------
+# Field validation sets (same pattern as rpc.py for ETH)
+# ---------------------------------------------------------------------------
+
+# -- Block -------------------------------------------------------------------
+
+_BLOCK_KNOWN_KEYS = frozenset(
+    {
+        "hash",
+        "height",
+        "time",
+        "size",
+        "strippedsize",
+        "weight",
+        "version",
+        "merkleroot",
+        "nonce",
+        "bits",
+        "tx",
+    }
+)
+
+_BLOCK_BLACKLIST = frozenset(
+    {
+        "confirmations",  # changes with each new block
+        "difficulty",  # derived from bits
+        "chainwork",  # cumulative chain work, not stored
+        "nTx",  # redundant with len(tx)
+        "previousblockhash",  # not stored
+        "nextblockhash",  # only present for non-tip blocks, not stored
+        "versionHex",  # hex representation of version, redundant
+        "mediantime",  # median of last 11 blocks, not stored
+    }
+)
+
+# -- Transaction -------------------------------------------------------------
+
+_TX_KNOWN_KEYS = frozenset(
+    {
+        "txid",
+        "size",
+        "vsize",
+        "version",
+        "locktime",
+        "vin",
+        "vout",
+        # ZCash shielded I/O
+        "vjoinsplit",
+        "valueBalance",
+    }
+)
+
+_TX_BLACKLIST = frozenset(
+    {
+        "hash",  # wtxid (witness hash), different from txid for segwit
+        "weight",  # derived from size/vsize
+        "hex",  # raw transaction hex, not stored
+        "fee",  # convenience field at verbosity 3, we compute it ourselves
+        # ZCash extras we don't parse
+        "vShieldedSpend",
+        "vShieldedOutput",
+        "bindingSig",
+        "overwintered",
+        "expiryheight",
+        "valueBalanceZat",
+        "authDigest",
+    }
+)
+
+# -- Input (vin entry) ------------------------------------------------------
+
+_VIN_KNOWN_KEYS = frozenset(
+    {
+        "coinbase",  # present instead of txid/vout for coinbase txs
+        "txid",
+        "vout",
+        "scriptSig",
+        "sequence",
+        "txinwitness",
+        "prevout",  # verbosity 3 only
+    }
+)
+
+_VIN_BLACKLIST = frozenset()
+
+# -- scriptSig --------------------------------------------------------------
+
+_SCRIPT_SIG_KNOWN_KEYS = frozenset(
+    {
+        "asm",
+        "hex",
+    }
+)
+
+_SCRIPT_SIG_BLACKLIST = frozenset()
+
+# -- prevout (verbosity 3) --------------------------------------------------
+
+_PREVOUT_KNOWN_KEYS = frozenset(
+    {
+        "value",
+        "scriptPubKey",
+    }
+)
+
+_PREVOUT_BLACKLIST = frozenset(
+    {
+        "generated",  # whether UTXO is from coinbase
+        "height",  # block height of the UTXO
+    }
+)
+
+# -- Output (vout entry) ----------------------------------------------------
+
+_VOUT_KNOWN_KEYS = frozenset(
+    {
+        "value",
+        "n",
+        "scriptPubKey",
+    }
+)
+
+_VOUT_BLACKLIST = frozenset()
+
+# -- scriptPubKey (shared by vout and prevout) -------------------------------
+
+_SCRIPT_PUB_KEY_KNOWN_KEYS = frozenset(
+    {
+        "asm",
+        "hex",
+        "type",
+        "address",  # modern Bitcoin Core (singular)
+        "addresses",  # older nodes (list)
+        "reqSigs",  # legacy multisig field
+    }
+)
+
+_SCRIPT_PUB_KEY_BLACKLIST = frozenset(
+    {
+        "desc",  # output descriptor (Bitcoin Core 22+)
+    }
+)
+
+# -- vjoinsplit (ZCash Sprout) -----------------------------------------------
+
+_JOINSPLIT_KNOWN_KEYS = frozenset(
+    {
+        "vpub_old",
+        "vpub_new",
+    }
+)
+
+_JOINSPLIT_BLACKLIST = frozenset(
+    {
+        "valid",
+        "description",
+        "nullifiers",
+        "commitments",
+        "onetimePubKey",
+        "randomSeed",
+        "macs",
+        "proof",
+        "vpub_oldZat",
+        "vpub_newZat",
+    }
+)
 
 
 def _btc_to_satoshi(value):
@@ -65,7 +233,15 @@ def _parse_input(vin_entry, index):
     contains the spent output's value, address, and type — no external
     database lookup required.
     """
+    validate_rpc_fields(vin_entry.keys(), _VIN_KNOWN_KEYS, _VIN_BLACKLIST, "vin")
     script_sig = vin_entry.get("scriptSig") or {}
+    if script_sig:
+        validate_rpc_fields(
+            script_sig.keys(),
+            _SCRIPT_SIG_KNOWN_KEYS,
+            _SCRIPT_SIG_BLACKLIST,
+            "scriptSig",
+        )
     prevout = vin_entry.get("prevout")
 
     input_dict = {
@@ -83,8 +259,18 @@ def _parse_input(vin_entry, index):
     }
 
     if prevout:
+        validate_rpc_fields(
+            prevout.keys(), _PREVOUT_KNOWN_KEYS, _PREVOUT_BLACKLIST, "prevout"
+        )
         input_dict["value"] = _btc_to_satoshi(prevout.get("value"))
         spk = prevout.get("scriptPubKey") or {}
+        if spk:
+            validate_rpc_fields(
+                spk.keys(),
+                _SCRIPT_PUB_KEY_KNOWN_KEYS,
+                _SCRIPT_PUB_KEY_BLACKLIST,
+                "prevout.scriptPubKey",
+            )
         address = spk.get("address")
         addresses = spk.get("addresses")
         if not addresses:
@@ -108,7 +294,15 @@ def _parse_input(vin_entry, index):
 
 def _parse_output(vout_entry):
     """Parse a single vout entry to output dict matching bitcoin-etl format."""
+    validate_rpc_fields(vout_entry.keys(), _VOUT_KNOWN_KEYS, _VOUT_BLACKLIST, "vout")
     script_pub_key = vout_entry.get("scriptPubKey") or {}
+    if script_pub_key:
+        validate_rpc_fields(
+            script_pub_key.keys(),
+            _SCRIPT_PUB_KEY_KNOWN_KEYS,
+            _SCRIPT_PUB_KEY_BLACKLIST,
+            "scriptPubKey",
+        )
     addresses = script_pub_key.get("addresses")
     if not addresses:
         a = script_pub_key.get("address")
@@ -167,6 +361,8 @@ def _parse_btc_block_and_txs(raw_block):
     Handles coinbase detection, value conversion, non-standard addresses,
     and ZCash shielded I/O. Output format matches bitcoin-etl's mapper output.
     """
+    validate_rpc_fields(raw_block.keys(), _BLOCK_KNOWN_KEYS, _BLOCK_BLACKLIST, "block")
+
     block_hash = raw_block["hash"]
     block_number = raw_block["height"]
     block_timestamp = raw_block["time"]
@@ -176,6 +372,7 @@ def _parse_btc_block_and_txs(raw_block):
     txs = []
 
     for tx_index, raw_tx in enumerate(raw_txs):
+        validate_rpc_fields(raw_tx.keys(), _TX_KNOWN_KEYS, _TX_BLACKLIST, "transaction")
         vin = raw_tx.get("vin") or []
         vout = raw_tx.get("vout") or []
 
@@ -185,6 +382,9 @@ def _parse_btc_block_and_txs(raw_block):
         input_idx = 0
         for vin_entry in vin:
             if "coinbase" in vin_entry:
+                validate_rpc_fields(
+                    vin_entry.keys(), _VIN_KNOWN_KEYS, _VIN_BLACKLIST, "vin"
+                )
                 coinbase_param = vin_entry["coinbase"]
                 is_coinbase = True
             else:
@@ -200,6 +400,12 @@ def _parse_btc_block_and_txs(raw_block):
         vjoinsplit = raw_tx.get("vjoinsplit")
         if vjoinsplit:
             for js in vjoinsplit:
+                validate_rpc_fields(
+                    js.keys(),
+                    _JOINSPLIT_KNOWN_KEYS,
+                    _JOINSPLIT_BLACKLIST,
+                    "vjoinsplit",
+                )
                 vpub_old = _btc_to_satoshi(js.get("vpub_old")) or 0
                 vpub_new = _btc_to_satoshi(js.get("vpub_new")) or 0
                 if vpub_new > 0:
@@ -272,7 +478,7 @@ _GETRAWTX_BATCH_SIZE = 50
 _MAX_OUTPUT_CACHE_ENTRIES = 2**24  # ~16M txs, matching old LRUCache limit
 
 
-class FastBtcBlockExporter:
+class BtcBlockExporter:
     """Export UTXO blocks and transactions via direct batch JSON-RPC.
 
     Replaces bitcoin-etl's ExportBlocksJob + BtcService for all UTXO chains

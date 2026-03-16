@@ -23,7 +23,7 @@ from ..utils.account import get_id_group
 from ..utils.bch import bch_address_to_legacy
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
-from .fast_btc import FastBtcBlockExporter
+from .btc import BtcBlockExporter
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
@@ -597,9 +597,7 @@ def print_block_info(
         logger.warning(f"Last ingested block: {last_ingested_block:,}")
 
 
-def get_last_block_yesterday(
-    exporter: FastBtcBlockExporter, last_synced_block: int
-) -> int:
+def get_last_block_yesterday(exporter: BtcBlockExporter, last_synced_block: int) -> int:
     until_date = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
@@ -752,7 +750,7 @@ def ingest(
         f"Importing base data: {import_base_data}, import tx refs {import_refs}"
     )
 
-    exporter = FastBtcBlockExporter(provider_uri, timeout=provider_timeout)
+    exporter = BtcBlockExporter(provider_uri, timeout=provider_timeout)
 
     resolver = CassandraOutputResolver(
         db,

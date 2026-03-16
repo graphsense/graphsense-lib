@@ -474,7 +474,7 @@ def enrich_transactions(transactions, receipts):
 # ---------------------------------------------------------------------------
 
 
-class FastBlockExporter:
+class BlockExporter:
     """Export blocks and transactions via batch eth_getBlockByNumber calls."""
 
     def __init__(self, client, batch_size=50, max_workers=20):
@@ -612,7 +612,7 @@ class FastBlockExporter:
         return [all_blocks_by_num[bn] for bn in range(start_block, end_block + 1)]
 
 
-class FastReceiptExporter:
+class ReceiptExporter:
     """Export receipts and logs via batch eth_getTransactionReceipt calls."""
 
     def __init__(self, client, batch_size=50, max_workers=20):
@@ -688,7 +688,7 @@ class FastReceiptExporter:
         return all_receipts, all_logs
 
 
-class FastBlockReceiptExporter:
+class BlockReceiptExporter:
     """Export receipts and logs via batch eth_getBlockReceipts calls.
 
     Uses 1 RPC call per block instead of 1 per transaction, which is
@@ -740,7 +740,7 @@ class FastBlockReceiptExporter:
         """Export receipts and logs for a block range.
 
         Returns (receipts, logs) with the same dict format as
-        FastReceiptExporter.export_receipts_and_logs().
+        ReceiptExporter.export_receipts_and_logs().
         """
         block_numbers = list(range(start_block, end_block + 1))
 

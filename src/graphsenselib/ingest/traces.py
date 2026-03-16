@@ -12,7 +12,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from graphsenselib.ingest.fast_rpc import (
+from graphsenselib.ingest.rpc import (
     BatchRpcClient,
     hex_to_dec,
     validate_rpc_fields,
@@ -250,7 +250,7 @@ def calculate_trace_indexes(traces):
             trace["trace_index"] = idx
 
 
-class FastTraceExporter:
+class TraceExporter:
     """Fast trace exporter using batch JSON-RPC trace_block calls.
 
     Key improvements over ethereum-etl's ExportTracesJob:

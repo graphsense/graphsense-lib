@@ -1,9 +1,9 @@
-"""Tests for fast_btc.py — direct JSON-RPC UTXO block/tx exporter."""
+"""Tests for btc.py — direct JSON-RPC UTXO block/tx exporter."""
 
 from unittest.mock import patch
 
-from graphsenselib.ingest.fast_btc import (
-    FastBtcBlockExporter,
+from graphsenselib.ingest.btc import (
+    BtcBlockExporter,
     _btc_to_satoshi,
     _nonce_to_hex,
     _parse_btc_block_and_txs,
@@ -560,8 +560,8 @@ class TestResolveUnresolvedInputs:
 
     def _make_exporter(self):
         """Create an exporter without connecting to a node."""
-        with patch.object(FastBtcBlockExporter, "__init__", lambda self, **kw: None):
-            exp = FastBtcBlockExporter.__new__(FastBtcBlockExporter)
+        with patch.object(BtcBlockExporter, "__init__", lambda self, **kw: None):
+            exp = BtcBlockExporter.__new__(BtcBlockExporter)
             exp.max_workers = 2
             exp._output_cache = {}
             return exp

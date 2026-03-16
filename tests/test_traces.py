@@ -1,10 +1,10 @@
-"""Unit tests for fast_traces module.
+"""Unit tests for traces module.
 
 Verifies that the trace processing logic (parse, status calculation,
 ID generation, indexing) produces the same output as ethereum-etl.
 """
 
-from graphsenselib.ingest.fast_traces import (
+from graphsenselib.ingest.traces import (
     calculate_trace_ids,
     calculate_trace_indexes,
     calculate_trace_statuses,

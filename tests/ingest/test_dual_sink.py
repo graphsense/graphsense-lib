@@ -21,7 +21,7 @@ from graphsenselib.utils.account import get_id_group
 
 
 def _make_raw_blocks_and_txs():
-    """Create minimal raw block + tx data matching FastBtcBlockExporter output."""
+    """Create minimal raw block + tx data matching BtcBlockExporter output."""
     blocks = [
         {
             "type": "block",

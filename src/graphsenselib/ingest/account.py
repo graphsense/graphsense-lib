@@ -27,15 +27,15 @@ from .common import (
     cassandra_ingest,
     write_to_sinks,
 )
-from .fast_rpc import (
+from .rpc import (
     BatchRpcClient,
-    FastBlockExporter,
-    FastBlockReceiptExporter,
-    FastReceiptExporter,
+    BlockExporter,
+    BlockReceiptExporter,
+    ReceiptExporter,
     enrich_transactions as _enrich_transactions,
     get_block_range_for_date,
 )
-from .fast_traces import FastTraceExporter
+from .traces import TraceExporter
 
 logger = logging.getLogger(__name__)
 
@@ -98,22 +98,22 @@ class AccountStreamerAdapter:
         self.batch_size_receiptslogs = batch_size_receiptslogs
         self.max_workers_receiptslogs = max_workers_receiptslogs
 
-        self._block_exporter = FastBlockExporter(
+        self._block_exporter = BlockExporter(
             client,
             batch_size=batch_size_blockstransactions or 50,
             max_workers=max_workers_blockstransactions or 20,
         )
-        self._receipt_exporter = FastReceiptExporter(
+        self._receipt_exporter = ReceiptExporter(
             client,
             batch_size=batch_size_receiptslogs or 50,
             max_workers=max_workers_receiptslogs or 20,
         )
-        self._block_receipt_exporter = FastBlockReceiptExporter(
+        self._block_receipt_exporter = BlockReceiptExporter(
             client,
             batch_size=batch_size_blockstransactions or 20,
             max_workers=max_workers_blockstransactions or 10,
         )
-        self._trace_exporter = FastTraceExporter(
+        self._trace_exporter = TraceExporter(
             client=client,
             trace_batch_size=batch_size or 10,
             max_workers=max_workers or 20,

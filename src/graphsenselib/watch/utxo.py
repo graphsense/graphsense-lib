@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional, Tuple
 
 from ..datatypes.common import FlowDirection
-from ..ingest.fast_btc import FastBtcBlockExporter
+from ..ingest.btc import BtcBlockExporter
 from ..ingest.utxo import (
     OutputResolverBase,
     enrich_txs,
@@ -61,14 +61,14 @@ def parse_btcetl_txs(tx) -> List[FlowEvent]:
 
 class BitcoinEtlFlowProvider(FlowProvider):
     node_url: str
-    exporter: FastBtcBlockExporter
+    exporter: BtcBlockExporter
     output_resolver: OutputResolverBase
 
     def __init__(
         self, currency: str, node_url: str, output_resolver: OutputResolverBase
     ):
         self.node_url = node_url
-        self.exporter = FastBtcBlockExporter(
+        self.exporter = BtcBlockExporter(
             provider_uri=node_url, max_workers=1, timeout=60
         )
         self.output_resolver = output_resolver

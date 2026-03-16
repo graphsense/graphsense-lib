@@ -1,7 +1,7 @@
 import importlib
 import json
 
-from graphsenselib.ingest.fast_btc import _parse_input, _parse_output
+from graphsenselib.ingest.btc import _parse_input, _parse_output
 from graphsenselib.ingest.utxo import is_coinjoin
 
 from . import resources
@@ -9,7 +9,7 @@ from . import resources
 
 def raw_tx_to_dict(raw_tx):
     """Convert a raw Bitcoin RPC transaction JSON to the dict format expected by
-    is_coinjoin (same format as FastBtcBlockExporter output)."""
+    is_coinjoin (same format as BtcBlockExporter output)."""
     vin = raw_tx.get("vin", [])
     vout = raw_tx.get("vout", [])
 

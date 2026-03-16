@@ -14,8 +14,8 @@ from graphsenselib.ingest.utxo import (
     get_last_block_yesterday as utxo_get_last_block_yesterday,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Source
-from graphsenselib.ingest.fast_btc import FastBtcBlockExporter
-from graphsenselib.ingest.fast_traces import FastTraceExporter
+from graphsenselib.ingest.btc import BtcBlockExporter
+from graphsenselib.ingest.traces import TraceExporter
 from graphsenselib.ingest.tron.grpc_exporter import TronCombinedGrpcExporter
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ class SourceETH(Source):
             batch_size_receiptslogs=100,
             max_workers_receiptslogs=w,
         )
-        self.fast_trace_exporter = FastTraceExporter(
+        self.fast_trace_exporter = TraceExporter(
             client=self.client,
             trace_batch_size=10,
             max_workers=w,
@@ -303,7 +303,7 @@ class SourceUTXO(Source):
         resolve_inputs=True,
         max_workers=None,
     ):
-        self.fast_exporter = FastBtcBlockExporter(
+        self.fast_exporter = BtcBlockExporter(
             provider_uri=provider_uri,
             max_workers=max_workers or 10,
             timeout=provider_timeout,
