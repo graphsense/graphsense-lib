@@ -27,7 +27,9 @@ pytestmark = pytest.mark.cassandra
 
 # Tables where content differences are expected (e.g. bug fixes).
 # Set of (currency, table_name) tuples.
-KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = set()
+KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = {
+    ("trx", "fee"),  # energy_penalty_total was mapped to net_fee, now correct
+}
 
 # Columns added in the current version that the reference version lacks.
 # These are excluded from the content hash comparison.

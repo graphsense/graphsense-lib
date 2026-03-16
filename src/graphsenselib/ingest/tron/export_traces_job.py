@@ -127,7 +127,7 @@ def decode_fees(block_number: int, block: Any) -> List:
             "net_usage": tx.receipt.net_usage,
             "net_fee": tx.receipt.net_fee,
             "result": tx.receipt.result,
-            "energy_penalty_total": tx.receipt.net_fee,
+            "energy_penalty_total": tx.receipt.energy_penalty_total,
         }
         for tx in transactionInfo
     ]

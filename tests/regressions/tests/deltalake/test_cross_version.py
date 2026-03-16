@@ -39,6 +39,7 @@ KNOWN_COLUMN_DIVERGENCES: dict[tuple[str, str], set[str]] = {
     ("bch", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
     ("ltc", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
     ("zec", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("trx", "fee"): {"energy_penalty_total"},  # was mapped to net_fee, now correct
 }
 
 # Schema additions in the current version that the reference version lacks.
@@ -235,6 +236,23 @@ class TestCrossVersionCompatibility:
                             f"on {sorted(unexpected)} — only {sorted(allowed_cols)} "
                             f"are allowed to differ"
                         )
+            elif allowed_cols:
+                # Table has known column divergences but no schema additions.
+                # Content hash will differ; verify only allowed columns diverge.
+                if not diff.content_hash_match:
+                    if diff.common_columns_content_hash_match is not None:
+                        if not diff.common_columns_content_hash_match:
+                            unexpected = set(diff.differing_common_columns) - allowed_cols
+                            if diff.differing_common_columns:
+                                print(
+                                    f"  [{name}] Differing columns: "
+                                    f"{diff.differing_common_columns}"
+                                )
+                            assert not unexpected, (
+                                f"{name}: unexpected column-level content divergence "
+                                f"on {sorted(unexpected)} — only {sorted(allowed_cols)} "
+                                f"are allowed to differ"
+                            )
             else:
                 assert diff.content_hash_match, (
                     f"{name}: data content hash mismatch between reference-only "
