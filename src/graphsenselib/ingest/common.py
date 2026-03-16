@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pydantic
 
@@ -63,7 +63,7 @@ class StoreTask(AbstractTask):
 
 
 class BlockRangeContent(pydantic.BaseModel):
-    table_contents: Dict[str, List[dict]]
+    table_contents: Dict[str, Any]  # List[dict] for tables; dict for lookup maps
     start_block: Optional[int] = None  # None in the blockindependent case
     end_block: Optional[int] = None  # None in the blockindependent case
 
