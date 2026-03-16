@@ -61,6 +61,17 @@ _BLOCK_BLACKLIST = frozenset(
         "nextblockhash",  # only present for non-tip blocks, not stored
         "versionHex",  # hex representation of version, redundant
         "mediantime",  # median of last 11 blocks, not stored
+        "target",  # compact target threshold, derived from bits
+        # ZEC-specific consensus/mining fields
+        "solution",  # Equihash PoW solution
+        "anchor",  # Sprout note commitment tree anchor
+        "finalsaplingroot",  # Sapling tree root hash
+        "chainhistoryroot",  # chain history Merkle root
+        "blockcommitments",  # NU5 block commitments hash
+        "authdataroot",  # NU5 auth data Merkle root
+        "trees",  # note commitment tree state
+        "chainSupply",  # chain supply info
+        "valuePools",  # shielded pool balances
     }
 )
 
@@ -95,6 +106,10 @@ _TX_BLACKLIST = frozenset(
         "expiryheight",
         "valueBalanceZat",
         "authDigest",
+        "authdigest",  # same as authDigest, lowercase in some ZEC block ranges
+        "versiongroupid",  # ZEC Overwinter/Sapling version group ID
+        "joinSplitPubKey",  # ZEC Sprout joinsplit public key
+        "joinSplitSig",  # ZEC Sprout joinsplit signature
     }
 )
 
@@ -112,7 +127,11 @@ _VIN_KNOWN_KEYS = frozenset(
     }
 )
 
-_VIN_BLACKLIST = frozenset()
+_VIN_BLACKLIST = frozenset(
+    {
+        "ismweb",  # LTC: flags vin from MimbleWimble Extension Block
+    }
+)
 
 # -- scriptSig --------------------------------------------------------------
 
@@ -151,7 +170,13 @@ _VOUT_KNOWN_KEYS = frozenset(
     }
 )
 
-_VOUT_BLACKLIST = frozenset()
+_VOUT_BLACKLIST = frozenset(
+    {
+        "ismweb",  # LTC: flags vout from MimbleWimble Extension Block
+        "valueSat",  # ZEC: integer satoshi value, redundant with value
+        "valueZat",  # ZEC: integer zatoshi value, redundant with value
+    }
+)
 
 # -- scriptPubKey (shared by vout and prevout) -------------------------------
 
@@ -193,6 +218,8 @@ _JOINSPLIT_BLACKLIST = frozenset(
         "proof",
         "vpub_oldZat",
         "vpub_newZat",
+        "anchor",  # Sprout anchor hash
+        "ciphertexts",  # encrypted note ciphertexts
     }
 )
 
