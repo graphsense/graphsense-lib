@@ -19,23 +19,22 @@ Use one changelog file, but separate entries by track in each release window.
 - **New ingest pipeline**: replaced ethereum-etl and bitcoin-etl with direct batch RPC for all chains
 - **Dual-sink pipeline**: `from-node --sinks delta --sinks cassandra` ingests to both Delta Lake and Cassandra in a single pass
 - **TRX gRPC source**: replaced HTTP-based TRX ingestion with native gRPC for higher throughput
-- **UTXO prevout resolution**: verbosity 3 support for BTC/BCH; `getrawtransaction`-based input resolution for LTC/ZEC, removes cassandra dependency on ingest
+- **UTXO prevout resolution**: verbosity 3 support for BTC/BCH; `getrawtransaction`-based input resolution for LTC/ZEC, removes cassandra dependency on ingest, allows input resolution for delta lake ingest
 - **ETH Pectra fields**: `requestsHash`, `authorizationList`, `y_parity`, `parentBeaconBlockRoot`, `uncles`, `creationMethod`
-- **EIP-2930/4844 Cassandra fields**: `access_list` stored as binary in Cassandra schema
+- **EIP-2930/4844 Cassandra fields**: `access_list` stored in delta and cassandra schema
 - **Named S3 configs**: per-sink S3 references via `s3_configs` in `graphsense.yaml`
-- **Config validation**: warn on unknown keys at all nesting levels; set optimal `source_max_workers` per currency
+- **Config validation**: Instead of breaking, warn on unknown keys at all nesting levels; set optimal `source_max_workers` per currency
 - **Sink-level locking**: independent locks for delta and cassandra sinks, single lock for ingest+compact
 - **`ingest` module added to ty type checking scope**
-- **Regression test suite**: Delta Lake cross-version tests with multi-range profiles, Cassandra ingest tests with testcontainers, sink consistency tests (individual vs dual-sink), SIGINT partial-progress test
 
 #### changed
-- UTXO addresses stored as plain text strings in Delta tables instead of custom binary encoding
-- `legacy_ingest` config moved to top-level (set via `GRAPHSENSE_LEGACY_INGEST` env var)
+- UTXO addresses stored as plain text instead of custom binary encoding
+- Registry pattern for `dump.py`, decoupled transform/sink boundary
 
 #### fixed
-- `coinjoin` field now computed for Delta output (was previously only in Cassandra transform path)
-- Watch module: `transactionHash` read from wrong dict level in trace responses; crash on failed create traces
-- TRX: multi-byte protobuf tags (field numbers >= 16) misparsed in generic contract parser
+- Write correct `coinjoin` in delta sink
+- Handle missing delta config gracefully
+- Tron: map energy_penalty_total to correct protobuf field
 
 #### performance
 - Significantly sped up Tron and Ethereum ingest
