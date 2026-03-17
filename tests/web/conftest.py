@@ -6,28 +6,61 @@ import pytest_asyncio
 from docker.errors import NotFound
 from starlette.testclient import TestClient
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.waiting_utils import wait_for_logs
+from testcontainers.core.wait_strategies import ExecWaitStrategy
 from testcontainers.postgres import PostgresContainer
+
+
+class RedisContainer(DockerContainer):
+    """Minimal Redis container using non-deprecated wait strategies."""
+
+    REDIS_PORT = 6379
+
+    def __init__(self, image: str = "redis:latest", **kwargs) -> None:
+        super().__init__(image=image, **kwargs)
+        self.with_exposed_ports(self.REDIS_PORT)
+        self.waiting_for(ExecWaitStrategy(["redis-cli", "ping"]))
+
+    def get_container_host_ip(self) -> str:
+        return super().get_container_host_ip()
+
+    def get_exposed_port(self, port: int = REDIS_PORT) -> int:
+        return int(super().get_exposed_port(port))
 
 from graphsenselib.web.app import create_app
 from graphsenselib.web.config import GSRestConfig
 from tests.web.cassandra.insert import load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 
-from tests.conftest import (
-    cassandra as _cassandra_fixture,  # noqa: F401 - re-export for pytest discovery
-    gs_db_setup as _gs_db_setup_fixture,  # noqa: F401 - re-export for pytest discovery
-    DANGEROUSLY_ACCELERATE_TESTS,
-    create_web_schemas,
-)
+from tests.conftest import DANGEROUSLY_ACCELERATE_TESTS, create_web_schemas
 
 # Web-specific containers (not shared with root tests)
 postgres = PostgresContainer("postgres:16-alpine")
-redis = DockerContainer("redis:7-alpine").with_exposed_ports(6379)
+redis = RedisContainer("redis:7-alpine")
+
+
+def _stop_container(container, name: str) -> None:
+    try:
+        container.stop()
+    except NotFound:
+        return
+    except Exception:
+        wrapped = None
+        try:
+            wrapped = container.get_wrapped_container()
+        except Exception:
+            wrapped = None
+
+        container_id = getattr(wrapped, "id", None)
+        logging.getLogger(__name__).exception(
+            "Failed to stop %s test container%s",
+            name,
+            f" ({container_id[:12]})" if container_id else "",
+        )
+        raise
 
 
 @pytest.fixture(scope="session")
-def gs_rest_db_setup(gs_db_setup, request):
+def gs_rest_db_setup(gs_db_setup):
     """Set up all web test infrastructure. Depends on gs_db_setup for Cassandra."""
     SKIP_REST_CONTAINER_SETUP = environ.get("SKIP_REST_CONTAINER_SETUP", False)
     if SKIP_REST_CONTAINER_SETUP:
@@ -37,19 +70,6 @@ def gs_rest_db_setup(gs_db_setup, request):
 
     postgres.start()
     redis.start()
-    wait_for_logs(redis, "Ready to accept connections", timeout=60)
-
-    def remove_containers():
-        try:
-            redis.stop()
-        except NotFound:
-            pass
-        try:
-            postgres.stop()
-        except NotFound:
-            pass
-
-    request.addfinalizer(remove_containers)
 
     postgres_sync_url = postgres.get_connection_url()
     portgres_async_url = postgres_sync_url.replace("psycopg2", "asyncpg")
@@ -95,7 +115,11 @@ def gs_rest_db_setup(gs_db_setup, request):
     cas_load_test_data(cas_host, cas_port)
     tags_load_test_data(postgres_sync_url.replace("+psycopg2", ""))
 
-    return config
+    try:
+        yield config
+    finally:
+        _stop_container(redis, "redis")
+        _stop_container(postgres, "postgres")
 
 
 @pytest.fixture(scope="session")

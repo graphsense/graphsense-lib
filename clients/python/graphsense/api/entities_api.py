@@ -2394,7 +2394,7 @@ class EntitiesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> List[SearchResultLevel1]:
-        """Search entity neighborhood
+        """(Deprecated) Search entity neighborhood
 
         Returns matching neighboring entities found by key/value criteria within the specified search depth and breadth.
 
@@ -2435,6 +2435,7 @@ class EntitiesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /{currency}/entities/{entity}/search is deprecated.", DeprecationWarning)
 
         _param = self._search_entity_neighbors_serialize(
             currency=currency,
@@ -2491,7 +2492,7 @@ class EntitiesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[List[SearchResultLevel1]]:
-        """Search entity neighborhood
+        """(Deprecated) Search entity neighborhood
 
         Returns matching neighboring entities found by key/value criteria within the specified search depth and breadth.
 
@@ -2532,6 +2533,7 @@ class EntitiesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /{currency}/entities/{entity}/search is deprecated.", DeprecationWarning)
 
         _param = self._search_entity_neighbors_serialize(
             currency=currency,
@@ -2588,7 +2590,7 @@ class EntitiesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Search entity neighborhood
+        """(Deprecated) Search entity neighborhood
 
         Returns matching neighboring entities found by key/value criteria within the specified search depth and breadth.
 
@@ -2629,6 +2631,7 @@ class EntitiesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /{currency}/entities/{entity}/search is deprecated.", DeprecationWarning)
 
         _param = self._search_entity_neighbors_serialize(
             currency=currency,

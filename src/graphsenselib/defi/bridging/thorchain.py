@@ -1582,6 +1582,9 @@ async def get_bridges_from_thorchain_utxo_send(
         target_network_thor = asset_code.split(".")[0] if asset_code else ""
         target_network = THOR_TO_GRAPHSENSE_NETWORK.get(target_network_thor, "unknown")
 
+        if target_network == "unknown":
+            logger.warning(f"Unknown target network in memo: {target_network_thor}")
+
         # Create a partial receive transfer with zero amount (pending)
         partial_receive = BridgeReceiveTransfer(
             toAddress=target_address,

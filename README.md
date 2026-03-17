@@ -29,6 +29,7 @@ The web API requires two backend connections: a **Cassandra** cluster (blockchai
 ```bash
 GS_CASSANDRA_ASYNC_NODES='["<cassandra-host>"]' \
 GRAPHSENSE_TAGSTORE_READ_URL='postgresql+asyncpg://<user>:<password>@<host>:<port>/tagstore' \
+GS_CASSANDRA_ASYNC_CURRENCIES='{"btc":{"raw": "btc_raw", "transformed": "btc_transformed"},"eth":{}}' \
 uv run --extra web uvicorn graphsenselib.web.app:create_app --factory --host localhost --port 9000 --reload
 ```
 
@@ -77,11 +78,20 @@ make serve-web
 | Variable | Default | Description |
 |---|---|---|
 | `GSREST_DISABLE_AUTH` | `false` | Disable API key authentication |
+| `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP` | `false` | Auto-initialize TagStore tables/views at startup when missing |
 | `GSREST_ALLOWED_ORIGINS` | `*` | CORS allowed origins |
 | `GSREST_LOGGING_LEVEL` | — | Logging level (DEBUG, INFO, …) |
 | `GS_CASSANDRA_ASYNC_PORT` | `9042` | Cassandra port |
 | `GS_CASSANDRA_ASYNC_USERNAME` | — | Cassandra username |
 | `GS_CASSANDRA_ASYNC_PASSWORD` | — | Cassandra password |
+
+When enabling `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP=true`, keep in mind:
+
+- The DB user must have DDL privileges (create tables/views/indexes/extensions/procedures).
+- Startup may be slower because schema checks and potential initialization run before the app serves traffic.
+- In multi-replica deployments, initialize schema once (migration/init job) to avoid startup races.
+
+If TagStore is not configured (`gs-tagstore` missing) or the TagStore URL is unreachable, the REST app now falls back to a mock TagStore so endpoints still work. In this mode, tag-specific responses (labels, actors, taxonomies, tag counts) are empty.
 
 ### Basic Usage
 
@@ -511,6 +521,16 @@ For comprehensive testing:
 # Run complete test suite (including slow tests)
 make test
 ```
+
+#### Podman Notes
+
+If you run the test suite with Podman, make sure your shell points at the Podman socket:
+
+```bash
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+```
+
+The test fixtures automatically disable Ryuk when `DOCKER_HOST` contains `podman.sock` and rely on explicit fixture cleanup instead.
 
 ### Release Process
 

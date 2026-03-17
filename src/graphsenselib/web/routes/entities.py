@@ -279,6 +279,7 @@ async def list_entity_txs(
         "specified search depth and breadth."
     ),
     operation_id="search_entity_neighbors",
+    deprecated=True,
     response_model=list[SearchResultLevel1],
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},

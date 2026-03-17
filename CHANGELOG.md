@@ -11,16 +11,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
-## [2.9.9] unreleased
+## [2.9.10] 2026-03-13
+
+### Library (v2.9.10)
+
+#### Fixed
+- Fixed handling of swaps to unknown networks in utxo
+
+### Web API + Python client (webapi-2.9.6)
+no changes
+
+## [2.9.9] 2026-03-12
 
 ### Library (v2.9.9)
+
+#### Added
+- REST startup now supports optional Tagstore schema initialization via `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP` when the Tagstore database has not been initialized yet.
+
+#### Changed
+- REST configuration can now be provided via the `web` section in `.graphsense.yaml`.
+- REST `direction` query parameters remain optional but now only accept `in` or `out` when provided.
+- REST API startup no longer fails when `gs-tagstore` is an optional dependency now. If it fails or is not configured a dummy tag provider is added.
+- Swap queries for thorchain no longer raise errors on UTXO networks.
 
 #### Fixed
 - `graphsense-cli db block get-nr --date` no longer fails with `TypeError: can't compare offset-naive and offset-aware datetimes` when using the documented `%Y-%m-%d %H:%M:%S` input format.
 - `graphsense-cli db block get-nr --date` now also accepts timezone-aware input in `%Y-%m-%d %H:%M:%S%z` format (e.g. `+00:00`).
+- Testcontainer-based tests now work in Podman setups.
+- Cross-chain fork handling now uses the correct address for cross-chain pubkey lookup.
 
-### Web API + Python client (webapi-2.9.5)
-no changes
+### Web API + Python client (webapi-2.9.6)
+#### Changed
+- direction parameter for /txs endpoints are now an enum (in, out) instead of a string.
+- /entities/{entity}/search is now deprecated.
 
 ## [2.9.8] 2026-02-26
 

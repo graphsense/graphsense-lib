@@ -1,11 +1,12 @@
 import importlib
+import asyncio
 import json
 import logging
 import logging.handlers
 import os
 import re
 import traceback
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from html import escape
 from typing import Any, Optional
 
@@ -26,14 +27,17 @@ from graphsenselib.errors import (
     NotFoundException,
 )
 from graphsenselib.tagstore.db import TagstoreDbAsync, Taxonomies
-from graphsenselib.tagstore.db.database import get_db_engine_async
+from graphsenselib.tagstore.db.database import (
+    ensure_database_initialized,
+    get_db_engine_async,
+)
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
 from graphsenselib.web.config import GSRestConfig, LoggingConfig
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
@@ -368,30 +372,73 @@ async def setup_database(app: FastAPI):
     app.state.db = cls(db_config, logger)
 
     ts_conf = config.tagstore
-    max_conn = ts_conf.pool_size
-    max_pool_time = ts_conf.pool_timeout
-    mo = ts_conf.max_overflow
-    recycle = ts_conf.pool_recycle
-    enable_prepared_statements_cache = ts_conf.enable_prepared_statements_cache
 
-    engine = get_db_engine_async(
-        ts_conf.url
-        + (
-            "?prepared_statement_cache_size=0"
-            if not enable_prepared_statements_cache
-            else ""
-        ),
-        pool_size=int(max_conn),
-        max_overflow=int(mo),
-        pool_recycle=int(recycle),
-        pool_timeout=int(max_pool_time),
-        pool_pre_ping=True,
-    )
+    def _activate_mock_tagstore(reason: str):
+        logger.warning(
+            "TagStore unavailable (%s). Falling back to mock TagStore.",
+            reason,
+        )
+        app.state.tagstore_engine = None
+        app.state.tagstore_db = MockTagstoreDb()
+        ConceptsCacheServiceFastAPI.setup_empty_cache(app)
 
-    app.state.tagstore_engine = engine
+    if ts_conf is None or not getattr(ts_conf, "url", None):
+        _activate_mock_tagstore("configuration missing")
+        logger.info("Database setup done")
+        return
 
-    # Setup taxonomy cache
-    await ConceptsCacheServiceFastAPI.setup_cache(engine, app)
+    engine = None
+    initialized = False
+    try:
+        if config.ensure_tagstore_schema_on_startup:
+            logger.info(
+                "TagStore schema auto-init is enabled; checking required tables/views"
+            )
+            initialized = await asyncio.to_thread(
+                ensure_database_initialized,
+                ts_conf.url,
+                False,
+            )
+
+        max_conn = ts_conf.pool_size
+        max_pool_time = ts_conf.pool_timeout
+        mo = ts_conf.max_overflow
+        recycle = ts_conf.pool_recycle
+        enable_prepared_statements_cache = ts_conf.enable_prepared_statements_cache
+
+        engine = get_db_engine_async(
+            ts_conf.url
+            + (
+                "?prepared_statement_cache_size=0"
+                if not enable_prepared_statements_cache
+                else ""
+            ),
+            pool_size=int(max_conn),
+            max_overflow=int(mo),
+            pool_recycle=int(recycle),
+            pool_timeout=int(max_pool_time),
+            pool_pre_ping=True,
+        )
+
+        tagstore_db = TagstoreDbAsync(engine)
+        await ConceptsCacheServiceFastAPI.setup_cache(tagstore_db, app)
+
+        app.state.tagstore_engine = engine
+        app.state.tagstore_db = tagstore_db
+
+        if config.ensure_tagstore_schema_on_startup:
+            if initialized:
+                logger.info("TagStore schema initialized during REST startup")
+            else:
+                logger.info("TagStore schema already initialized")
+    except Exception as exc:
+        if engine is not None:
+            with suppress(Exception):
+                await engine.dispose()
+        logger.warning("TagStore startup failed: %s", exc, exc_info=True)
+        _activate_mock_tagstore("URL unreachable or initialization failed")
+        logger.info("Database setup done")
+        return
 
     logger.info("Database setup done")
 
@@ -402,10 +449,16 @@ async def teardown_database(app: FastAPI):
     driver = app.state.config.database.driver.lower()
     app.state.db.close()
     logger.info(f"Closed {driver} connection.")
-    logger.info(app.state.tagstore_engine.pool.status())
-    await app.state.tagstore_engine.dispose()
-    logger.info(app.state.tagstore_engine.pool.status())
-    logger.info("Closed Tagstore connection.")
+    tagstore_engine = getattr(app.state, "tagstore_engine", None)
+    if tagstore_engine is not None:
+        with suppress(Exception):
+            logger.info(tagstore_engine.pool.status())
+        await tagstore_engine.dispose()
+        with suppress(Exception):
+            logger.info(tagstore_engine.pool.status())
+        logger.info("Closed Tagstore connection.")
+    else:
+        logger.info("TagStore mock active; no TagStore connection to close.")
 
     # Close Redis client if it exists
     if getattr(app.state, "redis_client", None):
@@ -426,17 +479,26 @@ class ConceptsCacheServiceFastAPI(ConceptProtocol):
         return self.app.state.taxonomy_cache["labels"][taxonomy].get(concept_id, None)
 
     @classmethod
-    async def setup_cache(cls, db_engine, app: FastAPI):
-        tagstore_db = TagstoreDbAsync(db_engine)
+    async def setup_cache(cls, tagstore_db, app: FastAPI):
         taxs = await tagstore_db.get_taxonomies(
             {Taxonomies.CONCEPT, Taxonomies.COUNTRY}
         )
         app.state.taxonomy_cache = {
             "labels": {
-                Taxonomies.CONCEPT: {x.id: x.label for x in taxs.concept},
-                Taxonomies.COUNTRY: {x.id: x.label for x in taxs.country},
+                Taxonomies.CONCEPT: {x.id: x.label for x in (taxs.concept or [])},
+                Taxonomies.COUNTRY: {x.id: x.label for x in (taxs.country or [])},
             },
-            "abuse": {x.id for x in taxs.concept if x.is_abuse},
+            "abuse": {x.id for x in (taxs.concept or []) if x.is_abuse},
+        }
+
+    @classmethod
+    def setup_empty_cache(cls, app: FastAPI):
+        app.state.taxonomy_cache = {
+            "labels": {
+                Taxonomies.CONCEPT: {},
+                Taxonomies.COUNTRY: {},
+            },
+            "abuse": set(),
         }
 
 
@@ -462,7 +524,7 @@ async def setup_services(app: FastAPI):
     app.state.services = ServiceContainer(
         config=config,
         db=app.state.db,
-        tagstore_engine=app.state.tagstore_engine,
+        tagstore_db=app.state.tagstore_db,
         concepts_cache_service=ConceptsCacheServiceFastAPI(app),
         logger=logger,
         redis_client=redis_client,

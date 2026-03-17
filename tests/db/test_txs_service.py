@@ -519,7 +519,7 @@ class TestBuildConsensusMap:
         entry = consensus_map["addr_A"]
         assert entry.output.index == 3
         assert entry.confidence == 100
-        assert entry.sources == ["one_time_change", "direct_change"]
+        assert entry.sources == ["direct_change", "one_time_change"]
 
     def test_distinct_addresses_create_independent_entries(self):
         heuristic_map = {

@@ -8,7 +8,7 @@ from graphsenselib.web.models import (
     TxAccount,
 )
 from graphsenselib.web.util.values_legacy import convert_value
-from tests.web.helpers import assert_equal_sorted, get_json
+from tests.web.helpers import assert_equal_sorted, get_json, raw_request
 from tests.web.testdata.addresses import (
     entityWithTags,
     eth_address,
@@ -660,6 +660,39 @@ def test_list_entity_txs(client):
     assert len(result["address_txs"]) == 1
     assert [x["currency"] for x in result["address_txs"]] == ["weth"]
     assert [x["height"] for x in result["address_txs"]] == [2]
+
+
+def test_list_entity_txs_direction_validation(client):
+    path = "/{currency}/entities/{entity}/txs"
+    path_with_direction = path + "?direction={direction}"
+
+    # valid directions accepted
+    status, _ = raw_request(
+        client, path_with_direction, currency="btc", entity=144534, direction="in"
+    )
+    assert status == 200
+
+    status, _ = raw_request(
+        client, path_with_direction, currency="btc", entity=144534, direction="out"
+    )
+    assert status == 200
+
+    # omitting direction is also valid
+    status, _ = raw_request(
+        client, path, currency="btc", entity=144534
+    )
+    assert status == 200
+
+    # invalid direction rejected with 422
+    status, body = raw_request(
+        client, path_with_direction, currency="btc", entity=144534, direction="invalid"
+    )
+    assert status == 422
+
+    status, body = raw_request(
+        client, path_with_direction, currency="eth", entity=eth_entityWithTags.entity, direction="both"
+    )
+    assert status == 422
 
 
 # async def test_list_entity_links(client):

@@ -255,7 +255,7 @@ def _build_change_consensus_map(
             consensus_map[addr.address] = ConsensusEntry(
                 output=addr,
                 confidence=max(entry.confidence, result.confidence),
-                sources=entry.sources + [key],
+                sources=sorted(list(set(list(entry.sources) + [key]))),
             )
     return consensus_map
 
