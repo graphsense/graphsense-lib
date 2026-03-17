@@ -86,8 +86,11 @@ async def get_tx(
     include_io_index: Optional[bool] = Query(
         None, description="Include input/output indices"
     ),
-    include_heuristics: List[Literal["all","one_time_change", "direct_change", "multi_input_change"]] = Query(
-        default=[], description="Heuristics to compute (e.g. one_time_change) as list, or simply all"
+    include_heuristics: List[
+        Literal["all", "one_time_change", "direct_change", "multi_input_change"]
+    ] = Query(
+        default=[],
+        description="Heuristics to compute (e.g. one_time_change) as list, or simply all",
     ),
     ctx: ServiceContext = Depends(get_ctx),
 ):

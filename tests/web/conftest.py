@@ -5,8 +5,9 @@ import pytest
 import pytest_asyncio
 from docker.errors import NotFound
 from starlette.testclient import TestClient
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
-from testcontainers.redis import RedisContainer
 
 from graphsenselib.web.app import create_app
 from graphsenselib.web.config import GSRestConfig
@@ -14,15 +15,15 @@ from tests.web.cassandra.insert import load_test_data as cas_load_test_data
 from tests.web.tagstore.insert import load_test_data as tags_load_test_data
 
 from tests.conftest import (
-    cassandra,
-    gs_db_setup,  # noqa: F811 - re-export so pytest sees the dependency
+    cassandra as _cassandra_fixture,  # noqa: F401 - re-export for pytest discovery
+    gs_db_setup as _gs_db_setup_fixture,  # noqa: F401 - re-export for pytest discovery
     DANGEROUSLY_ACCELERATE_TESTS,
     create_web_schemas,
 )
 
 # Web-specific containers (not shared with root tests)
 postgres = PostgresContainer("postgres:16-alpine")
-redis = RedisContainer("redis:7-alpine")
+redis = DockerContainer("redis:7-alpine").with_exposed_ports(6379)
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +37,7 @@ def gs_rest_db_setup(gs_db_setup, request):
 
     postgres.start()
     redis.start()
+    wait_for_logs(redis, "Ready to accept connections", timeout=60)
 
     def remove_containers():
         try:

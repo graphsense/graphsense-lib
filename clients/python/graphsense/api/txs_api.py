@@ -14,7 +14,7 @@ from pydantic import Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictBool, StrictInt, StrictStr
+from pydantic import Field, StrictBool, StrictInt, StrictStr, field_validator
 from typing import Any, List, Optional
 from typing_extensions import Annotated
 from graphsense.models.external_conversion import ExternalConversion
@@ -727,6 +727,7 @@ class TxsApi:
         include_io: Annotated[Optional[StrictBool], Field(description="Include transaction inputs/outputs")] = None,
         include_nonstandard_io: Annotated[Optional[StrictBool], Field(description="Include non-standard inputs/outputs")] = None,
         include_io_index: Annotated[Optional[StrictBool], Field(description="Include input/output indices")] = None,
+        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change) as list, or simply all")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -756,6 +757,8 @@ class TxsApi:
         :type include_nonstandard_io: bool
         :param include_io_index: Include input/output indices
         :type include_io_index: bool
+        :param include_heuristics: Heuristics to compute (e.g. one_time_change) as list, or simply all
+        :type include_heuristics: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -785,6 +788,7 @@ class TxsApi:
             include_io=include_io,
             include_nonstandard_io=include_nonstandard_io,
             include_io_index=include_io_index,
+            include_heuristics=include_heuristics,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -816,6 +820,7 @@ class TxsApi:
         include_io: Annotated[Optional[StrictBool], Field(description="Include transaction inputs/outputs")] = None,
         include_nonstandard_io: Annotated[Optional[StrictBool], Field(description="Include non-standard inputs/outputs")] = None,
         include_io_index: Annotated[Optional[StrictBool], Field(description="Include input/output indices")] = None,
+        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change) as list, or simply all")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -845,6 +850,8 @@ class TxsApi:
         :type include_nonstandard_io: bool
         :param include_io_index: Include input/output indices
         :type include_io_index: bool
+        :param include_heuristics: Heuristics to compute (e.g. one_time_change) as list, or simply all
+        :type include_heuristics: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -874,6 +881,7 @@ class TxsApi:
             include_io=include_io,
             include_nonstandard_io=include_nonstandard_io,
             include_io_index=include_io_index,
+            include_heuristics=include_heuristics,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -905,6 +913,7 @@ class TxsApi:
         include_io: Annotated[Optional[StrictBool], Field(description="Include transaction inputs/outputs")] = None,
         include_nonstandard_io: Annotated[Optional[StrictBool], Field(description="Include non-standard inputs/outputs")] = None,
         include_io_index: Annotated[Optional[StrictBool], Field(description="Include input/output indices")] = None,
+        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change) as list, or simply all")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -934,6 +943,8 @@ class TxsApi:
         :type include_nonstandard_io: bool
         :param include_io_index: Include input/output indices
         :type include_io_index: bool
+        :param include_heuristics: Heuristics to compute (e.g. one_time_change) as list, or simply all
+        :type include_heuristics: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -963,6 +974,7 @@ class TxsApi:
             include_io=include_io,
             include_nonstandard_io=include_nonstandard_io,
             include_io_index=include_io_index,
+            include_heuristics=include_heuristics,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -989,6 +1001,7 @@ class TxsApi:
         include_io,
         include_nonstandard_io,
         include_io_index,
+        include_heuristics,
         _request_auth,
         _content_type,
         _headers,
@@ -998,6 +1011,7 @@ class TxsApi:
         _host = None
 
         _collection_formats: Dict[str, str] = {
+            'include_heuristics': 'multi',
         }
 
         _path_params: Dict[str, str] = {}
@@ -1030,6 +1044,10 @@ class TxsApi:
         if include_io_index is not None:
             
             _query_params.append(('include_io_index', include_io_index))
+            
+        if include_heuristics is not None:
+            
+            _query_params.append(('include_heuristics', include_heuristics))
             
         # process the header parameters
         # process the form parameters

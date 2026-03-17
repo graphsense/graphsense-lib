@@ -37,6 +37,7 @@ __all__ = [
     "Actor",
     "ActorContext",
     "Address",
+    "AddressOutput",
     "AddressTag",
     "AddressTags",
     "AddressTx",
@@ -44,8 +45,11 @@ __all__ = [
     "AddressTxs",
     "Block",
     "BlockAtDate",
+    "ChangeHeuristics",
     "Concept",
+    "ConsensusEntry",
     "CurrencyStats",
+    "DirectChangeHeuristic",
     "Entity",
     "EntityAddresses",
     "ExternalConversion",
@@ -57,10 +61,12 @@ __all__ = [
     "Links",
     "LinksInner",
     "LocationInner",
+    "MultiInputChangeHeuristic",
     "NeighborAddress",
     "NeighborAddresses",
     "NeighborEntities",
     "NeighborEntity",
+    "OneTimeChangeHeuristic",
     "Rate",
     "Rates",
     "RelatedAddress",
@@ -88,6 +94,7 @@ __all__ = [
     "TxValue",
     "UserReportedTag",
     "UserTagReportResponse",
+    "UtxoHeuristics",
     "ValidationError",
     "Values",
 ]
@@ -121,6 +128,7 @@ from graphsense.exceptions import ApiException as ApiException
 from graphsense.models.actor import Actor as Actor
 from graphsense.models.actor_context import ActorContext as ActorContext
 from graphsense.models.address import Address as Address
+from graphsense.models.address_output import AddressOutput as AddressOutput
 from graphsense.models.address_tag import AddressTag as AddressTag
 from graphsense.models.address_tags import AddressTags as AddressTags
 from graphsense.models.address_tx import AddressTx as AddressTx
@@ -128,8 +136,11 @@ from graphsense.models.address_tx_utxo import AddressTxUtxo as AddressTxUtxo
 from graphsense.models.address_txs import AddressTxs as AddressTxs
 from graphsense.models.block import Block as Block
 from graphsense.models.block_at_date import BlockAtDate as BlockAtDate
+from graphsense.models.change_heuristics import ChangeHeuristics as ChangeHeuristics
 from graphsense.models.concept import Concept as Concept
+from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats as CurrencyStats
+from graphsense.models.direct_change_heuristic import DirectChangeHeuristic as DirectChangeHeuristic
 from graphsense.models.entity import Entity as Entity
 from graphsense.models.entity_addresses import EntityAddresses as EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion as ExternalConversion
@@ -141,10 +152,12 @@ from graphsense.models.link_utxo import LinkUtxo as LinkUtxo
 from graphsense.models.links import Links as Links
 from graphsense.models.links_inner import LinksInner as LinksInner
 from graphsense.models.location_inner import LocationInner as LocationInner
+from graphsense.models.multi_input_change_heuristic import MultiInputChangeHeuristic as MultiInputChangeHeuristic
 from graphsense.models.neighbor_address import NeighborAddress as NeighborAddress
 from graphsense.models.neighbor_addresses import NeighborAddresses as NeighborAddresses
 from graphsense.models.neighbor_entities import NeighborEntities as NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity as NeighborEntity
+from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic as OneTimeChangeHeuristic
 from graphsense.models.rate import Rate as Rate
 from graphsense.models.rates import Rates as Rates
 from graphsense.models.related_address import RelatedAddress as RelatedAddress
@@ -172,6 +185,7 @@ from graphsense.models.tx_utxo import TxUtxo as TxUtxo
 from graphsense.models.tx_value import TxValue as TxValue
 from graphsense.models.user_reported_tag import UserReportedTag as UserReportedTag
 from graphsense.models.user_tag_report_response import UserTagReportResponse as UserTagReportResponse
+from graphsense.models.utxo_heuristics import UtxoHeuristics as UtxoHeuristics
 from graphsense.models.validation_error import ValidationError as ValidationError
 from graphsense.models.values import Values as Values
 

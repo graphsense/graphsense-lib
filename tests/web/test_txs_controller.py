@@ -9,21 +9,15 @@ from tests.web.testdata.txs import (
 
 def test_get_tx(client):
     path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", include_io=True
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", include_io=True)
     assert tx1.to_dict() == result
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", include_io=False
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", include_io=False)
     tx = tx1.to_dict()
     tx.pop("inputs")
     tx.pop("outputs")
     assert tx == result
 
-    result = get_json(
-        client, path, currency="eth", tx_hash="af6e0000", include_io=True
-    )
+    result = get_json(client, path, currency="eth", tx_hash="af6e0000", include_io=True)
     assert tx1_eth_with_identifier.to_dict() == result
 
     result = get_json(
@@ -70,13 +64,16 @@ def test_get_tx(client):
 
 def test_get_tx_include_heuristics(client):
     # valid heuristic name → 200
-    status, _ = raw_request(
+    result = get_json(
         client,
         "/{currency}/txs/{tx_hash}?include_heuristics=one_time_change",
         currency="btc",
         tx_hash="ab1880",
     )
-    assert status == 200
+    assert "heuristics" in result
+    one_time = result["heuristics"]["change_heuristics"]["one_time_change"]
+    assert one_time is not None
+    assert "details" not in one_time
 
     # unknown heuristic name → 422
     status, _ = raw_request(
@@ -113,14 +110,10 @@ def test_list_token_txs(client):
 
 def test_get_tx_io(client):
     path = "/{currency}/txs/{tx_hash}/{io}"
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", io="inputs"
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", io="inputs")
     assert tx1.to_dict()["inputs"] == result
 
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", io="outputs"
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", io="outputs")
     assert tx1.to_dict()["outputs"] == result
 
 

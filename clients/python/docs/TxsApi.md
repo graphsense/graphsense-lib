@@ -184,7 +184,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **get_tx**
-> Tx get_tx(currency, tx_hash, token_tx_id=token_tx_id, include_io=include_io, include_nonstandard_io=include_nonstandard_io, include_io_index=include_io_index)
+> Tx get_tx(currency, tx_hash, token_tx_id=token_tx_id, include_io=include_io, include_nonstandard_io=include_nonstandard_io, include_io_index=include_io_index, include_heuristics=include_heuristics)
 
 Get transaction details by hash
 
@@ -227,10 +227,11 @@ with graphsense.ApiClient(configuration) as api_client:
     include_io = True # bool | Include transaction inputs/outputs (optional)
     include_nonstandard_io = True # bool | Include non-standard inputs/outputs (optional)
     include_io_index = True # bool | Include input/output indices (optional)
+    include_heuristics = [] # List[str] | Heuristics to compute (e.g. one_time_change) as list, or simply all (optional) (default to [])
 
     try:
         # Get transaction details by hash
-        api_response = api_instance.get_tx(currency, tx_hash, token_tx_id=token_tx_id, include_io=include_io, include_nonstandard_io=include_nonstandard_io, include_io_index=include_io_index)
+        api_response = api_instance.get_tx(currency, tx_hash, token_tx_id=token_tx_id, include_io=include_io, include_nonstandard_io=include_nonstandard_io, include_io_index=include_io_index, include_heuristics=include_heuristics)
         print("The response of TxsApi->get_tx:\n")
         pprint(api_response)
     except Exception as e:
@@ -250,6 +251,7 @@ Name | Type | Description  | Notes
  **include_io** | **bool**| Include transaction inputs/outputs | [optional] 
  **include_nonstandard_io** | **bool**| Include non-standard inputs/outputs | [optional] 
  **include_io_index** | **bool**| Include input/output indices | [optional] 
+ **include_heuristics** | [**List[str]**](str.md)| Heuristics to compute (e.g. one_time_change) as list, or simply all | [optional] [default to []]
 
 ### Return type
 

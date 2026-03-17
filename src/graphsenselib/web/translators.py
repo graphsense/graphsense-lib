@@ -138,6 +138,25 @@ from graphsenselib.web.models import (
     TxValue,
     Values,
 )
+from graphsenselib.web.models.heuristics import (
+    AddressOutput as ApiHeuristicAddressOutput,
+)
+from graphsenselib.web.models.heuristics import (
+    ChangeHeuristics as ApiChangeHeuristics,
+)
+from graphsenselib.web.models.heuristics import (
+    ConsensusEntry as ApiHeuristicConsensusEntry,
+)
+from graphsenselib.web.models.heuristics import (
+    DirectChangeHeuristic as ApiDirectChangeHeuristic,
+)
+from graphsenselib.web.models.heuristics import (
+    MultiInputChangeHeuristic as ApiMultiInputChangeHeuristic,
+)
+from graphsenselib.web.models.heuristics import (
+    OneTimeChangeHeuristic as ApiOneTimeChangeHeuristic,
+)
+from graphsenselib.web.models.heuristics import UtxoHeuristics as ApiUtxoHeuristics
 
 
 def to_api_values(pydantic_values: PydanticValues) -> Values:
@@ -263,6 +282,81 @@ def to_api_tx_value(pydantic_tx_value) -> TxValue:
     )
 
 
+def to_api_heuristics_address_output(addr_output) -> ApiHeuristicAddressOutput:
+    """Convert service heuristic address output to web heuristic address output."""
+    return ApiHeuristicAddressOutput(
+        address=addr_output.address,
+        index=addr_output.index,
+    )
+
+
+def to_api_one_time_change_heuristic(heuristic) -> ApiOneTimeChangeHeuristic | None:
+    """Convert service one-time-change heuristic without exposing details."""
+    if heuristic is None:
+        return None
+    return ApiOneTimeChangeHeuristic(
+        summary=[to_api_heuristics_address_output(out) for out in heuristic.summary],
+        confidence=heuristic.confidence,
+    )
+
+
+def to_api_direct_change_heuristic(heuristic) -> ApiDirectChangeHeuristic | None:
+    """Convert service direct-change heuristic without exposing details."""
+    if heuristic is None:
+        return None
+    return ApiDirectChangeHeuristic(
+        summary=[to_api_heuristics_address_output(out) for out in heuristic.summary],
+        confidence=heuristic.confidence,
+    )
+
+
+def to_api_multi_input_change_heuristic(
+    heuristic,
+) -> ApiMultiInputChangeHeuristic | None:
+    """Convert service multi-input-change heuristic without exposing details."""
+    if heuristic is None:
+        return None
+    return ApiMultiInputChangeHeuristic(
+        summary=[to_api_heuristics_address_output(out) for out in heuristic.summary],
+        confidence=heuristic.confidence,
+    )
+
+
+def to_api_utxo_heuristics(pydantic_heuristics) -> ApiUtxoHeuristics | None:
+    """Convert service UTXO heuristics to web heuristics.
+
+    The web model intentionally omits detailed evidence sections for now.
+    """
+    if pydantic_heuristics is None:
+        return None
+
+    change_heuristics = pydantic_heuristics.change_heuristics
+    if change_heuristics is None:
+        return ApiUtxoHeuristics(change_heuristics=None)
+
+    return ApiUtxoHeuristics(
+        change_heuristics=ApiChangeHeuristics(
+            consensus=[
+                ApiHeuristicConsensusEntry(
+                    output=to_api_heuristics_address_output(entry.output),
+                    confidence=entry.confidence,
+                    sources=list(entry.sources),
+                )
+                for entry in change_heuristics.consensus
+            ],
+            one_time_change=to_api_one_time_change_heuristic(
+                change_heuristics.one_time_change
+            ),
+            direct_change=to_api_direct_change_heuristic(
+                change_heuristics.direct_change
+            ),
+            multi_input_change=to_api_multi_input_change_heuristic(
+                change_heuristics.multi_input_change
+            ),
+        )
+    )
+
+
 def to_api_tx_utxo(pydantic_tx: PydanticTxUtxo) -> TxUtxo:
     """Convert service TxUtxo to API TxUtxo."""
     return TxUtxo(
@@ -282,7 +376,7 @@ def to_api_tx_utxo(pydantic_tx: PydanticTxUtxo) -> TxUtxo:
         outputs=[to_api_tx_value(out) for out in pydantic_tx.outputs]
         if pydantic_tx.outputs
         else None,
-        heuristics=pydantic_tx.heuristics,
+        heuristics=to_api_utxo_heuristics(pydantic_tx.heuristics),
     )
 
 

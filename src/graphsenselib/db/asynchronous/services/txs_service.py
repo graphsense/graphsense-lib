@@ -33,6 +33,7 @@ from .rates_service import RatesService
 from graphsenselib.utils.constants import (
     replace_tron_dummy_address_with_valid_null_address,
 )
+from async_lru import alru_cache
 
 
 def is_supported_asset(
@@ -91,7 +92,6 @@ async def _raw_trace_to_std_tx(
                 result["type"] = "external"
 
     return await std_tx_from_row(currency, result, rates.rates, tokenConfig)
-
 
 
 class DatabaseProtocol(Protocol):
@@ -200,7 +200,14 @@ class TxsService:
                 result["type"] = "external"
 
             if len(include_heuristics) > 0:
-                result["heuristics"] = await calculate_heuristics(result, currency, self.db.get_address, include_heuristics)
+
+                @alru_cache(maxsize=2048, ttl=10)
+                async def _cached_get_address(curr: str, addr: str):
+                    return await self.db.get_address(curr, addr)
+
+                result["heuristics"] = await calculate_heuristics(
+                    result, currency, _cached_get_address, include_heuristics
+                )
 
             return await std_tx_from_row(
                 currency,
@@ -407,7 +414,6 @@ class TxsService:
             )
         else:
             return None
-
 
     def _conversion_from_external_swap(
         self, network: str, swap: ExternalSwap

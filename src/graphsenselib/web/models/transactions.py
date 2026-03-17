@@ -2,9 +2,7 @@
 
 from typing import Optional, Union
 
-from graphsenselib.db.asynchronous.services.heuristics import (
-    UtxoHeuristics,
-)
+from graphsenselib.web.models.heuristics import UtxoHeuristics
 from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.values import VALUES_EXAMPLE, Values
 
@@ -115,7 +113,6 @@ LINK_UTXO_EXAMPLE = {
         "value": 2378000000,
     },
 }
-
 
 
 class TxSummary(APIModel):
