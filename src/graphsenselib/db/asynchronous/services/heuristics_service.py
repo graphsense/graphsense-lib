@@ -45,7 +45,7 @@ async def _one_time_change_heuristic(
     cond_out_less_than_in = set()
     cond_not_reused = set()
 
-    min_input_value = min([inp.value for inp in tx.get("inputs", []) if inp is not None])
+    min_input_value = min((inp.value for inp in tx.get("inputs", []) if inp is not None), default=0)
 
     script_type_input = None
     for inp in tx.get("inputs", []):
@@ -99,7 +99,7 @@ async def _one_time_change_heuristic(
         if (
             addr_info.get("no_incoming_txs", 0) > 1
             or addr_info.get("no_outgoing_txs", 0) > 1
-            or (first_tx_height is not None and first_tx_height < tx["block_id"])
+            or (first_tx_height is not None and first_tx_height < tx.get("block_id"))
         ):
             not_change.add(addr)
         else:
@@ -215,7 +215,7 @@ async def _direct_change_heuristic(tx) -> DirectChangeHeuristic:
 
     for addr in intersection:
         for idx, outp in enumerate(outputs):
-            if outp is not None and outp.address[0] == addr:
+            if outp is not None and outp.address and outp.address[0] == addr:
                 result.summary.append(AddressOutput(address=addr, index=idx))
 
     return result
@@ -241,14 +241,14 @@ async def calculate_heuristics(tx, currency, get_address, heuristics: list) -> U
     heuristic_map = dict(zip(keys, results))
 
     # any heuristic marking it as change is accepted, tracking sources and max confidence
-    consensus_map: dict[AddressOutput, ConsensusEntry] = {}
+    consensus_map: dict[str, ConsensusEntry] = {}
     for key, result in heuristic_map.items():
         for addr in result.summary:
-            if addr not in consensus_map:
-                consensus_map[addr] = ConsensusEntry(output=addr, confidence=result.confidence, sources=[key])
+            if addr.address not in consensus_map:
+                consensus_map[addr.address] = ConsensusEntry(output=addr, confidence=result.confidence, sources=[key])
             else:
-                entry = consensus_map[addr]
-                consensus_map[addr] = ConsensusEntry(
+                entry = consensus_map[addr.address]
+                consensus_map[addr.address] = ConsensusEntry(
                     output=addr,
                     confidence=max(entry.confidence, result.confidence),
                     sources=entry.sources + [key],
