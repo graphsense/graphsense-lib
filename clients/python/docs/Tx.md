@@ -17,6 +17,7 @@ Name | Type | Description | Notes
 **total_output** | [**Values**](Values.md) |  | 
 **inputs** | [**List[TxValue]**](TxValue.md) |  | [optional] 
 **outputs** | [**List[TxValue]**](TxValue.md) |  | [optional] 
+**heuristics** | [**UtxoHeuristics**](UtxoHeuristics.md) |  | [optional] 
 **identifier** | **str** |  | 
 **network** | **str** |  | 
 **value** | [**Values**](Values.md) |  | 

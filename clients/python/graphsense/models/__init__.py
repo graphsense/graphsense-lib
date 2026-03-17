@@ -14,6 +14,7 @@
 from graphsense.models.actor import Actor
 from graphsense.models.actor_context import ActorContext
 from graphsense.models.address import Address
+from graphsense.models.address_output import AddressOutput
 from graphsense.models.address_tag import AddressTag
 from graphsense.models.address_tags import AddressTags
 from graphsense.models.address_tx import AddressTx
@@ -21,8 +22,11 @@ from graphsense.models.address_tx_utxo import AddressTxUtxo
 from graphsense.models.address_txs import AddressTxs
 from graphsense.models.block import Block
 from graphsense.models.block_at_date import BlockAtDate
+from graphsense.models.change_heuristics import ChangeHeuristics
 from graphsense.models.concept import Concept
+from graphsense.models.consensus_entry import ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats
+from graphsense.models.direct_change_heuristic import DirectChangeHeuristic
 from graphsense.models.entity import Entity
 from graphsense.models.entity_addresses import EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion
@@ -34,10 +38,12 @@ from graphsense.models.link_utxo import LinkUtxo
 from graphsense.models.links import Links
 from graphsense.models.links_inner import LinksInner
 from graphsense.models.location_inner import LocationInner
+from graphsense.models.multi_input_change_heuristic import MultiInputChangeHeuristic
 from graphsense.models.neighbor_address import NeighborAddress
 from graphsense.models.neighbor_addresses import NeighborAddresses
 from graphsense.models.neighbor_entities import NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity
+from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic
 from graphsense.models.rate import Rate
 from graphsense.models.rates import Rates
 from graphsense.models.related_address import RelatedAddress
@@ -65,6 +71,7 @@ from graphsense.models.tx_utxo import TxUtxo
 from graphsense.models.tx_value import TxValue
 from graphsense.models.user_reported_tag import UserReportedTag
 from graphsense.models.user_tag_report_response import UserTagReportResponse
+from graphsense.models.utxo_heuristics import UtxoHeuristics
 from graphsense.models.validation_error import ValidationError
 from graphsense.models.values import Values
 from graphsense.compat import CompatInt, CompatList

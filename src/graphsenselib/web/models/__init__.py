@@ -32,6 +32,15 @@ from graphsenselib.web.models.general import (
     TokenConfig,
     TokenConfigs,
 )
+from graphsenselib.web.models.heuristics import (
+    AddressOutput,
+    ChangeHeuristics,
+    ConsensusEntry,
+    DirectChangeHeuristic,
+    MultiInputChangeHeuristic,
+    OneTimeChangeHeuristic,
+    UtxoHeuristics,
+)
 from graphsenselib.web.models.search import (
     SearchResult,
     SearchResultByCurrency,
@@ -127,6 +136,14 @@ __all__ = [
     "Concept",
     "ActorContext",
     "Actor",
+    # Heuristics
+    "AddressOutput",
+    "ConsensusEntry",
+    "OneTimeChangeHeuristic",
+    "DirectChangeHeuristic",
+    "MultiInputChangeHeuristic",
+    "ChangeHeuristics",
+    "UtxoHeuristics",
     "TokenConfig",
     "TokenConfigs",
     "RelatedAddress",

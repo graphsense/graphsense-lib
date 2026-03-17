@@ -21,6 +21,7 @@ from graphsenselib.utils.transactions import (
 from graphsenselib.utils.rest_utils import is_eth_like
 
 from .common import std_tx_from_row
+from .heuristics_service import calculate_heuristics
 from .models import (
     ExternalConversion,
     TxAccount,
@@ -33,6 +34,7 @@ from .rates_service import RatesService
 from graphsenselib.utils.constants import (
     replace_tron_dummy_address_with_valid_null_address,
 )
+from async_lru import alru_cache
 
 
 def is_supported_asset(
@@ -122,6 +124,10 @@ class DatabaseProtocol(Protocol):
         self, currency: str, tx: Dict[str, Any], trace_index: Optional[int]
     ) -> Optional[Dict[str, Any]]: ...
 
+    async def get_address(
+        self, currency: str, address: str
+    ) -> Optional[Dict[str, Any]]: ...
+
 
 class TxsService:
     def __init__(
@@ -142,6 +148,7 @@ class TxsService:
         include_io: bool = False,
         include_nonstandard_io: bool = False,
         include_io_index: bool = False,
+        include_heuristics: list[str] = [],
     ) -> Union[TxAccount, TxUtxo]:
         trace_index = None
         tx_ident = tx_hash
@@ -192,6 +199,16 @@ class TxsService:
 
             if result:
                 result["type"] = "external"
+
+            if len(include_heuristics) > 0:
+
+                @alru_cache(maxsize=2048, ttl=10)
+                async def _cached_get_address(curr: str, addr: str):
+                    return await self.db.get_address(curr, addr)
+
+                result["heuristics"] = await calculate_heuristics(
+                    result, currency, _cached_get_address, include_heuristics
+                )
 
             return await std_tx_from_row(
                 currency,

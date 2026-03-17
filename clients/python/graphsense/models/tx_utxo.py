@@ -19,6 +19,7 @@ from pydantic import field_validator,  BaseModel, ConfigDict, StrictBool, Strict
 from graphsense.compat import CompatInt, CompatList
 from typing import Any, ClassVar, Dict, List, Optional
 from graphsense.models.tx_value import TxValue
+from graphsense.models.utxo_heuristics import UtxoHeuristics
 from graphsense.models.values import Values
 from typing import Optional, Set
 from typing_extensions import Self
@@ -39,7 +40,8 @@ class TxUtxo(BaseModel):
     total_output: Values
     inputs: Optional[List[TxValue]] = None
     outputs: Optional[List[TxValue]] = None
-    __properties: ClassVar[List[str]] = ["tx_type", "currency", "tx_hash", "coinbase", "height", "no_inputs", "no_outputs", "timestamp", "total_input", "total_output", "inputs", "outputs"]
+    heuristics: Optional[UtxoHeuristics] = None
+    __properties: ClassVar[List[str]] = ["tx_type", "currency", "tx_hash", "coinbase", "height", "no_inputs", "no_outputs", "timestamp", "total_input", "total_output", "inputs", "outputs", "heuristics"]
     @field_validator('height', mode='wrap')
     @classmethod
     def wrap_height_compat(cls, v, handler):
@@ -127,6 +129,9 @@ class TxUtxo(BaseModel):
                 if _item_outputs:
                     _items.append(_item_outputs.to_dict())
             _dict['outputs'] = _items
+        # override the default output from pydantic by calling `to_dict()` of heuristics
+        if self.heuristics:
+            _dict['heuristics'] = self.heuristics.to_dict()
 
         return _dict
 
@@ -151,7 +156,8 @@ class TxUtxo(BaseModel):
             "total_input": Values.from_dict(obj["total_input"]) if obj.get("total_input") is not None else None,
             "total_output": Values.from_dict(obj["total_output"]) if obj.get("total_output") is not None else None,
             "inputs": [TxValue.from_dict(_item) for _item in obj["inputs"]] if obj.get("inputs") is not None else None,
-            "outputs": [TxValue.from_dict(_item) for _item in obj["outputs"]] if obj.get("outputs") is not None else None
+            "outputs": [TxValue.from_dict(_item) for _item in obj["outputs"]] if obj.get("outputs") is not None else None,
+            "heuristics": UtxoHeuristics.from_dict(obj["heuristics"]) if obj.get("heuristics") is not None else None
         })
         return _obj
 

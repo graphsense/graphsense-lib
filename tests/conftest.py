@@ -1,6 +1,7 @@
 import logging
 from os import environ
 from pathlib import Path
+import asyncio
 
 import pytest
 import pytest_asyncio
@@ -327,3 +328,24 @@ def patch_config(monkeypatch):
         GoodConfConfigDict(default_files=[], env_prefix="GRAPHSENSE_PYTEST_"),
     )
     set_config(_build_test_config(*_cassandra_coords))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def managed_default_event_loop():
+    """Ensure a default loop exists and is closed explicitly at session end.
+
+    pytest-asyncio compatibility paths may create a process-global default loop
+    via ``asyncio.get_event_loop()`` and not close it. Keeping one managed loop
+    for the session prevents nondeterministic unclosed-loop warnings.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    yield
+
+    if not loop.is_closed():
+        loop.close()
+    asyncio.set_event_loop(None)
