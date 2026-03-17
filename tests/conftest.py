@@ -338,14 +338,19 @@ def managed_default_event_loop():
     via ``asyncio.get_event_loop()`` and not close it. Keeping one managed loop
     for the session prevents nondeterministic unclosed-loop warnings.
     """
+    policy = asyncio.get_event_loop_policy()
+    local_state = getattr(policy, "_local", None)
+    previous_loop = getattr(local_state, "_loop", None) if local_state else None
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        yield
+    finally:
+        if not loop.is_closed():
+            loop.close()
 
-    yield
-
-    if not loop.is_closed():
-        loop.close()
-    asyncio.set_event_loop(None)
+        if previous_loop is not None and not previous_loop.is_closed():
+            asyncio.set_event_loop(previous_loop)
+        else:
+            asyncio.set_event_loop(None)
