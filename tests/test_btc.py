@@ -1,8 +1,8 @@
-"""Tests for btc.py — direct JSON-RPC UTXO block/tx exporter."""
+"""Tests for rpc_utxo.py — direct JSON-RPC UTXO block/tx exporter."""
 
 from unittest.mock import patch
 
-from graphsenselib.ingest.btc import (
+from graphsenselib.ingest.rpc_utxo import (
     BtcBlockExporter,
     _btc_to_satoshi,
     _make_cache_entry,

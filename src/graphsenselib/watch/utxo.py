@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional, Tuple
 
 from ..datatypes.common import FlowDirection
-from ..ingest.btc import BtcBlockExporter
+from ..ingest.rpc_utxo import BtcBlockExporter
 from ..ingest.utxo import (
     OutputResolverBase,
     enrich_txs,

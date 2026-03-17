@@ -27,7 +27,7 @@ from .common import (
     cassandra_ingest,
     write_to_sinks,
 )
-from .rpc import (
+from .rpc_eth import (
     BatchRpcClient,
     BlockExporter,
     BlockReceiptExporter,

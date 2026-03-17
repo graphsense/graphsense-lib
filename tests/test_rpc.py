@@ -1,4 +1,4 @@
-"""Unit tests for graphsenselib.ingest.rpc parsers and enrichment."""
+"""Unit tests for graphsenselib.ingest.rpc_eth parsers and enrichment."""
 
 import json
 import threading
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from graphsenselib.ingest.rpc import (
+from graphsenselib.ingest.rpc_eth import (
     BatchRpcClient,
     BlockExporter,
     BlockReceiptExporter,

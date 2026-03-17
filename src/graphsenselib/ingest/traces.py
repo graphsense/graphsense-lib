@@ -12,7 +12,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from graphsenselib.ingest.rpc import (
+from graphsenselib.ingest.rpc_eth import (
     BatchRpcClient,
     hex_to_dec,
     validate_rpc_fields,

@@ -1,7 +1,7 @@
 import importlib
 import json
 
-from graphsenselib.ingest.btc import _parse_input, _parse_output
+from graphsenselib.ingest.rpc_utxo import _parse_input, _parse_output
 from graphsenselib.ingest.utxo import is_coinjoin
 
 from . import resources

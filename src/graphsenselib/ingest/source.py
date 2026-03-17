@@ -14,7 +14,7 @@ from graphsenselib.ingest.utxo import (
     get_last_block_yesterday as utxo_get_last_block_yesterday,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Source
-from graphsenselib.ingest.btc import BtcBlockExporter
+from graphsenselib.ingest.rpc_utxo import BtcBlockExporter
 from graphsenselib.ingest.traces import TraceExporter
 from graphsenselib.ingest.tron.grpc_exporter import TronCombinedGrpcExporter
 

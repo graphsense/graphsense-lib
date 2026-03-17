@@ -21,7 +21,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from graphsenselib.ingest.rpc import BatchRpcClient, validate_rpc_fields
+from graphsenselib.ingest.rpc_eth import BatchRpcClient, validate_rpc_fields
 
 logger = logging.getLogger(__name__)
 

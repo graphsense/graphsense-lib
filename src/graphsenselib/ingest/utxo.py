@@ -23,7 +23,7 @@ from ..utils.account import get_id_group
 from ..utils.bch import bch_address_to_legacy
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
-from .btc import BtcBlockExporter
+from .rpc_utxo import BtcBlockExporter
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
