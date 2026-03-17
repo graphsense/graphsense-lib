@@ -66,12 +66,17 @@ _BLOCK_BLACKLIST = frozenset(
         "solution",  # Equihash PoW solution
         "anchor",  # Sprout note commitment tree anchor
         "finalsaplingroot",  # Sapling tree root hash
+        "finalorchardroot",  # NU5 Orchard tree root hash
         "chainhistoryroot",  # chain history Merkle root
         "blockcommitments",  # NU5 block commitments hash
         "authdataroot",  # NU5 auth data Merkle root
         "trees",  # note commitment tree state
         "chainSupply",  # chain supply info
         "valuePools",  # shielded pool balances
+        # LTC-specific
+        "mweb",  # MimbleWimble Extension Block data
+        # BCH-specific
+        "ablastate",  # Adaptive Block Limit Algorithm state (BCHN 27+)
     }
 )
 
@@ -110,6 +115,7 @@ _TX_BLACKLIST = frozenset(
         "versiongroupid",  # ZEC Overwinter/Sapling version group ID
         "joinSplitPubKey",  # ZEC Sprout joinsplit public key
         "joinSplitSig",  # ZEC Sprout joinsplit signature
+        "orchard",  # ZEC NU5 Orchard bundle (actions, proof, etc.)
     }
 )
 
@@ -175,6 +181,7 @@ _VOUT_BLACKLIST = frozenset(
         "ismweb",  # LTC: flags vout from MimbleWimble Extension Block
         "valueSat",  # ZEC: integer satoshi value, redundant with value
         "valueZat",  # ZEC: integer zatoshi value, redundant with value
+        "tokenData",  # BCH: CashTokens data (category, amount, nft)
     }
 )
 
