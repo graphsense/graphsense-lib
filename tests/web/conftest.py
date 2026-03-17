@@ -5,8 +5,26 @@ import pytest
 import pytest_asyncio
 from docker.errors import NotFound
 from starlette.testclient import TestClient
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.wait_strategies import ExecWaitStrategy
 from testcontainers.postgres import PostgresContainer
-from testcontainers.redis import RedisContainer
+
+
+class RedisContainer(DockerContainer):
+    """Minimal Redis container using non-deprecated wait strategies."""
+
+    REDIS_PORT = 6379
+
+    def __init__(self, image: str = "redis:latest", **kwargs) -> None:
+        super().__init__(image=image, **kwargs)
+        self.with_exposed_ports(self.REDIS_PORT)
+        self.waiting_for(ExecWaitStrategy(["redis-cli", "ping"]))
+
+    def get_container_host_ip(self) -> str:
+        return super().get_container_host_ip()
+
+    def get_exposed_port(self, port: int = REDIS_PORT) -> int:
+        return int(super().get_exposed_port(port))
 
 from graphsenselib.web.app import create_app
 from graphsenselib.web.config import GSRestConfig
