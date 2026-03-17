@@ -34,7 +34,7 @@ REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 	generate-loki \
 	test-deltalake test-deltalake-comprehensive test-deltalake-perf test-deltalake-all \
 	clean-deltalake \
-	test-cassandra test-sink-consistency \
+	test-cassandra test-sink-consistency test-continuation \
 	test-ingest test clean
 
 # Build current from local path (requires GSLIB)
@@ -248,6 +248,17 @@ test-sink-consistency:
 	uv run pytest tests/sink_consistency/ -v -s -m sink_consistency
 
 # ============================================================================
+# Continuation (split-ingest) tests
+# ============================================================================
+
+CONTINUATION_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
+
+test-continuation:
+	CONTINUATION_CURRENCIES=$(CONTINUATION_CURRENCIES) \
+	GSLIB_PATH=$$(cd ../.. && pwd) \
+	uv run pytest tests/continuation/ -v -s -m continuation
+
+# ============================================================================
 # Combined ingest test suite
 # ============================================================================
 
@@ -259,6 +270,7 @@ test-ingest:
 	$(MAKE) test-cassandra || ret=1; \
 	$(MAKE) test-deltalake || ret=1; \
 	$(MAKE) test-sink-consistency || ret=1; \
+	$(MAKE) test-continuation || ret=1; \
 	exit $$ret
 
 # ============================================================================

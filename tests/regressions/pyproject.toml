@@ -32,6 +32,7 @@ markers = [
     "deltalake_perf: Delta Lake ingest performance tests",
     "cassandra: Cassandra ingest regression tests",
     "sink_consistency: Sink consistency tests (individual vs dual-sink output)",
+    "continuation: Continuation tests (split-ingest vs one-shot output)",
 ]
 asyncio_mode = "auto"
 

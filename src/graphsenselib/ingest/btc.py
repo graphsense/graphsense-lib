@@ -136,6 +136,7 @@ _VIN_KNOWN_KEYS = frozenset(
 _VIN_BLACKLIST = frozenset(
     {
         "ismweb",  # LTC: flags vin from MimbleWimble Extension Block
+        "tokenData",  # BCH: CashTokens data on input (category, amount, nft)
     }
 )
 
@@ -163,6 +164,7 @@ _PREVOUT_BLACKLIST = frozenset(
     {
         "generated",  # whether UTXO is from coinbase
         "height",  # block height of the UTXO
+        "tokenData",  # BCH: CashTokens data (category, amount, nft)
     }
 )
 
@@ -511,6 +513,19 @@ def _parse_btc_block_and_txs(raw_block):
 _GETRAWTX_BATCH_SIZE = 50
 _MAX_OUTPUT_CACHE_ENTRIES = 2**24  # ~16M txs, matching old LRUCache limit
 
+# Cache entry tuple layout (avoids dict overhead, saves ~200 bytes per entry)
+_CE_VALUE = 0
+_CE_ADDRESSES = 1
+_CE_TYPE = 2
+_CE_SCRIPT_HEX = 3  # only set for non-standard outputs, None otherwise
+
+
+def _make_cache_entry(value, addresses, output_type, script_hex):
+    """Create a compact cache entry tuple. Only stores script_hex for
+    non-standard outputs (where it's needed for address derivation)."""
+    needs_script = not addresses or output_type == "nonstandard"
+    return (value, addresses, output_type, script_hex if needs_script else None)
+
 
 class BtcBlockExporter:
     """Export UTXO blocks and transactions via direct batch JSON-RPC.
@@ -637,12 +652,12 @@ class BtcBlockExporter:
                 by_index = {}
                 for vout in raw_tx.get("vout", []):
                     parsed = _parse_output(vout)
-                    by_index[parsed["index"]] = {
-                        "value": parsed["value"],
-                        "addresses": parsed["addresses"],
-                        "type": parsed["type"],
-                        "script_hex": parsed.get("script_hex"),
-                    }
+                    by_index[parsed["index"]] = _make_cache_entry(
+                        parsed["value"],
+                        parsed["addresses"],
+                        parsed["type"],
+                        parsed.get("script_hex"),
+                    )
                 chunk_map[raw_tx["txid"]] = by_index
             return chunk_map
 
@@ -669,12 +684,12 @@ class BtcBlockExporter:
         for tx in transactions:
             by_index = {}
             for out in tx["outputs"]:
-                by_index[out["index"]] = {
-                    "value": out["value"],
-                    "addresses": out["addresses"],
-                    "type": out["type"],
-                    "script_hex": out.get("script_hex"),
-                }
+                by_index[out["index"]] = _make_cache_entry(
+                    out["value"],
+                    out["addresses"],
+                    out["type"],
+                    out.get("script_hex"),
+                )
             self._output_cache[tx["hash"]] = by_index
 
         # Collect unresolved spent tx hashes not in cache
@@ -703,11 +718,11 @@ class BtcBlockExporter:
                     idx = inp["spent_output_index"]
                     resolved = self._output_cache.get(sth, {}).get(idx)
                     if resolved:
-                        inp["value"] = resolved["value"]
-                        inp["addresses"] = resolved["addresses"]
-                        inp["type"] = resolved["type"]
-                        if resolved.get("script_hex"):
-                            inp["prevout_script_hex"] = resolved["script_hex"]
+                        inp["value"] = resolved[_CE_VALUE]
+                        inp["addresses"] = resolved[_CE_ADDRESSES]
+                        inp["type"] = resolved[_CE_TYPE]
+                        if resolved[_CE_SCRIPT_HEX]:
+                            inp["prevout_script_hex"] = resolved[_CE_SCRIPT_HEX]
                         spent_keys.append((sth, idx))
                         changed = True
                         n_resolved += 1

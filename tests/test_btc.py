@@ -5,6 +5,7 @@ from unittest.mock import patch
 from graphsenselib.ingest.btc import (
     BtcBlockExporter,
     _btc_to_satoshi,
+    _make_cache_entry,
     _nonce_to_hex,
     _parse_btc_block_and_txs,
     _parse_input,
@@ -638,10 +639,10 @@ class TestResolveUnresolvedInputs:
             },
         ]
 
-        # Mock the RPC call to return a fake spent tx
+        # Mock the RPC call to return a fake spent tx (tuple cache entries)
         fake_rpc_result = {
             "external_tx": {
-                1: {"value": 31_000_000, "addresses": ["addr_ext"], "type": "p2sh"},
+                1: _make_cache_entry(31_000_000, ["addr_ext"], "p2sh", None),
             }
         }
         with patch.object(exp, "_batch_getrawtransaction", return_value=fake_rpc_result):
