@@ -17,6 +17,13 @@ else:
 
 import pydantic
 
+try:
+    from deltalake import WriterProperties
+
+    _WRITER_PROPERTIES = WriterProperties(compression="ZSTD", compression_level=5)
+except ImportError:
+    _WRITER_PROPERTIES = None
+
 from ...schema.resources.parquet.account import (
     ACCOUNT_SCHEMA_RAW,
     BINARY_COL_CONVERSION_MAP_ACCOUNT,
@@ -84,7 +91,11 @@ def optimize_table(
         # some sources say 1GB, default in the lib is 256MB, we take 512MB
         # we strive for a manageable amount of Memory consumption, so we limit
         # the concurrency
-        metrics = table.optimize.compact(target_size=512 * MB, max_concurrent_tasks=15)
+        metrics = table.optimize.compact(
+            target_size=512 * MB,
+            max_concurrent_tasks=15,
+            writer_properties=_WRITER_PROPERTIES,
+        )
         logger.debug(f"Compaction metrics: {metrics}")
 
     if mode in ["both", "vacuum"]:
@@ -217,6 +228,7 @@ class DeltaTableWriter:
                         schema_mode="merge",
                         predicate=predicate,
                         storage_options=storage_options,
+                        writer_properties=_WRITER_PROPERTIES,  # ty: ignore[invalid-argument-type]
                         **options,
                     )
                     not_written = False
