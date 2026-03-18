@@ -511,7 +511,7 @@ def _parse_btc_block_and_txs(raw_block):
 
 
 _GETRAWTX_BATCH_SIZE = 50
-_MAX_OUTPUT_CACHE_ENTRIES = 2**24  # ~16M txs, matching old LRUCache limit
+_MAX_OUTPUT_CACHE_ENTRIES = 2**23  # ~8M txs
 
 # Cache entry tuple layout (avoids dict overhead, saves ~200 bytes per entry)
 _CE_VALUE = 0
@@ -595,21 +595,32 @@ class BtcBlockExporter:
         return hashes
 
     def _fetch_single_block(self, block_hash):
-        """Fetch a single block via getblock(hash, verbosity) and parse it."""
+        """Fetch a single block via getblock(hash, verbosity) and parse it.
+
+        Returns (block, txs, rpc_seconds, parse_seconds).
+        """
         rpc_request = {
             "jsonrpc": "2.0",
             "method": "getblock",
             "params": [block_hash, self.verbosity],
             "id": 0,
         }
+        t0 = time.monotonic()
         results = self.client.make_batch_request([rpc_request])
+        t_rpc = time.monotonic() - t0
+
         r = results[0]
         if "error" in r and r["error"] is not None:
             raise ValueError(f"RPC error for getblock({block_hash}): {r['error']}")
         raw_block = r["result"]
         if raw_block is None:
             raise ValueError(f"Block not found for hash {block_hash}")
-        return _parse_btc_block_and_txs(raw_block)
+
+        t0 = time.monotonic()
+        block, txs = _parse_btc_block_and_txs(raw_block)
+        t_parse = time.monotonic() - t0
+
+        return block, txs, t_rpc, t_parse
 
     def _batch_getrawtransaction(self, tx_hashes):
         """Fetch decoded transactions via batched getrawtransaction calls.
@@ -775,6 +786,8 @@ class BtcBlockExporter:
         # Phase 2: fetch each block individually for maximum node parallelism
         all_blocks_by_num = {}
         all_txs_by_block = {}
+        total_rpc_s = 0.0
+        total_parse_s = 0.0
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
@@ -782,12 +795,15 @@ class BtcBlockExporter:
                 for bn, bh in zip(block_numbers, hashes)
             }
             for future in as_completed(futures):
-                block, txs = future.result()
+                block, txs, t_rpc, t_parse = future.result()
+                total_rpc_s += t_rpc
+                total_parse_s += t_parse
                 all_blocks_by_num[block["number"]] = block
                 for tx in txs:
                     all_txs_by_block.setdefault(tx["block_number"], []).append(tx)
 
         # Reassemble in block order
+        t0_reassemble = time.monotonic()
         blocks = []
         transactions = []
         for bn in block_numbers:
@@ -795,6 +811,7 @@ class BtcBlockExporter:
             block_txs = all_txs_by_block.get(bn, [])
             block_txs.sort(key=lambda t: t["index"])
             transactions.extend(block_txs)
+        t_reassemble = time.monotonic() - t0_reassemble
 
         t_blocks = time.monotonic() - t0
 
@@ -812,7 +829,9 @@ class BtcBlockExporter:
         blks_per_sec = f"{n_blocks / dt:.1f}" if dt > 0 else "inf"
         logger.info(
             f"[source-timing] UTXO {n_blocks} blocks ({start_block}-{end_block}): "
-            f"total={dt:.2f}s  fetch={t_blocks:.2f}s{resolve_str}  "
+            f"total={dt:.2f}s  fetch={t_blocks:.2f}s  "
+            f"rpc_sum={total_rpc_s:.2f}s  parse_sum={total_parse_s:.2f}s  "
+            f"reassemble={t_reassemble:.3f}s{resolve_str}  "
             f"{len(transactions)} txs  "
             f"({blks_per_sec} blk/s)"
         )
