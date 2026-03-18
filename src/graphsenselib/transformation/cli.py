@@ -114,20 +114,22 @@ def run_transformation(
                     f"truncate existing tables before running transformation."
                 )
 
-    # Resolve delta path from config if not overridden
+    # Resolve delta path and S3 credentials from config if not overridden
+    s3_config_name = None
     if delta_lake_path is None:
         ingest_cfg = ks_config.ingest_config
         if ingest_cfg and ingest_cfg.raw_keyspace_file_sinks:
             delta_sink = ingest_cfg.raw_keyspace_file_sinks.get("delta")
             if delta_sink:
                 delta_lake_path = delta_sink.directory
+                s3_config_name = delta_sink.s3_config
         if delta_lake_path is None:
             raise click.UsageError(
                 "No --delta-lake-path provided and no delta sink configured "
                 f"for {currency} in environment {env}."
             )
 
-    s3_credentials = config.get_s3_credentials()
+    s3_credentials = config.get_s3_credentials(s3_config_name)
     spark_config = config.spark_config or {}
 
     logger.info(
