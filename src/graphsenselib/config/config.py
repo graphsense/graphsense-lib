@@ -248,6 +248,15 @@ class AppConfig(GoodConf):
 
     s3_configs: Dict[str, Dict[str, str]] = Field(default_factory=lambda: {})
 
+    spark_config: Dict[str, str] = Field(
+        default_factory=lambda: {},
+        description=(
+            "Arbitrary Spark configuration properties passed to SparkSession.builder. "
+            "Use for master URL, executor memory, shuffle partitions, etc. "
+            "Example: {'spark.master': 'spark://host:7077', 'spark.executor.memory': '8g'}"
+        ),
+    )
+
     legacy_ingest: bool = Field(
         default=False,
         description="Use the legacy ingest pipeline instead of the new IngestRunner pipeline.",

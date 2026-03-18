@@ -80,6 +80,39 @@ def run_transformation(
     cassandra_username = env_config.username
     cassandra_password = env_config.password
 
+    # Safety check: verify the target keyspace block table is empty
+    # to prevent accidental data corruption from mixing sources
+    from cassandra.cluster import Cluster as CassCluster
+
+    host, _, port = cassandra_nodes[0].partition(":")
+    cass_port = int(port) if port else 9042
+    auth_provider = None
+    if cassandra_username and cassandra_password:
+        from cassandra.auth import PlainTextAuthProvider
+
+        auth_provider = PlainTextAuthProvider(
+            username=cassandra_username, password=cassandra_password
+        )
+    with CassCluster([host], port=cass_port, auth_provider=auth_provider) as cluster:
+        session = cluster.connect()
+        rows = list(
+            session.execute(
+                "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s",
+                (raw_keyspace,),
+            )
+        )
+        if rows:
+            # Keyspace exists — check if block table has data
+            block_row = session.execute(
+                f"SELECT block_id FROM {raw_keyspace}.block LIMIT 1"  # noqa: S608
+            ).one()
+            if block_row is not None:
+                raise click.ClickException(
+                    f"Keyspace {raw_keyspace} already contains data "
+                    f"(block table is not empty). Use a fresh keyspace or "
+                    f"truncate existing tables before running transformation."
+                )
+
     # Resolve delta path from config if not overridden
     if delta_lake_path is None:
         ingest_cfg = ks_config.ingest_config
@@ -94,6 +127,7 @@ def run_transformation(
             )
 
     s3_credentials = config.get_s3_credentials()
+    spark_config = config.spark_config or {}
 
     logger.info(
         f"Starting transformation: env={env}, currency={currency}, "
@@ -116,4 +150,5 @@ def run_transformation(
         end_block=end_block,
         local=local,
         s3_credentials=s3_credentials,
+        spark_config=spark_config,
     )

@@ -13,6 +13,7 @@ def create_spark_session(
     cassandra_password=None,
     raw_keyspace=None,
     s3_credentials=None,
+    spark_config=None,
 ):
     """Create and configure a SparkSession for reading Delta Lake and writing to Cassandra.
 
@@ -92,6 +93,11 @@ def create_spark_session(
             builder = builder.config(
                 "spark.hadoop.fs.s3a.connection.ssl.enabled", "false"
             )
+
+    # Apply user-provided Spark config overrides last (highest priority)
+    if spark_config:
+        for key, value in spark_config.items():
+            builder = builder.config(key, value)
 
     spark = builder.getOrCreate()
     logger.info(f"SparkSession created: {app_name} (local={local})")

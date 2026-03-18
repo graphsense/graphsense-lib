@@ -20,6 +20,7 @@ def run(
     local=False,
     tables=None,
     s3_credentials=None,
+    spark_config=None,
 ):
     from graphsenselib.transformation.spark import create_spark_session
 
@@ -33,6 +34,7 @@ def run(
         cassandra_password=cassandra_password,
         raw_keyspace=raw_keyspace,
         s3_credentials=s3_credentials,
+        spark_config=spark_config,
     )
 
     if schema_type == "account":
@@ -52,6 +54,12 @@ def run(
             raw_keyspace=raw_keyspace,
         )
     elif schema_type == "utxo":
+        if start_block != 0:
+            logger.warning(
+                f"UTXO transformation with start_block={start_block} > 0: "
+                f"tx_id values will only be correct if the Delta table "
+                f"contains all blocks from genesis (block 0)."
+            )
         from graphsenselib.transformation.utxo import UtxoTransformation
 
         transformation = UtxoTransformation(
