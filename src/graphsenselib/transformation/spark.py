@@ -4,6 +4,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Default Maven packages. On the iknaio cluster, hadoop-aws must match the
+# cluster's hadoop-common version (3.3.1). Override via spark_config
+# {"spark.jars.packages": "..."} if needed.
+SPARK_CASSANDRA_CONNECTOR = "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
+JODA_TIME = "joda-time:joda-time:2.10.10"
+DELTA_SPARK = "io.delta:delta-spark_2.12:3.2.1"
+HADOOP_AWS_DEFAULT = "org.apache.hadoop:hadoop-aws:3.3.1"
+
 
 def create_spark_session(
     app_name,
@@ -22,12 +30,6 @@ def create_spark_session(
     """
     from pyspark.sql import SparkSession
 
-    SPARK_CASSANDRA_CONNECTOR = (
-        "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
-    )
-    DELTA_SPARK = "io.delta:delta-spark_2.12:3.2.1"
-    HADOOP_AWS = "org.apache.hadoop:hadoop-aws:3.3.4"
-
     builder = SparkSession.builder.appName(app_name)
 
     if local:
@@ -37,9 +39,9 @@ def create_spark_session(
             .config("spark.sql.shuffle.partitions", "8")
         )
 
-    packages = [SPARK_CASSANDRA_CONNECTOR, DELTA_SPARK]
+    packages = [SPARK_CASSANDRA_CONNECTOR, JODA_TIME, DELTA_SPARK]
     if s3_credentials:
-        packages.append(HADOOP_AWS)
+        packages.append(HADOOP_AWS_DEFAULT)
 
     builder = (
         builder.config("spark.jars.packages", ",".join(packages))
@@ -94,7 +96,8 @@ def create_spark_session(
                 "spark.hadoop.fs.s3a.connection.ssl.enabled", "false"
             )
 
-    # Apply user-provided Spark config overrides last (highest priority)
+    # Apply user-provided Spark config overrides last (highest priority).
+    # This allows overriding spark.jars.packages, spark.master, etc.
     if spark_config:
         for key, value in spark_config.items():
             builder = builder.config(key, value)
