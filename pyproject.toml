@@ -148,11 +148,16 @@ web = [
     "gunicorn>=23.0.0",
 ]
 
+transformation = [
+    "pyspark>=3.5.0,<4.0.0",
+]
+
 all = [
     "graphsense-lib[ingest]",
     "graphsense-lib[conversions]",
     "graphsense-lib[tagpacks]",
     "graphsense-lib[web]",
+    "graphsense-lib[transformation]",
 ]
 
 [project.scripts]

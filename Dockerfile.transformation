@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1.4
+FROM python:3.11-slim
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV UV_ONLY_BINARY=1
+ENV GIT_PYTHON_REFRESH=quiet
+
+# Install system deps + Java JRE for PySpark
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    git \
+    git-lfs \
+    openssh-client \
+    libpq-dev \
+    default-jre-headless \
+    && rm -rf /var/lib/apt/lists/* \
+    && git lfs install
+
+RUN mkdir -p /opt/graphsense/
+ADD ./src/ /opt/graphsense/lib/src
+ADD ./.git/ /opt/graphsense/lib/.git
+ADD ./pyproject.toml /opt/graphsense/lib/pyproject.toml
+ADD ./uv.lock /opt/graphsense/lib/uv.lock
+ADD ./Makefile /opt/graphsense/lib/Makefile
+
+WORKDIR /opt/graphsense/lib/
+RUN make build
+RUN uv pip install $(ls dist/graphsense_lib-*.whl)[all,transformation] --system
+
+# Cleanup build tools
+RUN apt-get purge -y gcc g++ make cmake && apt-get autoremove -y
+RUN rm -rf /opt/graphsense/
+
+ENTRYPOINT ["graphsense-cli"]

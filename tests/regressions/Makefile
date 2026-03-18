@@ -34,7 +34,7 @@ REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 	generate-loki \
 	test-deltalake test-deltalake-comprehensive test-deltalake-perf test-deltalake-all \
 	clean-deltalake \
-	test-cassandra test-sink-consistency test-continuation \
+	test-cassandra test-sink-consistency test-continuation test-transformation \
 	test-ingest test clean
 
 # Build current from local path (requires GSLIB)
@@ -259,6 +259,17 @@ test-continuation:
 	uv run pytest tests/continuation/ -v -s -m continuation
 
 # ============================================================================
+# Transformation tests (Delta Lake → PySpark → Cassandra equivalence)
+# ============================================================================
+
+TRANSFORMATION_CURRENCIES ?= btc,eth
+
+test-transformation:
+	TRANSFORMATION_CURRENCIES=$(TRANSFORMATION_CURRENCIES) \
+	GSLIB_PATH=$$(cd ../.. && pwd) \
+	uv run pytest tests/transformation/ -v -s -m transformation
+
+# ============================================================================
 # Combined ingest test suite
 # ============================================================================
 
@@ -271,6 +282,7 @@ test-ingest:
 	$(MAKE) test-deltalake || ret=1; \
 	$(MAKE) test-sink-consistency || ret=1; \
 	$(MAKE) test-continuation || ret=1; \
+	$(MAKE) test-transformation || ret=1; \
 	exit $$ret
 
 # ============================================================================

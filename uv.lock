@@ -1620,6 +1620,7 @@ all = [
     { name = "protobuf" },
     { name = "psycopg2-binary" },
     { name = "pyarrow" },
+    { name = "pyspark" },
     { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -1681,6 +1682,9 @@ tagstore = [
     { name = "pyyaml-include" },
     { name = "sqlmodel" },
     { name = "tabulate" },
+]
+transformation = [
+    { name = "pyspark" },
 ]
 web = [
     { name = "anytree" },
@@ -1767,6 +1771,7 @@ requires-dist = [
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["tagpacks"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["tagstore"], marker = "extra == 'tagpacks'" },
+    { name = "graphsense-lib", extras = ["transformation"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["web"], marker = "extra == 'all'" },
     { name = "grpcio", marker = "extra == 'ingest'", specifier = ">=1.49.0" },
     { name = "gunicorn", marker = "extra == 'web'", specifier = ">=23.0.0" },
@@ -1785,6 +1790,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'ingest'", specifier = ">=23.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0,<2.13.0" },
+    { name = "pyspark", marker = "extra == 'transformation'", specifier = ">=3.5.0,<4.0.0" },
     { name = "python-dateutil", marker = "extra == 'web'", specifier = ">=2.9.0" },
     { name = "python-dotenv", marker = "extra == 'tagstore'", specifier = ">=1.0.1" },
     { name = "pyyaml", marker = "extra == 'tagstore'", specifier = ">=6.0" },
@@ -1803,7 +1809,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.32.0" },
     { name = "web3", marker = "extra == 'ingest'", specifier = ">=6.0.0" },
 ]
-provides-extras = ["ingest", "conversions", "tagstore", "tagpacks", "web", "all"]
+provides-extras = ["ingest", "conversions", "tagstore", "tagpacks", "web", "transformation", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3252,6 +3258,15 @@ wheels = [
 ]
 
 [[package]]
+name = "py4j"
+version = "0.10.9.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/31/0b210511177070c8d5d3059556194352e5753602fa64b85b7ab81ec1a009/py4j-0.10.9.9.tar.gz", hash = "sha256:f694cad19efa5bd1dee4f3e5270eb406613c974394035e5bfc4ec1aba870b879", size = 761089, upload-time = "2025-01-15T03:53:18.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/db/ea0203e495be491c85af87b66e37acfd3bf756fd985f87e46fc5e3bf022c/py4j-0.10.9.9-py2.py3-none-any.whl", hash = "sha256:c7c26e4158defb37b0bb124933163641a2ff6e3a3913f7811b0ddbe07ed61533", size = 203008, upload-time = "2025-01-15T03:53:15.648Z" },
+]
+
+[[package]]
 name = "pyarrow"
 version = "23.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3502,6 +3517,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/08/4f/7088417e5465c53a3
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bd/a5/ce97a778f096aaa27cfcb7ad09f1198cf73277dcab6c68a4b8f332d91e48/pyrepl-0.11.4-py3-none-any.whl", hash = "sha256:ac30d6340267a21c39e1b1934f92bca6b8735017d14b17e40f903b2d1563541d", size = 55596, upload-time = "2025-07-17T22:56:24.537Z" },
 ]
+
+[[package]]
+name = "pyspark"
+version = "3.5.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "py4j" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/80/5a/3806f44eb47387e8af803508cdd6bbc0df784febf4dc010700be04a1ff89/pyspark-3.5.8.tar.gz", hash = "sha256:54cca0767b21b40e3953ad1d30f8601c53abf9cbda763653289cdcfcac52313c", size = 317817299, upload-time = "2026-01-15T11:46:14.487Z" }
 
 [[package]]
 name = "pytest"

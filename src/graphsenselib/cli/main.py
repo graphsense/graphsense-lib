@@ -39,6 +39,14 @@ except ImportError:
     logger.debug("Web CLI not available.")
     web_cli_available = False
 
+try:
+    from ..transformation.cli import transformation_cli
+
+    transformation_cli_available = True
+except ImportError:
+    logger.debug("Transformation CLI not available (pyspark not installed).")
+    transformation_cli_available = False
+
 __author__ = "iknaio"
 __copyright__ = "iknaio"
 __license__ = "MIT"
@@ -73,6 +81,7 @@ def version_cmd():
         ]
         + ([tagpacktool_cli, tagstore_cli] if tagpacktool_cli_available else [])
         + ([web_cli] if web_cli_available else [])
+        + ([transformation_cli] if transformation_cli_available else [])
     ),
     epilog="GraphSense - https://graphsense.github.io/",
 )
