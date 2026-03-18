@@ -8,7 +8,7 @@ from typing import Optional, Union, List
 
 from bitarray import bitarray
 from bitarray.util import ba2int
-from cashaddress.convert import InvalidAddress as BCHInvalidAddress
+from graphsenselib.utils.bch import InvalidAddress as BCHInvalidAddress
 
 from .accountmodel import (
     eth_address_to_hex,
@@ -479,9 +479,9 @@ def validate_bch_address(address: str) -> bool:
     # CashAddr format
     if ":" in address:
         try:
-            from cashaddress import convert
+            from graphsenselib.utils.bch import bch_address_to_legacy
 
-            convert.to_legacy_address(address)
+            bch_address_to_legacy(address)
             return True
         except Exception:
             return False

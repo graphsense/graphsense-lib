@@ -9,7 +9,7 @@ from functools import wraps
 from typing import List, Dict, Optional
 
 import numpy as np
-from cashaddress.convert import to_legacy_address
+from graphsenselib.utils.bch import bch_address_to_legacy as to_legacy_address
 from psycopg2 import connect
 from psycopg2.errors import DeadlockDetected
 from psycopg2.extensions import AsIs, register_adapter

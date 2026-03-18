@@ -414,12 +414,6 @@ wheels = [
 ]
 
 [[package]]
-name = "cashaddress"
-version = "1.0.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9d/c9/41487115911cd36c28936645874eaf9981e26f4ca467d141c3ee3acba292/cashaddress-1.0.6.tar.gz", hash = "sha256:fa1bd9c8ceb0657393ba1ec365ca4be42c803a6ca0e330694e6f630a10d26fdd", size = 5680, upload-time = "2019-05-15T09:22:19.151Z" }
-
-[[package]]
 name = "cassandra-driver"
 version = "3.29.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1573,7 +1567,6 @@ dependencies = [
     { name = "base58" },
     { name = "bech32" },
     { name = "bitarray" },
-    { name = "cashaddress" },
     { name = "cassandra-driver" },
     { name = "click" },
     { name = "coincurve" },
@@ -1748,7 +1741,6 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1" },
     { name = "bech32", specifier = ">=1.2.0" },
     { name = "bitarray", specifier = ">=2.9" },
-    { name = "cashaddress", specifier = ">=1.0.6" },
     { name = "cassandra-driver", specifier = ">=3.27.0" },
     { name = "chainside-btcpy", marker = "extra == 'ingest'", specifier = ">=0.6" },
     { name = "click", specifier = ">=8.0.3" },
