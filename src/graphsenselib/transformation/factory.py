@@ -73,6 +73,8 @@ def run(
             f"Unsupported schema type '{schema_type}' for currency '{currency}'"
         )
 
-    transformation.run(start_block, end_block, tables=tables)
-    spark.stop()
-    logger.info("Transformation complete, SparkSession stopped.")
+    try:
+        transformation.run(start_block, end_block, tables=tables)
+    finally:
+        spark.stop()
+        logger.info("SparkSession stopped.")

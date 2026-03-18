@@ -3,6 +3,7 @@
 import logging
 
 import click
+import pyspark  # noqa: F401 — trigger ImportError early if pyspark not installed
 
 from graphsenselib.cli.common import require_currency, require_environment
 from graphsenselib.schema import GraphsenseSchemas

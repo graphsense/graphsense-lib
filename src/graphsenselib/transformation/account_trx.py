@@ -87,17 +87,13 @@ class AccountTrxTransformation:
         return df
 
     def _write_cassandra(self, df, table_name):
-        count = df.count()
-        if count == 0:
-            logger.warning(f"No rows to write for {table_name}, skipping.")
-            return
         (
             df.write.format("org.apache.spark.sql.cassandra")
             .options(table=table_name, keyspace=self.raw_keyspace)
             .mode("append")
             .save()
         )
-        logger.info(f"Wrote {count} rows to {self.raw_keyspace}.{table_name}")
+        logger.info(f"Wrote to {self.raw_keyspace}.{table_name}")
 
     def transform_block(self, start_block, end_block):
         from pyspark.sql import functions as F

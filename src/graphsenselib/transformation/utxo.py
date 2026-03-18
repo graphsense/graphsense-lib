@@ -54,6 +54,7 @@ class UtxoTransformation:
         self.tx_bucket_size = tx_bucket_size
         self.tx_hash_prefix_len = tx_hash_prefix_len
         self._tx_df_cache = None
+        self._tx_df_cache_range = None
 
     def _read_delta(self, table_name, start_block=None, end_block=None):
         path = f"{self.delta_lake_path}/{table_name}"
@@ -69,17 +70,13 @@ class UtxoTransformation:
         return df
 
     def _write_cassandra(self, df, table_name):
-        count = df.count()
-        if count == 0:
-            logger.warning(f"No rows to write for {table_name}, skipping.")
-            return
         (
             df.write.format("org.apache.spark.sql.cassandra")
             .options(table=table_name, keyspace=self.raw_keyspace)
             .mode("append")
             .save()
         )
-        logger.info(f"Wrote {count} rows to {self.raw_keyspace}.{table_name}")
+        logger.info(f"Wrote to {self.raw_keyspace}.{table_name}")
 
     def _get_tx_df_with_ids(self, start_block, end_block):
         """Read transaction Delta table and compute tx_id.
@@ -87,6 +84,10 @@ class UtxoTransformation:
         Results are cached for reuse across derived table generation.
         """
         if self._tx_df_cache is not None:
+            assert self._tx_df_cache_range == (start_block, end_block), (
+                f"tx_df cache range mismatch: cached {self._tx_df_cache_range} "
+                f"vs requested ({start_block}, {end_block})"
+            )
             return self._tx_df_cache
 
         from pyspark.sql import Window, functions as F
@@ -123,6 +124,7 @@ class UtxoTransformation:
 
         range_df = range_df.cache()
         self._tx_df_cache = range_df
+        self._tx_df_cache_range = (start_block, end_block)
         return range_df
 
     def _address_type_map_expr(self):
