@@ -43,7 +43,15 @@ def run(
             delta_lake_path=delta_lake_path,
             raw_keyspace=raw_keyspace,
         )
-    elif schema_type in ("utxo",):
+    elif schema_type == "account_trx":
+        from graphsenselib.transformation.account_trx import AccountTrxTransformation
+
+        transformation = AccountTrxTransformation(
+            spark=spark,
+            delta_lake_path=delta_lake_path,
+            raw_keyspace=raw_keyspace,
+        )
+    elif schema_type == "utxo":
         from graphsenselib.transformation.utxo import UtxoTransformation
 
         transformation = UtxoTransformation(

@@ -262,7 +262,7 @@ test-continuation:
 # Transformation tests (Delta Lake → PySpark → Cassandra equivalence)
 # ============================================================================
 
-TRANSFORMATION_CURRENCIES ?= btc,eth
+TRANSFORMATION_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
 
 test-transformation:
 	TRANSFORMATION_CURRENCIES=$(TRANSFORMATION_CURRENCIES) \

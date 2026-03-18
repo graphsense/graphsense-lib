@@ -27,8 +27,20 @@ TRANSFORMATION_RANGES: dict[str, list[TransformationRange]] = {
     "btc": [
         TransformationRange("genesis", 0, 200, "first real txs at block 170"),
     ],
+    "ltc": [
+        TransformationRange("genesis", 0, 500, "first spending tx at block 448"),
+    ],
+    "bch": [
+        TransformationRange("genesis", 0, 200, "shares BTC history"),
+    ],
+    "zec": [
+        TransformationRange("genesis", 0, 400, "first spending at 396"),
+    ],
     "eth": [
         TransformationRange("mid", 2_000_000, 2_000_010, "early PoW era"),
+    ],
+    "trx": [
+        TransformationRange("mid", 50_000_001, 50_000_010, "mid-chain era"),
     ],
 }
 
