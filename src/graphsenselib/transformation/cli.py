@@ -35,8 +35,8 @@ def transformation():
 @click.option(
     "--end-block",
     type=int,
-    required=True,
-    help="End block (inclusive).",
+    default=None,
+    help="End block (inclusive). If omitted, auto-detected from Delta Lake.",
 )
 @click.option(
     "--create-schema",

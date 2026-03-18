@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASESEM := 'v2.10.0+newingest6'
+RELEASESEM := 'v2.10.0+pysparkingest1'
 WEBAPISEM := 'v2.9.5'
 
 -include .env
