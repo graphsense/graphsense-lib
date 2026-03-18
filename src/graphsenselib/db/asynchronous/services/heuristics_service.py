@@ -265,14 +265,15 @@ async def calculate_heuristics(
 ) -> UtxoHeuristics:
     tasks = []
     keys = []
+    heuristics = set(heuristics)
 
-    if "one_time_change" in heuristics or "all" in heuristics:
+    if {"one_time_change", "all", "all_change"} & heuristics:
         tasks.append(_one_time_change_heuristic(tx, currency, get_address))
         keys.append("one_time_change")
-    if "direct_change" in heuristics or "all" in heuristics:
+    if {"direct_change", "all", "all_change"} & heuristics:
         tasks.append(_direct_change_heuristic(tx))
         keys.append("direct_change")
-    if "multi_input_change" in heuristics or "all" in heuristics:
+    if {"multi_input_change", "all", "all_change"} & heuristics:
         tasks.append(_multi_input_change_heuristic(tx, currency, get_address))
         keys.append("multi_input_change")
 
