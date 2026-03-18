@@ -154,10 +154,10 @@ def transformation_image():
         pytest.skip("No transformation configs available")
 
     gslib_path = configs[0].gslib_path
-    dockerfile = gslib_path / "Dockerfile.transformation"
+    dockerfile = gslib_path / "Dockerfile"
 
     if not dockerfile.exists():
-        pytest.fail(f"Dockerfile.transformation not found at {dockerfile}")
+        pytest.fail(f"Dockerfile not found at {dockerfile}")
 
     print(f"\nBuilding transformation Docker image from {gslib_path}...")
     result = subprocess.run(
