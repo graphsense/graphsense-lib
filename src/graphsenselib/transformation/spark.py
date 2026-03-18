@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 def create_spark_session(
     app_name,
     local,
-    cassandra_host,
+    cassandra_nodes,
     cassandra_username=None,
     cassandra_password=None,
     raw_keyspace=None,
@@ -49,9 +49,17 @@ def create_spark_session(
         )
     )
 
-    # Cassandra connection
-    host, _, port = cassandra_host.partition(":")
-    builder = builder.config("spark.cassandra.connection.host", host)
+    # Cassandra connection — accepts a list of "host:port" strings
+    if isinstance(cassandra_nodes, str):
+        cassandra_nodes = [cassandra_nodes]
+    hosts = []
+    port = None
+    for node in cassandra_nodes:
+        h, _, p = node.partition(":")
+        hosts.append(h)
+        if p and port is None:
+            port = p
+    builder = builder.config("spark.cassandra.connection.host", ",".join(hosts))
     if port:
         builder = builder.config("spark.cassandra.connection.port", port)
     if cassandra_username:

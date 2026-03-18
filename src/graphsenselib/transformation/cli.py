@@ -76,7 +76,7 @@ def run_transformation(
         GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="raw")
 
     raw_keyspace = ks_config.raw_keyspace_name
-    cassandra_host = env_config.cassandra_nodes[0]
+    cassandra_nodes = env_config.cassandra_nodes
     cassandra_username = env_config.username
     cassandra_password = env_config.password
 
@@ -108,7 +108,7 @@ def run_transformation(
         env=env,
         currency=currency,
         delta_lake_path=delta_lake_path,
-        cassandra_host=cassandra_host,
+        cassandra_nodes=cassandra_nodes,
         cassandra_username=cassandra_username,
         cassandra_password=cassandra_password,
         raw_keyspace=raw_keyspace,

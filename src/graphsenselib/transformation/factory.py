@@ -11,7 +11,7 @@ def run(
     env,
     currency,
     delta_lake_path,
-    cassandra_host,
+    cassandra_nodes,
     cassandra_username=None,
     cassandra_password=None,
     raw_keyspace=None,
@@ -28,7 +28,7 @@ def run(
     spark = create_spark_session(
         app_name=f"graphsense-transformation-{currency}-{env}",
         local=local,
-        cassandra_host=cassandra_host,
+        cassandra_nodes=cassandra_nodes,
         cassandra_username=cassandra_username,
         cassandra_password=cassandra_password,
         raw_keyspace=raw_keyspace,
