@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from typing import List
 
 import pandas as pd
@@ -7,7 +6,7 @@ import requests
 from simplejson.errors import JSONDecodeError
 
 from ..db import DbFactory
-from ..db.analytics import DATE_FORMAT
+from .utils import as_utc_datetime, normalize_date_bounds
 
 MIN_START = "2010-10-17"  # no CoinDesk exchange rates available before
 logger = logging.getLogger(__name__)
@@ -101,22 +100,26 @@ def fetch_impl(
     dry_run,
     abort_on_gaps,
 ):
-    if datetime.fromisoformat(start_date) < datetime.fromisoformat(MIN_START):
+    if as_utc_datetime(start_date) < as_utc_datetime(MIN_START):
         logger.warning(f"Warning: Exchange rates not available before {MIN_START}")
-        start_date = MIN_START
 
+    most_recent_date = None
     # query most recent data in 'exchange_rates' table
-    if not force:
+    if not force and db:
         logger.info(f"Get last imported rate from {db.raw.get_keyspace()}")
         most_recent_date = db.raw.get_last_exchange_rate_date(table=table)
-        if most_recent_date is not None:
-            start_date = most_recent_date.strftime(DATE_FORMAT)
+
+    start_dt, end_dt = normalize_date_bounds(
+        start_date, end_date, MIN_START, most_recent_date
+    )
+    start_date = start_dt.date().isoformat()
+    end_date = end_dt.date().isoformat()
 
     logger.info(f"*** Starting exchange rate ingest for {currency} ***")
     logger.info(f"Start date: {start_date}")
     logger.info(f"End date: {end_date}")
 
-    if datetime.fromisoformat(start_date) > datetime.fromisoformat(end_date):
+    if start_dt > end_dt:
         logger.error("Error: start date after end date.")
         raise SystemExit(1)
 
