@@ -254,7 +254,7 @@ def run_transformation(
         "-v", f"{config_path}:/config.yaml:ro",
         "-e", "GRAPHSENSE_CONFIG_YAML=/config.yaml",
         image_name,
-        "transformation", "run",
+        "graphsense-cli", "transformation", "run",
         "--local",
         "--create-schema",
         "-e", "test",
