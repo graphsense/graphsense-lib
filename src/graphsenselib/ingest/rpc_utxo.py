@@ -550,7 +550,7 @@ class BtcBlockExporter:
     def __init__(
         self,
         provider_uri,
-        max_workers=10,
+        max_workers=5,
         timeout=300,
         verbosity=2,
         resolve_inputs=True,
