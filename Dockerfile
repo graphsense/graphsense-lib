@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-FROM  python:3.11-slim
+FROM  python:3.13-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 LABEL org.opencontainers.image.title="graphsense-lib"
 LABEL org.opencontainers.image.maintainer="contact@iknaio.com"
@@ -37,7 +37,7 @@ ADD ./uv.lock /opt/graphsense/lib/
 
 WORKDIR /opt/graphsense/lib/
 RUN make build
-RUN uv pip install $(ls dist/graphsense_lib-*.whl)[all] --system
+RUN uv pip install $(ls dist/graphsense_lib-*.whl)[all,transformation] --system
 RUN uv pip install gunicorn --system
 RUN mkdir -p /opt/duckdb/extensions \
     && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')"

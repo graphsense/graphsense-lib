@@ -55,12 +55,20 @@ def transformation():
     help="Run Spark in local mode with local[*].",
 )
 def run_transformation(
-    env, currency, start_block, end_block, create_schema, delta_lake_path, local
+    env,
+    currency,
+    start_block,
+    end_block,
+    create_schema,
+    delta_lake_path,
+    local,
 ):
     """Run PySpark transformation from Delta Lake to Cassandra raw keyspace.
+
+    For cluster mode, Spark workers must have Python >= 3.10 (matching the driver).
+    Install via: uv python install 3.11 on each worker node, then set
+    spark.pyspark.python in spark_config.
     \f
-    Reads raw blockchain data from Delta Lake tables and writes it to the
-    Cassandra raw keyspace using the spark-cassandra-connector.
     """
     from graphsenselib.config import get_config
 
