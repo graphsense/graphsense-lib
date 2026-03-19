@@ -53,10 +53,11 @@ _VARINT_COLS_TRACE = {"value"}
 
 
 def _binary_to_bigint_string_udf():
-    """Create a UDF converting big-endian binary bytes to string representation.
+    """Create a UDF converting big-endian binary bytes to decimal string.
 
-    The spark-cassandra-connector converts String to BigInteger for varint columns.
-    This avoids Spark's DecimalType 38-digit precision limit.
+    This is a Python UDF that runs on executors. Requires matching Python
+    versions between driver and workers. Set spark.pyspark.python in
+    spark_config if versions differ.
     """
     from pyspark.sql import functions as F
     from pyspark.sql.types import StringType
@@ -71,7 +72,7 @@ def _binary_to_bigint_string_udf():
 
 
 def _convert_varint_cols(df, varint_cols):
-    """Convert binary varint columns to string representation for Cassandra.
+    """Convert binary varint columns to string for Cassandra varint.
 
     Only converts columns that are actually BinaryType — integer columns
     are left as-is (the connector handles int→varint natively).
