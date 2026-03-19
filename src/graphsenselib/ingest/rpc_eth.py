@@ -64,7 +64,29 @@ class BatchRpcClient:
             self._local.session = requests.Session()
         return self._local.session
 
-    def make_batch_request(self, rpc_requests, max_retries=3):
+    def _reset_session(self):
+        """Close and discard the current thread-local session."""
+        session = getattr(self._local, "session", None)
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+            del self._local.session
+
+    def _is_connection_error(self, exc):
+        """Return True if the exception indicates a broken/incomplete connection."""
+        from requests.exceptions import ConnectionError, ChunkedEncodingError
+
+        if isinstance(exc, (ConnectionError, ChunkedEncodingError)):
+            return True
+        # IncompleteRead surfaces inside ConnectionError or on its own
+        exc_str = str(exc)
+        if "IncompleteRead" in exc_str or "Connection broken" in exc_str:
+            return True
+        return False
+
+    def make_batch_request(self, rpc_requests, max_retries=5):
         """POST a JSON-RPC batch and return list of responses."""
         session = self._get_session()
         last_error: Exception = Exception("no retries attempted")
@@ -83,8 +105,11 @@ class BatchRpcClient:
                 return result
             except Exception as e:
                 last_error = e
+                if self._is_connection_error(e):
+                    self._reset_session()
+                    session = self._get_session()
                 if attempt < max_retries - 1:
-                    wait = 2**attempt
+                    wait = min(2**attempt, 30)
                     logger.warning(
                         f"Batch RPC retry {attempt + 1}/{max_retries}: {e}. "
                         f"Waiting {wait}s."
@@ -92,8 +117,8 @@ class BatchRpcClient:
                     time.sleep(wait)
         raise last_error
 
-    def make_request(self, method, params):
-        """Single JSON-RPC call. Returns the 'result' field."""
+    def make_request(self, method, params, max_retries=5):
+        """Single JSON-RPC call with retries. Returns the 'result' field."""
         session = self._get_session()
         payload = {
             "jsonrpc": "2.0",
@@ -101,17 +126,35 @@ class BatchRpcClient:
             "params": params,
             "id": 1,
         }
-        response = session.post(
-            self.provider_uri,
-            data=orjson.dumps(payload),
-            headers={"Content-Type": "application/json"},
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        data = orjson.loads(response.content)
-        if data.get("error") is not None:
-            raise ValueError(f"RPC error for {method}: {data['error']}")
-        return data["result"]
+        last_error: Exception = Exception("no retries attempted")
+        for attempt in range(max_retries):
+            try:
+                response = session.post(
+                    self.provider_uri,
+                    data=orjson.dumps(payload),
+                    headers={"Content-Type": "application/json"},
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = orjson.loads(response.content)
+                if data.get("error") is not None:
+                    raise ValueError(f"RPC error for {method}: {data['error']}")
+                return data["result"]
+            except ValueError:
+                raise  # RPC-level errors are not retryable
+            except Exception as e:
+                last_error = e
+                if self._is_connection_error(e):
+                    self._reset_session()
+                    session = self._get_session()
+                if attempt < max_retries - 1:
+                    wait = min(2**attempt, 30)
+                    logger.warning(
+                        f"RPC retry {attempt + 1}/{max_retries} for {method}: "
+                        f"{e}. Waiting {wait}s."
+                    )
+                    time.sleep(wait)
+        raise last_error
 
     def get_latest_block_number(self):
         """eth_blockNumber -> int."""
