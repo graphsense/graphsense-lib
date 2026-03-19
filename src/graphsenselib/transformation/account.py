@@ -56,8 +56,8 @@ def _binary_to_bigint_string_udf():
     """Create a UDF converting big-endian binary bytes to decimal string.
 
     This is a Python UDF that runs on executors. Requires matching Python
-    versions between driver and workers — the driver ships its environment
-    to workers via spark.archives (see create_spark_session).
+    versions between driver and workers. Set spark.pyspark.python in
+    spark_config if versions differ.
     """
     from pyspark.sql import functions as F
     from pyspark.sql.types import StringType

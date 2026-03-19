@@ -1,10 +1,6 @@
 """SparkSession factory for Delta Lake → Cassandra transformation."""
 
 import logging
-import os
-import subprocess
-import sys
-import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -100,15 +96,6 @@ def create_spark_session(
                 "spark.hadoop.fs.s3a.connection.ssl.enabled", "false"
             )
 
-    # Ship the driver's Python environment to workers so Python UDFs
-    # use the same version. Only needed in cluster mode (not local).
-    if not local:
-        archive_path = _get_python_archive()
-        if archive_path:
-            builder = builder.config("spark.archives", f"{archive_path}#__pyenv__")
-            builder = builder.config("spark.pyspark.python", "./__pyenv__/bin/python")
-            logger.info(f"Shipping Python environment to workers: {archive_path}")
-
     # Apply user-provided Spark config overrides last (highest priority).
     # This allows overriding spark.jars.packages, spark.master, etc.
     if spark_config:
@@ -118,35 +105,3 @@ def create_spark_session(
     spark = builder.getOrCreate()
     logger.info(f"SparkSession created: {app_name} (local={local})")
     return spark
-
-
-def _get_python_archive():
-    """Create a tarball of the current Python environment for shipping to workers.
-
-    Uses venv-pack if available (fast, proper relocation), otherwise falls
-    back to tarring sys.prefix directly. Returns the archive path or None
-    if packing fails.
-    """
-    archive_dir = tempfile.gettempdir()
-    archive_path = os.path.join(archive_dir, "pyspark_pyenv.tar.gz")
-
-    if os.path.exists(archive_path):
-        logger.info(f"Reusing existing Python archive: {archive_path}")
-        return archive_path
-
-    prefix = sys.prefix
-    logger.info(f"Packing Python environment from {prefix}")
-
-    # tar the environment — works without extra dependencies
-    result = subprocess.run(
-        ["tar", "czf", archive_path, "-C", prefix, "."],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        logger.warning(f"Failed to pack Python environment: {result.stderr}")
-        return None
-
-    size_mb = os.path.getsize(archive_path) / 1024 / 1024
-    logger.info(f"Python archive created: {archive_path} ({size_mb:.0f} MB)")
-    return archive_path
