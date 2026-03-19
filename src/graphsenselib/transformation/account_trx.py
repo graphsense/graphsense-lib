@@ -199,14 +199,19 @@ class AccountTrxTransformation:
         self._write_cassandra(df, "trc10")
 
     def write_configuration(self):
-        from pyspark.sql import Row
+        from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
-        row = Row(
-            id=self.raw_keyspace,
-            block_bucket_size=self.block_bucket_size,
-            tx_prefix_length=self.tx_hash_prefix_len,
+        schema = StructType(
+            [
+                StructField("id", StringType(), False),
+                StructField("block_bucket_size", IntegerType(), False),
+                StructField("tx_prefix_length", IntegerType(), False),
+            ]
         )
-        df = self.spark.createDataFrame([row])
+        df = self.spark.createDataFrame(
+            [(self.raw_keyspace, self.block_bucket_size, self.tx_hash_prefix_len)],
+            schema,
+        )
         self._write_cassandra(df, "configuration")
 
     def run(self, start_block, end_block, tables=None):

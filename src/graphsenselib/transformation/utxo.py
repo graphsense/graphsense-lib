@@ -109,23 +109,33 @@ class UtxoTransformation:
             (full_df["block_id"] >= start_block) & (full_df["block_id"] <= end_block)
         )
 
-        # Compute per-block tx offsets to avoid global SinglePartition exchange.
-        # block_tx_counts is small (~one row per block) so its window is fast.
-        block_tx_counts = range_df.groupBy("block_id").agg(
-            F.count("*").alias("_tx_count")
+        # Compute per-block tx counts (parallel), then cumulative offsets on
+        # the driver to avoid any SinglePartition window operation.
+        block_rows = (
+            range_df.groupBy("block_id")
+            .agg(F.count("*").alias("_tx_count"))
+            .orderBy("block_id")
+            .collect()
         )
-        w_block = Window.orderBy("block_id").rowsBetween(Window.unboundedPreceding, -1)
-        block_tx_counts = block_tx_counts.withColumn(
-            "_block_tx_offset",
-            F.coalesce(F.sum("_tx_count").over(w_block), F.lit(0)).cast("long"),
-        )
+        cumulative = 0
+        offset_rows = []
+        for row in block_rows:
+            offset_rows.append((row["block_id"], cumulative))
+            cumulative += row["_tx_count"]
 
-        # Broadcast join back (block_tx_counts is tiny) and compute tx_id
-        # using a partitioned window (fully parallel across executors).
-        range_df = range_df.join(
-            F.broadcast(block_tx_counts.select("block_id", "_block_tx_offset")),
-            "block_id",
+        from pyspark.sql.types import IntegerType, LongType, StructField, StructType
+
+        offset_schema = StructType(
+            [
+                StructField("block_id", IntegerType(), False),
+                StructField("_block_tx_offset", LongType(), False),
+            ]
         )
+        offset_df = self.spark.createDataFrame(offset_rows, offset_schema)
+
+        # Broadcast join back and compute tx_id using a partitioned window
+        # (fully parallel across executors).
+        range_df = range_df.join(F.broadcast(offset_df), "block_id")
         w_within_block = Window.partitionBy("block_id").orderBy("index")
         range_df = range_df.withColumn(
             "tx_id",
@@ -346,19 +356,38 @@ class UtxoTransformation:
         self._write_cassandra(result, "transaction_by_tx_prefix")
 
     def write_configuration(self):
-        from pyspark.sql import Row
+        from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
-        row = Row(
-            id=self.raw_keyspace,
-            block_bucket_size=self.block_bucket_size,
-            tx_prefix_length=self.tx_hash_prefix_len,
-            tx_bucket_size=self.tx_bucket_size,
+        schema = StructType(
+            [
+                StructField("id", StringType(), False),
+                StructField("block_bucket_size", IntegerType(), False),
+                StructField("tx_prefix_length", IntegerType(), False),
+                StructField("tx_bucket_size", IntegerType(), False),
+            ]
         )
-        df = self.spark.createDataFrame([row])
+        df = self.spark.createDataFrame(
+            [
+                (
+                    self.raw_keyspace,
+                    self.block_bucket_size,
+                    self.tx_hash_prefix_len,
+                    self.tx_bucket_size,
+                )
+            ],
+            schema,
+        )
         self._write_cassandra(df, "configuration")
 
     def write_summary_statistics(self, start_block, end_block):
-        from pyspark.sql import Row, functions as F
+        from pyspark.sql import functions as F
+        from pyspark.sql.types import (
+            IntegerType,
+            LongType,
+            StringType,
+            StructField,
+            StructType,
+        )
 
         block_df = self._read_delta("block", start_block, end_block)
         tx_df = self._get_tx_df_with_ids(start_block, end_block)
@@ -369,13 +398,25 @@ class UtxoTransformation:
         max_ts_row = block_df.agg(F.max("timestamp").alias("ts")).collect()
         timestamp = max_ts_row[0]["ts"] if max_ts_row else 0
 
-        row = Row(
-            id=self.raw_keyspace,
-            no_blocks=int(no_blocks),
-            no_txs=int(no_txs),
-            timestamp=int(timestamp) if timestamp else 0,
+        schema = StructType(
+            [
+                StructField("id", StringType(), False),
+                StructField("no_blocks", LongType(), False),
+                StructField("no_txs", LongType(), False),
+                StructField("timestamp", IntegerType(), False),
+            ]
         )
-        df = self.spark.createDataFrame([row])
+        df = self.spark.createDataFrame(
+            [
+                (
+                    self.raw_keyspace,
+                    int(no_blocks),
+                    int(no_txs),
+                    int(timestamp) if timestamp else 0,
+                )
+            ],
+            schema,
+        )
         self._write_cassandra(df, "summary_statistics")
 
     def run(self, start_block, end_block, tables=None):
