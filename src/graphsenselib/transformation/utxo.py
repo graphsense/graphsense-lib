@@ -109,10 +109,35 @@ class UtxoTransformation:
             (full_df["block_id"] >= start_block) & (full_df["block_id"] <= end_block)
         )
 
-        w = Window.orderBy("block_id", "index")
-        range_df = range_df.withColumn(
-            "tx_id", (F.row_number().over(w) - 1 + tx_offset).cast("long")
+        # Compute per-block tx offsets to avoid global SinglePartition exchange.
+        # block_tx_counts is small (~one row per block) so its window is fast.
+        block_tx_counts = range_df.groupBy("block_id").agg(
+            F.count("*").alias("_tx_count")
         )
+        w_block = Window.orderBy("block_id").rowsBetween(Window.unboundedPreceding, -1)
+        block_tx_counts = block_tx_counts.withColumn(
+            "_block_tx_offset",
+            F.coalesce(F.sum("_tx_count").over(w_block), F.lit(0)).cast("long"),
+        )
+
+        # Broadcast join back (block_tx_counts is tiny) and compute tx_id
+        # using a partitioned window (fully parallel across executors).
+        range_df = range_df.join(
+            F.broadcast(block_tx_counts.select("block_id", "_block_tx_offset")),
+            "block_id",
+        )
+        w_within_block = Window.partitionBy("block_id").orderBy("index")
+        range_df = range_df.withColumn(
+            "tx_id",
+            (
+                F.col("_block_tx_offset")
+                + F.row_number().over(w_within_block)
+                - 1
+                + tx_offset
+            ).cast("long"),
+        )
+        range_df = range_df.drop("_block_tx_offset")
+
         range_df = range_df.withColumn(
             "tx_id_group",
             F.floor(F.col("tx_id") / self.tx_bucket_size).cast("int"),
