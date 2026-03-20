@@ -1,6 +1,7 @@
 """SparkSession factory for Delta Lake → Cassandra transformation."""
 
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,12 @@ def create_spark_session(
     if spark_config:
         for key, value in spark_config.items():
             builder = builder.config(key, value)
+
+    # PySpark's SparkContext reads PYSPARK_PYTHON from os.environ (not from
+    # Spark config) to determine which Python binary workers use. Mirror the
+    # spark.pyspark.python config value to the env var so it actually works.
+    if spark_config and "spark.pyspark.python" in spark_config:
+        os.environ["PYSPARK_PYTHON"] = spark_config["spark.pyspark.python"]
 
     spark = builder.getOrCreate()
     logger.info(f"SparkSession created: {app_name} (local={local})")
