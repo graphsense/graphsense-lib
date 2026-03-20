@@ -69,7 +69,9 @@ class UtxoTransformation:
             )
         return df
 
-    def _write_cassandra(self, df, table_name):
+    def _write_cassandra(self, df, table_name, partition_key=None):
+        if partition_key and partition_key in df.columns:
+            df = df.repartition(partition_key)
         (
             df.write.format("org.apache.spark.sql.cassandra")
             .options(table=table_name, keyspace=self.raw_keyspace)
@@ -249,7 +251,7 @@ class UtxoTransformation:
             "coinjoin",
         )
 
-        self._write_cassandra(result, "transaction")
+        self._write_cassandra(result, "transaction", partition_key="tx_id_group")
 
     def transform_spending_tables(self, start_block, end_block):
         """Derive transaction_spent_in and transaction_spending from base tx data.
@@ -296,7 +298,9 @@ class UtxoTransformation:
             "spending_tx_hash",
             "spending_input_index",
         )
-        self._write_cassandra(spent_in, "transaction_spent_in")
+        self._write_cassandra(
+            spent_in, "transaction_spent_in", partition_key="spent_tx_prefix"
+        )
 
         # transaction_spending
         spending = refs.select(
@@ -306,7 +310,9 @@ class UtxoTransformation:
             "spent_tx_hash",
             "spent_output_index",
         )
-        self._write_cassandra(spending, "transaction_spending")
+        self._write_cassandra(
+            spending, "transaction_spending", partition_key="spending_tx_prefix"
+        )
 
     def transform_block_transactions(self, start_block, end_block):
         """Derive block_transactions from base tx data.
@@ -339,7 +345,9 @@ class UtxoTransformation:
             F.floor(F.col("block_id") / self.block_bucket_size).cast("int"),
         )
 
-        self._write_cassandra(block_txs, "block_transactions")
+        self._write_cassandra(
+            block_txs, "block_transactions", partition_key="block_id_group"
+        )
 
     def transform_transaction_by_tx_prefix(self, start_block, end_block):
         """Derive transaction_by_tx_prefix from base tx data."""
@@ -353,7 +361,9 @@ class UtxoTransformation:
             F.col("tx_id").cast("long"),
         )
 
-        self._write_cassandra(result, "transaction_by_tx_prefix")
+        self._write_cassandra(
+            result, "transaction_by_tx_prefix", partition_key="tx_prefix"
+        )
 
     def write_configuration(self):
         from pyspark.sql.types import IntegerType, StringType, StructField, StructType
@@ -420,6 +430,8 @@ class UtxoTransformation:
         self._write_cassandra(df, "summary_statistics")
 
     def run(self, start_block, end_block, tables=None):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         all_tables = [
             "block",
             "transaction",
@@ -443,17 +455,49 @@ class UtxoTransformation:
             logger.info("Transforming transaction...")
             self.transform_transaction(start_block, end_block)
 
+        # Derived tables all read from the cached tx DataFrame and write to
+        # independent Cassandra tables, so they can run in parallel.
+        parallel_tasks = []
         if "transaction_spent_in" in targets or "transaction_spending" in targets:
-            logger.info("Transforming spending tables...")
-            self.transform_spending_tables(start_block, end_block)
-
+            parallel_tasks.append(
+                (
+                    "spending tables",
+                    self.transform_spending_tables,
+                    start_block,
+                    end_block,
+                )
+            )
         if "block_transactions" in targets:
-            logger.info("Transforming block_transactions...")
-            self.transform_block_transactions(start_block, end_block)
-
+            parallel_tasks.append(
+                (
+                    "block_transactions",
+                    self.transform_block_transactions,
+                    start_block,
+                    end_block,
+                )
+            )
         if "transaction_by_tx_prefix" in targets:
-            logger.info("Transforming transaction_by_tx_prefix...")
-            self.transform_transaction_by_tx_prefix(start_block, end_block)
+            parallel_tasks.append(
+                (
+                    "transaction_by_tx_prefix",
+                    self.transform_transaction_by_tx_prefix,
+                    start_block,
+                    end_block,
+                )
+            )
+
+        if parallel_tasks:
+            logger.info(
+                f"Running {len(parallel_tasks)} derived table transforms in parallel..."
+            )
+            with ThreadPoolExecutor(max_workers=len(parallel_tasks)) as pool:
+                futures = {}
+                for name, fn, sb, eb in parallel_tasks:
+                    futures[pool.submit(fn, sb, eb)] = name
+                for future in as_completed(futures):
+                    name = futures[future]
+                    future.result()
+                    logger.info(f"Parallel transform complete: {name}")
 
         logger.info("Writing configuration...")
         self.write_configuration()

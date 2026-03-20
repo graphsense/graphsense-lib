@@ -75,6 +75,21 @@ def create_spark_session(
             "spark.cassandra.output.consistency.level", "LOCAL_QUORUM"
         )
 
+    # Cassandra write tuning — reduce pressure, avoid timeouts
+    builder = (
+        builder.config("spark.cassandra.output.concurrent.writes", "3")
+        .config("spark.cassandra.output.batch.size.bytes", "2048")
+        .config("spark.cassandra.connection.timeoutMS", "300000")
+        .config("spark.cassandra.output.throughput_mb_per_sec", "50")
+    )
+
+    # Spark performance defaults
+    builder = (
+        builder.config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    )
+
     # S3/MinIO configuration
     if s3_credentials:
         endpoint = s3_credentials.get("AWS_ENDPOINT_URL", "")
