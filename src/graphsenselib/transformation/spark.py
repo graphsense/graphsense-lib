@@ -84,10 +84,8 @@ def create_spark_session(
     )
 
     # Spark performance defaults
-    builder = (
-        builder.config("spark.sql.adaptive.enabled", "true")
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
-        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    builder = builder.config("spark.sql.adaptive.enabled", "true").config(
+        "spark.sql.adaptive.coalescePartitions.enabled", "true"
     )
 
     # S3/MinIO configuration
