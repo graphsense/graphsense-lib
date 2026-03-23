@@ -1432,7 +1432,7 @@ def validate_call_compat(func):
     def wrapper(*args, **kwargs):
         # Capture async_req before removing it
         async_req = kwargs.pop('async_req', False)
-        kwargs.pop('_preload_content', None)
+        preload_content = kwargs.pop('_preload_content', None)
         kwargs.pop('_return_http_data_only', None)
         # Remap legacy 'body' kwarg to 'request_body' (v5 -> v7 migration)
         if 'body' in kwargs and 'request_body' not in kwargs:
@@ -1474,6 +1474,13 @@ def validate_call_compat(func):
                         UserWarning
                     )
             # No thread pool available, fall through to sync call
+
+        # Handle _preload_content=False by routing to _without_preload_content variant
+        if preload_content is False:
+            func_name = validated_func.__name__
+            without_preload = func_name + '_without_preload_content'
+            if args and hasattr(args[0], without_preload):
+                return getattr(args[0], without_preload)(*args[1:], **kwargs)
 
         return validated_func(*args, **kwargs)
     return wrapper

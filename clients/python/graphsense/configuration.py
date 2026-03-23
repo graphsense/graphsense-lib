@@ -533,8 +533,8 @@ conf = graphsense.Configuration(
         return "Python SDK Debug Report:\n"\
                "OS: {env}\n"\
                "Python Version: {pyversion}\n"\
-               "Version of the API: 2.9.7\n"\
-               "SDK Package Version: 2.9.7".\
+               "Version of the API: 2.9.8\n"\
+               "SDK Package Version: 2.9.8".\
                format(env=sys.platform, pyversion=sys.version)
 
     def get_host_settings(self) -> List[HostSetting]:

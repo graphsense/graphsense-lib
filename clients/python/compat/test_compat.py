@@ -556,6 +556,56 @@ def test_bulk_body_kwarg_compat():
     print("  Bulk body kwarg compat: PASSED")
 
 
+def test_preload_content_false():
+    """Regression: _preload_content=False is silently dropped.
+
+    Users calling bulk_csv(..., _preload_content=False) expect a raw
+    response stream for pd.read_csv(). The wrapper was stripping this
+    kwarg, causing the decoded string to be returned instead, which
+    pd.read_csv() then tried to open as a filename -> FileNotFoundError.
+    """
+    print("Testing _preload_content=False routing...")
+
+    from graphsense.api.bulk_api import validate_call_compat
+
+    @validate_call_compat
+    def mock_bulk_csv(self, currency: str, operation: str, num_pages: int,
+                      request_body: dict) -> str:
+        return "decoded_string"
+
+    @validate_call_compat
+    def mock_bulk_csv_without_preload_content(self, currency: str, operation: str,
+                                               num_pages: int,
+                                               request_body: dict) -> str:
+        return "raw_stream"
+
+    class MockSelf:
+        pass
+
+    MockSelf.mock_bulk_csv = mock_bulk_csv
+    MockSelf.mock_bulk_csv_without_preload_content = mock_bulk_csv_without_preload_content
+
+    mock = MockSelf()
+
+    # Without _preload_content: returns decoded string (default)
+    result = mock.mock_bulk_csv("btc", "get_block", 1, {"height": [1]})
+    assert result == "decoded_string", f"Expected decoded_string, got {result}"
+
+    # With _preload_content=False: should route to _without_preload_content
+    result2 = mock.mock_bulk_csv("btc", "get_block", 1,
+                                  {"height": [1]}, _preload_content=False)
+    assert result2 == "raw_stream", (
+        f"_preload_content=False should route to _without_preload_content, got {result2}"
+    )
+
+    # With _preload_content=True: should use normal path
+    result3 = mock.mock_bulk_csv("btc", "get_block", 1,
+                                  {"height": [1]}, _preload_content=True)
+    assert result3 == "decoded_string", f"Expected decoded_string, got {result3}"
+
+    print("  _preload_content=False routing: PASSED")
+
+
 def run_all_tests():
     """Run all compatibility tests."""
     print("=" * 60)
@@ -574,6 +624,7 @@ def run_all_tests():
         test_user_code_simulation()
         test_arithmetic_with_height()
         test_bulk_body_kwarg_compat()
+        test_preload_content_false()
 
         print("=" * 60)
         print("ALL TESTS PASSED!")
