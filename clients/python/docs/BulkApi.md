@@ -47,7 +47,7 @@ with graphsense.ApiClient(configuration) as api_client:
     # example passing only required values which don't have defaults set
     try:
         # Get data as CSV in bulk
-        api_response = api_instance.bulk_csv(currency, operation, body=body, num_pages=1)
+        api_response = api_instance.bulk_csv(currency, operation, 1, body)
         pprint(api_response)
     except graphsense.ApiException as e:
         print("Exception when calling BulkApi->bulk_csv: %s\n" % e)
@@ -58,10 +58,8 @@ with graphsense.ApiClient(configuration) as api_client:
         pandas.read_csv(
             api_instance.bulk_csv(currency,
                                   operation,
-                                  body=body,
-                                  num_pages=1,
-                                  _preload_content=False # set to False to omit decoding
-                                  ))
+                                  1,
+                                  body))
     pprint(dataframe)
 ```
 

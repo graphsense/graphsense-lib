@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
+## [2.9.11] 2026-03-23
+
+### Library (v2.9.11)
+
+#### Fixed
+- Fixed handling of "body" parameter in bulk requests of python client
+
+### Web API + Python client (webapi-2.9.6)
+no changes
+
+
 ## [2.9.10] 2026-03-13
 
 ### Library (v2.9.10)

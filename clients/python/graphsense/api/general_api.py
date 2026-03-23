@@ -62,6 +62,9 @@ def validate_call_compat(func):
         async_req = kwargs.pop('async_req', False)
         kwargs.pop('_preload_content', None)
         kwargs.pop('_return_http_data_only', None)
+        # Remap legacy 'body' kwarg to 'request_body' (v5 -> v7 migration)
+        if 'body' in kwargs and 'request_body' not in kwargs:
+            kwargs['request_body'] = kwargs.pop('body')
         # Convert datetime to date string for date parameters (backward compatibility)
         # Preserve full ISO 8601 format when datetime has time/timezone info
         for key in list(kwargs.keys()):
