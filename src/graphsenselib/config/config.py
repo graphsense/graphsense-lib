@@ -52,6 +52,80 @@ CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
 )
 
 
+def get_default_data_configuration(
+    currency: str, keyspace_type: str
+) -> Dict[str, object]:
+    """Get default data_configuration for a specific currency and keyspace type.
+
+    Args:
+        currency: The currency/network code (e.g., 'btc', 'eth', 'trx')
+        keyspace_type: Either 'raw' or 'transformed'
+
+    Returns:
+        Dictionary with default data_configuration for the given currency and keyspace type
+    """
+    currency = currency.lower()
+
+    # Configuration for account-based currencies (eth, trx)
+    if currency == "eth":
+        if keyspace_type == "raw":
+            return {
+                "id": "eth_raw",
+                "block_bucket_size": 1000,
+                "tx_prefix_length": 5,
+            }
+        else:  # transformed
+            return {
+                "keyspace_name": "eth_transformed",
+                "address_prefix_length": 5,
+                "bucket_size": 25000,
+                "tx_prefix_length": 5,
+                "fiat_currencies": ["EUR", "USD"],
+            }
+    elif currency == "trx":
+        if keyspace_type == "raw":
+            return {
+                "id": "trx_raw",
+                "block_bucket_size": 1000,
+                "tx_prefix_length": 5,
+            }
+        else:  # transformed
+            return {
+                "keyspace_name": "trx_transformed",
+                "address_prefix_length": 5,
+                "bucket_size": 10000,
+                "tx_prefix_length": 5,
+                "fiat_currencies": ["EUR", "USD"],
+            }
+
+    # Configuration for UTXO-based currencies (btc, bch, ltc, zec)
+    elif currency in ["btc", "bch", "ltc", "zec"]:
+        if keyspace_type == "raw":
+            return {
+                "id": f"{currency}_raw",
+                "block_bucket_size": 100,
+                "tx_bucket_size": 25000,
+                "tx_prefix_length": 5,
+            }
+        else:  # transformed
+            bech32_prefixes = {
+                "btc": "bc",
+                "bch": "",
+                "ltc": "ltc1",
+                "zec": "",
+            }
+            return {
+                "keyspace_name": f"{currency}_transformed",
+                "address_prefix_length": 4,
+                "bech_32_prefix": bech32_prefixes.get(currency, ""),
+                "bucket_size": 5000,
+                "coinjoin_filtering": True,
+                "fiat_currencies": ["EUR", "USD"],
+            }
+
+    return {}
+
+
 def is_account_based_currency(currency: str) -> bool:
     return currency_to_public_schema_type.get(currency.lower()) == "account"
 
@@ -141,6 +215,26 @@ class KeyspaceConfig(BaseModel):
 
         return v
 
+    def model_post_init(self, __context):
+        """Populate data_configuration with defaults if not provided.
+
+        This is called after model initialization to populate empty
+        data_configuration dictionaries with defaults based on currency.
+        """
+        # Extract currency from raw_keyspace_name
+        currency = self.raw_keyspace_name[:3].lower() if self.raw_keyspace_name else ""
+
+        if currency:
+            for keyspace_type in keyspace_types:
+                if keyspace_type in self.keyspace_setup_config:
+                    # Only populate if data_configuration is empty
+                    if not self.keyspace_setup_config[keyspace_type].data_configuration:
+                        self.keyspace_setup_config[
+                            keyspace_type
+                        ].data_configuration = get_default_data_configuration(
+                            currency, keyspace_type
+                        )
+
 
 class Environment(BaseModel):
     cassandra_nodes: List[str]
@@ -184,7 +278,10 @@ class AppConfig(GoodConf):
                         "disable_delta_updates": False,
                         "keyspace_setup_config": {
                             kst: {
-                                "replication_config": CASSANDRA_DEFAULT_REPLICATION_CONFIG  # noqa
+                                "replication_config": CASSANDRA_DEFAULT_REPLICATION_CONFIG,  # noqa
+                                "data_configuration": get_default_data_configuration(
+                                    cur, kst
+                                ),
                             }
                             for kst in keyspace_types
                         },
