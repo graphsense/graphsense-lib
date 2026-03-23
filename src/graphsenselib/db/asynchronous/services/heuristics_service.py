@@ -3,10 +3,14 @@ from collections import defaultdict
 from typing import Dict
 
 
+from collections import Counter
+
 from .common import cannonicalize_address
 from graphsenselib.db.asynchronous.services.heuristics import (
     AddressOutput,
     ChangeHeuristics,
+    CoinJoinConsensus,
+    CoinJoinHeuristics,
     ConsensusEntry,
     DirectChangeHeuristic,
     MultiInputChangeDetails,
@@ -14,8 +18,36 @@ from graphsenselib.db.asynchronous.services.heuristics import (
     MultiInputClusterEvidence,
     OneTimeChangeDetails,
     OneTimeChangeHeuristic,
+    JoinMarketHeuristic,
     UtxoHeuristics,
+    WasabiHeuristic,
+    WhirlpoolCoinJoinHeuristic,
+    WhirlpoolTx0Heuristic,
 )
+
+# Whirlpool pools: (denomination_sat, coordinator_fee_sat)
+WHIRLPOOL_POOLS = [
+    (100_000, 5_000),
+    (1_000_000, 50_000),
+    (5_000_000, 175_000),
+    (50_000_000, 1_750_000),
+]
+WASABI_10_DENOM_SAT = 10_000_000   # 0.1 BTC
+WASABI_10_EPSILON_SAT = 500_000    # ±5% tolerance
+WASABI_10_A_MAX = 7                # max inputs per participant
+
+WASABI_11_A_MAX = 7                # same as 1.0
+
+WASABI_20_A_MAX = 10               # max inputs per participant
+WASABI_20_MIN_INPUTS = 50          # minimum total inputs
+WASABI_20_V_MIN = 5_000            # minimum output value (sat)
+WASABI_20_MIN_DENOM_FREQ = 2       # minimum frequency for a value to be a denomination
+
+WHIRLPOOL_EPSILON_MIN = 100
+WHIRLPOOL_EPSILON_MAX = 100_000
+WHIRLPOOL_TX0_A_MAX = 70
+WHIRLPOOL_ETA1 = 0.5
+WHIRLPOOL_ETA2 = 3
 
 
 async def _one_time_change_heuristic(
@@ -260,8 +292,510 @@ def _build_change_consensus_map(
     return consensus_map
 
 
+def _build_coinjoin_consensus(coinjoin: CoinJoinHeuristics) -> CoinJoinConsensus | None:
+    """Aggregate coinjoin heuristic results into a single consensus signal.
+
+    whirlpool_tx0 is intentionally excluded — it is a pre-mix preparation
+    transaction, not a CoinJoin itself.
+    """
+    sources = []
+    confidence = 0
+    candidates = [
+        ("joinmarket", coinjoin.joinmarket),
+        ("wasabi", coinjoin.wasabi),
+        ("whirlpool_coinjoin", coinjoin.whirlpool_coinjoin),
+    ]
+    for name, result in candidates:
+        if result is not None and result.detected:
+            sources.append(name)
+            confidence = max(confidence, result.confidence)
+
+    if not sources:
+        return None
+
+    return CoinJoinConsensus(detected=True, confidence=confidence, sources=sources)
+
+
+def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
+    """
+    Structural check for Wasabi 1.0 (ZeroLink) CoinJoin transactions.
+    Fixed denomination close to 0.1 BTC, one coordinator fee output,
+    all output scripts distinct.
+    """
+    if tx.get("coinbase"):
+        return None
+
+    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+
+    # find candidate denomination: most frequent output value within the window
+    freq = Counter(
+        o.value for o in outputs
+        if abs(o.value - WASABI_10_DENOM_SAT) <= WASABI_10_EPSILON_SAT
+    )
+    if not freq:
+        return None
+
+    d, n = freq.most_common(1)[0]
+
+    # 1. denomination window (explicit guard)
+    if not (abs(d - WASABI_10_DENOM_SAT) <= WASABI_10_EPSILON_SAT):
+        return None
+
+    n_scripts_in = len({i.address[0] for i in inputs})
+    n_scripts_out = len({o.address[0] for o in outputs})
+
+    # 2. participant lower bound — coordinator fee accounts for one extra output
+    if not (n >= (len(outputs) - 1) / 2):
+        return None
+
+    # 3. input bounds
+    if not (n <= n_scripts_in <= WASABI_10_A_MAX * n):
+        return None
+
+    # 4. all output scripts distinct
+    if n_scripts_out != len(outputs):
+        return None
+
+    return WasabiHeuristic(
+        detected=True,
+        confidence=70,
+        version="1.0",
+        n_participants=n,
+        denominations=[d],
+    )
+
+
+JOINMARKET_MIN_PARTICIPANTS = 2
+JOINMARKET_DUST_THRESHOLD = 2730  # outputs at or below this value excluded as denomination candidates
+JOINMARKET_LOW_CONFIDENCE = 20    # confidence when only 2 equal-value outputs are found
+JOINMARKET_CONFIDENCE = 49        # confidence when 3+ equal-value outputs are found
+
+
+def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
+    """
+    Structural check for JoinMarket CoinJoin transactions.
+    The most frequent output value is the denomination; its count estimates
+    participant count n. JoinMarket is a superset — Wasabi 1.x and Whirlpool
+    CoinJoin txs also satisfy these conditions.
+
+    n=2 (exactly 2 equal-value outputs) is detected with low confidence (20)
+    since equal output values can occur by coincidence. n>=3 uses confidence 49.
+    """
+    if tx.get("coinbase"):
+        return None
+
+    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+
+    if not outputs or not inputs:
+        return None
+
+    # find most frequent output value, excluding dust
+    freq = Counter(
+        o.value for o in outputs
+        if o.value > JOINMARKET_DUST_THRESHOLD
+    )
+    if not freq:
+        return None
+
+    d, n = freq.most_common(1)[0]
+
+    n_scripts_in = len({i.address[0] for i in inputs})
+    n_scripts_out = len({o.address[0] for o in outputs})
+
+    # 1. majority of outputs are post-mix
+    if not (n >= len(outputs) / 2):
+        return None
+
+    # 2. at least 2 participants, each with distinct input
+    if not (JOINMARKET_MIN_PARTICIPANTS <= n <= n_scripts_in):
+        return None
+
+    # 3. all output scripts distinct
+    if n_scripts_out != len(outputs):
+        return None
+
+    confidence = JOINMARKET_CONFIDENCE if n >= 3 else JOINMARKET_LOW_CONFIDENCE
+
+    return JoinMarketHeuristic(
+        detected=True,
+        confidence=confidence,
+        n_participants=n,
+        denomination_sat=d,
+    )
+
+
+def _wasabi_11_heuristic(tx) -> WasabiHeuristic | None:
+    """
+    Structural check for Wasabi 1.1 (mixing levels) CoinJoin transactions.
+    Base denomination d ≈ 0.1 BTC; post-mix outputs appear at 2^i × d across
+    multiple levels, each level requiring ≥2 outputs.
+    Confidence is scored dynamically based on level count, post-mix coverage,
+    and how tightly n is bounded.
+    """
+    if tx.get("coinbase"):
+        return None
+
+    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+
+    if not outputs or not inputs:
+        return None
+
+    # base denomination is a protocol constant — no need to infer from level 0 outputs
+    d = WASABI_10_DENOM_SAT
+
+    # discover active levels: iterate until level_d exceeds max output value
+    max_output_value = max(o.value for o in outputs)
+    level_counts: dict[int, int] = {}
+    i = 0
+    while True:
+        level_d = (2 ** i) * d
+        if level_d > max_output_value:
+            break
+        count = sum(
+            1 for o in outputs
+            if abs(o.value - level_d) <= (2 ** i) * WASABI_10_EPSILON_SAT
+        )
+        if count >= 2:
+            level_counts[i] = count
+        i += 1
+
+    if not level_counts:
+        return None
+
+    total_postmix = sum(level_counts.values())
+    n_scripts_in = len({inp.address[0] for inp in inputs})
+    n_scripts_out = len({o.address[0] for o in outputs})
+
+    # n lower bound: max count at any single level (all must be distinct participants)
+    n = max(level_counts.values())
+
+    # input bounds
+    if not (n <= n_scripts_in <= WASABI_11_A_MAX * n):
+        return None
+
+    # postmix majority: in any real CoinJoin, postmix outputs dominate
+    # (each participant has ≥1 postmix and ≤1 change, plus one coordinator fee)
+    # subtract 1 for coordinator fee, same as Wasabi 1.0 condition
+    postmix_majority = total_postmix >= (len(outputs) - 1) / 2
+
+    # original sum condition (paper eq. 22): uses n_scripts_in as proxy
+    # can be too permissive when n_scripts_in >> n
+    sum_condition = total_postmix >= len(outputs) - n_scripts_in - 1
+
+    # at least one must hold, otherwise reject
+    if not postmix_majority and not sum_condition:
+        return None
+
+    # all output scripts distinct
+    if n_scripts_out != len(outputs):
+        return None
+
+    # confidence scoring: 0-100
+    # n_tightness: how well participant count is bounded (1.0 = exact, single-level case)
+    n_tightness = n / n_scripts_in
+
+    # coverage: ratio of post-mix outputs to total outputs
+    # expected ~2/3 if change is uniform in [0,1] per participant
+    # normalized: coverage_score = min(coverage / expected_coverage, 1.0)
+    # where expected_coverage = n / (1.5 * n + 1)
+    # commented out until change distribution is better understood
+    # coverage = total_postmix / len(outputs)
+    # expected_coverage = n / (1.5 * n + 1)
+    # coverage_score = min(coverage / expected_coverage, 1.0)
+
+    min_tightness = 1 / WASABI_11_A_MAX
+    confidence = int(50 + 50 * (n_tightness - min_tightness) / (1 - min_tightness))
+
+    # penalize if only one structural condition holds
+    if not (postmix_majority and sum_condition):
+        confidence = confidence // 2
+    version = "1.0" if list(level_counts.keys()) == [0] else "1.1"
+
+    return WasabiHeuristic(
+        detected=True,
+        confidence=confidence,
+        version=version,
+        n_participants=n,
+        denominations=sorted((2 ** i) * d for i in level_counts),
+    )
+
+
+def _wasabi_20_heuristic(tx) -> WasabiHeuristic | None:
+    """
+    Structural check for Wasabi 2.0 (WabiSabi) CoinJoin transactions.
+    Variable denomination set D derived from output values appearing ≥2 times.
+    Large rounds (≥50 inputs), all outputs above v_min, distinct scripts.
+    """
+    if tx.get("coinbase"):
+        return None
+
+    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+
+    if not outputs or not inputs:
+        return None
+
+    # 1. large round: minimum input count
+    if len(inputs) < WASABI_20_MIN_INPUTS:
+        return None
+
+    # 2. no tiny outputs
+    if any(o.value < WASABI_20_V_MIN for o in outputs):
+        return None
+
+    # 3. all output scripts distinct
+    n_scripts_out = len({o.address[0] for o in outputs})
+    if n_scripts_out != len(outputs):
+        return None
+
+    # 4. derive denomination set D: output values appearing ≥ min_freq times
+    freq = Counter(o.value for o in outputs)
+    denom_set = {v for v, c in freq.items() if c >= WASABI_20_MIN_DENOM_FREQ}
+
+    if not denom_set:
+        return None
+
+    n_denom_outputs = sum(1 for o in outputs if o.value in denom_set)
+
+    # 5. at least half of outputs (minus coordinator fee) are denomination outputs
+    if not (n_denom_outputs >= (len(outputs) - 1) / 2):
+        return None
+
+    # 6. enough denomination outputs relative to inputs
+    if not (n_denom_outputs >= len(inputs) / WASABI_20_A_MAX):
+        return None
+
+    # participant estimate: number of distinct input scripts / a_max as lower bound
+    n_scripts_in = len({i.address[0] for i in inputs})
+    n_participants = max(n_scripts_in // WASABI_20_A_MAX, 1)
+
+    return WasabiHeuristic(
+        detected=True,
+        confidence=60,
+        version="2.0",
+        n_participants=n_participants,
+        denominations=sorted(denom_set),
+    )
+
+
+def _whirlpool_coinjoin_heuristic(tx) -> WhirlpoolCoinJoinHeuristic | None:
+    """
+    Structural check for Whirlpool CoinJoin transactions.
+    Exactly 5 inputs and 5 outputs, all distinct scripts, all outputs at a known
+    pool denomination, all inputs in [d, d + epsilon_max] with 1-4 new entrants.
+    """
+    if tx.get("coinbase"):
+        return None
+
+    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+
+    # amount check
+    if len(inputs) != 5 or len(outputs) != 5:
+        return None
+
+    # uniqueness check
+    if len({i.address[0] for i in inputs}) != 5:
+        return None
+    if len({o.address[0] for o in outputs}) != 5:
+        return None
+
+    input_values = [i.value for i in inputs]
+    output_values = [o.value for o in outputs]
+
+    for d, _ in WHIRLPOOL_POOLS:
+        if not all(v == d for v in output_values):
+            continue
+        if not all(d <= v <= d + WHIRLPOOL_EPSILON_MAX for v in input_values):
+            continue
+
+        # each new entrant needs to pay a fee
+        new_entrant_epsilons = [v - d for v in input_values if v > d]
+        if not all(WHIRLPOOL_EPSILON_MIN <= e <= WHIRLPOOL_EPSILON_MAX for e in new_entrant_epsilons):
+            continue
+
+        # at least one old remix required and at least one new entrant
+        n_new_entrants = len(new_entrant_epsilons)
+        if not (1 <= n_new_entrants <= 4):
+            continue
+
+        return WhirlpoolCoinJoinHeuristic(
+            detected=True,
+            confidence=60,
+            pool_denomination_sat=d,
+            n_remixers=5 - n_new_entrants,
+            n_new_entrants=n_new_entrants,
+        )
+
+    return None
+
+
+def _whirlpool_tx0_heuristic(tx) -> WhirlpoolTx0Heuristic | None:
+    """
+    Structural check for Whirlpool Tx0 transactions.
+    Identifies pre-mix outputs (d + epsilon), exactly one zero-value output,
+    exactly one coordinator fee output, and validates against known pools.
+    """
+    if tx.get("coinbase"):
+        return None
+
+    all_outputs = [outp for outp in tx.get("outputs", []) if outp is not None]
+    op_return_outputs = [outp for outp in all_outputs if not outp.address]
+    outputs = [outp for outp in all_outputs if outp.address]
+
+    # exactly one OP_RETURN required
+    if len(op_return_outputs) != 1:
+        return None
+
+    # minimum spendable outputs: at least 1 pre-mix + 1 fee
+    if len(outputs) < 2:
+        return None
+
+    for d, f in WHIRLPOOL_POOLS:
+        # find candidate pre-mix value: most frequent output value in [d+emin, d+emax]
+        premix_range = [
+            outp.value for outp in outputs
+            if d + WHIRLPOOL_EPSILON_MIN <= outp.value <= d + WHIRLPOOL_EPSILON_MAX
+        ]
+        if not premix_range:
+            continue
+
+        freq = defaultdict(int)
+        for v in premix_range:
+            freq[v] += 1
+        d_tilde = max(freq, key=lambda v: (freq[v], v))
+        epsilon = d_tilde - d
+
+        if not (WHIRLPOOL_EPSILON_MIN <= epsilon <= WHIRLPOOL_EPSILON_MAX):
+            continue
+
+        n_premix = freq[d_tilde]
+        if not (1 <= n_premix <= WHIRLPOOL_TX0_A_MAX):
+            continue
+        if n_premix < len(outputs) - 2:  # at most 2 non-premix spendable outputs: fee + optional change
+            continue
+
+        fee_outputs = [
+            outp for outp in outputs
+            if WHIRLPOOL_ETA1 * f <= outp.value <= WHIRLPOOL_ETA2 * f
+        ]
+        if len(fee_outputs) != 1:
+            continue
+
+        return WhirlpoolTx0Heuristic(
+            detected=True,
+            confidence=60,
+            pool_denomination_sat=d,
+            n_premix_outputs=n_premix,
+        )
+
+    return None
+
+
+async def _verify_whirlpool_lineage(
+    tx, get_tx, pool_denomination, depth, _cancel: asyncio.Event | None = None
+) -> bool:
+    """
+    Recursively verify that all inputs of a Whirlpool CoinJoin trace back to
+    valid Tx0 or CoinJoin transactions up to the given depth.
+    All inputs must verify — a single failure cancels all sibling checks.
+
+    New entrant inputs (value > d) are terminal: their source must be a Tx0.
+    Remixer inputs (value == d) recurse: their source must be a CoinJoin.
+    """
+    if depth == 0:
+        return True
+
+    # shared cancellation flag across all recursive branches
+    if _cancel is None:
+        _cancel = asyncio.Event()
+
+    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
+
+    async def verify_input(inp) -> bool:
+        # bail out early if a sibling already failed
+        if _cancel.is_set():
+            return False
+
+        src_tx = await get_tx(inp.spent_tx_id)
+
+        # check again after await — cancel may have been set while fetching
+        if _cancel.is_set():
+            return False
+
+        if src_tx is None:
+            _cancel.set()
+            return False
+
+        if inp.value > pool_denomination:
+            # new entrant: d + ε input must come from a Tx0, no further recursion needed
+            result = _whirlpool_tx0_heuristic(src_tx) is not None
+        else:
+            # remixer: d input must come from a previous CoinJoin, recurse one level deeper
+            if _whirlpool_coinjoin_heuristic(src_tx) is None:
+                result = False
+            else:
+                result = await _verify_whirlpool_lineage(
+                    src_tx, get_tx, pool_denomination, depth - 1, _cancel
+                )
+
+        # signal failure to all sibling coroutines
+        if not result:
+            _cancel.set()
+        return result
+
+    # all inputs verified in parallel; all must pass
+    results = await asyncio.gather(*[verify_input(inp) for inp in inputs])
+    return all(results)
+
+
+WHIRLPOOL_TX0_MAX_FORWARD_CHECKS = 20
+WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE = 90
+
+
+async def _verify_tx0_forward(
+    tx, pool_denomination, get_spent_in, get_tx
+) -> bool:
+    """
+    Check if any pre-mix output of a Tx0 candidate was spent in a
+    Whirlpool CoinJoin. One confirmed hit is enough.
+    """
+    tx_hash_raw = tx.get("tx_hash")
+    if not tx_hash_raw:
+        return False
+    tx_hash = tx_hash_raw.hex() if isinstance(tx_hash_raw, (bytes, bytearray)) else tx_hash_raw
+
+    d = pool_denomination
+    all_outputs = [outp for outp in tx.get("outputs", []) if outp is not None]
+    premix_indices = [
+        idx for idx, outp in enumerate(all_outputs)
+        if outp.address
+        and d + WHIRLPOOL_EPSILON_MIN <= outp.value <= d + WHIRLPOOL_EPSILON_MAX
+    ]
+
+    # limit to avoid excessive DB calls on large Tx0s
+    premix_indices = premix_indices[:WHIRLPOOL_TX0_MAX_FORWARD_CHECKS]
+
+    async def check_output(io_index: int) -> bool:
+        spent_refs = await get_spent_in(tx_hash, io_index)
+        if not spent_refs:
+            return False
+        for ref in spent_refs:
+            spending_tx = await get_tx(ref.tx_hash)
+            if spending_tx and _whirlpool_coinjoin_heuristic(spending_tx) is not None:
+                return True
+        return False
+
+    results = await asyncio.gather(*[check_output(idx) for idx in premix_indices])
+    return any(results)
+
+
 async def calculate_heuristics(
-    tx, currency, get_address, heuristics: list
+    tx, currency, get_address, heuristics: list,
+    get_spent_in=None, get_tx=None,
 ) -> UtxoHeuristics:
     tasks = []
     keys = []
@@ -286,6 +820,51 @@ async def calculate_heuristics(
         confidence_max = max(entry.confidence for entry in consensus_map.values())
         consensus_map = {addr: entry for addr, entry in consensus_map.items() if entry.confidence == confidence_max}
 
+    coinjoin = None
+    if {"whirlpool", "all", "all_coinjoin"} & heuristics:
+        whirlpool_coinjoin = _whirlpool_coinjoin_heuristic(tx)
+        whirlpool_tx0 = _whirlpool_tx0_heuristic(tx)
+
+        # forward verification: if Tx0 detected and DB callbacks available,
+        # check if pre-mix outputs were spent in Whirlpool CoinJoins
+        if whirlpool_tx0 is not None and get_spent_in and get_tx:
+            confirmed = await _verify_tx0_forward(
+                tx, whirlpool_tx0.pool_denomination_sat, get_spent_in, get_tx
+            )
+            if confirmed:
+                whirlpool_tx0.confidence = WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE
+
+        if whirlpool_coinjoin is not None or whirlpool_tx0 is not None:
+            coinjoin = CoinJoinHeuristics(
+                whirlpool_coinjoin=whirlpool_coinjoin,
+                whirlpool_tx0=whirlpool_tx0,
+            )
+
+    if {"wasabi_2_0", "wasabi", "all", "all_coinjoin"} & heuristics:
+        wasabi_20_result = _wasabi_20_heuristic(tx)
+        if wasabi_20_result is not None:
+            if coinjoin is None:
+                coinjoin = CoinJoinHeuristics()
+            coinjoin.wasabi = wasabi_20_result
+
+    if {"wasabi_1_0", "wasabi_1_1", "wasabi", "all", "all_coinjoin"} & heuristics:
+        wasabi_result = _wasabi_11_heuristic(tx)
+        # 1.x only overwrites if 2.0 didn't match (2.0 is more specific)
+        if wasabi_result is not None and (coinjoin is None or coinjoin.wasabi is None):
+            if coinjoin is None:
+                coinjoin = CoinJoinHeuristics()
+            coinjoin.wasabi = wasabi_result
+
+    if {"joinmarket", "all", "all_coinjoin"} & heuristics:
+        joinmarket_result = _joinmarket_heuristic(tx)
+        if joinmarket_result is not None:
+            if coinjoin is None:
+                coinjoin = CoinJoinHeuristics()
+            coinjoin.joinmarket = joinmarket_result
+
+    if coinjoin is not None:
+        coinjoin.consensus = _build_coinjoin_consensus(coinjoin)
+
     return UtxoHeuristics(
         change_heuristics=ChangeHeuristics(
             consensus=list(consensus_map.values()),
@@ -293,4 +872,5 @@ async def calculate_heuristics(
             direct_change=heuristic_map.get("direct_change"),
             multi_input_change=heuristic_map.get("multi_input_change"),
         ),
+        coinjoin_heuristics=coinjoin,
     )

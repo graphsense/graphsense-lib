@@ -87,10 +87,14 @@ async def get_tx(
         None, description="Include input/output indices"
     ),
     include_heuristics: List[
-        Literal["all", "one_time_change", "direct_change", "multi_input_change", "all_change"]
+        Literal[
+            "all",
+            "one_time_change", "direct_change", "multi_input_change", "all_change",
+            "all_coinjoin", "whirlpool", "wasabi", "wasabi_1_0", "wasabi_1_1", "wasabi_2_0", "joinmarket",
+        ]
     ] = Query(
         default=[],
-        description="Heuristics to compute (e.g. one_time_change) as list, or simply all",
+        description="Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all",
     ),
     ctx: ServiceContext = Depends(get_ctx),
 ):
