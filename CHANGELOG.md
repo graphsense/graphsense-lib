@@ -16,10 +16,11 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library (v2.9.11)
 no changes
 
-### Web API + Python client (webapi-2.9.7)
+### Web API + Python client (webapi-2.9.8)
 
 #### Fixed
 - Fixed handling of "body" parameter in bulk requests of python client
+- Fixed `_preload_content=False` being silently ignored in bulk requests, causing `FileNotFoundError` when streaming CSV into pandas
 
 
 ## [2.9.10] 2026-03-13
