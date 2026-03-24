@@ -900,7 +900,7 @@ class TestJoinMarketHappyPath:
         assert result is not None
         assert result.detected is True
         assert result.n_participants == 2
-        assert result.denomination_sat == self.D
+        assert result.pool_denomination == self.D
         assert result.confidence == 20
 
     def test_three_participants(self):
@@ -909,7 +909,7 @@ class TestJoinMarketHappyPath:
         assert result is not None
         assert result.detected is True
         assert result.n_participants == 3
-        assert result.denomination_sat == self.D
+        assert result.pool_denomination == self.D
         assert result.confidence == 49
 
     def test_typical_round(self):
@@ -929,7 +929,7 @@ class TestJoinMarketHappyPath:
         for d in [100_000, 1_234_567, 50_000_000]:
             result = _joinmarket_heuristic(self._make_joinmarket(5, denom=d))
             assert result is not None, f"Failed for denomination {d}"
-            assert result.denomination_sat == d
+            assert result.pool_denomination == d
 
     def test_wasabi_coordinator_fee_breaks_joinmarket(self):
         """A Wasabi 1.0 tx with coordinator fee fails JoinMarket — the extra output

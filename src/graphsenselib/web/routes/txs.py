@@ -90,7 +90,8 @@ async def get_tx(
         Literal[
             "all",
             "one_time_change", "direct_change", "multi_input_change", "all_change",
-            "all_coinjoin", "whirlpool", "wasabi", "wasabi_1_0", "wasabi_1_1", "wasabi_2_0", "joinmarket",
+            "all_coinjoin", "whirlpool_coinjoin", "wasabi_coinjoin", "wasabi_1_0_coinjoin",
+            "wasabi_1_1_coinjoin", "wasabi_2_0_coinjoin", "joinmarket_coinjoin",
         ]
     ] = Query(
         default=[],

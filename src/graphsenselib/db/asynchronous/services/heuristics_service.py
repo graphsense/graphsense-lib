@@ -1,9 +1,10 @@
 import asyncio
-from collections import defaultdict
-from typing import Dict
+import logging
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from typing import Callable, Dict
 
-
-from collections import Counter
+logger = logging.getLogger(__name__)
 
 from .common import cannonicalize_address
 from graphsenselib.db.asynchronous.services.heuristics import (
@@ -24,6 +25,13 @@ from graphsenselib.db.asynchronous.services.heuristics import (
     WhirlpoolCoinJoinHeuristic,
     WhirlpoolTx0Heuristic,
 )
+
+
+@dataclass
+class CoinJoinDbCallbacks:
+    get_spent_in: Callable
+    get_tx: Callable
+
 
 # Whirlpool pools: (denomination_sat, coordinator_fee_sat)
 WHIRLPOOL_POOLS = [
@@ -48,6 +56,9 @@ WHIRLPOOL_EPSILON_MAX = 100_000
 WHIRLPOOL_TX0_A_MAX = 70
 WHIRLPOOL_ETA1 = 0.5
 WHIRLPOOL_ETA2 = 3
+
+WHIRLPOOL_TX0_MAX_FORWARD_CHECKS = 20
+WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE = 90
 
 
 async def _one_time_change_heuristic(
@@ -301,8 +312,8 @@ def _build_coinjoin_consensus(coinjoin: CoinJoinHeuristics) -> CoinJoinConsensus
     sources = []
     confidence = 0
     candidates = [
-        ("joinmarket", coinjoin.joinmarket),
-        ("wasabi", coinjoin.wasabi),
+        ("joinmarket_coinjoin", coinjoin.joinmarket),
+        ("wasabi_coinjoin", coinjoin.wasabi),
         ("whirlpool_coinjoin", coinjoin.whirlpool_coinjoin),
     ]
     for name, result in candidates:
@@ -422,7 +433,7 @@ def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
         detected=True,
         confidence=confidence,
         n_participants=n,
-        denomination_sat=d,
+        pool_denomination=d,
     )
 
 
@@ -752,8 +763,6 @@ async def _verify_whirlpool_lineage(
     return all(results)
 
 
-WHIRLPOOL_TX0_MAX_FORWARD_CHECKS = 20
-WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE = 90
 
 
 async def _verify_tx0_forward(
@@ -795,7 +804,7 @@ async def _verify_tx0_forward(
 
 async def calculate_heuristics(
     tx, currency, get_address, heuristics: list,
-    get_spent_in=None, get_tx=None,
+    coinjoin_callbacks: CoinJoinDbCallbacks | None = None,
 ) -> UtxoHeuristics:
     tasks = []
     keys = []
@@ -821,18 +830,22 @@ async def calculate_heuristics(
         consensus_map = {addr: entry for addr, entry in consensus_map.items() if entry.confidence == confidence_max}
 
     coinjoin = None
-    if {"whirlpool", "all", "all_coinjoin"} & heuristics:
+    if {"whirlpool_coinjoin", "all", "all_coinjoin"} & heuristics:
         whirlpool_coinjoin = _whirlpool_coinjoin_heuristic(tx)
         whirlpool_tx0 = _whirlpool_tx0_heuristic(tx)
 
         # forward verification: if Tx0 detected and DB callbacks available,
         # check if pre-mix outputs were spent in Whirlpool CoinJoins
-        if whirlpool_tx0 is not None and get_spent_in and get_tx:
+        if whirlpool_tx0 is not None and coinjoin_callbacks is not None:
             confirmed = await _verify_tx0_forward(
-                tx, whirlpool_tx0.pool_denomination_sat, get_spent_in, get_tx
+                tx, whirlpool_tx0.pool_denomination_sat,
+                coinjoin_callbacks.get_spent_in, coinjoin_callbacks.get_tx,
             )
             if confirmed:
                 whirlpool_tx0.confidence = WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE
+        elif whirlpool_tx0 is not None:
+            logger.warning("whirlpool_tx0 detected but coinjoin_callbacks not available")
+
 
         if whirlpool_coinjoin is not None or whirlpool_tx0 is not None:
             coinjoin = CoinJoinHeuristics(
@@ -840,14 +853,14 @@ async def calculate_heuristics(
                 whirlpool_tx0=whirlpool_tx0,
             )
 
-    if {"wasabi_2_0", "wasabi", "all", "all_coinjoin"} & heuristics:
+    if {"wasabi_2_0_coinjoin", "wasabi_coinjoin", "all", "all_coinjoin"} & heuristics:
         wasabi_20_result = _wasabi_20_heuristic(tx)
         if wasabi_20_result is not None:
             if coinjoin is None:
                 coinjoin = CoinJoinHeuristics()
             coinjoin.wasabi = wasabi_20_result
 
-    if {"wasabi_1_0", "wasabi_1_1", "wasabi", "all", "all_coinjoin"} & heuristics:
+    if {"wasabi_1_0_coinjoin", "wasabi_1_1_coinjoin", "wasabi_coinjoin", "all", "all_coinjoin"} & heuristics:
         wasabi_result = _wasabi_11_heuristic(tx)
         # 1.x only overwrites if 2.0 didn't match (2.0 is more specific)
         if wasabi_result is not None and (coinjoin is None or coinjoin.wasabi is None):
@@ -855,7 +868,7 @@ async def calculate_heuristics(
                 coinjoin = CoinJoinHeuristics()
             coinjoin.wasabi = wasabi_result
 
-    if {"joinmarket", "all", "all_coinjoin"} & heuristics:
+    if {"joinmarket_coinjoin", "all", "all_coinjoin"} & heuristics:
         joinmarket_result = _joinmarket_heuristic(tx)
         if joinmarket_result is not None:
             if coinjoin is None:

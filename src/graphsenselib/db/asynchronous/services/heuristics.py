@@ -58,7 +58,7 @@ class JoinMarketHeuristic(BaseModel):
     detected: bool
     confidence: int
     n_participants: int
-    denomination_sat: int
+    pool_denomination: int
 
 
 class WasabiHeuristic(BaseModel):

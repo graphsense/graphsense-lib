@@ -21,7 +21,7 @@ from graphsenselib.utils.transactions import (
 from graphsenselib.utils.rest_utils import is_eth_like
 
 from .common import std_tx_from_row
-from .heuristics_service import calculate_heuristics
+from .heuristics_service import CoinJoinDbCallbacks, calculate_heuristics
 from .models import (
     ExternalConversion,
     TxAccount,
@@ -214,7 +214,10 @@ class TxsService:
 
                 result["heuristics"] = await calculate_heuristics(
                     result, currency, _cached_get_address, include_heuristics,
-                    get_spent_in=_get_spent_in, get_tx=_get_tx,
+                    coinjoin_callbacks=CoinJoinDbCallbacks(
+                        get_spent_in=_get_spent_in,
+                        get_tx=_get_tx,
+                    ),
                 )
 
             return await std_tx_from_row(
