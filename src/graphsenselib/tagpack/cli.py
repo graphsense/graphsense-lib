@@ -182,6 +182,48 @@ def load_actorpack_for_validation(actorpack_path, config):
     return ap
 
 
+def load_actor_ids_from_url(actor_url):
+    """Download and parse actor IDs from a YAML file
+
+    Args:
+        actor_url: URL to the actor YAML file
+
+    Returns:
+        A set of valid actor IDs, or None if download fails
+    """
+    import requests
+
+    logger.info(f"Downloading actors from {actor_url}...")
+    try:
+        response = requests.get(actor_url, timeout=30)
+        response.raise_for_status()
+
+        # Parse the YAML content
+        actors_data = yaml.safe_load(response.text)
+
+        if not isinstance(actors_data, dict):
+            logger.error("Invalid actor file format: expected YAML dict")
+            return None
+
+        actors_list = actors_data.get("actors", [])
+        if not isinstance(actors_list, list):
+            logger.error("Invalid actor file format: 'actors' must be a list")
+            return None
+
+        # Extract all actor IDs
+        actor_ids = set()
+        for actor in actors_list:
+            if isinstance(actor, dict) and "id" in actor:
+                actor_ids.add(actor["id"])
+
+        logger.info(f"Downloaded {len(actor_ids)} actor IDs from {actor_url}")
+        return actor_ids
+
+    except Exception as e:
+        logger.error(f"Failed to download or parse actors from {actor_url}: {e}")
+        return None
+
+
 @click.group()
 def tagpacktool_cli():
     """tagpack management tool commands"""
@@ -391,6 +433,8 @@ def validate_tagpack(
     check_actor_references=False,
     actorpack_path=None,
     use_pyyaml=False,
+    validate_actor_ids=True,
+    actor_url=None,
 ):
     t0 = time.time()
     logger.info("TagPack validation starts")
@@ -411,6 +455,20 @@ def validate_tagpack(
     actorpack = None
     existing_actor_ids = []
     similarity_threshold = 80  # Default threshold for fuzzy matching
+
+    # Load actor IDs taxonomy if validation is enabled
+    valid_actor_ids = None
+    if validate_actor_ids:
+        if actor_url is None:
+            actor_url = "https://raw.githubusercontent.com/graphsense/graphsense-tagpacks/refs/heads/master/actors/graphsense.actorpack.yaml"
+        valid_actor_ids = load_actor_ids_from_url(actor_url)
+        if valid_actor_ids is None:
+            logger.error(
+                "Failed to load actor IDs for validation. Actor ID validation will be skipped."
+            )
+            validate_actor_ids = False
+        else:
+            logger.info(f"Loaded {len(valid_actor_ids)} valid actor IDs for validation")
 
     if check_actor_references:
         # Check if rapidfuzz is installed
@@ -489,9 +547,33 @@ def validate_tagpack(
                         else:
                             unique_known_actors.add(actor)
 
-                logger.info(f"PASSED: {tagpack_file}")
+                # Validate actor IDs against taxonomy if enabled
+                invalid_actor_ids = []
+                if validate_actor_ids and valid_actor_ids:
+                    # Collect actors from header level and tag level
+                    actors_to_check = set()
+                    header_actor = tagpack.all_header_fields.get("actor")
+                    if header_actor:
+                        actors_to_check.add(header_actor)
+                    for tag in tagpack.tags:
+                        tag_actor = tag.all_fields.get("actor")
+                        if tag_actor:
+                            actors_to_check.add(tag_actor)
 
-                no_passed += 1
+                    for actor in actors_to_check:
+                        if actor not in valid_actor_ids:
+                            invalid_actor_ids.append(actor)
+                            logger.error(
+                                f"  Actor '{actor}' is not in the downloaded actor taxonomy"
+                            )
+
+                if invalid_actor_ids:
+                    logger.error(
+                        f"FAILED: {tagpack_file} - Invalid actor IDs: {invalid_actor_ids}"
+                    )
+                else:
+                    logger.info(f"PASSED: {tagpack_file}")
+                    no_passed += 1
     except (ValidationError, TagPackFileError) as e:
         logger.error(f"FAILED: {e}")
 
@@ -820,13 +902,30 @@ def tagpack():
     help="Path to actorpack file (downloads graphsense actorpack if not provided)",
 )
 @click.option(
+    "--validate-actor-ids/--no-validate-actor-ids",
+    default=True,
+    help="Validates that actor IDs are from the downloaded actor taxonomy",
+)
+@click.option(
+    "--actor-url",
+    default=None,
+    help="URL to download actor taxonomy (defaults to graphsense actorpack)",
+)
+@click.option(
     "--use-pyyaml",
     is_flag=True,
     help="Use PyYAML instead of rapidyaml for YAML parsing",
 )
 @click.pass_context
 def validate_tagpack_cli(
-    ctx, path, no_address_validation, check_actor_references, actorpack_path, use_pyyaml
+    ctx,
+    path,
+    no_address_validation,
+    check_actor_references,
+    actorpack_path,
+    validate_actor_ids,
+    actor_url,
+    use_pyyaml,
 ):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
@@ -837,6 +936,8 @@ def validate_tagpack_cli(
         check_actor_references,
         actorpack_path,
         use_pyyaml,
+        validate_actor_ids,
+        actor_url,
     )
 
 

@@ -56,6 +56,7 @@ tags:
                 "--check-actor-references",
                 "--actorpack-path",
                 actorpack_path,
+                "--no-validate-actor-ids",
             ],
         )
 
@@ -78,6 +79,7 @@ tags:
                 "--check-actor-references",
                 "--actorpack-path",
                 actorpack_path,
+                "--no-validate-actor-ids",
             ],
         )
 
@@ -146,6 +148,7 @@ tags:
                 "--check-actor-references",
                 "--actorpack-path",
                 actorpack_path,
+                "--no-validate-actor-ids",
             ],
         )
 
@@ -168,6 +171,7 @@ tags:
                 "--check-actor-references",
                 "--actorpack-path",
                 actorpack_path,
+                "--no-validate-actor-ids",
             ],
         )
 

@@ -284,7 +284,11 @@ async def calculate_heuristics(
     # only allow the highest confidence addr. match to be in the consensus
     if len(consensus_map) > 1:
         confidence_max = max(entry.confidence for entry in consensus_map.values())
-        consensus_map = {addr: entry for addr, entry in consensus_map.items() if entry.confidence == confidence_max}
+        consensus_map = {
+            addr: entry
+            for addr, entry in consensus_map.items()
+            if entry.confidence == confidence_max
+        }
 
     return UtxoHeuristics(
         change_heuristics=ChangeHeuristics(
