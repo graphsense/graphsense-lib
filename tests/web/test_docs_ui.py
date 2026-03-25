@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 from types import SimpleNamespace
 
+from graphsenselib.config.config import SlackTopic
+from graphsenselib.web.app import create_app
 from graphsenselib.web.app import _setup_custom_docs_ui
 from graphsenselib.web.config import GSRestConfig
 
@@ -104,3 +106,60 @@ def test_docs_ui_accepts_mock_config_object():
     assert ">Client Docs<" in swagger_html
     assert 'href="https://example.com/client-docs"' in redoc_html
     assert ">Client Docs<" in redoc_html
+
+
+def test_gsrest_config_parses_slack_topics_from_dict():
+    cfg = GSRestConfig.from_dict(
+        {
+            "database": {"nodes": ["localhost"]},
+            "slack_topics": {
+                "exceptions": {
+                    "hooks": ["https://hooks.slack.com/services/T000/B000/TESTHOOK"]
+                }
+            },
+        }
+    )
+
+    topic = cfg.get_slack_hooks_by_topic("exceptions")
+    assert topic is not None
+    assert topic.hooks == ["https://hooks.slack.com/services/T000/B000/TESTHOOK"]
+
+
+def test_create_app_prefers_gsrest_slack_topics(monkeypatch):
+    class DummyAppConfig:
+        default_environment = "test"
+
+        def load_partial(self):
+            return True, []
+
+        def get_slack_hooks_by_topic(self, topic: str):
+            if topic == "exceptions":
+                return SlackTopic(hooks=["https://hooks.slack.com/services/T000/B000/FALLBACK"])
+            return None
+
+    captured = {}
+
+    def fake_setup_logging(app_logger, slack_exception_hook, default_environment, logging_config):
+        captured["slack_exception_hook"] = slack_exception_hook
+        captured["default_environment"] = default_environment
+
+    monkeypatch.setattr("graphsenselib.web.app.AppConfig", lambda: DummyAppConfig())
+    monkeypatch.setattr("graphsenselib.web.app.setup_logging", fake_setup_logging)
+
+    cfg = GSRestConfig.from_dict(
+        {
+            "database": {"nodes": ["localhost"]},
+            "slack_topics": {
+                "exceptions": {
+                    "hooks": ["https://hooks.slack.com/services/T000/B000/PRIMARY"]
+                }
+            },
+        }
+    )
+
+    create_app(config=cfg)
+
+    assert captured["slack_exception_hook"] is not None
+    assert captured["slack_exception_hook"].hooks == [
+        "https://hooks.slack.com/services/T000/B000/PRIMARY"
+    ]

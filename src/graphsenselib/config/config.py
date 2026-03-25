@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Dict, List, Optional, Tuple
@@ -434,19 +435,33 @@ class AppConfig(GoodConf):
             for field_name, value in raw_config.items():
                 try:
                     if field_name == "slack_topics" and isinstance(value, dict):
-                        converted_topics = {}
-                        for topic_name, topic_data in value.items():
-                            if isinstance(topic_data, dict):
-                                converted_topics[topic_name] = SlackTopic(**topic_data)
-                            else:
-                                converted_topics[topic_name] = topic_data
-                        setattr(self, field_name, converted_topics)
+                        setattr(self, field_name, self._parse_slack_topics(value))
                     else:
                         setattr(self, field_name, value)
                 except Exception as e:
                     errors.append(f"{field_name}: {str(e)}")
 
+        env_slack_topics = os.environ.get("GRAPHSENSE_SLACK_TOPICS")
+        if env_slack_topics:
+            try:
+                parsed_env_topics = json.loads(env_slack_topics)
+                if not isinstance(parsed_env_topics, dict):
+                    raise ValueError("GRAPHSENSE_SLACK_TOPICS must be a JSON object")
+                self.slack_topics = self._parse_slack_topics(parsed_env_topics)
+            except Exception as e:
+                errors.append(f"GRAPHSENSE_SLACK_TOPICS: {str(e)}")
+
         return len(errors) == 0, errors
+
+    @staticmethod
+    def _parse_slack_topics(raw_topics: Dict) -> Dict[str, SlackTopic]:
+        converted_topics = {}
+        for topic_name, topic_data in raw_topics.items():
+            if isinstance(topic_data, dict):
+                converted_topics[topic_name] = SlackTopic(**topic_data)
+            else:
+                converted_topics[topic_name] = topic_data
+        return converted_topics
 
     def _init_with_field_defaults(self):
         """Initialize config using field default factories."""

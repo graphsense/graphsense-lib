@@ -4,7 +4,6 @@ from graphsenselib.web.models import (
     AddressTxUtxo,
     AddressTxs,
     EntityAddresses,
-    Links,
     TxAccount,
 )
 from graphsenselib.web.util.values_legacy import convert_value
@@ -229,6 +228,21 @@ def test_list_entity_neighbors(client):
         [eth_entityWithTagsOutNeighbors.neighbors[0].entity.entity]
         == [n["entity"]["entity"] for n in result["neighbors"]]
     )
+
+
+def test_list_entity_neighbors_invalid_only_ids_returns_400(client):
+    path = "/{currency}/entities/{entity}/neighbors?direction={direction}&only_ids={only_ids}"
+    status, body = raw_request(
+        client,
+        path,
+        currency="btc",
+        entity="17642138",
+        direction="in",
+        only_ids="only_ids_example",
+    )
+
+    assert status == 400
+    assert "Invalid format for only_ids" in body
 
 
 def test_list_entity_addresses(client):
