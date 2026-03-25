@@ -163,7 +163,13 @@ def parse_datetime(dt_str: Optional[str]) -> Optional[datetime]:
         return None
     from dateutil import parser
 
-    return parser.parse(dt_str)
+    try:
+        return parser.parse(dt_str)
+    except (parser.ParserError, ValueError, OverflowError) as exc:
+        raise BadUserInputException(
+            "Invalid datetime format. Expected an ISO 8601 date/time like "
+            "2024-01-31 or 2024-01-31T12:34:56Z."
+        ) from exc
 
 
 def to_json_response(result: Any) -> dict:

@@ -232,6 +232,18 @@ def _promote_schema_examples_to_parameter_level(
     This post-processor promotes schema.examples[0] to parameter.example so
     that Swagger UI displays them correctly.
     """
+
+    def _to_python_literal(value: Any) -> str:
+        if value is None:
+            return "None"
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str):
+            return repr(value)
+        return repr(value)
+
     for path_val in schema.get("paths", {}).values():
         for method_val in path_val.values():
             if not isinstance(method_val, dict):
@@ -242,6 +254,50 @@ def _promote_schema_examples_to_parameter_level(
                     examples = param_schema.pop("examples")
                     if isinstance(examples, list) and examples:
                         param["example"] = examples[0]
+                        # Keep track of examples that were explicitly set on API params.
+                        param["x-graphsense-explicit-example"] = True
+                        param["x-graphsense-python-example"] = _to_python_literal(
+                            examples[0]
+                        )
+    return schema
+
+
+def _normalize_parameter_examples_for_generated_clients(
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize selected OpenAPI parameter examples for generated client snippets.
+
+    Some generators eagerly include all optional parameters in example code. For a
+    few parameters this yields invalid/default placeholder combinations in snippets.
+    Keep these examples explicit and safe at the OpenAPI source.
+    """
+
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+
+            parameters = operation.get("parameters", [])
+            parameter_names = {p.get("name") for p in parameters if isinstance(p, dict)}
+            has_height_filters = (
+                "min_height" in parameter_names or "max_height" in parameter_names
+            )
+
+            for parameter in parameters:
+                if not isinstance(parameter, dict):
+                    continue
+
+                name = parameter.get("name")
+
+                if name in {"page", "token_tx_id"}:
+                    parameter["example"] = None
+                    parameter.pop("x-graphsense-python-example", None)
+                    continue
+
+                if has_height_filters and name in {"min_date", "max_date"}:
+                    parameter["example"] = None
+                    parameter.pop("x-graphsense-python-example", None)
+
     return schema
 
 
@@ -949,6 +1005,11 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
         # Promote schema-level examples to parameter-level for Swagger UI
         openapi_schema = _promote_schema_examples_to_parameter_level(openapi_schema)
+
+        # Normalize selected parameter examples for generated SDK snippets
+        openapi_schema = _normalize_parameter_examples_for_generated_clients(
+            openapi_schema
+        )
 
         # Convert schema names to snake_case for backward compatibility
         openapi_schema = _convert_schema_names_to_snake_case(openapi_schema)

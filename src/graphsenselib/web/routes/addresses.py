@@ -227,7 +227,9 @@ async def list_address_neighbors(
     address: AddressPath,
     direction: DirectionQuery,
     only_ids: Optional[str] = Query(
-        None, description="Restrict result to given set of comma separated addresses"
+        None,
+        description="Restrict result to given set of comma separated addresses",
+        examples=["1,2,3"],
     ),
     include_labels: IncludeLabelsQuery = None,
     include_actors: IncludeActorsQuery = True,

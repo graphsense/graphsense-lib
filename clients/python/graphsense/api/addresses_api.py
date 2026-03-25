@@ -1039,10 +1039,10 @@ class AddressesApi:
         neighbor: Annotated[StrictStr, Field(description="Neighbor address")],
         min_height: Annotated[Optional[StrictInt], Field(description="Return transactions starting from given height")] = None,
         max_height: Annotated[Optional[StrictInt], Field(description="Return transactions up to (including) given height")] = None,
-        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs")] = None,
-        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs")] = None,
+        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
+        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1072,13 +1072,13 @@ class AddressesApi:
         :type min_height: int
         :param max_height: Return transactions up to (including) given height
         :type max_height: int
-        :param min_date: Min date of txs
+        :param min_date: Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type min_date: str
-        :param max_date: Max date of txs
+        :param max_date: Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency
+        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1148,10 +1148,10 @@ class AddressesApi:
         neighbor: Annotated[StrictStr, Field(description="Neighbor address")],
         min_height: Annotated[Optional[StrictInt], Field(description="Return transactions starting from given height")] = None,
         max_height: Annotated[Optional[StrictInt], Field(description="Return transactions up to (including) given height")] = None,
-        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs")] = None,
-        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs")] = None,
+        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
+        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1181,13 +1181,13 @@ class AddressesApi:
         :type min_height: int
         :param max_height: Return transactions up to (including) given height
         :type max_height: int
-        :param min_date: Min date of txs
+        :param min_date: Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type min_date: str
-        :param max_date: Max date of txs
+        :param max_date: Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency
+        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1257,10 +1257,10 @@ class AddressesApi:
         neighbor: Annotated[StrictStr, Field(description="Neighbor address")],
         min_height: Annotated[Optional[StrictInt], Field(description="Return transactions starting from given height")] = None,
         max_height: Annotated[Optional[StrictInt], Field(description="Return transactions up to (including) given height")] = None,
-        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs")] = None,
-        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs")] = None,
+        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
+        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1290,13 +1290,13 @@ class AddressesApi:
         :type min_height: int
         :param max_height: Return transactions up to (including) given height
         :type max_height: int
-        :param min_date: Min date of txs
+        :param min_date: Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type min_date: str
-        :param max_date: Max date of txs
+        :param max_date: Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency
+        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1858,10 +1858,10 @@ class AddressesApi:
         direction: Annotated[Optional[StrictStr], Field(description="Incoming or outgoing transactions")] = None,
         min_height: Annotated[Optional[StrictInt], Field(description="Return transactions starting from given height")] = None,
         max_height: Annotated[Optional[StrictInt], Field(description="Return transactions up to (including) given height")] = None,
-        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs")] = None,
-        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs")] = None,
+        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
+        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -1891,13 +1891,13 @@ class AddressesApi:
         :type min_height: int
         :param max_height: Return transactions up to (including) given height
         :type max_height: int
-        :param min_date: Min date of txs
+        :param min_date: Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type min_date: str
-        :param max_date: Max date of txs
+        :param max_date: Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency
+        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -1968,10 +1968,10 @@ class AddressesApi:
         direction: Annotated[Optional[StrictStr], Field(description="Incoming or outgoing transactions")] = None,
         min_height: Annotated[Optional[StrictInt], Field(description="Return transactions starting from given height")] = None,
         max_height: Annotated[Optional[StrictInt], Field(description="Return transactions up to (including) given height")] = None,
-        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs")] = None,
-        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs")] = None,
+        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
+        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2001,13 +2001,13 @@ class AddressesApi:
         :type min_height: int
         :param max_height: Return transactions up to (including) given height
         :type max_height: int
-        :param min_date: Min date of txs
+        :param min_date: Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type min_date: str
-        :param max_date: Max date of txs
+        :param max_date: Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency
+        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str
@@ -2078,10 +2078,10 @@ class AddressesApi:
         direction: Annotated[Optional[StrictStr], Field(description="Incoming or outgoing transactions")] = None,
         min_height: Annotated[Optional[StrictInt], Field(description="Return transactions starting from given height")] = None,
         max_height: Annotated[Optional[StrictInt], Field(description="Return transactions up to (including) given height")] = None,
-        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs")] = None,
-        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs")] = None,
+        min_date: Annotated[Optional[StrictStr], Field(description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
+        max_date: Annotated[Optional[StrictStr], Field(description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ")] = None,
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
-        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency")] = None,
+        token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
         pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
@@ -2111,13 +2111,13 @@ class AddressesApi:
         :type min_height: int
         :param max_height: Return transactions up to (including) given height
         :type max_height: int
-        :param min_date: Min date of txs
+        :param min_date: Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type min_date: str
-        :param max_date: Max date of txs
+        :param max_date: Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ
         :type max_date: str
         :param order: Sorting order
         :type order: str
-        :param token_currency: Return transactions of given token or base currency
+        :param token_currency: Return transactions of given token or base currency e.g. 'WETH'
         :type token_currency: str
         :param page: Resumption token for retrieving the next page
         :type page: str

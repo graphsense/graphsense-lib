@@ -195,3 +195,41 @@ def test_pydantic_validation_error_is_handled_as_bad_user_input():
 
     assert response.status_code == 422
     assert "Input should be a valid integer" in response.json()["detail"]
+
+
+def test_openapi_examples_are_normalized_for_generated_client_snippets():
+    app = create_spec_app()
+    with TestClient(app) as client:
+        spec = client.get("/openapi.json").json()
+
+    address_neighbors_operation = spec["paths"]["/{currency}/addresses/{address}/neighbors"][
+        "get"
+    ]
+    address_neighbors_parameters = {
+        p["name"]: p for p in address_neighbors_operation.get("parameters", [])
+    }
+
+    assert address_neighbors_parameters["only_ids"].get("example") == "1,2,3"
+    assert address_neighbors_parameters["page"].get("example") is None
+
+    entity_neighbors_operation = spec["paths"]["/{currency}/entities/{entity}/neighbors"][
+        "get"
+    ]
+    entity_neighbors_parameters = {
+        p["name"]: p for p in entity_neighbors_operation.get("parameters", [])
+    }
+
+    assert entity_neighbors_parameters["only_ids"].get("example") is None
+    assert entity_neighbors_parameters["page"].get("example") is None
+
+    entity_txs_operation = spec["paths"]["/{currency}/entities/{entity}/txs"]["get"]
+    entity_txs_parameters = {
+        p["name"]: p for p in entity_txs_operation.get("parameters", [])
+    }
+
+    assert entity_txs_parameters["min_date"].get("example") is None
+    assert entity_txs_parameters["max_date"].get("example") is None
+
+    tx_operation = spec["paths"]["/{currency}/txs/{tx_hash}"]["get"]
+    tx_parameters = {p["name"]: p for p in tx_operation.get("parameters", [])}
+    assert tx_parameters["token_tx_id"].get("example") is None

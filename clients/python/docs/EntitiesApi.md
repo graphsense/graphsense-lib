@@ -53,8 +53,8 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.EntitiesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     entity = 67065 # int | The entity ID
-    exclude_best_address_tag = True # bool | Whether to exclude best address tag (optional)
-    include_actors = False # bool | Whether to include actor information (optional) (default to False)
+    exclude_best_address_tag = None # bool | Whether to exclude best address tag (optional)
+    include_actors = True # bool | Whether to include actor information (optional) (default to False)
 
     try:
         # Get entity details
@@ -140,7 +140,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.EntitiesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     entity = 67065 # int | The entity ID
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -227,7 +227,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.EntitiesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     entity = 67065 # int | The entity ID
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -317,11 +317,11 @@ with graphsense.ApiClient(configuration) as api_client:
     neighbor = 123456 # int | Neighbor entity ID
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
+    min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
+    max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -345,10 +345,10 @@ Name | Type | Description  | Notes
  **neighbor** | **int**| Neighbor entity ID | 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
- **min_date** | **str**| Min date of txs | [optional] 
- **max_date** | **str**| Max date of txs | [optional] 
+ **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
+ **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -416,13 +416,13 @@ with graphsense.ApiClient(configuration) as api_client:
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     entity = 67065 # int | The entity ID
     direction = 'out' # str | Incoming or outgoing neighbors
-    only_ids = 'only_ids_example' # str | Restrict result to given set of comma separated IDs (optional)
-    include_labels = true # bool | Whether to include labels of first page of address tags (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    only_ids = None # str | Restrict result to given set of comma separated IDs (optional)
+    include_labels = True # bool | Whether to include labels of first page of address tags (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
-    relations_only = True # bool | Return only relations without entity details (optional)
-    exclude_best_address_tag = True # bool | Whether to exclude best address tag (optional)
-    include_actors = False # bool | Whether to include actor information (optional) (default to False)
+    relations_only = None # bool | Return only relations without entity details (optional)
+    exclude_best_address_tag = None # bool | Whether to exclude best address tag (optional)
+    include_actors = True # bool | Whether to include actor information (optional) (default to False)
 
     try:
         # List neighboring entities
@@ -517,11 +517,11 @@ with graphsense.ApiClient(configuration) as api_client:
     direction = 'out' # str | Incoming or outgoing transactions (optional)
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
+    min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
+    max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -545,10 +545,10 @@ Name | Type | Description  | Notes
  **direction** | **str**| Incoming or outgoing transactions | [optional] 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
- **min_date** | **str**| Min date of txs | [optional] 
- **max_date** | **str**| Max date of txs | [optional] 
+ **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
+ **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -620,7 +620,7 @@ with graphsense.ApiClient(configuration) as api_client:
     value = 'Miner' # str | Comma separated search values
     depth = 2 # int | Search depth
     breadth = 16 # int | Search breadth
-    skip_num_addresses = 56 # int | Skip entities with more than N addresses (optional)
+    skip_num_addresses = None # int | Skip entities with more than N addresses (optional)
 
     try:
         # Search entity neighborhood
