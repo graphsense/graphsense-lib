@@ -17,6 +17,8 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError as PydanticValidationError
+from pydantic_core import ValidationError as PydanticCoreValidationError
 from graphsenselib.config import AppConfig
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
@@ -650,6 +652,17 @@ def _register_exception_handlers(app: FastAPI):
         return JSONResponse(
             status_code=400,
             content={"detail": exc.get_user_msg()},
+        )
+
+    @app.exception_handler(PydanticValidationError)
+    @app.exception_handler(PydanticCoreValidationError)
+    async def pydantic_validation_handler(request: Request, exc: Exception):
+        logger.warning(
+            f"PydanticValidationError: {str(exc)} | {_get_request_context(request)}"
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"detail": str(exc)},
         )
 
     @app.exception_handler(FeatureNotAvailableException)

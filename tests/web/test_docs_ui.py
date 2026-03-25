@@ -1,10 +1,12 @@
 from fastapi import FastAPI
+from pydantic import BaseModel
 from starlette.testclient import TestClient
 from types import SimpleNamespace
 
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.web.app import create_app
 from graphsenselib.web.app import create_spec_app
+from graphsenselib.web.app import _register_exception_handlers
 from graphsenselib.web.app import _setup_custom_docs_ui
 from graphsenselib.web.config import GSRestConfig
 
@@ -174,3 +176,22 @@ def test_report_tag_does_not_expose_internal_username_header_in_openapi():
     operation = spec["paths"]["/tags/report-tag"]["post"]
     parameter_names = {param["name"] for param in operation.get("parameters", [])}
     assert "x-consumer-username" not in parameter_names
+
+
+def test_pydantic_validation_error_is_handled_as_bad_user_input():
+    class SampleInput(BaseModel):
+        value: int
+
+    app = FastAPI()
+    _register_exception_handlers(app)
+
+    @app.get("/validation-error")
+    def raise_validation_error():
+        SampleInput.model_validate({"value": "not-an-int"})
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        response = client.get("/validation-error")
+
+    assert response.status_code == 400
+    assert "Input should be a valid integer" in response.json()["detail"]
