@@ -11,9 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
-## [2.9.11] 2026-03-25
+## [2.9.12] 2026-03-25
 
 ### Library (v2.9.12)
+
 #### Fixed
 - fixed unhandled exception in only_ids parsing
 - fixed loading of slack exception notification topics.
