@@ -193,5 +193,5 @@ def test_pydantic_validation_error_is_handled_as_bad_user_input():
     with TestClient(app) as client:
         response = client.get("/validation-error")
 
-    assert response.status_code == 400
+    assert response.status_code == 422
     assert "Input should be a valid integer" in response.json()["detail"]

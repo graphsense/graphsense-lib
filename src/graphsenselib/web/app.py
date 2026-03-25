@@ -661,7 +661,7 @@ def _register_exception_handlers(app: FastAPI):
             f"PydanticValidationError: {str(exc)} | {_get_request_context(request)}"
         )
         return JSONResponse(
-            status_code=400,
+            status_code=422,
             content={"detail": str(exc)},
         )
 
