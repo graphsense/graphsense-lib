@@ -1,0 +1,35 @@
+name: Python examples
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  run-python-examples:
+    if: ${{ secrets.GS_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    env:
+      GS_API_KEY: ${{ secrets.GS_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install client dependencies
+        working-directory: clients/python
+        run: uv sync
+
+      - name: Run generated Python examples
+        working-directory: clients/python
+        run: make run-examples

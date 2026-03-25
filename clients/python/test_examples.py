@@ -1,7 +1,9 @@
+# ruff: noqa: T201
 import pypandoc
 import json
 import os
 import glob
+import sys
 from io import StringIO
 from contextlib import redirect_stdout
 
@@ -15,8 +17,10 @@ if not os.environ.get("API_KEY"):
     os.environ["API_KEY"] = api_key
 
 exclude_regexes = [
-    "report_tag" # This api has side effects, so skip it in CI and testing.
+    "report_tag"  # This api has side effects, so skip it in CI and testing.
 ]
+issues = 0
+
 for fil in glob.glob("./docs/" + pattern + ".md"):
     print(fil)
     data = pypandoc.convert_file(fil, "json")
@@ -27,7 +31,9 @@ for fil in glob.glob("./docs/" + pattern + ".md"):
         code = block["c"][1].replace("YOUR_API_KEY", api_key)
 
         if any(regex in block["c"][1] for regex in exclude_regexes):
-            print(f"Skipping execution of snippet in {fil} due to matching exclude regex")
+            print(
+                f"Skipping execution of snippet in {fil} due to matching exclude regex"
+            )
             continue
 
         if replace:
@@ -40,6 +46,7 @@ for fil in glob.glob("./docs/" + pattern + ".md"):
             output = f.getvalue()
             if "Exception" in output:
                 print(output)
+                issues += 1
             else:
                 print("Executed successfully")
 
@@ -48,3 +55,8 @@ for fil in glob.glob("./docs/" + pattern + ".md"):
             # Keep running remaining samples and report the failure instead of aborting.
             print(code.replace(api_key, "XXX"))
             print(f"Exception while executing snippet: {e}\n")
+            issues += 1
+
+if issues > 0:
+    print(f"Encountered {issues} snippet issue(s).")
+    sys.exit(1)
