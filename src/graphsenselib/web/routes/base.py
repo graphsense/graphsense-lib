@@ -80,7 +80,9 @@ def get_services(request: Request) -> ServiceContainer:
 
 
 def get_username(
-    x_consumer_username: Annotated[Optional[str], Header()] = None,
+    x_consumer_username: Annotated[
+        Optional[str], Header(include_in_schema=False)
+    ] = None,
 ) -> Optional[str]:
     """Extract username from header"""
     return x_consumer_username

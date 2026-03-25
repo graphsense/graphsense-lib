@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.web.app import create_app
+from graphsenselib.web.app import create_spec_app
 from graphsenselib.web.app import _setup_custom_docs_ui
 from graphsenselib.web.config import GSRestConfig
 
@@ -163,3 +164,13 @@ def test_create_app_prefers_gsrest_slack_topics(monkeypatch):
     assert captured["slack_exception_hook"].hooks == [
         "https://hooks.slack.com/services/T000/B000/PRIMARY"
     ]
+
+
+def test_report_tag_does_not_expose_internal_username_header_in_openapi():
+    app = create_spec_app()
+    with TestClient(app) as client:
+        spec = client.get("/openapi.json").json()
+
+    operation = spec["paths"]["/tags/report-tag"]["post"]
+    parameter_names = {param["name"] for param in operation.get("parameters", [])}
+    assert "x-consumer-username" not in parameter_names

@@ -1,6 +1,6 @@
 [project]
 name = "graphsense-python"
-version = "2.9.8"
+version = "2.9.9"
 description = "GraphSense API"
 license = "MIT"
 authors = [
