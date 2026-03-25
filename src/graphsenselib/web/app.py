@@ -360,6 +360,26 @@ def setup_logging(
     app_logger.addHandler(handler)
 
 
+def log_slack_exception_notification_status(
+    slack_exception_hook, default_environment: Optional[str]
+):
+    """Log whether Slack exception notifications are configured at startup."""
+    hooks = slack_exception_hook.hooks if slack_exception_hook is not None else []
+    environment = default_environment or "unknown"
+
+    if hooks:
+        logger.info(
+            "Slack exception notifications enabled (hooks=%d, environment=%s)",
+            len(hooks),
+            environment,
+        )
+    else:
+        logger.info(
+            "Slack exception notifications disabled (no 'exceptions' slack hooks configured, environment=%s)",
+            environment,
+        )
+
+
 async def setup_database(app: FastAPI):
     """Setup database connections (Cassandra + TagStore)"""
     config = app.state.config
@@ -813,12 +833,17 @@ def create_app(
 
     config = resolve_rest_config(config_file, config, gslib_config)
 
-    slack_exception_hook = gslib_config.get_slack_hooks_by_topic("exceptions")
-    slack_info_hook = gslib_config.get_slack_hooks_by_topic("info")
+    slack_exception_hook = config.get_slack_hooks_by_topic(
+        "exceptions"
+    ) or gslib_config.get_slack_hooks_by_topic("exceptions")
+    slack_info_hook = config.get_slack_hooks_by_topic(
+        "info"
+    ) or gslib_config.get_slack_hooks_by_topic("info")
     default_environment = config.environment or gslib_config.default_environment
     config.slack_info_hook = slack_info_hook
 
     setup_logging(logger, slack_exception_hook, default_environment, config.logging)
+    log_slack_exception_notification_status(slack_exception_hook, default_environment)
 
     app = FastAPI(
         title="GraphSense API",

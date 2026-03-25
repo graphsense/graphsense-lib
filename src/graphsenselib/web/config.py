@@ -165,6 +165,10 @@ class GSRestConfig(BaseSettings):
     plugins: List[str] = Field(
         default_factory=list, description="List of plugin modules to load"
     )
+    slack_topics: Dict[str, SlackTopic] = Field(
+        default_factory=dict,
+        description="Slack topics/hooks for REST app (e.g. exceptions, info)",
+    )
     slack_info_hook: Dict[str, SlackTopic] = Field(
         default_factory=dict, description="Slack info hook"
     )
@@ -189,6 +193,9 @@ class GSRestConfig(BaseSettings):
         # Fall back to default
         return default
 
+    def get_slack_hooks_by_topic(self, topic: str) -> Optional[SlackTopic]:
+        return self.slack_topics.get(topic)
+
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "GSRestConfig":
         """Create config from dictionary (for backward compatibility with YAML loading)"""
@@ -211,5 +218,16 @@ class GSRestConfig(BaseSettings):
             config_dict["gs-tagstore"] = TagStoreReaderConfig(
                 **config_dict["gs-tagstore"]
             )
+
+        if "slack_topics" in config_dict and isinstance(
+            config_dict["slack_topics"], dict
+        ):
+            converted_topics = {}
+            for topic_name, topic_data in config_dict["slack_topics"].items():
+                if isinstance(topic_data, dict):
+                    converted_topics[topic_name] = SlackTopic(**topic_data)
+                else:
+                    converted_topics[topic_name] = topic_data
+            config_dict["slack_topics"] = converted_topics
 
         return cls(**config_dict)

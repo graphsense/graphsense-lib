@@ -10,6 +10,7 @@ from fastapi import Depends, Header, Request
 from fastapi.routing import APIRoute
 from starlette.responses import Response
 
+from graphsenselib.errors import BadUserInputException
 from graphsenselib.web.config import GSRestConfig
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.service import ServiceContext
@@ -197,7 +198,12 @@ def parse_comma_separated_ints(value: Optional[str]) -> Optional[list[int]]:
         return None
     if value.strip() == "":
         return None
-    return [int(x.strip()) for x in value.split(",") if x.strip()]
+    try:
+        return [int(x.strip()) for x in value.split(",") if x.strip()]
+    except ValueError as exc:
+        raise BadUserInputException(
+            "Invalid format for only_ids. Expected comma separated integers"
+        ) from exc
 
 
 def parse_comma_separated_strings(value: Optional[str]) -> Optional[list[str]]:
