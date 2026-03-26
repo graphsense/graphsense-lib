@@ -227,7 +227,7 @@ with graphsense.ApiClient(configuration) as api_client:
     include_io = None # bool | Include transaction inputs/outputs (optional)
     include_nonstandard_io = None # bool | Include non-standard inputs/outputs (optional)
     include_io_index = None # bool | Include input/output indices (optional)
-    include_heuristics = None # List[str] | Heuristics to compute (e.g. one_time_change) as list, or simply all (optional) (default to [])
+    include_heuristics = None # List[str] | Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all (optional) (default to [])
 
     try:
         # Get transaction details by hash
@@ -251,7 +251,7 @@ Name | Type | Description  | Notes
  **include_io** | **bool**| Include transaction inputs/outputs | [optional] 
  **include_nonstandard_io** | **bool**| Include non-standard inputs/outputs | [optional] 
  **include_io_index** | **bool**| Include input/output indices | [optional] 
- **include_heuristics** | [**List[str]**](str.md)| Heuristics to compute (e.g. one_time_change) as list, or simply all | [optional] [default to []]
+ **include_heuristics** | [**List[str]**](str.md)| Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all | [optional] [default to []]
 
 ### Return type
 

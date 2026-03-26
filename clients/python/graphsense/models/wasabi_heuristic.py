@@ -15,20 +15,28 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
-from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.change_heuristics import ChangeHeuristics
-from graphsense.models.coin_join_heuristics import CoinJoinHeuristics
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class UtxoHeuristics(BaseModel):
+class WasabiHeuristic(BaseModel):
     """
-    UtxoHeuristics
+    WasabiHeuristic
     """ # noqa: E501
-    change_heuristics: Optional[ChangeHeuristics] = None
-    coinjoin_heuristics: Optional[CoinJoinHeuristics] = None
-    __properties: ClassVar[List[str]] = ["change_heuristics", "coinjoin_heuristics"]
+    detected: StrictBool
+    confidence: StrictInt
+    version: StrictStr
+    n_participants: StrictInt
+    denominations: List[StrictInt]
+    __properties: ClassVar[List[str]] = ["detected", "confidence", "version", "n_participants", "denominations"]
+
+    @field_validator('version')
+    def version_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['1.0', '1.1', '2.0']):
+            raise ValueError("must be one of enum values ('1.0', '1.1', '2.0')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -48,7 +56,7 @@ class UtxoHeuristics(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of UtxoHeuristics from a JSON string"""
+        """Create an instance of WasabiHeuristic from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -69,18 +77,11 @@ class UtxoHeuristics(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of change_heuristics
-        if self.change_heuristics:
-            _dict['change_heuristics'] = self.change_heuristics.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of coinjoin_heuristics
-        if self.coinjoin_heuristics:
-            _dict['coinjoin_heuristics'] = self.coinjoin_heuristics.to_dict()
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of UtxoHeuristics from a dict"""
+        """Create an instance of WasabiHeuristic from a dict"""
         if obj is None:
             return None
 
@@ -88,8 +89,11 @@ class UtxoHeuristics(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "change_heuristics": ChangeHeuristics.from_dict(obj["change_heuristics"]) if obj.get("change_heuristics") is not None else None,
-            "coinjoin_heuristics": CoinJoinHeuristics.from_dict(obj["coinjoin_heuristics"]) if obj.get("coinjoin_heuristics") is not None else None
+            "detected": obj.get("detected"),
+            "confidence": obj.get("confidence"),
+            "version": obj.get("version"),
+            "n_participants": obj.get("n_participants"),
+            "denominations": obj.get("denominations")
         })
         return _obj
 

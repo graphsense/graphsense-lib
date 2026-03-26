@@ -737,7 +737,7 @@ class TxsApi:
         include_io: Annotated[Optional[StrictBool], Field(description="Include transaction inputs/outputs")] = None,
         include_nonstandard_io: Annotated[Optional[StrictBool], Field(description="Include non-standard inputs/outputs")] = None,
         include_io_index: Annotated[Optional[StrictBool], Field(description="Include input/output indices")] = None,
-        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change) as list, or simply all")] = None,
+        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -767,7 +767,7 @@ class TxsApi:
         :type include_nonstandard_io: bool
         :param include_io_index: Include input/output indices
         :type include_io_index: bool
-        :param include_heuristics: Heuristics to compute (e.g. one_time_change) as list, or simply all
+        :param include_heuristics: Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all
         :type include_heuristics: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -830,7 +830,7 @@ class TxsApi:
         include_io: Annotated[Optional[StrictBool], Field(description="Include transaction inputs/outputs")] = None,
         include_nonstandard_io: Annotated[Optional[StrictBool], Field(description="Include non-standard inputs/outputs")] = None,
         include_io_index: Annotated[Optional[StrictBool], Field(description="Include input/output indices")] = None,
-        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change) as list, or simply all")] = None,
+        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -860,7 +860,7 @@ class TxsApi:
         :type include_nonstandard_io: bool
         :param include_io_index: Include input/output indices
         :type include_io_index: bool
-        :param include_heuristics: Heuristics to compute (e.g. one_time_change) as list, or simply all
+        :param include_heuristics: Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all
         :type include_heuristics: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -923,7 +923,7 @@ class TxsApi:
         include_io: Annotated[Optional[StrictBool], Field(description="Include transaction inputs/outputs")] = None,
         include_nonstandard_io: Annotated[Optional[StrictBool], Field(description="Include non-standard inputs/outputs")] = None,
         include_io_index: Annotated[Optional[StrictBool], Field(description="Include input/output indices")] = None,
-        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change) as list, or simply all")] = None,
+        include_heuristics: Annotated[Optional[List[StrictStr]], Field(description="Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -953,7 +953,7 @@ class TxsApi:
         :type include_nonstandard_io: bool
         :param include_io_index: Include input/output indices
         :type include_io_index: bool
-        :param include_heuristics: Heuristics to compute (e.g. one_time_change) as list, or simply all
+        :param include_heuristics: Heuristics to compute (e.g. one_time_change, all_coinjoin) as list, or simply all
         :type include_heuristics: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request

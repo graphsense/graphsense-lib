@@ -6,6 +6,7 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **change_heuristics** | [**ChangeHeuristics**](ChangeHeuristics.md) |  | [optional] 
+**coinjoin_heuristics** | [**CoinJoinHeuristics**](CoinJoinHeuristics.md) |  | [optional] 
 
 ## Example
 

@@ -4,9 +4,8 @@ All transactions are constructed as simple namespaces mirroring the object
 structure used in heuristics_service.py (`.address`, `.value`, `.address_type`).
 OP_RETURN outputs are objects with an empty address list and zero value.
 """
-from types import SimpleNamespace
 
-import pytest
+from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.services.heuristics_service import (
     _joinmarket_heuristic,
@@ -20,10 +19,6 @@ from graphsenselib.db.asynchronous.services.heuristics_service import (
     WASABI_10_EPSILON_SAT,
     WASABI_10_A_MAX,
     WASABI_11_A_MAX,
-    WASABI_20_A_MAX,
-    WASABI_20_MIN_INPUTS,
-    WASABI_20_V_MIN,
-    WASABI_20_MIN_DENOM_FREQ,
     WHIRLPOOL_POOLS,
     WHIRLPOOL_EPSILON_MIN,
     WHIRLPOOL_EPSILON_MAX,
@@ -33,6 +28,7 @@ from graphsenselib.db.asynchronous.services.heuristics_service import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_output(value, address="addr_out"):
     return SimpleNamespace(value=value, address=[address], address_type="p2wpkh")
@@ -55,19 +51,20 @@ def make_tx(inputs, outputs, coinbase=False):
 # Tx0 — happy path
 # ---------------------------------------------------------------------------
 
+
 class TestWhirlpoolTx0HappyPath:
     # Use the 0.01 BTC pool for all tests in this class
-    D, F = WHIRLPOOL_POOLS[1]   # 1_000_000 sat, 50_000 sat fee
-    EPS = 5_000                  # a valid epsilon within [EPSILON_MIN, EPSILON_MAX]
+    D, F = WHIRLPOOL_POOLS[1]  # 1_000_000 sat, 50_000 sat fee
+    EPS = 5_000  # a valid epsilon within [EPSILON_MIN, EPSILON_MAX]
 
     def test_minimal_valid_tx0(self):
         """Minimal Tx0: 1 pre-mix output + fee output + OP_RETURN."""
         tx = make_tx(
             inputs=[make_input(2_000_000, "wallet_addr")],
             outputs=[
-                make_output(self.D + self.EPS, "premix_1"),   # pre-mix
-                make_output(self.F, "coordinator"),             # fee
-                make_op_return(),                               # OP_RETURN
+                make_output(self.D + self.EPS, "premix_1"),  # pre-mix
+                make_output(self.F, "coordinator"),  # fee
+                make_op_return(),  # OP_RETURN
             ],
         )
         result = _whirlpool_tx0_heuristic(tx)
@@ -102,7 +99,7 @@ class TestWhirlpoolTx0HappyPath:
                 make_output(self.D + self.EPS, "premix_2"),
                 make_output(self.D + self.EPS, "premix_3"),
                 make_output(self.F, "coordinator"),
-                make_output(300_000, "change"),       # outside fee range [25k, 150k]
+                make_output(300_000, "change"),  # outside fee range [25k, 150k]
                 make_op_return(),
             ],
         )
@@ -182,6 +179,7 @@ class TestWhirlpoolTx0HappyPath:
 # ---------------------------------------------------------------------------
 # Tx0 — rejection cases
 # ---------------------------------------------------------------------------
+
 
 class TestWhirlpoolTx0Rejection:
     D, F = WHIRLPOOL_POOLS[1]
@@ -297,7 +295,9 @@ class TestWhirlpoolTx0Rejection:
         tx = make_tx(
             inputs=[make_input(2_000_000)],
             outputs=[
-                make_output(500_000 + self.EPS, "premix_1"),  # between 100k and 1M pools
+                make_output(
+                    500_000 + self.EPS, "premix_1"
+                ),  # between 100k and 1M pools
                 make_output(self.F, "coordinator"),
                 make_op_return(),
             ],
@@ -309,18 +309,17 @@ class TestWhirlpoolTx0Rejection:
 # CoinJoin — happy path
 # ---------------------------------------------------------------------------
 
+
 class TestWhirlpoolCoinJoinHappyPath:
-    D, F = WHIRLPOOL_POOLS[1]   # 1_000_000 sat, 50_000 sat fee
-    EPS = 5_000                  # valid epsilon for new entrant inputs
+    D, F = WHIRLPOOL_POOLS[1]  # 1_000_000 sat, 50_000 sat fee
+    EPS = 5_000  # valid epsilon for new entrant inputs
 
     def _make_coinjoin(self, n_new_entrants, pool=None):
         """Build a valid 5×5 Whirlpool CoinJoin with n_new_entrants new entrants."""
         d = pool or self.D
         inputs = [
             make_input(d + self.EPS, f"new_{i}") for i in range(n_new_entrants)
-        ] + [
-            make_input(d, f"remix_{i}") for i in range(5 - n_new_entrants)
-        ]
+        ] + [make_input(d, f"remix_{i}") for i in range(5 - n_new_entrants)]
         outputs = [make_output(d, f"out_{i}") for i in range(5)]
         return make_tx(inputs, outputs)
 
@@ -383,6 +382,7 @@ class TestWhirlpoolCoinJoinHappyPath:
 # CoinJoin — rejection cases
 # ---------------------------------------------------------------------------
 
+
 class TestWhirlpoolCoinJoinRejection:
     D, F = WHIRLPOOL_POOLS[1]
     EPS = 5_000
@@ -390,9 +390,7 @@ class TestWhirlpoolCoinJoinRejection:
     def _make_coinjoin(self, n_new_entrants=2):
         inputs = [
             make_input(self.D + self.EPS, f"new_{i}") for i in range(n_new_entrants)
-        ] + [
-            make_input(self.D, f"remix_{i}") for i in range(5 - n_new_entrants)
-        ]
+        ] + [make_input(self.D, f"remix_{i}") for i in range(5 - n_new_entrants)]
         outputs = [make_output(self.D, f"out_{i}") for i in range(5)]
         return make_tx(inputs, outputs)
 
@@ -501,9 +499,10 @@ class TestWhirlpoolCoinJoinRejection:
 # Wasabi 1.0 — happy path
 # ---------------------------------------------------------------------------
 
+
 class TestWasabi10HappyPath:
-    D = WASABI_10_DENOM_SAT       # 10_000_000 sat
-    FEE = 50_000                  # coordinator fee (arbitrary unique value)
+    D = WASABI_10_DENOM_SAT  # 10_000_000 sat
+    FEE = 50_000  # coordinator fee (arbitrary unique value)
 
     def _make_wasabi10(self, n, n_change=None, fee=None, inputs_per_participant=1):
         """Build a valid Wasabi 1.0 tx with n participants."""
@@ -512,7 +511,10 @@ class TestWasabi10HappyPath:
         fee = fee or self.FEE
         outputs = (
             [make_output(self.D, f"postmix_{i}") for i in range(n)]
-            + [make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(n_change)]
+            + [
+                make_output(self.D // 3 + i * 1001, f"change_{i}")
+                for i in range(n_change)
+            ]
             + [make_output(fee, "coordinator")]
         )
         inputs = [
@@ -594,6 +596,7 @@ class TestWasabi10HappyPath:
 # Wasabi 1.0 — rejection cases
 # ---------------------------------------------------------------------------
 
+
 class TestWasabi10Rejection:
     D = WASABI_10_DENOM_SAT
     FEE = 50_000
@@ -604,7 +607,10 @@ class TestWasabi10Rejection:
         fee = fee or self.FEE
         outputs = (
             [make_output(self.D, f"postmix_{i}") for i in range(n)]
-            + [make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(n_change)]
+            + [
+                make_output(self.D // 3 + i * 1001, f"change_{i}")
+                for i in range(n_change)
+            ]
             + [make_output(fee, "coordinator")]
         )
         inputs = [make_input(self.D * 2, f"inp_{i}") for i in range(n)]
@@ -666,7 +672,9 @@ class TestWasabi10Rejection:
             + [make_output(self.FEE, "coordinator")]
         )
         # WASABI_10_A_MAX * n + 1 distinct inputs
-        inputs = [make_input(self.D * 2, f"inp_{i}") for i in range(WASABI_10_A_MAX * n + 1)]
+        inputs = [
+            make_input(self.D * 2, f"inp_{i}") for i in range(WASABI_10_A_MAX * n + 1)
+        ]
         assert _wasabi_10_heuristic(make_tx(inputs, outputs)) is None
 
     def test_duplicate_output_script_rejected(self):
@@ -683,10 +691,9 @@ class TestWasabi10Rejection:
 
     def test_no_outputs_in_denomination_window(self):
         """No outputs near 0.1 BTC at all."""
-        outputs = (
-            [make_output(500_000 + i * 1001, f"out_{i}") for i in range(10)]
-            + [make_output(self.FEE, "coordinator")]
-        )
+        outputs = [make_output(500_000 + i * 1001, f"out_{i}") for i in range(10)] + [
+            make_output(self.FEE, "coordinator")
+        ]
         inputs = [make_input(1_000_000, f"inp_{i}") for i in range(5)]
         assert _wasabi_10_heuristic(make_tx(inputs, outputs)) is None
 
@@ -695,8 +702,9 @@ class TestWasabi10Rejection:
 # Wasabi 1.1 — happy path
 # ---------------------------------------------------------------------------
 
+
 class TestWasabi11HappyPath:
-    D = WASABI_10_DENOM_SAT   # 10_000_000 sat base denomination
+    D = WASABI_10_DENOM_SAT  # 10_000_000 sat base denomination
     FEE = 50_000
 
     def _make_wasabi11(self, level_counts: dict[int, int], n_change=None, fee=None):
@@ -708,7 +716,7 @@ class TestWasabi11HappyPath:
         outputs = []
         addr_idx = 0
         for level, count in level_counts.items():
-            level_d = (2 ** level) * self.D
+            level_d = (2**level) * self.D
             for _ in range(count):
                 outputs.append(make_output(level_d, f"postmix_{addr_idx}"))
                 addr_idx += 1
@@ -767,7 +775,9 @@ class TestWasabi11HappyPath:
             + [make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(n)]
             + [make_output(self.FEE, "coordinator")]
         )
-        inputs = [make_input(self.D * 10, f"inp_{i}") for i in range(WASABI_11_A_MAX * n)]
+        inputs = [
+            make_input(self.D * 10, f"inp_{i}") for i in range(WASABI_11_A_MAX * n)
+        ]
         result = _wasabi_11_heuristic(make_tx(inputs, outputs))
         assert result is not None
         assert result.confidence >= 50
@@ -796,6 +806,7 @@ class TestWasabi11HappyPath:
 # Wasabi 1.1 — rejection cases
 # ---------------------------------------------------------------------------
 
+
 class TestWasabi11Rejection:
     D = WASABI_10_DENOM_SAT
     FEE = 50_000
@@ -805,7 +816,7 @@ class TestWasabi11Rejection:
         outputs = []
         addr_idx = 0
         for level, count in level_counts.items():
-            level_d = (2 ** level) * self.D
+            level_d = (2**level) * self.D
             for _ in range(count):
                 outputs.append(make_output(level_d, f"postmix_{addr_idx}"))
                 addr_idx += 1
@@ -854,13 +865,17 @@ class TestWasabi11Rejection:
             + [make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(n)]
             + [make_output(self.FEE, "coordinator")]
         )
-        inputs = [make_input(self.D * 4, f"inp_{i}") for i in range(WASABI_11_A_MAX * n + 1)]
+        inputs = [
+            make_input(self.D * 4, f"inp_{i}") for i in range(WASABI_11_A_MAX * n + 1)
+        ]
         assert _wasabi_11_heuristic(make_tx(inputs, outputs)) is None
 
     def test_duplicate_output_script_rejected(self):
         tx = self._make_wasabi11({0: 3, 1: 3})
         # duplicate one output address
-        tx["outputs"][0] = make_output(tx["outputs"][0].value, tx["outputs"][1].address[0])
+        tx["outputs"][0] = make_output(
+            tx["outputs"][0].value, tx["outputs"][1].address[0]
+        )
         assert _wasabi_11_heuristic(tx) is None
 
     def test_sum_condition_fails(self):
@@ -879,18 +894,18 @@ class TestWasabi11Rejection:
 # JoinMarket — happy path
 # ---------------------------------------------------------------------------
 
+
 class TestJoinMarketHappyPath:
-    D = 5_000_000   # arbitrary denomination — JoinMarket has no fixed denom
+    D = 5_000_000  # arbitrary denomination — JoinMarket has no fixed denom
 
     def _make_joinmarket(self, n, n_change=None, denom=None):
         """n participants, each with one post-mix output, optionally one change."""
         d = denom or self.D
         if n_change is None:
             n_change = n
-        outputs = (
-            [make_output(d, f"postmix_{i}") for i in range(n)]
-            + [make_output(d // 3 + i * 1001, f"change_{i}") for i in range(n_change)]
-        )
+        outputs = [make_output(d, f"postmix_{i}") for i in range(n)] + [
+            make_output(d // 3 + i * 1001, f"change_{i}") for i in range(n_change)
+        ]
         inputs = [make_input(d * 2, f"inp_{i}") for i in range(n)]
         return make_tx(inputs, outputs)
 
@@ -937,7 +952,9 @@ class TestJoinMarketHappyPath:
         outputs = (
             [make_output(10_000_000, f"postmix_{i}") for i in range(5)]
             + [make_output(3_000_000 + i * 1001, f"change_{i}") for i in range(5)]
-            + [make_output(50_000, "coordinator")]  # this extra output breaks the condition
+            + [
+                make_output(50_000, "coordinator")
+            ]  # this extra output breaks the condition
         )
         inputs = [make_input(20_000_000, f"inp_{i}") for i in range(5)]
         assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
@@ -955,10 +972,10 @@ class TestJoinMarketHappyPath:
         assert result is not None
 
 
-
 # ---------------------------------------------------------------------------
 # JoinMarket — rejection cases
 # ---------------------------------------------------------------------------
+
 
 class TestJoinMarketRejection:
     D = 5_000_000
@@ -966,10 +983,9 @@ class TestJoinMarketRejection:
     def _make_joinmarket(self, n, n_change=None):
         if n_change is None:
             n_change = n
-        outputs = (
-            [make_output(self.D, f"postmix_{i}") for i in range(n)]
-            + [make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(n_change)]
-        )
+        outputs = [make_output(self.D, f"postmix_{i}") for i in range(n)] + [
+            make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(n_change)
+        ]
         inputs = [make_input(self.D * 2, f"inp_{i}") for i in range(n)]
         return make_tx(inputs, outputs)
 
@@ -983,25 +999,25 @@ class TestJoinMarketRejection:
 
     def test_postmix_not_majority_rejected(self):
         """n < |outputs| / 2 — too many non-postmix outputs."""
-        outputs = (
-            [make_output(self.D, f"postmix_{i}") for i in range(3)]
-            + [make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(10)]
-        )
+        outputs = [make_output(self.D, f"postmix_{i}") for i in range(3)] + [
+            make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(10)
+        ]
         inputs = [make_input(self.D * 2, f"inp_{i}") for i in range(3)]
         assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
 
     def test_too_few_distinct_inputs_rejected(self):
         """n > n_scripts_in — not enough distinct input addresses."""
-        outputs = (
-            [make_output(self.D, f"postmix_{i}") for i in range(5)]
-            + [make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(5)]
-        )
+        outputs = [make_output(self.D, f"postmix_{i}") for i in range(5)] + [
+            make_output(self.D // 3 + i * 1001, f"change_{i}") for i in range(5)
+        ]
         inputs = [make_input(self.D * 2, f"inp_{i % 2}") for i in range(5)]
         assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
 
     def test_duplicate_output_script_rejected(self):
         tx = self._make_joinmarket(5)
-        tx["outputs"][0] = make_output(tx["outputs"][0].value, tx["outputs"][1].address[0])
+        tx["outputs"][0] = make_output(
+            tx["outputs"][0].value, tx["outputs"][1].address[0]
+        )
         assert _joinmarket_heuristic(tx) is None
 
     def test_all_outputs_dust_rejected(self):
@@ -1013,7 +1029,9 @@ class TestJoinMarketRejection:
     def test_dust_spam_not_misclassified(self):
         """A dust attack tx sending the same small amount to many addresses
         must not be classified as JoinMarket — dust is excluded as denomination."""
-        outputs = [make_output(JOINMARKET_DUST_THRESHOLD, f"victim_{i}") for i in range(20)]
+        outputs = [
+            make_output(JOINMARKET_DUST_THRESHOLD, f"victim_{i}") for i in range(20)
+        ]
         inputs = [make_input(100_000, "attacker")]
         assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
 
@@ -1021,6 +1039,7 @@ class TestJoinMarketRejection:
 # ---------------------------------------------------------------------------
 # Wasabi 2.0 — happy path
 # ---------------------------------------------------------------------------
+
 
 class TestWasabi20HappyPath:
     """Wasabi 2.0 (WabiSabi): large rounds with variable denomination sets."""
@@ -1066,7 +1085,9 @@ class TestWasabi20HappyPath:
     def test_large_round(self):
         """100 inputs, typical large WabiSabi round."""
         denoms = {100_000: 40, 500_000: 20}
-        result = _wasabi_20_heuristic(self._make_wasabi20(denoms, n_inputs=100, n_change=15))
+        result = _wasabi_20_heuristic(
+            self._make_wasabi20(denoms, n_inputs=100, n_change=15)
+        )
         assert result is not None
         assert result.n_participants >= 1
 
@@ -1077,7 +1098,9 @@ class TestWasabi20HappyPath:
 
     def test_no_change_outputs(self):
         """All outputs are denominations — no change."""
-        result = _wasabi_20_heuristic(self._make_wasabi20({200_000: 40}, n_change=0, n_inputs=50))
+        result = _wasabi_20_heuristic(
+            self._make_wasabi20({200_000: 40}, n_change=0, n_inputs=50)
+        )
         assert result is not None
 
     def test_op_return_ignored(self):
@@ -1090,7 +1113,9 @@ class TestWasabi20HappyPath:
     def test_denominations_not_near_01_btc(self):
         """Wasabi 2.0 has no fixed denomination — values far from 0.1 BTC should work."""
         denoms = {50_000: 15, 75_000: 15}
-        result = _wasabi_20_heuristic(self._make_wasabi20(denoms, n_change=5, n_inputs=55))
+        result = _wasabi_20_heuristic(
+            self._make_wasabi20(denoms, n_change=5, n_inputs=55)
+        )
         assert result is not None
         assert result.version == "2.0"
 
@@ -1105,17 +1130,16 @@ class TestWasabi20HappyPath:
 # Wasabi 2.0 — rejection cases
 # ---------------------------------------------------------------------------
 
-class TestWasabi20Rejection:
 
+class TestWasabi20Rejection:
     def test_coinbase_rejected(self):
         assert _wasabi_20_heuristic(make_tx([], [], coinbase=True)) is None
 
     def test_fewer_than_50_inputs(self):
         """49 inputs — below minimum, must reject."""
-        outputs = (
-            [make_output(200_000, f"denom_{i}") for i in range(30)]
-            + [make_output(50_000 + i * 1001, f"change_{i}") for i in range(10)]
-        )
+        outputs = [make_output(200_000, f"denom_{i}") for i in range(30)] + [
+            make_output(50_000 + i * 1001, f"change_{i}") for i in range(10)
+        ]
         inputs = [make_input(1_000_000, f"inp_{i}") for i in range(49)]
         assert _wasabi_20_heuristic(make_tx(inputs, outputs)) is None
 
@@ -1178,6 +1202,7 @@ class TestWasabi20Rejection:
 # False positive scenarios — cross-protocol
 # ---------------------------------------------------------------------------
 
+
 class TestFalsePositiveScenarios:
     """Transactions that superficially resemble CoinJoin but are not."""
 
@@ -1185,7 +1210,7 @@ class TestFalsePositiveScenarios:
         """An exchange paying 10 users exactly 0.5 BTC each with 10 distinct
         hot-wallet UTXOs as inputs. Structurally indistinguishable from
         JoinMarket — this is a known limitation. We document that it passes."""
-        d = 50_000_000   # 0.5 BTC
+        d = 50_000_000  # 0.5 BTC
         outputs = [make_output(d, f"user_{i}") for i in range(10)]
         inputs = [make_input(d * 2, f"hotwallet_utxo_{i}") for i in range(10)]
         result = _joinmarket_heuristic(make_tx(inputs, outputs))
@@ -1196,19 +1221,20 @@ class TestFalsePositiveScenarios:
         """Same batch payout but with change outputs — now n < |outputs|/2
         so JoinMarket rejects it."""
         d = 50_000_000
-        outputs = (
-            [make_output(d, f"user_{i}") for i in range(5)]
-            + [make_output(d // 3 + i * 1001, f"change_{i}") for i in range(6)]
-        )
+        outputs = [make_output(d, f"user_{i}") for i in range(5)] + [
+            make_output(d // 3 + i * 1001, f"change_{i}") for i in range(6)
+        ]
         inputs = [make_input(d * 2, f"hotwallet_utxo_{i}") for i in range(5)]
         assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
 
     def test_omni_tx_not_whirlpool_tx0(self):
         """Omni Layer tx with OP_RETURN and outputs that happen to be near
         the 0.001 BTC pool. Should not be classified as Whirlpool Tx0."""
-        d, f = 100_000, 5_000   # smallest Whirlpool pool
+        _, _ = 100_000, 5_000  # smallest Whirlpool pool
         outputs = [
-            make_output(80_000, "omni_recipient_1"),   # near d but not in [d+emin, d+emax]
+            make_output(
+                80_000, "omni_recipient_1"
+            ),  # near d but not in [d+emin, d+emax]
             make_output(80_000, "omni_recipient_2"),
             make_output(20_000, "omni_fee"),
             make_op_return(),  # Omni protocol data
@@ -1219,7 +1245,7 @@ class TestFalsePositiveScenarios:
     def test_omni_tx_with_premix_like_values_not_tx0(self):
         """Omni tx where outputs are in the premix range but no valid
         coordinator fee output exists."""
-        d, f = 1_000_000, 50_000
+        d, _ = 1_000_000, 50_000
         eps = 5_000
         outputs = [
             make_output(d + eps, "recipient_1"),
@@ -1237,10 +1263,9 @@ class TestFalsePositiveScenarios:
         d = WASABI_10_DENOM_SAT
         # 4 identical outputs + 3 change-like outputs = 7 outputs
         # n=4, (7-1)/2=3, 4>=3 ✓ — but n_scripts_in must be ≥ n
-        outputs = (
-            [make_output(d, f"user_{i}") for i in range(4)]
-            + [make_output(d // 3 + i * 1001, f"change_{i}") for i in range(3)]
-        )
+        outputs = [make_output(d, f"user_{i}") for i in range(4)] + [
+            make_output(d // 3 + i * 1001, f"change_{i}") for i in range(3)
+        ]
         # only 2 distinct input addresses — fails n <= n_scripts_in
         inputs = [make_input(d * 5, f"exchange_{i % 2}") for i in range(4)]
         assert _wasabi_10_heuristic(make_tx(inputs, outputs)) is None

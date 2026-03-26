@@ -151,6 +151,8 @@ Class | Method | HTTP request | Description
  - [Block](docs/Block.md)
  - [BlockAtDate](docs/BlockAtDate.md)
  - [ChangeHeuristics](docs/ChangeHeuristics.md)
+ - [CoinJoinConsensus](docs/CoinJoinConsensus.md)
+ - [CoinJoinHeuristics](docs/CoinJoinHeuristics.md)
  - [Concept](docs/Concept.md)
  - [ConsensusEntry](docs/ConsensusEntry.md)
  - [CurrencyStats](docs/CurrencyStats.md)
@@ -159,6 +161,7 @@ Class | Method | HTTP request | Description
  - [EntityAddresses](docs/EntityAddresses.md)
  - [ExternalConversion](docs/ExternalConversion.md)
  - [HTTPValidationError](docs/HTTPValidationError.md)
+ - [JoinMarketHeuristic](docs/JoinMarketHeuristic.md)
  - [LabelSummary](docs/LabelSummary.md)
  - [LabeledItemRef](docs/LabeledItemRef.md)
  - [Link](docs/Link.md)
@@ -202,6 +205,9 @@ Class | Method | HTTP request | Description
  - [UtxoHeuristics](docs/UtxoHeuristics.md)
  - [ValidationError](docs/ValidationError.md)
  - [Values](docs/Values.md)
+ - [WasabiHeuristic](docs/WasabiHeuristic.md)
+ - [WhirlpoolCoinJoinHeuristic](docs/WhirlpoolCoinJoinHeuristic.md)
+ - [WhirlpoolTx0Heuristic](docs/WhirlpoolTx0Heuristic.md)
 
 
 <a id="documentation-for-authorization"></a>

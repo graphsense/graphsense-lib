@@ -1,12 +1,11 @@
+# noqa: E402
 import asyncio
 import logging
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict
 
-logger = logging.getLogger(__name__)
-
-from .common import cannonicalize_address
+from .common import cannonicalize_address  # noqa: E402
 from graphsenselib.db.asynchronous.services.heuristics import (
     AddressOutput,
     ChangeHeuristics,
@@ -24,7 +23,10 @@ from graphsenselib.db.asynchronous.services.heuristics import (
     WasabiHeuristic,
     WhirlpoolCoinJoinHeuristic,
     WhirlpoolTx0Heuristic,
-)
+)  # noqa: E402
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -40,16 +42,16 @@ WHIRLPOOL_POOLS = [
     (5_000_000, 175_000),
     (50_000_000, 1_750_000),
 ]
-WASABI_10_DENOM_SAT = 10_000_000   # 0.1 BTC
-WASABI_10_EPSILON_SAT = 500_000    # ±5% tolerance
-WASABI_10_A_MAX = 7                # max inputs per participant
+WASABI_10_DENOM_SAT = 10_000_000  # 0.1 BTC
+WASABI_10_EPSILON_SAT = 500_000  # ±5% tolerance
+WASABI_10_A_MAX = 7  # max inputs per participant
 
-WASABI_11_A_MAX = 7                # same as 1.0
+WASABI_11_A_MAX = 7  # same as 1.0
 
-WASABI_20_A_MAX = 10               # max inputs per participant
-WASABI_20_MIN_INPUTS = 50          # minimum total inputs
-WASABI_20_V_MIN = 5_000            # minimum output value (sat)
-WASABI_20_MIN_DENOM_FREQ = 2       # minimum frequency for a value to be a denomination
+WASABI_20_A_MAX = 10  # max inputs per participant
+WASABI_20_MIN_INPUTS = 50  # minimum total inputs
+WASABI_20_V_MIN = 5_000  # minimum output value (sat)
+WASABI_20_MIN_DENOM_FREQ = 2  # minimum frequency for a value to be a denomination
 
 WHIRLPOOL_EPSILON_MIN = 100
 WHIRLPOOL_EPSILON_MAX = 100_000
@@ -341,7 +343,8 @@ def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
 
     # find candidate denomination: most frequent output value within the window
     freq = Counter(
-        o.value for o in outputs
+        o.value
+        for o in outputs
         if abs(o.value - WASABI_10_DENOM_SAT) <= WASABI_10_EPSILON_SAT
     )
     if not freq:
@@ -378,9 +381,11 @@ def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
 
 
 JOINMARKET_MIN_PARTICIPANTS = 2
-JOINMARKET_DUST_THRESHOLD = 2730  # outputs at or below this value excluded as denomination candidates
-JOINMARKET_LOW_CONFIDENCE = 20    # confidence when only 2 equal-value outputs are found
-JOINMARKET_CONFIDENCE = 49        # confidence when 3+ equal-value outputs are found
+JOINMARKET_DUST_THRESHOLD = (
+    2730  # outputs at or below this value excluded as denomination candidates
+)
+JOINMARKET_LOW_CONFIDENCE = 20  # confidence when only 2 equal-value outputs are found
+JOINMARKET_CONFIDENCE = 49  # confidence when 3+ equal-value outputs are found
 
 
 def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
@@ -403,10 +408,7 @@ def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
         return None
 
     # find most frequent output value, excluding dust
-    freq = Counter(
-        o.value for o in outputs
-        if o.value > JOINMARKET_DUST_THRESHOLD
-    )
+    freq = Counter(o.value for o in outputs if o.value > JOINMARKET_DUST_THRESHOLD)
     if not freq:
         return None
 
@@ -462,12 +464,13 @@ def _wasabi_11_heuristic(tx) -> WasabiHeuristic | None:
     level_counts: dict[int, int] = {}
     i = 0
     while True:
-        level_d = (2 ** i) * d
+        level_d = (2**i) * d
         if level_d > max_output_value:
             break
         count = sum(
-            1 for o in outputs
-            if abs(o.value - level_d) <= (2 ** i) * WASABI_10_EPSILON_SAT
+            1
+            for o in outputs
+            if abs(o.value - level_d) <= (2**i) * WASABI_10_EPSILON_SAT
         )
         if count >= 2:
             level_counts[i] = count
@@ -530,7 +533,7 @@ def _wasabi_11_heuristic(tx) -> WasabiHeuristic | None:
         confidence=confidence,
         version=version,
         n_participants=n,
-        denominations=sorted((2 ** i) * d for i in level_counts),
+        denominations=sorted((2**i) * d for i in level_counts),
     )
 
 
@@ -625,7 +628,10 @@ def _whirlpool_coinjoin_heuristic(tx) -> WhirlpoolCoinJoinHeuristic | None:
 
         # each new entrant needs to pay a fee
         new_entrant_epsilons = [v - d for v in input_values if v > d]
-        if not all(WHIRLPOOL_EPSILON_MIN <= e <= WHIRLPOOL_EPSILON_MAX for e in new_entrant_epsilons):
+        if not all(
+            WHIRLPOOL_EPSILON_MIN <= e <= WHIRLPOOL_EPSILON_MAX
+            for e in new_entrant_epsilons
+        ):
             continue
 
         # at least one old remix required and at least one new entrant
@@ -668,7 +674,8 @@ def _whirlpool_tx0_heuristic(tx) -> WhirlpoolTx0Heuristic | None:
     for d, f in WHIRLPOOL_POOLS:
         # find candidate pre-mix value: most frequent output value in [d+emin, d+emax]
         premix_range = [
-            outp.value for outp in outputs
+            outp.value
+            for outp in outputs
             if d + WHIRLPOOL_EPSILON_MIN <= outp.value <= d + WHIRLPOOL_EPSILON_MAX
         ]
         if not premix_range:
@@ -686,11 +693,14 @@ def _whirlpool_tx0_heuristic(tx) -> WhirlpoolTx0Heuristic | None:
         n_premix = freq[d_tilde]
         if not (1 <= n_premix <= WHIRLPOOL_TX0_A_MAX):
             continue
-        if n_premix < len(outputs) - 2:  # at most 2 non-premix spendable outputs: fee + optional change
+        if (
+            n_premix < len(outputs) - 2
+        ):  # at most 2 non-premix spendable outputs: fee + optional change
             continue
 
         fee_outputs = [
-            outp for outp in outputs
+            outp
+            for outp in outputs
             if WHIRLPOOL_ETA1 * f <= outp.value <= WHIRLPOOL_ETA2 * f
         ]
         if len(fee_outputs) != 1:
@@ -763,11 +773,7 @@ async def _verify_whirlpool_lineage(
     return all(results)
 
 
-
-
-async def _verify_tx0_forward(
-    tx, pool_denomination, get_spent_in, get_tx
-) -> bool:
+async def _verify_tx0_forward(tx, pool_denomination, get_spent_in, get_tx) -> bool:
     """
     Check if any pre-mix output of a Tx0 candidate was spent in a
     Whirlpool CoinJoin. One confirmed hit is enough.
@@ -775,12 +781,17 @@ async def _verify_tx0_forward(
     tx_hash_raw = tx.get("tx_hash")
     if not tx_hash_raw:
         return False
-    tx_hash = tx_hash_raw.hex() if isinstance(tx_hash_raw, (bytes, bytearray)) else tx_hash_raw
+    tx_hash = (
+        tx_hash_raw.hex()
+        if isinstance(tx_hash_raw, (bytes, bytearray))
+        else tx_hash_raw
+    )
 
     d = pool_denomination
     all_outputs = [outp for outp in tx.get("outputs", []) if outp is not None]
     premix_indices = [
-        idx for idx, outp in enumerate(all_outputs)
+        idx
+        for idx, outp in enumerate(all_outputs)
         if outp.address
         and d + WHIRLPOOL_EPSILON_MIN <= outp.value <= d + WHIRLPOOL_EPSILON_MAX
     ]
@@ -803,7 +814,10 @@ async def _verify_tx0_forward(
 
 
 async def calculate_heuristics(
-    tx, currency, get_address, heuristics: list,
+    tx,
+    currency,
+    get_address,
+    heuristics: list,
     coinjoin_callbacks: CoinJoinDbCallbacks | None = None,
 ) -> UtxoHeuristics:
     tasks = []
@@ -842,14 +856,17 @@ async def calculate_heuristics(
         # check if pre-mix outputs were spent in Whirlpool CoinJoins
         if whirlpool_tx0 is not None and coinjoin_callbacks is not None:
             confirmed = await _verify_tx0_forward(
-                tx, whirlpool_tx0.pool_denomination_sat,
-                coinjoin_callbacks.get_spent_in, coinjoin_callbacks.get_tx,
+                tx,
+                whirlpool_tx0.pool_denomination_sat,
+                coinjoin_callbacks.get_spent_in,
+                coinjoin_callbacks.get_tx,
             )
             if confirmed:
                 whirlpool_tx0.confidence = WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE
         elif whirlpool_tx0 is not None:
-            logger.warning("whirlpool_tx0 detected but coinjoin_callbacks not available")
-
+            logger.warning(
+                "whirlpool_tx0 detected but coinjoin_callbacks not available"
+            )
 
         if whirlpool_coinjoin is not None or whirlpool_tx0 is not None:
             coinjoin = CoinJoinHeuristics(
@@ -864,7 +881,13 @@ async def calculate_heuristics(
                 coinjoin = CoinJoinHeuristics()
             coinjoin.wasabi = wasabi_20_result
 
-    if {"wasabi_1_0_coinjoin", "wasabi_1_1_coinjoin", "wasabi_coinjoin", "all", "all_coinjoin"} & heuristics:
+    if {
+        "wasabi_1_0_coinjoin",
+        "wasabi_1_1_coinjoin",
+        "wasabi_coinjoin",
+        "all",
+        "all_coinjoin",
+    } & heuristics:
         wasabi_result = _wasabi_11_heuristic(tx)
         # 1.x only overwrites if 2.0 didn't match (2.0 is more specific)
         if wasabi_result is not None and (coinjoin is None or coinjoin.wasabi is None):

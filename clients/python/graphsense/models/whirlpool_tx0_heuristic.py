@@ -15,20 +15,20 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
-from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.change_heuristics import ChangeHeuristics
-from graphsense.models.coin_join_heuristics import CoinJoinHeuristics
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class UtxoHeuristics(BaseModel):
+class WhirlpoolTx0Heuristic(BaseModel):
     """
-    UtxoHeuristics
+    WhirlpoolTx0Heuristic
     """ # noqa: E501
-    change_heuristics: Optional[ChangeHeuristics] = None
-    coinjoin_heuristics: Optional[CoinJoinHeuristics] = None
-    __properties: ClassVar[List[str]] = ["change_heuristics", "coinjoin_heuristics"]
+    detected: StrictBool
+    confidence: StrictInt
+    pool_denomination_sat: StrictInt
+    n_premix_outputs: StrictInt
+    __properties: ClassVar[List[str]] = ["detected", "confidence", "pool_denomination_sat", "n_premix_outputs"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -48,7 +48,7 @@ class UtxoHeuristics(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of UtxoHeuristics from a JSON string"""
+        """Create an instance of WhirlpoolTx0Heuristic from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -69,18 +69,11 @@ class UtxoHeuristics(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of change_heuristics
-        if self.change_heuristics:
-            _dict['change_heuristics'] = self.change_heuristics.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of coinjoin_heuristics
-        if self.coinjoin_heuristics:
-            _dict['coinjoin_heuristics'] = self.coinjoin_heuristics.to_dict()
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of UtxoHeuristics from a dict"""
+        """Create an instance of WhirlpoolTx0Heuristic from a dict"""
         if obj is None:
             return None
 
@@ -88,8 +81,10 @@ class UtxoHeuristics(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "change_heuristics": ChangeHeuristics.from_dict(obj["change_heuristics"]) if obj.get("change_heuristics") is not None else None,
-            "coinjoin_heuristics": CoinJoinHeuristics.from_dict(obj["coinjoin_heuristics"]) if obj.get("coinjoin_heuristics") is not None else None
+            "detected": obj.get("detected"),
+            "confidence": obj.get("confidence"),
+            "pool_denomination_sat": obj.get("pool_denomination_sat"),
+            "n_premix_outputs": obj.get("n_premix_outputs")
         })
         return _obj
 

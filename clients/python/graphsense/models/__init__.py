@@ -23,6 +23,8 @@ from graphsense.models.address_txs import AddressTxs
 from graphsense.models.block import Block
 from graphsense.models.block_at_date import BlockAtDate
 from graphsense.models.change_heuristics import ChangeHeuristics
+from graphsense.models.coin_join_consensus import CoinJoinConsensus
+from graphsense.models.coin_join_heuristics import CoinJoinHeuristics
 from graphsense.models.concept import Concept
 from graphsense.models.consensus_entry import ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats
@@ -31,6 +33,7 @@ from graphsense.models.entity import Entity
 from graphsense.models.entity_addresses import EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion
 from graphsense.models.http_validation_error import HTTPValidationError
+from graphsense.models.join_market_heuristic import JoinMarketHeuristic
 from graphsense.models.label_summary import LabelSummary
 from graphsense.models.labeled_item_ref import LabeledItemRef
 from graphsense.models.link import Link
@@ -74,5 +77,8 @@ from graphsense.models.user_tag_report_response import UserTagReportResponse
 from graphsense.models.utxo_heuristics import UtxoHeuristics
 from graphsense.models.validation_error import ValidationError
 from graphsense.models.values import Values
+from graphsense.models.wasabi_heuristic import WasabiHeuristic
+from graphsense.models.whirlpool_coin_join_heuristic import WhirlpoolCoinJoinHeuristic
+from graphsense.models.whirlpool_tx0_heuristic import WhirlpoolTx0Heuristic
 from graphsense.compat import CompatInt, CompatList
 

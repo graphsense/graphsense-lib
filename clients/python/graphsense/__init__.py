@@ -46,6 +46,8 @@ __all__ = [
     "Block",
     "BlockAtDate",
     "ChangeHeuristics",
+    "CoinJoinConsensus",
+    "CoinJoinHeuristics",
     "Concept",
     "ConsensusEntry",
     "CurrencyStats",
@@ -54,6 +56,7 @@ __all__ = [
     "EntityAddresses",
     "ExternalConversion",
     "HTTPValidationError",
+    "JoinMarketHeuristic",
     "LabelSummary",
     "LabeledItemRef",
     "Link",
@@ -97,6 +100,9 @@ __all__ = [
     "UtxoHeuristics",
     "ValidationError",
     "Values",
+    "WasabiHeuristic",
+    "WhirlpoolCoinJoinHeuristic",
+    "WhirlpoolTx0Heuristic",
 ]
 
 # Import compat module first to apply BaseModel patches
@@ -137,6 +143,8 @@ from graphsense.models.address_txs import AddressTxs as AddressTxs
 from graphsense.models.block import Block as Block
 from graphsense.models.block_at_date import BlockAtDate as BlockAtDate
 from graphsense.models.change_heuristics import ChangeHeuristics as ChangeHeuristics
+from graphsense.models.coin_join_consensus import CoinJoinConsensus as CoinJoinConsensus
+from graphsense.models.coin_join_heuristics import CoinJoinHeuristics as CoinJoinHeuristics
 from graphsense.models.concept import Concept as Concept
 from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats as CurrencyStats
@@ -145,6 +153,7 @@ from graphsense.models.entity import Entity as Entity
 from graphsense.models.entity_addresses import EntityAddresses as EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion as ExternalConversion
 from graphsense.models.http_validation_error import HTTPValidationError as HTTPValidationError
+from graphsense.models.join_market_heuristic import JoinMarketHeuristic as JoinMarketHeuristic
 from graphsense.models.label_summary import LabelSummary as LabelSummary
 from graphsense.models.labeled_item_ref import LabeledItemRef as LabeledItemRef
 from graphsense.models.link import Link as Link
@@ -188,4 +197,7 @@ from graphsense.models.user_tag_report_response import UserTagReportResponse as 
 from graphsense.models.utxo_heuristics import UtxoHeuristics as UtxoHeuristics
 from graphsense.models.validation_error import ValidationError as ValidationError
 from graphsense.models.values import Values as Values
+from graphsense.models.wasabi_heuristic import WasabiHeuristic as WasabiHeuristic
+from graphsense.models.whirlpool_coin_join_heuristic import WhirlpoolCoinJoinHeuristic as WhirlpoolCoinJoinHeuristic
+from graphsense.models.whirlpool_tx0_heuristic import WhirlpoolTx0Heuristic as WhirlpoolTx0Heuristic
 
