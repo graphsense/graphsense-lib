@@ -360,7 +360,20 @@ def to_api_utxo_heuristics(pydantic_heuristics) -> ApiUtxoHeuristics | None:
     api_coinjoin = None
     cj = pydantic_heuristics.coinjoin_heuristics
     if cj is not None:
-        api_coinjoin = ApiCoinJoinHeuristics.model_validate(cj.model_dump())
+        cj_data = cj.model_dump()
+
+        # Keep backward compatibility between service and API naming for
+        # JoinMarket denomination fields.
+        joinmarket = cj_data.get("joinmarket")
+        if joinmarket is not None and "denomination_sat" not in joinmarket:
+            if "pool_denomination" in joinmarket:
+                joinmarket["denomination_sat"] = joinmarket.pop("pool_denomination")
+            elif "common_input_denomination" in joinmarket:
+                joinmarket["denomination_sat"] = joinmarket.pop(
+                    "common_input_denomination"
+                )
+
+        api_coinjoin = ApiCoinJoinHeuristics.model_validate(cj_data)
 
     return ApiUtxoHeuristics(
         change_heuristics=api_change,
