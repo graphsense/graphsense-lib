@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel
 
 
@@ -54,5 +54,50 @@ class ChangeHeuristics(BaseModel):
     multi_input_change: Optional[MultiInputChangeHeuristic] = None
 
 
+class JoinMarketHeuristic(BaseModel):
+    detected: bool
+    confidence: int
+    n_participants: int
+    pool_denomination: int
+
+
+class WasabiHeuristic(BaseModel):
+    detected: bool
+    confidence: int
+    version: Literal["1.0", "1.1", "2.0"]
+    n_participants: int
+    denominations: list[int]
+
+
+class WhirlpoolTx0Heuristic(BaseModel):
+    detected: bool
+    confidence: int
+    pool_denomination_sat: int
+    n_premix_outputs: int
+
+
+class WhirlpoolCoinJoinHeuristic(BaseModel):
+    detected: bool
+    confidence: int
+    pool_denomination_sat: int
+    n_remixers: int
+    n_new_entrants: int
+
+
+class CoinJoinConsensus(BaseModel):
+    detected: bool
+    confidence: int
+    sources: list[str]
+
+
+class CoinJoinHeuristics(BaseModel):
+    consensus: Optional[CoinJoinConsensus] = None
+    joinmarket: Optional[JoinMarketHeuristic] = None
+    wasabi: Optional[WasabiHeuristic] = None
+    whirlpool_tx0: Optional[WhirlpoolTx0Heuristic] = None
+    whirlpool_coinjoin: Optional[WhirlpoolCoinJoinHeuristic] = None
+
+
 class UtxoHeuristics(BaseModel):
     change_heuristics: Optional[ChangeHeuristics] = None
+    coinjoin_heuristics: Optional[CoinJoinHeuristics] = None

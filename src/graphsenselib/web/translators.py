@@ -156,7 +156,10 @@ from graphsenselib.web.models.heuristics import (
 from graphsenselib.web.models.heuristics import (
     OneTimeChangeHeuristic as ApiOneTimeChangeHeuristic,
 )
-from graphsenselib.web.models.heuristics import UtxoHeuristics as ApiUtxoHeuristics
+from graphsenselib.web.models.heuristics import (
+    CoinJoinHeuristics as ApiCoinJoinHeuristics,
+    UtxoHeuristics as ApiUtxoHeuristics,
+)
 
 
 def to_api_values(pydantic_values: PydanticValues) -> Values:
@@ -331,11 +334,9 @@ def to_api_utxo_heuristics(pydantic_heuristics) -> ApiUtxoHeuristics | None:
         return None
 
     change_heuristics = pydantic_heuristics.change_heuristics
-    if change_heuristics is None:
-        return ApiUtxoHeuristics(change_heuristics=None)
-
-    return ApiUtxoHeuristics(
-        change_heuristics=ApiChangeHeuristics(
+    api_change = None
+    if change_heuristics is not None:
+        api_change = ApiChangeHeuristics(
             consensus=[
                 ApiHeuristicConsensusEntry(
                     output=to_api_heuristics_address_output(entry.output),
@@ -354,6 +355,16 @@ def to_api_utxo_heuristics(pydantic_heuristics) -> ApiUtxoHeuristics | None:
                 change_heuristics.multi_input_change
             ),
         )
+
+    # CoinJoin heuristics: flat models, pass through via model_validate
+    api_coinjoin = None
+    cj = pydantic_heuristics.coinjoin_heuristics
+    if cj is not None:
+        api_coinjoin = ApiCoinJoinHeuristics.model_validate(cj.model_dump())
+
+    return ApiUtxoHeuristics(
+        change_heuristics=api_change,
+        coinjoin_heuristics=api_coinjoin,
     )
 
 
