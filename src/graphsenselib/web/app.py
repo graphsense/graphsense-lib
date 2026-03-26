@@ -17,6 +17,8 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError as PydanticValidationError
+from pydantic_core import ValidationError as PydanticCoreValidationError
 from graphsenselib.config import AppConfig
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
@@ -230,6 +232,18 @@ def _promote_schema_examples_to_parameter_level(
     This post-processor promotes schema.examples[0] to parameter.example so
     that Swagger UI displays them correctly.
     """
+
+    def _to_python_literal(value: Any) -> str:
+        if value is None:
+            return "None"
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str):
+            return repr(value)
+        return repr(value)
+
     for path_val in schema.get("paths", {}).values():
         for method_val in path_val.values():
             if not isinstance(method_val, dict):
@@ -240,6 +254,50 @@ def _promote_schema_examples_to_parameter_level(
                     examples = param_schema.pop("examples")
                     if isinstance(examples, list) and examples:
                         param["example"] = examples[0]
+                        # Keep track of examples that were explicitly set on API params.
+                        param["x-graphsense-explicit-example"] = True
+                        param["x-graphsense-python-example"] = _to_python_literal(
+                            examples[0]
+                        )
+    return schema
+
+
+def _normalize_parameter_examples_for_generated_clients(
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize selected OpenAPI parameter examples for generated client snippets.
+
+    Some generators eagerly include all optional parameters in example code. For a
+    few parameters this yields invalid/default placeholder combinations in snippets.
+    Keep these examples explicit and safe at the OpenAPI source.
+    """
+
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+
+            parameters = operation.get("parameters", [])
+            parameter_names = {p.get("name") for p in parameters if isinstance(p, dict)}
+            has_height_filters = (
+                "min_height" in parameter_names or "max_height" in parameter_names
+            )
+
+            for parameter in parameters:
+                if not isinstance(parameter, dict):
+                    continue
+
+                name = parameter.get("name")
+
+                if name in {"page", "token_tx_id"}:
+                    parameter["example"] = None
+                    parameter.pop("x-graphsense-python-example", None)
+                    continue
+
+                if has_height_filters and name in {"min_date", "max_date"}:
+                    parameter["example"] = None
+                    parameter.pop("x-graphsense-python-example", None)
+
     return schema
 
 
@@ -358,6 +416,26 @@ def setup_logging(
 
     handler.setLevel(getattr(logging, smtp.level))
     app_logger.addHandler(handler)
+
+
+def log_slack_exception_notification_status(
+    slack_exception_hook, default_environment: Optional[str]
+):
+    """Log whether Slack exception notifications are configured at startup."""
+    hooks = slack_exception_hook.hooks if slack_exception_hook is not None else []
+    environment = default_environment or "unknown"
+
+    if hooks:
+        logger.info(
+            "Slack exception notifications enabled (hooks=%d, environment=%s)",
+            len(hooks),
+            environment,
+        )
+    else:
+        logger.info(
+            "Slack exception notifications disabled (no 'exceptions' slack hooks configured, environment=%s)",
+            environment,
+        )
 
 
 async def setup_database(app: FastAPI):
@@ -632,6 +710,17 @@ def _register_exception_handlers(app: FastAPI):
             content={"detail": exc.get_user_msg()},
         )
 
+    @app.exception_handler(PydanticValidationError)
+    @app.exception_handler(PydanticCoreValidationError)
+    async def pydantic_validation_handler(request: Request, exc: Exception):
+        logger.warning(
+            f"PydanticValidationError: {str(exc)} | {_get_request_context(request)}"
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": str(exc)},
+        )
+
     @app.exception_handler(FeatureNotAvailableException)
     async def feature_not_available_handler(
         request: Request, exc: FeatureNotAvailableException
@@ -813,12 +902,17 @@ def create_app(
 
     config = resolve_rest_config(config_file, config, gslib_config)
 
-    slack_exception_hook = gslib_config.get_slack_hooks_by_topic("exceptions")
-    slack_info_hook = gslib_config.get_slack_hooks_by_topic("info")
+    slack_exception_hook = config.get_slack_hooks_by_topic(
+        "exceptions"
+    ) or gslib_config.get_slack_hooks_by_topic("exceptions")
+    slack_info_hook = config.get_slack_hooks_by_topic(
+        "info"
+    ) or gslib_config.get_slack_hooks_by_topic("info")
     default_environment = config.environment or gslib_config.default_environment
     config.slack_info_hook = slack_info_hook
 
     setup_logging(logger, slack_exception_hook, default_environment, config.logging)
+    log_slack_exception_notification_status(slack_exception_hook, default_environment)
 
     app = FastAPI(
         title="GraphSense API",
@@ -911,6 +1005,11 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
         # Promote schema-level examples to parameter-level for Swagger UI
         openapi_schema = _promote_schema_examples_to_parameter_level(openapi_schema)
+
+        # Normalize selected parameter examples for generated SDK snippets
+        openapi_schema = _normalize_parameter_examples_for_generated_clients(
+            openapi_schema
+        )
 
         # Convert schema names to snake_case for backward compatibility
         openapi_schema = _convert_schema_names_to_snake_case(openapi_schema)

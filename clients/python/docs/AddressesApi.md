@@ -224,7 +224,7 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.AddressesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    include_best_cluster_tag = True # bool | If the best cluster tag should be inherited to the address level (optional)
+    include_best_cluster_tag = None # bool | If the best cluster tag should be inherited to the address level (optional)
 
     try:
         # Get address attribution tag summary
@@ -312,11 +312,11 @@ with graphsense.ApiClient(configuration) as api_client:
     neighbor = '1FKCzy3BEtiZDhRDtivp7Y7RVb9edg5BH7' # str | Neighbor address
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
+    min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
+    max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -340,10 +340,10 @@ Name | Type | Description  | Notes
  **neighbor** | **str**| Neighbor address | 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
- **min_date** | **str**| Min date of txs | [optional] 
- **max_date** | **str**| Max date of txs | [optional] 
+ **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
+ **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -411,10 +411,10 @@ with graphsense.ApiClient(configuration) as api_client:
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
     direction = 'out' # str | Incoming or outgoing neighbors
-    only_ids = 'only_ids_example' # str | Restrict result to given set of comma separated addresses (optional)
-    include_labels = true # bool | Whether to include labels of first page of address tags (optional)
+    only_ids = '1,2,3' # str | Restrict result to given set of comma separated addresses (optional)
+    include_labels = True # bool | Whether to include labels of first page of address tags (optional)
     include_actors = True # bool | Whether to include actor information (optional) (default to True)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -508,11 +508,11 @@ with graphsense.ApiClient(configuration) as api_client:
     direction = 'out' # str | Incoming or outgoing transactions (optional)
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
+    min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
+    max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -536,10 +536,10 @@ Name | Type | Description  | Notes
  **direction** | **str**| Incoming or outgoing transactions | [optional] 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
- **min_date** | **str**| Min date of txs | [optional] 
- **max_date** | **str**| Max date of txs | [optional] 
+ **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
+ **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -607,8 +607,8 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.AddressesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    address_relation_type = pubkey # str | What type of related addresses to return (optional) (default to pubkey)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    address_relation_type = 'pubkey' # str | What type of related addresses to return (optional) (default to pubkey)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -696,9 +696,9 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.AddressesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
-    include_best_cluster_tag = True # bool | If the best cluster tag should be inherited to the address level (optional)
+    include_best_cluster_tag = None # bool | If the best cluster tag should be inherited to the address level (optional)
 
     try:
         # List attribution tags for an address

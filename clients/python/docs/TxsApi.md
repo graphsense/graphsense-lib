@@ -223,11 +223,11 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.TxsApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
-    token_tx_id = 56 # int | Token transaction ID for account-model currencies (optional)
-    include_io = True # bool | Include transaction inputs/outputs (optional)
-    include_nonstandard_io = True # bool | Include non-standard inputs/outputs (optional)
-    include_io_index = True # bool | Include input/output indices (optional)
-    include_heuristics = [] # List[str] | Heuristics to compute (e.g. one_time_change) as list, or simply all (optional) (default to [])
+    token_tx_id = None # int | Token transaction ID for account-model currencies (optional)
+    include_io = None # bool | Include transaction inputs/outputs (optional)
+    include_nonstandard_io = None # bool | Include non-standard inputs/outputs (optional)
+    include_io_index = None # bool | Include input/output indices (optional)
+    include_heuristics = None # List[str] | Heuristics to compute (e.g. one_time_change) as list, or simply all (optional) (default to [])
 
     try:
         # Get transaction details by hash
@@ -400,8 +400,8 @@ with graphsense.ApiClient(configuration) as api_client:
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
     io = 'outputs' # str | Input or output values of a transaction (inputs or outputs)
-    include_nonstandard_io = True # bool | Include non-standard inputs/outputs (optional)
-    include_io_index = True # bool | Include input/output indices (optional)
+    include_nonstandard_io = None # bool | Include non-standard inputs/outputs (optional)
+    include_io_index = None # bool | Include input/output indices (optional)
 
     try:
         # List transaction inputs or outputs
@@ -570,10 +570,10 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.TxsApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = '04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd' # str | The transaction hash
-    strip_zero_value_txs = True # bool | Strip zero value transactions (optional)
-    only_token_txs = false # bool | Only return token transactions (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    strip_zero_value_txs = None # bool | Strip zero value transactions (optional)
+    only_token_txs = False # bool | Only return token transactions (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -596,7 +596,7 @@ Name | Type | Description  | Notes
  **tx_hash** | **str**| The transaction hash | 
  **strip_zero_value_txs** | **bool**| Strip zero value transactions | [optional] 
  **only_token_txs** | **bool**| Only return token transactions | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 

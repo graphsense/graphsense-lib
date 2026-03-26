@@ -55,3 +55,9 @@ gs-tagstore:
 # Optional: Plugins
 # plugins:
 #   - "graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags"
+
+# Optional: Slack hooks for REST runtime events
+# slack_topics:
+#   exceptions:
+#     hooks:
+#       - "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"

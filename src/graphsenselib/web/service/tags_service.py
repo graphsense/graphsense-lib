@@ -56,7 +56,7 @@ async def report_tag(ctx, body):
         network=body.network,
         actor=body.actor,
         label=body.label,
-        description=body.description,
+        description=body.description or "",
         user=ctx.username,
     )
 

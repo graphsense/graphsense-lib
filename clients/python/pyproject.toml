@@ -1,6 +1,6 @@
 [project]
 name = "graphsense-python"
-version = "2.10.0-dev.1"
+version = "2.10.0-dev.3"
 description = "GraphSense API"
 license = "MIT"
 authors = [
@@ -32,6 +32,7 @@ include = ["graphsense*"]
 
 [dependency-groups]
 dev = [
+    "pandas>=2.3.3",
     "pytest>=8.4.2",
 ]
 

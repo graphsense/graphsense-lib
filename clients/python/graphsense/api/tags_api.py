@@ -64,8 +64,11 @@ def validate_call_compat(func):
     def wrapper(*args, **kwargs):
         # Capture async_req before removing it
         async_req = kwargs.pop('async_req', False)
-        kwargs.pop('_preload_content', None)
+        preload_content = kwargs.pop('_preload_content', None)
         kwargs.pop('_return_http_data_only', None)
+        # Remap legacy 'body' kwarg to 'request_body' (v5 -> v7 migration)
+        if 'body' in kwargs and 'request_body' not in kwargs:
+            kwargs['request_body'] = kwargs.pop('body')
         # Convert datetime to date string for date parameters (backward compatibility)
         # Preserve full ISO 8601 format when datetime has time/timezone info
         for key in list(kwargs.keys()):
@@ -103,6 +106,13 @@ def validate_call_compat(func):
                         UserWarning
                     )
             # No thread pool available, fall through to sync call
+
+        # Handle _preload_content=False by routing to _without_preload_content variant
+        if preload_content is False:
+            func_name = validated_func.__name__
+            without_preload = func_name + '_without_preload_content'
+            if args and hasattr(args[0], without_preload):
+                return getattr(args[0], without_preload)(*args[1:], **kwargs)
 
         return validated_func(*args, **kwargs)
     return wrapper
@@ -1497,7 +1507,6 @@ class TagsApi:
     def report_tag(
         self,
         user_reported_tag: UserReportedTag,
-        x_consumer_username: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1517,8 +1526,6 @@ class TagsApi:
 
         :param user_reported_tag: (required)
         :type user_reported_tag: UserReportedTag
-        :param x_consumer_username:
-        :type x_consumer_username: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1543,7 +1550,6 @@ class TagsApi:
 
         _param = self._report_tag_serialize(
             user_reported_tag=user_reported_tag,
-            x_consumer_username=x_consumer_username,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1569,7 +1575,6 @@ class TagsApi:
     def report_tag_with_http_info(
         self,
         user_reported_tag: UserReportedTag,
-        x_consumer_username: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1589,8 +1594,6 @@ class TagsApi:
 
         :param user_reported_tag: (required)
         :type user_reported_tag: UserReportedTag
-        :param x_consumer_username:
-        :type x_consumer_username: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1615,7 +1618,6 @@ class TagsApi:
 
         _param = self._report_tag_serialize(
             user_reported_tag=user_reported_tag,
-            x_consumer_username=x_consumer_username,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1641,7 +1643,6 @@ class TagsApi:
     def report_tag_without_preload_content(
         self,
         user_reported_tag: UserReportedTag,
-        x_consumer_username: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1661,8 +1662,6 @@ class TagsApi:
 
         :param user_reported_tag: (required)
         :type user_reported_tag: UserReportedTag
-        :param x_consumer_username:
-        :type x_consumer_username: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1687,7 +1686,6 @@ class TagsApi:
 
         _param = self._report_tag_serialize(
             user_reported_tag=user_reported_tag,
-            x_consumer_username=x_consumer_username,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1708,7 +1706,6 @@ class TagsApi:
     def _report_tag_serialize(
         self,
         user_reported_tag,
-        x_consumer_username,
         _request_auth,
         _content_type,
         _headers,
@@ -1732,8 +1729,6 @@ class TagsApi:
         # process the path parameters
         # process the query parameters
         # process the header parameters
-        if x_consumer_username is not None:
-            _header_params['x-consumer-username'] = x_consumer_username
         # process the form parameters
         # process the body parameter
         if user_reported_tag is not None:

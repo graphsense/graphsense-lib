@@ -131,7 +131,7 @@ with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
     actor = 'binance' # str | The actor ID
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -215,7 +215,7 @@ with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
     label = 'cimedy' # str | The label to search for
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
@@ -416,7 +416,7 @@ This endpoint does not need any parameter.
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **report_tag**
-> UserTagReportResponse report_tag(user_reported_tag, x_consumer_username=x_consumer_username)
+> UserTagReportResponse report_tag(user_reported_tag)
 
 Submit a user-reported tag
 
@@ -455,11 +455,10 @@ with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
     user_reported_tag = graphsense.UserReportedTag() # UserReportedTag | 
-    x_consumer_username = 'x_consumer_username_example' # str |  (optional)
 
     try:
         # Submit a user-reported tag
-        api_response = api_instance.report_tag(user_reported_tag, x_consumer_username=x_consumer_username)
+        api_response = api_instance.report_tag(user_reported_tag)
         print("The response of TagsApi->report_tag:\n")
         pprint(api_response)
     except Exception as e:
@@ -474,7 +473,6 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **user_reported_tag** | [**UserReportedTag**](UserReportedTag.md)|  | 
- **x_consumer_username** | **str**|  | [optional] 
 
 ### Return type
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Dict, List, Optional, Tuple
@@ -50,6 +51,80 @@ GRAPHSENSE_VERBOSE_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 )
+
+
+def get_default_data_configuration(
+    currency: str, keyspace_type: str
+) -> Dict[str, object]:
+    """Get default data_configuration for a specific currency and keyspace type.
+
+    Args:
+        currency: The currency/network code (e.g., 'btc', 'eth', 'trx')
+        keyspace_type: Either 'raw' or 'transformed'
+
+    Returns:
+        Dictionary with default data_configuration for the given currency and keyspace type
+    """
+    currency = currency.lower()
+
+    # Configuration for account-based currencies (eth, trx)
+    if currency == "eth":
+        if keyspace_type == "raw":
+            return {
+                "id": "eth_raw",
+                "block_bucket_size": 1000,
+                "tx_prefix_length": 5,
+            }
+        else:  # transformed
+            return {
+                "keyspace_name": "eth_transformed",
+                "address_prefix_length": 5,
+                "bucket_size": 25000,
+                "tx_prefix_length": 5,
+                "fiat_currencies": ["EUR", "USD"],
+            }
+    elif currency == "trx":
+        if keyspace_type == "raw":
+            return {
+                "id": "trx_raw",
+                "block_bucket_size": 1000,
+                "tx_prefix_length": 5,
+            }
+        else:  # transformed
+            return {
+                "keyspace_name": "trx_transformed",
+                "address_prefix_length": 5,
+                "bucket_size": 10000,
+                "tx_prefix_length": 5,
+                "fiat_currencies": ["EUR", "USD"],
+            }
+
+    # Configuration for UTXO-based currencies (btc, bch, ltc, zec)
+    elif currency in ["btc", "bch", "ltc", "zec"]:
+        if keyspace_type == "raw":
+            return {
+                "id": f"{currency}_raw",
+                "block_bucket_size": 100,
+                "tx_bucket_size": 25000,
+                "tx_prefix_length": 5,
+            }
+        else:  # transformed
+            bech32_prefixes = {
+                "btc": "bc",
+                "bch": "",
+                "ltc": "ltc1",
+                "zec": "",
+            }
+            return {
+                "keyspace_name": f"{currency}_transformed",
+                "address_prefix_length": 4,
+                "bech_32_prefix": bech32_prefixes.get(currency, ""),
+                "bucket_size": 5000,
+                "coinjoin_filtering": True,
+                "fiat_currencies": ["EUR", "USD"],
+            }
+
+    return {}
 
 
 def is_account_based_currency(currency: str) -> bool:
@@ -141,6 +216,26 @@ class KeyspaceConfig(BaseModel):
 
         return v
 
+    def model_post_init(self, __context):
+        """Populate data_configuration with defaults if not provided.
+
+        This is called after model initialization to populate empty
+        data_configuration dictionaries with defaults based on currency.
+        """
+        # Extract currency from raw_keyspace_name
+        currency = self.raw_keyspace_name[:3].lower() if self.raw_keyspace_name else ""
+
+        if currency:
+            for keyspace_type in keyspace_types:
+                if keyspace_type in self.keyspace_setup_config:
+                    # Only populate if data_configuration is empty
+                    if not self.keyspace_setup_config[keyspace_type].data_configuration:
+                        self.keyspace_setup_config[
+                            keyspace_type
+                        ].data_configuration = get_default_data_configuration(
+                            currency, keyspace_type
+                        )
+
 
 class Environment(BaseModel):
     cassandra_nodes: List[str]
@@ -184,7 +279,10 @@ class AppConfig(GoodConf):
                         "disable_delta_updates": False,
                         "keyspace_setup_config": {
                             kst: {
-                                "replication_config": CASSANDRA_DEFAULT_REPLICATION_CONFIG  # noqa
+                                "replication_config": CASSANDRA_DEFAULT_REPLICATION_CONFIG,  # noqa
+                                "data_configuration": get_default_data_configuration(
+                                    cur, kst
+                                ),
                             }
                             for kst in keyspace_types
                         },
@@ -337,19 +435,33 @@ class AppConfig(GoodConf):
             for field_name, value in raw_config.items():
                 try:
                     if field_name == "slack_topics" and isinstance(value, dict):
-                        converted_topics = {}
-                        for topic_name, topic_data in value.items():
-                            if isinstance(topic_data, dict):
-                                converted_topics[topic_name] = SlackTopic(**topic_data)
-                            else:
-                                converted_topics[topic_name] = topic_data
-                        setattr(self, field_name, converted_topics)
+                        setattr(self, field_name, self._parse_slack_topics(value))
                     else:
                         setattr(self, field_name, value)
                 except Exception as e:
                     errors.append(f"{field_name}: {str(e)}")
 
+        env_slack_topics = os.environ.get("GRAPHSENSE_SLACK_TOPICS")
+        if env_slack_topics:
+            try:
+                parsed_env_topics = json.loads(env_slack_topics)
+                if not isinstance(parsed_env_topics, dict):
+                    raise ValueError("GRAPHSENSE_SLACK_TOPICS must be a JSON object")
+                self.slack_topics = self._parse_slack_topics(parsed_env_topics)
+            except Exception as e:
+                errors.append(f"GRAPHSENSE_SLACK_TOPICS: {str(e)}")
+
         return len(errors) == 0, errors
+
+    @staticmethod
+    def _parse_slack_topics(raw_topics: Dict) -> Dict[str, SlackTopic]:
+        converted_topics = {}
+        for topic_name, topic_data in raw_topics.items():
+            if isinstance(topic_data, dict):
+                converted_topics[topic_name] = SlackTopic(**topic_data)
+            else:
+                converted_topics[topic_name] = topic_data
+        return converted_topics
 
     def _init_with_field_defaults(self):
         """Initialize config using field default factories."""

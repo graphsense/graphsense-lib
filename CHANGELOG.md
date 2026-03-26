@@ -11,6 +11,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Use one changelog file, but separate entries by track in each release window.
 
 
+## [2.9.12] 2026-03-25
+
+### Library (v2.9.12)
+
+#### Fixed
+- fixed unhandled exception in only_ids parsing
+- fixed loading of slack exception notification topics.
+
+### Web API + Python client (webapi-2.9.9)
+
+#### Fixed
+- fixed (internal) header explicitly exposed in report tag endpoint
+
+
+## [2.9.11] 2026-03-23
+
+### Library (v2.9.11)
+no changes
+
+### Web API + Python client (webapi-2.9.8)
+
+#### Fixed
+- Fixed handling of "body" parameter in bulk requests of python client
+- Fixed `_preload_content=False` being silently ignored in bulk requests, causing `FileNotFoundError` when streaming CSV into pandas
+
+
 ## [2.9.10] 2026-03-13
 
 ### Library (v2.9.10)
