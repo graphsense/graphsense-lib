@@ -213,7 +213,10 @@ class TxsService:
                     return await self.db.get_tx(currency, tx_hash_hex)
 
                 result["heuristics"] = await calculate_heuristics(
-                    result, currency, _cached_get_address, include_heuristics,
+                    result,
+                    currency,
+                    _cached_get_address,
+                    include_heuristics,
                     coinjoin_callbacks=CoinJoinDbCallbacks(
                         get_spent_in=_get_spent_in,
                         get_tx=_get_tx,
@@ -328,6 +331,11 @@ class TxsService:
     ) -> Optional[List[TxValue]]:
         if is_eth_like(currency):
             raise NotFoundException("get_tx_io not implemented for ETH")
+
+        if io not in {"inputs", "outputs"}:
+            raise BadUserInputException(
+                "Invalid io value. Expected one of: inputs, outputs"
+            )
 
         result = await self.get_tx(
             currency,

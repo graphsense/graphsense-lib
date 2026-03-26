@@ -117,6 +117,19 @@ def test_get_tx_io(client):
     assert tx1.to_dict()["outputs"] == result
 
 
+def test_get_tx_io_invalid_io_returns_400(client):
+    path = "/{currency}/txs/{tx_hash}/{io}"
+    status, body = raw_request(
+        client,
+        path,
+        currency="btc",
+        tx_hash="ab1880",
+        io="spending_addresses",
+    )
+    assert status == 400
+    assert "Invalid io value" in body
+
+
 def test_get_spending_txs(client):
     path = "/{currency}/txs/{tx_hash}/spending"
     result = get_json(client, path, currency="btc", tx_hash="ab1880")
