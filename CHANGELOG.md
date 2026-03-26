@@ -10,6 +10,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.10.0] not yet released
+
+### Library (v2.10.0)
+
+#### Changed
+- tagpack tool validate by default checks actor taxonomy
+
+#### Added
+- default values for ingest data configurations
+
+#### Fixed
+- fixed errors with offset-aware timestamps
+
+### Web API + Python client (webapi-2.10.0)
+
+#### Added
+- heuristics for utxo txs (coinjoin and change)
+
 
 ## [2.9.12] 2026-03-25
 
