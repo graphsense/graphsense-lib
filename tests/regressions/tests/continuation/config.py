@@ -5,11 +5,16 @@ ingesting [0, N] in one shot produces the same output as ingesting
 [0, M] then [M+1, N] sequentially with the same exporter instance.
 """
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tests.deltalake.config import SCHEMA_TYPE_MAP, SCHEMA_TABLES_MAP, load_ingest_configs
+from tests.lib.config import (
+    SCHEMA_TYPE_MAP,
+    load_ingest_configs,
+    parse_currencies,
+    resolve_gslib_path,
+    tables_for_currency,
+)
 
 
 def _range(range_id: str, start: int, note: str = "") -> "ContinuationRange":
@@ -83,19 +88,13 @@ class ContinuationConfig:
 
     @property
     def tables(self) -> list[str]:
-        schema_type = SCHEMA_TYPE_MAP[self.currency]
-        return SCHEMA_TABLES_MAP[schema_type]
+        return tables_for_currency(self.currency)
 
 
 def build_continuation_configs() -> list[ContinuationConfig]:
     """Build a ContinuationConfig per configured currency and range."""
-    currencies_str = os.environ.get(
-        "CONTINUATION_CURRENCIES", ",".join(ALL_CURRENCIES)
-    )
-    currencies = [c.strip() for c in currencies_str.split(",") if c.strip()]
-    gslib_path = Path(
-        os.environ.get("GSLIB_PATH", str(Path(__file__).resolve().parents[4]))
-    )
+    currencies = parse_currencies("CONTINUATION_CURRENCIES", ALL_CURRENCIES)
+    gslib_path = resolve_gslib_path()
     ingest_configs = load_ingest_configs()
 
     configs = []
