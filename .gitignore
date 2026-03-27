@@ -35,6 +35,7 @@ share/python-wheels/
 develop-eggs/
 downloads/
 lib/
+!tests/regressions/tests/lib/
 lib64/
 parts/
 var/
