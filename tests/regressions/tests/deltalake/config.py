@@ -4,10 +4,14 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-from graphsenselib.schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
-from graphsenselib.schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
-from graphsenselib.schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
+from tests.lib.config import (
+    SCHEMA_TYPE_MAP,
+    get_minio_storage_options,
+    load_ingest_configs,
+    parse_currencies,
+    resolve_gslib_path,
+    tables_for_currency,
+)
 
 
 @dataclass(frozen=True)
@@ -222,63 +226,6 @@ NETWORK_RANGE_PROFILES: dict[str, list[BlockRangeProfile]] = {
 
 ALL_CURRENCIES = list(NETWORK_RANGE_PROFILES.keys())
 
-SCHEMA_TYPE_MAP = {
-    "btc": "utxo",
-    "ltc": "utxo",
-    "bch": "utxo",
-    "zec": "utxo",
-    "eth": "account",
-    "trx": "account_trx",
-}
-
-SCHEMA_TABLES_MAP = {
-    "utxo": list(UTXO_SCHEMA_RAW.keys()),
-    "account": list(ACCOUNT_SCHEMA_RAW.keys()),
-    "account_trx": list(ACCOUNT_TRX_SCHEMA_RAW.keys()),
-}
-
-GRAPHSENSE_CONFIG_PATHS = [
-    Path(".graphsense.yaml"),
-    Path.home() / ".graphsense.yaml",
-]
-
-
-def load_ingest_configs(environment: str = "dev") -> dict[str, dict]:
-    """Load ingest configs from .graphsense.yaml, keyed by currency.
-
-    Returns a dict like::
-
-        {"eth": {"node_url": "http://...", "secondary_node_references": [...]}, ...}
-    """
-    config_file = os.environ.get("GRAPHSENSE_CONFIG_YAML")
-    if config_file:
-        paths = [Path(config_file)]
-    else:
-        paths = GRAPHSENSE_CONFIG_PATHS
-
-    for p in paths:
-        if p.exists():
-            with open(p) as f:
-                config = yaml.safe_load(f)
-            keyspaces = (
-                config.get("environments", {})
-                .get(environment, {})
-                .get("keyspaces", {})
-            )
-            result = {}
-            for currency, ks in keyspaces.items():
-                ic = ks.get("ingest_config", {})
-                node_url = ic.get("node_reference", "")
-                if node_url:
-                    result[currency] = {
-                        "node_url": node_url,
-                        "secondary_node_references": ic.get(
-                            "secondary_node_references", []
-                        ),
-                    }
-            return result
-    return {}
-
 
 @dataclass
 class DeltaTestConfig:
@@ -318,8 +265,7 @@ class DeltaTestConfig:
     @property
     def tables(self) -> list[str]:
         """Tables to compare — all raw parquet tables for this currency."""
-        schema_type = SCHEMA_TYPE_MAP[self.currency]
-        return SCHEMA_TABLES_MAP[schema_type]
+        return tables_for_currency(self.currency)
 
     @property
     def test_id(self) -> str:
@@ -361,11 +307,8 @@ def build_delta_configs() -> list[DeltaTestConfig]:
     a configured node URL are silently skipped.
     """
     ref_version = os.environ.get("DELTA_REF_VERSION", "v25.11.18")
-    currencies_str = os.environ.get("DELTA_CURRENCIES", ",".join(ALL_CURRENCIES))
-    currencies = [c.strip() for c in currencies_str.split(",") if c.strip()]
-    gslib_path = Path(
-        os.environ.get("GSLIB_PATH", str(Path(__file__).resolve().parents[4]))
-    )
+    currencies = parse_currencies("DELTA_CURRENCIES", ALL_CURRENCIES)
+    gslib_path = resolve_gslib_path()
     perf_blocks = int(os.environ.get("DELTA_PERF_BLOCKS", "200"))
     categories = _parse_range_categories()
     ingest_configs = load_ingest_configs()
@@ -397,17 +340,3 @@ def build_delta_configs() -> list[DeltaTestConfig]:
                 )
             )
     return configs
-
-
-def get_minio_storage_options(
-    endpoint: str, access_key: str, secret_key: str
-) -> dict[str, str]:
-    """Build AWS-compatible storage options dict for deltalake / S3."""
-    return {
-        "AWS_ENDPOINT_URL": endpoint,
-        "AWS_ACCESS_KEY_ID": access_key,
-        "AWS_SECRET_ACCESS_KEY": secret_key,
-        "AWS_REGION": "us-east-1",
-        "AWS_ALLOW_HTTP": "true",
-        "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
-    }
