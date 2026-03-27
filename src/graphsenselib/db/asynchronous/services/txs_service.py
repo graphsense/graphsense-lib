@@ -221,7 +221,8 @@ class TxsService:
                 if self.tags_service is not None:
                     async def _get_tag_summary(curr: str, address: str):
                         return await self.tags_service.get_tag_summary_by_address(
-                            curr, address, tagstore_groups=tagstore_groups
+                            curr, address, tagstore_groups=tagstore_groups,
+                            include_best_cluster_tag=True,
                         )
                     get_tag_summary = _get_tag_summary
 
