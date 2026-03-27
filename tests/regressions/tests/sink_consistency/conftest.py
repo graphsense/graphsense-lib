@@ -1,140 +1,59 @@
-"""Fixtures for sink consistency tests.
+"""Fixtures for sink consistency tests."""
 
-Provides:
-- MinIO testcontainer (session-scoped, for Delta Lake tables)
-- Cassandra testcontainer (session-scoped)
-- Current virtual environment
-- Per-currency test parametrization via .graphsense.yaml
-"""
-
-import time
-import urllib.request
-
-import boto3
 import pytest
-from testcontainers.cassandra import CassandraContainer
-from testcontainers.core.container import DockerContainer
 
-from tests.deltalake.config import get_minio_storage_options
 from tests.deltalake.venv_manager import get_or_create_current_venv
+from tests.lib.conftest_helpers import (
+    get_cassandra_coords as _get_cassandra_coords,
+    make_minio_config,
+    make_storage_options,
+    parametrize_configs,
+    skip_if_no_configs,
+    start_cassandra_container,
+    start_minio_container,
+)
 from tests.sink_consistency.config import build_sink_consistency_configs
-
-MINIO_ACCESS_KEY = "minioadmin"
-MINIO_SECRET_KEY = "minioadmin"
-MINIO_BUCKET = "sink-test"
-
-VANILLA_CASSANDRA_IMAGE = "cassandra:4.1.4"
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip all sink_consistency tests when no currencies have node URLs configured."""
-    configs = build_sink_consistency_configs()
-    if configs:
-        return
-
-    skip_marker = pytest.mark.skip(
-        reason="No currencies with node URLs found in .graphsense.yaml"
-    )
-    for item in items:
-        if "sink_consistency" in item.keywords:
-            item.add_marker(skip_marker)
+    skip_if_no_configs(items, "sink_consistency", build_sink_consistency_configs)
 
 
 def pytest_generate_tests(metafunc):
-    """Parametrize sink_config over all configured currencies."""
-    if "sink_config" not in metafunc.fixturenames:
-        return
-    configs = build_sink_consistency_configs()
-    metafunc.parametrize(
-        "sink_config", configs, ids=[c.test_id for c in configs]
-    )
+    parametrize_configs(metafunc, "sink_config", build_sink_consistency_configs)
 
 
 @pytest.fixture(scope="session")
 def minio_container():
-    """Start a MinIO container for the test session."""
-    container = (
-        DockerContainer("minio/minio:latest")
-        .with_exposed_ports(9000)
-        .with_env("MINIO_ROOT_USER", MINIO_ACCESS_KEY)
-        .with_env("MINIO_ROOT_PASSWORD", MINIO_SECRET_KEY)
-        .with_command("server /data")
-    )
-    container.start()
-
-    host = container.get_container_host_ip()
-    port = container.get_exposed_port(9000)
-    health_url = f"http://{host}:{port}/minio/health/live"
-    for _ in range(30):
-        time.sleep(1)
-        try:
-            urllib.request.urlopen(health_url, timeout=2)
-            break
-        except Exception:
-            continue
-    else:
-        raise RuntimeError("MinIO did not become ready in 30s")
-
+    container = start_minio_container()
     yield container
     container.stop()
 
 
 @pytest.fixture(scope="session")
-def minio_config(minio_container) -> dict[str, str]:
-    """Return MinIO connection details as a dict."""
-    host = minio_container.get_container_host_ip()
-    port = minio_container.get_exposed_port(9000)
-    endpoint = f"http://{host}:{port}"
-
-    config = {
-        "endpoint": endpoint,
-        "access_key": MINIO_ACCESS_KEY,
-        "secret_key": MINIO_SECRET_KEY,
-        "bucket": MINIO_BUCKET,
-    }
-
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=MINIO_ACCESS_KEY,
-        aws_secret_access_key=MINIO_SECRET_KEY,
-        region_name="us-east-1",
-    )
-    s3.create_bucket(Bucket=MINIO_BUCKET)
-
-    return config
+def minio_config(minio_container):
+    return make_minio_config(minio_container, bucket="sink-test")
 
 
 @pytest.fixture(scope="session")
-def storage_options(minio_config) -> dict[str, str]:
-    """AWS-compatible storage options for deltalake / pyarrow."""
-    return get_minio_storage_options(
-        endpoint=minio_config["endpoint"],
-        access_key=minio_config["access_key"],
-        secret_key=minio_config["secret_key"],
-    )
+def storage_options(minio_config):
+    return make_storage_options(minio_config)
 
 
 @pytest.fixture(scope="session")
 def cassandra_container():
-    """Start a Cassandra container for the test session."""
-    container = CassandraContainer(VANILLA_CASSANDRA_IMAGE)
-    container.start()
+    container = start_cassandra_container()
     yield container
     container.stop()
 
 
 @pytest.fixture(scope="session")
-def cassandra_coords(cassandra_container) -> tuple[str, int]:
-    """Return (host, port) for the running Cassandra container."""
-    host = cassandra_container.get_container_host_ip()
-    port = int(cassandra_container.get_exposed_port(9042))
-    return host, port
+def cassandra_coords(cassandra_container):
+    return _get_cassandra_coords(cassandra_container)
 
 
 @pytest.fixture(scope="session")
 def current_venv():
-    """Create (or reuse cached) virtual environment for the current version."""
     configs = build_sink_consistency_configs()
     gslib_path = configs[0].gslib_path if configs else None
     if gslib_path is None:
