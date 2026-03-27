@@ -98,30 +98,42 @@ def build_gs_config(
     return gs_config
 
 
-def detect_no_lock_flag(cli_bin: str, env: dict) -> str:
+def detect_no_lock_flag(cli_bin: str, env: dict | None = None) -> str:
     """Detect the correct no-lock CLI flag for this graphsense-cli version.
 
     Older versions (v25.11.18) use ``--no-file-lock``, newer use ``--no-lock``.
+
+    Points ``GRAPHSENSE_CONFIG_YAML`` at a minimal empty YAML so the CLI can
+    start up without crashing on config incompatibilities between versions.
     """
-    result = subprocess.run(
-        [cli_bin, "ingest", "from-node", "--help"],
-        capture_output=True,
-        text=True,
-        env=env,
+    help_env = (env or os.environ).copy()
+    stub = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", prefix="gs-detect-", delete=False
     )
+    stub.write("{}\n")
+    stub.close()
+    help_env["GRAPHSENSE_CONFIG_YAML"] = stub.name
+    try:
+        result = subprocess.run(
+            [cli_bin, "ingest", "from-node", "--help"],
+            capture_output=True,
+            text=True,
+            env=help_env,
+        )
+    finally:
+        Path(stub.name).unlink(missing_ok=True)
     help_text = result.stdout + result.stderr
     if "--no-file-lock" in help_text:
         return "--no-file-lock"
     return "--no-lock"
 
 
-def make_cli_env(venv_dir: Path, config_path: str, extra: dict | None = None) -> dict:
+def make_cli_env(venv_dir: Path, config_path: str = "", extra: dict | None = None) -> dict:
     """Build an environment dict for subprocess calls to graphsense-cli."""
     env = os.environ.copy()
-    env.update({
-        "GRAPHSENSE_CONFIG_YAML": config_path,
-        "PATH": f"{venv_dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
-    })
+    env["PATH"] = f"{venv_dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+    if config_path:
+        env["GRAPHSENSE_CONFIG_YAML"] = config_path
     if extra:
         env.update(extra)
     return env
