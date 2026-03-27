@@ -3,11 +3,10 @@
 Defines block ranges per currency and builds test configs from .graphsense.yaml.
 """
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tests.deltalake.config import SCHEMA_TYPE_MAP, SCHEMA_TABLES_MAP, load_ingest_configs
+from tests.lib.config import SCHEMA_TYPE_MAP, load_ingest_configs, parse_currencies, resolve_gslib_path, tables_for_currency
 
 
 @dataclass(frozen=True)
@@ -71,20 +70,13 @@ class TransformationConfig:
 
     @property
     def tables(self) -> list[str]:
-        """Delta Lake tables for this currency."""
-        schema_type = SCHEMA_TYPE_MAP[self.currency]
-        return SCHEMA_TABLES_MAP[schema_type]
+        return tables_for_currency(self.currency)
 
 
 def build_transformation_configs() -> list[TransformationConfig]:
     """Build a TransformationConfig per configured currency and range."""
-    currencies_str = os.environ.get(
-        "TRANSFORMATION_CURRENCIES", ",".join(ALL_CURRENCIES)
-    )
-    currencies = [c.strip() for c in currencies_str.split(",") if c.strip()]
-    gslib_path = Path(
-        os.environ.get("GSLIB_PATH", str(Path(__file__).resolve().parents[4]))
-    )
+    currencies = parse_currencies("TRANSFORMATION_CURRENCIES", ALL_CURRENCIES)
+    gslib_path = resolve_gslib_path()
     ingest_configs = load_ingest_configs()
 
     configs = []
