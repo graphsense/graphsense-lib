@@ -28,12 +28,6 @@ SCHEMA_TYPE_MAP = {
     "trx": "account_trx",
 }
 
-SCHEMA_TABLES_MAP_KEYS = {
-    "utxo",
-    "account",
-    "account_trx",
-}
-
 
 def load_ingest_configs(environment: str = "dev") -> dict[str, dict]:
     """Load ingest configs from .graphsense.yaml, keyed by currency.

@@ -7,7 +7,6 @@ Supports three modes:
 """
 
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -18,15 +17,6 @@ from tests.lib.ingest import (
     make_cli_env,
     run_cli_ingest,
 )
-
-
-def _detect_has_sinks_flag(cli_bin: str, env: dict) -> bool:
-    """Check if ``ingest delta-lake ingest`` supports ``--sinks``."""
-    result = subprocess.run(
-        [cli_bin, "ingest", "delta-lake", "ingest", "--help"],
-        capture_output=True, text=True, env=env,
-    )
-    return "--sinks" in (result.stdout + result.stderr)
 
 
 def run_cassandra_ingest(
@@ -93,6 +83,7 @@ def _run_legacy_ingest(
         venv_dir, gs_config, cmd_args,
         config_prefix="gsconfig-cassandra-",
         extra_env={"GRAPHSENSE_LEGACY_INGEST": "true"},
+        label="Legacy Cassandra ingestion",
     )
 
 
@@ -130,7 +121,9 @@ def _run_from_node_ingest(
     ]
 
     run_cli_ingest(
-        venv_dir, gs_config, cmd_args, config_prefix="gsconfig-fromnode-"
+        venv_dir, gs_config, cmd_args,
+        config_prefix="gsconfig-fromnode-",
+        label="from-node Cassandra ingestion",
     )
 
 
@@ -169,7 +162,9 @@ def _run_delta_ingest(
 
     try:
         run_cli_ingest(
-            venv_dir, gs_config, cmd_args, config_prefix="gsconfig-delta-cass-"
+            venv_dir, gs_config, cmd_args,
+            config_prefix="gsconfig-delta-cass-",
+            label="Delta dual-sink ingestion",
         )
     finally:
         shutil.rmtree(delta_dir, ignore_errors=True)

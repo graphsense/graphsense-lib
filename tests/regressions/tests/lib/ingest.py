@@ -134,7 +134,8 @@ def run_cli_ingest(
     timeout: int = INGEST_TIMEOUT_S,
     config_prefix: str = "gsconfig-",
     extra_env: dict | None = None,
-    stderr_limit: int = 3000,
+    output_tail: int = 3000,
+    label: str = "Ingestion",
 ) -> subprocess.CompletedProcess:
     """Write gs_config to a temp file, run graphsense-cli with cmd_args, clean up.
 
@@ -160,10 +161,10 @@ def run_cli_ingest(
 
     if result.returncode != 0:
         raise RuntimeError(
-            f"Ingestion failed (exit {result.returncode}):\n"
+            f"{label} failed (exit {result.returncode}):\n"
             f"cmd: {' '.join(cmd)}\n"
-            f"stdout: {result.stdout[-stderr_limit:]}\n"
-            f"stderr: {result.stderr[-stderr_limit:]}"
+            f"stdout: {result.stdout[-output_tail:]}\n"
+            f"stderr: {result.stderr[-output_tail:]}"
         )
 
     return result
