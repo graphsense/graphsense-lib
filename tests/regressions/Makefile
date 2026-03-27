@@ -1,17 +1,173 @@
 SHELL := /bin/bash
 
-# Repo
+# ============================================================================
+# Shared defaults
+# ============================================================================
+
 GSLIB_REPO := https://github.com/graphsense/graphsense-lib.git
+GSLIB_PATH := $(shell cd ../.. && pwd)
+
+# Override to restrict all suites to specific currencies (comma-separated).
+# Per-suite overrides (e.g., CASSANDRA_CURRENCIES) still take precedence.
+CURRENCIES ?= btc,eth,ltc,bch,zec,trx
+
+# Reference version for cross-version tests (cassandra, deltalake)
+REF_VERSION ?= v25.11.18
+
+# ============================================================================
+# Help (default target)
+# ============================================================================
+
+.DEFAULT_GOAL := help
+
+help: ## Show this help
+	@echo "Usage: make <target> [VAR=value ...]"
+	@echo ""
+	@echo "Global variables:"
+	@echo "  CURRENCIES=btc,eth      Restrict all suites to specific currencies"
+	@echo "  REF_VERSION=v25.11.18   Reference version for cross-version tests"
+	@echo ""
+	@echo "Targets:"
+	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-28s\033[0m %s\n", $$1, $$2}'
+
+# ============================================================================
+# Setup
+# ============================================================================
+
+install: ## Install test dependencies
+	uv sync
+
+lint: ## Lint regression test code
+	uv run ruff check tests/ --exclude .venv
+
+format: ## Auto-format regression test code
+	uv run ruff check --fix tests/ --exclude .venv
+	uv run ruff format tests/ --exclude .venv
+
+# ============================================================================
+# Quick smoke test (single currency, all ingest suites)
+# ============================================================================
+
+QUICK_CURRENCY ?= eth
+
+test-quick: ## Run all ingest suites for a single currency (default: eth)
+	@echo "========================================================================"
+	@echo "  Quick smoke test: $(QUICK_CURRENCY)"
+	@echo "========================================================================"
+	@ret=0; \
+	$(MAKE) test-cassandra CASSANDRA_CURRENCIES=$(QUICK_CURRENCY) || ret=1; \
+	$(MAKE) test-deltalake DELTA_CURRENCIES=$(QUICK_CURRENCY) || ret=1; \
+	$(MAKE) test-sink-consistency SINK_CONSISTENCY_CURRENCIES=$(QUICK_CURRENCY) || ret=1; \
+	$(MAKE) test-continuation CONTINUATION_CURRENCIES=$(QUICK_CURRENCY) || ret=1; \
+	$(MAKE) test-transformation TRANSFORMATION_CURRENCIES=$(QUICK_CURRENCY) || ret=1; \
+	exit $$ret
+
+# ============================================================================
+# Delta Lake cross-version compatibility tests
+# ============================================================================
+
+DELTA_REF_VERSION ?= $(REF_VERSION)
+DELTA_CURRENCIES ?= $(CURRENCIES)
+DELTA_RANGE_CATEGORIES ?= mid
+DELTA_PERF_RANGE_CATEGORIES ?= mid
+
+test-deltalake: ## Delta Lake cross-version compatibility
+	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
+	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
+	DELTA_RANGE_CATEGORIES=$(DELTA_RANGE_CATEGORIES) \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/deltalake/ -v -s -m deltalake
+
+test-deltalake-comprehensive: ## Delta Lake — all range categories
+	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
+	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
+	DELTA_RANGE_CATEGORIES=genesis,old,mid,new,protocol \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/deltalake/ -v -s -m deltalake
+
+test-deltalake-perf: ## Delta Lake ingest performance
+	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
+	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
+	DELTA_RANGE_CATEGORIES=$(DELTA_PERF_RANGE_CATEGORIES) \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/deltalake/test_performance.py -v -s -m deltalake_perf
+
+test-deltalake-all: ## Delta Lake compatibility + performance
+	@echo "Running Delta Lake compatibility + performance regression suite..."
+	@$(MAKE) test-deltalake
+	@$(MAKE) test-deltalake-perf
+
+# ============================================================================
+# Cassandra ingest regression tests
+# ============================================================================
+
+CASSANDRA_REF_VERSION ?= $(REF_VERSION)
+CASSANDRA_CURRENCIES ?= $(CURRENCIES)
+
+test-cassandra: ## Cassandra cross-version ingest
+	CASSANDRA_REF_VERSION=$(CASSANDRA_REF_VERSION) \
+	CASSANDRA_CURRENCIES=$(CASSANDRA_CURRENCIES) \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/cassandra/ -v -s -m cassandra
+
+# ============================================================================
+# Sink consistency tests (individual vs dual-sink)
+# ============================================================================
+
+SINK_CONSISTENCY_CURRENCIES ?= $(CURRENCIES)
+
+test-sink-consistency: ## Sink consistency (dual-sink vs individual)
+	SINK_CONSISTENCY_CURRENCIES=$(SINK_CONSISTENCY_CURRENCIES) \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/sink_consistency/ -v -s -m sink_consistency
+
+# ============================================================================
+# Continuation (split-ingest) tests
+# ============================================================================
+
+CONTINUATION_CURRENCIES ?= $(CURRENCIES)
+
+test-continuation: ## Continuation (split-ingest vs one-shot)
+	CONTINUATION_CURRENCIES=$(CONTINUATION_CURRENCIES) \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/continuation/ -v -s -m continuation
+
+# ============================================================================
+# Transformation tests (Delta Lake → PySpark → Cassandra equivalence)
+# ============================================================================
+
+TRANSFORMATION_CURRENCIES ?= $(CURRENCIES)
+
+test-transformation: ## Transformation (Delta → PySpark → Cassandra)
+	TRANSFORMATION_CURRENCIES=$(TRANSFORMATION_CURRENCIES) \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/transformation/ -v -s -m transformation
+
+# ============================================================================
+# Combined suites
+# ============================================================================
+
+test-ingest: ## Run all ingest regression tests
+	@echo "========================================================================"
+	@echo "  Running all ingest regression tests"
+	@echo "========================================================================"
+	@ret=0; \
+	$(MAKE) test-cassandra || ret=1; \
+	$(MAKE) test-deltalake || ret=1; \
+	$(MAKE) test-sink-consistency || ret=1; \
+	$(MAKE) test-continuation || ret=1; \
+	$(MAKE) test-transformation || ret=1; \
+	exit $$ret
 
 # ============================================================================
 # REST API regression tests
 # ============================================================================
 
-# Required: baseline version (tag or commit hash) of graphsense-lib
-REST_BASELINE ?= 6c9f1ef2bc304e42bd2bb96f61b71a0fd9fe2959
+# Baseline version: set to a tag, branch, or commit hash
+REST_BASELINE ?=
 
 # Branch to test against baseline
-REST_CURRENT_BRANCH ?= feature/web
+REST_CURRENT_BRANCH ?= master
 
 # Optional: local graphsense-lib path (for rest-build-local)
 GSLIB ?=
@@ -27,18 +183,7 @@ IMAGE_BASELINE := gslib-test:baseline
 # Config (graphsense-REST format, mounted into container)
 REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 
-.PHONY: rest-build-local rest-build-develop rest-build-baseline rest-serve rest-stop \
-	test-rest-local test-rest-dev-branch rest-run-tests \
-	test-rest-fuzz test-rest-manual test-rest-loki test-rest-all \
-	rest-ensure-servers rest-ensure-baseline rest-info rest-clean \
-	generate-loki \
-	test-deltalake test-deltalake-comprehensive test-deltalake-perf test-deltalake-all \
-	clean-deltalake \
-	test-cassandra test-sink-consistency test-continuation test-transformation \
-	test-ingest test clean
-
-# Build current from local path (requires GSLIB)
-rest-build-local:
+rest-build-local: ## Build current REST image from local path (GSLIB=)
 	@if [ -z "$(GSLIB)" ]; then \
 		echo "Error: GSLIB not set. Usage: make rest-build-local GSLIB=/path/to/graphsense-lib"; \
 		exit 1; \
@@ -46,17 +191,15 @@ rest-build-local:
 	@echo "Building current from local: $(GSLIB)"
 	docker build -t $(IMAGE_CURRENT) $(GSLIB)
 
-# Build current from feature/web branch (REST API lives here)
-rest-build-develop:
+rest-build-develop: ## Build current REST image from branch
 	@echo "Building current from $(REST_CURRENT_BRANCH) branch..."
 	@rm -rf /tmp/gslib-current && \
 	git clone --depth 1 --branch $(REST_CURRENT_BRANCH) $(GSLIB_REPO) /tmp/gslib-current && \
 	docker build -t $(IMAGE_CURRENT) /tmp/gslib-current
 
-# Build baseline version (requires REST_BASELINE=<tag|hash>)
-rest-build-baseline:
+rest-build-baseline: ## Build baseline REST image (REST_BASELINE=)
 	@if [ -z "$(REST_BASELINE)" ]; then \
-		echo "Error: REST_BASELINE not set. Usage: make test REST_BASELINE=v26.01.0"; \
+		echo "Error: REST_BASELINE not set. Usage: make rest-build-baseline REST_BASELINE=v26.01.0"; \
 		exit 1; \
 	fi
 	@echo "Building baseline: $(REST_BASELINE)"
@@ -66,7 +209,6 @@ rest-build-baseline:
 	cd /tmp/gslib-baseline && sed -i 's/"pydantic>=2.0.0"/"pydantic>=2.0.0",\n    "pydantic-settings>=2.0.0,<2.13.0"/' pyproject.toml && uv lock && \
 	docker build -t $(IMAGE_BASELINE) /tmp/gslib-baseline
 
-# Ensure baseline image exists
 rest-ensure-baseline:
 	@if ! docker image inspect $(IMAGE_BASELINE) >/dev/null 2>&1; then \
 		if [ -z "$(REST_BASELINE)" ]; then \
@@ -77,7 +219,6 @@ rest-ensure-baseline:
 		$(MAKE) rest-build-baseline; \
 	fi
 
-# Ensure servers are running (start if not)
 rest-ensure-servers: rest-ensure-baseline
 	@if [ ! -f "$(REST_CONFIG_FILE)" ] && [ ! -L "$(REST_CONFIG_FILE)" ]; then \
 		echo "Error: REST_CONFIG_FILE not found at $(REST_CONFIG_FILE)"; \
@@ -119,16 +260,15 @@ rest-ensure-servers: rest-ensure-baseline
 	@echo "Current:  http://localhost:$(REST_CURRENT_PORT)"
 	@echo "Baseline: http://localhost:$(REST_BASELINE_PORT)"
 
-rest-serve: rest-ensure-servers
+rest-serve: rest-ensure-servers ## Start both REST servers
 
-rest-stop:
+rest-stop: ## Stop REST server containers
 	-docker stop gs-current gs-baseline 2>/dev/null || true
 
-# REST tests — use test-rest-local or test-rest-dev-branch
-test-rest-local: rest-build-local rest-build-baseline rest-ensure-servers
+test-rest-local: rest-build-local rest-build-baseline rest-ensure-servers ## Full REST regression (local build)
 	@$(MAKE) rest-run-tests; ret=$$?; $(MAKE) rest-stop; exit $$ret
 
-test-rest-dev-branch: rest-build-develop rest-build-baseline rest-ensure-servers
+test-rest-dev-branch: rest-build-develop rest-build-baseline rest-ensure-servers ## Full REST regression (branch build)
 	@$(MAKE) rest-run-tests; ret=$$?; $(MAKE) rest-stop; exit $$ret
 
 rest-info:
@@ -139,13 +279,11 @@ rest-info:
 	@echo "  Host:             $$(hostname)"
 	@echo "  Current branch:   $(REST_CURRENT_BRANCH)"
 	@echo "  Baseline ref:     $(REST_BASELINE)"
-	@echo "  Current commit:   $$(docker inspect --format='{{.Config.Labels}}' $(IMAGE_CURRENT) 2>/dev/null | grep -oP 'commit:\K[a-f0-9]+' || (cd /tmp/gslib-current 2>/dev/null && git rev-parse --short HEAD || echo 'n/a'))"
-	@echo "  Baseline commit:  $$(docker inspect --format='{{.Config.Labels}}' $(IMAGE_BASELINE) 2>/dev/null | grep -oP 'commit:\K[a-f0-9]+' || (cd /tmp/gslib-baseline 2>/dev/null && git rev-parse --short HEAD || echo 'n/a'))"
 	@echo "  Current image:    $(IMAGE_CURRENT) ($$(docker inspect --format='{{.Id}}' $(IMAGE_CURRENT) 2>/dev/null | cut -c8-19 || echo 'n/a'))"
 	@echo "  Baseline image:   $(IMAGE_BASELINE) ($$(docker inspect --format='{{.Id}}' $(IMAGE_BASELINE) 2>/dev/null | cut -c8-19 || echo 'n/a'))"
 	@echo "  Current server:   http://localhost:$(REST_CURRENT_PORT)"
 	@echo "  Baseline server:  http://localhost:$(REST_BASELINE_PORT)"
-	@echo "  Config file:      $(REST_CONFIG_FILE) -> $$(readlink -f $(REST_CONFIG_FILE) 2>/dev/null || echo '(not a symlink)')"
+	@echo "  Config file:      $(REST_CONFIG_FILE)"
 	@echo "========================================================================"
 
 rest-run-tests: rest-info
@@ -155,138 +293,50 @@ rest-run-tests: rest-info
 	$(MAKE) test-rest-loki || ret=1; \
 	exit $$ret
 
-test-rest-fuzz: rest-ensure-servers
+test-rest-fuzz: rest-ensure-servers ## REST fuzz regression tests
 	CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
 	BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
 	uv run pytest tests/rest/test_baseline_regression.py -v -m regression
 
-test-rest-manual: rest-ensure-servers
+test-rest-manual: rest-ensure-servers ## REST manual regression tests
 	CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
 	BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
 	uv run pytest tests/rest/test_manual_regression.py -v -m regression
 
-test-rest-loki: rest-ensure-servers
+test-rest-loki: rest-ensure-servers ## REST Loki-generated tests
 	@if [ -f tests/rest/test_loki_generated.py ]; then \
 		CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
 		BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
 		uv run pytest tests/rest/test_loki_generated.py -v -m loki_generated; \
 	else \
-		echo "Skipping loki tests: tests/rest/test_loki_generated.py not found (run 'make generate-loki' to create)"; \
+		echo "Skipping loki tests (run 'make generate-loki' to create)"; \
 	fi
 
-test-rest-all: rest-ensure-servers
-	@$(MAKE) test-rest-fuzz test-rest-manual test-rest-loki; ret=$$?; $(MAKE) rest-stop; exit $$ret
-
-# Generate Loki tests from production logs (requires LOKI_URL)
-generate-loki:
+generate-loki: ## Generate Loki tests from production logs (LOKI_URL=)
 	uv run scripts/generate_loki_tests.py
+
+# ============================================================================
+# Cleanup
+# ============================================================================
 
 rest-clean: rest-stop
 	-docker rmi $(IMAGE_CURRENT) $(IMAGE_BASELINE) 2>/dev/null || true
 	-rm -rf /tmp/gslib-current /tmp/gslib-baseline
 
-# ============================================================================
-# Delta Lake cross-version compatibility tests
-# ============================================================================
-
-DELTA_REF_VERSION ?= v25.11.18
-DELTA_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
-DELTA_RANGE_CATEGORIES ?= mid
-DELTA_PERF_RANGE_CATEGORIES ?= mid
-
-test-deltalake:
-	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
-	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
-	DELTA_RANGE_CATEGORIES=$(DELTA_RANGE_CATEGORIES) \
-	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/deltalake/ -v -s -m deltalake
-
-test-deltalake-comprehensive:
-	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
-	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
-	DELTA_RANGE_CATEGORIES=genesis,old,mid,new,protocol \
-	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/deltalake/ -v -s -m deltalake
-
-test-deltalake-perf:
-	DELTA_REF_VERSION=$(DELTA_REF_VERSION) \
-	DELTA_CURRENCIES=$(DELTA_CURRENCIES) \
-	DELTA_RANGE_CATEGORIES=$(DELTA_PERF_RANGE_CATEGORIES) \
-	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/deltalake/test_performance.py -v -s -m deltalake_perf
-
-test-deltalake-all:
-	@echo "Running Delta Lake compatibility + performance regression suite..."
-	@$(MAKE) test-deltalake
-	@$(MAKE) test-deltalake-perf
-
-clean-deltalake:
+clean-venvs: ## Remove cached test virtual environments
 	rm -rf /tmp/gslib-deltalake-testvenvs
 
-# ============================================================================
-# Cassandra ingest regression tests
-# ============================================================================
-
-CASSANDRA_REF_VERSION ?= v25.11.18
-CASSANDRA_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
-
-test-cassandra:
-	CASSANDRA_REF_VERSION=$(CASSANDRA_REF_VERSION) \
-	CASSANDRA_CURRENCIES=$(CASSANDRA_CURRENCIES) \
-	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/cassandra/ -v -s -m cassandra
+clean: rest-clean clean-venvs ## Remove all test artifacts
 
 # ============================================================================
-# Sink consistency tests (individual vs dual-sink)
+# .PHONY
 # ============================================================================
 
-SINK_CONSISTENCY_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
-
-test-sink-consistency:
-	SINK_CONSISTENCY_CURRENCIES=$(SINK_CONSISTENCY_CURRENCIES) \
-	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/sink_consistency/ -v -s -m sink_consistency
-
-# ============================================================================
-# Continuation (split-ingest) tests
-# ============================================================================
-
-CONTINUATION_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
-
-test-continuation:
-	CONTINUATION_CURRENCIES=$(CONTINUATION_CURRENCIES) \
-	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/continuation/ -v -s -m continuation
-
-# ============================================================================
-# Transformation tests (Delta Lake → PySpark → Cassandra equivalence)
-# ============================================================================
-
-TRANSFORMATION_CURRENCIES ?= btc,eth,ltc,bch,zec,trx
-
-test-transformation:
-	TRANSFORMATION_CURRENCIES=$(TRANSFORMATION_CURRENCIES) \
-	GSLIB_PATH=$$(cd ../.. && pwd) \
-	uv run pytest tests/transformation/ -v -s -m transformation
-
-# ============================================================================
-# Combined ingest test suite
-# ============================================================================
-
-test-ingest:
-	@echo "========================================================================"
-	@echo "  Running all ingest regression tests"
-	@echo "========================================================================"
-	@ret=0; \
-	$(MAKE) test-cassandra || ret=1; \
-	$(MAKE) test-deltalake || ret=1; \
-	$(MAKE) test-sink-consistency || ret=1; \
-	$(MAKE) test-continuation || ret=1; \
-	$(MAKE) test-transformation || ret=1; \
-	exit $$ret
-
-# ============================================================================
-# Top-level
-# ============================================================================
-
-clean: rest-clean clean-deltalake
+.PHONY: help install lint format \
+	test-quick test-ingest \
+	test-deltalake test-deltalake-comprehensive test-deltalake-perf test-deltalake-all \
+	test-cassandra test-sink-consistency test-continuation test-transformation \
+	rest-build-local rest-build-develop rest-build-baseline \
+	rest-ensure-servers rest-ensure-baseline rest-serve rest-stop rest-info rest-run-tests \
+	test-rest-local test-rest-dev-branch test-rest-fuzz test-rest-manual test-rest-loki \
+	generate-loki rest-clean clean-venvs clean
