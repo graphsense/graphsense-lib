@@ -106,7 +106,7 @@ def tables_for_currency(currency: str) -> list[str]:
 def resolve_gslib_path() -> Path:
     """Resolve the graphsense-lib repo root from env or filesystem."""
     return Path(
-        os.environ.get("GSLIB_PATH", str(Path(__file__).resolve().parents[5]))
+        os.environ.get("GSLIB_PATH", str(Path(__file__).resolve().parents[4]))
     )
 
 

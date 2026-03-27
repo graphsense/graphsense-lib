@@ -7,7 +7,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from tests.deltalake.config import SCHEMA_TYPE_MAP, load_ingest_configs
+from tests.lib.config import SCHEMA_TYPE_MAP, load_ingest_configs, parse_currencies, resolve_gslib_path
+from tests.lib.constants import DEFAULT_REF_VERSION, VANILLA_CASSANDRA_IMAGE
 
 
 @dataclass(frozen=True)
@@ -95,9 +96,6 @@ EXPECTED_MIN_ROWS = {
 
 ALL_CASSANDRA_CURRENCIES = list(CASSANDRA_TEST_RANGES.keys())
 
-DEFAULT_REF_VERSION = "v25.11.18"
-
-VANILLA_CASSANDRA_IMAGE = "cassandra:4.1.4"
 FAST_CASSANDRA_IMAGE = os.environ.get(
     "CASSANDRA_TEST_IMAGE", "graphsense/cassandra-test:4.1.4"
 )
@@ -128,13 +126,8 @@ class CassandraTestConfig:
 def build_cassandra_configs() -> list[CassandraTestConfig]:
     """Build a CassandraTestConfig per configured currency and range."""
     ref_version = os.environ.get("CASSANDRA_REF_VERSION", DEFAULT_REF_VERSION)
-    currencies_str = os.environ.get(
-        "CASSANDRA_CURRENCIES", ",".join(ALL_CASSANDRA_CURRENCIES)
-    )
-    currencies = [c.strip() for c in currencies_str.split(",") if c.strip()]
-    gslib_path = Path(
-        os.environ.get("GSLIB_PATH", str(Path(__file__).resolve().parents[4]))
-    )
+    currencies = parse_currencies("CASSANDRA_CURRENCIES", ALL_CASSANDRA_CURRENCIES)
+    gslib_path = resolve_gslib_path()
     ingest_configs = load_ingest_configs()
 
     configs = []
