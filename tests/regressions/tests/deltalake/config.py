@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from tests.lib.config import (
-    SCHEMA_TYPE_MAP,
-    get_minio_storage_options,
     load_ingest_configs,
     parse_currencies,
     resolve_gslib_path,

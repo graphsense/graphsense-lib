@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tests.lib.config import SCHEMA_TYPE_MAP, load_ingest_configs, parse_currencies, resolve_gslib_path
-from tests.lib.constants import DEFAULT_REF_VERSION, VANILLA_CASSANDRA_IMAGE
+from tests.lib.constants import DEFAULT_REF_VERSION
 
 
 @dataclass(frozen=True)
