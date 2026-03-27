@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 class CoinJoinDbCallbacks:
     get_spent_in: Callable
     get_tx: Callable
+    get_tag_summary: Callable | None = None
 
 
 # Whirlpool pools: (denomination_sat, coordinator_fee_sat)
@@ -813,6 +814,26 @@ async def _verify_tx0_forward(tx, pool_denomination, get_spent_in, get_tx) -> bo
     return any(results)
 
 
+async def _any_input_is_exchange(tx, currency, get_tag_summary) -> bool:
+    """Return True if any input address is tagged as an exchange (broad_category == 'exchange').
+
+    Checks inputs sequentially and short-circuits on the first match to avoid
+    unnecessary tag lookups.
+    """
+    seen = set()
+    for inp in tx.get("inputs", []):
+        if inp is None or not inp.address:
+            continue
+        addr = inp.address[0]
+        if addr in seen:
+            continue
+        seen.add(addr)
+        summary = await get_tag_summary(currency, addr)
+        if summary is not None and summary.broad_category == "exchange":
+            return True
+    return False
+
+
 async def calculate_heuristics(
     tx,
     currency,
@@ -901,6 +922,24 @@ async def calculate_heuristics(
             if coinjoin is None:
                 coinjoin = CoinJoinHeuristics()
             coinjoin.joinmarket = joinmarket_result
+
+    # Exchange false-positive suppression: if JoinMarket or Wasabi 1.x fired, check
+    # whether any input comes from a known exchange. If yes, remove those results —
+    # exchange batch payouts structurally resemble these CoinJoin protocols.
+    # Wasabi 2.0 and Whirlpool are intentionally excluded (different FP profile).
+    if (
+        coinjoin is not None
+        and coinjoin_callbacks is not None
+        and coinjoin_callbacks.get_tag_summary is not None
+        and (
+            coinjoin.joinmarket is not None
+            or (coinjoin.wasabi is not None and coinjoin.wasabi.version in ("1.0", "1.1"))
+        )
+        and await _any_input_is_exchange(tx, currency, coinjoin_callbacks.get_tag_summary)
+    ):
+        coinjoin.joinmarket = None
+        if coinjoin.wasabi is not None and coinjoin.wasabi.version in ("1.0", "1.1"):
+            coinjoin.wasabi = None
 
     if coinjoin is not None:
         coinjoin.consensus = _build_coinjoin_consensus(coinjoin)

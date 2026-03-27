@@ -36,6 +36,8 @@ from graphsenselib.utils.constants import (
 )
 from async_lru import alru_cache
 
+from .tags_service import TagsService
+
 
 def is_supported_asset(
     asset_address: str, token_config: Optional[Dict[str, Any]]
@@ -135,10 +137,12 @@ class TxsService:
         db: DatabaseProtocol,
         rates_service: RatesService,
         logger: Any,
+        tags_service: TagsService = None,
     ):
         self.db = db
         self.rates_service = rates_service
         self.logger = logger
+        self.tags_service = tags_service
 
     async def get_tx(
         self,
@@ -149,6 +153,7 @@ class TxsService:
         include_nonstandard_io: bool = False,
         include_io_index: bool = False,
         include_heuristics: list[str] = [],
+        tagstore_groups: list[str] = [],
     ) -> Union[TxAccount, TxUtxo]:
         trace_index = None
         tx_ident = tx_hash
@@ -212,6 +217,14 @@ class TxsService:
                 async def _get_tx(tx_hash_hex):
                     return await self.db.get_tx(currency, tx_hash_hex)
 
+                get_tag_summary = None
+                if self.tags_service is not None:
+                    async def _get_tag_summary(curr: str, address: str):
+                        return await self.tags_service.get_tag_summary_by_address(
+                            curr, address, tagstore_groups=tagstore_groups
+                        )
+                    get_tag_summary = _get_tag_summary
+
                 result["heuristics"] = await calculate_heuristics(
                     result,
                     currency,
@@ -220,6 +233,7 @@ class TxsService:
                     coinjoin_callbacks=CoinJoinDbCallbacks(
                         get_spent_in=_get_spent_in,
                         get_tx=_get_tx,
+                        get_tag_summary=get_tag_summary,
                     ),
                 )
 

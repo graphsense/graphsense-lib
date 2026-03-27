@@ -29,6 +29,7 @@ async def get_tx(
         include_nonstandard_io,
         include_io_index,
         include_heuristics,
+        tagstore_groups=ctx.tagstore_groups,
     )
     return to_api_tx(result)
 
