@@ -254,8 +254,6 @@ def _promote_schema_examples_to_parameter_level(
                     examples = param_schema.pop("examples")
                     if isinstance(examples, list) and examples:
                         param["example"] = examples[0]
-                        # Keep track of examples that were explicitly set on API params.
-                        param["x-graphsense-explicit-example"] = True
                         param["x-graphsense-python-example"] = _to_python_literal(
                             examples[0]
                         )
@@ -1120,7 +1118,15 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
     @app.get("/ui", include_in_schema=False)
     async def custom_swagger_ui() -> HTMLResponse:
         favicon_url = _get_docs_favicon_url(app)
-        swagger_kwargs = {"swagger_favicon_url": favicon_url} if favicon_url else {}
+        swagger_kwargs = {
+            # Hide all OpenAPI vendor extensions (x-*) in Swagger UI.
+            "swagger_ui_parameters": {
+                "showExtensions": False,
+                "showCommonExtensions": False,
+            }
+        }
+        if favicon_url:
+            swagger_kwargs["swagger_favicon_url"] = favicon_url
         response = get_swagger_ui_html(
             openapi_url=app.openapi_url,
             title=f"{app.title} - Swagger UI",

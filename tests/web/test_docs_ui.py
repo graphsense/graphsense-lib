@@ -48,10 +48,25 @@ def test_docs_ui_default_python_client_link_present():
         swagger_html = client.get("/ui").text
         redoc_html = client.get("/docs").text
 
-    assert 'href="https://github.com/graphsense/graphsense-lib/tree/master/clients/python"' in swagger_html
+    assert (
+        'href="https://github.com/graphsense/graphsense-lib/tree/master/clients/python"'
+        in swagger_html
+    )
     assert ">Python Client Docs<" in swagger_html
-    assert 'href="https://github.com/graphsense/graphsense-lib/tree/master/clients/python"' in redoc_html
+    assert (
+        'href="https://github.com/graphsense/graphsense-lib/tree/master/clients/python"'
+        in redoc_html
+    )
     assert ">Python Client Docs<" in redoc_html
+
+
+def test_swagger_ui_hides_vendor_extensions():
+    app = _build_test_app()
+    with TestClient(app) as client:
+        swagger_html = client.get("/ui").text
+
+    assert '"showExtensions": false' in swagger_html
+    assert '"showCommonExtensions": false' in swagger_html
 
 
 def test_docs_ui_external_link_present_when_configured():
@@ -137,12 +152,16 @@ def test_create_app_prefers_gsrest_slack_topics(monkeypatch):
 
         def get_slack_hooks_by_topic(self, topic: str):
             if topic == "exceptions":
-                return SlackTopic(hooks=["https://hooks.slack.com/services/T000/B000/FALLBACK"])
+                return SlackTopic(
+                    hooks=["https://hooks.slack.com/services/T000/B000/FALLBACK"]
+                )
             return None
 
     captured = {}
 
-    def fake_setup_logging(app_logger, slack_exception_hook, default_environment, logging_config):
+    def fake_setup_logging(
+        app_logger, slack_exception_hook, default_environment, logging_config
+    ):
         captured["slack_exception_hook"] = slack_exception_hook
         captured["default_environment"] = default_environment
 
@@ -202,9 +221,9 @@ def test_openapi_examples_are_normalized_for_generated_client_snippets():
     with TestClient(app) as client:
         spec = client.get("/openapi.json").json()
 
-    address_neighbors_operation = spec["paths"]["/{currency}/addresses/{address}/neighbors"][
-        "get"
-    ]
+    address_neighbors_operation = spec["paths"][
+        "/{currency}/addresses/{address}/neighbors"
+    ]["get"]
     address_neighbors_parameters = {
         p["name"]: p for p in address_neighbors_operation.get("parameters", [])
     }
@@ -212,9 +231,9 @@ def test_openapi_examples_are_normalized_for_generated_client_snippets():
     assert address_neighbors_parameters["only_ids"].get("example") == "1,2,3"
     assert address_neighbors_parameters["page"].get("example") is None
 
-    entity_neighbors_operation = spec["paths"]["/{currency}/entities/{entity}/neighbors"][
-        "get"
-    ]
+    entity_neighbors_operation = spec["paths"][
+        "/{currency}/entities/{entity}/neighbors"
+    ]["get"]
     entity_neighbors_parameters = {
         p["name"]: p for p in entity_neighbors_operation.get("parameters", [])
     }
