@@ -844,14 +844,27 @@ async def calculate_heuristics(
     tasks = []
     keys = []
     heuristics = set(heuristics)
+    cur = {currency.lower()}
 
-    if {"one_time_change", "all", "all_change"} & heuristics:
+    if {"one_time_change", "all", "all_change"} & heuristics and cur & {
+        "btc",
+        "ltc",
+        "bch",
+    }:
         tasks.append(_one_time_change_heuristic(tx, currency, get_address))
         keys.append("one_time_change")
-    if {"direct_change", "all", "all_change"} & heuristics:
+    if {"direct_change", "all", "all_change"} & heuristics and cur & {
+        "btc",
+        "ltc",
+        "bch",
+    }:
         tasks.append(_direct_change_heuristic(tx))
         keys.append("direct_change")
-    if {"multi_input_change", "all", "all_change"} & heuristics:
+    if {"multi_input_change", "all", "all_change"} & heuristics and cur & {
+        "btc",
+        "ltc",
+        "bch",
+    }:
         tasks.append(_multi_input_change_heuristic(tx, currency, get_address))
         keys.append("multi_input_change")
 
@@ -869,7 +882,7 @@ async def calculate_heuristics(
         }
 
     coinjoin = None
-    if {"whirlpool_coinjoin", "all", "all_coinjoin"} & heuristics:
+    if {"whirlpool_coinjoin", "all", "all_coinjoin"} & heuristics and cur & {"btc"}:
         whirlpool_coinjoin = _whirlpool_coinjoin_heuristic(tx)
         whirlpool_tx0 = _whirlpool_tx0_heuristic(tx)
 
@@ -895,7 +908,12 @@ async def calculate_heuristics(
                 whirlpool_tx0=whirlpool_tx0,
             )
 
-    if {"wasabi_2_0_coinjoin", "wasabi_coinjoin", "all", "all_coinjoin"} & heuristics:
+    if {
+        "wasabi_2_0_coinjoin",
+        "wasabi_coinjoin",
+        "all",
+        "all_coinjoin",
+    } & heuristics and cur & {"btc"}:
         wasabi_20_result = _wasabi_20_heuristic(tx)
         if wasabi_20_result is not None:
             if coinjoin is None:
@@ -908,7 +926,7 @@ async def calculate_heuristics(
         "wasabi_coinjoin",
         "all",
         "all_coinjoin",
-    } & heuristics:
+    } & heuristics and cur & {"btc"}:
         wasabi_result = _wasabi_11_heuristic(tx)
         # 1.x only overwrites if 2.0 didn't match (2.0 is more specific)
         if wasabi_result is not None and (coinjoin is None or coinjoin.wasabi is None):
@@ -916,7 +934,11 @@ async def calculate_heuristics(
                 coinjoin = CoinJoinHeuristics()
             coinjoin.wasabi = wasabi_result
 
-    if {"joinmarket_coinjoin", "all", "all_coinjoin"} & heuristics:
+    if {"joinmarket_coinjoin", "all", "all_coinjoin"} & heuristics and cur & {
+        "btc",
+        "ltc",
+        "bch",
+    }:
         joinmarket_result = _joinmarket_heuristic(tx)
         if joinmarket_result is not None:
             if coinjoin is None:
@@ -933,9 +955,14 @@ async def calculate_heuristics(
         and coinjoin_callbacks.get_tag_summary is not None
         and (
             coinjoin.joinmarket is not None
-            or (coinjoin.wasabi is not None and coinjoin.wasabi.version in ("1.0", "1.1"))
+            or (
+                coinjoin.wasabi is not None
+                and coinjoin.wasabi.version in ("1.0", "1.1")
+            )
         )
-        and await _any_input_is_exchange(tx, currency, coinjoin_callbacks.get_tag_summary)
+        and await _any_input_is_exchange(
+            tx, currency, coinjoin_callbacks.get_tag_summary
+        )
     ):
         coinjoin.joinmarket = None
         if coinjoin.wasabi is not None and coinjoin.wasabi.version in ("1.0", "1.1"):
