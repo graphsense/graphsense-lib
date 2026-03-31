@@ -138,7 +138,7 @@ test-ingest: ## Run all ingest regression tests
 	@echo "========================================================================"
 	@ret=0; \
 	$(MAKE) test-ingest-cassandra || ret=1; \
-	$(MAKE) test-ingest-deltalake-cross-version || ret=1; \
+	$(MAKE) test-ingest-deltalake || ret=1; \
 	$(MAKE) test-ingest-sink-consistency || ret=1; \
 	$(MAKE) test-ingest-split-continuation || ret=1; \
 	$(MAKE) test-ingest-transformation || ret=1; \
@@ -193,7 +193,7 @@ generate-loki: ## Generate Loki test file from production logs (requires LOKI_UR
 
 # --- REST infrastructure (build, serve, stop) ---
 
-rest-build: ## Build both REST Docker images (GSLIB= REST_BASELINE=)
+rest-build: ## Build both REST Docker images (REST_BASELINE= required)
 	@$(MAKE) rest-build-current
 	@$(MAKE) rest-build-baseline
 
@@ -233,7 +233,7 @@ rest-ensure-servers: rest-ensure-baseline
 		echo "Starting current server on port $(REST_CURRENT_PORT)..."; \
 		docker run -d --name gs-current --rm --network=host \
 			-v "$$REAL_CONFIG:/srv/graphsense-rest/instance/config.yaml:ro" \
-			-e NUM_WORKERS=1 -e NUM_THREADS=1 \
+			-e CONFIG_FILE=/srv/graphsense-rest/instance/config.yaml -e NUM_WORKERS=1 -e NUM_THREADS=1 \
 			$(IMAGE_CURRENT) \
 			sh -c 'gunicorn -c /opt/gunicorn-conf.py --bind 0.0.0.0:$(REST_CURRENT_PORT) "graphsenselib.web.app:create_app(\"$$CONFIG_FILE\")" --worker-class uvicorn.workers.UvicornWorker'; \
 	fi && \

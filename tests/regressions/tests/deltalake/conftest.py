@@ -16,6 +16,7 @@ from tests.lib.conftest_helpers import (
     skip_if_no_configs,
     start_minio_container,
 )
+from tests.lib.constants import DEFAULT_REF_VERSION
 
 
 def pytest_collection_modifyitems(config, items):
@@ -61,7 +62,7 @@ def storage_options(minio_config):
 @pytest.fixture(scope="session")
 def reference_venv():
     configs = build_delta_configs()
-    ref_version = configs[0].ref_version if configs else "v25.11.18"
+    ref_version = configs[0].ref_version if configs else DEFAULT_REF_VERSION
     return get_or_create_reference_venv(ref_version)
 
 

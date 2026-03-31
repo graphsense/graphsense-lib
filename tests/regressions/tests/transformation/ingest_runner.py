@@ -152,10 +152,12 @@ def run_transformation(
         "--delta-lake-path", delta_directory,
     ]
 
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=TRANSFORMATION_TIMEOUT_S
-    )
-    Path(config_path).unlink(missing_ok=True)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=TRANSFORMATION_TIMEOUT_S
+        )
+    finally:
+        Path(config_path).unlink(missing_ok=True)
 
     if result.stdout:
         print(f"\n    [spark stdout tail]: {result.stdout[-2000:]}")

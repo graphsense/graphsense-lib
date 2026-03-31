@@ -10,6 +10,7 @@ from tests.lib.config import (
     resolve_gslib_path,
     tables_for_currency,
 )
+from tests.lib.constants import DEFAULT_REF_VERSION
 
 
 @dataclass(frozen=True)
@@ -229,7 +230,7 @@ ALL_CURRENCIES = list(NETWORK_RANGE_PROFILES.keys())
 class DeltaTestConfig:
     """Configuration for a single currency's Delta Lake cross-version test."""
 
-    ref_version: str = "v25.11.18"
+    ref_version: str = DEFAULT_REF_VERSION
     currency: str = "eth"
     start_block: int = 2000000
     base_blocks: int = 50
@@ -304,7 +305,7 @@ def build_delta_configs() -> list[DeltaTestConfig]:
     currency into multiple block-range scenarios. Currencies without
     a configured node URL are silently skipped.
     """
-    ref_version = os.environ.get("DELTA_REF_VERSION", "v25.11.18")
+    ref_version = os.environ.get("DELTA_REF_VERSION", DEFAULT_REF_VERSION)
     currencies = parse_currencies("DELTA_CURRENCIES", ALL_CURRENCIES)
     gslib_path = resolve_gslib_path()
     perf_blocks = int(os.environ.get("DELTA_PERF_BLOCKS", "200"))

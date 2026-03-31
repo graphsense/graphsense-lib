@@ -124,7 +124,7 @@ def skip_if_no_configs(items, keyword: str, build_fn):
         reason="No currencies with node URLs found in .graphsense.yaml"
     )
     for item in items:
-        if keyword in item.keywords or keyword in str(item.fspath):
+        if keyword in item.keywords or keyword in str(item.path):
             item.add_marker(skip_marker)
 
 
