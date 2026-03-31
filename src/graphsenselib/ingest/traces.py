@@ -274,7 +274,7 @@ class TraceExporter:
         self.trace_batch_size = trace_batch_size
         self.max_workers = max_workers
 
-    def _fetch_traces_for_blocks(self, block_numbers, max_retries=3):
+    def _fetch_traces_for_blocks(self, block_numbers, max_retries=5):
         """Fetch traces for a batch of blocks via a single batch JSON-RPC call.
 
         Returns dict mapping block_number -> list of trace dicts,
@@ -298,7 +298,7 @@ class TraceExporter:
             except Exception as e:
                 last_error = e
                 if attempt < max_retries - 1:
-                    wait = 2**attempt
+                    wait = min(2**attempt, 30)
                     logger.warning(
                         f"Batch trace_block retry {attempt + 1}/{max_retries} "
                         f"for blocks {block_numbers[0]}-{block_numbers[-1]}: {e}. "

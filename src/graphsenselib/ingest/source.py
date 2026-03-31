@@ -305,7 +305,7 @@ class SourceUTXO(Source):
     ):
         self.fast_exporter = BtcBlockExporter(
             provider_uri=provider_uri,
-            max_workers=max_workers or 10,
+            max_workers=max_workers or 5,
             timeout=provider_timeout,
             verbosity=verbosity,
             resolve_inputs=resolve_inputs,
