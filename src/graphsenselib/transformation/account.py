@@ -163,8 +163,6 @@ class AccountTransformation:
         if "v" in df.columns:
             df = df.withColumn("v", F.col("v").cast("short"))
         df = _convert_varint_cols(df, _VARINT_COLS_TX)
-        # Repartition by Cassandra PK for write locality
-        df = df.repartitionByRange(2000, "tx_hash_prefix", "tx_hash")
         self._write_cassandra(df, "transaction")
 
     def transform_trace(self, start_block, end_block):
