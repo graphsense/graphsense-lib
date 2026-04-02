@@ -35,7 +35,7 @@ from .rates_service import RatesService
 from graphsenselib.utils.constants import (
     replace_tron_dummy_address_with_valid_null_address,
 )
-from async_lru import alru_cache
+
 
 from .tags_service import TagsService
 
@@ -208,10 +208,6 @@ class TxsService:
 
             if len(include_heuristics) > 0:
 
-                @alru_cache(maxsize=2048, ttl=10)
-                async def _cached_get_address(curr: str, addr: str):
-                    return await self.db.get_address(curr, addr)
-
                 async def _get_spent_in(tx_hash_hex, io_index):
                     return await self.get_spent_in_txs(currency, tx_hash_hex, io_index)
 
@@ -234,7 +230,7 @@ class TxsService:
                 result["heuristics"] = await calculate_heuristics(
                     result,
                     currency,
-                    _cached_get_address,
+                    self.db,
                     include_heuristics,
                     coinjoin_callbacks=CoinJoinDbCallbacks(
                         get_spent_in=_get_spent_in,

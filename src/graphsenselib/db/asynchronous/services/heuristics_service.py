@@ -67,22 +67,24 @@ WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE = 90
 async def _prefetch_addresses(tx, currency, get_address) -> dict[str, dict]:
     """Batch-fetch all unique input+output addresses concurrently.
 
-    Returns a dict mapping canonical address -> address info (or None).
+    get_address: async callable (currency, address) -> dict or object with
+                 get_addresses_light(currency, addresses) -> dict for batch mode.
+
+    Returns a dict mapping canonical address -> address info.
     """
-    unique: dict[str, str] = {}  # canon -> original addr
+    unique: set[str] = set()
     for io in list(tx.get("inputs", [])) + list(tx.get("outputs", [])):
         if io is None or not io.address:
             continue
-        addr = io.address[0]
-        canon = cannonicalize_address(currency, addr)
-        if canon not in unique:
-            unique[canon] = addr
+        unique.add(cannonicalize_address(currency, io.address[0]))
 
-    canon_keys = list(unique.keys())
-    results = await asyncio.gather(
-        *[get_address(currency, canon) for canon in canon_keys]
-    )
-    return dict(zip(canon_keys, results))
+    addrs = list(unique)
+
+    if hasattr(get_address, "get_addresses_light"):
+        return await get_address.get_addresses_light(currency, addrs)
+
+    results = await asyncio.gather(*[get_address(currency, addr) for addr in addrs])
+    return dict(zip(addrs, results))
 
 
 def _one_time_change_heuristic(

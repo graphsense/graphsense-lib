@@ -82,29 +82,11 @@ def make_addr_cache_with_cluster(cluster_map: dict) -> dict:
     return {addr: {"cluster_id": cid} for addr, cid in cluster_map.items()}
 
 
-def make_get_address(address_data: dict):
-    """Returns an async callable that looks up address records by address string.
-
-    Used by calculate_heuristics (which calls _prefetch_addresses internally).
-    """
-
-    async def get_address(currency, address):
-        return address_data.get(address)
-
-    return get_address
-
-
-def make_get_address_with_cluster(cluster_map: dict):
-    """Returns an async callable that returns dicts with cluster_id key.
-
-    Used by calculate_heuristics (which calls _prefetch_addresses internally).
-    """
-
-    async def get_address(currency, address):
-        cluster_id = cluster_map.get(address, -1)
-        return {"cluster_id": cluster_id}
-
-    return get_address
+def make_mock_db(address_data: dict):
+    """Returns a mock db with get_addresses_light that returns address_data as-is."""
+    db = MagicMock()
+    db.get_addresses_light = AsyncMock(return_value=dict(address_data))
+    return db
 
 
 def make_tx(inputs, outputs, coinbase=False, block_id=BLOCK_ID):
@@ -556,7 +538,7 @@ class TestCalculateHeuristics:
             ],
         )
         result = await calculate_heuristics(
-            tx, CURRENCY, make_get_address({}), ["direct_change"]
+            tx, CURRENCY, make_mock_db({}), ["direct_change"]
         )
         consensus = result.change_heuristics.consensus
         assert any(e.output.address == "addr_A" for e in consensus)
@@ -570,7 +552,7 @@ class TestCalculateHeuristics:
             ],
         )
         result = await calculate_heuristics(
-            tx, CURRENCY, make_get_address({}), ["direct_change"]
+            tx, CURRENCY, make_mock_db({}), ["direct_change"]
         )
         entry = next(
             e
@@ -589,7 +571,7 @@ class TestCalculateHeuristics:
             ],
         )
         result = await calculate_heuristics(
-            tx, CURRENCY, make_get_address({}), ["direct_change", "one_time_change"]
+            tx, CURRENCY, make_mock_db({}), ["direct_change", "one_time_change"]
         )
         assert any(
             e.output.address == "addr_A" for e in result.change_heuristics.consensus
@@ -602,7 +584,7 @@ class TestCalculateHeuristics:
             outputs=[make_output("addr_out", 49000)],
         )
         result = await calculate_heuristics(
-            tx, CURRENCY, make_get_address({}), ["direct_change"]
+            tx, CURRENCY, make_mock_db({}), ["direct_change"]
         )
         assert not any(
             e.output.address == "addr_out" for e in result.change_heuristics.consensus
@@ -618,7 +600,7 @@ class TestCalculateHeuristics:
             ],
         )
         result = await calculate_heuristics(
-            tx, CURRENCY, make_get_address({}), ["direct_change"]
+            tx, CURRENCY, make_mock_db({}), ["direct_change"]
         )
         entry = next(
             e
@@ -634,7 +616,7 @@ class TestCalculateHeuristics:
             outputs=[make_output("addr_out", 49000)],
         )
         result = await calculate_heuristics(
-            tx, CURRENCY, make_get_address({}), ["direct_change", "one_time_change"]
+            tx, CURRENCY, make_mock_db({}), ["direct_change", "one_time_change"]
         )
         ch = result.change_heuristics
         assert ch.direct_change is not None
@@ -684,6 +666,7 @@ class TestTxsServiceHeuristicsRouting:
         db.get_tx = AsyncMock(return_value=raw_tx)
         db.get_token_configuration = MagicMock(return_value=None)
         db.get_address = AsyncMock(return_value=None)
+        db.get_addresses_light = AsyncMock(return_value={})
         if currency == "eth":
             trace = dict(raw_tx)
             trace["tx_hash"] = TX_HASH
