@@ -65,11 +65,27 @@ def make_address_record(no_incoming=1, no_outgoing=0, first_tx_height=BLOCK_ID):
     }
 
 
-def make_get_address(address_data: dict):
-    """Returns an async callable that looks up address records by address string.
+def make_addr_cache(address_data: dict) -> dict:
+    """Build an addr_cache dict from address records.
 
     address_data: {address: {"no_incoming_txs": int, "no_outgoing_txs": int, "first_tx": obj}}
     Use make_address_record() to build entries.
+    """
+    return dict(address_data)
+
+
+def make_addr_cache_with_cluster(cluster_map: dict) -> dict:
+    """Build an addr_cache dict with cluster_id entries.
+
+    cluster_map: {address: cluster_id} — missing keys won't be in the cache.
+    """
+    return {addr: {"cluster_id": cid} for addr, cid in cluster_map.items()}
+
+
+def make_get_address(address_data: dict):
+    """Returns an async callable that looks up address records by address string.
+
+    Used by calculate_heuristics (which calls _prefetch_addresses internally).
     """
 
     async def get_address(currency, address):
@@ -81,7 +97,7 @@ def make_get_address(address_data: dict):
 def make_get_address_with_cluster(cluster_map: dict):
     """Returns an async callable that returns dicts with cluster_id key.
 
-    cluster_map: {address: cluster_id} — missing key means no cluster (returns -1 default).
+    Used by calculate_heuristics (which calls _prefetch_addresses internally).
     """
 
     async def get_address(currency, address):
@@ -118,7 +134,7 @@ class TestOneTimeChangeHeuristic:
     async def test_coinbase_returns_all_false(self):
         """Coinbase transactions have no real inputs, heuristic does not apply."""
         tx = make_tx(inputs=[], outputs=[make_output("addr_A", 5000000)], coinbase=True)
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.summary == []
         assert all(
             v == []
@@ -135,7 +151,7 @@ class TestOneTimeChangeHeuristic:
             inputs=[make_input(50000)],
             outputs=[make_output("addr_A", 49000)],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.summary == []
         assert all(
             v == []
@@ -152,7 +168,7 @@ class TestOneTimeChangeHeuristic:
             inputs=[make_input(50000)],
             outputs=[make_output(f"addr_{i}", 1000) for i in range(11)],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.summary == []
         assert all(
             v == []
@@ -169,7 +185,7 @@ class TestOneTimeChangeHeuristic:
             inputs=[make_input(50000)],
             outputs=[make_output("addr_A", 49000), make_output("addr_B", 999)],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.summary is not None
 
     async def test_exactly_ten_outputs_runs_heuristic(self):
@@ -177,7 +193,7 @@ class TestOneTimeChangeHeuristic:
             inputs=[make_input(50000)],
             outputs=[make_output(f"addr_{i}", 1000) for i in range(10)],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.summary is not None
 
     async def test_clear_change_address(self):
@@ -195,9 +211,7 @@ class TestOneTimeChangeHeuristic:
                 no_incoming=1, no_outgoing=0, first_tx_height=BLOCK_ID
             )
         }
-        result = await _one_time_change_heuristic(
-            tx, CURRENCY, make_get_address(address_data)
-        )
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache(address_data))
         assert addr_in(result.summary, "addr_change")
         assert not addr_in(result.summary, "addr_payment")
 
@@ -211,7 +225,7 @@ class TestOneTimeChangeHeuristic:
                 make_output("addr_other", 49001, address_type="p2sh"),
             ],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert not addr_in(result.summary, "addr_partial")
 
     async def test_past_use_disqualified(self):
@@ -226,9 +240,7 @@ class TestOneTimeChangeHeuristic:
         address_data = {
             "addr_change": make_address_record(first_tx_height=BLOCK_ID - 1)
         }
-        result = await _one_time_change_heuristic(
-            tx, CURRENCY, make_get_address(address_data)
-        )
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache(address_data))
         assert not addr_in(result.details.not_reused, "addr_change")
         assert not addr_in(result.summary, "addr_change")
 
@@ -246,9 +258,7 @@ class TestOneTimeChangeHeuristic:
                 no_incoming=1, no_outgoing=1, first_tx_height=BLOCK_ID
             )
         }
-        result = await _one_time_change_heuristic(
-            tx, CURRENCY, make_get_address(address_data)
-        )
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache(address_data))
         assert addr_in(result.summary, "addr_change")
 
     async def test_two_outgoing_disqualified(self):
@@ -265,9 +275,7 @@ class TestOneTimeChangeHeuristic:
                 no_incoming=1, no_outgoing=2, first_tx_height=BLOCK_ID
             )
         }
-        result = await _one_time_change_heuristic(
-            tx, CURRENCY, make_get_address(address_data)
-        )
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache(address_data))
         assert not addr_in(result.details.not_reused, "addr_change")
         assert not addr_in(result.summary, "addr_change")
 
@@ -285,9 +293,7 @@ class TestOneTimeChangeHeuristic:
                 no_incoming=2, no_outgoing=0, first_tx_height=BLOCK_ID
             )
         }
-        result = await _one_time_change_heuristic(
-            tx, CURRENCY, make_get_address(address_data)
-        )
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache(address_data))
         assert not addr_in(result.details.not_reused, "addr_change")
         assert not addr_in(result.summary, "addr_change")
 
@@ -303,7 +309,7 @@ class TestOneTimeChangeHeuristic:
                 make_output("addr_B", 999, address_type="p2wpkh"),
             ],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.details.same_script_type == []
         assert result.summary == []
 
@@ -317,7 +323,7 @@ class TestOneTimeChangeHeuristic:
                 make_output("addr_payment", 48000, address_type="p2pkh"),
             ],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert not addr_in(result.summary, "addr_dup")
 
     async def test_nonstandard_output_no_address_skipped(self):
@@ -330,7 +336,7 @@ class TestOneTimeChangeHeuristic:
                 make_output("addr_B", 999),
             ],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.summary is not None
         assert all(k.address is not None for k in result.summary)
 
@@ -343,7 +349,7 @@ class TestOneTimeChangeHeuristic:
                 make_output("addr_B", 1000),
             ],
         )
-        result = await _one_time_change_heuristic(tx, CURRENCY, make_get_address({}))
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache({}))
         assert result.details.not_nicely_divisible == []
         assert result.summary == []
 
@@ -360,16 +366,14 @@ class TestOneTimeChangeHeuristic:
             "addr_A": make_address_record(),
             "addr_B": make_address_record(),
         }
-        result = await _one_time_change_heuristic(
-            tx, CURRENCY, make_get_address(address_data)
-        )
+        result = _one_time_change_heuristic(tx, CURRENCY, make_addr_cache(address_data))
         assert result.summary == []
 
 
 class TestDirectChangeHeuristic:
     async def test_coinbase_returns_empty(self):
         tx = make_tx(inputs=[], outputs=[make_output("addr_A", 5000)], coinbase=True)
-        result = await _direct_change_heuristic(tx)
+        result = _direct_change_heuristic(tx)
         assert result.summary == []
 
     async def test_no_overlap_returns_empty(self):
@@ -377,7 +381,7 @@ class TestDirectChangeHeuristic:
             inputs=[make_input(50000, address="addr_in")],
             outputs=[make_output("addr_out", 49000)],
         )
-        result = await _direct_change_heuristic(tx)
+        result = _direct_change_heuristic(tx)
         assert result.summary == []
 
     async def test_address_in_both_input_and_output_flagged(self):
@@ -389,7 +393,7 @@ class TestDirectChangeHeuristic:
                 make_output("addr_B", 49000),
             ],
         )
-        result = await _direct_change_heuristic(tx)
+        result = _direct_change_heuristic(tx)
         assert addr_in(result.summary, "addr_A")
         assert not addr_in(result.summary, "addr_B")
 
@@ -405,7 +409,7 @@ class TestDirectChangeHeuristic:
                 make_output("addr_C", 48000),
             ],
         )
-        result = await _direct_change_heuristic(tx)
+        result = _direct_change_heuristic(tx)
         assert addr_in(result.summary, "addr_A")
         assert addr_in(result.summary, "addr_B")
         assert not addr_in(result.summary, "addr_C")
@@ -419,7 +423,7 @@ class TestDirectChangeHeuristic:
                 make_output("addr_A", 1000),
             ],
         )
-        result = await _direct_change_heuristic(tx)
+        result = _direct_change_heuristic(tx)
         matching = [k for k in result.summary if k.address == "addr_A"]
         assert len(matching) == 1
         assert matching[0].index == 1
@@ -428,8 +432,8 @@ class TestDirectChangeHeuristic:
 class TestMultiInputChangeHeuristic:
     async def test_coinbase_returns_empty(self):
         tx = make_tx(inputs=[], outputs=[make_output("addr_A", 5000)], coinbase=True)
-        result = await _multi_input_change_heuristic(
-            tx, CURRENCY, make_get_address_with_cluster({})
+        result = _multi_input_change_heuristic(
+            tx, CURRENCY, make_addr_cache_with_cluster({})
         )
         assert result.summary == []
 
@@ -439,10 +443,10 @@ class TestMultiInputChangeHeuristic:
             inputs=[make_input(50000, address="addr_in")],
             outputs=[make_output("addr_out", 49000)],
         )
-        result = await _multi_input_change_heuristic(
+        result = _multi_input_change_heuristic(
             tx,
             CURRENCY,
-            make_get_address_with_cluster({"addr_in": 42}),
+            make_addr_cache_with_cluster({"addr_in": 42}),
         )
         assert not addr_in(result.summary, "addr_out")
 
@@ -452,10 +456,10 @@ class TestMultiInputChangeHeuristic:
             inputs=[make_input(50000, address="addr_in")],
             outputs=[make_output("addr_out", 49000)],
         )
-        result = await _multi_input_change_heuristic(
+        result = _multi_input_change_heuristic(
             tx,
             CURRENCY,
-            make_get_address_with_cluster({"addr_in": 42, "addr_out": 42}),
+            make_addr_cache_with_cluster({"addr_in": 42, "addr_out": 42}),
         )
         assert addr_in(result.summary, "addr_out")
 
@@ -465,10 +469,10 @@ class TestMultiInputChangeHeuristic:
             inputs=[make_input(50000, address="addr_in")],
             outputs=[make_output("addr_out", 49000)],
         )
-        result = await _multi_input_change_heuristic(
+        result = _multi_input_change_heuristic(
             tx,
             CURRENCY,
-            make_get_address_with_cluster({"addr_in": 42, "addr_out": 99}),
+            make_addr_cache_with_cluster({"addr_in": 42, "addr_out": 99}),
         )
         assert not addr_in(result.summary, "addr_out")
 
@@ -478,10 +482,10 @@ class TestMultiInputChangeHeuristic:
             inputs=[make_input(50000, address="addr_in")],
             outputs=[make_output("addr_out", 49000)],
         )
-        result = await _multi_input_change_heuristic(
+        result = _multi_input_change_heuristic(
             tx,
             CURRENCY,
-            make_get_address_with_cluster({"addr_in": 42, "addr_out": 42}),
+            make_addr_cache_with_cluster({"addr_in": 42, "addr_out": 42}),
         )
         assert 42 in result.details.cluster
         evidence_list = result.details.cluster[42]

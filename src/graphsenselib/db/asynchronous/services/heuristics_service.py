@@ -64,8 +64,29 @@ WHIRLPOOL_TX0_MAX_FORWARD_CHECKS = 20
 WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE = 90
 
 
-async def _one_time_change_heuristic(
-    tx, currency, get_address
+async def _prefetch_addresses(tx, currency, get_address) -> dict[str, dict]:
+    """Batch-fetch all unique input+output addresses concurrently.
+
+    Returns a dict mapping canonical address -> address info (or None).
+    """
+    unique: dict[str, str] = {}  # canon -> original addr
+    for io in list(tx.get("inputs", [])) + list(tx.get("outputs", [])):
+        if io is None or not io.address:
+            continue
+        addr = io.address[0]
+        canon = cannonicalize_address(currency, addr)
+        if canon not in unique:
+            unique[canon] = addr
+
+    canon_keys = list(unique.keys())
+    results = await asyncio.gather(
+        *[get_address(currency, canon) for canon in canon_keys]
+    )
+    return dict(zip(canon_keys, results))
+
+
+def _one_time_change_heuristic(
+    tx, currency, addr_cache: dict[str, dict]
 ) -> OneTimeChangeHeuristic:
     """
     Combining multiple heuristics to identify one time change addresses.
@@ -134,7 +155,7 @@ async def _one_time_change_heuristic(
             continue
 
         addr = cand.address[0]
-        addr_info = await get_address(currency, cannonicalize_address(currency, addr))
+        addr_info = addr_cache.get(cannonicalize_address(currency, addr))
         if addr_info is None:
             cond_not_reused.add(addr)
             continue
@@ -195,8 +216,8 @@ async def _one_time_change_heuristic(
     )
 
 
-async def _multi_input_change_heuristic(
-    tx, currency, get_address
+def _multi_input_change_heuristic(
+    tx, currency, addr_cache: dict[str, dict]
 ) -> MultiInputChangeHeuristic:
     """
     Checks if the output address can be mapped to a cluster from the input addresses. If yes, it is marked as change.
@@ -209,51 +230,51 @@ async def _multi_input_change_heuristic(
     inputs = tx.get("inputs", [])
     outputs = tx.get("outputs", [])
 
+    # Build cluster_id -> first matching input address from pre-fetched cache
+    cluster_to_inp: dict[int, str] = {}
+    for inp in inputs:
+        if inp is None or not inp.address:
+            continue
+        inp_addr = inp.address[0]
+        canon = cannonicalize_address(currency, inp_addr)
+        info = addr_cache.get(canon)
+        if info is not None and info.get("cluster_id", -1) != -1:
+            cid = info.get("cluster_id")
+            if cid not in cluster_to_inp:
+                cluster_to_inp[cid] = inp_addr
+
     for idx, outp in enumerate(outputs):
         if outp is None or not outp.address:
             continue
 
         outp_addr = outp.address[0]
-        addr_out_info = await get_address(
-            currency, cannonicalize_address(currency, outp_addr)
-        )
+        addr_out_info = addr_cache.get(cannonicalize_address(currency, outp_addr))
+        if addr_out_info is None:
+            continue
         addr = AddressOutput(address=outp_addr, index=idx)
 
-        if addr_out_info.get("cluster_id", -1) == -1:
+        out_cluster = addr_out_info.get("cluster_id", -1)
+        if out_cluster == -1:
             continue
 
-        for in_idx, inp in enumerate(inputs):
-            if inp is None or not inp.address:
-                continue
+        # Check if any input belongs to the same cluster
+        matching_inp_addr = cluster_to_inp.get(out_cluster)
+        if matching_inp_addr is not None:
+            result.summary.append(addr)
 
-            inp_addr = inp.address[0]
-            addr_inp_info = await get_address(
-                currency, cannonicalize_address(currency, inp_addr)
+            cluster_evidence = MultiInputClusterEvidence(
+                matching_input_address=matching_inp_addr, output=addr
             )
-
-            if addr_inp_info.get("cluster_id", -1) == -1:
-                continue
-
-            # same cluster
-            if addr_inp_info.get("cluster_id") == addr_out_info.get("cluster_id"):
-                result.summary.append(addr)
-
-                cluster_id = addr_inp_info.get("cluster_id")
-                cluster_evidence = MultiInputClusterEvidence(
-                    matching_input_address=inp_addr, output=addr
-                )
-                if cluster_id not in details.cluster:
-                    details.cluster[cluster_id] = [cluster_evidence]
-                else:
-                    details.cluster[cluster_id].append(cluster_evidence)
-
-                break
+            if out_cluster not in details.cluster:
+                details.cluster[out_cluster] = [cluster_evidence]
+            else:
+                details.cluster[out_cluster].append(cluster_evidence)
 
     result.details = details
     return result
 
 
-async def _direct_change_heuristic(tx) -> DirectChangeHeuristic:
+def _direct_change_heuristic(tx) -> DirectChangeHeuristic:
     """
     marks an address as change if it is used both as input and output in the same transaction.
     """
@@ -264,17 +285,13 @@ async def _direct_change_heuristic(tx) -> DirectChangeHeuristic:
     inputs = tx.get("inputs", [])
     outputs = tx.get("outputs", [])
     addr_inputs = set(
-        [inp.address[0] for inp in inputs if inp is not None and inp.address]
+        inp.address[0] for inp in inputs if inp is not None and inp.address
     )
-    addr_outputs = set(
-        [outp.address[0] for outp in outputs if outp is not None and outp.address]
-    )
-    intersection = addr_inputs.intersection(addr_outputs)
 
-    for addr in intersection:
-        for idx, outp in enumerate(outputs):
-            if outp is not None and outp.address and outp.address[0] == addr:
-                result.summary.append(AddressOutput(address=addr, index=idx))
+    # Single pass over outputs: check membership in input set (O(1) per lookup)
+    for idx, outp in enumerate(outputs):
+        if outp is not None and outp.address and outp.address[0] in addr_inputs:
+            result.summary.append(AddressOutput(address=outp.address[0], index=idx))
 
     return result
 
@@ -817,21 +834,25 @@ async def _verify_tx0_forward(tx, pool_denomination, get_spent_in, get_tx) -> bo
 async def _any_input_is_exchange(tx, currency, get_tag_summary) -> bool:
     """Return True if any input address is tagged as an exchange (broad_category == 'exchange').
 
-    Checks inputs sequentially and short-circuits on the first match to avoid
-    unnecessary tag lookups.
+    Fetches tag summaries for all unique input addresses concurrently.
     """
+    unique_addrs = []
     seen = set()
     for inp in tx.get("inputs", []):
         if inp is None or not inp.address:
             continue
         addr = inp.address[0]
-        if addr in seen:
-            continue
-        seen.add(addr)
-        summary = await get_tag_summary(currency, addr)
-        if summary is not None and summary.broad_category == "exchange":
-            return True
-    return False
+        if addr not in seen:
+            seen.add(addr)
+            unique_addrs.append(addr)
+
+    if not unique_addrs:
+        return False
+
+    summaries = await asyncio.gather(
+        *[get_tag_summary(currency, addr) for addr in unique_addrs]
+    )
+    return any(s is not None and s.broad_category == "exchange" for s in summaries)
 
 
 async def calculate_heuristics(
@@ -841,35 +862,41 @@ async def calculate_heuristics(
     heuristics: list[str],
     coinjoin_callbacks: CoinJoinDbCallbacks | None = None,
 ) -> UtxoHeuristics:
-    tasks = []
-    keys = []
     heuristics_set = set(heuristics)
     cur = {currency.lower()}
 
-    if {"one_time_change", "all", "all_change"} & heuristics_set and cur & {
-        "btc",
-        "ltc",
-        "bch",
-    }:
-        tasks.append(_one_time_change_heuristic(tx, currency, get_address))
-        keys.append("one_time_change")
-    if {"direct_change", "all", "all_change"} & heuristics_set and cur & {
-        "btc",
-        "ltc",
-        "bch",
-    }:
-        tasks.append(_direct_change_heuristic(tx))
-        keys.append("direct_change")
-    if {"multi_input_change", "all", "all_change"} & heuristics_set and cur & {
-        "btc",
-        "ltc",
-        "bch",
-    }:
-        tasks.append(_multi_input_change_heuristic(tx, currency, get_address))
-        keys.append("multi_input_change")
+    needs_address_cache = {"one_time_change", "multi_input_change", "all", "all_change"}
+    utxo_currencies = {"btc", "ltc", "bch"}
 
-    results = await asyncio.gather(*tasks)
-    heuristic_map = dict(zip(keys, results))
+    # Batch-prefetch all addresses once if any change heuristic needs them
+    addr_cache: dict[str, dict] = {}
+    if needs_address_cache & heuristics_set and cur & utxo_currencies:
+        addr_cache = await _prefetch_addresses(tx, currency, get_address)
+
+    heuristic_map: dict[str, object] = {}
+
+    if {
+        "one_time_change",
+        "all",
+        "all_change",
+    } & heuristics_set and cur & utxo_currencies:
+        heuristic_map["one_time_change"] = _one_time_change_heuristic(
+            tx, currency, addr_cache
+        )
+    if {
+        "direct_change",
+        "all",
+        "all_change",
+    } & heuristics_set and cur & utxo_currencies:
+        heuristic_map["direct_change"] = _direct_change_heuristic(tx)
+    if {
+        "multi_input_change",
+        "all",
+        "all_change",
+    } & heuristics_set and cur & utxo_currencies:
+        heuristic_map["multi_input_change"] = _multi_input_change_heuristic(
+            tx, currency, addr_cache
+        )
     consensus_map = _build_change_consensus_map(heuristic_map)
 
     # only allow the highest confidence addr. match to be in the consensus

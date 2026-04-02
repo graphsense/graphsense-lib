@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Union, Tuple
 
 from graphsenselib.defi import Bridge, ExternalSwap
@@ -219,11 +220,15 @@ class TxsService:
 
                 get_tag_summary = None
                 if self.tags_service is not None:
+
                     async def _get_tag_summary(curr: str, address: str):
                         return await self.tags_service.get_tag_summary_by_address(
-                            curr, address, tagstore_groups=tagstore_groups,
+                            curr,
+                            address,
+                            tagstore_groups=tagstore_groups,
                             include_best_cluster_tag=True,
                         )
+
                     get_tag_summary = _get_tag_summary
 
                 result["heuristics"] = await calculate_heuristics(
@@ -271,18 +276,20 @@ class TxsService:
         if is_eth_like(network):
             if include_internal_txs:
                 traces = await self.db.fetch_transaction_traces(network, tx)
-                traces_converted = [
-                    await _raw_trace_to_std_tx(
-                        network,
-                        result,
-                        tx["block_timestamp"],
-                        rates,
-                        tokenConfig,
-                        trace_index=result["trace_index"],
-                        is_first_trace=(i == 0),
-                    )
-                    for i, result in enumerate(traces)
-                ]
+                traces_converted = await asyncio.gather(
+                    *[
+                        _raw_trace_to_std_tx(
+                            network,
+                            result,
+                            tx["block_timestamp"],
+                            rates,
+                            tokenConfig,
+                            trace_index=result["trace_index"],
+                            is_first_trace=(i == 0),
+                        )
+                        for i, result in enumerate(traces)
+                    ]
+                )
 
                 results_list.extend(traces_converted)
             else:
@@ -292,10 +299,12 @@ class TxsService:
 
             if include_token_txs:
                 tokens = await self.db.list_token_txs(network, tx_hash)
-                tokens_converted = [
-                    await std_tx_from_row(network, result, rates.rates, tokenConfig)
-                    for result in tokens
-                ]
+                tokens_converted = await asyncio.gather(
+                    *[
+                        std_tx_from_row(network, result, rates.rates, tokenConfig)
+                        for result in tokens
+                    ]
+                )
 
                 results_list.extend(tokens_converted)
 
@@ -365,17 +374,34 @@ class TxsService:
         self, currency: str, tx_hash: str, token_tx_id: Optional[int] = None
     ) -> List[TxAccount]:
         results = await self.db.list_token_txs(currency, tx_hash, log_index=token_tx_id)
+        if not results:
+            return []
 
-        txs = []
-        for result in results:
-            rates = await self.rates_service.get_rates(currency, result["block_id"])
-            tx = await std_tx_from_row(
-                currency,
-                result,
-                rates.rates,
-                self.db.get_token_configuration(currency),
+        # Fetch rates once per unique block height instead of per result
+        unique_heights = {r["block_id"] for r in results}
+        rates_by_height = {}
+        for height, rates in zip(
+            unique_heights,
+            await asyncio.gather(
+                *[self.rates_service.get_rates(currency, h) for h in unique_heights]
+            ),
+        ):
+            rates_by_height[height] = rates
+
+        token_config = self.db.get_token_configuration(currency)
+        txs = list(
+            await asyncio.gather(
+                *[
+                    std_tx_from_row(
+                        currency,
+                        result,
+                        rates_by_height[result["block_id"]].rates,
+                        token_config,
+                    )
+                    for result in results
+                ]
             )
-            txs.append(tx)
+        )
 
         return txs
 
