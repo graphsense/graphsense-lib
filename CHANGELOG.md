@@ -10,23 +10,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.10.0] not yet released
+## [2.10.0] 2026-04-02
 
 ### Library (v2.10.0)
 
-#### Changed
-- tagpack tool validate by default checks actor taxonomy
-
 #### Added
-- default values for ingest data configurations
+- Coinjoin detection heuristics for UTXO transactions
+- Change address detection heuristics with configurable `include_heuristic` option (`all_change`)
+- Currency safeguards for heuristics to prevent applying heuristics on unsupported networks
+- Exchange tagging check for coinjoin heuristics
+- Default values for ingest data configurations
+- GitHub action to run examples on a regular basis
+- Strict actor mapping in tagpack tool validation
+
+#### Changed
+- Tagpack tool validate by default checks actor taxonomy
+- Updated dependencies
 
 #### Fixed
-- fixed errors with offset-aware timestamps
+- Fixed `TypeError: can't compare offset-naive and offset-aware datetimes` in exchange rates
+- Fixed bad user input handling on IO access REST API
 
 ### Web API + Python client (webapi-2.10.0)
 
 #### Added
-- heuristics for utxo txs (coinjoin and change)
+- Heuristics for UTXO transactions (coinjoin and change detection)
+
+#### Changed
+- Removed extensions from Swagger/OpenAPI spec
+- Internal service headers no longer exposed in REST API
+
+#### Fixed
+- Fixed Python client documentation examples and bad user input handling
 
 
 ## [2.9.12] 2026-03-25
