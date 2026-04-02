@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-FROM  python:3.13-slim
+FROM  python:3.13-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 LABEL org.opencontainers.image.title="graphsense-lib"
 LABEL org.opencontainers.image.maintainer="contact@iknaio.com"
@@ -24,7 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git-lfs \
     openssh-client \
     libpq-dev \
-    default-jre-headless \
+    openjdk-17-jre-headless \
+    # Arrow Java 12 (PySpark 3.5) requires Java 17; Java 21 removed
+    # DirectByteBuffer(long,int) which Arrow 12 needs for directBuffer()
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 

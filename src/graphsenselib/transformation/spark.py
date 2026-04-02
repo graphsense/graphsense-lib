@@ -80,12 +80,17 @@ def create_spark_session(
         builder.config("spark.cassandra.output.concurrent.writes", "3")
         .config("spark.cassandra.output.batch.size.bytes", "2048")
         .config("spark.cassandra.connection.timeoutMS", "300000")
-        .config("spark.cassandra.output.throughput_mb_per_sec", "50")
+        .config("spark.cassandra.output.throughputMBPerSec", "2")
     )
 
     # Spark performance defaults
-    builder = builder.config("spark.sql.adaptive.enabled", "true").config(
-        "spark.sql.adaptive.coalescePartitions.enabled", "true"
+    # Arrow-optimized Python UDFs (Spark 3.5+) use Arrow serialization
+    # instead of row-at-a-time, giving ~2x speedup for UDFs like varint
+    # conversion. Requires Java 17 (Arrow Java 12 is incompatible with 21+).
+    builder = (
+        builder.config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.execution.pythonUDF.arrow.enabled", "true")
     )
 
     # S3/MinIO configuration
