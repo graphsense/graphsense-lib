@@ -70,17 +70,12 @@ def create_spark_session(
         builder = builder.config("spark.cassandra.auth.username", cassandra_username)
     if cassandra_password:
         builder = builder.config("spark.cassandra.auth.password", cassandra_password)
-    if raw_keyspace:
-        builder = builder.config(
-            "spark.cassandra.output.consistency.level", "LOCAL_QUORUM"
-        )
-
     # Cassandra write tuning — reduce pressure, avoid timeouts
     builder = (
-        builder.config("spark.cassandra.output.concurrent.writes", "3")
-        .config("spark.cassandra.output.batch.size.bytes", "2048")
-        .config("spark.cassandra.connection.timeoutMS", "300000")
-        .config("spark.cassandra.output.throughputMBPerSec", "2")
+        builder.config("spark.cassandra.output.concurrent.writes", "2")
+        .config("spark.cassandra.output.batch.size.bytes", "4096")
+        .config("spark.cassandra.connection.timeoutMS", "600000")
+        .config("spark.cassandra.output.throughputMBPerSec", "1")
     )
 
     # Spark performance defaults

@@ -126,6 +126,8 @@ class AccountTrxTransformation:
         if "v" in df.columns:
             df = df.withColumn("v", F.col("v").cast("short"))
         df = _convert_varint_cols(df, _VARINT_COLS_TX)
+        # Repartition by Cassandra PK for write locality
+        df = df.repartitionByRange(2000, "tx_hash_prefix", "tx_hash")
         self._write_cassandra(df, "transaction")
 
     def transform_trace(self, start_block, end_block):
@@ -145,6 +147,8 @@ class AccountTrxTransformation:
                 "call_info_index", F.col("call_info_index").cast("short")
             )
         df = _convert_varint_cols(df, _VARINT_COLS_TRACE_TRX)
+        # Repartition to eliminate stragglers from data skew
+        df = df.repartitionByRange(2000, "block_id_group", "block_id")
         self._write_cassandra(df, "trace")
 
     def transform_log(self, start_block, end_block):
