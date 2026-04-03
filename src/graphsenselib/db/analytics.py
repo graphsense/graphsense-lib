@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache, partial
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import pandas as pd
 from cassandra import OperationTimedOut, WriteTimeout
@@ -652,6 +652,41 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         if not self.exists():
             return None
         return self._get_only_row_from_table("summary_statistics")
+
+    def get_fresh_clusters_for_addresses(
+        self, address_ids: List[int]
+    ) -> List[Tuple[int, int]]:
+        """Look up (address_id, cluster_id) from fresh_address_cluster for given IDs."""
+        if not address_ids:
+            return []
+        id_list = ",".join(str(a) for a in address_ids)
+        rows = self.execute_raw_cql(
+            f"SELECT address_id, cluster_id FROM "
+            f"{self._keyspace}.fresh_address_cluster "
+            f"WHERE address_id IN ({id_list})"
+        )
+        return [(r.address_id, r.cluster_id) for r in rows]
+
+    def get_fresh_cluster_members(self, cluster_ids: Set[int]) -> List[Tuple[int, int]]:
+        """Read (cluster_id, address_id) from fresh_cluster_addresses for given clusters."""
+        if not cluster_ids:
+            return []
+        id_list = ",".join(str(c) for c in cluster_ids)
+        rows = self.execute_raw_cql(
+            f"SELECT cluster_id, address_id FROM "
+            f"{self._keyspace}.fresh_cluster_addresses "
+            f"WHERE cluster_id IN ({id_list})"
+        )
+        return [(r.cluster_id, r.address_id) for r in rows]
+
+    def is_fresh_clustering_empty(self) -> bool:
+        """Check if the fresh_address_cluster table has any rows."""
+        rows = list(
+            self.execute_raw_cql(
+                f"SELECT address_id FROM {self._keyspace}.fresh_address_cluster LIMIT 1"
+            )
+        )
+        return len(rows) == 0
 
     def get_exchange_rates_by_block(self, block) -> Iterable:
         return self.select_one("exchange_rates", where={"block_id": block})
