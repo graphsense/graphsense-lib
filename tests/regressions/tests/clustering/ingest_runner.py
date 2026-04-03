@@ -272,8 +272,15 @@ def read_raw_tx_inputs(
     cassandra_host: str,
     cassandra_port: int,
     raw_keyspace: str,
+    min_block_id: int = 0,
+    max_block_id: int | None = None,
 ) -> list[list[str]]:
     """Read transaction inputs from the raw keyspace.
+
+    Args:
+        min_block_id: Only include transactions from blocks >= this (inclusive).
+        max_block_id: Only include transactions from blocks <= this (inclusive).
+            If None, no upper bound.
 
     Returns: list of transactions, each transaction is a list of input address strings.
     Only includes transactions with >1 unique input address (multi-input heuristic).
@@ -283,11 +290,15 @@ def read_raw_tx_inputs(
     with Cluster([cassandra_host], port=cassandra_port) as cluster:
         session = cluster.connect()
         rows = session.execute(
-            f"SELECT tx_id, coinbase, inputs FROM {raw_keyspace}.transaction"  # noqa: S608
+            f"SELECT block_id, coinbase, inputs FROM {raw_keyspace}.transaction"  # noqa: S608
         )
         tx_inputs = []
         for row in rows:
             if row.coinbase:
+                continue
+            if row.block_id < min_block_id:
+                continue
+            if max_block_id is not None and row.block_id > max_block_id:
                 continue
             if not row.inputs:
                 continue
@@ -302,37 +313,11 @@ def read_raw_tx_inputs(
     return tx_inputs
 
 
-def run_rust_clustering(
-    cassandra_host: str,
-    cassandra_port: int,
-    raw_keyspace: str,
-    transformed_keyspace: str,
-) -> dict[int, int]:
-    """Run Rust clustering in-process using address IDs from Scala's address table.
-
-    1. Reads address -> address_id mapping from Scala's transformed keyspace
-    2. Reads raw transaction inputs from Cassandra
-    3. Maps input addresses to address_ids
-    4. Feeds multi-input groups to gs_clustering.Clustering
-    5. Returns address_id -> cluster_id mapping
-
-    Returns: dict mapping address_id -> cluster_id for all addresses that
-    appear in at least one multi-input transaction.
-    """
-    from gs_clustering import Clustering
-
-    # Step 1: Read address -> address_id mapping from Scala
-    addr_to_id = read_address_id_mapping(
-        cassandra_host, cassandra_port, transformed_keyspace
-    )
-    if not addr_to_id:
-        return {}
-
-    # Step 2: Read raw transaction inputs
-    raw_inputs = read_raw_tx_inputs(cassandra_host, cassandra_port, raw_keyspace)
-
-    # Step 3: Map addresses to address_ids, build transaction input groups
-    max_address_id = max(addr_to_id.values())
+def _resolve_tx_inputs(
+    raw_inputs: list[list[str]],
+    addr_to_id: dict[str, int],
+) -> list[list[int]]:
+    """Map address strings to address_ids, keeping only multi-input groups."""
     tx_input_ids = []
     for addrs in raw_inputs:
         ids = []
@@ -342,20 +327,99 @@ def run_rust_clustering(
                 ids.append(aid)
         if len(ids) > 1:
             tx_input_ids.append(ids)
+    return tx_input_ids
 
-    # Step 4: Run Rust clustering
-    c = Clustering(max_address_id=max_address_id)
-    if tx_input_ids:
-        c.process_transactions(tx_input_ids)
 
-    # Step 5: Extract mapping for addresses that actually exist
-    batch = c.get_mapping()
+def _mapping_from_clustering(clustering, addr_to_id: dict[str, int]) -> dict[int, int]:
+    """Extract address_id -> cluster_id for existing addresses only."""
+    batch = clustering.get_mapping()
     all_address_ids = batch.column("address_id").to_pylist()
     all_cluster_ids = batch.column("cluster_id").to_pylist()
-
     existing_ids = set(addr_to_id.values())
     return {
         aid: cid
         for aid, cid in zip(all_address_ids, all_cluster_ids)
         if aid in existing_ids
     }
+
+
+def run_rust_clustering(
+    cassandra_host: str,
+    cassandra_port: int,
+    raw_keyspace: str,
+    transformed_keyspace: str,
+    max_block_id: int | None = None,
+) -> dict[int, int]:
+    """Run Rust clustering from scratch on blocks [0, max_block_id].
+
+    Returns: dict mapping address_id -> cluster_id for all known addresses.
+    """
+    from gs_clustering import Clustering
+
+    addr_to_id = read_address_id_mapping(
+        cassandra_host, cassandra_port, transformed_keyspace
+    )
+    if not addr_to_id:
+        return {}
+
+    raw_inputs = read_raw_tx_inputs(
+        cassandra_host, cassandra_port, raw_keyspace,
+        max_block_id=max_block_id,
+    )
+    tx_input_ids = _resolve_tx_inputs(raw_inputs, addr_to_id)
+
+    max_address_id = max(addr_to_id.values())
+    c = Clustering(max_address_id=max_address_id)
+    if tx_input_ids:
+        c.process_transactions(tx_input_ids)
+
+    return _mapping_from_clustering(c, addr_to_id)
+
+
+def run_rust_clustering_incremental(
+    cassandra_host: str,
+    cassandra_port: int,
+    raw_keyspace: str,
+    transformed_keyspace: str,
+    existing_mapping: dict[int, int],
+    min_block_id: int,
+    max_block_id: int | None = None,
+) -> dict[int, int]:
+    """Run Rust incremental clustering: rebuild from existing mapping, add new blocks.
+
+    Args:
+        existing_mapping: address_id -> cluster_id from the initial clustering.
+        min_block_id: First block of the new range (inclusive).
+        max_block_id: Last block of the new range (inclusive).
+
+    Returns: updated address_id -> cluster_id for all known addresses.
+    """
+    from gs_clustering import Clustering
+
+    addr_to_id = read_address_id_mapping(
+        cassandra_host, cassandra_port, transformed_keyspace
+    )
+    if not addr_to_id:
+        return existing_mapping
+
+    raw_inputs = read_raw_tx_inputs(
+        cassandra_host, cassandra_port, raw_keyspace,
+        min_block_id=min_block_id,
+        max_block_id=max_block_id,
+    )
+    new_tx_input_ids = _resolve_tx_inputs(raw_inputs, addr_to_id)
+
+    max_address_id = max(addr_to_id.values())
+    c = Clustering(max_address_id=max_address_id)
+
+    # Rebuild from existing state
+    if existing_mapping:
+        addr_ids = list(existing_mapping.keys())
+        clus_ids = list(existing_mapping.values())
+        c.rebuild_from_mapping(addr_ids, clus_ids)
+
+    # Process new transactions
+    if new_tx_input_ids:
+        c.process_transactions(new_tx_input_ids)
+
+    return _mapping_from_clustering(c, addr_to_id)

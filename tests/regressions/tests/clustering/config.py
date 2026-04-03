@@ -2,6 +2,12 @@
 
 Defines block ranges per UTXO currency and builds test configs from .graphsense.yaml.
 Only UTXO currencies are supported (btc, ltc, bch, zec) -- no ETH/TRX.
+
+The test flow:
+1. Scala full transform on blocks [start_block, end_block] → reference clusters
+2. Rust clustering on blocks [start_block, initial_end_block] → initial clusters
+3. Rust incremental clustering on blocks [initial_end_block+1, end_block] → updated clusters
+4. Compare Rust final vs Scala reference → must be partition-equivalent
 """
 
 from dataclasses import dataclass, field
@@ -17,6 +23,7 @@ class ClusteringRange:
     range_id: str
     start_block: int
     end_block: int
+    initial_end_block: int  # Rust does full clustering up to here, then incremental
     note: str = ""
 
 
@@ -24,16 +31,19 @@ class ClusteringRange:
 # UTXO chains start from 0 (need full tx_id sequence for address ID assignment).
 CLUSTERING_RANGES: dict[str, list[ClusteringRange]] = {
     "btc": [
-        ClusteringRange("genesis", 0, 200, "first real multi-input txs around block 170"),
+        ClusteringRange(
+            "incremental", 0, 15000, 10000,
+            "10k full + 5k incremental; multi-input txs start around block 170",
+        ),
     ],
     "ltc": [
-        ClusteringRange("genesis", 0, 500, "first spending tx at block 448"),
+        ClusteringRange("incremental", 0, 5000, 3000, "3k full + 2k incremental"),
     ],
     "bch": [
-        ClusteringRange("genesis", 0, 200, "shares BTC history"),
+        ClusteringRange("incremental", 0, 15000, 10000, "shares BTC history"),
     ],
     "zec": [
-        ClusteringRange("genesis", 0, 400, "first spending at 396"),
+        ClusteringRange("incremental", 0, 5000, 3000, "3k full + 2k incremental"),
     ],
 }
 
@@ -49,6 +59,7 @@ class ClusteringConfig:
     secondary_node_references: list[str]
     start_block: int
     end_block: int
+    initial_end_block: int
     schema_type: str
     gslib_path: Path = field(
         default_factory=lambda: Path(__file__).resolve().parents[4]
@@ -87,6 +98,7 @@ def build_clustering_configs() -> list[ClusteringConfig]:
                     ),
                     start_block=cr.start_block,
                     end_block=cr.end_block,
+                    initial_end_block=cr.initial_end_block,
                     schema_type=SCHEMA_TYPE_MAP.get(currency, "utxo"),
                     gslib_path=gslib_path,
                     range_note=cr.note,

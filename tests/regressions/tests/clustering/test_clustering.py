@@ -1,18 +1,21 @@
 """Clustering regression test.
 
 Compares Scala/Spark transformation clustering output against Rust clustering
-output for partition equivalence.
+output for partition equivalence, testing both full and incremental paths.
 
-The Scala and Rust clusterings assign different cluster IDs. The test compares
-cluster MEMBERSHIPS: for every address, the set of addresses in its cluster
-must be identical in both systems.
+Test flow:
+1. Ingest all blocks [0, end_block] to raw Cassandra + Delta Lake
+2. Run Scala full transformation on all blocks → reference clusters
+3. Run Rust clustering on blocks [0, initial_end_block] → initial clusters
+4. Run Rust incremental clustering on blocks [initial_end_block+1, end_block]
+5. Compare Rust final clusters vs Scala reference → must be partition-equivalent
 
 Requires:
 - Docker (for MinIO, Cassandra testcontainers, and Scala transformation container)
 - Node URLs configured in .graphsense.yaml
 - ``CLUSTERING_CURRENCIES`` env var (default: btc only)
-- ``CLUSTERING_SCALA_IMAGE`` env var (Docker image for full Scala/Spark transformation)
 - ``gs_clustering`` Rust module installed (build with: make build-rust)
+- Scala transformation repo as sibling (or ``CLUSTERING_SCALA_IMAGE`` env var)
 """
 
 import pytest
@@ -25,6 +28,7 @@ from tests.clustering.ingest_runner import (
     run_ingest_cassandra_raw,
     run_ingest_delta_only,
     run_rust_clustering,
+    run_rust_clustering_incremental,
     run_scala_transformation,
 )
 
@@ -37,25 +41,18 @@ def compare_cluster_partitions(
 ) -> tuple[bool, list[str]]:
     """Compare two clusterings for partition equivalence.
 
-    Args:
-        scala_clusters: cluster_id -> set of address_ids (from Scala)
-        rust_mapping: address_id -> cluster_id (from Rust)
-
-    Returns:
-        (is_equivalent, list of mismatch descriptions)
-
     The comparison works by building a canonical representative for each address
     (the minimum address_id in its cluster). Two partitions are equivalent iff
     every address maps to the same canonical representative in both systems.
     """
-    # Build Scala mapping: address_id -> canonical representative (min addr in cluster)
+    # Build Scala: address_id -> canonical representative
     scala_repr: dict[int, int] = {}
     for _cluster_id, members in scala_clusters.items():
         representative = min(members)
         for addr_id in members:
             scala_repr[addr_id] = representative
 
-    # Build Rust mapping: address_id -> canonical representative
+    # Build Rust: address_id -> canonical representative
     rust_clusters: dict[int, set[int]] = {}
     for addr_id, cluster_id in rust_mapping.items():
         rust_clusters.setdefault(cluster_id, set()).add(addr_id)
@@ -78,10 +75,16 @@ def compare_cluster_partitions(
     return len(mismatches) == 0, mismatches
 
 
+def _cluster_stats(clusters: dict[int, set[int]]) -> str:
+    total_addrs = sum(len(m) for m in clusters.values())
+    non_singleton = sum(1 for m in clusters.values() if len(m) > 1)
+    return f"{len(clusters)} clusters, {total_addrs} addresses, {non_singleton} non-singleton"
+
+
 class TestClustering:
     """Scala/Spark clustering must produce the same partition as Rust clustering."""
 
-    def test_scala_vs_rust_clustering(
+    def test_scala_vs_rust_incremental_clustering(
         self,
         clustering_config: ClusteringConfig,
         minio_config: dict[str, str],
@@ -110,21 +113,25 @@ class TestClustering:
         ks_transformed = f"clust_{currency}_{range_id}_transformed"
         delta_path = f"s3://{bucket}/{currency}/{range_id}"
 
+        initial_end = clustering_config.initial_end_block
+        final_end = clustering_config.end_block
+
         print(f"\n{'=' * 68}")
         print(f"CLUSTERING: {currency.upper()} [{range_id}]")
         print(
             f"  blocks:          "
-            f"{clustering_config.start_block:,}-"
-            f"{clustering_config.end_block:,} "
+            f"{clustering_config.start_block:,}-{final_end:,} "
             f"({clustering_config.num_blocks} blocks)"
         )
+        print(f"  initial (full):  0-{initial_end:,}")
+        print(f"  incremental:     {initial_end + 1:,}-{final_end:,}")
         if clustering_config.range_note:
             print(f"  note:            {clustering_config.range_note}")
 
         # ------------------------------------------------------------------
-        # Step 1: Ingest raw data to Delta Lake
+        # Step 1: Ingest all blocks to Delta Lake
         # ------------------------------------------------------------------
-        print("  [1/5] delta-only ingest ...", end=" ", flush=True)
+        print("  [1/7] delta-only ingest ...", end=" ", flush=True)
         run_ingest_delta_only(
             venv_dir=current_venv,
             config=clustering_config,
@@ -134,9 +141,9 @@ class TestClustering:
         print("done")
 
         # ------------------------------------------------------------------
-        # Step 2: Ingest raw data to Cassandra (for Rust to read tx inputs)
+        # Step 2: Ingest all blocks to Cassandra raw
         # ------------------------------------------------------------------
-        print("  [2/5] raw Cassandra ingest ...", end=" ", flush=True)
+        print("  [2/7] raw Cassandra ingest ...", end=" ", flush=True)
         run_ingest_cassandra_raw(
             venv_dir=current_venv,
             config=clustering_config,
@@ -147,14 +154,13 @@ class TestClustering:
         print("done")
 
         # Seed dummy exchange rates and create transformed keyspace
-        # (Scala transform requires both to exist before it runs)
         _seed_exchange_rates(cass_host, cass_port, ks_raw)
         _create_transformed_keyspace(cass_host, cass_port, ks_transformed)
 
         # ------------------------------------------------------------------
-        # Step 3: Run Scala transformation -> transformed keyspace with clusters
+        # Step 3: Run Scala full transformation on ALL blocks → reference
         # ------------------------------------------------------------------
-        print("  [3/5] Scala transformation ...", end=" ", flush=True)
+        print("  [3/7] Scala full transformation ...", end=" ", flush=True)
         run_scala_transformation(
             image_name=scala_transformation_image,
             config=clustering_config,
@@ -166,47 +172,52 @@ class TestClustering:
         print("done")
 
         # ------------------------------------------------------------------
-        # Step 4: Read Scala clusters from cluster_addresses
+        # Step 4: Read Scala reference clusters
         # ------------------------------------------------------------------
-        print("  [4/5] reading Scala clusters ...", end=" ", flush=True)
-        scala_clusters = read_scala_clusters(
-            cass_host, cass_port, ks_transformed
-        )
-        scala_total_addrs = sum(len(m) for m in scala_clusters.values())
-        scala_non_singleton = sum(
-            1 for m in scala_clusters.values() if len(m) > 1
-        )
-        print(
-            f"done ({len(scala_clusters)} clusters, "
-            f"{scala_total_addrs} addresses, "
-            f"{scala_non_singleton} non-singleton)"
-        )
+        print("  [4/7] reading Scala clusters ...", end=" ", flush=True)
+        scala_clusters = read_scala_clusters(cass_host, cass_port, ks_transformed)
+        print(f"done ({_cluster_stats(scala_clusters)})")
 
         # ------------------------------------------------------------------
-        # Step 5: Run Rust clustering using Scala's address IDs + raw tx data
+        # Step 5: Rust full clustering on blocks [0, initial_end_block]
         # ------------------------------------------------------------------
-        print("  [5/5] Rust clustering ...", end=" ", flush=True)
-        rust_mapping = run_rust_clustering(
-            cass_host, cass_port, ks_raw, ks_transformed
-        )
-        rust_clusters_by_id: dict[int, set[int]] = {}
-        for aid, cid in rust_mapping.items():
-            rust_clusters_by_id.setdefault(cid, set()).add(aid)
-        rust_non_singleton = sum(
-            1 for m in rust_clusters_by_id.values() if len(m) > 1
-        )
         print(
-            f"done ({len(rust_clusters_by_id)} clusters, "
-            f"{len(rust_mapping)} addresses, "
-            f"{rust_non_singleton} non-singleton)"
+            f"  [5/7] Rust clustering blocks 0-{initial_end:,} ...",
+            end=" ", flush=True,
         )
+        initial_mapping = run_rust_clustering(
+            cass_host, cass_port, ks_raw, ks_transformed,
+            max_block_id=initial_end,
+        )
+        initial_clusters: dict[int, set[int]] = {}
+        for aid, cid in initial_mapping.items():
+            initial_clusters.setdefault(cid, set()).add(aid)
+        print(f"done ({_cluster_stats(initial_clusters)})")
 
         # ------------------------------------------------------------------
-        # Step 6: Compare partitions
+        # Step 6: Rust incremental clustering adding [initial_end+1, final_end]
+        # ------------------------------------------------------------------
+        print(
+            f"  [6/7] Rust incremental blocks {initial_end + 1:,}-{final_end:,} ...",
+            end=" ", flush=True,
+        )
+        final_mapping = run_rust_clustering_incremental(
+            cass_host, cass_port, ks_raw, ks_transformed,
+            existing_mapping=initial_mapping,
+            min_block_id=initial_end + 1,
+            max_block_id=final_end,
+        )
+        final_clusters: dict[int, set[int]] = {}
+        for aid, cid in final_mapping.items():
+            final_clusters.setdefault(cid, set()).add(aid)
+        print(f"done ({_cluster_stats(final_clusters)})")
+
+        # ------------------------------------------------------------------
+        # Step 7: Compare partitions
         # ------------------------------------------------------------------
         print("\n  Partition comparison:")
         is_equivalent, mismatches = compare_cluster_partitions(
-            scala_clusters, rust_mapping
+            scala_clusters, final_mapping
         )
 
         if is_equivalent:
