@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.10.1] 2026-04-03
+
+### Library (v2.10.1)
+
+#### Fixed
+- Performance issues on large coinjoin txs e.g. 698a08f9d9fae6a4fde83501efd989e2b7392bbf9354ce60b921295315434a90
+- Fixed heuristics caused errors on coinbase txs (no inputs)
+
+### Web API + Python client (webapi-2.10.0)
+no changes
+
+#### Fixed
+- Fixed Python client documentation examples and bad user input handling
+
 ## [2.10.0] 2026-04-02
 
 ### Library (v2.10.0)
