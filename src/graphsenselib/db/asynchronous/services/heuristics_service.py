@@ -50,12 +50,12 @@ WASABI_10_A_MAX = 7  # max inputs per participant
 WASABI_11_A_MAX = 7  # same as 1.0
 
 WASABI_20_A_MAX = 10  # max inputs per participant
-WASABI_20_MIN_INPUTS = 50  # minimum total inputs
+WASABI_20_MIN_INPUTS = 20  # minimum total inputs (lowered post-May 2024)
 WASABI_20_V_MIN = 5_000  # minimum output value (sat)
 WASABI_20_MIN_DENOM_FREQ = 2  # minimum frequency for a value to be a denomination
 
 WHIRLPOOL_EPSILON_MIN = 100
-WHIRLPOOL_EPSILON_MAX = 100_000
+WHIRLPOOL_EPSILON_MAX = 110_000
 WHIRLPOOL_TX0_A_MAX = 70
 WHIRLPOOL_ETA1 = 0.5
 WHIRLPOOL_ETA2 = 3
@@ -561,7 +561,7 @@ def _wasabi_20_heuristic(tx) -> WasabiHeuristic | None:
     """
     Structural check for Wasabi 2.0 (WabiSabi) CoinJoin transactions.
     Variable denomination set D derived from output values appearing ≥2 times.
-    Large rounds (≥50 inputs), all outputs above v_min, distinct scripts.
+    Large rounds (≥20 inputs), all outputs above v_min, distinct scripts.
     """
     if tx.get("coinbase"):
         return None
@@ -618,8 +618,9 @@ def _wasabi_20_heuristic(tx) -> WasabiHeuristic | None:
 def _whirlpool_coinjoin_heuristic(tx) -> WhirlpoolCoinJoinHeuristic | None:
     """
     Structural check for Whirlpool CoinJoin transactions.
-    Exactly 5 inputs and 5 outputs, all distinct scripts, all outputs at a known
-    pool denomination, all inputs in [d, d + epsilon_max] with 1-4 new entrants.
+    5-8 inputs and matching outputs (surge cycles add extra remixers),
+    all distinct scripts, all outputs at a known pool denomination,
+    all inputs in [d, d + epsilon_max] with 1-4 new entrants.
     """
     if tx.get("coinbase"):
         return None
@@ -627,14 +628,16 @@ def _whirlpool_coinjoin_heuristic(tx) -> WhirlpoolCoinJoinHeuristic | None:
     inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
     outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
 
-    # amount check
-    if len(inputs) != 5 or len(outputs) != 5:
+    n = len(inputs)
+
+    # 5-8 inputs/outputs (standard 5x5 + surge cycles 6/7/8)
+    if not (5 <= n <= 8) or len(outputs) != n:
         return None
 
     # uniqueness check
-    if len({i.address[0] for i in inputs}) != 5:
+    if len({i.address[0] for i in inputs}) != n:
         return None
-    if len({o.address[0] for o in outputs}) != 5:
+    if len({o.address[0] for o in outputs}) != n:
         return None
 
     input_values = [i.value for i in inputs]
@@ -663,7 +666,7 @@ def _whirlpool_coinjoin_heuristic(tx) -> WhirlpoolCoinJoinHeuristic | None:
             detected=True,
             confidence=60,
             pool_denomination_sat=d,
-            n_remixers=5 - n_new_entrants,
+            n_remixers=n - n_new_entrants,
             n_new_entrants=n_new_entrants,
         )
 
