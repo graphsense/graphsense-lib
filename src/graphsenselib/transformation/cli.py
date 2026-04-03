@@ -229,6 +229,11 @@ def run_clustering(env, currency, start_block, end_block, delta_lake_path, local
     s3_credentials = config.get_s3_credentials(s3_config_name)
     spark_config = config.spark_config or {}
 
+    # Ensure transformed keyspace schema is up to date
+    from graphsenselib.schema.schema import GraphsenseSchemas
+
+    GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
+
     logger.info(
         f"Starting clustering: env={env}, currency={currency}, "
         f"blocks={start_block}-{end_block}, delta={delta_lake_path}, "

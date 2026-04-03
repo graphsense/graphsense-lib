@@ -100,6 +100,8 @@ def deltaupdate(
             env, currency, keyspace_type="transformed"
         )
 
+    GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
+
     update(
         env,
         currency,
