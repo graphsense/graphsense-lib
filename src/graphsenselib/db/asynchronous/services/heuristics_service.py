@@ -73,7 +73,7 @@ async def _prefetch_addresses(tx, currency, get_address) -> dict[str, dict]:
     Returns a dict mapping canonical address -> address info.
     """
     unique: set[str] = set()
-    for io in list(tx.get("inputs", [])) + list(tx.get("outputs", [])):
+    for io in list(tx.get("inputs") or []) + list(tx.get("outputs") or []):
         if io is None or not io.address:
             continue
         unique.add(cannonicalize_address(currency, io.address[0]))
@@ -103,8 +103,8 @@ def _one_time_change_heuristic(
 
     if (
         tx.get("coinbase")
-        or len(tx.get("outputs", [])) > 10
-        or len(tx.get("outputs", [])) < 2
+        or len(tx.get("outputs") or []) > 10
+        or len(tx.get("outputs") or []) < 2
     ):
         return OneTimeChangeHeuristic(summary=[], details=empty_details)
 
@@ -114,11 +114,11 @@ def _one_time_change_heuristic(
     cond_not_reused = set()
 
     min_input_value = min(
-        (inp.value for inp in tx.get("inputs", []) if inp is not None), default=0
+        (inp.value for inp in tx.get("inputs") or [] if inp is not None), default=0
     )
 
     script_type_input = None
-    for inp in tx.get("inputs", []):
+    for inp in tx.get("inputs") or []:
         if inp is None:
             continue
         if script_type_input is None:
@@ -130,7 +130,7 @@ def _one_time_change_heuristic(
             break
 
     counts: Dict[str, int] = defaultdict(int)
-    for outp in tx.get("outputs", []):
+    for outp in tx.get("outputs") or []:
         if outp is None or not outp.address:
             continue
 
@@ -152,7 +152,7 @@ def _one_time_change_heuristic(
         cond_not_nicely_divisible
     ).intersection(cond_out_less_than_in)
     not_change = set()
-    for cand in tx.get("outputs", []):
+    for cand in tx.get("outputs") or []:
         if cand is None or not cand.address:
             continue
 
@@ -189,7 +189,7 @@ def _one_time_change_heuristic(
     not_nicely_divisible_addr_out = list()
     output_less_than_input_addr_out = list()
     not_reused_addr_out = list()
-    for idx, outp in enumerate(tx.get("outputs", [])):
+    for idx, outp in enumerate(tx.get("outputs") or []):
         if outp is None or not outp.address:
             continue
 
@@ -229,8 +229,8 @@ def _multi_input_change_heuristic(
     if tx.get("coinbase"):
         return result
 
-    inputs = tx.get("inputs", [])
-    outputs = tx.get("outputs", [])
+    inputs = tx.get("inputs") or []
+    outputs = tx.get("outputs") or []
 
     # Build cluster_id -> first matching input address from pre-fetched cache
     cluster_to_inp: dict[int, str] = {}
@@ -284,8 +284,8 @@ def _direct_change_heuristic(tx) -> DirectChangeHeuristic:
     if tx.get("coinbase"):
         return result
 
-    inputs = tx.get("inputs", [])
-    outputs = tx.get("outputs", [])
+    inputs = tx.get("inputs") or []
+    outputs = tx.get("outputs") or []
     addr_inputs = set(
         inp.address[0] for inp in inputs if inp is not None and inp.address
     )
@@ -358,8 +358,8 @@ def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
     if tx.get("coinbase"):
         return None
 
-    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
-    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+    inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
 
     # find candidate denomination: most frequent output value within the window
     freq = Counter(
@@ -421,8 +421,8 @@ def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
     if tx.get("coinbase"):
         return None
 
-    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
-    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+    inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
 
     if not outputs or not inputs:
         return None
@@ -470,8 +470,8 @@ def _wasabi_11_heuristic(tx) -> WasabiHeuristic | None:
     if tx.get("coinbase"):
         return None
 
-    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
-    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+    inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
 
     if not outputs or not inputs:
         return None
@@ -566,8 +566,8 @@ def _wasabi_20_heuristic(tx) -> WasabiHeuristic | None:
     if tx.get("coinbase"):
         return None
 
-    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
-    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+    inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
 
     if not outputs or not inputs:
         return None
@@ -624,8 +624,8 @@ def _whirlpool_coinjoin_heuristic(tx) -> WhirlpoolCoinJoinHeuristic | None:
     if tx.get("coinbase"):
         return None
 
-    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
-    outputs = [o for o in tx.get("outputs", []) if o is not None and o.address]
+    inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
 
     # amount check
     if len(inputs) != 5 or len(outputs) != 5:
@@ -679,7 +679,7 @@ def _whirlpool_tx0_heuristic(tx) -> WhirlpoolTx0Heuristic | None:
     if tx.get("coinbase"):
         return None
 
-    all_outputs = [outp for outp in tx.get("outputs", []) if outp is not None]
+    all_outputs = [outp for outp in tx.get("outputs") or [] if outp is not None]
     op_return_outputs = [outp for outp in all_outputs if not outp.address]
     outputs = [outp for outp in all_outputs if outp.address]
 
@@ -754,7 +754,7 @@ async def _verify_whirlpool_lineage(
     if _cancel is None:
         _cancel = asyncio.Event()
 
-    inputs = [i for i in tx.get("inputs", []) if i is not None and i.address]
+    inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
 
     async def verify_input(inp) -> bool:
         # bail out early if a sibling already failed
@@ -808,7 +808,7 @@ async def _verify_tx0_forward(tx, pool_denomination, get_spent_in, get_tx) -> bo
     )
 
     d = pool_denomination
-    all_outputs = [outp for outp in tx.get("outputs", []) if outp is not None]
+    all_outputs = [outp for outp in tx.get("outputs") or [] if outp is not None]
     premix_indices = [
         idx
         for idx, outp in enumerate(all_outputs)
@@ -840,7 +840,7 @@ async def _any_input_is_exchange(tx, currency, get_tag_summary) -> bool:
     """
     unique_addrs = []
     seen = set()
-    for inp in tx.get("inputs", []):
+    for inp in tx.get("inputs") or []:
         if inp is None or not inp.address:
             continue
         addr = inp.address[0]
