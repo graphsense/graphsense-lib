@@ -19,6 +19,8 @@ import pytest
 
 from tests.clustering.config import ClusteringConfig
 from tests.clustering.ingest_runner import (
+    _create_transformed_keyspace,
+    _seed_exchange_rates,
     read_scala_clusters,
     run_ingest_cassandra_raw,
     run_ingest_delta_only,
@@ -143,6 +145,11 @@ class TestClustering:
             keyspace_name=ks_raw,
         )
         print("done")
+
+        # Seed dummy exchange rates and create transformed keyspace
+        # (Scala transform requires both to exist before it runs)
+        _seed_exchange_rates(cass_host, cass_port, ks_raw)
+        _create_transformed_keyspace(cass_host, cass_port, ks_transformed)
 
         # ------------------------------------------------------------------
         # Step 3: Run Scala transformation -> transformed keyspace with clusters

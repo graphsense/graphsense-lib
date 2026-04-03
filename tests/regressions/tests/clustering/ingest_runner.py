@@ -1,6 +1,7 @@
 """Run ingest, Scala transformation, and Rust clustering for regression tests."""
 
 import subprocess
+from pathlib import Path
 
 from tests.lib.config import SCHEMA_TYPE_MAP
 from tests.lib.constants import TRANSFORMATION_TIMEOUT_S
@@ -99,6 +100,52 @@ def run_ingest_cassandra_raw(
     )
 
 
+def _create_transformed_keyspace(cassandra_host: str, cassandra_port: int, keyspace: str):
+    """Create the transformed keyspace with its schema so Scala can write to it."""
+    from cassandra.cluster import Cluster
+
+    with Cluster([cassandra_host], port=cassandra_port) as cluster:
+        session = cluster.connect()
+        session.execute(
+            f"CREATE KEYSPACE IF NOT EXISTS {keyspace} "  # noqa: S608
+            "WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+        )
+        # Load the transformed UTXO schema from the repo
+        schema_path = (
+            Path(__file__).resolve().parents[4]
+            / "src" / "graphsenselib" / "schema" / "resources"
+            / "transformed_utxo_schema.sql"
+        )
+        schema_sql = schema_path.read_text()
+        # Replace placeholder keyspace name and remove USE statement
+        for stmt in schema_sql.split(";"):
+            stmt = stmt.strip()
+            if not stmt or stmt.upper().startswith("CREATE KEYSPACE") or stmt.upper().startswith("USE "):
+                continue
+            # Prepend keyspace to CREATE TABLE/TYPE statements
+            stmt = stmt.replace("CREATE TABLE ", f"CREATE TABLE {keyspace}.")
+            stmt = stmt.replace("CREATE TYPE ", f"CREATE TYPE {keyspace}.")
+            stmt = stmt.replace("CREATE TABLE IF NOT EXISTS ", f"CREATE TABLE IF NOT EXISTS {keyspace}.")
+            stmt = stmt.replace("CREATE TYPE IF NOT EXISTS ", f"CREATE TYPE IF NOT EXISTS {keyspace}.")
+            session.execute(stmt)
+
+
+def _seed_exchange_rates(cassandra_host: str, cassandra_port: int, keyspace: str):
+    """Insert dummy exchange rates so the Scala transformation doesn't fail.
+
+    The Scala transform requires at least one row in exchange_rates.
+    For genesis-era blocks real rates don't exist, so we seed a dummy.
+    """
+    from cassandra.cluster import Cluster
+
+    with Cluster([cassandra_host], port=cassandra_port) as cluster:
+        session = cluster.connect()
+        session.execute(
+            f"INSERT INTO {keyspace}.exchange_rates (date, fiat_values) "  # noqa: S608
+            "VALUES ('2009-01-03', {'usd': 0.0})"
+        )
+
+
 def run_scala_transformation(
     image_name: str,
     config: ClusteringConfig,
@@ -112,23 +159,44 @@ def run_scala_transformation(
     This produces the transformed keyspace with cluster_addresses, address table, etc.
     The Scala image uses docker/submit.sh with env vars for spark-submit.
     """
-    network_name = {"btc": "bitcoin", "ltc": "litecoin", "bch": "bitcoin_cash", "zec": "zcash"}.get(
-        config.currency, config.currency
+    # The Scala TransformationJob expects the short currency code (btc, ltc, etc.)
+    network_name = config.currency
+
+    # We invoke spark-submit directly (rather than submit.sh) so we can pass
+    # the non-default Cassandra port from the testcontainer.
+    spark_packages = (
+        "com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,"
+        "org.rogach:scallop_2.12:4.1.0,"
+        "joda-time:joda-time:2.10.10,"
+        "org.web3j:core:4.8.7,"
+        "org.web3j:abi:4.8.7,"
+        "graphframes:graphframes:0.8.3-spark3.4-s_2.12"
     )
 
     cmd = [
         "docker", "run", "--rm",
         "--network", "host",
-        "-e", f"CASSANDRA_HOST={cassandra_host}",
-        "-e", f"RAW_KEYSPACE={raw_keyspace}",
-        "-e", f"TGT_KEYSPACE={transformed_keyspace}",
-        "-e", f"NETWORK={network_name}",
-        "-e", "SPARK_MASTER=local[*]",
-        "-e", "SPARK_DRIVER_MEMORY=2g",
-        "-e", "SPARK_EXECUTOR_MEMORY=2g",
-        "-e", f"TRANSFORM_BUCKET_SIZE={_block_bucket_size(config.currency)}",
         image_name,
-        "bash", "submit.sh",
+        "/opt/spark/bin/spark-submit",
+        "--class", "org.graphsense.TransformationJob",
+        "--master", "local[*]",
+        "--conf", f"spark.cassandra.connection.host={cassandra_host}",
+        "--conf", f"spark.cassandra.connection.port={cassandra_port}",
+        "--conf", "spark.driver.memory=4g",
+        "--conf", "spark.executor.memory=4g",
+        "--conf", "spark.driver.bindAddress=0.0.0.0",
+        "--conf", "spark.sql.extensions=com.datastax.spark.connector.CassandraSparkExtensions",
+        "--conf", "spark.sql.session.timeZone=UTC",
+        "--conf", "spark.sql.adaptive.enabled=true",
+        "--conf", "spark.serializer=org.apache.spark.serializer.KryoSerializer",
+        "--conf", "spark.kryo.referenceTracking=false",
+        "--conf", "spark.executor.extraJavaOptions=-XX:+UnlockExperimentalVMOptions -XX:hashCode=0",
+        "--conf", "spark.driver.extraJavaOptions=-XX:+UnlockExperimentalVMOptions -XX:hashCode=0",
+        "--packages", spark_packages,
+        "graphsense-spark.jar",
+        "--network", network_name,
+        "--raw-keyspace", raw_keyspace,
+        "--target-keyspace", transformed_keyspace,
     ]
 
     result = subprocess.run(
