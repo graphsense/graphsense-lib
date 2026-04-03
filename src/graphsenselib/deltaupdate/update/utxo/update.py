@@ -52,58 +52,160 @@ def _check_gs_clustering():
     return _GS_CLUSTERING_AVAILABLE
 
 
+LARGE_MERGE_WARNING_THRESHOLD = 100_000
+
+
 def run_incremental_clustering(
-    db: AnalyticsDb, currency: str, new_tx_inputs: List[List[int]]
+    db: AnalyticsDb, new_tx_inputs: List[List[int]]
 ) -> List[Tuple[int, int]]:
-    """Read existing cluster mapping, rebuild union-find, process new txs,
+    """Read only affected clusters, rebuild a small union-find, process new txs,
     and return changed (address_id, cluster_id) pairs.
 
+    Instead of reading the entire fresh_address_cluster table, this:
+    1. Looks up cluster_ids for addresses in new transactions
+    2. Reads all members of those clusters from fresh_cluster_addresses
+    3. Builds a dense-remapped union-find with only affected addresses
+    4. Processes new transactions and returns the diff
+
     Args:
-        db: AnalyticsDb instance (uses db.transformed for the transformed keyspace)
-        currency: Currency string (unused, reserved for future multi-currency support)
+        db: AnalyticsDb instance
         new_tx_inputs: List of lists of input address IDs per transaction
 
     Returns:
-        List of (address_id, cluster_id) tuples that changed (or full mapping
-        on first run).
+        List of (address_id, cluster_id) tuples that changed.
     """
     from gs_clustering import Clustering
 
     tdb = db.transformed
     keyspace = tdb.get_keyspace()
 
-    # Read existing mapping from fresh_address_cluster
+    # Collect all address IDs mentioned in new transactions
+    new_address_ids = set()
+    for tx in new_tx_inputs:
+        new_address_ids.update(tx)
+
+    if not new_address_ids:
+        return []
+
+    # Step 1: Look up existing cluster_ids for these addresses
+    # (addresses not yet in fresh_address_cluster are new — they're singletons)
+    addr_id_list = ",".join(str(a) for a in new_address_ids)
     rows = list(
         tdb.execute_raw_cql(
-            f"SELECT address_id, cluster_id FROM {keyspace}.fresh_address_cluster"
+            f"SELECT address_id, cluster_id FROM {keyspace}.fresh_address_cluster "
+            f"WHERE address_id IN ({addr_id_list})"
         )
     )
 
-    existing_address_ids = [r.address_id for r in rows]
-    existing_cluster_ids = [r.cluster_id for r in rows]
+    first_run = len(rows) == 0 and not list(
+        tdb.execute_raw_cql(
+            f"SELECT address_id FROM {keyspace}.fresh_address_cluster LIMIT 1"
+        )
+    )
 
-    # Determine max address ID across existing + new
-    new_ids = [aid for tx in new_tx_inputs for aid in tx]
-    all_ids = existing_address_ids + new_ids
-    if not all_ids:
-        return []
-    max_address_id = max(all_ids)
-
-    c = Clustering(max_address_id=max_address_id)
-
-    first_run = len(rows) == 0
-    if not first_run:
-        c.rebuild_from_mapping(existing_address_ids, existing_cluster_ids)
-
-    c.process_transactions(new_tx_inputs)
-
-    batch = c.get_mapping() if first_run else c.get_diff()
-    addr_col = batch.column("address_id").to_pylist()
-    clst_col = batch.column("cluster_id").to_pylist()
     if first_run:
-        return [(a, cl) for a, cl in zip(addr_col, clst_col) if a > 0]
-    else:
-        return list(zip(addr_col, clst_col))
+        # First run: no existing state. Process all new transactions directly.
+        all_ids = sorted(new_address_ids)
+        original_to_dense = {orig: i for i, orig in enumerate(all_ids)}
+        dense_to_original = all_ids
+
+        dense_tx_inputs = [[original_to_dense[a] for a in tx] for tx in new_tx_inputs]
+
+        c = Clustering(max_address_id=len(all_ids) - 1)
+        c.process_transactions(dense_tx_inputs)
+        batch = c.get_mapping()
+
+        result = []
+        for dense_a, dense_c in zip(
+            batch.column("address_id").to_pylist(),
+            batch.column("cluster_id").to_pylist(),
+        ):
+            orig_a = dense_to_original[dense_a]
+            orig_c = dense_to_original[dense_c]
+            result.append((orig_a, orig_c))
+        return result
+
+    # Step 2: Find all affected cluster_ids
+    affected_cluster_ids = {r.cluster_id for r in rows}
+
+    if not affected_cluster_ids:
+        # All addresses in new txs are brand new (not yet clustered)
+        # Process them as a mini first-run
+        all_ids = sorted(new_address_ids)
+        original_to_dense = {orig: i for i, orig in enumerate(all_ids)}
+        dense_to_original = all_ids
+
+        dense_tx_inputs = [[original_to_dense[a] for a in tx] for tx in new_tx_inputs]
+
+        c = Clustering(max_address_id=len(all_ids) - 1)
+        c.process_transactions(dense_tx_inputs)
+        batch = c.get_mapping()
+
+        result = []
+        for dense_a, dense_c in zip(
+            batch.column("address_id").to_pylist(),
+            batch.column("cluster_id").to_pylist(),
+        ):
+            orig_a = dense_to_original[dense_a]
+            orig_c = dense_to_original[dense_c]
+            result.append((orig_a, orig_c))
+        return result
+
+    # Step 3: Read all members of affected clusters
+    cluster_id_list = ",".join(str(c) for c in affected_cluster_ids)
+    member_rows = list(
+        tdb.execute_raw_cql(
+            f"SELECT cluster_id, address_id FROM {keyspace}.fresh_cluster_addresses "
+            f"WHERE cluster_id IN ({cluster_id_list})"
+        )
+    )
+
+    # Build existing mapping for affected addresses only
+    existing_mapping: Dict[int, int] = {}  # address_id -> cluster_id
+    for r in member_rows:
+        existing_mapping[r.address_id] = r.cluster_id
+
+    total_affected = len(existing_mapping) + len(new_address_ids)
+    if total_affected > LARGE_MERGE_WARNING_THRESHOLD:
+        logger.warning(
+            f"Large clustering operation: {total_affected} addresses affected "
+            f"({len(existing_mapping)} existing + {len(new_address_ids)} from new txs, "
+            f"{len(affected_cluster_ids)} clusters involved)"
+        )
+
+    # Step 4: Dense remapping — map sparse original IDs to compact range
+    all_ids = sorted(set(existing_mapping.keys()) | new_address_ids)
+    original_to_dense = {orig: i for i, orig in enumerate(all_ids)}
+    dense_to_original = all_ids  # index -> original (since all_ids is sorted list)
+
+    dense_existing_addr = [original_to_dense[a] for a in existing_mapping]
+    dense_existing_clus = [
+        original_to_dense[existing_mapping[a]] for a in existing_mapping
+    ]
+
+    dense_tx_inputs = [
+        [original_to_dense[a] for a in tx if a in original_to_dense]
+        for tx in new_tx_inputs
+    ]
+    dense_tx_inputs = [tx for tx in dense_tx_inputs if len(tx) >= 2]
+
+    # Step 5: Run Rust clustering on dense range
+    c = Clustering(max_address_id=len(all_ids) - 1)
+    c.rebuild_from_mapping(dense_existing_addr, dense_existing_clus)
+    c.process_transactions(dense_tx_inputs)
+    diff_batch = c.get_diff()
+
+    # Step 6: Map back to original IDs
+    result = []
+    for dense_a, dense_c in zip(
+        diff_batch.column("address_id").to_pylist(),
+        diff_batch.column("cluster_id").to_pylist(),
+    ):
+        orig_a = dense_to_original[dense_a]
+        orig_c = dense_to_original[dense_c]
+        result.append((orig_a, orig_c))
+
+    return result
 
 
 COINBASE_PSEUDO_ADDRESS = "coinbase"
@@ -1358,11 +1460,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 f"in blocks {start_block}-{end_block}"
             )
 
-            changed = run_incremental_clustering(
-                self._db,
-                self._db.transformed._keyspace_config.currency,
-                new_tx_inputs,
-            )
+            changed = run_incremental_clustering(self._db, new_tx_inputs)
 
             lg.debug(f"Clustering produced {len(changed)} changed mappings")
 
