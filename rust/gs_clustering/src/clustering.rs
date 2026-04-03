@@ -62,4 +62,39 @@ mod tests {
         // No panics, no changes
         assert_eq!(uf.find(0), 0);
     }
+
+    #[test]
+    fn test_rebuild_from_mapping() {
+        // Simulate existing mapping: addresses 1,2,3 in cluster 1; 4,5 in cluster 4
+        let uf = UFRush::new(10);
+
+        // Group by cluster_id, unite within groups
+        // Cluster 1: addresses 1, 2, 3
+        uf.unite(1, 2);
+        uf.unite(1, 3);
+        // Cluster 4: addresses 4, 5
+        uf.unite(4, 5);
+
+        assert_eq!(uf.find(1), uf.find(2));
+        assert_eq!(uf.find(1), uf.find(3));
+        assert_eq!(uf.find(4), uf.find(5));
+        assert_ne!(uf.find(1), uf.find(4));
+    }
+
+    #[test]
+    fn test_rebuild_then_merge() {
+        let uf = UFRush::new(10);
+        // Rebuild: cluster A = {1,2}, cluster B = {3,4}
+        uf.unite(1, 2);
+        uf.unite(3, 4);
+        assert_ne!(uf.find(1), uf.find(3));
+
+        // New transaction merges the clusters: tx with inputs [2, 3]
+        let txs = vec![vec![2u32, 3]];
+        execute_union_operations(&uf, &txs);
+
+        // All 4 should now be in the same cluster
+        assert_eq!(uf.find(1), uf.find(3));
+        assert_eq!(uf.find(1), uf.find(4));
+    }
 }
