@@ -31,6 +31,7 @@ class Address(BaseModel):
     currency: StrictStr
     address: StrictStr
     entity: StrictInt
+    fresh_cluster_id: Optional[StrictInt] = None
     balance: Values
     total_received: Values
     total_spent: Values
@@ -46,7 +47,7 @@ class Address(BaseModel):
     actors: Optional[List[LabeledItemRef]] = None
     is_contract: Optional[StrictBool] = None
     status: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["currency", "address", "entity", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "is_contract", "status"]
+    __properties: ClassVar[List[str]] = ["currency", "address", "entity", "fresh_cluster_id", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "is_contract", "status"]
     @field_validator('actors', mode='wrap')
     @classmethod
     def wrap_actors_compat(cls, v, handler):
@@ -155,6 +156,7 @@ class Address(BaseModel):
             "currency": obj.get("currency"),
             "address": obj.get("address"),
             "entity": obj.get("entity"),
+            "fresh_cluster_id": obj.get("fresh_cluster_id"),
             "balance": Values.from_dict(obj["balance"]) if obj.get("balance") is not None else None,
             "total_received": Values.from_dict(obj["total_received"]) if obj.get("total_received") is not None else None,
             "total_spent": Values.from_dict(obj["total_spent"]) if obj.get("total_spent") is not None else None,

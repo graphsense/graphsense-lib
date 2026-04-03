@@ -184,6 +184,9 @@ class TagstoreProtocol(Protocol):
 
 class DatabaseProtocol(Protocol):
     async def get_address_entity_id(self, currency: str, address: str) -> int: ...
+    async def get_fresh_cluster_id(
+        self, currency: str, address_id: int
+    ) -> Optional[int]: ...
     async def get_address(self, currency: str, address: str) -> Dict[str, Any]: ...
     async def new_address(self, currency: str, address: str) -> Dict[str, Any]: ...
     async def list_neighbors(
@@ -279,6 +282,7 @@ def address_from_row(
     rates: Dict[str, float],
     token_config: Dict[str, Any],
     actors: Optional[List[Any]] = None,
+    fresh_cluster_id: Optional[int] = None,
 ) -> Address:
     # Convert actors to LabeledItemRef if they aren't already
     converted_actors = None
@@ -295,6 +299,7 @@ def address_from_row(
         currency=currency,
         address=address_to_user_format(currency, row["address"]),
         entity=row.get("cluster_id"),
+        fresh_cluster_id=fresh_cluster_id,
         first_tx=TxSummary(
             height=row["first_tx"].height,
             timestamp=row["first_tx"].timestamp,
@@ -462,6 +467,13 @@ async def get_address(
         actor_res = await tagstore.get_actors_by_subjectid(address, tagstore_groups)
         actors = [labeled_item_ref_from_actor(a) for a in actor_res]
 
+    # Look up fresh cluster ID if available (UTXO only)
+    fresh_cluster_id = None
+    if result and not is_eth_like(currency):
+        address_id = result.get("address_id")
+        if address_id is not None:
+            fresh_cluster_id = await db.get_fresh_cluster_id(currency, address_id)
+
     rates = await rates_service.get_rates(currency)
     return address_from_row(
         currency,
@@ -469,6 +481,7 @@ async def get_address(
         rates.rates,
         db.get_token_configuration(currency),
         actors,
+        fresh_cluster_id=fresh_cluster_id,
     )
 
 

@@ -9,6 +9,7 @@ Name | Type | Description | Notes
 **currency** | **str** |  | 
 **address** | **str** |  | 
 **entity** | **int** |  | 
+**fresh_cluster_id** | **int** |  | [optional] 
 **balance** | [**Values**](Values.md) |  | 
 **total_received** | [**Values**](Values.md) |  | 
 **total_spent** | [**Values**](Values.md) |  | 

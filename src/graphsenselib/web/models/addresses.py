@@ -13,6 +13,7 @@ ADDRESS_EXAMPLE = {
     "currency": "btc",
     "address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
     "entity": 264711,
+    "fresh_cluster_id": 264800,
     "balance": VALUES_EXAMPLE,
     "total_received": VALUES_EXAMPLE,
     "total_spent": VALUES_EXAMPLE,
@@ -34,6 +35,7 @@ class Address(APIModel):
     currency: str
     address: str
     entity: int
+    fresh_cluster_id: Optional[int] = None
     balance: Values
     total_received: Values
     total_spent: Values

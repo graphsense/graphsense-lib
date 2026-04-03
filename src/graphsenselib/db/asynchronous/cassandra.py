@@ -1529,6 +1529,21 @@ class Cassandra:
             )
         return result["cluster_id"]
 
+    async def get_fresh_cluster_id(self, currency, address_id):
+        """Look up fresh_cluster_id for an address_id. Returns None if not found."""
+        query = "SELECT cluster_id FROM fresh_address_cluster WHERE address_id = %s"
+        try:
+            result = await self.execute_async(
+                currency, "transformed", query, [address_id]
+            )
+        except InvalidRequest:
+            # Table may not exist if fresh clustering has not been run yet
+            return None
+        result = one(result)
+        if not result:
+            return None
+        return result["cluster_id"]
+
     async def list_address_links(
         self,
         currency,
