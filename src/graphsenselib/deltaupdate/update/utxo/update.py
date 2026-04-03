@@ -40,6 +40,71 @@ from graphsenselib.utils.utxo import (
 
 logger = logging.getLogger(__name__)
 
+_GS_CLUSTERING_AVAILABLE = None
+
+
+def _check_gs_clustering():
+    global _GS_CLUSTERING_AVAILABLE
+    if _GS_CLUSTERING_AVAILABLE is None:
+        import importlib
+
+        _GS_CLUSTERING_AVAILABLE = importlib.util.find_spec("gs_clustering") is not None
+    return _GS_CLUSTERING_AVAILABLE
+
+
+def run_incremental_clustering(
+    db: AnalyticsDb, currency: str, new_tx_inputs: List[List[int]]
+) -> List[Tuple[int, int]]:
+    """Read existing cluster mapping, rebuild union-find, process new txs,
+    and return changed (address_id, cluster_id) pairs.
+
+    Args:
+        db: AnalyticsDb instance (uses db.transformed for the transformed keyspace)
+        currency: Currency string (unused, reserved for future multi-currency support)
+        new_tx_inputs: List of lists of input address IDs per transaction
+
+    Returns:
+        List of (address_id, cluster_id) tuples that changed (or full mapping
+        on first run).
+    """
+    from gs_clustering import Clustering
+
+    tdb = db.transformed
+    keyspace = tdb.get_keyspace()
+
+    # Read existing mapping from fresh_address_cluster
+    rows = list(
+        tdb.execute_raw_cql(
+            f"SELECT address_id, cluster_id FROM {keyspace}.fresh_address_cluster"
+        )
+    )
+
+    existing_address_ids = [r.address_id for r in rows]
+    existing_cluster_ids = [r.cluster_id for r in rows]
+
+    # Determine max address ID across existing + new
+    new_ids = [aid for tx in new_tx_inputs for aid in tx]
+    all_ids = existing_address_ids + new_ids
+    if not all_ids:
+        return []
+    max_address_id = max(all_ids)
+
+    c = Clustering(max_address_id=max_address_id)
+
+    first_run = len(rows) == 0
+    if not first_run:
+        c.rebuild_from_mapping(existing_address_ids, existing_cluster_ids)
+
+    c.process_transactions(new_tx_inputs)
+
+    batch = c.get_mapping() if first_run else c.get_diff()
+    addr_col = batch.column("address_id").to_pylist()
+    clst_col = batch.column("cluster_id").to_pylist()
+    if first_run:
+        return [(a, cl) for a, cl in zip(addr_col, clst_col) if a > 0]
+    else:
+        return list(zip(addr_col, clst_col))
+
 
 COINBASE_PSEUDO_ADDRESS = "coinbase"
 PSEUDO_ADDRESS_AND_IDS = {COINBASE_PSEUDO_ADDRESS: 0}
@@ -252,6 +317,11 @@ def get_transaction_changes(
             txs
         )
 
+        # Save per-tx input address strings for incremental clustering
+        tx_input_address_strs = [
+            list(regularize_inoutputs(tx.inputs).keys()) for tx in txs
+        ]
+
     """
         Compute the changeset for each tx of the batch and convert
         all currency values with the corresponding rates.
@@ -357,6 +427,57 @@ def get_transaction_changes(
         assert (
             len([1 for k, (addr_id2, _) in addresses.items() if addr_id2 is None]) == 0
         )
+
+    """
+        Incremental clustering: update fresh_address_cluster / fresh_cluster_addresses
+    """
+    clustering_changes = []
+    if _check_gs_clustering():
+        with LoggerScope.debug(logger, "Running incremental clustering") as lg:
+            # Convert per-tx input address strings to address IDs
+            new_tx_inputs = []
+            for addr_strs in tx_input_address_strs:
+                ids = [
+                    addresses[a][0]
+                    for a in addr_strs
+                    if a in addresses and addresses[a][0] is not None
+                ]
+                if len(ids) >= 2:
+                    new_tx_inputs.append(ids)
+
+            del tx_input_address_strs
+
+            if new_tx_inputs:
+                currency = db.transformed._keyspace_config.currency
+                changed = run_incremental_clustering(db, currency, new_tx_inputs)
+                lg.debug(
+                    f"Clustering produced {len(changed)} changed mappings "
+                    f"from {len(new_tx_inputs)} transactions"
+                )
+                for address_id, cluster_id in changed:
+                    clustering_changes.append(
+                        DbChange.new(
+                            table="fresh_address_cluster",
+                            data={
+                                "address_id": address_id,
+                                "cluster_id": cluster_id,
+                            },
+                        )
+                    )
+                    clustering_changes.append(
+                        DbChange.new(
+                            table="fresh_cluster_addresses",
+                            data={
+                                "cluster_id": cluster_id,
+                                "address_id": address_id,
+                            },
+                        )
+                    )
+                del changed
+            del new_tx_inputs
+    else:
+        logger.warning("gs_clustering not available, skipping incremental clustering")
+        del tx_input_address_strs
 
     """
         Reading relations to be updated.
@@ -585,6 +706,8 @@ def get_transaction_changes(
             changes.extend(entity_changes)
             nr_new_entities_created[mode] = nr_new_entities
             del nr_new_entities
+
+    changes.extend(clustering_changes)
 
     return (
         changes,
