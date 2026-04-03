@@ -34,6 +34,7 @@ markers = [
     "sink_consistency: Sink consistency tests (individual vs dual-sink output)",
     "continuation: Continuation tests (split-ingest vs one-shot output)",
     "transformation: Transformation tests (Delta Lake → PySpark → Cassandra equivalence)",
+    "clustering: Clustering regression tests (Scala vs Rust partition equivalence)",
 ]
 asyncio_mode = "auto"
 
