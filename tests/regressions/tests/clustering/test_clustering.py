@@ -155,8 +155,6 @@ class TestClustering:
             cassandra_port=cass_port,
             raw_keyspace=ks_raw,
             transformed_keyspace=ks_transformed,
-            delta_directory=delta_path,
-            **minio_kw,
         )
         print("done")
 

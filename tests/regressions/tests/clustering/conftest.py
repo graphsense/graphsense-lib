@@ -65,18 +65,60 @@ def current_venv():
     return get_or_create_current_venv(gslib_path)
 
 
+SCALA_IMAGE_NAME = "graphsense-spark-test:latest"
+
+# Known locations for the Scala transformation repo (sibling of graphsense-lib).
+_SCALA_REPO_CANDIDATES = [
+    "graphsense-ethereum-transformation",
+    "graphsense-spark",
+]
+
+
 @pytest.fixture(scope="session")
 def scala_transformation_image():
-    """Return the Scala transformation Docker image name from env var.
+    """Build or locate the Scala/Spark transformation Docker image.
 
-    If CLUSTERING_SCALA_IMAGE is not set, skip the test with a clear message.
-    This image runs the full Scala/Spark transformation (including clustering).
+    Checks CLUSTERING_SCALA_IMAGE env var first.  If unset, tries to build
+    from a sibling repo (graphsense-ethereum-transformation or graphsense-spark).
     """
+    import subprocess
+
     image = os.environ.get("CLUSTERING_SCALA_IMAGE")
-    if not image:
-        pytest.skip(
-            "CLUSTERING_SCALA_IMAGE env var not set -- "
-            "set it to the Docker image that runs the full Scala/Spark transformation "
-            "(e.g. graphsense/graphsense-spark:latest)"
-        )
-    return image
+    if image:
+        return image
+
+    # Try to build from sibling repo
+    configs = build_clustering_configs()
+    gslib_path = configs[0].gslib_path if configs else None
+    if gslib_path is None:
+        pytest.skip("No clustering configs available")
+
+    parent = gslib_path.parent  # e.g. .../graphsense/
+    for candidate in _SCALA_REPO_CANDIDATES:
+        repo_path = parent / candidate
+        dockerfile = repo_path / "Dockerfile"
+        if dockerfile.exists():
+            print(f"\nBuilding Scala transformation image from {repo_path} ...")
+            result = subprocess.run(
+                [
+                    "docker", "build",
+                    "-f", str(dockerfile),
+                    "-t", SCALA_IMAGE_NAME,
+                    str(repo_path),
+                ],
+                capture_output=True, text=True, timeout=900,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Docker build failed for {repo_path} "
+                    f"(exit {result.returncode}):\n"
+                    f"stderr: {result.stderr[-3000:]}"
+                )
+            print(f"Scala image built: {SCALA_IMAGE_NAME}")
+            return SCALA_IMAGE_NAME
+
+    pytest.skip(
+        "No Scala transformation image found. Either set CLUSTERING_SCALA_IMAGE "
+        "env var or place graphsense-ethereum-transformation repo next to "
+        "graphsense-lib."
+    )

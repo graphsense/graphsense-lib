@@ -1,10 +1,6 @@
 """Run ingest, Scala transformation, and Rust clustering for regression tests."""
 
 import subprocess
-import tempfile
-from pathlib import Path
-
-import yaml
 
 from tests.lib.config import SCHEMA_TYPE_MAP
 from tests.lib.constants import TRANSFORMATION_TIMEOUT_S
@@ -103,73 +99,6 @@ def run_ingest_cassandra_raw(
     )
 
 
-def _build_scala_gs_config(
-    config: ClusteringConfig,
-    cassandra_host: str,
-    cassandra_port: int,
-    raw_keyspace: str,
-    transformed_keyspace: str,
-    delta_directory: str,
-    minio_endpoint: str,
-    minio_access_key: str,
-    minio_secret_key: str,
-) -> dict:
-    """Build a .graphsense.yaml config dict for the Scala transformation image."""
-    schema_type = SCHEMA_TYPE_MAP.get(config.currency, "utxo")
-    cassandra_node = f"{cassandra_host}:{cassandra_port}"
-
-    gs_config = {
-        "environments": {
-            "test": {
-                "cassandra_nodes": [cassandra_node],
-                "keyspaces": {
-                    config.currency: {
-                        "raw_keyspace_name": raw_keyspace,
-                        "transformed_keyspace_name": transformed_keyspace,
-                        "schema_type": schema_type,
-                        "ingest_config": {
-                            "node_reference": config.node_url,
-                            "raw_keyspace_file_sinks": {
-                                "delta": {"directory": delta_directory},
-                            },
-                        },
-                        "keyspace_setup_config": {
-                            "raw": {
-                                "replication_config": (
-                                    "{'class': 'SimpleStrategy', 'replication_factor': 1}"
-                                ),
-                                "data_configuration": {
-                                    "id": raw_keyspace,
-                                    "block_bucket_size": _block_bucket_size(config.currency),
-                                    "tx_bucket_size": 25000,
-                                    "tx_prefix_length": 5,
-                                },
-                            },
-                            "transformed": {
-                                "replication_config": (
-                                    "{'class': 'SimpleStrategy', 'replication_factor': 1}"
-                                ),
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    }
-
-    if minio_endpoint:
-        gs_config["s3_credentials"] = {
-            "AWS_ENDPOINT_URL": minio_endpoint,
-            "AWS_ACCESS_KEY_ID": minio_access_key,
-            "AWS_SECRET_ACCESS_KEY": minio_secret_key,
-            "AWS_REGION": "us-east-1",
-            "AWS_ALLOW_HTTP": "true",
-            "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
-        }
-
-    return gs_config
-
-
 def run_scala_transformation(
     image_name: str,
     config: ClusteringConfig,
@@ -177,56 +106,34 @@ def run_scala_transformation(
     cassandra_port: int,
     raw_keyspace: str,
     transformed_keyspace: str,
-    delta_directory: str,
-    minio_endpoint: str,
-    minio_access_key: str,
-    minio_secret_key: str,
 ) -> None:
     """Run Scala/Spark full transformation via Docker.
 
     This produces the transformed keyspace with cluster_addresses, address table, etc.
-    The Docker command can be overridden via CLUSTERING_SCALA_CMD env var.
+    The Scala image uses docker/submit.sh with env vars for spark-submit.
     """
-    gs_config = _build_scala_gs_config(
-        config=config,
-        cassandra_host=cassandra_host,
-        cassandra_port=cassandra_port,
-        raw_keyspace=raw_keyspace,
-        transformed_keyspace=transformed_keyspace,
-        delta_directory=delta_directory,
-        minio_endpoint=minio_endpoint,
-        minio_access_key=minio_access_key,
-        minio_secret_key=minio_secret_key,
+    network_name = {"btc": "bitcoin", "ltc": "litecoin", "bch": "bitcoin_cash", "zec": "zcash"}.get(
+        config.currency, config.currency
     )
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", prefix="gsconfig-clust-scala-", delete=False
-    ) as f:
-        yaml.dump(gs_config, f)
-        config_path = f.name
 
     cmd = [
         "docker", "run", "--rm",
         "--network", "host",
-        "-v", f"{config_path}:/config.yaml:ro",
-        "-e", "GRAPHSENSE_CONFIG_YAML=/config.yaml",
+        "-e", f"CASSANDRA_HOST={cassandra_host}",
+        "-e", f"RAW_KEYSPACE={raw_keyspace}",
+        "-e", f"TGT_KEYSPACE={transformed_keyspace}",
+        "-e", f"NETWORK={network_name}",
+        "-e", "SPARK_MASTER=local[*]",
+        "-e", "SPARK_DRIVER_MEMORY=2g",
+        "-e", "SPARK_EXECUTOR_MEMORY=2g",
+        "-e", f"TRANSFORM_BUCKET_SIZE={_block_bucket_size(config.currency)}",
         image_name,
-        "graphsense-cli", "transformation", "run",
-        "--local",
-        "--create-schema",
-        "-e", "test",
-        "-c", config.currency,
-        "--start-block", str(config.start_block),
-        "--end-block", str(config.end_block),
-        "--delta-lake-path", delta_directory,
+        "bash", "submit.sh",
     ]
 
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=TRANSFORMATION_TIMEOUT_S
-        )
-    finally:
-        Path(config_path).unlink(missing_ok=True)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=TRANSFORMATION_TIMEOUT_S
+    )
 
     if result.stdout:
         print(f"\n    [scala stdout tail]: {result.stdout[-2000:]}")
