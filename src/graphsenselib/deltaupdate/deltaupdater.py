@@ -175,6 +175,10 @@ def update_transformed(
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
                 return b[-1]
 
+    # Run fresh clustering once for the entire block range
+    if hasattr(updater, "run_fresh_clustering"):
+        updater.run_fresh_clustering(start_block, end_block)
+
     return end_block
 
 

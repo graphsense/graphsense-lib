@@ -317,11 +317,6 @@ def get_transaction_changes(
             txs
         )
 
-        # Save per-tx input address strings for incremental clustering
-        tx_input_address_strs = [
-            list(regularize_inoutputs(tx.inputs).keys()) for tx in txs
-        ]
-
     """
         Compute the changeset for each tx of the batch and convert
         all currency values with the corresponding rates.
@@ -427,57 +422,6 @@ def get_transaction_changes(
         assert (
             len([1 for k, (addr_id2, _) in addresses.items() if addr_id2 is None]) == 0
         )
-
-    """
-        Incremental clustering: update fresh_address_cluster / fresh_cluster_addresses
-    """
-    clustering_changes = []
-    if _check_gs_clustering():
-        with LoggerScope.debug(logger, "Running incremental clustering") as lg:
-            # Convert per-tx input address strings to address IDs
-            new_tx_inputs = []
-            for addr_strs in tx_input_address_strs:
-                ids = [
-                    addresses[a][0]
-                    for a in addr_strs
-                    if a in addresses and addresses[a][0] is not None
-                ]
-                if len(ids) >= 2:
-                    new_tx_inputs.append(ids)
-
-            del tx_input_address_strs
-
-            if new_tx_inputs:
-                currency = db.transformed._keyspace_config.currency
-                changed = run_incremental_clustering(db, currency, new_tx_inputs)
-                lg.debug(
-                    f"Clustering produced {len(changed)} changed mappings "
-                    f"from {len(new_tx_inputs)} transactions"
-                )
-                for address_id, cluster_id in changed:
-                    clustering_changes.append(
-                        DbChange.new(
-                            table="fresh_address_cluster",
-                            data={
-                                "address_id": address_id,
-                                "cluster_id": cluster_id,
-                            },
-                        )
-                    )
-                    clustering_changes.append(
-                        DbChange.new(
-                            table="fresh_cluster_addresses",
-                            data={
-                                "cluster_id": cluster_id,
-                                "address_id": address_id,
-                            },
-                        )
-                    )
-                del changed
-            del new_tx_inputs
-    else:
-        logger.warning("gs_clustering not available, skipping incremental clustering")
-        del tx_input_address_strs
 
     """
         Reading relations to be updated.
@@ -706,8 +650,6 @@ def get_transaction_changes(
             changes.extend(entity_changes)
             nr_new_entities_created[mode] = nr_new_entities
             del nr_new_entities
-
-    changes.extend(clustering_changes)
 
     return (
         changes,
@@ -1356,6 +1298,92 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 HISTORY_TABLE_PK,
                 truncate=False,
             )
+
+    def run_fresh_clustering(self, start_block: int, end_block: int):
+        """Run incremental clustering for the full block range [start_block, end_block].
+
+        Reads new multi-input transactions from the raw keyspace, rebuilds
+        the union-find from existing fresh_address_cluster state, processes
+        new transactions, and writes changed mappings to Cassandra.
+
+        Called once after all batches have been processed.
+        """
+        if not _check_gs_clustering():
+            logger.warning("gs_clustering not available, skipping fresh clustering")
+            return
+
+        with LoggerScope.debug(
+            logger, f"Fresh clustering for blocks {start_block}-{end_block}"
+        ) as lg:
+            # Read multi-input transactions from raw keyspace for the block range
+            raw_ks = self._db.raw.get_keyspace()
+            rows = list(
+                self._db.raw.execute_raw_cql(
+                    f"SELECT block_id, coinbase, inputs FROM {raw_ks}.transaction"
+                )
+            )
+
+            # Resolve input addresses to address IDs
+            tdb = self._db.transformed
+            t_ks = tdb.get_keyspace()
+            addr_rows = list(
+                tdb.execute_raw_cql(f"SELECT address_id, address FROM {t_ks}.address")
+            )
+            addr_to_id = {r.address: r.address_id for r in addr_rows}
+
+            new_tx_inputs = []
+            for row in rows:
+                if row.coinbase:
+                    continue
+                if row.block_id < start_block or row.block_id > end_block:
+                    continue
+                if not row.inputs:
+                    continue
+                ids = set()
+                for inp in row.inputs:
+                    if inp.address:
+                        for addr in inp.address:
+                            aid = addr_to_id.get(addr)
+                            if aid is not None:
+                                ids.add(aid)
+                if len(ids) >= 2:
+                    new_tx_inputs.append(list(ids))
+
+            if not new_tx_inputs:
+                lg.debug("No multi-input transactions in block range")
+                return
+
+            lg.debug(
+                f"Found {len(new_tx_inputs)} multi-input transactions "
+                f"in blocks {start_block}-{end_block}"
+            )
+
+            changed = run_incremental_clustering(
+                self._db,
+                self._db.transformed._keyspace_config.currency,
+                new_tx_inputs,
+            )
+
+            lg.debug(f"Clustering produced {len(changed)} changed mappings")
+
+            changes = []
+            for address_id, cluster_id in changed:
+                changes.append(
+                    DbChange.new(
+                        table="fresh_address_cluster",
+                        data={"address_id": address_id, "cluster_id": cluster_id},
+                    )
+                )
+                changes.append(
+                    DbChange.new(
+                        table="fresh_cluster_addresses",
+                        data={"cluster_id": cluster_id, "address_id": address_id},
+                    )
+                )
+
+            if changes:
+                apply_changes(self._db, changes, self._pedantic)
+                lg.debug(f"Wrote {len(changes)} clustering changes to Cassandra")
 
     def process_batch_impl_hook(self, batch) -> Tuple[Action, Optional[int]]:
         rates = {}
