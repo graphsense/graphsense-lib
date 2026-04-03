@@ -23,8 +23,8 @@ import pytest
 from tests.clustering.config import ClusteringConfig
 from tests.clustering.ingest_runner import (
     _create_transformed_keyspace,
-    _seed_exchange_rates,
     read_scala_clusters,
+    run_exchange_rates_ingest,
     run_ingest_cassandra_raw,
     run_ingest_delta_only,
     run_rust_clustering,
@@ -153,8 +153,18 @@ class TestClustering:
         )
         print("done")
 
-        # Seed dummy exchange rates and create transformed keyspace
-        _seed_exchange_rates(cass_host, cass_port, ks_raw)
+        # Ingest real exchange rates (Scala transform drops blocks without rates)
+        print("  [2b/7] exchange rates ingest ...", end=" ", flush=True)
+        run_exchange_rates_ingest(
+            venv_dir=current_venv,
+            config=clustering_config,
+            cassandra_host=cass_host,
+            cassandra_port=cass_port,
+            keyspace_name=ks_raw,
+        )
+        print("done")
+
+        # Create transformed keyspace schema for Scala to write to
         _create_transformed_keyspace(cass_host, cass_port, ks_transformed)
 
         # ------------------------------------------------------------------

@@ -130,20 +130,32 @@ def _create_transformed_keyspace(cassandra_host: str, cassandra_port: int, keysp
             session.execute(stmt)
 
 
-def _seed_exchange_rates(cassandra_host: str, cassandra_port: int, keyspace: str):
-    """Insert dummy exchange rates so the Scala transformation doesn't fail.
+def run_exchange_rates_ingest(
+    venv_dir: Path,
+    config: ClusteringConfig,
+    cassandra_host: str,
+    cassandra_port: int,
+    keyspace_name: str,
+):
+    """Ingest exchange rates via graphsense-cli exchange-rates cryptocompare ingest."""
+    gs_config = build_gs_config(
+        currency=config.currency,
+        node_url=config.node_url,
+        secondary_node_references=config.secondary_node_references,
+        cassandra_host=cassandra_host,
+        cassandra_port=cassandra_port,
+        keyspace_name=keyspace_name,
+    )
 
-    The Scala transform requires at least one row in exchange_rates.
-    For genesis-era blocks real rates don't exist, so we seed a dummy.
-    """
-    from cassandra.cluster import Cluster
+    cmd_args = [
+        "exchange-rates", "cryptocompare", "ingest",
+        "-e", "test",
+        "-c", config.currency,
+    ]
 
-    with Cluster([cassandra_host], port=cassandra_port) as cluster:
-        session = cluster.connect()
-        session.execute(
-            f"INSERT INTO {keyspace}.exchange_rates (date, fiat_values) "  # noqa: S608
-            "VALUES ('2009-01-03', {'usd': 0.0})"
-        )
+    run_cli_ingest(
+        venv_dir, gs_config, cmd_args, config_prefix="gsconfig-clust-rates-"
+    )
 
 
 def run_scala_transformation(
