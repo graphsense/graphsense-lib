@@ -56,6 +56,22 @@ def extract_tx_input_address_ids(tx_df: DataFrame, addr_id_df: DataFrame) -> Dat
     )
 
 
+def read_address_ids_from_cassandra(
+    spark: SparkSession, transformed_keyspace: str
+) -> DataFrame:
+    """Read existing address ID mapping from the transformed Cassandra keyspace.
+
+    Returns DataFrame with columns: (address: str, address_id: int)
+    """
+    logger.info(f"Reading address IDs from {transformed_keyspace}.address")
+    return (
+        spark.read.format("org.apache.spark.sql.cassandra")
+        .options(table="address", keyspace=transformed_keyspace)
+        .load()
+        .select("address", "address_id")
+    )
+
+
 def run_clustering_one_off(
     spark: SparkSession,
     tx_df: DataFrame,
@@ -70,17 +86,17 @@ def run_clustering_one_off(
         tx_df: Transaction DataFrame with 'inputs' and 'tx_id' columns
         raw_keyspace: Raw keyspace name (for reading config)
         transformed_keyspace: Transformed keyspace name (for writing results)
-        addr_id_df: Optional pre-computed address ID DataFrame.
-                    If None, address IDs are assigned from the transaction inputs.
+        addr_id_df: Optional pre-computed address ID DataFrame with
+                    columns (address: str, address_id: int). If None,
+                    reads from the transformed keyspace's address table.
     """
     from gs_clustering import Clustering
 
     logger.info("Starting one-off clustering")
 
-    # Step 1: Get or compute address IDs
+    # Step 1: Get address IDs (from transformed keyspace or provided)
     if addr_id_df is None:
-        logger.info("Assigning address IDs from transaction inputs")
-        addr_id_df = assign_address_ids(spark, tx_df)
+        addr_id_df = read_address_ids_from_cassandra(spark, transformed_keyspace)
         addr_id_df.cache()
 
     # Step 2: Extract input address IDs per transaction
