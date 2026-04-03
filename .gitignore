@@ -133,3 +133,7 @@ docker-compose.override.yml
 PRD.md
 
 openapi.json.30.tmp
+/docs
+
+# Rust build artifacts
+rust/*/target/

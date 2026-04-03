@@ -91,6 +91,9 @@ pre-commit:
 build:
 	uv build
 
+build-rust:
+	cd rust/gs_clustering && maturin develop --release
+
 build-docker:
 	docker build -t graphsense-lib .
 
@@ -183,4 +186,4 @@ package-ui:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions
+.PHONY: all test install lint format build build-rust pre-commit test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions

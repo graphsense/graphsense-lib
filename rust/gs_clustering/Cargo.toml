@@ -1,0 +1,15 @@
+[package]
+name = "gs_clustering"
+version = "0.1.0"
+edition = "2021"
+description = "UTXO address clustering via parallel Union-Find, exposed to Python via PyO3"
+
+[lib]
+name = "gs_clustering"
+crate-type = ["cdylib"]
+
+[dependencies]
+uf_rush = "0.2.1"
+rayon = "1.10"
+pyo3 = { version = "0.23", features = ["extension-module"] }
+arrow = { version = "54.3", features = ["pyarrow"] }
