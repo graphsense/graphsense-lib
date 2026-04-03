@@ -114,6 +114,17 @@ CREATE TABLE cluster_outgoing_relations (
     PRIMARY KEY (src_cluster_id_group, src_cluster_id, dst_cluster_id)
 );
 
+CREATE TABLE fresh_address_cluster (
+    address_id int PRIMARY KEY,
+    cluster_id int
+);
+
+CREATE TABLE fresh_cluster_addresses (
+    cluster_id int,
+    address_id int,
+    PRIMARY KEY (cluster_id, address_id)
+);
+
 CREATE TABLE summary_statistics (
     id int PRIMARY KEY,
     timestamp int,
