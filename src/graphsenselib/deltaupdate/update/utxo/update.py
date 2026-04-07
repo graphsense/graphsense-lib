@@ -1360,9 +1360,21 @@ class UpdateStrategyUtxo(UpdateStrategy):
     def run_fresh_clustering(self, start_block: int, end_block: int):
         """Run incremental clustering for the full block range [start_block, end_block].
 
-        Reads new multi-input transactions from the raw keyspace, rebuilds
-        the union-find from existing fresh_address_cluster state, processes
-        new transactions, and writes changed mappings to Cassandra.
+        Reads only the data needed for the new block range:
+
+        1. ``block_transactions`` rows for blocks in ``[start, end]`` to enumerate
+           the new tx_ids (concurrent point reads, ``O(end - start)``).
+        2. ``transaction`` rows for those tx_ids to extract input addresses
+           (concurrent point reads, ``O(num_new_txs)``).
+        3. ``address_ids_by_address_prefix`` for the unique input addresses to
+           resolve them to address_ids (concurrent point reads,
+           ``O(num_unique_input_addresses)``).
+        4. ``run_incremental_clustering`` then reads only the affected clusters
+           from ``fresh_address_cluster`` / ``fresh_cluster_addresses``.
+
+        Avoids the previous full table scans of ``transaction`` and ``address``,
+        making the cost ``O(new_blocks + new_txs + new_addresses)`` instead of
+        ``O(total_chain)``.
 
         Called once after all batches have been processed.
         """
@@ -1373,53 +1385,112 @@ class UpdateStrategyUtxo(UpdateStrategy):
         with LoggerScope.debug(
             logger, f"Fresh clustering for blocks {start_block}-{end_block}"
         ) as lg:
-            # Read multi-input transactions from raw keyspace for the block range
-            raw_ks = self._db.raw.get_keyspace()
-            rows = list(
-                self._db.raw.execute_raw_cql(
-                    f"SELECT block_id, coinbase, inputs FROM {raw_ks}.transaction"
-                )
-            )
-
-            # Resolve input addresses to address IDs
+            rdb = self._db.raw
             tdb = self._db.transformed
-            t_ks = tdb.get_keyspace()
-            addr_rows = list(
-                tdb.execute_raw_cql(f"SELECT address_id, address FROM {t_ks}.address")
+            raw_ks = rdb.get_keyspace()
+
+            # 1) Look up tx_ids in [start_block, end_block] via block_transactions
+            block_bucket_size = rdb.get_block_bucket_size()
+            bt_prep = rdb._db.get_prepared_statement(
+                f"SELECT txs FROM {raw_ks}.block_transactions "
+                "WHERE block_id_group=? AND block_id=?"
             )
-            addr_to_id = {r.address: r.address_id for r in addr_rows}
+            bt_stmts = [
+                bt_prep.bind(
+                    {
+                        "block_id_group": rdb.get_id_group(b, block_bucket_size),
+                        "block_id": b,
+                    }
+                )
+                for b in range(start_block, end_block + 1)
+            ]
+            tx_ids: List[int] = []
+            for success, result in rdb._db.execute_statements(bt_stmts):
+                if not success:
+                    raise RuntimeError(f"block_transactions read failed: {result}")
+                for row in result:
+                    if row.txs:
+                        tx_ids.extend(tx.tx_id for tx in row.txs)
 
-            new_tx_inputs = []
-            for row in rows:
-                if row.coinbase:
-                    continue
-                if row.block_id < start_block or row.block_id > end_block:
-                    continue
-                if not row.inputs:
-                    continue
-                ids = set()
-                for inp in row.inputs:
-                    if inp.address:
-                        for addr in inp.address:
-                            aid = addr_to_id.get(addr)
-                            if aid is not None:
-                                ids.add(aid)
-                if len(ids) >= 2:
-                    new_tx_inputs.append(list(ids))
+            if not tx_ids:
+                lg.debug(f"No transactions in blocks {start_block}-{end_block}")
+                return
 
-            if not new_tx_inputs:
+            # 2) Read transaction rows for those tx_ids in parallel
+            tx_bucket_size = rdb.get_tx_bucket_size()
+            tx_prep = rdb._db.get_prepared_statement(
+                f"SELECT coinbase, inputs FROM {raw_ks}.transaction "
+                "WHERE tx_id_group=? AND tx_id=?"
+            )
+            tx_stmts = [
+                tx_prep.bind(
+                    {
+                        "tx_id_group": rdb.get_id_group(tid, tx_bucket_size),
+                        "tx_id": tid,
+                    }
+                )
+                for tid in tx_ids
+            ]
+
+            # 3) Collect per-tx input address sets (only multi-input txs)
+            tx_input_addr_lists: List[List[str]] = []
+            unique_addresses: Set[str] = set()
+            for success, result in rdb._db.execute_statements(tx_stmts):
+                if not success:
+                    raise RuntimeError(f"transaction read failed: {result}")
+                for row in result:
+                    if row.coinbase or not row.inputs:
+                        continue
+                    addrs: Set[str] = set()
+                    for inp in row.inputs:
+                        if inp.address:
+                            for addr in inp.address:
+                                addrs.add(addr)
+                    if len(addrs) >= 2:
+                        addr_list = list(addrs)
+                        tx_input_addr_lists.append(addr_list)
+                        unique_addresses.update(addr_list)
+
+            if not tx_input_addr_lists:
                 lg.debug("No multi-input transactions in block range")
                 return
 
             lg.debug(
-                f"Found {len(new_tx_inputs)} multi-input transactions "
+                f"Found {len(tx_input_addr_lists)} multi-input transactions "
+                f"with {len(unique_addresses)} unique input addresses "
                 f"in blocks {start_block}-{end_block}"
             )
 
+            # 4) Resolve unique input address strings to address_ids
+            addr_to_id: Dict[str, int] = {}
+            for adr, exec_result in tdb.get_address_id_async_batch(
+                list(unique_addresses)
+            ):
+                row = exec_result.result_or_exc.one()
+                if row is not None:
+                    addr_to_id[adr] = row.address_id
+
+            # 5) Build new_tx_inputs as lists of address_ids
+            new_tx_inputs: List[List[int]] = []
+            for addr_list in tx_input_addr_lists:
+                ids = set()
+                for addr in addr_list:
+                    aid = addr_to_id.get(addr)
+                    if aid is not None:
+                        ids.add(aid)
+                if len(ids) >= 2:
+                    new_tx_inputs.append(list(ids))
+
+            if not new_tx_inputs:
+                lg.debug("No resolvable multi-input transactions in block range")
+                return
+
+            # 6) Run the incremental clustering itself
             changed = run_incremental_clustering(self._db, new_tx_inputs)
 
             lg.debug(f"Clustering produced {len(changed)} changed mappings")
 
+            # 7) Persist the diff
             changes = []
             for address_id, cluster_id in changed:
                 changes.append(
@@ -1436,7 +1507,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 )
 
             if changes:
-                apply_changes(self._db, changes, self._pedantic)
+                apply_changes(
+                    self._db, changes, self._pedantic, try_atomic_writes=False
+                )
                 lg.debug(f"Wrote {len(changes)} clustering changes to Cassandra")
 
     def process_batch_impl_hook(self, batch) -> Tuple[Action, Optional[int]]:
