@@ -1,159 +1,277 @@
-"""One-off clustering: assign address IDs, run Rust clustering, write to Cassandra."""
+"""One-off clustering: read raw Cassandra, run Rust clustering, write to Cassandra."""
 
 import logging
-from typing import Optional
-
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import Window
-from pyspark.sql import functions as F
+import time
+from typing import Dict, List, Set
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 5_000_000
+# Defaults for run_clustering_one_off_from_cassandra
+DEFAULT_BLOCK_CHUNK_SIZE = 1_000
+DEFAULT_CASSANDRA_CONCURRENCY = 100
+DEFAULT_WRITE_CHUNK = 100_000
 
 
-def assign_address_ids(spark: SparkSession, tx_df: DataFrame) -> DataFrame:
-    """Assign sequential address IDs to all unique input addresses.
-
-    Expects tx_df to have an 'inputs' column (list of tx_input_output UDTs)
-    where each element has an 'address' field (list of strings).
-
-    Returns DataFrame with columns: (address: str, address_id: int)
-    """
-    # Explode inputs to get one row per input
-    input_addrs = (
-        tx_df.select(F.explode("inputs").alias("inp"))
-        .select(F.explode("inp.address").alias("address"))
-        .filter(F.col("address").isNotNull())
-        .distinct()
-    )
-
-    # Assign sequential IDs using row_number (1-based, 0 reserved for coinbase)
-    w = Window.orderBy("address")
-    return input_addrs.withColumn("address_id", F.row_number().over(w).cast("int"))
-
-
-def extract_tx_input_address_ids(tx_df: DataFrame, addr_id_df: DataFrame) -> DataFrame:
-    """Extract input address IDs grouped by transaction.
-
-    Returns DataFrame with columns: (tx_id: long, input_address_ids: array<int>)
-    """
-    # Explode inputs with index
-    exploded = tx_df.select(
-        "tx_id",
-        F.posexplode("inputs").alias("input_idx", "inp"),
-    ).select(
-        "tx_id",
-        F.explode("inp.address").alias("address"),
-    )
-
-    # Join with address IDs
-    joined = exploded.join(addr_id_df, on="address", how="inner")
-
-    # Group by tx_id, collect address IDs
-    return joined.groupBy("tx_id").agg(
-        F.collect_set("address_id").alias("input_address_ids")
-    )
-
-
-def read_address_ids_from_cassandra(
-    spark: SparkSession, transformed_keyspace: str
-) -> DataFrame:
-    """Read existing address ID mapping from the transformed Cassandra keyspace.
-
-    Returns DataFrame with columns: (address: str, address_id: int)
-    """
-    logger.info(f"Reading address IDs from {transformed_keyspace}.address")
-    return (
-        spark.read.format("org.apache.spark.sql.cassandra")
-        .options(table="address", keyspace=transformed_keyspace)
-        .load()
-        .select("address", "address_id")
-    )
-
-
-def run_clustering_one_off(
-    spark: SparkSession,
-    tx_df: DataFrame,
-    raw_keyspace: str,
-    transformed_keyspace: str,
-    addr_id_df: Optional[DataFrame] = None,
+def run_clustering_one_off_from_cassandra(
+    db,
+    start_block: int,
+    end_block: int,
+    chunk_size: int = DEFAULT_BLOCK_CHUNK_SIZE,
+    concurrency: int = DEFAULT_CASSANDRA_CONCURRENCY,
+    write_chunk: int = DEFAULT_WRITE_CHUNK,
 ):
-    """Run full clustering from scratch and write results to Cassandra.
+    """Run full one-off clustering from the raw Cassandra keyspace.
+
+    No PySpark dependency.  Processes blocks in ``chunk_size``-block chunks.
+    For each chunk:
+
+      1. Parallel point reads of ``raw.block_transactions`` for every block
+         in the chunk  ->  list of new tx_ids.
+      2. Per-tx_id_group range reads of ``raw.transaction`` over
+         [min_tx_id, max_tx_id] for the chunk  ->  multi-input address sets.
+         One query per bucket, dispatched via ``execute_statements_async``
+         with bounded concurrency (issues parallel single-partition scans,
+         not one fan-out coordinator query).
+      3. Async batched resolution of unique input addresses via
+         ``transformed.address_ids_by_address_prefix``  ->  address_ids.
+      4. Feed the resulting ``tx_input_ids`` to the Rust Union-Find
+         (``Clustering.process_transactions``), which accumulates state
+         across chunk calls.
+
+    After all chunks are processed, ``get_mapping()`` is called once and the
+    full mapping is streamed back to Cassandra in ``write_chunk``-sized
+    slices via the driver's async concurrent execution.
 
     Args:
-        spark: Active SparkSession with Cassandra connector configured
-        tx_df: Transaction DataFrame with 'inputs' and 'tx_id' columns
-        raw_keyspace: Raw keyspace name (for reading config)
-        transformed_keyspace: Transformed keyspace name (for writing results)
-        addr_id_df: Optional pre-computed address ID DataFrame with
-                    columns (address: str, address_id: int). If None,
-                    reads from the transformed keyspace's address table.
+        db: open ``AnalyticsDb`` instance.
+        start_block: first block to include (inclusive).
+        end_block: last block to include (inclusive).
+        chunk_size: number of blocks per read+feed batch (default 1,000).
+        concurrency: max concurrent in-flight statements per batch
+            (default 100).  Keeps the Cassandra driver from flooding the
+            coordinator during large-chunk reads or the final mapping write.
+        write_chunk: number of rows per write slice (default 100,000).
+
+    Raises:
+        RuntimeError on any failed statement or if
+        ``summary_statistics.no_addresses`` is missing (the UF needs it to
+        size itself).  Relies on the invariant that address_ids are dense
+        in ``[1, no_addresses]``, which is preserved by both the Scala
+        seeding and ``consume_address_id()`` in the delta updater.
     """
     from gs_clustering import Clustering
 
-    logger.info("Starting one-off clustering")
+    rdb = db.raw
+    tdb = db.transformed
+    raw_ks = rdb.get_keyspace()
+    transformed_ks = tdb.get_keyspace()
 
-    # Step 1: Get address IDs (from transformed keyspace or provided)
-    if addr_id_df is None:
-        addr_id_df = read_address_ids_from_cassandra(spark, transformed_keyspace)
-        addr_id_df.cache()
+    # 1) Size the Union-Find from summary_statistics.no_addresses.
+    stats = tdb.get_summary_statistics()
+    if stats is None or getattr(stats, "no_addresses", None) is None:
+        raise RuntimeError(
+            f"{transformed_ks}.summary_statistics.no_addresses is missing — "
+            "the transformed keyspace must be seeded (Scala transformation "
+            "or a prior run) before one-off clustering can run."
+        )
+    max_address_id = int(stats.no_addresses)
+    logger.info(
+        f"max_address_id={max_address_id:,} "
+        f"(from {transformed_ks}.summary_statistics.no_addresses)"
+    )
 
-    # Step 2: Extract input address IDs per transaction
-    logger.info("Extracting input address IDs per transaction")
-    tx_inputs_df = extract_tx_input_address_ids(tx_df, addr_id_df)
-
-    # Step 3: Find max address ID for Clustering initialization
-    max_id_row = addr_id_df.agg(F.max("address_id")).collect()[0]
-    max_address_id = max_id_row[0]
-    logger.info(f"Max address ID: {max_address_id}")
-
-    # Step 4: Process via Rust (collect to driver, chunk in Python)
     c = Clustering(max_address_id=max_address_id)
 
-    logger.info("Collecting transaction inputs to driver")
-    rows = tx_inputs_df.select("input_address_ids").collect()
-    all_tx_inputs = [row.input_address_ids for row in rows if row.input_address_ids]
-    logger.info(f"Processing {len(all_tx_inputs)} transactions")
+    # 2) Prepare statements once.
+    block_bucket_size = rdb.get_block_bucket_size()
+    tx_bucket_size = rdb.get_tx_bucket_size()
 
-    for i in range(0, len(all_tx_inputs), CHUNK_SIZE):
-        chunk = all_tx_inputs[i : i + CHUNK_SIZE]
-        c.process_transactions(chunk)
+    bt_prep = rdb._db.get_prepared_statement(
+        f"SELECT txs FROM {raw_ks}.block_transactions "
+        "WHERE block_id_group=? AND block_id=?"
+    )
+    tx_prep = rdb._db.get_prepared_statement(
+        f"SELECT coinbase, inputs FROM {raw_ks}.transaction "
+        "WHERE tx_id_group=? AND tx_id>? AND tx_id<=?"
+    )
+
+    # 3) Walk the block range in chunks.  Each chunk is fully processed
+    # (read -> feed to Rust) before the next is started — no prefetch, no
+    # double-buffering.
+    total_blocks = end_block - start_block + 1
+    total_tx_rows = 0
+    total_multi_input = 0
+    feed_start = time.perf_counter()
+
+    for chunk_start in range(start_block, end_block + 1, chunk_size):
+        chunk_end = min(chunk_start + chunk_size - 1, end_block)
+        chunk_t0 = time.perf_counter()
+
+        # 3a) block_transactions -> tx_ids
+        bt_stmts = [
+            bt_prep.bind(
+                {
+                    "block_id_group": rdb.get_id_group(b, block_bucket_size),
+                    "block_id": b,
+                }
+            )
+            for b in range(chunk_start, chunk_end + 1)
+        ]
+        tx_ids: List[int] = []
+        for success, result in rdb._db.execute_statements_async(
+            bt_stmts, concurrency=concurrency
+        ):
+            if not success:
+                raise RuntimeError(
+                    f"block_transactions read failed in chunk "
+                    f"[{chunk_start},{chunk_end}]: {result}"
+                )
+            for row in result:
+                if row.txs:
+                    tx_ids.extend(tx.tx_id for tx in row.txs)
+
+        if not tx_ids:
+            continue
+
+        min_tx_id = min(tx_ids)
+        max_tx_id = max(tx_ids)
+
+        # 3b) transaction range reads, one statement per tx_id_group bucket.
+        # Parallel single-partition scans: Cassandra-idiomatic.
+        min_bucket = rdb.get_id_group(min_tx_id, tx_bucket_size)
+        max_bucket = rdb.get_id_group(max_tx_id, tx_bucket_size)
+
+        tx_stmts = [
+            tx_prep.bind(
+                {
+                    "tx_id_group": bucket,
+                    "tx_id_lower": min_tx_id - 1,  # > lower, inclusive
+                    "tx_id_upper": max_tx_id,
+                }
+            )
+            for bucket in range(min_bucket, max_bucket + 1)
+        ]
+
+        tx_input_addr_lists: List[List[str]] = []
+        unique_addresses: Set[str] = set()
+
+        for success, result in rdb._db.execute_statements_async(
+            tx_stmts, concurrency=concurrency
+        ):
+            if not success:
+                raise RuntimeError(
+                    f"transaction read failed in chunk "
+                    f"[{chunk_start},{chunk_end}]: {result}"
+                )
+            for row in result:
+                if row.coinbase or not row.inputs:
+                    continue
+                addrs: Set[str] = set()
+                for inp in row.inputs:
+                    if inp.address:
+                        for addr in inp.address:
+                            addrs.add(addr)
+                if len(addrs) >= 2:
+                    addr_list = list(addrs)
+                    tx_input_addr_lists.append(addr_list)
+                    unique_addresses.update(addr_list)
+
+        if not tx_input_addr_lists:
+            total_tx_rows += len(tx_ids)
+            continue
+
+        # 3c) Resolve unique input addresses to address_ids.
+        addr_to_id: Dict[str, int] = {}
+        for adr, exec_result in tdb.get_address_id_async_batch(list(unique_addresses)):
+            row = exec_result.result_or_exc.one()
+            if row is not None:
+                addr_to_id[adr] = row.address_id
+
+        # 3d) Build dense address_id lists per tx, drop any that shrink
+        # to <2 after resolution (missing addresses).
+        tx_input_ids: List[List[int]] = []
+        for addr_list in tx_input_addr_lists:
+            ids = set()
+            for addr in addr_list:
+                aid = addr_to_id.get(addr)
+                if aid is not None:
+                    ids.add(aid)
+            if len(ids) >= 2:
+                tx_input_ids.append(list(ids))
+
+        # 3e) Feed to Rust.  UFRush accumulates across calls.
+        if tx_input_ids:
+            c.process_transactions(tx_input_ids)
+
+        total_tx_rows += len(tx_ids)
+        total_multi_input += len(tx_input_ids)
+        chunk_secs = time.perf_counter() - chunk_t0
+        blocks_done = chunk_end - start_block + 1
+        pct = 100 * blocks_done / total_blocks
         logger.info(
-            f"Processed {min(i + CHUNK_SIZE, len(all_tx_inputs))}"
-            f"/{len(all_tx_inputs)} transactions"
+            f"  chunk [{chunk_start:,}-{chunk_end:,}] "
+            f"{len(tx_ids):,} txs ({len(tx_input_ids):,} multi-input) "
+            f"in {chunk_secs:.2f}s  [{pct:.1f}%]"
         )
 
-    # Step 5: Get full mapping and write to Cassandra
-    logger.info("Generating cluster mapping")
+    feed_secs = time.perf_counter() - feed_start
+    logger.info(
+        f"Fed {total_tx_rows:,} tx rows "
+        f"({total_multi_input:,} multi-input) to Rust in {feed_secs:.1f}s "
+        f"for blocks [{start_block:,}-{end_block:,}]"
+    )
+
+    # 4) Final mapping.  WARNING: this is still a single RecordBatch of
+    # size ``max_address_id+1`` — on BTC mainnet that's ~10 GB.  A future
+    # Rust ``get_mapping_range(start, end)`` will let us stream it.  For
+    # now the mapping lives in driver memory, but the writes are streamed
+    # below in ``write_chunk``-sized slices so at least the per-write-batch
+    # memory stays bounded.
+    logger.info("Generating final cluster mapping from Rust")
     mapping_batch = c.get_mapping()
+    total_rows = mapping_batch.num_rows
+    logger.info(f"Mapping has {total_rows:,} rows — streaming to Cassandra")
 
-    import pyarrow as pa
+    # 5) Stream-write the mapping to fresh_* tables.
+    fa_prep = rdb._db.get_prepared_statement(
+        f"INSERT INTO {transformed_ks}.fresh_address_cluster "
+        "(address_id, cluster_id) VALUES (?, ?)"
+    )
+    fc_prep = rdb._db.get_prepared_statement(
+        f"INSERT INTO {transformed_ks}.fresh_cluster_addresses "
+        "(cluster_id, address_id) VALUES (?, ?)"
+    )
 
-    # Convert Arrow RecordBatch to PySpark DataFrame
-    mapping_pdf = pa.RecordBatch.to_pandas(mapping_batch, types_mapper=None)
-    # Filter to only addresses that actually appeared (skip address_id 0)
-    mapping_pdf = mapping_pdf[mapping_pdf["address_id"] > 0]
+    aid_col = mapping_batch.column("address_id")
+    cid_col = mapping_batch.column("cluster_id")
 
-    mapping_spark_df = spark.createDataFrame(mapping_pdf)
-    mapping_spark_df = mapping_spark_df.withColumn(
-        "address_id", F.col("address_id").cast("int")
-    ).withColumn("cluster_id", F.col("cluster_id").cast("int"))
+    written = 0
+    write_start = time.perf_counter()
+    for offset in range(0, total_rows, write_chunk):
+        length = min(write_chunk, total_rows - offset)
+        aids = aid_col.slice(offset, length).to_pylist()
+        cids = cid_col.slice(offset, length).to_pylist()
 
-    # Write fresh_address_cluster
-    logger.info("Writing fresh_address_cluster")
-    mapping_spark_df.select("address_id", "cluster_id").write.format(
-        "org.apache.spark.sql.cassandra"
-    ).options(table="fresh_address_cluster", keyspace=transformed_keyspace).mode(
-        "append"
-    ).save()
+        stmts = []
+        for aid, cid in zip(aids, cids):
+            if aid == 0:
+                continue  # coinbase placeholder
+            stmts.append(fa_prep.bind({"address_id": aid, "cluster_id": cid}))
+            stmts.append(fc_prep.bind({"cluster_id": cid, "address_id": aid}))
 
-    # Write fresh_cluster_addresses (reverse mapping)
-    logger.info("Writing fresh_cluster_addresses")
-    mapping_spark_df.select("cluster_id", "address_id").write.format(
-        "org.apache.spark.sql.cassandra"
-    ).options(table="fresh_cluster_addresses", keyspace=transformed_keyspace).mode(
-        "append"
-    ).save()
+        for success, result in rdb._db.execute_statements_async(
+            stmts, concurrency=concurrency
+        ):
+            if not success:
+                raise RuntimeError(f"clustering write failed: {result}")
 
-    logger.info("One-off clustering complete")
+        written += length
+        logger.info(
+            f"  wrote {written:,}/{total_rows:,} ({100 * written / total_rows:.1f}%)"
+        )
+
+    write_secs = time.perf_counter() - write_start
+    logger.info(
+        f"Wrote {total_rows:,} mappings in {write_secs:.1f}s "
+        f"(total runtime {time.perf_counter() - feed_start:.1f}s)"
+    )

@@ -179,108 +179,75 @@ def run_transformation(
     "--end-block",
     type=int,
     default=None,
-    help="End block (inclusive). If omitted, auto-detected from Delta Lake.",
+    help="End block (inclusive). If omitted, auto-detected from the raw keyspace.",
 )
 @click.option(
-    "--delta-lake-path",
-    type=str,
-    default=None,
-    help="Override Delta Lake base path (default: from config).",
+    "--chunk-size",
+    type=int,
+    default=1000,
+    show_default=True,
+    help="Block-range chunk size for the Cassandra read/feed loop.",
 )
 @click.option(
-    "--local",
-    is_flag=True,
-    help="Run Spark in local mode with local[*].",
+    "--concurrency",
+    type=int,
+    default=100,
+    show_default=True,
+    help="Max in-flight Cassandra statements per chunk.",
 )
-def run_clustering(env, currency, start_block, end_block, delta_lake_path, local):
-    """Run one-off UTXO address clustering via PySpark + Rust.
+@click.option(
+    "--write-chunk",
+    type=int,
+    default=100_000,
+    show_default=True,
+    help="Number of mapping rows per Cassandra write slice.",
+)
+def run_clustering(
+    env, currency, start_block, end_block, chunk_size, concurrency, write_chunk
+):
+    """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
 
-    Reads transactions from Delta Lake, assigns address IDs, runs the Rust
-    clustering engine, and writes results to the transformed Cassandra keyspace.
+    Reads transactions via point/range queries in ``--chunk-size``-block chunks,
+    feeds them to the Rust clustering engine, and streams the resulting mapping
+    back to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in the
+    transformed keyspace.  No PySpark dependency.
+
+    The transformed keyspace must already be seeded by the Scala transformation
+    (or a prior run) so that ``summary_statistics.no_addresses`` is populated.
     \f
     """
-    from graphsenselib.config import get_config
-
-    config = get_config()
-    env_config = config.get_environment(env)
-    ks_config = config.get_keyspace_config(env, currency)
-
-    raw_keyspace = ks_config.raw_keyspace_name
-    transformed_keyspace = ks_config.transformed_keyspace_name
-    cassandra_nodes = env_config.cassandra_nodes
-    cassandra_username = env_config.username
-    cassandra_password = env_config.password
-
-    # Resolve delta path and S3 credentials from config if not overridden
-    s3_config_name = None
-    if delta_lake_path is None:
-        ingest_cfg = ks_config.ingest_config
-        if ingest_cfg and ingest_cfg.raw_keyspace_file_sinks:
-            delta_sink = ingest_cfg.raw_keyspace_file_sinks.get("delta")
-            if delta_sink:
-                delta_lake_path = delta_sink.directory
-                s3_config_name = delta_sink.s3_config
-        if delta_lake_path is None:
-            raise click.UsageError(
-                "No --delta-lake-path provided and no delta sink configured "
-                f"for {currency} in environment {env}."
-            )
-
-    s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.spark_config or {}
+    from graphsenselib.db.factory import DbFactory
+    from graphsenselib.schema.schema import GraphsenseSchemas
+    from graphsenselib.transformation.clustering import (
+        run_clustering_one_off_from_cassandra,
+    )
 
     # Ensure transformed keyspace schema is up to date
-    from graphsenselib.schema.schema import GraphsenseSchemas
-
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
 
-    logger.info(
-        f"Starting clustering: env={env}, currency={currency}, "
-        f"blocks={start_block}-{end_block}, delta={delta_lake_path}, "
-        f"raw_keyspace={raw_keyspace}, transformed_keyspace={transformed_keyspace}, "
-        f"local={local}"
-    )
-
-    from graphsenselib.transformation.spark import create_spark_session
-
-    spark = create_spark_session(
-        app_name=f"graphsense-clustering-{currency}-{env}",
-        local=local,
-        cassandra_nodes=cassandra_nodes,
-        cassandra_username=cassandra_username,
-        cassandra_password=cassandra_password,
-        raw_keyspace=raw_keyspace,
-        s3_credentials=s3_credentials,
-        spark_config=spark_config,
-    )
-
-    from graphsenselib.transformation.utxo import UtxoTransformation
-
-    t = UtxoTransformation(
-        spark=spark,
-        delta_lake_path=delta_lake_path,
-        raw_keyspace=raw_keyspace,
-    )
-
-    # Auto-detect end_block from Delta Lake if not provided
-    if end_block is None:
-        block_path = delta_lake_path.rstrip("/").replace("s3://", "s3a://") + "/block"
-        block_df = spark.read.format("delta").load(block_path)
-        max_row = block_df.agg({"block_id": "max"}).collect()[0]
-        end_block = max_row[0]
+    with DbFactory().from_config(env, currency) as db:
         if end_block is None:
-            spark.stop()
-            raise click.ClickException(
-                f"Cannot auto-detect end_block: block Delta table at "
-                f"{block_path} is empty."
-            )
-        logger.info(f"Auto-detected end_block={end_block} from Delta Lake.")
+            end_block = db.raw.get_highest_block()
+            if end_block is None:
+                raise click.ClickException(
+                    f"Cannot auto-detect end_block: raw keyspace for "
+                    f"{currency} in environment {env} appears empty."
+                )
+            logger.info(f"Auto-detected end_block={end_block} from raw keyspace.")
 
-    tx_df = t._get_tx_df_with_ids(start_block, end_block)
+        logger.info(
+            f"Starting clustering: env={env}, currency={currency}, "
+            f"blocks={start_block}-{end_block}, chunk_size={chunk_size}, "
+            f"concurrency={concurrency}"
+        )
 
-    from graphsenselib.transformation.clustering import run_clustering_one_off
+        run_clustering_one_off_from_cassandra(
+            db,
+            start_block=start_block,
+            end_block=end_block,
+            chunk_size=chunk_size,
+            concurrency=concurrency,
+            write_chunk=write_chunk,
+        )
 
-    run_clustering_one_off(spark, tx_df, raw_keyspace, transformed_keyspace)
-
-    spark.stop()
-    logger.info("SparkSession stopped.")
+    logger.info("One-off clustering complete.")
