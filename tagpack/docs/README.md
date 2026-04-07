@@ -15,9 +15,6 @@ Please note that the last feature requires (installation of) a [Postgresql](http
 
 # Quickstart
 
-## Installation
-
-    pip install git+https://github.com/graphsense/graphsense-tagpack-tool.git
 
 ## Prepare a TagStore database
 
