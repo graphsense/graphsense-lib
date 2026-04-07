@@ -24,6 +24,7 @@ class ClusteringRange:
     start_block: int
     end_block: int
     initial_end_block: int  # Rust does full clustering up to here, then incremental
+    incremental_batch_count: int = 1  # split [initial_end+1, end_block] into N batches
     note: str = ""
 
 
@@ -33,17 +34,31 @@ CLUSTERING_RANGES: dict[str, list[ClusteringRange]] = {
     "btc": [
         ClusteringRange(
             "incremental", 0, 15000, 10000,
-            "10k full + 5k incremental; multi-input txs start around block 170",
+            incremental_batch_count=3,
+            note="10k full + 5k incremental in 3 batches; "
+                 "exercises sequential reads/writes of fresh_* tables",
         ),
     ],
     "ltc": [
-        ClusteringRange("incremental", 0, 5000, 3000, "3k full + 2k incremental"),
+        ClusteringRange(
+            "incremental", 0, 5000, 3000,
+            incremental_batch_count=3,
+            note="3k full + 2k incremental in 3 batches",
+        ),
     ],
     "bch": [
-        ClusteringRange("incremental", 0, 15000, 10000, "shares BTC history"),
+        ClusteringRange(
+            "incremental", 0, 15000, 10000,
+            incremental_batch_count=3,
+            note="shares BTC history; 3 incremental batches",
+        ),
     ],
     "zec": [
-        ClusteringRange("incremental", 0, 5000, 3000, "3k full + 2k incremental"),
+        ClusteringRange(
+            "incremental", 0, 5000, 3000,
+            incremental_batch_count=3,
+            note="3k full + 2k incremental in 3 batches",
+        ),
     ],
 }
 
@@ -61,6 +76,7 @@ class ClusteringConfig:
     end_block: int
     initial_end_block: int
     schema_type: str
+    incremental_batch_count: int = 1
     gslib_path: Path = field(
         default_factory=lambda: Path(__file__).resolve().parents[4]
     )
@@ -100,6 +116,7 @@ def build_clustering_configs() -> list[ClusteringConfig]:
                     end_block=cr.end_block,
                     initial_end_block=cr.initial_end_block,
                     schema_type=SCHEMA_TYPE_MAP.get(currency, "utxo"),
+                    incremental_batch_count=cr.incremental_batch_count,
                     gslib_path=gslib_path,
                     range_note=cr.note,
                 )

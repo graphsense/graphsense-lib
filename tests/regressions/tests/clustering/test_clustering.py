@@ -18,6 +18,8 @@ Requires:
 - Scala transformation repo as sibling (or ``CLUSTERING_SCALA_IMAGE`` env var)
 """
 
+import time
+
 import pytest
 
 from tests.clustering.config import ClusteringConfig
@@ -25,11 +27,12 @@ from tests.clustering.ingest_runner import (
     _create_transformed_keyspace,
     read_scala_clusters,
     run_exchange_rates_ingest,
+    run_incremental_clustering_via_production,
     run_ingest_cassandra_raw,
     run_ingest_delta_only,
     run_rust_clustering,
-    run_rust_clustering_incremental,
     run_scala_transformation,
+    write_fresh_clustering_to_cassandra,
 )
 
 pytestmark = pytest.mark.clustering
@@ -115,6 +118,18 @@ class TestClustering:
 
         initial_end = clustering_config.initial_end_block
         final_end = clustering_config.end_block
+        batch_count = clustering_config.incremental_batch_count
+
+        # Split [initial_end+1, final_end] into N roughly-equal batches.
+        # The last batch absorbs any remainder so it always reaches final_end.
+        incremental_total = final_end - initial_end
+        chunk = incremental_total // batch_count
+        batches: list[tuple[int, int]] = []
+        b_start = initial_end + 1
+        for i in range(batch_count):
+            b_end = final_end if i == batch_count - 1 else b_start + chunk - 1
+            batches.append((b_start, b_end))
+            b_start = b_end + 1
 
         print(f"\n{'=' * 68}")
         print(f"CLUSTERING: {currency.upper()} [{range_id}]")
@@ -124,7 +139,10 @@ class TestClustering:
             f"({clustering_config.num_blocks} blocks)"
         )
         print(f"  initial (full):  0-{initial_end:,}")
-        print(f"  incremental:     {initial_end + 1:,}-{final_end:,}")
+        print(f"  incremental:     {initial_end + 1:,}-{final_end:,} "
+              f"in {batch_count} batches")
+        for i, (bs, be) in enumerate(batches, 1):
+            print(f"    batch {i}/{batch_count}: {bs:,}-{be:,}")
         if clustering_config.range_note:
             print(f"  note:            {clustering_config.range_note}")
 
@@ -187,6 +205,9 @@ class TestClustering:
         print("  [4/7] reading Scala clusters ...", end=" ", flush=True)
         scala_clusters = read_scala_clusters(cass_host, cass_port, ks_transformed)
         print(f"done ({_cluster_stats(scala_clusters)})")
+        assert len(scala_clusters) > 0, (
+            "Scala produced no clusters — transformation may have failed silently"
+        )
 
         # ------------------------------------------------------------------
         # Step 5: Rust full clustering on blocks [0, initial_end_block]
@@ -195,32 +216,95 @@ class TestClustering:
             f"  [5/7] Rust clustering blocks 0-{initial_end:,} ...",
             end=" ", flush=True,
         )
+        t0 = time.perf_counter()
         initial_mapping = run_rust_clustering(
             cass_host, cass_port, ks_raw, ks_transformed,
             max_block_id=initial_end,
         )
+        full_secs = time.perf_counter() - t0
+        full_blocks = initial_end + 1
         initial_clusters: dict[int, set[int]] = {}
         for aid, cid in initial_mapping.items():
             initial_clusters.setdefault(cid, set()).add(aid)
-        print(f"done ({_cluster_stats(initial_clusters)})")
+        print(
+            f"done in {full_secs:.2f}s "
+            f"({full_blocks / full_secs:,.0f} blocks/s, "
+            f"{len(initial_mapping) / full_secs:,.0f} addrs/s) "
+            f"({_cluster_stats(initial_clusters)})"
+        )
+        assert len(initial_mapping) > 0, (
+            "Rust full clustering produced no mappings"
+        )
+
+        # Verify that the partial result (blocks 0-initial_end) does NOT match
+        # Scala (all blocks).  If it already matches, the incremental step
+        # would be a no-op and the test would not exercise it.
+        is_initial_equiv, _ = compare_cluster_partitions(
+            scala_clusters, initial_mapping
+        )
+        assert not is_initial_equiv, (
+            f"Rust full-only (0-{initial_end}) already matches Scala "
+            f"(0-{final_end}); incremental step would not be exercised"
+        )
+
+        # Seed the fresh_* tables in Cassandra so the production
+        # run_incremental_clustering can read existing state from them.
+        write_fresh_clustering_to_cassandra(
+            cass_host, cass_port, ks_transformed, initial_mapping,
+        )
 
         # ------------------------------------------------------------------
-        # Step 6: Rust incremental clustering adding [initial_end+1, final_end]
+        # Step 6: Rust incremental clustering across multiple batches.
+        #         Uses the PRODUCTION UpdateStrategyUtxo.run_fresh_clustering
+        #         code path: point reads of block_transactions, transaction,
+        #         and address_ids_by_address_prefix for blocks in the range,
+        #         then run_incremental_clustering over the affected clusters,
+        #         and apply_changes back to fresh_address_cluster /
+        #         fresh_cluster_addresses.  Each batch reads the *accumulated*
+        #         Cassandra state from previous batches.
         # ------------------------------------------------------------------
+        current_mapping = initial_mapping
+        batch_timings: list[tuple[int, float]] = []  # (num_blocks, secs)
+        for i, (b_start, b_end) in enumerate(batches, 1):
+            print(
+                f"  [6.{i}/{batch_count}] Rust incremental "
+                f"blocks {b_start:,}-{b_end:,} ...",
+                end=" ", flush=True,
+            )
+            t0 = time.perf_counter()
+            current_mapping = run_incremental_clustering_via_production(
+                cass_host, cass_port, ks_raw, ks_transformed, currency,
+                initial_mapping=current_mapping,
+                min_block_id=b_start,
+                max_block_id=b_end,
+                current_venv=current_venv,
+            )
+            batch_secs = time.perf_counter() - t0
+            batch_blocks = b_end - b_start + 1
+            batch_timings.append((batch_blocks, batch_secs))
+            batch_clusters: dict[int, set[int]] = {}
+            for aid, cid in current_mapping.items():
+                batch_clusters.setdefault(cid, set()).add(aid)
+            print(
+                f"done in {batch_secs:.2f}s "
+                f"({batch_blocks / batch_secs:,.0f} blocks/s) "
+                f"({_cluster_stats(batch_clusters)})"
+            )
+
+        total_inc_blocks = sum(b for b, _ in batch_timings)
+        total_inc_secs = sum(s for _, s in batch_timings)
         print(
-            f"  [6/7] Rust incremental blocks {initial_end + 1:,}-{final_end:,} ...",
-            end=" ", flush=True,
+            f"  incremental total: {total_inc_blocks:,} blocks in "
+            f"{total_inc_secs:.2f}s "
+            f"({total_inc_blocks / total_inc_secs:,.0f} blocks/s avg, "
+            f"{total_inc_secs / batch_count:.2f}s/batch incl. subprocess "
+            f"+ Cassandra writes)"
         )
-        final_mapping = run_rust_clustering_incremental(
-            cass_host, cass_port, ks_raw, ks_transformed,
-            existing_mapping=initial_mapping,
-            min_block_id=initial_end + 1,
-            max_block_id=final_end,
-        )
+
+        final_mapping = current_mapping
         final_clusters: dict[int, set[int]] = {}
         for aid, cid in final_mapping.items():
             final_clusters.setdefault(cid, set()).add(aid)
-        print(f"done ({_cluster_stats(final_clusters)})")
 
         # ------------------------------------------------------------------
         # Step 7: Compare partitions

@@ -54,8 +54,11 @@ def run_ingest_delta_only(
         "--sinks", "delta",
     ]
 
+    # Clustering tests ingest 15k blocks which can exceed the default 600s timeout
+    # when the BTC node is slow.  Allow 30 minutes.
     run_cli_ingest(
-        venv_dir, gs_config, cmd_args, config_prefix="gsconfig-clust-delta-"
+        venv_dir, gs_config, cmd_args, config_prefix="gsconfig-clust-delta-",
+        timeout=1800,
     )
 
 
@@ -96,7 +99,8 @@ def run_ingest_cassandra_raw(
     ]
 
     run_cli_ingest(
-        venv_dir, gs_config, cmd_args, config_prefix="gsconfig-clust-raw-"
+        venv_dir, gs_config, cmd_args, config_prefix="gsconfig-clust-raw-",
+        timeout=1800,
     )
 
 
@@ -388,50 +392,144 @@ def run_rust_clustering(
     return _mapping_from_clustering(c, addr_to_id)
 
 
-def run_rust_clustering_incremental(
+def write_fresh_clustering_to_cassandra(
+    cassandra_host: str,
+    cassandra_port: int,
+    transformed_keyspace: str,
+    mapping: dict[int, int],
+) -> None:
+    """Write address_id -> cluster_id mapping to fresh_address_cluster and
+    fresh_cluster_addresses tables in Cassandra.
+
+    This seeds the state that run_incremental_clustering reads from.
+    """
+    from cassandra.cluster import Cluster
+
+    with Cluster([cassandra_host], port=cassandra_port) as cluster:
+        session = cluster.connect()
+        prep_ac = session.prepare(
+            f"INSERT INTO {transformed_keyspace}.fresh_address_cluster "
+            f"(address_id, cluster_id) VALUES (?, ?)"
+        )
+        prep_ca = session.prepare(
+            f"INSERT INTO {transformed_keyspace}.fresh_cluster_addresses "
+            f"(cluster_id, address_id) VALUES (?, ?)"
+        )
+        for address_id, cluster_id in mapping.items():
+            session.execute(prep_ac, (address_id, cluster_id))
+            session.execute(prep_ca, (cluster_id, address_id))
+
+
+# Helper script that runs inside current_venv (which has graphsenselib installed
+# in editable mode).  Reads JSON args from stdin, instantiates UpdateStrategyUtxo,
+# and calls the PRODUCTION run_fresh_clustering method.  All read/write of
+# fresh_* tables happens inside that method.
+_RUN_FRESH_CLUSTERING_HELPER = """
+import json
+import sys
+
+from graphsenselib.db.factory import DbFactory
+from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
+from graphsenselib.deltaupdate.update.utxo.update import UpdateStrategyUtxo
+
+args = json.load(sys.stdin)
+
+db = DbFactory().from_name(
+    raw_keyspace_name=args['raw_keyspace'],
+    transformed_keyspace_name=args['transformed_keyspace'],
+    schema_type='utxo',
+    cassandra_nodes=[f"{args['cassandra_host']}:{args['cassandra_port']}"],
+    currency=args['currency'],
+)
+db.open()
+try:
+    updater = UpdateStrategyUtxo(
+        db=db,
+        currency=args['currency'],
+        pedantic=False,
+        application_strategy=ApplicationStrategy.BATCH,
+        patch_mode=False,
+    )
+    updater.run_fresh_clustering(args['start_block'], args['end_block'])
+finally:
+    db.close()
+
+print("OK")
+"""
+
+
+def _read_fresh_address_cluster(
+    cassandra_host: str,
+    cassandra_port: int,
+    transformed_keyspace: str,
+) -> dict[int, int]:
+    """Read the full fresh_address_cluster table -> address_id -> cluster_id."""
+    from cassandra.cluster import Cluster
+
+    with Cluster([cassandra_host], port=cassandra_port) as cluster:
+        session = cluster.connect()
+        rows = session.execute(
+            f"SELECT address_id, cluster_id FROM {transformed_keyspace}.fresh_address_cluster"  # noqa: S608
+        )
+        return {row.address_id: row.cluster_id for row in rows}
+
+
+def run_incremental_clustering_via_production(
     cassandra_host: str,
     cassandra_port: int,
     raw_keyspace: str,
     transformed_keyspace: str,
-    existing_mapping: dict[int, int],
+    currency: str,
+    initial_mapping: dict[int, int],
     min_block_id: int,
-    max_block_id: int | None = None,
+    max_block_id: int,
+    current_venv: Path,
 ) -> dict[int, int]:
-    """Run Rust incremental clustering: rebuild from existing mapping, add new blocks.
+    """Run incremental clustering by invoking the production
+    ``UpdateStrategyUtxo.run_fresh_clustering`` method via subprocess.
 
-    Args:
-        existing_mapping: address_id -> cluster_id from the initial clustering.
-        min_block_id: First block of the new range (inclusive).
-        max_block_id: Last block of the new range (inclusive).
+    This exercises the full production code path: point reads from
+    ``block_transactions`` and ``transaction``, address resolution via
+    ``address_ids_by_address_prefix``, ``run_incremental_clustering`` over the
+    affected clusters, and ``apply_changes`` writing the diff back to
+    ``fresh_address_cluster`` / ``fresh_cluster_addresses``.
 
-    Returns: updated address_id -> cluster_id for all known addresses.
+    The ``initial_mapping`` argument is unused — production state is read
+    directly from Cassandra — but is kept in the signature for API parity with
+    the previous helper.  After the subprocess finishes, this reads
+    ``fresh_address_cluster`` back and returns the full mapping.
+
+    Because the regressions test venv does not have graphsenselib installed,
+    the production code is invoked as a subprocess using ``current_venv``'s
+    Python, which has the package installed in editable mode.
     """
-    from gs_clustering import Clustering
+    import json
 
-    addr_to_id = read_address_id_mapping(
+    helper_args = {
+        "cassandra_host": cassandra_host,
+        "cassandra_port": cassandra_port,
+        "raw_keyspace": raw_keyspace,
+        "transformed_keyspace": transformed_keyspace,
+        "currency": currency,
+        "start_block": min_block_id,
+        "end_block": max_block_id,
+    }
+    python_bin = str(current_venv / "bin" / "python")
+    result = subprocess.run(
+        [python_bin, "-c", _RUN_FRESH_CLUSTERING_HELPER],
+        input=json.dumps(helper_args),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"run_fresh_clustering helper failed "
+            f"(exit {result.returncode}):\n"
+            f"stdout: {result.stdout[-3000:]}\n"
+            f"stderr: {result.stderr[-3000:]}"
+        )
+
+    return _read_fresh_address_cluster(
         cassandra_host, cassandra_port, transformed_keyspace
     )
-    if not addr_to_id:
-        return existing_mapping
-
-    raw_inputs = read_raw_tx_inputs(
-        cassandra_host, cassandra_port, raw_keyspace,
-        min_block_id=min_block_id,
-        max_block_id=max_block_id,
-    )
-    new_tx_input_ids = _resolve_tx_inputs(raw_inputs, addr_to_id)
-
-    max_address_id = max(addr_to_id.values())
-    c = Clustering(max_address_id=max_address_id)
-
-    # Rebuild from existing state
-    if existing_mapping:
-        addr_ids = list(existing_mapping.keys())
-        clus_ids = list(existing_mapping.values())
-        c.rebuild_from_mapping(addr_ids, clus_ids)
-
-    # Process new transactions
-    if new_tx_input_ids:
-        c.process_transactions(new_tx_input_ids)
-
-    return _mapping_from_clustering(c, addr_to_id)

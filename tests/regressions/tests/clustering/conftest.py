@@ -58,11 +58,62 @@ def cassandra_coords(cassandra_container):
 
 @pytest.fixture(scope="session")
 def current_venv():
+    """Current venv for clustering tests.
+
+    In addition to the editable graphsense-lib install, this ensures that the
+    Rust ``gs_clustering`` extension is built and installed into the same venv,
+    so that the production ``run_incremental_clustering`` function (which
+    imports ``gs_clustering``) can be invoked as a subprocess from here.
+    """
+    import subprocess
+
     configs = build_clustering_configs()
     gslib_path = configs[0].gslib_path if configs else None
     if gslib_path is None:
         pytest.skip("No clustering configs available")
-    return get_or_create_current_venv(gslib_path)
+
+    venv_dir = get_or_create_current_venv(gslib_path)
+
+    # Check if gs_clustering is already installed in this venv
+    python_bin = venv_dir / "bin" / "python"
+    check = subprocess.run(
+        [str(python_bin), "-c", "import gs_clustering"],
+        capture_output=True,
+    )
+    if check.returncode != 0:
+        # Build and install gs_clustering into the current_venv.
+        # `uv pip install <rust_path>` uses maturin as the build backend and
+        # compiles for the target Python version automatically.
+        rust_dir = gslib_path / "rust" / "gs_clustering"
+        if not rust_dir.exists():
+            pytest.skip(f"rust/gs_clustering not found at {rust_dir}")
+        print(f"\nBuilding gs_clustering into {venv_dir} ...", flush=True)
+        result = subprocess.run(
+            ["uv", "pip", "install", str(rust_dir), "--python", str(python_bin)],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to build gs_clustering (exit {result.returncode}):\n"
+                f"stdout: {result.stdout[-3000:]}\n"
+                f"stderr: {result.stderr[-3000:]}"
+            )
+        # Verify install
+        verify = subprocess.run(
+            [str(python_bin), "-c", "import gs_clustering"],
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode != 0:
+            raise RuntimeError(
+                f"gs_clustering still not importable after build:\n"
+                f"stderr: {verify.stderr}"
+            )
+        print(f"gs_clustering built and installed into {venv_dir}", flush=True)
+
+    return venv_dir
 
 
 SCALA_IMAGE_NAME = "graphsense-spark-test:latest"
