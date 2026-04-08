@@ -314,13 +314,13 @@ class TestWhirlpoolCoinJoinHappyPath:
     D, F = WHIRLPOOL_POOLS[1]  # 1_000_000 sat, 50_000 sat fee
     EPS = 5_000  # valid epsilon for new entrant inputs
 
-    def _make_coinjoin(self, n_new_entrants, pool=None):
-        """Build a valid 5×5 Whirlpool CoinJoin with n_new_entrants new entrants."""
+    def _make_coinjoin(self, n_new_entrants, pool=None, size=5):
+        """Build a valid Whirlpool CoinJoin with n_new_entrants new entrants."""
         d = pool or self.D
         inputs = [
             make_input(d + self.EPS, f"new_{i}") for i in range(n_new_entrants)
-        ] + [make_input(d, f"remix_{i}") for i in range(5 - n_new_entrants)]
-        outputs = [make_output(d, f"out_{i}") for i in range(5)]
+        ] + [make_input(d, f"remix_{i}") for i in range(size - n_new_entrants)]
+        outputs = [make_output(d, f"out_{i}") for i in range(size)]
         return make_tx(inputs, outputs)
 
     def test_one_new_entrant(self):
@@ -377,6 +377,36 @@ class TestWhirlpoolCoinJoinHappyPath:
             assert result is not None, f"Failed for pool denomination {d}"
             assert result.pool_denomination_sat == d
 
+    # --- Surge cycle tests (6/7/8 inputs) ---
+
+    def test_surge_6x6(self):
+        """Surge cycle: 6 inputs, 6 outputs — 2 new entrants + 4 remixers."""
+        result = _whirlpool_coinjoin_heuristic(self._make_coinjoin(2, size=6))
+        assert result is not None
+        assert result.n_new_entrants == 2
+        assert result.n_remixers == 4
+
+    def test_surge_7x7(self):
+        """Surge cycle: 7 inputs, 7 outputs — 3 new entrants + 4 remixers."""
+        result = _whirlpool_coinjoin_heuristic(self._make_coinjoin(3, size=7))
+        assert result is not None
+        assert result.n_new_entrants == 3
+        assert result.n_remixers == 4
+
+    def test_surge_8x8(self):
+        """Surge cycle: 8 inputs, 8 outputs — 4 new entrants + 4 remixers."""
+        result = _whirlpool_coinjoin_heuristic(self._make_coinjoin(4, size=8))
+        assert result is not None
+        assert result.n_new_entrants == 4
+        assert result.n_remixers == 4
+
+    def test_surge_8x8_one_new_entrant(self):
+        """Surge cycle: 8 inputs — 1 new entrant + 7 remixers."""
+        result = _whirlpool_coinjoin_heuristic(self._make_coinjoin(1, size=8))
+        assert result is not None
+        assert result.n_new_entrants == 1
+        assert result.n_remixers == 7
+
 
 # ---------------------------------------------------------------------------
 # CoinJoin — rejection cases
@@ -404,8 +434,9 @@ class TestWhirlpoolCoinJoinRejection:
         assert _whirlpool_coinjoin_heuristic(make_tx(inputs, outputs)) is None
 
     def test_too_many_inputs_rejected(self):
-        inputs = [make_input(self.D, f"remix_{i}") for i in range(6)]
-        outputs = [make_output(self.D, f"out_{i}") for i in range(5)]
+        """9 inputs exceeds surge cycle maximum of 8."""
+        inputs = [make_input(self.D, f"remix_{i}") for i in range(9)]
+        outputs = [make_output(self.D, f"out_{i}") for i in range(9)]
         assert _whirlpool_coinjoin_heuristic(make_tx(inputs, outputs)) is None
 
     def test_too_few_outputs_rejected(self):
@@ -415,11 +446,12 @@ class TestWhirlpoolCoinJoinRejection:
         outputs = [make_output(self.D, f"out_{i}") for i in range(4)]
         assert _whirlpool_coinjoin_heuristic(make_tx(inputs, outputs)) is None
 
-    def test_too_many_outputs_rejected(self):
+    def test_mismatched_input_output_count_rejected(self):
+        """6 inputs but 5 outputs — must have equal counts."""
         inputs = [make_input(self.D + self.EPS, f"new_{i}") for i in range(2)] + [
-            make_input(self.D, f"remix_{i}") for i in range(3)
+            make_input(self.D, f"remix_{i}") for i in range(4)
         ]
-        outputs = [make_output(self.D, f"out_{i}") for i in range(6)]
+        outputs = [make_output(self.D, f"out_{i}") for i in range(5)]
         assert _whirlpool_coinjoin_heuristic(make_tx(inputs, outputs)) is None
 
     def test_duplicate_input_script_rejected(self):
@@ -1044,12 +1076,12 @@ class TestJoinMarketRejection:
 class TestWasabi20HappyPath:
     """Wasabi 2.0 (WabiSabi): large rounds with variable denomination sets."""
 
-    def _make_wasabi20(self, denoms: dict[int, int], n_change=10, n_inputs=60):
+    def _make_wasabi20(self, denoms: dict[int, int], n_change=10, n_inputs=30):
         """
         Build a valid Wasabi 2.0 tx.
         denoms: {denomination_value: count} — the denomination set with frequencies
         n_change: number of non-denomination outputs (change)
-        n_inputs: total input count (must be >= 50)
+        n_inputs: total input count (must be >= 20)
         """
         outputs = []
         addr_idx = 0
@@ -1064,11 +1096,11 @@ class TestWasabi20HappyPath:
         return make_tx(inputs, outputs)
 
     def test_minimal_valid(self):
-        """50 inputs, single denomination with enough outputs."""
+        """20 inputs, single denomination with enough outputs."""
         # 30 denom outputs + 10 change + 1 coordinator = 41 outputs
         # denom majority: 30 >= (41-1)/2 = 20 ✓
-        # denom vs inputs: 30 >= 50/10 = 5 ✓
-        result = _wasabi_20_heuristic(self._make_wasabi20({200_000: 30}, n_inputs=50))
+        # denom vs inputs: 30 >= 20/10 = 2 ✓
+        result = _wasabi_20_heuristic(self._make_wasabi20({200_000: 30}, n_inputs=20))
         assert result is not None
         assert result.detected is True
         assert result.version == "2.0"
@@ -1091,9 +1123,9 @@ class TestWasabi20HappyPath:
         assert result is not None
         assert result.n_participants >= 1
 
-    def test_exactly_50_inputs(self):
-        """Boundary: exactly 50 inputs should pass."""
-        result = _wasabi_20_heuristic(self._make_wasabi20({300_000: 30}, n_inputs=50))
+    def test_exactly_20_inputs(self):
+        """Boundary: exactly 20 inputs should pass."""
+        result = _wasabi_20_heuristic(self._make_wasabi20({300_000: 30}, n_inputs=20))
         assert result is not None
 
     def test_no_change_outputs(self):
@@ -1135,12 +1167,12 @@ class TestWasabi20Rejection:
     def test_coinbase_rejected(self):
         assert _wasabi_20_heuristic(make_tx([], [], coinbase=True)) is None
 
-    def test_fewer_than_50_inputs(self):
-        """49 inputs — below minimum, must reject."""
+    def test_fewer_than_20_inputs(self):
+        """19 inputs — below minimum, must reject."""
         outputs = [make_output(200_000, f"denom_{i}") for i in range(30)] + [
             make_output(50_000 + i * 1001, f"change_{i}") for i in range(10)
         ]
-        inputs = [make_input(1_000_000, f"inp_{i}") for i in range(49)]
+        inputs = [make_input(1_000_000, f"inp_{i}") for i in range(19)]
         assert _wasabi_20_heuristic(make_tx(inputs, outputs)) is None
 
     def test_output_below_v_min(self):
