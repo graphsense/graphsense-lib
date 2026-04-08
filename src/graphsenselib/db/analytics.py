@@ -101,6 +101,14 @@ class DbChange:
             )
 
 
+@dataclass(frozen=True)
+class ApplyChangesResult:
+    attempts_made: int
+    total_retry_wait_seconds: float
+    warning_threshold: Optional[str] = None
+    warning_text: Optional[str] = None
+
+
 class KeyspaceConfig:
     def __init__(self, keyspace_name, db_type, address_type, tx_hash_type, currency):
         self._keyspace_name = keyspace_name
@@ -333,10 +341,11 @@ class DbWriterMixin:
         self,
         changes: List[DbChange],
         atomic=True,
-        nr_retries=10,
+        nr_retries=100,
         initial_concurrency: int = 100,
         min_concurrency: int = 5,
-    ):
+    ) -> ApplyChangesResult:
+        """Apply db changes and return retry/warning metadata."""
         statements = [
             (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
             for chng in changes
@@ -355,11 +364,12 @@ class DbWriterMixin:
         ]
 
         attempts_made = 0
+        total_retry_wait_seconds = 0.0
         for attempt in Retrying(
             retry=retry_if_exception_type((WriteTimeout, OperationTimedOut)),
             reraise=True,
             stop=stop_after_attempt(nr_retries),
-            wait=wait_exponential(multiplier=0.5, min=0.5, max=5),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=240),
             before_sleep=before_sleep_log(logger, logging.WARNING),
         ):
             # see https://tenacity.readthedocs.io/en/latest/#retrying-code-block
@@ -381,6 +391,26 @@ class DbWriterMixin:
                     self._db.execute_statements(
                         change_stmts, concurrency=current_concurrency
                     )
+                total_retry_wait_seconds = max(
+                    total_retry_wait_seconds, float(attempt.retry_state.idle_for or 0.0)
+                )
+
+        warning_threshold = None
+        warning_text = None
+        if total_retry_wait_seconds > 30:
+            warning_threshold = "retry_wait_gt_30s"
+            warning_text = (
+                "Total retry wait time exceeded threshold: "
+                f"{total_retry_wait_seconds:.1f}s > 30.0s "
+                f"(attempts={attempts_made})"
+            )
+
+        return ApplyChangesResult(
+            attempts_made=attempts_made,
+            total_retry_wait_seconds=total_retry_wait_seconds,
+            warning_threshold=warning_threshold,
+            warning_text=warning_text,
+        )
 
     def ensure_table_exists(
         self,

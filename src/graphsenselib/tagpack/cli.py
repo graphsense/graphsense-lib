@@ -718,7 +718,7 @@ def insert_tagpack(
         msg = f"Failed to load actor alias mapping from tagstore: {e}"
         logger.error(msg)
         try:
-            send_msg_to_topic("tagpack_insert_errors", msg)
+            send_msg_to_topic("info", msg)
         except Exception as slack_err:
             logger.warning(f"Failed to send Slack notification: {slack_err}")
 
@@ -814,7 +814,7 @@ def insert_tagpack(
         failed_count = n_ppacks - no_passed
         try:
             send_msg_to_topic(
-                "tagpack_insert_errors",
+                "info",
                 f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {path}",
             )
         except Exception as e:
