@@ -17,7 +17,13 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 from cassandra import OperationTimedOut, WriteTimeout
-from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
+from tenacity import (
+    Retrying,
+    before_sleep_log,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..config import keyspace_types
 from ..datatypes import DbChangeType
@@ -323,7 +329,14 @@ class DbWriterMixin:
     self._db and requires the object to provide the WithinKeyspace mixin
     """
 
-    def apply_changes(self, changes: List[DbChange], atomic=True, nr_retries=10):
+    def apply_changes(
+        self,
+        changes: List[DbChange],
+        atomic=True,
+        nr_retries=10,
+        initial_concurrency: int = 100,
+        min_concurrency: int = 5,
+    ):
         statements = [
             (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
             for chng in changes
@@ -346,19 +359,28 @@ class DbWriterMixin:
             retry=retry_if_exception_type((WriteTimeout, OperationTimedOut)),
             reraise=True,
             stop=stop_after_attempt(nr_retries),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=5),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
         ):
             # see https://tenacity.readthedocs.io/en/latest/#retrying-code-block
             with attempt:
                 attempts_made += 1
+                current_concurrency = max(
+                    min_concurrency,
+                    initial_concurrency // (2 ** (attempts_made - 1)),
+                )
                 if attempts_made > 1:
                     logger.warning(
                         "Applying changes ran into a write timeout. "
-                        f"Retrying {(nr_retries - attempts_made) + 1} more times."
+                        f"Retrying {(nr_retries - attempts_made) + 1} more times "
+                        f"with concurrency={current_concurrency}."
                     )
                 if atomic:
                     self._db.execute_statements_atomic(change_stmts)
                 else:
-                    self._db.execute_statements(change_stmts)
+                    self._db.execute_statements(
+                        change_stmts, concurrency=current_concurrency
+                    )
 
     def ensure_table_exists(
         self,
