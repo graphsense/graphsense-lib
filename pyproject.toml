@@ -151,16 +151,28 @@ transformation = [
     "pyspark>=3.5.0,<4.0.0",
 ]
 
+clustering = [
+    "graphsense-clustering>=0.1.0",
+]
+
 all = [
     "graphsense-lib[ingest]",
     "graphsense-lib[conversions]",
     "graphsense-lib[tagpacks]",
     "graphsense-lib[web]",
     "graphsense-lib[transformation]",
+    "graphsense-lib[clustering]",
 ]
 
 [project.scripts]
 graphsense-cli = "graphsenselib.cli:main.main"
+
+# Local source override for the clustering extension: inside this checkout,
+# `uv sync --extra clustering` builds the Rust crate from rust/gs_clustering
+# via maturin.  End users installing `graphsense-lib[clustering]` from PyPI
+# ignore this section and get the published `graphsense-clustering` wheel.
+[tool.uv.sources]
+graphsense-clustering = { path = "rust/gs_clustering", editable = true }
 
 [tool.setuptools]
 zip-safe = true

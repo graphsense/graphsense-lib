@@ -91,6 +91,12 @@ pre-commit:
 build:
 	uv build
 
+# Local development build of the Rust clustering extension.  Installs the
+# compiled module into the current venv via maturin develop --release.
+#
+# Not needed for end users: `pip install graphsense-lib[clustering]` pulls
+# pre-built wheels of `graphsense-clustering` from PyPI, produced by the
+# .github/workflows/pypi-publish-clustering.yaml workflow.
 build-rust:
 	cd rust/gs_clustering && maturin develop --release
 

@@ -3,9 +3,41 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "gs_clustering"
+name = "graphsense-clustering"
 version = "0.1.0"
+description = "UTXO address clustering via parallel Union-Find for GraphSense"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@iknaio.com" },
+]
 requires-python = ">=3.10"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
+dependencies = [
+    "pyarrow>=14.0",
+]
+
+[project.urls]
+Homepage = "https://graphsense.github.io/"
+Source = "https://github.com/graphsense/graphsense-lib"
+Tracker = "https://github.com/graphsense/graphsense-lib/issues"
 
 [tool.maturin]
+module-name = "gs_clustering"
 features = ["pyo3/extension-module"]

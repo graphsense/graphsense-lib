@@ -39,7 +39,7 @@ ADD ./uv.lock /opt/graphsense/lib/
 
 WORKDIR /opt/graphsense/lib/
 RUN make build
-RUN uv pip install $(ls dist/graphsense_lib-*.whl)[all,transformation] --system
+RUN uv pip install $(ls dist/graphsense_lib-*.whl)[all,transformation,clustering] --system
 RUN uv pip install gunicorn --system
 RUN mkdir -p /opt/duckdb/extensions \
     && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')"

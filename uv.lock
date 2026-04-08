@@ -1560,6 +1560,17 @@ yaml = [
 ]
 
 [[package]]
+name = "graphsense-clustering"
+version = "0.1.0"
+source = { editable = "rust/gs_clustering" }
+dependencies = [
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyarrow", specifier = ">=14.0" }]
+
+[[package]]
 name = "graphsense-lib"
 source = { editable = "." }
 dependencies = [
@@ -1603,6 +1614,7 @@ all = [
     { name = "fastapi", extra = ["all"] },
     { name = "gitpython" },
     { name = "giturlparse" },
+    { name = "graphsense-clustering" },
     { name = "grpcio" },
     { name = "gunicorn" },
     { name = "httpx" },
@@ -1625,6 +1637,9 @@ all = [
     { name = "tabulate" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "web3" },
+]
+clustering = [
+    { name = "graphsense-clustering" },
 ]
 conversions = [
     { name = "matplotlib" },
@@ -1758,6 +1773,8 @@ requires-dist = [
     { name = "gitpython", marker = "extra == 'tagstore'", specifier = ">=3.1" },
     { name = "giturlparse", marker = "extra == 'tagstore'", specifier = ">=0.10" },
     { name = "goodconf", extras = ["yaml"], specifier = ">=3.0.0" },
+    { name = "graphsense-clustering", marker = "extra == 'clustering'", editable = "rust/gs_clustering" },
+    { name = "graphsense-lib", extras = ["clustering"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["conversions"], marker = "extra == 'all'" },
     { name = "graphsense-lib", extras = ["conversions", "tagstore"], marker = "extra == 'web'" },
     { name = "graphsense-lib", extras = ["ingest"], marker = "extra == 'all'" },
@@ -1801,7 +1818,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.32.0" },
     { name = "web3", marker = "extra == 'ingest'", specifier = ">=6.0.0" },
 ]
-provides-extras = ["ingest", "conversions", "tagstore", "tagpacks", "web", "transformation", "all"]
+provides-extras = ["ingest", "conversions", "tagstore", "tagpacks", "web", "transformation", "clustering", "all"]
 
 [package.metadata.requires-dev]
 dev = [
