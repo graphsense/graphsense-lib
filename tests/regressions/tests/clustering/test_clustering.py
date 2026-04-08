@@ -42,38 +42,98 @@ def compare_cluster_partitions(
     scala_clusters: dict[int, set[int]],
     rust_mapping: dict[int, int],
 ) -> tuple[bool, list[str]]:
-    """Compare two clusterings for partition equivalence.
+    """Compare two clusterings for exact partition equivalence.
 
-    The comparison works by building a canonical representative for each address
-    (the minimum address_id in its cluster). Two partitions are equivalent iff
-    every address maps to the same canonical representative in both systems.
+    The comparison canonicalizes each side as a sorted list of sorted
+    address-id tuples — one tuple per cluster, keyed by the cluster's minimum
+    address id — and compares the two canonical forms directly. Cluster ids
+    are allowed to differ; every cluster's exact membership must match.
+
+    Checks, in order:
+      1. Both sides cover exactly the same set of address ids.
+      2. Both sides produce the same number of clusters.
+      3. Every cluster in Scala has an identical counterpart in Rust.
     """
-    # Build Scala: address_id -> canonical representative
-    scala_repr: dict[int, int] = {}
-    for _cluster_id, members in scala_clusters.items():
-        representative = min(members)
-        for addr_id in members:
-            scala_repr[addr_id] = representative
-
-    # Build Rust: address_id -> canonical representative
+    # Build rust clusters: cluster_id -> set[addr_id]
     rust_clusters: dict[int, set[int]] = {}
     for addr_id, cluster_id in rust_mapping.items():
         rust_clusters.setdefault(cluster_id, set()).add(addr_id)
 
-    rust_repr: dict[int, int] = {}
-    for _cluster_id, members in rust_clusters.items():
-        representative = min(members)
-        for addr_id in members:
-            rust_repr[addr_id] = representative
+    mismatches: list[str] = []
 
-    # Compare over the union of all addresses
-    all_addrs = set(scala_repr.keys()) | set(rust_repr.keys())
-    mismatches = []
-    for addr_id in sorted(all_addrs):
-        s = scala_repr.get(addr_id)
-        r = rust_repr.get(addr_id)
-        if s != r:
-            mismatches.append(f"addr {addr_id}: scala_rep={s}, rust_rep={r}")
+    # 1. Address-set equality
+    scala_addrs = {a for m in scala_clusters.values() for a in m}
+    rust_addrs = set(rust_mapping.keys())
+
+    only_scala = scala_addrs - rust_addrs
+    only_rust = rust_addrs - scala_addrs
+    if only_scala:
+        sample = sorted(only_scala)[:10]
+        mismatches.append(
+            f"{len(only_scala)} addresses in Scala missing from Rust "
+            f"(first {len(sample)}: {sample})"
+        )
+    if only_rust:
+        sample = sorted(only_rust)[:10]
+        mismatches.append(
+            f"{len(only_rust)} addresses in Rust missing from Scala "
+            f"(first {len(sample)}: {sample})"
+        )
+
+    # 2. Canonical form: sorted tuple per cluster, then order clusters by
+    #    their minimum address id.  min(cluster) is unique across clusters
+    #    since each address belongs to exactly one cluster, so this is a
+    #    total order.
+    def canonical(
+        clusters: dict[int, set[int]],
+    ) -> list[tuple[int, ...]]:
+        return sorted(
+            (tuple(sorted(members)) for members in clusters.values()),
+            key=lambda t: t[0],
+        )
+
+    scala_canon = canonical(scala_clusters)
+    rust_canon = canonical(rust_clusters)
+
+    if len(scala_canon) != len(rust_canon):
+        mismatches.append(
+            f"cluster count differs: scala={len(scala_canon)}, "
+            f"rust={len(rust_canon)}"
+        )
+
+    # 3. Cluster-by-cluster comparison on the canonical order.  Key each
+    #    cluster by its minimum address id so we can pair Scala and Rust
+    #    clusters even when cluster counts differ.
+    scala_by_min = {c[0]: c for c in scala_canon}
+    rust_by_min = {c[0]: c for c in rust_canon}
+
+    cluster_diffs = 0
+    for min_addr in sorted(set(scala_by_min) | set(rust_by_min)):
+        s = scala_by_min.get(min_addr)
+        r = rust_by_min.get(min_addr)
+        if s == r:
+            continue
+        cluster_diffs += 1
+        if cluster_diffs <= 20:
+            if s is None:
+                mismatches.append(
+                    f"cluster min={min_addr}: only in rust, members={r}"
+                )
+            elif r is None:
+                mismatches.append(
+                    f"cluster min={min_addr}: only in scala, members={s}"
+                )
+            else:
+                s_only = sorted(set(s) - set(r))
+                r_only = sorted(set(r) - set(s))
+                mismatches.append(
+                    f"cluster min={min_addr}: "
+                    f"scala-only={s_only}, rust-only={r_only}"
+                )
+    if cluster_diffs > 20:
+        mismatches.append(
+            f"... and {cluster_diffs - 20} more cluster mismatches"
+        )
 
     return len(mismatches) == 0, mismatches
 
