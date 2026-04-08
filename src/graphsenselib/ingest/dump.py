@@ -110,12 +110,12 @@ PIPELINE_REGISTRY: Dict[str, Callable] = {
 # anymore since compaction takes care of that.
 # Could potentially be lowered if performance doesnt take a hit.
 FILESIZES = {
-    "zec": 10000,
-    "trx": 10000,
-    "ltc": 1000,
-    "eth": 1000,
-    "btc": 1000,
-    "bch": 1000,
+    "zec": 1000,
+    "trx": 1000,
+    "ltc": 100,
+    "eth": 100,
+    "btc": 100,
+    "bch": 100,
 }
 
 PARTITIONSIZES = {
