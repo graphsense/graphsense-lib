@@ -216,10 +216,7 @@ def get_bridges_from_stargate(
 ) -> Optional[List[Bridge]]:
     # TODO: Unfinished
 
-    swaps = [dlog for dlog in dlogs if dlog["name"] == "Swap"]
-    # todo should we call them differently than the actual log is called? because swap is ambiguous
-    assert len(swaps) == 1, "Expected exactly one swap"
-    # swap = swaps[0]
+    # swap = [dlog for dlog in dlogs if dlog["name"] == "Swap"][0]
     # chainId = swap["parameters"]["chainId"]
     # dstPoolId = swap["parameters"]["dstPoolId"]
     # from_ = swap["parameters"]["from"]
