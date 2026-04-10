@@ -153,7 +153,7 @@ Start a PostgreSQL instance using Docker Compose:
 
 This will automatically create the database with the nessesary permissions for the `POSTGRES_USER_TAGSTORE`.
 
-    GS_TAGSTORE_DB_URL='postgresql://${POSTGRES_USER_TAGSTORE}:${POSTGRES_PASSWORD_TAGSTORE}@{HOST}:{PORT}/{DBNAME}' tagstore init
+    GS_TAGSTORE_DB_URL='postgresql://${POSTGRES_USER_TAGSTORE}:${POSTGRES_PASSWORD_TAGSTORE}@{HOST}:{PORT}/{DBNAME}' graphsense-cli tagstore init
 
 then generates the nessesary tables, views etc. and populates the database with some default entries.
 
