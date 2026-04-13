@@ -1,0 +1,7 @@
+rust/gs_clustering/target/
+venv/
+.venv/
+__pycache__/
+*.pyc
+dist/
+*.egg-info/

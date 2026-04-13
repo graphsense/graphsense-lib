@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git-lfs \
     openssh-client \
     libpq-dev \
+    curl \
     openjdk-17-jre-headless \
     # Arrow Java 12 (PySpark 3.5) requires Java 17; Java 21 removed
     # DirectByteBuffer(long,int) which Arrow 12 needs for directBuffer()
@@ -36,16 +37,24 @@ ADD ./.git/ /opt/graphsense/lib/.git
 ADD ./Makefile /opt/graphsense/lib/
 ADD ./pyproject.toml /opt/graphsense/lib/
 ADD ./uv.lock /opt/graphsense/lib/
+ADD ./rust/ /opt/graphsense/lib/rust
 
 WORKDIR /opt/graphsense/lib/
-RUN make build
-RUN uv pip install $(ls dist/graphsense_lib-*.whl)[all,transformation,clustering] --system
-RUN uv pip install gunicorn --system
-RUN mkdir -p /opt/duckdb/extensions \
-    && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')"
-
-RUN apt-get purge -y gcc g++ make cmake && apt-get autoremove -y
-RUN rm -rf /opt/graphsense/
+# Build everything (Python wheel + Rust clustering wheel), install all deps,
+# then remove Rust toolchain, build tools, and caches in a single layer.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+    && export PATH="/root/.cargo/bin:${PATH}" \
+    && make build \
+    && uv pip install maturin --system \
+    && cd rust/gs_clustering && maturin build --release && cd /opt/graphsense/lib/ \
+    && uv pip install rust/gs_clustering/target/wheels/graphsense_clustering-*manylinux*.whl --system \
+    && uv pip install $(ls dist/graphsense_lib-*.whl)[all,transformation] --system \
+    && uv pip install gunicorn --system \
+    && mkdir -p /opt/duckdb/extensions \
+    && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')" \
+    && rustup self uninstall -y \
+    && rm -rf /root/.cargo /root/.rustup /root/.cache /opt/graphsense/ \
+    && apt-get purge -y gcc g++ make cmake curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Inline gunicorn config for REST API
 COPY <<EOF /opt/gunicorn-conf.py
