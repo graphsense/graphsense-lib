@@ -16,6 +16,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Changed
 - better retry handling for delta updates
+- sources in coinjoin heuristics are now sorted by confidence
 
 ### Web API + Python client (webapi-2.10.0)
 no changes

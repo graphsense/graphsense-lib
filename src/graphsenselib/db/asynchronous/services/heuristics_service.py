@@ -331,7 +331,7 @@ def _build_coinjoin_consensus(coinjoin: CoinJoinHeuristics) -> CoinJoinConsensus
     whirlpool_tx0 is intentionally excluded — it is a pre-mix preparation
     transaction, not a CoinJoin itself.
     """
-    sources = []
+    detected_sources: list[tuple[str, int]] = []
     confidence = 0
     candidates = [
         ("joinmarket_coinjoin", coinjoin.joinmarket),
@@ -340,11 +340,19 @@ def _build_coinjoin_consensus(coinjoin: CoinJoinHeuristics) -> CoinJoinConsensus
     ]
     for name, result in candidates:
         if result is not None and result.detected:
-            sources.append(name)
+            detected_sources.append((name, result.confidence))
             confidence = max(confidence, result.confidence)
 
-    if not sources:
+    if not detected_sources:
         return None
+
+    sources = [
+        name
+        for name, _ in sorted(
+            detected_sources,
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
 
     return CoinJoinConsensus(detected=True, confidence=confidence, sources=sources)
 

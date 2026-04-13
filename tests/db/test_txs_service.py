@@ -4,14 +4,19 @@ import pytest
 
 from graphsenselib.db.asynchronous.services.heuristics import (
     AddressOutput,
+    CoinJoinHeuristics,
     DirectChangeHeuristic,
+    JoinMarketHeuristic,
     MultiInputChangeDetails,
     MultiInputChangeHeuristic,
     OneTimeChangeDetails,
     OneTimeChangeHeuristic,
+    WasabiHeuristic,
+    WhirlpoolCoinJoinHeuristic,
 )
 from graphsenselib.db.asynchronous.services.heuristics_service import (
     _build_change_consensus_map,
+    _build_coinjoin_consensus,
     _direct_change_heuristic,
     _multi_input_change_heuristic,
     _one_time_change_heuristic,
@@ -525,6 +530,64 @@ class TestBuildConsensusMap:
         assert set(consensus_map.keys()) == {"addr_A", "addr_B"}
         assert consensus_map["addr_A"].sources == ["direct_change"]
         assert consensus_map["addr_B"].sources == ["multi_input_change"]
+
+
+class TestBuildCoinJoinConsensus:
+    def test_sources_sorted_by_confidence_descending(self):
+        coinjoin = CoinJoinHeuristics(
+            joinmarket=JoinMarketHeuristic(
+                detected=True,
+                confidence=49,
+                n_participants=5,
+                pool_denomination=100_000,
+            ),
+            wasabi=WasabiHeuristic(
+                detected=True,
+                confidence=80,
+                version="2.0",
+                n_participants=5,
+                denominations=[100_000],
+            ),
+            whirlpool_coinjoin=WhirlpoolCoinJoinHeuristic(
+                detected=True,
+                confidence=70,
+                pool_denomination_sat=100_000,
+                n_remixers=3,
+                n_new_entrants=2,
+            ),
+        )
+
+        consensus = _build_coinjoin_consensus(coinjoin)
+
+        assert consensus is not None
+        assert consensus.sources == [
+            "wasabi_coinjoin",
+            "whirlpool_coinjoin",
+            "joinmarket_coinjoin",
+        ]
+        assert consensus.confidence == 80
+
+    def test_tie_breaker_is_stable_and_deterministic(self):
+        coinjoin = CoinJoinHeuristics(
+            joinmarket=JoinMarketHeuristic(
+                detected=True,
+                confidence=70,
+                n_participants=5,
+                pool_denomination=100_000,
+            ),
+            wasabi=WasabiHeuristic(
+                detected=True,
+                confidence=70,
+                version="2.0",
+                n_participants=5,
+                denominations=[100_000],
+            ),
+        )
+
+        consensus = _build_coinjoin_consensus(coinjoin)
+
+        assert consensus is not None
+        assert consensus.sources == ["joinmarket_coinjoin", "wasabi_coinjoin"]
 
 
 class TestCalculateHeuristics:
