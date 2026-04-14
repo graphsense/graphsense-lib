@@ -568,9 +568,21 @@ class TxsService:
             currency, self.db, tx, included_bridges=included_bridges
         )
 
+        # A sub-tx identifier pointing to the root trace of the tx (trace_address == "")
+        # is semantically equivalent to the whole tx, so treat it as such.
+        is_root_trace = False
+        if tx_obj.tx_type is SubTransactionType.InternalTx and is_eth_like(currency):
+            raw_traces = await self.db.fetch_transaction_traces(currency, tx)
+            for t in raw_traces:
+                if t.get("trace_index") == tx_obj.sub_index:
+                    trace_address = t.get("trace_address")
+                    if trace_address is None or trace_address == "":
+                        is_root_trace = True
+                    break
+
         # if it is a raw tx hash without a subtx, dont filter, otherwise
         # filter the conversions to the ones that have either fromPayment or toPayment as identifier
-        if tx_obj.tx_type is SubTransactionType.ExternalTx:
+        if tx_obj.tx_type is SubTransactionType.ExternalTx or is_root_trace:
             filtered_conversions = conversions_gslib
         else:
             filtered_conversions = [

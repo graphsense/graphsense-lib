@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.config.tagstore_config import TagStoreReaderConfig
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -176,6 +176,20 @@ class GSRestConfig(BaseSettings):
     tag_access_logger: Optional[TagAccessLoggerConfig] = Field(
         default=None, description="Tag access logger configuration"
     )
+
+    @model_validator(mode="after")
+    def load_tagstore_from_env(self) -> "GSRestConfig":
+        """Populate tagstore from GRAPHSENSE_TAGSTORE_READ_* env vars when unset."""
+        if self.tagstore is not None:
+            return self
+
+        try:
+            self.tagstore = TagStoreReaderConfig()
+        except ValidationError:
+            # No valid env-provided tagstore config; keep optional field unset.
+            return self
+
+        return self
 
     def get_plugin_config(self, plugin_name: str) -> Optional[Dict[str, Any]]:
         """Get configuration for a specific plugin"""

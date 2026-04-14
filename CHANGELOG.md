@@ -18,6 +18,10 @@ Use one changelog file, but separate entries by track in each release window.
 - better retry handling for delta updates
 - sources in coinjoin heuristics are now sorted by confidence
 
+#### Fixed
+- load all conversions if input is root_trace
+- loading tagstore config via env variables within gsrest.
+
 ### Web API + Python client (webapi-2.10.0)
 
 #### Added
