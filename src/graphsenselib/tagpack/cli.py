@@ -821,7 +821,7 @@ def insert_tagpack(
             logger.warning(f"Failed to send Slack notification: {e}")
     else:
         click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
-    msg = "Don't forget to run 'graphsense-cli tagstore refresh-views' soon to keep the database"
+    msg = "Don't forget to run 'graphsense-cli tagpack-tool refresh-views' soon to keep the database"
     msg += " consistent!"
     print(msg)
 
