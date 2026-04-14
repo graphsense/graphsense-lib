@@ -127,11 +127,11 @@ Responses from deprecated routes carry:
 - **`Link: </docs#section/Deprecation-policy>; rel="deprecation"; type="text/html"`** —
   points clients at the authoritative policy page.
 - **`Sunset: <HTTP-date>`** — [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594).
-  When a specific removal date has been committed, this header is added to
-  announce it (e.g. `Sunset: Wed, 01 Oct 2026 00:00:00 GMT`). **Not currently
-  emitted** — the API advertises deprecation without a fixed sunset date until
-  the replacement surface has bedded in. Clients should still parse it if
-  present, since future releases will populate it per-endpoint.
+  Announces the committed removal date for the endpoint. For the
+  `/entities/...` endpoints (superseded by `/clusters/...`), the sunset is
+  set to `Sat, 31 Oct 2026 00:00:00 GMT`. After that date the deprecated
+  endpoints may be removed without further notice. Other deprecations may
+  be introduced with different sunset dates in future releases.
 
 To detect deprecation in your own client code, inspect the `Deprecation` and
 `Sunset` response headers and log a warning (or fail CI) when you hit a

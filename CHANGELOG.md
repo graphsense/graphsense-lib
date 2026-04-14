@@ -31,9 +31,10 @@ Use one changelog file, but separate entries by track in each release window.
 - New `Cluster`, `NeighborCluster`, `NeighborClusters`, `ClusterAddresses` types
   in the generated Python client (subclasses of the `Entity*` types, so both
   are usable during the deprecation window).
-- RFC 9745 `Deprecation: true` response header plus a `Link` header with
-  `rel="deprecation"` on every deprecated route. Clients can detect these
-  without parsing the OpenAPI schema.
+- RFC 9745 `Deprecation: true` response header, RFC 8594 `Sunset` response
+  header (set to `2026-10-31` for the `/entities/...` endpoints), and a `Link`
+  header with `rel="deprecation"` on every deprecated route. Clients can
+  detect these without parsing the OpenAPI schema.
 - Written deprecation policy in the API description (visible in `/docs` and
   in the generated spec).
 

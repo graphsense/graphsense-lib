@@ -59,11 +59,13 @@ def test_legacy_response_contains_both_entity_and_cluster_keys(client):
     assert result["entity"] == result["cluster"]
 
 
-def test_deprecated_route_sets_deprecation_header(client):
-    """RFC 9745 `Deprecation` + `Link` headers on deprecated routes."""
+def test_deprecated_route_sets_deprecation_headers(client):
+    """RFC 9745 `Deprecation`, RFC 8594 `Sunset`, and `Link` headers are set."""
     response = client.get(f"/btc/entities/{entityWithTags.entity}")
     assert response.status_code == 200
     assert response.headers.get("deprecation") == "true"
+    # Sunset for the entities→clusters migration: 2026-10-31
+    assert response.headers.get("sunset") == "Sat, 31 Oct 2026 00:00:00 GMT"
     link = response.headers.get("link", "")
     assert 'rel="deprecation"' in link
 
