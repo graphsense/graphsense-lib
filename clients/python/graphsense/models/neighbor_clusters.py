@@ -17,15 +17,15 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.neighbor_entity import NeighborEntity
+from graphsense.models.neighbor_cluster import NeighborCluster
 from typing import Optional, Set
 from typing_extensions import Self
 
-class NeighborEntities(BaseModel):
+class NeighborClusters(BaseModel):
     """
-    Paginated list of neighbor clusters (legacy name: NeighborEntities).
+    Paginated list of neighbor clusters (canonical name).
     """ # noqa: E501
-    neighbors: List[NeighborEntity]
+    neighbors: List[NeighborCluster]
     next_page: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["neighbors", "next_page"]
 
@@ -47,7 +47,7 @@ class NeighborEntities(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of NeighborEntities from a JSON string"""
+        """Create an instance of NeighborClusters from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -80,7 +80,7 @@ class NeighborEntities(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of NeighborEntities from a dict"""
+        """Create an instance of NeighborClusters from a dict"""
         if obj is None:
             return None
 
@@ -88,7 +88,7 @@ class NeighborEntities(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "neighbors": [NeighborEntity.from_dict(_item) for _item in obj["neighbors"]] if obj.get("neighbors") is not None else None,
+            "neighbors": [NeighborCluster.from_dict(_item) for _item in obj["neighbors"]] if obj.get("neighbors") is not None else None,
             "next_page": obj.get("next_page")
         })
         return _obj

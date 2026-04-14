@@ -47,6 +47,7 @@ from graphsenselib.web.routes import (
     addresses,
     blocks,
     bulk,
+    clusters,
     entities,
     general,
     rates,
@@ -759,6 +760,11 @@ def _register_routers(app: FastAPI):
         tags=["addresses"],
     )
     app.include_router(blocks.router, prefix="/{currency}", tags=["blocks"])
+    app.include_router(
+        clusters.router,
+        prefix="/{currency}",
+        tags=["clusters"],
+    )
     app.include_router(
         entities.router,
         prefix="/{currency}",

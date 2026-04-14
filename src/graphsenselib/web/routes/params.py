@@ -24,6 +24,11 @@ EntityPath = Annotated[
     Path(description="The entity ID", examples=[67065]),
 ]
 
+ClusterPath = Annotated[
+    int,
+    Path(description="The cluster ID", examples=[67065]),
+]
+
 TxHashPath = Annotated[
     str,
     Path(

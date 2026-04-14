@@ -17,17 +17,17 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.neighbor_entity import NeighborEntity
+from graphsense.models.address import Address
 from typing import Optional, Set
 from typing_extensions import Self
 
-class NeighborEntities(BaseModel):
+class ClusterAddresses(BaseModel):
     """
-    Paginated list of neighbor clusters (legacy name: NeighborEntities).
+    Paginated list of addresses in a cluster (canonical name).
     """ # noqa: E501
-    neighbors: List[NeighborEntity]
+    addresses: List[Address]
     next_page: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["neighbors", "next_page"]
+    __properties: ClassVar[List[str]] = ["addresses", "next_page"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +47,7 @@ class NeighborEntities(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of NeighborEntities from a JSON string"""
+        """Create an instance of ClusterAddresses from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,19 +68,19 @@ class NeighborEntities(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of each item in neighbors (list)
+        # override the default output from pydantic by calling `to_dict()` of each item in addresses (list)
         _items = []
-        if self.neighbors:
-            for _item_neighbors in self.neighbors:
-                if _item_neighbors:
-                    _items.append(_item_neighbors.to_dict())
-            _dict['neighbors'] = _items
+        if self.addresses:
+            for _item_addresses in self.addresses:
+                if _item_addresses:
+                    _items.append(_item_addresses.to_dict())
+            _dict['addresses'] = _items
 
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of NeighborEntities from a dict"""
+        """Create an instance of ClusterAddresses from a dict"""
         if obj is None:
             return None
 
@@ -88,7 +88,7 @@ class NeighborEntities(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "neighbors": [NeighborEntity.from_dict(_item) for _item in obj["neighbors"]] if obj.get("neighbors") is not None else None,
+            "addresses": [Address.from_dict(_item) for _item in obj["addresses"]] if obj.get("addresses") is not None else None,
             "next_page": obj.get("next_page")
         })
         return _obj

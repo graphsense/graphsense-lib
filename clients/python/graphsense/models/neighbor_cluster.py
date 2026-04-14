@@ -22,9 +22,9 @@ from graphsense.models.values import Values
 from typing import Optional, Set
 from typing_extensions import Self
 
-class NeighborEntity(BaseModel):
+class NeighborCluster(BaseModel):
     """
-    Neighbor cluster model (legacy name: NeighborEntity).  Note: unlike the top-level `Entity`/`Cluster` models, this class does NOT dual-emit a `cluster` key at the neighbor level. The nested `entity` value is either an integer ID or a full `Entity` object (which itself already exposes both `entity` and `cluster` keys), so adding a sibling `cluster` key here would duplicate either an int or an entire object for no gain and introduce an OpenAPI schema name collision with the top-level `Cluster` type.
+    Neighbor cluster (canonical name, supersedes `NeighborEntity`).
     """ # noqa: E501
     value: Values
     no_txs: StrictInt
@@ -51,7 +51,7 @@ class NeighborEntity(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of NeighborEntity from a JSON string"""
+        """Create an instance of NeighborCluster from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -90,7 +90,7 @@ class NeighborEntity(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of NeighborEntity from a dict"""
+        """Create an instance of NeighborCluster from a dict"""
         if obj is None:
             return None
 

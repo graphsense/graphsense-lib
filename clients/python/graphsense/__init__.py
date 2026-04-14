@@ -19,6 +19,7 @@ __all__ = [
     "AddressesApi",
     "BlocksApi",
     "BulkApi",
+    "ClustersApi",
     "EntitiesApi",
     "GeneralApi",
     "RatesApi",
@@ -46,6 +47,8 @@ __all__ = [
     "Block",
     "BlockAtDate",
     "ChangeHeuristics",
+    "Cluster",
+    "ClusterAddresses",
     "CoinJoinConsensus",
     "CoinJoinHeuristics",
     "Concept",
@@ -67,6 +70,8 @@ __all__ = [
     "MultiInputChangeHeuristic",
     "NeighborAddress",
     "NeighborAddresses",
+    "NeighborCluster",
+    "NeighborClusters",
     "NeighborEntities",
     "NeighborEntity",
     "OneTimeChangeHeuristic",
@@ -112,6 +117,7 @@ import graphsense.compat  # noqa: F401
 from graphsense.api.addresses_api import AddressesApi as AddressesApi
 from graphsense.api.blocks_api import BlocksApi as BlocksApi
 from graphsense.api.bulk_api import BulkApi as BulkApi
+from graphsense.api.clusters_api import ClustersApi as ClustersApi
 from graphsense.api.entities_api import EntitiesApi as EntitiesApi
 from graphsense.api.general_api import GeneralApi as GeneralApi
 from graphsense.api.rates_api import RatesApi as RatesApi
@@ -143,6 +149,8 @@ from graphsense.models.address_txs import AddressTxs as AddressTxs
 from graphsense.models.block import Block as Block
 from graphsense.models.block_at_date import BlockAtDate as BlockAtDate
 from graphsense.models.change_heuristics import ChangeHeuristics as ChangeHeuristics
+from graphsense.models.cluster import Cluster as Cluster
+from graphsense.models.cluster_addresses import ClusterAddresses as ClusterAddresses
 from graphsense.models.coin_join_consensus import CoinJoinConsensus as CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics as CoinJoinHeuristics
 from graphsense.models.concept import Concept as Concept
@@ -164,6 +172,8 @@ from graphsense.models.location_inner import LocationInner as LocationInner
 from graphsense.models.multi_input_change_heuristic import MultiInputChangeHeuristic as MultiInputChangeHeuristic
 from graphsense.models.neighbor_address import NeighborAddress as NeighborAddress
 from graphsense.models.neighbor_addresses import NeighborAddresses as NeighborAddresses
+from graphsense.models.neighbor_cluster import NeighborCluster as NeighborCluster
+from graphsense.models.neighbor_clusters import NeighborClusters as NeighborClusters
 from graphsense.models.neighbor_entities import NeighborEntities as NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity as NeighborEntity
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic as OneTimeChangeHeuristic

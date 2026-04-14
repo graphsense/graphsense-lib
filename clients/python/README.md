@@ -111,6 +111,13 @@ Class | Method | HTTP request | Description
 *BlocksApi* | [**list_block_txs**](docs/BlocksApi.md#list_block_txs) | **GET** /{currency}/blocks/{height}/txs | List transactions in a block
 *BulkApi* | [**bulk_csv**](docs/BulkApi.md#bulk_csv) | **POST** /{currency}/bulk.csv/{operation} | Stream bulk operation results as CSV
 *BulkApi* | [**bulk_json**](docs/BulkApi.md#bulk_json) | **POST** /{currency}/bulk.json/{operation} | Stream bulk operation results as JSON
+*ClustersApi* | [**get_cluster**](docs/ClustersApi.md#get_cluster) | **GET** /{currency}/clusters/{cluster} | Get cluster details
+*ClustersApi* | [**list_address_tags_by_cluster**](docs/ClustersApi.md#list_address_tags_by_cluster) | **GET** /{currency}/clusters/{cluster}/tags | List cluster address tags
+*ClustersApi* | [**list_cluster_addresses**](docs/ClustersApi.md#list_cluster_addresses) | **GET** /{currency}/clusters/{cluster}/addresses | List cluster addresses
+*ClustersApi* | [**list_cluster_links**](docs/ClustersApi.md#list_cluster_links) | **GET** /{currency}/clusters/{cluster}/links | List transactions between clusters
+*ClustersApi* | [**list_cluster_neighbors**](docs/ClustersApi.md#list_cluster_neighbors) | **GET** /{currency}/clusters/{cluster}/neighbors | List neighboring clusters
+*ClustersApi* | [**list_cluster_txs**](docs/ClustersApi.md#list_cluster_txs) | **GET** /{currency}/clusters/{cluster}/txs | List cluster transactions
+*ClustersApi* | [**search_cluster_neighbors**](docs/ClustersApi.md#search_cluster_neighbors) | **GET** /{currency}/clusters/{cluster}/search | Search cluster neighborhood
 *EntitiesApi* | [**get_entity**](docs/EntitiesApi.md#get_entity) | **GET** /{currency}/entities/{entity} | Get entity details
 *EntitiesApi* | [**list_address_tags_by_entity**](docs/EntitiesApi.md#list_address_tags_by_entity) | **GET** /{currency}/entities/{entity}/tags | List entity address tags
 *EntitiesApi* | [**list_entity_addresses**](docs/EntitiesApi.md#list_entity_addresses) | **GET** /{currency}/entities/{entity}/addresses | List entity addresses
@@ -151,6 +158,8 @@ Class | Method | HTTP request | Description
  - [Block](docs/Block.md)
  - [BlockAtDate](docs/BlockAtDate.md)
  - [ChangeHeuristics](docs/ChangeHeuristics.md)
+ - [Cluster](docs/Cluster.md)
+ - [ClusterAddresses](docs/ClusterAddresses.md)
  - [CoinJoinConsensus](docs/CoinJoinConsensus.md)
  - [CoinJoinHeuristics](docs/CoinJoinHeuristics.md)
  - [Concept](docs/Concept.md)
@@ -172,6 +181,8 @@ Class | Method | HTTP request | Description
  - [MultiInputChangeHeuristic](docs/MultiInputChangeHeuristic.md)
  - [NeighborAddress](docs/NeighborAddress.md)
  - [NeighborAddresses](docs/NeighborAddresses.md)
+ - [NeighborCluster](docs/NeighborCluster.md)
+ - [NeighborClusters](docs/NeighborClusters.md)
  - [NeighborEntities](docs/NeighborEntities.md)
  - [NeighborEntity](docs/NeighborEntity.md)
  - [OneTimeChangeHeuristic](docs/OneTimeChangeHeuristic.md)

@@ -15,7 +15,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
@@ -42,8 +42,9 @@ class AddressTag(BaseModel):
     confidence_level: Optional[StrictInt] = None
     inherited_from: Optional[StrictStr] = None
     address: Optional[StrictStr] = None
-    entity: Optional[StrictInt] = None
-    __properties: ClassVar[List[str]] = ["label", "tag_type", "tagpack_title", "tagpack_is_public", "tagpack_creator", "is_cluster_definer", "currency", "category", "concepts", "actor", "abuse", "tagpack_uri", "source", "lastmod", "confidence", "confidence_level", "inherited_from", "address", "entity"]
+    entity: Optional[StrictInt] = Field(default=None, description="Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release.")
+    cluster: Optional[StrictInt] = Field(description="Address cluster ID (preferred alias for the deprecated `entity` field).")
+    __properties: ClassVar[List[str]] = ["label", "tag_type", "tagpack_title", "tagpack_is_public", "tagpack_creator", "is_cluster_definer", "currency", "category", "concepts", "actor", "abuse", "tagpack_uri", "source", "lastmod", "confidence", "confidence_level", "inherited_from", "address", "entity", "cluster"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -75,8 +76,10 @@ class AddressTag(BaseModel):
         * `None` is only added to the output dict for nullable fields that
           were set at model initialization. Other fields with value `None`
           are ignored.
+        * OpenAPI `readOnly` fields are excluded.
         """
         excluded_fields: Set[str] = set([
+            "cluster",
         ])
 
         _dict = self.model_dump(
@@ -115,7 +118,8 @@ class AddressTag(BaseModel):
             "confidence_level": obj.get("confidence_level"),
             "inherited_from": obj.get("inherited_from"),
             "address": obj.get("address"),
-            "entity": obj.get("entity")
+            "entity": obj.get("entity"),
+            "cluster": obj.get("cluster")
         })
         return _obj
 

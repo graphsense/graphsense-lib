@@ -1,24 +1,24 @@
-# graphsense.EntitiesApi
+# graphsense.ClustersApi
 
 All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**get_entity**](EntitiesApi.md#get_entity) | **GET** /{currency}/entities/{entity} | Get entity details
-[**list_address_tags_by_entity**](EntitiesApi.md#list_address_tags_by_entity) | **GET** /{currency}/entities/{entity}/tags | List entity address tags
-[**list_entity_addresses**](EntitiesApi.md#list_entity_addresses) | **GET** /{currency}/entities/{entity}/addresses | List entity addresses
-[**list_entity_links**](EntitiesApi.md#list_entity_links) | **GET** /{currency}/entities/{entity}/links | List transactions between entities
-[**list_entity_neighbors**](EntitiesApi.md#list_entity_neighbors) | **GET** /{currency}/entities/{entity}/neighbors | List neighboring entities
-[**list_entity_txs**](EntitiesApi.md#list_entity_txs) | **GET** /{currency}/entities/{entity}/txs | List entity transactions
-[**search_entity_neighbors**](EntitiesApi.md#search_entity_neighbors) | **GET** /{currency}/entities/{entity}/search | Search entity neighborhood
+[**get_cluster**](ClustersApi.md#get_cluster) | **GET** /{currency}/clusters/{cluster} | Get cluster details
+[**list_address_tags_by_cluster**](ClustersApi.md#list_address_tags_by_cluster) | **GET** /{currency}/clusters/{cluster}/tags | List cluster address tags
+[**list_cluster_addresses**](ClustersApi.md#list_cluster_addresses) | **GET** /{currency}/clusters/{cluster}/addresses | List cluster addresses
+[**list_cluster_links**](ClustersApi.md#list_cluster_links) | **GET** /{currency}/clusters/{cluster}/links | List transactions between clusters
+[**list_cluster_neighbors**](ClustersApi.md#list_cluster_neighbors) | **GET** /{currency}/clusters/{cluster}/neighbors | List neighboring clusters
+[**list_cluster_txs**](ClustersApi.md#list_cluster_txs) | **GET** /{currency}/clusters/{cluster}/txs | List cluster transactions
+[**search_cluster_neighbors**](ClustersApi.md#search_cluster_neighbors) | **GET** /{currency}/clusters/{cluster}/search | Search cluster neighborhood
 
 
-# **get_entity**
-> Entity get_entity(currency, entity, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
+# **get_cluster**
+> Cluster get_cluster(currency, cluster, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
 
-Get entity details
+Get cluster details
 
-Deprecated alias for `GET /{currency}/clusters/{cluster}`. Returns details for a single address cluster.
+Returns details for a single address cluster.
 
 ### Example
 
@@ -26,7 +26,7 @@ Deprecated alias for `GET /{currency}/clusters/{cluster}`. Returns details for a
 
 ```python
 import graphsense
-from graphsense.models.entity import Entity
+from graphsense.models.cluster import Cluster
 from graphsense.rest import ApiException
 from pprint import pprint
 
@@ -50,19 +50,19 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.EntitiesApi(api_client)
+    api_instance = graphsense.ClustersApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    cluster = 67065 # int | The cluster ID
     exclude_best_address_tag = None # bool | Whether to exclude best address tag (optional)
     include_actors = True # bool | Whether to include actor information (optional) (default to False)
 
     try:
-        # Get entity details
-        api_response = api_instance.get_entity(currency, entity, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
-        print("The response of EntitiesApi->get_entity:\n")
+        # Get cluster details
+        api_response = api_instance.get_cluster(currency, cluster, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
+        print("The response of ClustersApi->get_cluster:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling EntitiesApi->get_entity: %s\n" % e)
+        print("Exception when calling ClustersApi->get_cluster: %s\n" % e)
 ```
 
 
@@ -73,13 +73,13 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **entity** | **int**| The entity ID | 
+ **cluster** | **int**| The cluster ID | 
  **exclude_best_address_tag** | **bool**| Whether to exclude best address tag | [optional] 
  **include_actors** | **bool**| Whether to include actor information | [optional] [default to False]
 
 ### Return type
 
-[**Entity**](Entity.md)
+[**Cluster**](Cluster.md)
 
 ### Authorization
 
@@ -95,17 +95,17 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**404** | Entity not found for the selected currency. |  -  |
+**404** | Cluster not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **list_address_tags_by_entity**
-> AddressTags list_address_tags_by_entity(currency, entity, page=page, pagesize=pagesize)
+# **list_address_tags_by_cluster**
+> AddressTags list_address_tags_by_cluster(currency, cluster, page=page, pagesize=pagesize)
 
-List entity address tags
+List cluster address tags
 
-Returns paginated attribution tags observed on addresses in the entity.
+Returns paginated attribution tags observed on addresses in the cluster.
 
 ### Example
 
@@ -137,19 +137,19 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.EntitiesApi(api_client)
+    api_instance = graphsense.ClustersApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    cluster = 67065 # int | The cluster ID
     page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # List entity address tags
-        api_response = api_instance.list_address_tags_by_entity(currency, entity, page=page, pagesize=pagesize)
-        print("The response of EntitiesApi->list_address_tags_by_entity:\n")
+        # List cluster address tags
+        api_response = api_instance.list_address_tags_by_cluster(currency, cluster, page=page, pagesize=pagesize)
+        print("The response of ClustersApi->list_address_tags_by_cluster:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling EntitiesApi->list_address_tags_by_entity: %s\n" % e)
+        print("Exception when calling ClustersApi->list_address_tags_by_cluster: %s\n" % e)
 ```
 
 
@@ -160,7 +160,7 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **entity** | **int**| The entity ID | 
+ **cluster** | **int**| The cluster ID | 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -182,17 +182,17 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**404** | Entity not found for the selected currency. |  -  |
+**404** | Cluster not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **list_entity_addresses**
-> EntityAddresses list_entity_addresses(currency, entity, page=page, pagesize=pagesize)
+# **list_cluster_addresses**
+> ClusterAddresses list_cluster_addresses(currency, cluster, page=page, pagesize=pagesize)
 
-List entity addresses
+List cluster addresses
 
-Deprecated alias for `GET /{currency}/clusters/{cluster}/addresses`. Returns paginated addresses that belong to the cluster.
+Returns paginated addresses that belong to the cluster.
 
 ### Example
 
@@ -200,7 +200,7 @@ Deprecated alias for `GET /{currency}/clusters/{cluster}/addresses`. Returns pag
 
 ```python
 import graphsense
-from graphsense.models.entity_addresses import EntityAddresses
+from graphsense.models.cluster_addresses import ClusterAddresses
 from graphsense.rest import ApiException
 from pprint import pprint
 
@@ -224,19 +224,19 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.EntitiesApi(api_client)
+    api_instance = graphsense.ClustersApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    cluster = 67065 # int | The cluster ID
     page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # List entity addresses
-        api_response = api_instance.list_entity_addresses(currency, entity, page=page, pagesize=pagesize)
-        print("The response of EntitiesApi->list_entity_addresses:\n")
+        # List cluster addresses
+        api_response = api_instance.list_cluster_addresses(currency, cluster, page=page, pagesize=pagesize)
+        print("The response of ClustersApi->list_cluster_addresses:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling EntitiesApi->list_entity_addresses: %s\n" % e)
+        print("Exception when calling ClustersApi->list_cluster_addresses: %s\n" % e)
 ```
 
 
@@ -247,13 +247,13 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **entity** | **int**| The entity ID | 
+ **cluster** | **int**| The cluster ID | 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
 ### Return type
 
-[**EntityAddresses**](EntityAddresses.md)
+[**ClusterAddresses**](ClusterAddresses.md)
 
 ### Authorization
 
@@ -269,17 +269,17 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**404** | Entity not found for the selected currency. |  -  |
+**404** | Cluster not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **list_entity_links**
-> Links list_entity_links(currency, entity, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
+# **list_cluster_links**
+> Links list_cluster_links(currency, cluster, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
 
-List transactions between entities
+List transactions between clusters
 
-Returns paginated transaction links between the entity and a neighbor entity.
+Returns paginated transaction links between the cluster and a neighbor cluster.
 
 ### Example
 
@@ -311,10 +311,10 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.EntitiesApi(api_client)
+    api_instance = graphsense.ClustersApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
-    neighbor = 123456 # int | Neighbor entity ID
+    cluster = 67065 # int | The cluster ID
+    neighbor = 123456 # int | Neighbor cluster ID
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
     min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
@@ -325,12 +325,12 @@ with graphsense.ApiClient(configuration) as api_client:
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # List transactions between entities
-        api_response = api_instance.list_entity_links(currency, entity, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
-        print("The response of EntitiesApi->list_entity_links:\n")
+        # List transactions between clusters
+        api_response = api_instance.list_cluster_links(currency, cluster, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
+        print("The response of ClustersApi->list_cluster_links:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling EntitiesApi->list_entity_links: %s\n" % e)
+        print("Exception when calling ClustersApi->list_cluster_links: %s\n" % e)
 ```
 
 
@@ -341,8 +341,8 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **entity** | **int**| The entity ID | 
- **neighbor** | **int**| Neighbor entity ID | 
+ **cluster** | **int**| The cluster ID | 
+ **neighbor** | **int**| Neighbor cluster ID | 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
  **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
@@ -370,17 +370,17 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**404** | Entity not found for the selected currency. |  -  |
+**404** | Cluster not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **list_entity_neighbors**
-> NeighborEntities list_entity_neighbors(currency, entity, direction, only_ids=only_ids, include_labels=include_labels, page=page, pagesize=pagesize, relations_only=relations_only, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
+# **list_cluster_neighbors**
+> NeighborClusters list_cluster_neighbors(currency, cluster, direction, only_ids=only_ids, include_labels=include_labels, page=page, pagesize=pagesize, relations_only=relations_only, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
 
-List neighboring entities
+List neighboring clusters
 
-Returns neighboring entities connected to the given entity in the entity graph.
+Returns neighboring clusters connected to the given cluster in the cluster graph.
 
 ### Example
 
@@ -388,7 +388,7 @@ Returns neighboring entities connected to the given entity in the entity graph.
 
 ```python
 import graphsense
-from graphsense.models.neighbor_entities import NeighborEntities
+from graphsense.models.neighbor_clusters import NeighborClusters
 from graphsense.rest import ApiException
 from pprint import pprint
 
@@ -412,25 +412,25 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.EntitiesApi(api_client)
+    api_instance = graphsense.ClustersApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    cluster = 67065 # int | The cluster ID
     direction = 'out' # str | Incoming or outgoing neighbors
     only_ids = None # str | Restrict result to given set of comma separated IDs (optional)
     include_labels = True # bool | Whether to include labels of first page of address tags (optional)
     page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
-    relations_only = None # bool | Return only relations without entity details (optional)
+    relations_only = None # bool | Return only relations without cluster details (optional)
     exclude_best_address_tag = None # bool | Whether to exclude best address tag (optional)
     include_actors = True # bool | Whether to include actor information (optional) (default to False)
 
     try:
-        # List neighboring entities
-        api_response = api_instance.list_entity_neighbors(currency, entity, direction, only_ids=only_ids, include_labels=include_labels, page=page, pagesize=pagesize, relations_only=relations_only, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
-        print("The response of EntitiesApi->list_entity_neighbors:\n")
+        # List neighboring clusters
+        api_response = api_instance.list_cluster_neighbors(currency, cluster, direction, only_ids=only_ids, include_labels=include_labels, page=page, pagesize=pagesize, relations_only=relations_only, exclude_best_address_tag=exclude_best_address_tag, include_actors=include_actors)
+        print("The response of ClustersApi->list_cluster_neighbors:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling EntitiesApi->list_entity_neighbors: %s\n" % e)
+        print("Exception when calling ClustersApi->list_cluster_neighbors: %s\n" % e)
 ```
 
 
@@ -441,19 +441,19 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **entity** | **int**| The entity ID | 
+ **cluster** | **int**| The cluster ID | 
  **direction** | **str**| Incoming or outgoing neighbors | 
  **only_ids** | **str**| Restrict result to given set of comma separated IDs | [optional] 
  **include_labels** | **bool**| Whether to include labels of first page of address tags | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
- **relations_only** | **bool**| Return only relations without entity details | [optional] 
+ **relations_only** | **bool**| Return only relations without cluster details | [optional] 
  **exclude_best_address_tag** | **bool**| Whether to exclude best address tag | [optional] 
  **include_actors** | **bool**| Whether to include actor information | [optional] [default to False]
 
 ### Return type
 
-[**NeighborEntities**](NeighborEntities.md)
+[**NeighborClusters**](NeighborClusters.md)
 
 ### Authorization
 
@@ -469,17 +469,17 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**404** | Entity not found for the selected currency. |  -  |
+**404** | Cluster not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **list_entity_txs**
-> AddressTxs list_entity_txs(currency, entity, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
+# **list_cluster_txs**
+> AddressTxs list_cluster_txs(currency, cluster, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
 
-List entity transactions
+List cluster transactions
 
-Returns paginated transactions involving the entity, with optional height, date, direction, and token filters.
+Returns paginated transactions involving the cluster, with optional height, date, direction, and token filters.
 
 ### Example
 
@@ -511,9 +511,9 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.EntitiesApi(api_client)
+    api_instance = graphsense.ClustersApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    cluster = 67065 # int | The cluster ID
     direction = 'out' # str | Incoming or outgoing transactions (optional)
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
@@ -525,12 +525,12 @@ with graphsense.ApiClient(configuration) as api_client:
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # List entity transactions
-        api_response = api_instance.list_entity_txs(currency, entity, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
-        print("The response of EntitiesApi->list_entity_txs:\n")
+        # List cluster transactions
+        api_response = api_instance.list_cluster_txs(currency, cluster, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
+        print("The response of ClustersApi->list_cluster_txs:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling EntitiesApi->list_entity_txs: %s\n" % e)
+        print("Exception when calling ClustersApi->list_cluster_txs: %s\n" % e)
 ```
 
 
@@ -541,7 +541,7 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **entity** | **int**| The entity ID | 
+ **cluster** | **int**| The cluster ID | 
  **direction** | **str**| Incoming or outgoing transactions | [optional] 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
@@ -570,17 +570,17 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**404** | Entity not found for the selected currency. |  -  |
+**404** | Cluster not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **search_entity_neighbors**
-> List[SearchResultLevel1] search_entity_neighbors(currency, entity, direction, key, value, depth, breadth, skip_num_addresses=skip_num_addresses)
+# **search_cluster_neighbors**
+> List[SearchResultLevel1] search_cluster_neighbors(currency, cluster, direction, key, value, depth, breadth, skip_num_addresses=skip_num_addresses)
 
-Search entity neighborhood
+Search cluster neighborhood
 
-Returns matching neighboring entities found by key/value criteria within the specified search depth and breadth.
+Returns matching neighboring clusters found by key/value criteria within the specified search depth and breadth.
 
 ### Example
 
@@ -612,23 +612,23 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.EntitiesApi(api_client)
+    api_instance = graphsense.ClustersApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    entity = 67065 # int | The entity ID
+    cluster = 67065 # int | The cluster ID
     direction = 'out' # str | Incoming or outgoing neighbors
     key = 'category' # str | Search key
     value = 'Miner' # str | Comma separated search values
     depth = 2 # int | Search depth
     breadth = 16 # int | Search breadth
-    skip_num_addresses = None # int | Skip entities with more than N addresses (optional)
+    skip_num_addresses = None # int | Skip clusters with more than N addresses (optional)
 
     try:
-        # Search entity neighborhood
-        api_response = api_instance.search_entity_neighbors(currency, entity, direction, key, value, depth, breadth, skip_num_addresses=skip_num_addresses)
-        print("The response of EntitiesApi->search_entity_neighbors:\n")
+        # Search cluster neighborhood
+        api_response = api_instance.search_cluster_neighbors(currency, cluster, direction, key, value, depth, breadth, skip_num_addresses=skip_num_addresses)
+        print("The response of ClustersApi->search_cluster_neighbors:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling EntitiesApi->search_entity_neighbors: %s\n" % e)
+        print("Exception when calling ClustersApi->search_cluster_neighbors: %s\n" % e)
 ```
 
 
@@ -639,13 +639,13 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **entity** | **int**| The entity ID | 
+ **cluster** | **int**| The cluster ID | 
  **direction** | **str**| Incoming or outgoing neighbors | 
  **key** | **str**| Search key | 
  **value** | **str**| Comma separated search values | 
  **depth** | **int**| Search depth | 
  **breadth** | **int**| Search breadth | 
- **skip_num_addresses** | **int**| Skip entities with more than N addresses | [optional] 
+ **skip_num_addresses** | **int**| Skip clusters with more than N addresses | [optional] 
 
 ### Return type
 
@@ -665,7 +665,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**404** | Entity not found for the selected currency. |  -  |
+**404** | Cluster not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

@@ -4,6 +4,7 @@
 from graphsense.api.addresses_api import AddressesApi
 from graphsense.api.blocks_api import BlocksApi
 from graphsense.api.bulk_api import BulkApi
+from graphsense.api.clusters_api import ClustersApi
 from graphsense.api.entities_api import EntitiesApi
 from graphsense.api.general_api import GeneralApi
 from graphsense.api.rates_api import RatesApi

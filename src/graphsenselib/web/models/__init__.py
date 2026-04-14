@@ -13,8 +13,12 @@ from graphsenselib.web.models.base import APIModel
 from graphsenselib.web.models.blocks import Block, BlockAtDate
 from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.entities import (
+    Cluster,
+    ClusterAddresses,
     Entity,
     EntityAddresses,
+    NeighborCluster,
+    NeighborClusters,
     NeighborEntities,
     NeighborEntity,
 )
@@ -116,11 +120,16 @@ __all__ = [
     "Address",
     "NeighborAddress",
     "NeighborAddresses",
-    # Entities
+    # Entities (deprecated names, kept for backwards compatibility)
     "Entity",
     "NeighborEntity",
     "NeighborEntities",
     "EntityAddresses",
+    # Clusters (canonical names; aliases of Entity*)
+    "Cluster",
+    "NeighborCluster",
+    "NeighborClusters",
+    "ClusterAddresses",
     # Blocks
     "Block",
     "BlockAtDate",

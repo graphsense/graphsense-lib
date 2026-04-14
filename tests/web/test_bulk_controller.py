@@ -31,9 +31,9 @@ def test_bulk_csv(client):
     )
     result = response.text
     expected = (
-        "_error,_info,_request_address,actors,address,balance_eur,balance_usd,balance_value,currency,entity,first_tx_height,first_tx_timestamp,first_tx_tx_hash,in_degree,is_contract,last_tx_height,last_tx_timestamp,last_tx_tx_hash,no_incoming_txs,no_outgoing_txs,out_degree,status,token_balances,total_received_eur,total_received_usd,total_received_value,total_spent_eur,total_spent_usd,total_spent_value,total_tokens_received,total_tokens_spent\r\n"  # noqa
-        "not found,,2,,,,,,,,,,,,,,,,,,,,,,,,,,,,\r\n"
-        ",,a123456,,a123456,1.15,2.31,115422577,btc,123,1,1361497172,04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd,5013,,1,1361497172,bd01b57a50bdee0fb34ce77f5c62a664cea5b94b304d438a8225850f05b45ae5,3981,267,284,clean,,2130676.5,2543214.5,40412296129,2118309.0,2541183.0,40296873552,,\r\n"
+        "_error,_info,_request_address,actors,address,balance_eur,balance_usd,balance_value,cluster,currency,entity,first_tx_height,first_tx_timestamp,first_tx_tx_hash,in_degree,is_contract,last_tx_height,last_tx_timestamp,last_tx_tx_hash,no_incoming_txs,no_outgoing_txs,out_degree,status,token_balances,total_received_eur,total_received_usd,total_received_value,total_spent_eur,total_spent_usd,total_spent_value,total_tokens_received,total_tokens_spent\r\n"  # noqa
+        "not found,,2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,\r\n"
+        ",,a123456,,a123456,1.15,2.31,115422577,123,btc,123,1,1361497172,04d92601677d62a985310b61a301e74870fa942c8be0648e16b1db23b996a8cd,5013,,1,1361497172,bd01b57a50bdee0fb34ce77f5c62a664cea5b94b304d438a8225850f05b45ae5,3981,267,284,clean,,2130676.5,2543214.5,40412296129,2118309.0,2541183.0,40296873552,,\r\n"
     )  # noqa
     assert sorted(expected.split("\r\n")) == sorted(result.split("\r\n"))
 

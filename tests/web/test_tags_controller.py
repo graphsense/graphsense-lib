@@ -26,6 +26,7 @@ def test_get_actor_tags(client):
             "confidence_level": 100,
             "currency": "BTC",
             "entity": 17642138,
+            "cluster": 17642138,
             "is_cluster_definer": False,
             "label": "labelX",
             "actor": "actorY",
@@ -45,6 +46,7 @@ def test_get_actor_tags(client):
             "confidence_level": 100,
             "currency": "ETH",
             "entity": 107925001,
+            "cluster": 107925001,
             "is_cluster_definer": False,
             "label": "LabelY",
             "actor": "actorY",
@@ -105,6 +107,7 @@ def test_list_address_tags(client):
     t2["is_cluster_definer"] = True
     t2["tagpack_title"] += " Private"
     t2["entity"] = 456
+    t2["cluster"] = 456
     assert [t1, t2] == result["address_tags"]
 
     result = get_json(client, path, auth="unauthorized", label="isolinks")

@@ -23,6 +23,8 @@ from graphsense.models.address_txs import AddressTxs
 from graphsense.models.block import Block
 from graphsense.models.block_at_date import BlockAtDate
 from graphsense.models.change_heuristics import ChangeHeuristics
+from graphsense.models.cluster import Cluster
+from graphsense.models.cluster_addresses import ClusterAddresses
 from graphsense.models.coin_join_consensus import CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics
 from graphsense.models.concept import Concept
@@ -44,6 +46,8 @@ from graphsense.models.location_inner import LocationInner
 from graphsense.models.multi_input_change_heuristic import MultiInputChangeHeuristic
 from graphsense.models.neighbor_address import NeighborAddress
 from graphsense.models.neighbor_addresses import NeighborAddresses
+from graphsense.models.neighbor_cluster import NeighborCluster
+from graphsense.models.neighbor_clusters import NeighborClusters
 from graphsense.models.neighbor_entities import NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic

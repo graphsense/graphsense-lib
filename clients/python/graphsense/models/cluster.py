@@ -15,22 +15,22 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import field_validator,  BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
-from graphsense.compat import CompatList
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.address_tag import AddressTag
 from graphsense.models.labeled_item_ref import LabeledItemRef
 from graphsense.models.tx_summary import TxSummary
 from graphsense.models.values import Values
 from typing import Optional, Set
 from typing_extensions import Self
 
-class Address(BaseModel):
+class Cluster(BaseModel):
     """
-    Address model.
+    Address cluster (canonical name, supersedes `Entity`).
     """ # noqa: E501
     currency: StrictStr
-    address: StrictStr
     entity: StrictInt = Field(description="Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release.")
+    root_address: StrictStr
     balance: Values
     total_received: Values
     total_spent: Values
@@ -38,25 +38,17 @@ class Address(BaseModel):
     last_tx: TxSummary
     in_degree: StrictInt
     out_degree: StrictInt
+    no_addresses: StrictInt
     no_incoming_txs: StrictInt
     no_outgoing_txs: StrictInt
+    no_address_tags: StrictInt
     token_balances: Optional[Dict[str, Values]] = None
     total_tokens_received: Optional[Dict[str, Values]] = None
     total_tokens_spent: Optional[Dict[str, Values]] = None
     actors: Optional[List[LabeledItemRef]] = None
-    is_contract: Optional[StrictBool] = None
-    status: Optional[StrictStr] = Field(default=None, description="Legacy field. Do not use — retained only for backwards compatibility and will be removed in a future release.")
-    cluster: StrictInt = Field(description="Address cluster ID (preferred alias for the deprecated `entity` field).")
-    __properties: ClassVar[List[str]] = ["currency", "address", "entity", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "is_contract", "status", "cluster"]
-    @field_validator('actors', mode='wrap')
-    @classmethod
-    def wrap_actors_compat(cls, v, handler):
-        """Wrap actors in CompatList for backward compatibility."""
-        validated = handler(v)
-        if validated is not None and not isinstance(validated, CompatList):
-            return CompatList(validated) if isinstance(validated, list) else validated
-        return validated
-
+    best_address_tag: Optional[AddressTag] = None
+    cluster: StrictInt = Field(description="Cluster ID (preferred alias for the deprecated `entity` field).")
+    __properties: ClassVar[List[str]] = ["currency", "entity", "root_address", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_addresses", "no_incoming_txs", "no_outgoing_txs", "no_address_tags", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "best_address_tag", "cluster"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -76,7 +68,7 @@ class Address(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of Address from a JSON string"""
+        """Create an instance of Cluster from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -142,12 +134,15 @@ class Address(BaseModel):
                 if _item_actors:
                     _items.append(_item_actors.to_dict())
             _dict['actors'] = _items
+        # override the default output from pydantic by calling `to_dict()` of best_address_tag
+        if self.best_address_tag:
+            _dict['best_address_tag'] = self.best_address_tag.to_dict()
 
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of Address from a dict"""
+        """Create an instance of Cluster from a dict"""
         if obj is None:
             return None
 
@@ -156,8 +151,8 @@ class Address(BaseModel):
 
         _obj = cls.model_validate({
             "currency": obj.get("currency"),
-            "address": obj.get("address"),
             "entity": obj.get("entity"),
+            "root_address": obj.get("root_address"),
             "balance": Values.from_dict(obj["balance"]) if obj.get("balance") is not None else None,
             "total_received": Values.from_dict(obj["total_received"]) if obj.get("total_received") is not None else None,
             "total_spent": Values.from_dict(obj["total_spent"]) if obj.get("total_spent") is not None else None,
@@ -165,8 +160,10 @@ class Address(BaseModel):
             "last_tx": TxSummary.from_dict(obj["last_tx"]) if obj.get("last_tx") is not None else None,
             "in_degree": obj.get("in_degree"),
             "out_degree": obj.get("out_degree"),
+            "no_addresses": obj.get("no_addresses"),
             "no_incoming_txs": obj.get("no_incoming_txs"),
             "no_outgoing_txs": obj.get("no_outgoing_txs"),
+            "no_address_tags": obj.get("no_address_tags"),
             "token_balances": dict(
                 (_k, Values.from_dict(_v))
                 for _k, _v in obj["token_balances"].items()
@@ -186,8 +183,7 @@ class Address(BaseModel):
             if obj.get("total_tokens_spent") is not None
             else None,
             "actors": [LabeledItemRef.from_dict(_item) for _item in obj["actors"]] if obj.get("actors") is not None else None,
-            "is_contract": obj.get("is_contract"),
-            "status": obj.get("status"),
+            "best_address_tag": AddressTag.from_dict(obj["best_address_tag"]) if obj.get("best_address_tag") is not None else None,
             "cluster": obj.get("cluster")
         })
         return _obj

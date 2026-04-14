@@ -23,7 +23,7 @@ from typing_extensions import Self
 
 class EntityAddresses(BaseModel):
     """
-    Paginated list of addresses in an entity.
+    Paginated list of addresses in a cluster (legacy name: EntityAddresses).
     """ # noqa: E501
     addresses: List[Address]
     next_page: Optional[StrictStr] = None
