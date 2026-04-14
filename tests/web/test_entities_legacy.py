@@ -57,3 +57,19 @@ def test_legacy_response_contains_both_entity_and_cluster_keys(client):
     assert "entity" in result
     assert "cluster" in result
     assert result["entity"] == result["cluster"]
+
+
+def test_deprecated_route_sets_deprecation_header(client):
+    """RFC 9745 `Deprecation` + `Link` headers on deprecated routes."""
+    response = client.get(f"/btc/entities/{entityWithTags.entity}")
+    assert response.status_code == 200
+    assert response.headers.get("deprecation") == "true"
+    link = response.headers.get("link", "")
+    assert 'rel="deprecation"' in link
+
+
+def test_cluster_route_does_not_set_deprecation_header(client):
+    """Non-deprecated `/clusters/...` routes must NOT carry the deprecation header."""
+    response = client.get(f"/btc/clusters/{entityWithTags.entity}")
+    assert response.status_code == 200
+    assert "deprecation" not in {k.lower() for k in response.headers.keys()}

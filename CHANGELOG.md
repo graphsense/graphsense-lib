@@ -19,7 +19,32 @@ Use one changelog file, but separate entries by track in each release window.
 - sources in coinjoin heuristics are now sorted by confidence
 
 ### Web API + Python client (webapi-2.10.0)
-no changes
+
+#### Added
+- New `/{currency}/clusters/...` endpoints (`get_cluster`, `list_cluster_addresses`,
+  `list_cluster_neighbors`, `list_cluster_links`, `list_address_tags_by_cluster`,
+  `list_cluster_txs`, `search_cluster_neighbors`) that supersede the
+  corresponding `/entities/...` endpoints. Both sets return identical data;
+  new integrations should use `/clusters/...`.
+- New `cluster` field on `Address`, `Cluster`/`Entity`, and `AddressTag` response
+  models. Dual-emitted alongside the existing `entity` field.
+- New `Cluster`, `NeighborCluster`, `NeighborClusters`, `ClusterAddresses` types
+  in the generated Python client (subclasses of the `Entity*` types, so both
+  are usable during the deprecation window).
+- RFC 9745 `Deprecation: true` response header plus a `Link` header with
+  `rel="deprecation"` on every deprecated route. Clients can detect these
+  without parsing the OpenAPI schema.
+- Written deprecation policy in the API description (visible in `/docs` and
+  in the generated spec).
+
+#### Deprecated
+- `/{currency}/entities/...` endpoints — use `/{currency}/clusters/...` instead.
+- `entity` field on `Address`, `Cluster`, `NeighborEntity`, and `AddressTag` —
+  use `cluster` instead.
+- `status` field on `Address` — legacy field, no replacement.
+
+All deprecated surfaces continue to work; see the "Deprecation policy" section
+of the API description for the support window.
 
 ## [2.10.1] 2026-04-03
 
