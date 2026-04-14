@@ -58,7 +58,7 @@ def to_int(string: Union[str, int]) -> int:
 
 def hex_to_bytes(hex_str: Optional[str]) -> Optional[bytes]:
     """Convert hexstring (starting with 0x) to bytearray."""
-    return bytes.fromhex(strip_0x(hex_str)) if hex_str is not None else None  # type: ignore[invalid-argument-type]
+    return bytes.fromhex(strip_0x(hex_str)) if hex_str is not None else None  # ty: ignore[invalid-argument-type]
 
 
 def is_native_placeholder(asset: str) -> bool:

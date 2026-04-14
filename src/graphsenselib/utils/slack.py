@@ -50,7 +50,7 @@ class ClickSlackErrorNotificationContext:
         if (
             isinstance(e, SystemExit)
             and e.code is not None
-            and ((e.code > 10) or (e.code == 0))
+            and ((e.code > 10) or (e.code == 0))  # ty: ignore[unsupported-operator]
         ):
             # Exit code 911 is used when lockfile is already used in
             # delta updates we don't what notifications for that

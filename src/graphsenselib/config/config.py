@@ -246,7 +246,7 @@ class Environment(BaseModel):
     keyspaces: Dict[str, KeyspaceConfig]
 
     def get_configured_currencies(self) -> List[str]:
-        return self.keyspaces.keys()
+        return list(self.keyspaces.keys())
 
     def get_keyspace(self, currency: str) -> KeyspaceConfig:
         return self.keyspaces[currency]
@@ -336,7 +336,7 @@ class AppConfig(GoodConf):
         self, load: bool = False, config_file: str | None = None, **kwargs
     ) -> None:
         super().__init__(load, config_file, **kwargs)
-        self.model_config["explicit_config_file"] = config_file
+        self.model_config["explicit_config_file"] = config_file  # ty: ignore[invalid-key]
 
     def is_loaded(self) -> bool:
         return hasattr(self, "environments")
@@ -354,7 +354,7 @@ class AppConfig(GoodConf):
         elif env_overwrite_file_env and env_overwrite_file:
             return env_overwrite_file
         else:
-            default_files = self.model_config.get("default_files", [])
+            default_files = self.model_config.get("default_files", []) or []
             for f in default_files:
                 if os.path.exists(f):
                     return f
@@ -391,7 +391,7 @@ class AppConfig(GoodConf):
             return []
 
     def get_configured_slack_topics(self) -> List[str]:
-        return self.slack_topics.keys()
+        return list(self.slack_topics.keys())
 
     def get_environment(self, env: str) -> Environment:
         if not self.is_loaded():
@@ -473,7 +473,7 @@ class AppConfig(GoodConf):
         delta_sink = (
             self.get_environment(env)
             .keyspaces[currency]
-            .ingest_config.raw_keyspace_file_sinks.get("delta")
+            .ingest_config.raw_keyspace_file_sinks.get("delta")  # ty: ignore[unresolved-attribute]
         )
         if delta_sink is None:
             logger.debug(f"Delta sink not configured for {currency} in {env}")

@@ -38,7 +38,7 @@ class TestCassandraConfig:
     def test_valid_minimal_config(self):
         """Test valid minimal configuration."""
         config_dict = {"currencies": {"btc": None, "eth": None}, "nodes": ["127.0.0.1"]}
-        config = CassandraConfig(**config_dict)
+        config = CassandraConfig(**config_dict)  # ty: ignore[invalid-argument-type]
 
         assert len(config.currencies) == 2
         assert isinstance(config.currencies["btc"], CurrencyConfig)
@@ -62,12 +62,12 @@ class TestCassandraConfig:
             "retry_interval": 10,
             "list_address_txs_ordered_legacy": True,
         }
-        config = CassandraConfig(**config_dict)
+        config = CassandraConfig(**config_dict)  # ty: ignore[invalid-argument-type]
 
-        assert config.currencies["btc"].raw == "btc_raw"  # ty: ignore[possibly-unbound-attribute]
-        assert config.currencies["btc"].transformed == "btc_transformed"  # ty: ignore[possibly-unbound-attribute]
-        assert config.currencies["eth"].raw == "eth_raw"  # ty: ignore[possibly-unbound-attribute]
-        assert config.currencies["eth"].balance_provider == "node"  # ty: ignore[possibly-unbound-attribute]
+        assert config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
+        assert config.currencies["btc"].transformed == "btc_transformed"  # ty: ignore[unresolved-attribute]
+        assert config.currencies["eth"].raw == "eth_raw"  # ty: ignore[unresolved-attribute]
+        assert config.currencies["eth"].balance_provider == "node"  # ty: ignore[unresolved-attribute]
         assert config.nodes == ["127.0.0.1", "127.0.0.2"]
         assert config.port == 9043
         assert config.username == "cassandra"
@@ -103,12 +103,12 @@ class TestCassandraConfig:
 
         # Invalid currency config type
         with pytest.raises(ValidationError) as exc_info:
-            CassandraConfig(currencies={"btc": "invalid_config"}, nodes=["127.0.0.1"])
+            CassandraConfig(currencies={"btc": "invalid_config"}, nodes=["127.0.0.1"])  # ty: ignore[invalid-argument-type]
         assert "Invalid config type for currency btc" in str(exc_info.value)
 
         # Valid currency configs
         config = CassandraConfig(
-            currencies={
+            currencies={  # ty: ignore[invalid-argument-type]
                 "btc": None,
                 "eth": {"raw": "eth_raw"},
                 "ltc": CurrencyConfig(transformed="ltc_transformed"),
@@ -211,7 +211,7 @@ class TestCassandraConfig:
     def test_config_serialization(self):
         """Test configuration serialization and deserialization."""
         original_config = CassandraConfig(
-            currencies={"btc": {"raw": "btc_raw"}, "eth": None},
+            currencies={"btc": {"raw": "btc_raw"}, "eth": None},  # ty: ignore[invalid-argument-type]
             nodes=["127.0.0.1"],
             port=9043,
             username="user",
@@ -225,7 +225,7 @@ class TestCassandraConfig:
 
         # Compare
         assert (
-            new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[possibly-unbound-attribute]
+            new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
         )
         assert isinstance(new_config.currencies["eth"], CurrencyConfig)
         assert new_config.nodes == ["127.0.0.1"]
@@ -235,7 +235,8 @@ class TestCassandraConfig:
     def test_json_serialization(self):
         """Test JSON serialization and deserialization."""
         config = CassandraConfig(
-            currencies={"btc": {"raw": "btc_raw"}}, nodes=["127.0.0.1"]
+            currencies={"btc": {"raw": "btc_raw"}},  # ty: ignore[invalid-argument-type]
+            nodes=["127.0.0.1"],
         )
 
         # Serialize to JSON
@@ -244,7 +245,7 @@ class TestCassandraConfig:
         # Deserialize from JSON
         new_config = CassandraConfig.model_validate_json(json_str)
 
-        assert new_config.currencies["btc"].raw == "btc_raw"
+        assert new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
         assert new_config.nodes == ["127.0.0.1"]
 
 

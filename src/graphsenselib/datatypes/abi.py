@@ -605,7 +605,7 @@ def get_filtered_log_signatures(filter: str, log_signatures_local=log_signatures
 
     result = {}
     for k, v in log_signatures_local.items():
-        vnew = [x for x in v if any(pattern.match(y) for y in x.get("tags", []))]
+        vnew = [x for x in v if any(pattern.match(y) for y in x.get("tags", []))]  # ty: ignore[no-matching-overload]
 
         if len(vnew) > 0:
             result[k] = v
@@ -663,9 +663,10 @@ def decode_log(log, log_signatures_local=log_signatures):
                 versioned_dict = VersionedDict(log_signatures_local, i)
                 decoded_log = eth_event.decode_log(log, versioned_dict)
                 ld = versioned_dict
-                decoded_log["log_def"] = ld[log["topics"][0]]
-                decoded_log["parameters"] = {
-                    d["name"]: d["value"] for d in decoded_log.get("data", [])
+                decoded_log["log_def"] = ld[log["topics"][0]]  # ty: ignore[invalid-key]
+                decoded_log["parameters"] = {  # ty: ignore[invalid-key]
+                    d["name"]: d["value"]  # ty: ignore[invalid-argument-type]
+                    for d in decoded_log.get("data", [])
                 }
                 return decoded_log
             except eth_event.EventError as e:

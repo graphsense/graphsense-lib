@@ -253,7 +253,7 @@ class AddressConverterBch(AddressConverterBtcLike):
         super().__init__(bech32_prefix=None, nonstandard_prefix="nonstandard")
 
     def to_canonical_address_str(self, address: str) -> str:
-        if address.startswith(self.nonstandard_prefix):
+        if address.startswith(self.nonstandard_prefix):  # ty: ignore[invalid-argument-type]
             return address
         try:
             return bch_address_to_legacy(address)
@@ -277,7 +277,7 @@ class AddressConverterBchWithNonstandardFallback(AddressConverterBch):
         super().__init__()
 
     def to_str(self, address_byte):
-        return super().to_str(address_byte).removeprefix(self.nonstandard_prefix)
+        return super().to_str(address_byte).removeprefix(self.nonstandard_prefix)  # ty: ignore[no-matching-overload]
 
     def to_bytes(self, address: str) -> bytes:
         if any(
