@@ -79,6 +79,7 @@ make serve-web
 |---|---|---|
 | `GSREST_DISABLE_AUTH` | `false` | Disable API key authentication |
 | `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP` | `false` | Auto-initialize TagStore tables/views at startup when missing |
+| `GRAPHSENSE_TAGSTORE_READ_URL` | — | TagStore database URL (e.g., `postgresql://user:password@host:5432/tagstore`) |
 | `GSREST_ALLOWED_ORIGINS` | `*` | CORS allowed origins |
 | `GSREST_LOGGING_LEVEL` | — | Logging level (DEBUG, INFO, …) |
 | `GS_CASSANDRA_ASYNC_PORT` | `9042` | Cassandra port |
