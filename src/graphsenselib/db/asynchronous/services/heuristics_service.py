@@ -1010,6 +1010,8 @@ async def calculate_heuristics(
 
     if coinjoin is not None:
         coinjoin.consensus = _build_coinjoin_consensus(coinjoin)
+        if coinjoin.consensus is not None:
+            consensus_map = {}
 
     return UtxoHeuristics(
         change_heuristics=ChangeHeuristics(
