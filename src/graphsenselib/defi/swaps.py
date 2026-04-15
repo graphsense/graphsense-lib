@@ -54,6 +54,12 @@ def extract_asset_flows(
 ) -> Tuple[List[AssetFlow], List[AssetFlow], List[AssetFlow], List[AssetFlow]]:
     """Extract asset flows from transfers, withdrawals, deposits and traces."""
 
+    if len(dlogs) != len(logs_raw):
+        logger.warning(
+            "Decoded logs and raw logs length mismatch; using shortest length for flow extraction"
+        )
+    logs_by_dlog_index = {i: logs_raw[i] for i in range(min(len(dlogs), len(logs_raw)))}
+
     # Extract transfers
     transfers = [dlog for dlog in dlogs if dlog["name"] == "Transfer"]
     transfer_asset_flows = [
@@ -63,44 +69,68 @@ def extract_asset_flows(
             asset=dlog["address"].lower(),
             amount=dlog["parameters"]["value"],
             source_type="erc20",
-            source_index=logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
-                "log_index"
-            ],
+            source_index=logs_by_dlog_index[
+                next(i for i, d in enumerate(dlogs) if d == dlog)
+            ]["log_index"],
         )
         for i, dlog in enumerate(transfers)
     ]
 
     # Extract withdrawals
     withdrawals = [dlog for dlog in dlogs if dlog["name"] == "Withdrawal"]
-    withdrawal_asset_flows = [
-        AssetFlow(
-            from_address=dlog["parameters"]["src"],
-            to_address=dlog["address"].lower(),
-            asset=dlog["address"].lower(),
-            amount=dlog["parameters"]["value"],
-            source_type="erc20",
-            source_index=logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
-                "log_index"
-            ],
+    withdrawal_asset_flows: List[AssetFlow] = []
+    for dlog in withdrawals:  # WETH to WETH contract
+        params = dlog.get("parameters", {})
+        from_address = params.get("src") or params.get("from")
+        amount = params.get("value")
+        if amount is None:
+            amount = params.get("wad")
+        if from_address is None or amount is None:
+            continue
+        dlog_index = next((i for i, d in enumerate(dlogs) if d == dlog), None)
+        if dlog_index is None or dlog_index not in logs_by_dlog_index:
+            continue
+        withdrawal_asset_flows.append(
+            AssetFlow(
+                from_address=from_address,
+                to_address=dlog["address"].lower(),
+                asset=dlog["address"].lower(),
+                amount=amount,
+                source_type="erc20",
+                source_index=logs_by_dlog_index[dlog_index]["log_index"],
+            )
         )
-        for dlog in withdrawals  # WETH to WETH contract
-    ]
 
     # Extract deposits
     deposits = [dlog for dlog in dlogs if dlog["name"] == "Deposit"]
-    deposit_asset_flows = [
-        AssetFlow(
-            from_address=dlog["address"].lower(),
-            to_address=dlog["parameters"]["dst"],
-            asset=dlog["address"].lower(),
-            amount=dlog["parameters"]["wad"],
-            source_type="erc20",
-            source_index=logs_raw[next(i for i, d in enumerate(dlogs) if d == dlog)][
-                "log_index"
-            ],
+    deposit_asset_flows: List[AssetFlow] = []
+    for dlog in deposits:
+        params = dlog.get("parameters", {})
+        to_address = (
+            params.get("dst")
+            or params.get("to")
+            or params.get("recipient")
+            or params.get("account")
         )
-        for dlog in deposits
-    ]
+        amount = params.get("wad")
+        if amount is None:
+            amount = params.get("value")
+        # Ignore unrelated Deposit events with different schemas.
+        if to_address is None or amount is None:
+            continue
+        dlog_index = next((i for i, d in enumerate(dlogs) if d == dlog), None)
+        if dlog_index is None or dlog_index not in logs_by_dlog_index:
+            continue
+        deposit_asset_flows.append(
+            AssetFlow(
+                from_address=dlog["address"].lower(),
+                to_address=to_address,
+                asset=dlog["address"].lower(),
+                amount=amount,
+                source_type="erc20",
+                source_index=logs_by_dlog_index[dlog_index]["log_index"],
+            )
+        )
 
     # Extract traces
     relevant_traces = [trace for trace in traces if trace.is_call and trace.value != 0]
@@ -111,7 +141,7 @@ def extract_asset_flows(
             asset=ETH_PLACEHOLDER_ADDRESS,
             amount=trace.value,
             source_type="trace",
-            source_index=trace.trace_index,
+            source_index=trace.trace_index if trace.trace_index is not None else 0,
         )
         for trace in relevant_traces
     ]
@@ -180,7 +210,7 @@ def get_swap_from_eulerian_path(
     traces: List[Trace],
     logs_raw: List[Dict[str, Any]],
     version: str,
-) -> ExternalSwap:
+) -> Optional[ExternalSwap]:
     """Extract swap information from eulerian path analysis."""
     trace0 = traces[0]
     assert (
@@ -236,8 +266,8 @@ def get_swap_from_eulerian_path(
         toAddress=sender,
         fromAsset=normalize_asset(fromAsset),
         toAsset=normalize_asset(toAsset),
-        fromAmount=fromAmount,
-        toAmount=toAmount,
+        fromAmount=str(fromAmount),
+        toAmount=str(toAmount),
         fromPayment=fromPayment,
         toPayment=toPayment,
     )
@@ -315,9 +345,9 @@ def filter_graph_for_eulerian_path(
 def visualize_graph(
     G,
     tx_hash: str = "unknown",
-    swap_edges: list = None,
-    transfer_edges: list = None,
-    tx_sender: str = None,
+    swap_edges: Optional[List[Tuple[str, str]]] = None,
+    transfer_edges: Optional[List[Tuple[str, str]]] = None,
+    tx_sender: Optional[str] = None,
 ):
     plt.figure(figsize=(10, 8))
     pos = nx.spring_layout(G)
@@ -524,9 +554,11 @@ def get_swap_from_decoded_logs(
     This function has been refactored to use modular components for better maintainability.
     """
     # Sort dlogs and raw logs
-    dlogs, logs_raw = zip(
+    dlogs_sorted, logs_raw_sorted = zip(
         *sorted(zip(dlogs, logs_raw), key=lambda x: x[1]["log_index"])
     )
+    dlogs = list(dlogs_sorted)
+    logs_raw = list(logs_raw_sorted)
 
     # Determine strategy
     strategy = get_swap_strategy_from_decoded_logs(dlogs)
