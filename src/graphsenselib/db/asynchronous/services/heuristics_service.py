@@ -36,33 +36,62 @@ class CoinJoinDbCallbacks:
     get_tag_summary: Callable | None = None
 
 
-# Whirlpool pools: (denomination_sat, coordinator_fee_sat)
+# ---------------------------------------------------------------------------
+# Whirlpool
+# ---------------------------------------------------------------------------
 WHIRLPOOL_POOLS = [
     (100_000, 5_000),
     (1_000_000, 50_000),
     (5_000_000, 175_000),
     (50_000_000, 1_750_000),
 ]
+WHIRLPOOL_EPSILON_MIN = 100
+WHIRLPOOL_EPSILON_MAX = 110_000
+WHIRLPOOL_TX0_A_MAX = 70
+WHIRLPOOL_ETA1 = 0.5
+WHIRLPOOL_ETA2 = 3
+WHIRLPOOL_TX0_MAX_FORWARD_CHECKS = 20
+WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE = 90
+
+# ---------------------------------------------------------------------------
+# Wasabi 1.x (ZeroLink / mixing levels)
+# ---------------------------------------------------------------------------
 WASABI_10_DENOM_SAT = 10_000_000  # 0.1 BTC
 WASABI_10_EPSILON_SAT = 500_000  # ±5% tolerance
 WASABI_10_A_MAX = 7  # max inputs per participant
-
 WASABI_11_A_MAX = 7  # same as 1.0
+WASABI_1X_MIN_INPUTS = 10
+WASABI_1X_MIN_PARTICIPANTS = 3
+WASABI_1X_SMALL_ROUND_GATE = 20
+WASABI_1X_MAX_SPLIT_RESIDUAL = 0.0001
+WASABI_1X_MAX_TOP_INPUT_SHARE = 0.1
 
+# ---------------------------------------------------------------------------
+# Wasabi 2.0 (WabiSabi)
+# ---------------------------------------------------------------------------
 WASABI_20_A_MAX = 10  # max inputs per participant
 WASABI_20_MIN_INPUTS = 20  # minimum total inputs (lowered post-May 2024)
 WASABI_20_V_MIN = 5_000  # minimum output value (sat)
 WASABI_20_MIN_DENOM_FREQ = 2  # minimum frequency for a value to be a denomination
 WASABI_20_MAX_TOP_INPUT_SHARE = 0.1  # reject if one address owns >10% of inputs
 
-WHIRLPOOL_EPSILON_MIN = 100
-WHIRLPOOL_EPSILON_MAX = 110_000
-WHIRLPOOL_TX0_A_MAX = 70
-WHIRLPOOL_ETA1 = 0.5
-WHIRLPOOL_ETA2 = 3
+# ---------------------------------------------------------------------------
+# Stonewall (Samourai) — used as a veto signal, not a positive detector
+# ---------------------------------------------------------------------------
+STONEWALL_V_MIN = 5_000  # outputs at or below this are dust — ignored as denomination
 
-WHIRLPOOL_TX0_MAX_FORWARD_CHECKS = 20
-WHIRLPOOL_TX0_CONFIRMED_CONFIDENCE = 90
+# ---------------------------------------------------------------------------
+# JoinMarket
+# ---------------------------------------------------------------------------
+JOINMARKET_MIN_PARTICIPANTS = 3
+JOINMARKET_DUST_THRESHOLD = (
+    2730  # outputs at or below are excluded as denomination candidates
+)
+JOINMARKET_CONFIDENCE = 49
+# Large-round structural gates — activate when a tx has at least this many inputs.
+JOINMARKET_LARGE_ROUND_THRESHOLD = 50
+JOINMARKET_MAX_INPUTS_PER_PARTICIPANT = 20
+JOINMARKET_MIN_OUTPUTS_PER_PARTICIPANT = 1.7
 
 
 async def _prefetch_addresses(tx, currency, get_address) -> dict[str, dict]:
@@ -358,6 +387,47 @@ def _build_coinjoin_consensus(coinjoin: CoinJoinHeuristics) -> CoinJoinConsensus
     return CoinJoinConsensus(detected=True, confidence=confidence, sources=sources)
 
 
+def _is_stonewall(tx) -> bool:
+    """Does this tx look like a Samourai Stonewall?
+
+    Stonewall's on-chain shape is always:
+
+    3 or 4 real outputs, exactly two of them equal, the rest change.
+
+    (3 outputs = "simplified stonewall", 4 = classic.)
+    We use the match as a veto signal for those other detectors purely to cut their
+    FP rate, not as a positive claim about what the tx is.
+    """
+    if tx.get("coinbase"):
+        return False
+    inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
+    outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
+
+    # 3 or 4 outputs (after OP_RETURN is filtered out), ≥2 inputs, all output scripts distinct
+    if len(outputs) not in (3, 4) or len(inputs) < 2:
+        return False
+    if len({o.address[0] for o in outputs}) != len(outputs):
+        return False
+
+    # exactly one value appears exactly twice — that's the pseudo-mix denomination
+    freq = Counter(o.value for o in outputs)
+    denoms = [v for v, c in freq.items() if c == 2]
+    if len(denoms) != 1:
+        return False
+    d = denoms[0]
+    if d < STONEWALL_V_MIN:
+        return False
+
+    # for 4-output Stonewall the two change outputs must differ from each other
+    # (three equal values + one other isn't a Stonewall — that's a different shape)
+    if len(outputs) == 4:
+        non_denom = [o.value for o in outputs if o.value != d]
+        if non_denom[0] == non_denom[1]:
+            return False
+
+    return True
+
+
 def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
     """
     Structural check for Wasabi 1.0 (ZeroLink) CoinJoin transactions.
@@ -369,6 +439,16 @@ def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
 
     inputs = [i for i in tx.get("inputs") or [] if i is not None and i.address]
     outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
+
+    if len(inputs) < WASABI_1X_MIN_INPUTS:
+        return None
+
+    in_script_counts = Counter(i.address[0] for i in inputs)
+    if (
+        in_script_counts.most_common(1)[0][1] / len(inputs)
+        > WASABI_1X_MAX_TOP_INPUT_SHARE
+    ):
+        return None
 
     # find candidate denomination: most frequent output value within the window
     freq = Counter(
@@ -383,6 +463,9 @@ def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
 
     # 1. denomination window (explicit guard)
     if not (abs(d - WASABI_10_DENOM_SAT) <= WASABI_10_EPSILON_SAT):
+        return None
+
+    if n < WASABI_1X_MIN_PARTICIPANTS:
         return None
 
     n_scripts_in = len({i.address[0] for i in inputs})
@@ -400,6 +483,18 @@ def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
     if n_scripts_out != len(outputs):
         return None
 
+    if len(inputs) < WASABI_1X_SMALL_ROUND_GATE:
+        tot_out = sum(o.value for o in outputs)
+        most_freq = Counter(o.value for o in outputs).most_common(1)[0][0]
+        if tot_out and most_freq:
+            N_hat = round(tot_out / most_freq)
+            if (
+                N_hat > 0
+                and abs(tot_out - N_hat * most_freq) / tot_out
+                <= WASABI_1X_MAX_SPLIT_RESIDUAL
+            ):
+                return None
+
     return WasabiHeuristic(
         detected=True,
         confidence=70,
@@ -409,23 +504,13 @@ def _wasabi_10_heuristic(tx) -> WasabiHeuristic | None:
     )
 
 
-JOINMARKET_MIN_PARTICIPANTS = 2
-JOINMARKET_DUST_THRESHOLD = (
-    2730  # outputs at or below this value excluded as denomination candidates
-)
-JOINMARKET_LOW_CONFIDENCE = 20  # confidence when only 2 equal-value outputs are found
-JOINMARKET_CONFIDENCE = 49  # confidence when 3+ equal-value outputs are found
-
-
 def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
     """
     Structural check for JoinMarket CoinJoin transactions.
     The most frequent output value is the denomination; its count estimates
-    participant count n. JoinMarket is a superset — Wasabi 1.x and Whirlpool
-    CoinJoin txs also satisfy these conditions.
-
-    n=2 (exactly 2 equal-value outputs) is detected with low confidence (20)
-    since equal output values can occur by coincidence. n>=3 uses confidence 49.
+    participant count n. Requires ≥3 participants and
+    at least one non-denomination output (change), which real JM rounds always
+    have — one change output per participant.
     """
     if tx.get("coinbase"):
         return None
@@ -450,7 +535,7 @@ def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
     if not (n >= len(outputs) / 2):
         return None
 
-    # 2. at least 2 participants, each with distinct input
+    # 2. JoinMarket requires ≥3 participants
     if not (JOINMARKET_MIN_PARTICIPANTS <= n <= n_scripts_in):
         return None
 
@@ -458,11 +543,22 @@ def _joinmarket_heuristic(tx) -> JoinMarketHeuristic | None:
     if n_scripts_out != len(outputs):
         return None
 
-    confidence = JOINMARKET_CONFIDENCE if n >= 3 else JOINMARKET_LOW_CONFIDENCE
+    # 4. at least one output must NOT be a denomination
+    if not any(o.value != d for o in outputs):
+        return None
+
+    # 5. for large-input rounds, demand JM-like structure: no extreme input
+    # fan-in (real makers bring 1-3 inputs), and enough outputs per participant
+    # (≈2: denom + change). Exchange batch payouts violate both.
+    if len(inputs) >= JOINMARKET_LARGE_ROUND_THRESHOLD:
+        if len(inputs) / n > JOINMARKET_MAX_INPUTS_PER_PARTICIPANT:
+            return None
+        if len(outputs) / n < JOINMARKET_MIN_OUTPUTS_PER_PARTICIPANT:
+            return None
 
     return JoinMarketHeuristic(
         detected=True,
-        confidence=confidence,
+        confidence=JOINMARKET_CONFIDENCE,
         n_participants=n,
         pool_denomination=d,
     )
@@ -483,6 +579,16 @@ def _wasabi_11_heuristic(tx) -> WasabiHeuristic | None:
     outputs = [o for o in tx.get("outputs") or [] if o is not None and o.address]
 
     if not outputs or not inputs:
+        return None
+
+    if len(inputs) < WASABI_1X_MIN_INPUTS:
+        return None
+
+    in_script_counts = Counter(i.address[0] for i in inputs)
+    if (
+        in_script_counts.most_common(1)[0][1] / len(inputs)
+        > WASABI_1X_MAX_TOP_INPUT_SHARE
+    ):
         return None
 
     # base denomination is a protocol constant — no need to infer from level 0 outputs
@@ -515,6 +621,9 @@ def _wasabi_11_heuristic(tx) -> WasabiHeuristic | None:
     # n lower bound: max count at any single level (all must be distinct participants)
     n = max(level_counts.values())
 
+    if n < WASABI_1X_MIN_PARTICIPANTS:
+        return None
+
     # input bounds
     if not (n <= n_scripts_in <= WASABI_11_A_MAX * n):
         return None
@@ -535,6 +644,18 @@ def _wasabi_11_heuristic(tx) -> WasabiHeuristic | None:
     # all output scripts distinct
     if n_scripts_out != len(outputs):
         return None
+
+    if len(inputs) < WASABI_1X_SMALL_ROUND_GATE:
+        tot_out = sum(o.value for o in outputs)
+        most_freq = Counter(o.value for o in outputs).most_common(1)[0][0]
+        if tot_out and most_freq:
+            N_hat = round(tot_out / most_freq)
+            if (
+                N_hat > 0
+                and abs(tot_out - N_hat * most_freq) / tot_out
+                <= WASABI_1X_MAX_SPLIT_RESIDUAL
+            ):
+                return None
 
     # confidence scoring: 0-100
     # n_tightness: how well participant count is bounded (1.0 = exact, single-level case)
@@ -628,10 +749,6 @@ def _wasabi_20_heuristic(tx) -> WasabiHeuristic | None:
     # distinct denomination tiers are present in practice. A single repeated
     # value (JoinMarket-style or N-way payout) doesn't qualify.
     if len(denom_set) < 3:
-        return None
-
-    # 6. enough denomination outputs relative to inputs
-    if not (n_denom_outputs >= len(inputs) / WASABI_20_A_MAX):
         return None
 
     # participant estimate: number of distinct input scripts / a_max as lower bound
@@ -1008,6 +1125,24 @@ async def calculate_heuristics(
             if coinjoin is None:
                 coinjoin = CoinJoinHeuristics()
             coinjoin.joinmarket = joinmarket_result
+
+    # Stonewall veto (FP reduction): if the tx has a Stonewall / simplified-Stonewall
+    # shape, our other CoinJoin detectors firing on it are nearly always wrong
+    if coinjoin is not None and _is_stonewall(tx):
+        coinjoin.wasabi = None
+        coinjoin.joinmarket = None
+        coinjoin.whirlpool_coinjoin = None
+        coinjoin.whirlpool_tx0 = None
+        if all(
+            v is None
+            for v in (
+                coinjoin.wasabi,
+                coinjoin.joinmarket,
+                coinjoin.whirlpool_coinjoin,
+                coinjoin.whirlpool_tx0,
+            )
+        ):
+            coinjoin = None
 
     # Exchange false-positive suppression: if JoinMarket or Wasabi 1.x fired, check
     # whether any input comes from a known exchange. If yes, remove those results —

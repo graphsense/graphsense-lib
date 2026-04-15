@@ -8,6 +8,7 @@ OP_RETURN outputs are objects with an empty address list and zero value.
 from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.services.heuristics_service import (
+    _is_stonewall,
     _joinmarket_heuristic,
     _wasabi_10_heuristic,
     _wasabi_11_heuristic,
@@ -15,6 +16,7 @@ from graphsenselib.db.asynchronous.services.heuristics_service import (
     _whirlpool_tx0_heuristic,
     _whirlpool_coinjoin_heuristic,
     JOINMARKET_DUST_THRESHOLD,
+    STONEWALL_V_MIN,
     WASABI_10_DENOM_SAT,
     WASABI_10_EPSILON_SAT,
     WASABI_10_A_MAX,
@@ -536,7 +538,7 @@ class TestWasabi10HappyPath:
     D = WASABI_10_DENOM_SAT  # 10_000_000 sat
     FEE = 50_000  # coordinator fee (arbitrary unique value)
 
-    def _make_wasabi10(self, n, n_change=None, fee=None, inputs_per_participant=1):
+    def _make_wasabi10(self, n, n_change=None, fee=None, inputs_per_participant=4):
         """Build a valid Wasabi 1.0 tx with n participants."""
         if n_change is None:
             n_change = n  # all participants have change by default
@@ -591,7 +593,7 @@ class TestWasabi10HappyPath:
             + [make_output(d // 3 + i * 1001, f"change_{i}") for i in range(5)]
             + [make_output(self.FEE, "coordinator")]
         )
-        inputs = [make_input(d * 2, f"inp_{i}") for i in range(5)]
+        inputs = [make_input(d * 2, f"inp_{i}_{j}") for i in range(5) for j in range(2)]
         result = _wasabi_10_heuristic(make_tx(inputs, outputs))
         assert result is not None
         assert result.denominations == [d]
@@ -604,7 +606,7 @@ class TestWasabi10HappyPath:
             + [make_output(d // 3 + i * 1001, f"change_{i}") for i in range(5)]
             + [make_output(self.FEE, "coordinator")]
         )
-        inputs = [make_input(d * 2, f"inp_{i}") for i in range(5)]
+        inputs = [make_input(d * 2, f"inp_{i}_{j}") for i in range(5) for j in range(2)]
         result = _wasabi_10_heuristic(make_tx(inputs, outputs))
         assert result is not None
         assert result.denominations == [d]
@@ -739,10 +741,18 @@ class TestWasabi11HappyPath:
     D = WASABI_10_DENOM_SAT  # 10_000_000 sat base denomination
     FEE = 50_000
 
-    def _make_wasabi11(self, level_counts: dict[int, int], n_change=None, fee=None):
+    def _make_wasabi11(
+        self,
+        level_counts: dict[int, int],
+        n_change=None,
+        fee=None,
+        inputs_per_participant: int = 4,
+    ):
         """
         Build a valid Wasabi 1.1 tx.
         level_counts: {level_index: n_outputs_at_that_level}
+        inputs_per_participant defaults to 4 so tests clear the WASABI_1X_MIN_INPUTS
+        floor even with small participant counts.
         """
         fee = fee or self.FEE
         outputs = []
@@ -760,7 +770,11 @@ class TestWasabi11HappyPath:
             outputs.append(make_output(self.D // 3 + i * 1001, f"change_{i}"))
 
         outputs.append(make_output(fee, "coordinator"))
-        inputs = [make_input(self.D * 4, f"inp_{i}") for i in range(n_participants)]
+        inputs = [
+            make_input(self.D * 4, f"inp_{i}_{j}")
+            for i in range(n_participants)
+            for j in range(inputs_per_participant)
+        ]
         return make_tx(inputs, outputs)
 
     def test_two_levels(self):
@@ -816,7 +830,9 @@ class TestWasabi11HappyPath:
 
     def test_confidence_high_with_one_input_per_participant(self):
         """Best case: one input per participant — confidence must be 100."""
-        result = _wasabi_11_heuristic(self._make_wasabi11({0: 4, 1: 4}))
+        result = _wasabi_11_heuristic(
+            self._make_wasabi11({0: 10, 1: 10}, inputs_per_participant=1)
+        )
         assert result.confidence == 100
 
     def test_no_change_outputs(self):
@@ -941,17 +957,15 @@ class TestJoinMarketHappyPath:
         inputs = [make_input(d * 2, f"inp_{i}") for i in range(n)]
         return make_tx(inputs, outputs)
 
-    def test_minimal_valid(self):
-        """Minimum 2 participants — detected with low confidence."""
+    def test_two_participants_rejected(self):
+        """2 participants — rejected. Real JoinMarket has 1 taker + ≥2 makers
+        (≥3 total). 2-equal-output patterns are too ambiguous (2-way splits,
+        stonewall post-mix, simple batch pairs)."""
         result = _joinmarket_heuristic(self._make_joinmarket(2))
-        assert result is not None
-        assert result.detected is True
-        assert result.n_participants == 2
-        assert result.pool_denomination == self.D
-        assert result.confidence == 20
+        assert result is None
 
     def test_three_participants(self):
-        """3 participants — detected with normal confidence."""
+        """3 participants — minimum valid round."""
         result = _joinmarket_heuristic(self._make_joinmarket(3))
         assert result is not None
         assert result.detected is True
@@ -965,11 +979,12 @@ class TestJoinMarketHappyPath:
         assert result is not None
         assert result.n_participants == 8
 
-    def test_no_change_outputs(self):
-        """All participants without change — still valid."""
+    def test_no_change_outputs_rejected(self):
+        """All outputs equal the denomination — deterministic N-way split, not
+        a CoinJoin. Real JM rounds always have change outputs (one per
+        participant, from leftover inputs after denomination + fee)."""
         result = _joinmarket_heuristic(self._make_joinmarket(5, n_change=0))
-        assert result is not None
-        assert result.n_participants == 5
+        assert result is None
 
     def test_arbitrary_denomination(self):
         """JoinMarket has no fixed denomination — any value should work."""
@@ -992,9 +1007,9 @@ class TestJoinMarketHappyPath:
         assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
 
     def test_confidence_below_wasabi(self):
-        """JoinMarket confidence must be lower than Wasabi minimum (50)."""
+        """JoinMarket confidence must be lower than Wasabi minimum (60)."""
         result = _joinmarket_heuristic(self._make_joinmarket(5))
-        assert result.confidence < 50
+        assert result.confidence < 60
 
     def test_op_return_ignored(self):
         """OP_RETURN in outputs must not affect detection."""
@@ -1024,10 +1039,20 @@ class TestJoinMarketRejection:
     def test_coinbase_rejected(self):
         assert _joinmarket_heuristic(make_tx([], [], coinbase=True)) is None
 
-    def test_fewer_than_2_participants_rejected(self):
-        """n=1 fails the minimum participant check."""
-        result = _joinmarket_heuristic(self._make_joinmarket(1))
-        assert result is None
+    def test_fewer_than_3_participants_rejected(self):
+        """n=1 and n=2 fail the minimum participant check (Patch D — JM
+        requires 1 taker + ≥2 makers = 3 total)."""
+        assert _joinmarket_heuristic(self._make_joinmarket(1)) is None
+        assert _joinmarket_heuristic(self._make_joinmarket(2)) is None
+
+    def test_all_outputs_are_denomination_rejected(self):
+        """Patch E — every output equals the denomination, so there's no
+        change output. This is a deterministic N-way split (batch payout),
+        not a JoinMarket round."""
+        d = 50_000_000
+        outputs = [make_output(d, f"recipient_{i}") for i in range(5)]
+        inputs = [make_input(d * 2, f"inp_{i}") for i in range(5)]
+        assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
 
     def test_postmix_not_majority_rejected(self):
         """n < |outputs| / 2 — too many non-postmix outputs."""
@@ -1243,16 +1268,15 @@ class TestWasabi20Rejection:
 class TestFalsePositiveScenarios:
     """Transactions that superficially resemble CoinJoin but are not."""
 
-    def test_batch_payout_detected_as_joinmarket(self):
+    def test_batch_payout_rejected_as_joinmarket(self):
         """An exchange paying 10 users exactly 0.5 BTC each with 10 distinct
-        hot-wallet UTXOs as inputs. Structurally indistinguishable from
-        JoinMarket — this is a known limitation. We document that it passes."""
+        hot-wallet UTXOs as inputs. Previously a known FP (structurally equal
+        outputs, no change). Now rejected by the `has_non_denom_output` guard
+        (Patch E) since every output equals the denomination."""
         d = 50_000_000  # 0.5 BTC
         outputs = [make_output(d, f"user_{i}") for i in range(10)]
         inputs = [make_input(d * 2, f"hotwallet_utxo_{i}") for i in range(10)]
-        result = _joinmarket_heuristic(make_tx(inputs, outputs))
-        # known false positive — structurally identical to JoinMarket
-        assert result is not None
+        assert _joinmarket_heuristic(make_tx(inputs, outputs)) is None
 
     def test_batch_payout_with_change_not_joinmarket(self):
         """Same batch payout but with change outputs — now n < |outputs|/2
@@ -1318,3 +1342,181 @@ class TestFalsePositiveScenarios:
         )
         inputs = [make_input(d * 10, f"inp_{i}") for i in range(20)]
         assert _wasabi_11_heuristic(make_tx(inputs, outputs)) is None
+
+
+# ---------------------------------------------------------------------------
+# Stonewall — happy path (match)
+# ---------------------------------------------------------------------------
+
+
+class TestStonewallHappyPath:
+    """Transactions that match the Samourai Stonewall / simplified-Stonewall
+    on-chain shape. `_is_stonewall` is used as a veto against other CoinJoin
+    detectors — this only asserts the shape match itself."""
+
+    D = 1_000_000  # pseudo-mix denomination (≥ STONEWALL_V_MIN)
+
+    def test_simplified_stonewall_3_outputs(self):
+        """3 outputs = [denom, denom, change], 5 inputs."""
+        outputs = [
+            make_output(self.D, "denom_1"),
+            make_output(self.D, "denom_2"),
+            make_output(423_117, "change"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(5)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is True
+
+    def test_classic_stonewall_4_outputs(self):
+        """4 outputs = [denom, denom, change1, change2] with change1 ≠ change2."""
+        outputs = [
+            make_output(self.D, "denom_1"),
+            make_output(self.D, "denom_2"),
+            make_output(423_117, "change_1"),
+            make_output(517_903, "change_2"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(5)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is True
+
+    def test_large_input_stonewall(self):
+        """50+ inputs (wallet consolidation case), 4 outputs in Stonewall shape."""
+        outputs = [
+            make_output(self.D, "denom_1"),
+            make_output(self.D, "denom_2"),
+            make_output(111_111, "change_1"),
+            make_output(222_222, "change_2"),
+        ]
+        inputs = [make_input(50_000, f"inp_{i}") for i in range(55)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is True
+
+    def test_denomination_at_minimum(self):
+        """Denom = exactly STONEWALL_V_MIN (5000 sat). The check is strict
+        less-than (`d < STONEWALL_V_MIN`), so exactly the threshold passes."""
+        d = STONEWALL_V_MIN  # 5_000
+        outputs = [
+            make_output(d, "denom_1"),
+            make_output(d, "denom_2"),
+            make_output(1_234, "change"),
+        ]
+        inputs = [make_input(d, f"inp_{i}") for i in range(3)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is True
+
+    def test_op_return_ignored(self):
+        """OP_RETURN outputs are filtered out before checking output count/shape."""
+        outputs = [
+            make_output(self.D, "denom_1"),
+            make_output(self.D, "denom_2"),
+            make_output(423_117, "change"),
+            make_op_return(),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(5)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is True
+
+
+# ---------------------------------------------------------------------------
+# Stonewall — rejection cases
+# ---------------------------------------------------------------------------
+
+
+class TestStonewallRejection:
+    """Transactions that do NOT match the Stonewall shape."""
+
+    D = 1_000_000
+
+    def test_coinbase_rejected(self):
+        assert _is_stonewall(make_tx([], [], coinbase=True)) is False
+
+    def test_fewer_than_3_outputs(self):
+        """2-output tx can't be Stonewall."""
+        outputs = [
+            make_output(self.D, "a"),
+            make_output(self.D, "b"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(3)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_5_outputs_rejected(self):
+        """5-output tx — beyond Stonewall's 3-or-4 shape, even with 2 equals."""
+        outputs = [
+            make_output(self.D, "denom_1"),
+            make_output(self.D, "denom_2"),
+            make_output(100_000, "change_1"),
+            make_output(200_000, "change_2"),
+            make_output(300_000, "change_3"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(5)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_single_input_rejected(self):
+        """1-input tx — Stonewall requires ≥2 inputs (two parties)."""
+        outputs = [
+            make_output(self.D, "denom_1"),
+            make_output(self.D, "denom_2"),
+            make_output(423_117, "change"),
+        ]
+        inputs = [make_input(self.D * 3, "sole_input")]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_no_equal_pair(self):
+        """3 distinct output values — no pair to be the denomination."""
+        outputs = [
+            make_output(1_000_000, "a"),
+            make_output(2_000_000, "b"),
+            make_output(3_000_000, "c"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(3)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_three_equal_outputs(self):
+        """3 outputs all equal — freq[value]==3, not 2, so no denom is picked."""
+        outputs = [
+            make_output(self.D, "a"),
+            make_output(self.D, "b"),
+            make_output(self.D, "c"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(3)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_two_pairs_rejected(self):
+        """4 outputs with shape [a,a,b,b] — freq has two values at count 2, so
+        `len(denoms) != 1` rejects before the non-denom-equality check."""
+        outputs = [
+            make_output(self.D, "a_1"),
+            make_output(self.D, "a_2"),
+            make_output(2 * self.D, "b_1"),
+            make_output(2 * self.D, "b_2"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(4)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_four_output_equal_non_denoms_rejected(self):
+        """4 outputs [denom, denom, change, change] with change1 == change2 —
+        rejected by the 4-output branch requiring the non-denom pair to differ."""
+        outputs = [
+            make_output(self.D, "denom_1"),
+            make_output(self.D, "denom_2"),
+            make_output(100_000, "change_1"),
+            make_output(100_000, "change_2"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(4)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_dust_denomination_rejected(self):
+        """Denom = 4_999 (just under STONEWALL_V_MIN) — rejected as dust."""
+        d = STONEWALL_V_MIN - 1  # 4_999
+        outputs = [
+            make_output(d, "denom_1"),
+            make_output(d, "denom_2"),
+            make_output(1_234, "change"),
+        ]
+        inputs = [make_input(10_000, f"inp_{i}") for i in range(3)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
+
+    def test_duplicate_output_script_rejected(self):
+        """Two outputs at the same address — not all scripts distinct."""
+        outputs = [
+            make_output(self.D, "same_addr"),
+            make_output(self.D, "same_addr"),  # duplicate script
+            make_output(423_117, "change"),
+        ]
+        inputs = [make_input(self.D, f"inp_{i}") for i in range(3)]
+        assert _is_stonewall(make_tx(inputs, outputs)) is False
