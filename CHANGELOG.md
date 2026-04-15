@@ -10,17 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.10.2] unreleased
+## [2.10.2] 2026-04-15
 
 ### Library (v2.10.2)
 
 #### Changed
-- better retry handling for delta updates
-- sources in coinjoin heuristics are now sorted by confidence
+- Improved retry handling for delta updates
+- Sorted CoinJoin consensus sources by descending confidence for deterministic heuristics output
+- Updated utxo heuristic parameters
 
 #### Fixed
-- load all conversions if input is root_trace
-- loading tagstore config via env variables within gsrest.
+- Fixed loading all conversions when input is `root_trace`
+- Fixed loading environment variables in Web subsystem (Tagstore parameters)
+- thorchain nodes changed, more resilient http requests.
 
 ### Web API + Python client (webapi-2.10.0)
 
