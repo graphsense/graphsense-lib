@@ -266,8 +266,8 @@ def get_swap_from_eulerian_path(
         toAddress=sender,
         fromAsset=normalize_asset(fromAsset),
         toAsset=normalize_asset(toAsset),
-        fromAmount=str(fromAmount),
-        toAmount=str(toAmount),
+        fromAmount=fromAmount,  # type: ignore[arg-type]
+        toAmount=toAmount,  # type: ignore[arg-type]
         fromPayment=fromPayment,
         toPayment=toPayment,
     )

@@ -10,6 +10,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.10.4] 2026-04-15
+
+### Library (v2.10.4)
+
+#### Fixed
+- fix swap detection regression
+
+### Web API + Python client (webapi-2.10.0)
+no changes
+
 ## [2.10.3] 2026-04-15
 
 ### Library (v2.10.3)
