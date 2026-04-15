@@ -1096,15 +1096,16 @@ class TestWasabi20HappyPath:
         return make_tx(inputs, outputs)
 
     def test_minimal_valid(self):
-        """20 inputs, single denomination with enough outputs."""
+        """20 inputs, three denomination tiers with enough outputs."""
         # 30 denom outputs + 10 change + 1 coordinator = 41 outputs
         # denom majority: 30 >= (41-1)/2 = 20 ✓
         # denom vs inputs: 30 >= 20/10 = 2 ✓
-        result = _wasabi_20_heuristic(self._make_wasabi20({200_000: 30}, n_inputs=20))
+        denoms = {100_000: 10, 200_000: 10, 400_000: 10}
+        result = _wasabi_20_heuristic(self._make_wasabi20(denoms, n_inputs=20))
         assert result is not None
         assert result.detected is True
         assert result.version == "2.0"
-        assert result.denominations == [200_000]
+        assert set(result.denominations) == {100_000, 200_000, 400_000}
 
     def test_multiple_denominations(self):
         """Multiple denomination values in set D."""
@@ -1116,7 +1117,7 @@ class TestWasabi20HappyPath:
 
     def test_large_round(self):
         """100 inputs, typical large WabiSabi round."""
-        denoms = {100_000: 40, 500_000: 20}
+        denoms = {100_000: 30, 200_000: 20, 500_000: 10}
         result = _wasabi_20_heuristic(
             self._make_wasabi20(denoms, n_inputs=100, n_change=15)
         )
@@ -1125,26 +1126,29 @@ class TestWasabi20HappyPath:
 
     def test_exactly_20_inputs(self):
         """Boundary: exactly 20 inputs should pass."""
-        result = _wasabi_20_heuristic(self._make_wasabi20({300_000: 30}, n_inputs=20))
+        denoms = {100_000: 10, 200_000: 10, 400_000: 10}
+        result = _wasabi_20_heuristic(self._make_wasabi20(denoms, n_inputs=20))
         assert result is not None
 
     def test_no_change_outputs(self):
-        """All outputs are denominations — no change."""
+        """All outputs are denominations — no change (coordinator is the non-denom)."""
+        denoms = {150_000: 15, 250_000: 15, 400_000: 10}
         result = _wasabi_20_heuristic(
-            self._make_wasabi20({200_000: 40}, n_change=0, n_inputs=50)
+            self._make_wasabi20(denoms, n_change=0, n_inputs=50)
         )
         assert result is not None
 
     def test_op_return_ignored(self):
         """OP_RETURN outputs should be filtered out, not cause crashes."""
-        tx = self._make_wasabi20({200_000: 30}, n_inputs=50)
+        denoms = {100_000: 10, 200_000: 10, 400_000: 10}
+        tx = self._make_wasabi20(denoms, n_inputs=50)
         tx["outputs"].append(make_op_return())
         result = _wasabi_20_heuristic(tx)
         assert result is not None
 
     def test_denominations_not_near_01_btc(self):
         """Wasabi 2.0 has no fixed denomination — values far from 0.1 BTC should work."""
-        denoms = {50_000: 15, 75_000: 15}
+        denoms = {50_000: 10, 75_000: 10, 100_000: 10}
         result = _wasabi_20_heuristic(
             self._make_wasabi20(denoms, n_change=5, n_inputs=55)
         )
@@ -1153,7 +1157,8 @@ class TestWasabi20HappyPath:
 
     def test_confidence_is_set(self):
         """Confidence should be a reasonable value."""
-        result = _wasabi_20_heuristic(self._make_wasabi20({200_000: 30}, n_inputs=50))
+        denoms = {100_000: 10, 200_000: 10, 400_000: 10}
+        result = _wasabi_20_heuristic(self._make_wasabi20(denoms, n_inputs=50))
         assert result.confidence > 0
         assert result.confidence <= 100
 

@@ -53,6 +53,7 @@ WASABI_20_A_MAX = 10  # max inputs per participant
 WASABI_20_MIN_INPUTS = 20  # minimum total inputs (lowered post-May 2024)
 WASABI_20_V_MIN = 5_000  # minimum output value (sat)
 WASABI_20_MIN_DENOM_FREQ = 2  # minimum frequency for a value to be a denomination
+WASABI_20_MAX_TOP_INPUT_SHARE = 0.1  # reject if one address owns >10% of inputs
 
 WHIRLPOOL_EPSILON_MIN = 100
 WHIRLPOOL_EPSILON_MAX = 110_000
@@ -584,6 +585,14 @@ def _wasabi_20_heuristic(tx) -> WasabiHeuristic | None:
     if len(inputs) < WASABI_20_MIN_INPUTS:
         return None
 
+    # 1b. reject concentration sweeps: no single address may own >X% of inputs.
+    in_script_counts = Counter(i.address[0] for i in inputs)
+    if (
+        in_script_counts.most_common(1)[0][1] / len(inputs)
+        > WASABI_20_MAX_TOP_INPUT_SHARE
+    ):
+        return None
+
     # 2. no tiny outputs
     if any(o.value < WASABI_20_V_MIN for o in outputs):
         return None
@@ -604,6 +613,21 @@ def _wasabi_20_heuristic(tx) -> WasabiHeuristic | None:
 
     # 5. at least half of outputs (minus coordinator fee) are denomination outputs
     if not (n_denom_outputs >= (len(outputs) - 1) / 2):
+        return None
+
+    # 5b. precision/recall tradeoff filter: require at least one non-denomination
+    # output. Most WabiSabi rounds have a coordinator fee and/or change output,
+    # but all-remix rounds with clean decompositions legitimately have neither
+    # (coordinator fee is 0% on remixes). Rejecting these loses a small number
+    # of true positives in exchange for eliminating many deterministic N-way
+    # split batch-payout false positives.
+    if n_denom_outputs == len(outputs):
+        return None
+
+    # 5c. real WabiSabi rounds use a power-of-2 denomination schedule, so ≥3
+    # distinct denomination tiers are present in practice. A single repeated
+    # value (JoinMarket-style or N-way payout) doesn't qualify.
+    if len(denom_set) < 3:
         return None
 
     # 6. enough denomination outputs relative to inputs
