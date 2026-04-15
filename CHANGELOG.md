@@ -12,7 +12,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [2.10.3] 2026-04-15
 
-### Library (v2.10.2)
+### Library (v2.10.3)
 
 #### Fixed
 - Thorbridge issue with unsuppored return shape (9a645b5557accbe5f6ba139ea637dc9315a20d9bdfedebf642a429ace19d45da)
