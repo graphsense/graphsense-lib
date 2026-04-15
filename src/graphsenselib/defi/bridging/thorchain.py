@@ -36,8 +36,7 @@ THOR_TO_GRAPHSENSE_NETWORK = {
 }
 GRAPHSENSE_TO_THOR_NETWORK = {v: k for k, v in THOR_TO_GRAPHSENSE_NETWORK.items()}
 THORNODE_URLS = [
-    "https://thornode.ninerealms.com/thorchain/tx/status/",
-    "https://thornode-v1.ninerealms.com/thorchain/tx/details/",
+    "https://gateway.liquify.com/chain/thorchain_api/thorchain/tx/status/",
 ]
 
 # Known THORChain router addresses (for validating deposit addresses)

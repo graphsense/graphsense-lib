@@ -14,7 +14,7 @@ class RetryHTTPClient:
     async def get(self, url: str, **kwargs) -> Optional[httpx.Response]:
         for attempt in range(self.max_retries):
             try:
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(follow_redirects=True) as client:
                     response = await client.get(url, timeout=self.timeout, **kwargs)
                     if response.status_code < 500:  # Don't retry client errors
                         return response
