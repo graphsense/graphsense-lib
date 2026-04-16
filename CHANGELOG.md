@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.10.5] 2026-04-16
+
+### Library (v2.10.5)
+
+#### Fixed
+- Tagpack validation now catches duplicate tags that would later violate the tagstore unique constraint after network/address normalization.
+- Malformed BCH CashAddr values no longer abort processing during normalization; they are reported as warnings in validation and insert paths.
+
+### Web API + Python client (webapi-2.10.0)
+no changes
+
+## [2.10.3] 2026-04-15
+
+### Library (v2.10.3)
+
+#### Fixed
+- Thorbridge issue with unsuppored return shape (9a645b5557accbe5f6ba139ea637dc9315a20d9bdfedebf642a429ace19d45da)
+- Swap issue with unspecified dst (b42ba68eb68bc4cff3b0f1069fd413912cc1ec0296e3e95f2c38d03bde337ced)
+
 ## [2.10.4] 2026-04-15
 
 ### Library (v2.10.4)

@@ -965,7 +965,14 @@ def _get_tag(tag, tagpack_id, tag_type_default, actor_resolve_mapping=None):
 
 def _perform_address_modifications(address, network):
     if "BCH" == network.upper() and address.startswith("bitcoincash"):
-        address = to_legacy_address(address)
+        try:
+            address = to_legacy_address(address)
+        except Exception as exc:
+            logger.warning(
+                "Could not normalize BCH cash address during insert; using original address as-is: %s (%s)",
+                address,
+                exc,
+            )
 
     elif "ETH" == network.upper():
         address = address.lower()
