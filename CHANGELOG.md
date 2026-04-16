@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+
+## [2.10.6] 2026-04-??
+
+### Library (v2.10.6)
+
+#### Fixed
+- reduced false positive rate for coinjoin detection module.
+
+
 ## [2.10.5] 2026-04-16
 
 ### Library (v2.10.5)
