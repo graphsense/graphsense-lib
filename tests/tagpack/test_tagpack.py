@@ -693,7 +693,6 @@ def test_same_tag_with_different_context_is_not_deduplicated(taxonomies):
         taxonomies,
     )
 
-    tagpack.validate()
     unique_tags = tagpack.get_unique_tags()
 
     assert len(unique_tags) == 2
@@ -701,6 +700,52 @@ def test_same_tag_with_different_context_is_not_deduplicated(taxonomies):
         "source-a",
         "source-b",
     }
+
+
+def test_validate_fails_for_db_unique_collision_with_different_context(taxonomies):
+    tagpack = TagPack.load_from_file(
+        "http://example.com/packs",
+        "tests/testfiles/simple/duplicate_tag_with_context.yaml",
+        TagPackSchema(),
+        taxonomies,
+    )
+
+    with pytest.raises(ValidationError) as e:
+        tagpack.validate()
+
+    assert "would violate DB unique constraint" in str(e.value)
+
+
+def test_validate_warns_for_malformed_bch_cashaddr(schema, taxonomies, caplog):
+    tagpack = TagPack(
+        "http://example.com",
+        {
+            "title": "Malformed BCH TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/my_addresses",
+            "confidence": "web_crawl",
+            "currency": "BCH",
+            "lastmod": date.fromisoformat("2021-04-21"),
+            "tags": [
+                {
+                    "label": "Bad BCH cashaddr",
+                    "address": "bitcoincash:bitcoincash:qq123",
+                }
+            ],
+        },
+        schema,
+        taxonomies,
+    )
+
+    assert tagpack.validate()
+
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+
+    assert "Could not normalize BCH cash address during validation" in log_text
+    assert "Cash address contains more than one colon character" in log_text
 
 
 def test_conf_level_mandatory_if_not_set_default(tagpack):

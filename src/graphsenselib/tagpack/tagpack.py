@@ -299,6 +299,45 @@ class TagPack(object):
 
     verifiable_currencies = supported_base_currencies
 
+    @staticmethod
+    def _db_unique_key_for_tag(tag):
+        """Build the uniqueness key used by tagstore insert/DB constraint.
+
+        Mirrors the normalization applied by tagstore insert to ensure
+        validation can detect DB unique constraint violations early.
+        """
+        # Extract identifier (address or tx_hash)
+        if "address" in tag.all_fields:
+            address = tag.all_fields.get("address")
+            network = str(tag.all_fields.get("network", "")).upper()
+
+            # Apply network-specific address normalization (matches tagstore._perform_address_modifications)
+            if network == "BCH" and address.startswith("bitcoincash"):
+                from cashaddress.convert import to_legacy_address
+
+                try:
+                    address = to_legacy_address(address)
+                except Exception as exc:
+                    logger.warning(
+                        "Could not normalize BCH cash address during validation; "
+                        "using original address as-is: %s (%s)",
+                        address,
+                        exc,
+                    )
+            elif network == "ETH":
+                address = address.lower()
+
+            identifier = address
+        else:
+            identifier = tag.all_fields.get("tx_hash")
+
+        return (
+            identifier,
+            str(tag.all_fields.get("network", "")).upper(),
+            tag.all_fields.get("label", "").strip(),
+            tag.all_fields.get("source"),
+        )
+
     def load_from_file(
         uri, pathname, schema, taxonomies, header_dir=None, use_pyyaml=False
     ):
@@ -515,6 +554,20 @@ class TagPack(object):
                     f"{count} tags with the same address {address} found. "
                     "Consider aggregating them."
                 )
+
+        # Fail fast if two tags would collide on DB unique constraint after the
+        # same normalization used by tagstore insert (_get_network_and_address,
+        # label.strip(), network upper-casing).
+        unique_tag_index = {}
+        for tag in ut:
+            key = self._db_unique_key_for_tag(tag)
+            if key in unique_tag_index:
+                raise ValidationError(
+                    "Duplicate tags would violate DB unique constraint "
+                    "(identifier, network, label, tagpack, source): "
+                    f"{key}"
+                )
+            unique_tag_index[key] = True
 
         if self._duplicates:
             msg = f"{len(self._duplicates)} duplicate(s) found, starting "
