@@ -378,14 +378,8 @@ def test_addresses_whitespace(tagpack, caplog):
     log_messages = [
         record.message for record in caplog.records if record.levelname == "WARNING"
     ]
-    log_text = " ".join(log_messages)
-
-    msg1 = "Address contains whitespace: '1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s '"
-    msg2 = "Address contains whitespace: '1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s\\t'"
-    msg3 = "Address contains whitespace: '\\n1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s'"
-    assert msg1 in log_text
-    assert msg2 in log_text
-    assert msg3 in log_text
+    assert len(log_messages) == 1
+    assert "3 address(es) contain whitespace" in log_messages[0]
 
 
 def test_invalid_addresses(tagpack, caplog):
@@ -394,10 +388,49 @@ def test_invalid_addresses(tagpack, caplog):
     log_messages = [
         record.message for record in caplog.records if record.levelname == "WARNING"
     ]
-    log_text = " ".join(log_messages)
+    assert len(log_messages) == 1
+    assert "possible invalid address" in log_messages[0]
+    assert "BTC" in log_messages[0]
+    assert "ETH" in log_messages[0]
 
-    assert "Possible invalid BTC address: 123Bitcoin45" in log_text
-    assert "Possible invalid ETH address: 123Bitcoin66" in log_text
+
+def test_verify_addresses_with_missing_uri_does_not_fail(tagpack, caplog):
+    tagpack.uri = None
+    tagpack.verify_addresses()
+
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert len(log_messages) == 1
+    assert "possible invalid address" in log_messages[0]
+
+
+def test_verify_addresses_uses_shortened_source_name(tagpack, caplog):
+    tagpack.contents["tags"] = [
+        {"label": "bad", "address": "definitely-not-a-btc-address"}
+    ]
+    tagpack.uri = "/tmp/" + "a" * 60 + "_" + "b" * 60 + ".yaml"
+
+    tagpack.verify_addresses()
+
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert len(log_messages) == 1
+    assert log_messages[0].startswith("[")
+    src = log_messages[0].split("]", 1)[0][1:]
+    assert len(src) <= 50
+    assert "..." in src
+
+
+def test_validate_no_actor_warning_with_missing_uri_does_not_fail(tagpack, caplog):
+    tagpack.uri = None
+    assert tagpack.validate() is True
+
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    assert any("tags have no actor configured" in msg for msg in log_messages)
 
 
 def test_context_is_valid_json(tagpack):
@@ -685,7 +718,7 @@ def test_duplicate_does_not_raise_only_inform(caplog, taxonomies):
     assert len(tagpack.get_unique_tags()) == 2
 
 
-def test_same_tag_with_different_context_is_not_deduplicated(taxonomies):
+def test_same_tag_with_different_context_is_deduplicated(taxonomies):
     tagpack = TagPack.load_from_file(
         "http://example.com/packs",
         "tests/testfiles/simple/duplicate_tag_with_context.yaml",
@@ -695,14 +728,10 @@ def test_same_tag_with_different_context_is_not_deduplicated(taxonomies):
 
     unique_tags = tagpack.get_unique_tags()
 
-    assert len(unique_tags) == 2
-    assert {tag.all_fields.get("context") for tag in unique_tags} == {
-        "source-a",
-        "source-b",
-    }
+    assert len(unique_tags) == 1
 
 
-def test_validate_fails_for_db_unique_collision_with_different_context(taxonomies):
+def test_validate_warns_for_duplicate_with_different_context(taxonomies, caplog):
     tagpack = TagPack.load_from_file(
         "http://example.com/packs",
         "tests/testfiles/simple/duplicate_tag_with_context.yaml",
@@ -710,10 +739,15 @@ def test_validate_fails_for_db_unique_collision_with_different_context(taxonomie
         taxonomies,
     )
 
-    with pytest.raises(ValidationError) as e:
-        tagpack.validate()
+    assert tagpack.validate() is True
 
-    assert "would violate DB unique constraint" in str(e.value)
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+
+    assert "Duplicate tag" in log_text
+    assert "removed during deduplication" in log_text
 
 
 def test_validate_warns_for_malformed_bch_cashaddr(schema, taxonomies, caplog):

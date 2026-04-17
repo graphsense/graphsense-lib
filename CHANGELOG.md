@@ -15,8 +15,12 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library (v2.10.6)
 
+#### Changed
+- improved tag validation output (stdout)
+
 #### Fixed
 - reduced false positive rate for coinjoin detection module.
+- fixed disalignment of tag validation and db uniqueness constraints.
 
 
 ## [2.10.5] 2026-04-16
