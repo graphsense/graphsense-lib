@@ -1,5 +1,6 @@
 """Tests for the ObfuscateTags builtin plugin."""
 
+from types import SimpleNamespace
 import pytest
 from unittest.mock import MagicMock
 
@@ -7,6 +8,9 @@ from starlette.requests import Request
 from starlette.datastructures import Headers, QueryParams
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
+    OBFUSCATION_MODE_CONFIG_KEY,
+    OBFUSCATION_MODE_FORCE_DISABLE,
+    OBFUSCATION_MODE_FORCE_ENABLE,
     ObfuscateTags,
     GROUPS_HEADER_NAME,
     OBFUSCATION_MARKER_GROUP,
@@ -14,6 +18,8 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     obfuscate_private_tags,
     obfuscate_tagpack_uri_by_rule,
 )
+from graphsenselib.web.app import setup_plugins
+from graphsenselib.web.routes.base import should_obfuscate_private_tags
 from graphsenselib.web.models import (
     AddressTag,
     AddressTags,
@@ -176,6 +182,20 @@ def test_before_request_applies(path):
     }
 
 
+def test_before_request_force_enable_applies_for_all_requests():
+    req = make_request("/search")
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_ENABLE}}
+    assert ObfuscateTags.before_request(context, req) == {
+        GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP
+    }
+
+
+def test_before_request_force_disable_never_applies():
+    req = make_request("/btc/entities/123")
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}}
+    assert ObfuscateTags.before_request(context, req) is None
+
+
 # --- before_response Tests ---
 
 
@@ -252,15 +272,68 @@ def test_before_response_skips_with_no_obfuscation_group(group):
     assert entity.best_address_tag.label == "Private"
 
 
-def test_before_response_obfuscates_when_force_obfuscate_enabled(monkeypatch):
-    # With FORCE_OBFUSCATE enabled, tags-private group is overridden
-    import graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags as obf_module
-    monkeypatch.setattr(obf_module, "FORCE_OBFUSCATE", True)
-
+def test_before_response_obfuscates_when_force_enable_mode_is_set():
     entity = make_entity(tag=make_tag(is_public=False, label="Private"))
     req = make_request("/btc/entities/123", {GROUPS_HEADER_NAME: "tags-private"})
-    ObfuscateTags.before_response({}, req, entity)
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_ENABLE}}
+    ObfuscateTags.before_response(context, req, entity)
     assert entity.best_address_tag.label == ""  # Obfuscated despite tags-private group
+
+
+def test_before_response_skips_when_force_disable_mode_is_set():
+    entity = make_entity(tag=make_tag(is_public=False, label="Private"))
+    req = make_request("/btc/entities/123")
+    req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}}
+    ObfuscateTags.before_response(context, req, entity)
+    assert entity.best_address_tag.label == "Private"
+
+
+def test_should_obfuscate_private_tags_uses_plugin_marker():
+    req = make_request("/btc/entities/123")
+    req.state.plugin_state = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+    assert should_obfuscate_private_tags(req) is True
+
+
+def test_should_obfuscate_private_tags_false_without_marker():
+    req = make_request("/btc/entities/123")
+    req.state.plugin_state = {}
+    assert should_obfuscate_private_tags(req) is False
+
+
+def test_should_obfuscate_private_tags_uses_request_header_fallback():
+    req = make_request("/btc/entities/123")
+    req.state.plugin_state = {}
+    req.headers = Headers({GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP})
+    assert should_obfuscate_private_tags(req) is True
+
+
+@pytest.mark.asyncio
+async def test_setup_plugins_loads_builtin_obfuscate_config_from_gsrest_key():
+    plugin_name = "gsrest.builtin.plugins.obfuscate_tags.obfuscate_tags"
+    plugin_cfg = {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}
+
+    class DummyConfig:
+        plugins = [plugin_name]
+
+        @staticmethod
+        def get_plugin_config(name):
+            if name == plugin_name:
+                return plugin_cfg
+            return None
+
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            config=DummyConfig(),
+            plugin_cleanup_generators=[],
+        )
+    )
+
+    await setup_plugins(app)
+
+    builtin_name = ObfuscateTags.__module__
+    assert builtin_name in app.state.plugin_contexts
+    assert app.state.plugin_contexts[builtin_name]["config"] == plugin_cfg
 
 
 class TestTagpackUriRule:

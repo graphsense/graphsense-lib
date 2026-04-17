@@ -619,14 +619,23 @@ async def setup_plugins(app: FastAPI):
     )
 
     if obfuscate_private_tags:
-        logger.warning(
-            "Tag obfuscation plugin enabled, using built-in version. "
-            "Skipping load of external plugin."
-        )
         builtin_plugin = ObfuscateTags
         name = f"{builtin_plugin.__module__}"
         app.state.plugins.append(builtin_plugin)
         plugin_config = config.get_plugin_config(name)
+        if plugin_config is None:
+            # Backward compatibility: users often configure the builtin plugin
+            # under the plugin entry path from config.plugins.
+            for configured_name in config.plugins:
+                if configured_name.endswith("obfuscate_tags"):
+                    plugin_config = config.get_plugin_config(configured_name)
+                    if plugin_config is not None:
+                        break
+
+        logger.warning(
+            f"Tag obfuscation plugin enabled, using built-in version. "
+            f"Skipping load of external plugin. Config: {plugin_config}"
+        )
         app.state.plugin_contexts[name] = {"config": plugin_config}
         if hasattr(builtin_plugin, "setup"):
             setup_args = {

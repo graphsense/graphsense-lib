@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from functools import partial
 from typing import Any
@@ -32,9 +33,40 @@ from graphsenselib.web.plugins import (
 GROUPS_HEADER_NAME = "X-Consumer-Groups"
 NO_OBFUSCATION_MARKER_PATTERN = re.compile(r"tags-private")
 OBFUSCATION_MARKER_GROUP = "obfuscate"
+OBFUSCATION_MODE_CONFIG_KEY = "obfuscation_mode"
+OBFUSCATION_MODE_DEFAULT = "default"
+OBFUSCATION_MODE_FORCE_ENABLE = "force_enable"
+OBFUSCATION_MODE_FORCE_DISABLE = "force_disable"
 
-# Set to True to force obfuscation of all private tags (useful for development)
-FORCE_OBFUSCATE = False
+
+logger = logging.getLogger(__name__)
+
+
+def get_obfuscation_mode(context: dict) -> str:
+    """Return effective obfuscation mode.
+
+    Supported values:
+    - default: header/path based logic
+    - force_enable: always obfuscate private tags
+    - force_disable: never obfuscate private tags
+    """
+    config = context.get("config") or {}
+    mode = str(
+        config.get(OBFUSCATION_MODE_CONFIG_KEY, OBFUSCATION_MODE_DEFAULT)
+    ).lower()
+    valid_modes = {
+        OBFUSCATION_MODE_DEFAULT,
+        OBFUSCATION_MODE_FORCE_ENABLE,
+        OBFUSCATION_MODE_FORCE_DISABLE,
+    }
+    if mode not in valid_modes:
+        logger.warning(
+            "Unknown obfuscation mode '%s', falling back to '%s'",
+            mode,
+            OBFUSCATION_MODE_DEFAULT,
+        )
+        return OBFUSCATION_MODE_DEFAULT
+    return mode
 
 
 def has_no_obfuscation_group(groups):
@@ -73,6 +105,12 @@ def obfuscate_private_tags(tags):
 class ObfuscateTags(Plugin):
     @classmethod
     def before_request(cls, context: dict, request: Request) -> dict | None:
+        mode = get_obfuscation_mode(context)
+        if mode == OBFUSCATION_MODE_FORCE_DISABLE:
+            return None
+        if mode == OBFUSCATION_MODE_FORCE_ENABLE:
+            return {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+
         groups = [
             x.strip()
             for x in get_request_header(request, GROUPS_HEADER_NAME, "").split(",")
@@ -99,6 +137,11 @@ class ObfuscateTags(Plugin):
 
     @classmethod
     def before_response(cls, context: dict, request: Request, result: Any) -> None:
+        mode = get_obfuscation_mode(context)
+
+        if mode == OBFUSCATION_MODE_FORCE_DISABLE:
+            return
+
         # Get groups from headers (check for header modifications first)
         header_mods = getattr(request.state, "plugin_state", {})
         if GROUPS_HEADER_NAME in header_mods:
@@ -121,8 +164,8 @@ class ObfuscateTags(Plugin):
                 partial(obfuscate_tagpack_uri_by_rule, obfuscate_tagpack_uri_rule),
             )
 
-        if FORCE_OBFUSCATE:
-            # Ignore group-based bypass when FORCE_OBFUSCATE is enabled
+        if mode == OBFUSCATION_MODE_FORCE_ENABLE:
+            # Ignore group-based bypass when force_enable mode is active.
             cls.obfuscate_tags_in_objects(
                 context, request, result, obfuscate_private_tags
             )
