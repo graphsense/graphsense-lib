@@ -331,10 +331,13 @@ class TagPack(object):
         else:
             identifier = tag.all_fields.get("tx_hash")
 
+        label = tag.all_fields.get("label")
+        label = label.strip() if isinstance(label, str) else ""
+
         return (
             identifier,
             str(tag.all_fields.get("network", "")).upper(),
-            tag.all_fields.get("label", "").strip(),
+            label,
             tag.all_fields.get("source"),
         )
 
@@ -436,18 +439,33 @@ class TagPack(object):
         if self._unique_tags:
             return self._unique_tags
 
-        keys = ("address", "currency", "network", "label", "source", "context")
         seen = set()
         duplicates = []
         self._unique_tags = []
 
         for tag in self.tags:
             fields = tag.all_fields
-            key_tuple = tuple(str(fields.get(k, "")).lower() for k in keys)
-            if key_tuple in seen:
-                duplicates.append(key_tuple)
+            key = (
+                str(fields.get("address", fields.get("tx_hash", ""))).lower(),
+                str(fields.get("currency", "")).lower(),
+                str(fields.get("network", "")).lower(),
+                str(fields.get("label", "")).lower(),
+                str(fields.get("source", "")).lower(),
+            )
+            if key in seen:
+                # Log warning for duplicate detected
+                identifier, _, network, label, source = key
+                logger.warning(
+                    "Duplicate tag will be removed during deduplication on insert: "
+                    "label=%s, identifier=%s, network=%s, source=%s",
+                    label,
+                    identifier,
+                    network,
+                    source,
+                )
+                duplicates.append(key)
             else:
-                seen.add(key_tuple)
+                seen.add(key)
                 self._unique_tags.append(tag)
 
         self._duplicates = duplicates

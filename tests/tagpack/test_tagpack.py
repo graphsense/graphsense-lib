@@ -685,7 +685,7 @@ def test_duplicate_does_not_raise_only_inform(caplog, taxonomies):
     assert len(tagpack.get_unique_tags()) == 2
 
 
-def test_same_tag_with_different_context_is_not_deduplicated(taxonomies):
+def test_same_tag_with_different_context_is_deduplicated(taxonomies):
     tagpack = TagPack.load_from_file(
         "http://example.com/packs",
         "tests/testfiles/simple/duplicate_tag_with_context.yaml",
@@ -695,14 +695,10 @@ def test_same_tag_with_different_context_is_not_deduplicated(taxonomies):
 
     unique_tags = tagpack.get_unique_tags()
 
-    assert len(unique_tags) == 2
-    assert {tag.all_fields.get("context") for tag in unique_tags} == {
-        "source-a",
-        "source-b",
-    }
+    assert len(unique_tags) == 1
 
 
-def test_validate_fails_for_db_unique_collision_with_different_context(taxonomies):
+def test_validate_warns_for_duplicate_with_different_context(taxonomies, caplog):
     tagpack = TagPack.load_from_file(
         "http://example.com/packs",
         "tests/testfiles/simple/duplicate_tag_with_context.yaml",
@@ -710,10 +706,15 @@ def test_validate_fails_for_db_unique_collision_with_different_context(taxonomie
         taxonomies,
     )
 
-    with pytest.raises(ValidationError) as e:
-        tagpack.validate()
+    assert tagpack.validate() is True
 
-    assert "would violate DB unique constraint" in str(e.value)
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+
+    assert "Duplicate tag" in log_text
+    assert "removed during deduplication" in log_text
 
 
 def test_validate_warns_for_malformed_bch_cashaddr(schema, taxonomies, caplog):
