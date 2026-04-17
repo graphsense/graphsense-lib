@@ -45,6 +45,7 @@ class UtxoTransformation:
         block_bucket_size=UTXO_BLOCK_BUCKET_SIZE,
         tx_bucket_size=UTXO_TX_BUCKET_SIZE,
         tx_hash_prefix_len=UTXO_TX_HASH_PREFIX_LEN,
+        debug_write_audit=False,
     ):
         self.spark = spark
         # Spark/Hadoop uses s3a:// not s3://
@@ -53,6 +54,7 @@ class UtxoTransformation:
         self.block_bucket_size = block_bucket_size
         self.tx_bucket_size = tx_bucket_size
         self.tx_hash_prefix_len = tx_hash_prefix_len
+        self.debug_write_audit = debug_write_audit
         self._tx_df_cache = None
         self._tx_df_cache_range = None
 
@@ -72,6 +74,8 @@ class UtxoTransformation:
     def _write_cassandra(self, df, table_name, partition_key=None):
         if partition_key and partition_key in df.columns:
             df = df.repartition(partition_key)
+        if self.debug_write_audit and partition_key and partition_key in df.columns:
+            self._log_partition_audit(df, table_name, partition_key)
         (
             df.write.format("org.apache.spark.sql.cassandra")
             .options(table=table_name, keyspace=self.raw_keyspace)
@@ -79,6 +83,43 @@ class UtxoTransformation:
             .save()
         )
         logger.info(f"Wrote to {self.raw_keyspace}.{table_name}")
+
+    def _log_partition_audit(self, df, table_name, partition_key):
+        """Aggregate per-Spark-partition stats and log them on the driver.
+
+        Runs an extra Spark job (one shuffle aggregation) before the Cassandra
+        write. Use to diagnose stragglers: correlate Spark UI task durations
+        with row counts and partition-key skew.
+        """
+        from pyspark.sql import functions as F
+
+        per_key = df.groupBy(
+            F.spark_partition_id().alias("task_idx"),
+            F.col(partition_key).alias("key"),
+        ).agg(F.count("*").alias("rows"))
+
+        per_task = (
+            per_key.groupBy("task_idx")
+            .agg(
+                F.sum("rows").alias("rows"),
+                F.countDistinct("key").alias("distinct_keys"),
+                F.max("rows").alias("max_key_count"),
+            )
+            .orderBy(F.desc("rows"))
+            .limit(20)
+            .collect()
+        )
+
+        logger.info(
+            f"AUDIT {self.raw_keyspace}.{table_name} partition_key={partition_key} "
+            f"top {len(per_task)} heaviest tasks (of {df.rdd.getNumPartitions()}):"
+        )
+        for r in per_task:
+            logger.info(
+                f"AUDIT  task={r.task_idx:>5} rows={r.rows:>10} "
+                f"distinct_keys={r.distinct_keys:>8} "
+                f"max_rows_per_key={r.max_key_count:>8}"
+            )
 
     def _get_tx_df_with_ids(self, start_block, end_block):
         """Read transaction Delta table and compute tx_id.

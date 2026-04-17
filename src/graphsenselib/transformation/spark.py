@@ -88,6 +88,23 @@ def create_spark_session(
         .config("spark.sql.execution.pythonUDF.arrow.enabled", "true")
     )
 
+    # Cassandra connector instrumentation. The connector publishes per-task
+    # write latency / batch / retry metrics via the Spark metrics system; this
+    # is the Layer-2 input for straggler diagnosis. Override sink/dir or
+    # disable via spark_config.
+    metrics_dir = "/tmp/spark-metrics"
+    os.makedirs(metrics_dir, exist_ok=True)
+    builder = (
+        builder.config("spark.cassandra.output.metrics", "true")
+        .config(
+            "spark.metrics.conf.*.sink.csv.class",
+            "org.apache.spark.metrics.sink.CsvSink",
+        )
+        .config("spark.metrics.conf.*.sink.csv.period", "10")
+        .config("spark.metrics.conf.*.sink.csv.unit", "seconds")
+        .config("spark.metrics.conf.*.sink.csv.directory", metrics_dir)
+    )
+
     # S3/MinIO configuration
     if s3_credentials:
         endpoint = s3_credentials.get("AWS_ENDPOINT_URL", "")

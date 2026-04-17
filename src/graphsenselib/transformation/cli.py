@@ -54,6 +54,15 @@ def transformation():
     is_flag=True,
     help="Run Spark in local mode with local[*].",
 )
+@click.option(
+    "--debug-write-audit",
+    is_flag=True,
+    help=(
+        "Before each Cassandra write, run an extra aggregation that logs "
+        "per-Spark-partition row counts and partition-key skew. Use to "
+        "diagnose stragglers. Adds one shuffle per write."
+    ),
+)
 def run_transformation(
     env,
     currency,
@@ -62,6 +71,7 @@ def run_transformation(
     create_schema,
     delta_lake_path,
     local,
+    debug_write_audit,
 ):
     """Run PySpark transformation from Delta Lake to Cassandra raw keyspace.
 
@@ -162,6 +172,7 @@ def run_transformation(
         local=local,
         s3_credentials=s3_credentials,
         spark_config=spark_config,
+        debug_write_audit=debug_write_audit,
     )
 
 

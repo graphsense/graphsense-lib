@@ -21,6 +21,7 @@ def run(
     tables=None,
     s3_credentials=None,
     spark_config=None,
+    debug_write_audit=False,
 ):
     from graphsenselib.transformation.spark import create_spark_session
 
@@ -80,6 +81,7 @@ def run(
             spark=spark,
             delta_lake_path=delta_lake_path,
             raw_keyspace=raw_keyspace,
+            debug_write_audit=debug_write_audit,
         )
     else:
         spark.stop()
