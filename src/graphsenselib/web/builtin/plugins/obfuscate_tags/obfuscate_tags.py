@@ -33,6 +33,9 @@ GROUPS_HEADER_NAME = "X-Consumer-Groups"
 NO_OBFUSCATION_MARKER_PATTERN = re.compile(r"tags-private")
 OBFUSCATION_MARKER_GROUP = "obfuscate"
 
+# Set to True to force obfuscation of all private tags (useful for development)
+FORCE_OBFUSCATE = False
+
 
 def has_no_obfuscation_group(groups):
     """Check if any group matches the no obfuscation pattern."""
@@ -118,9 +121,13 @@ class ObfuscateTags(Plugin):
                 partial(obfuscate_tagpack_uri_by_rule, obfuscate_tagpack_uri_rule),
             )
 
-        if has_no_obfuscation_group(groups):
+        if FORCE_OBFUSCATE:
+            # Ignore group-based bypass when FORCE_OBFUSCATE is enabled
+            cls.obfuscate_tags_in_objects(
+                context, request, result, obfuscate_private_tags
+            )
+        elif has_no_obfuscation_group(groups):
             return
-
         else:
             cls.obfuscate_tags_in_objects(
                 context, request, result, obfuscate_private_tags

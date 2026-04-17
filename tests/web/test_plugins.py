@@ -244,12 +244,23 @@ class TestBeforeResponseNeighborEntities:
 
 @pytest.mark.parametrize(
     "group", ["tags-private"]
-)  # Only 'tags-private' skips obfuscation
+)  # tags-private group skips obfuscation (unless FORCE_OBFUSCATE is enabled)
 def test_before_response_skips_with_no_obfuscation_group(group):
     entity = make_entity(tag=make_tag(is_public=False, label="Private"))
     req = make_request("/btc/entities/123", {GROUPS_HEADER_NAME: group})
     ObfuscateTags.before_response({}, req, entity)
     assert entity.best_address_tag.label == "Private"
+
+
+def test_before_response_obfuscates_when_force_obfuscate_enabled(monkeypatch):
+    # With FORCE_OBFUSCATE enabled, tags-private group is overridden
+    import graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags as obf_module
+    monkeypatch.setattr(obf_module, "FORCE_OBFUSCATE", True)
+
+    entity = make_entity(tag=make_tag(is_public=False, label="Private"))
+    req = make_request("/btc/entities/123", {GROUPS_HEADER_NAME: "tags-private"})
+    ObfuscateTags.before_response({}, req, entity)
+    assert entity.best_address_tag.label == ""  # Obfuscated despite tags-private group
 
 
 class TestTagpackUriRule:
