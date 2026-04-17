@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.10.7] 2026-04-17
+
+### Library (v2.10.7)
+
+#### Fixed
+- loading tags with invalid tron addresses failed with unhandled error
+
 
 ## [2.10.6] 2026-04-17
 

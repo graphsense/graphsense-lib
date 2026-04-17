@@ -229,7 +229,9 @@ class ServiceContainer:
             logger=logger,
         )
         self._txs_service = TxsService(
-            db=db, rates_service=self._rates_service, logger=logger,
+            db=db,
+            rates_service=self._rates_service,
+            logger=logger,
             tags_service=self._tags_service,
         )
         self._blocks_service = BlocksService(
