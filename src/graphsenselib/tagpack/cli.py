@@ -463,7 +463,12 @@ def validate_tagpack(
             for tagpack_file in files:
                 strict_file_failed = False
                 tagpack = TagPack.load_from_file(
-                    "", tagpack_file, schema, taxonomies, headerfile_dir, use_pyyaml
+                    tagpack_file,
+                    tagpack_file,
+                    schema,
+                    taxonomies,
+                    headerfile_dir,
+                    use_pyyaml,
                 )
 
                 logger.info(f"Validating {tagpack_file}")

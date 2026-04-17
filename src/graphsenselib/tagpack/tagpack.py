@@ -341,6 +341,37 @@ class TagPack(object):
             tag.all_fields.get("source"),
         )
 
+    @staticmethod
+    def _shorten_middle(value: str, max_len: int = 50) -> str:
+        if len(value) <= max_len:
+            return value
+
+        if max_len <= 3:
+            return "." * max_len
+
+        keep = max_len - 3
+        left = keep // 2
+        right = keep - left
+        return f"{value[:left]}...{value[-right:]}"
+
+    def _source_prefix(self) -> str:
+        """Return a safe source prefix for log messages, or empty string."""
+        src_value = ""
+        if isinstance(self.uri, (str, os.PathLike)):
+            src_value = os.fspath(self.uri)
+
+        if not src_value:
+            return ""
+
+        try:
+            src = pathlib.Path(src_value).name or src_value
+        except Exception:
+            src = src_value
+
+        src = self._shorten_middle(str(src), max_len=50)
+        return f"[{src}] " if src else ""
+
+    @staticmethod
     def load_from_file(
         uri, pathname, schema, taxonomies, header_dir=None, use_pyyaml=False
     ):
@@ -443,6 +474,8 @@ class TagPack(object):
         duplicates = []
         self._unique_tags = []
 
+        src = self._source_prefix()
+
         for tag in self.tags:
             fields = tag.all_fields
             key = (
@@ -456,8 +489,9 @@ class TagPack(object):
                 # Log warning for duplicate detected
                 identifier, _, network, label, source = key
                 logger.warning(
-                    "Duplicate tag will be removed during deduplication on insert: "
+                    "%s Duplicate tag will be removed during deduplication on insert: "
                     "label=%s, identifier=%s, network=%s, source=%s",
+                    src,
                     label,
                     identifier,
                     network,
@@ -555,8 +589,9 @@ class TagPack(object):
                     raise ValidationError(f"{e} in {tag}")
 
         if nr_no_actors > 0:
+            src_prefix = self._source_prefix()
             logger.warning(
-                f"{nr_no_actors}/{len(ut)} tags have no actor configured. "
+                f"{src_prefix}{nr_no_actors}/{len(ut)} tags have no actor configured. "
                 "Please consider connecting the tag to an actor."
             )
 
@@ -568,8 +603,9 @@ class TagPack(object):
 
         for address, count in address_counts.items():
             if count > 100:
+                src_prefix = self._source_prefix()
                 logger.warning(
-                    f"{count} tags with the same address {address} found. "
+                    f"{src_prefix}{count} tags with the same address {address} found. "
                     "Consider aggregating them."
                 )
 
@@ -588,7 +624,8 @@ class TagPack(object):
             unique_tag_index[key] = True
 
         if self._duplicates:
-            msg = f"{len(self._duplicates)} duplicate(s) found, starting "
+            src_prefix = self._source_prefix()
+            msg = f"{src_prefix}{len(self._duplicates)} duplicate(s) found, starting "
             msg += f"with {self._duplicates[0]}"
             logger.warning(msg)
         return True
@@ -602,27 +639,54 @@ class TagPack(object):
         """
 
         unsupported = defaultdict(set)
-        msg = "Possible invalid {} address: {}"
+        invalid = defaultdict(list)  # cupper -> [address, ...]
+        whitespace_addrs = []
         for tag in self.get_unique_tags():
             currency = tag.all_fields.get("currency", "").lower()
             cupper = currency.upper()
             address = tag.all_fields.get("address")
             if address is not None:
                 if len(address) != len(address.strip()):
-                    logger.warning(f"Address contains whitespace: {repr(address)}")
-
+                    whitespace_addrs.append(address)
                 elif currency in self.verifiable_currencies:
                     v = validate_address(currency, address)
                     if not v:
-                        logger.warning(msg.format(cupper, address))
+                        invalid[cupper].append(address)
                 else:
                     unsupported[cupper].add(address)
 
-        for c, addrs in unsupported.items():
-            logger.warning(f"Address verification is not supported for {c}:")
-            for a in sorted(addrs):
-                logger.debug(f"Address verification skipped for: {a}")
-            logger.warning(f"Address verification skipped for: {len(addrs)} addresses")
+        _SAMPLE_SIZE = 3
+
+        def _fmt_summary(items, repr_items=False):
+            total = len(items)
+            sample = list(items)[:_SAMPLE_SIZE]
+            samples = ", ".join(repr(a) if repr_items else a for a in sample)
+            extra = f" (+{total - _SAMPLE_SIZE} more)" if total > _SAMPLE_SIZE else ""
+            return total, samples, extra
+
+        src_prefix = self._source_prefix()
+
+        if whitespace_addrs:
+            total, samples, extra = _fmt_summary(whitespace_addrs, repr_items=True)
+            logger.warning(
+                f"{src_prefix}{total} address(es) contain whitespace: {samples}{extra}"
+            )
+
+        if invalid:
+            all_invalid = [a for addrs in invalid.values() for a in addrs]
+            currencies = ", ".join(sorted(invalid.keys()))
+            total, samples, extra = _fmt_summary(all_invalid)
+            logger.warning(
+                f"{src_prefix}{total} possible invalid address(es) [{currencies}]: {samples}{extra}"
+            )
+
+        if unsupported:
+            total_unsupported = sum(len(v) for v in unsupported.values())
+            currencies = ", ".join(sorted(unsupported.keys()))
+            logger.warning(
+                f"{src_prefix}Address verification skipped for {total_unsupported} address(es) "
+                f"in unsupported currencies [{currencies}]"
+            )
 
     def add_actors(
         self, find_actor_candidates, only_categories=None, user_choice_cache={}
