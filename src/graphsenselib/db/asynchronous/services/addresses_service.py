@@ -178,26 +178,35 @@ class AddressesService:
             # This is because TRX addresses can be derived from EVM addresses
             # and we want to ensure we find related addresses even if the TRX address is not
             # directly in the address_to_pubkey table.
-            evm_address = tron_address_to_evm_string(address)
-
             try:
-                results_trx = await self.db.get_cross_chain_pubkey_related_addresses(
-                    evm_address, "eth"
+                evm_address = tron_address_to_evm_string(address)
+            except Exception as exc:
+                self.logger.warning(
+                    "Skipping TRX pubkey-derived lookup due to invalid TRX address %s: %s",
+                    address,
+                    exc,
                 )
-            except NetworkNotFoundException:
-                results_trx = []
+            else:
+                try:
+                    results_trx = (
+                        await self.db.get_cross_chain_pubkey_related_addresses(
+                            evm_address, "eth"
+                        )
+                    )
+                except NetworkNotFoundException:
+                    results_trx = []
 
-            data = [
-                CrossChainPubkeyRelatedAddress.model_validate(addr)
-                for addr in results_trx
-                if addr["address"] != address
-                or (
-                    network is None
-                    or (network is not None and addr["currency"] != network)
-                )
-            ]
+                data = [
+                    CrossChainPubkeyRelatedAddress.model_validate(addr)
+                    for addr in results_trx
+                    if addr["address"] != address
+                    or (
+                        network is None
+                        or (network is not None and addr["currency"] != network)
+                    )
+                ]
 
-            raw_query_results = results_trx
+                raw_query_results = results_trx
 
         forked_addresses = await self._handle_fork_address_overlap(
             raw_query_results, address, network=network
