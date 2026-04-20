@@ -99,6 +99,7 @@ def try_load_config(filename: str):
         "tagpack-tool",
         "tagstore",
         "web",
+        "convert",
     ]
 
     app_config = get_config()

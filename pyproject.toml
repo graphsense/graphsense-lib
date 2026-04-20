@@ -53,7 +53,7 @@ content-type = "text/markdown; charset=UTF-8; variant=GFM"
 # Add here related links, for example:
 
 [project.urls]
-Homepage = "https://graphsense.github.io/"
+Homepage = "https://graphsense.org/"
 Source = "https://github.com/graphsense/graphsense-lib"
 Changelog = "https://github.com/graphsense/graphsense-lib/blob/master/CHANGELOG.md"
 Tracker = "https://github.com/graphsense/graphsense-lib/issues"

@@ -1,6 +1,7 @@
 import click
 
 from .accountsetl import convert_etl_to_ingestable_logs
+from .gs_files.cli import gs_files_cli
 
 
 @click.group()
@@ -12,6 +13,9 @@ def convert_cli():
 def convert():
     """Useful file convertions tools for the graphsense infrastructure."""
     pass
+
+
+convert.add_command(gs_files_cli)
 
 
 @convert.command("log-to-ingestable-log")
