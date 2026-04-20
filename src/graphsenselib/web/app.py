@@ -40,6 +40,7 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
 )
 from graphsenselib.web.config import GSRestConfig, LoggingConfig
 from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
+from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
@@ -47,6 +48,7 @@ from graphsenselib.web.routes import (
     addresses,
     blocks,
     bulk,
+    clusters,
     entities,
     general,
     rates,
@@ -62,12 +64,28 @@ DOCS_STATIC_URL = "/docs_assets"
 DEFAULT_DOCS_LOGO_URL = f"{DOCS_STATIC_URL}/logo.png"
 DEFAULT_DOCS_FAVICON_ICO_URL = f"{DOCS_STATIC_URL}/favicon.ico"
 DEFAULT_DOCS_FAVICON_PNG_URL = f"{DOCS_STATIC_URL}/favicon.png"
-API_DESCRIPTION = (
-    "GraphSense API provides programmatic access to blockchain analytics data "
-    "across multiple ledgers. Use it to explore addresses, entities, blocks, "
-    "transactions, tags, token activity, and exchange-rate context, and to "
-    "integrate investigation workflows into your own applications and automation."
-)
+API_DESCRIPTION = """\
+GraphSense API provides programmatic access to blockchain analytics data across
+multiple ledgers. Use it to explore addresses, clusters, blocks, transactions,
+tags, token activity, and exchange-rate context, and to integrate investigation
+workflows into your own applications and automation.
+
+## Versioning and deprecation policy
+
+The API follows semantic versioning. Minor releases are additive and
+backwards-compatible; breaking changes only happen in major releases, which
+are rare and announced in advance.
+
+Deprecated endpoints and fields remain fully functional for at least six
+months after they are marked deprecated. During that window they are
+highlighted with a strikethrough in the docs and in generated clients, and
+responses from deprecated endpoints carry a `Deprecation` HTTP header that
+client tooling can detect. Replacement endpoints and fields are always
+introduced before the deprecated surface is removed.
+
+See the [full versioning and deprecation policy](https://github.com/graphsense/graphsense-lib/blob/master/README.md#rest-api-evolution-and-deprecation-policy)
+for details.
+"""
 logger = logging.getLogger(__name__)
 
 
@@ -769,6 +787,11 @@ def _register_routers(app: FastAPI):
     )
     app.include_router(blocks.router, prefix="/{currency}", tags=["blocks"])
     app.include_router(
+        clusters.router,
+        prefix="/{currency}",
+        tags=["clusters"],
+    )
+    app.include_router(
         entities.router,
         prefix="/{currency}",
         tags=["entities"],
@@ -942,6 +965,9 @@ def create_app(
 
     # Empty params middleware (must be after PluginMiddleware to run first)
     app.add_middleware(EmptyQueryParamsMiddleware)
+
+    # Advertise deprecation on responses from routes marked deprecated=True.
+    app.add_middleware(DeprecationHeaderMiddleware)
 
     _register_exception_handlers(app)
     _register_routers(app)

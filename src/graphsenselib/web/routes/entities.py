@@ -44,12 +44,23 @@ import graphsenselib.web.service.entities_service as service
 
 router = APIRouter(route_class=PluginRoute)
 
+# Sunset date shared by all `/entities/...` routes. After this date, the
+# routes may be removed without further notice. Advertised to clients via the
+# `Sunset` HTTP header (RFC 8594) by DeprecationHeaderMiddleware, which reads
+# it from each route's `openapi_extra` metadata.
+_ENTITIES_SUNSET = {"x-sunset": "2026-10-31"}
+
 
 @router.get(
     "/entities/{entity}",
     summary="Get entity details",
-    description="Returns details for a single clustered entity.",
+    description=(
+        "Deprecated alias for `GET /{currency}/clusters/{cluster}`. Returns details "
+        "for a single address cluster."
+    ),
     operation_id="get_entity",
+    deprecated=True,
+    openapi_extra=_ENTITIES_SUNSET,
     response_model=Entity,
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},
@@ -76,8 +87,13 @@ async def get_entity(
 @router.get(
     "/entities/{entity}/addresses",
     summary="List entity addresses",
-    description="Returns paginated addresses that belong to the entity.",
+    description=(
+        "Deprecated alias for `GET /{currency}/clusters/{cluster}/addresses`. "
+        "Returns paginated addresses that belong to the cluster."
+    ),
     operation_id="list_entity_addresses",
+    deprecated=True,
+    openapi_extra=_ENTITIES_SUNSET,
     response_model=EntityAddresses,
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},
@@ -110,6 +126,7 @@ async def list_entity_addresses(
     ),
     operation_id="list_entity_neighbors",
     deprecated=True,
+    openapi_extra=_ENTITIES_SUNSET,
     response_model=NeighborEntities,
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},
@@ -157,6 +174,7 @@ async def list_entity_neighbors(
     ),
     operation_id="list_entity_links",
     deprecated=True,
+    openapi_extra=_ENTITIES_SUNSET,
     response_model=Links,
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},
@@ -202,6 +220,7 @@ async def list_entity_links(
     ),
     operation_id="list_address_tags_by_entity",
     deprecated=True,
+    openapi_extra=_ENTITIES_SUNSET,
     response_model=AddressTags,
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},
@@ -234,6 +253,7 @@ async def list_address_tags_by_entity(
     ),
     operation_id="list_entity_txs",
     deprecated=True,
+    openapi_extra=_ENTITIES_SUNSET,
     response_model=AddressTxs,
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},
@@ -280,6 +300,7 @@ async def list_entity_txs(
     ),
     operation_id="search_entity_neighbors",
     deprecated=True,
+    openapi_extra=_ENTITIES_SUNSET,
     response_model=list[SearchResultLevel1],
     response_model_exclude_none=True,
     responses={404: {"description": "Entity not found for the selected currency."}},

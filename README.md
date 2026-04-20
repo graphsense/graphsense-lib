@@ -94,6 +94,71 @@ When enabling `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP=true`, keep in mind:
 
 If TagStore is not configured (`gs-tagstore` missing) or the TagStore URL is unreachable, the REST app now falls back to a mock TagStore so endpoints still work. In this mode, tag-specific responses (labels, actors, taxonomies, tag counts) are empty.
 
+### REST API evolution and deprecation policy
+
+The REST API follows semantic versioning via `info.version` in the OpenAPI spec
+and the `__api_version__` field in the library:
+
+- **Patch** (`2.10.x`): bug fixes, no schema changes.
+- **Minor** (`2.y.0`): additive changes — new endpoints, new fields, new
+  optional parameters. Deprecations may be introduced here but deprecated
+  surfaces continue to work.
+- **Major** (`x.0.0`): removal of deprecated surfaces and other breaking
+  changes. Major bumps are rare and announced in advance.
+
+Deprecated endpoints and fields remain fully functional for **at least two
+minor releases or six months**, whichever is longer. Deprecations are announced
+through three mechanisms, listed from most to least machine-readable:
+
+#### OpenAPI schema (`deprecated: true`)
+
+Deprecated paths and response fields carry `deprecated: true` in
+`/openapi.json`, which renders as a strikethrough in Swagger UI (`/docs`) and
+is propagated to the generated Python client's docstrings. Check the spec at
+build time to fail CI if you depend on a deprecated surface.
+
+#### HTTP response headers (RFC 9745 / RFC 8594)
+
+Responses from deprecated routes carry:
+
+- **`Deprecation: true`** — [RFC 9745](https://www.rfc-editor.org/rfc/rfc9745).
+  Signals that this specific endpoint is deprecated. Currently emitted as the
+  literal string `true`; future releases may upgrade it to an `@<epoch>`
+  timestamp indicating when deprecation took effect.
+- **`Link: </docs#section/Deprecation-policy>; rel="deprecation"; type="text/html"`** —
+  points clients at the authoritative policy page.
+- **`Sunset: <HTTP-date>`** — [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594).
+  Announces the committed removal date for the endpoint. For the
+  `/entities/...` endpoints (superseded by `/clusters/...`), the sunset is
+  set to `Sat, 31 Oct 2026 00:00:00 GMT`. After that date the deprecated
+  endpoints may be removed without further notice. Other deprecations may
+  be introduced with different sunset dates in future releases.
+
+To detect deprecation in your own client code, inspect the `Deprecation` and
+`Sunset` response headers and log a warning (or fail CI) when you hit a
+deprecated surface. Example with the generated Python client:
+
+```python
+from graphsense import ApiClient, Configuration
+from graphsense.api import ClustersApi
+
+cfg = Configuration(host="https://api.iknaio.com", api_key={"api_key": "..."})
+with ApiClient(cfg) as api_client:
+    clusters = ClustersApi(api_client)
+    response = clusters.get_cluster_with_http_info(currency="btc", cluster=264711)
+    headers = response.headers
+    if headers.get("Deprecation"):
+        sunset = headers.get("Sunset", "no sunset date set")
+        print(f"WARNING: endpoint deprecated (sunset: {sunset})")
+```
+
+#### CHANGELOG
+
+Every deprecation is recorded in [`CHANGELOG.md`](CHANGELOG.md) under the
+release that introduced it, and every removal is recorded in the major release
+that applies it. Use the changelog as the audit trail when planning client
+upgrades.
+
 ### Basic Usage
 
 #### Database Access with Configuration File

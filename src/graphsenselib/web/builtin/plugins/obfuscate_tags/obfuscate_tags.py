@@ -13,7 +13,9 @@ from graphsenselib.tagstore.algorithms.obfuscate import (
 
 from graphsenselib.web.models import (
     AddressTags,
+    Cluster,
     Entity,
+    NeighborClusters,
     NeighborEntities,
     SearchResultLeaf,
     SearchResultLevel1,
@@ -178,14 +180,14 @@ class ObfuscateTags(Plugin):
 
     @classmethod
     def obfuscate_tags_in_objects(cls, context, request, result, tag_obfuscation_func):
-        if isinstance(result, Entity):
+        if isinstance(result, (Entity, Cluster)):
             tag_obfuscation_func(result.best_address_tag)
             obfuscate_entity_actor(result)
             return
         if isinstance(result, AddressTags):
             tag_obfuscation_func(result.address_tags)
             return
-        if isinstance(result, NeighborEntities):
+        if isinstance(result, (NeighborEntities, NeighborClusters)):
             for neighbor in result.neighbors:
                 tag_obfuscation_func(neighbor.entity.best_address_tag)
                 obfuscate_entity_actor(neighbor.entity)

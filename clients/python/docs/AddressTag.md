@@ -24,7 +24,8 @@ Name | Type | Description | Notes
 **confidence_level** | **int** |  | [optional] 
 **inherited_from** | **str** |  | [optional] 
 **address** | **str** |  | [optional] 
-**entity** | **int** |  | [optional] 
+**entity** | **int** | Deprecated alias of &#x60;cluster&#x60;. Use &#x60;cluster&#x60; instead; this field is retained for backwards compatibility and will be removed in a future release. | [optional] 
+**cluster** | **int** | Address cluster ID (preferred alias for the deprecated &#x60;entity&#x60; field). | [readonly] 
 
 ## Example
 

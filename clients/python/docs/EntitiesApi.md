@@ -18,7 +18,7 @@ Method | HTTP request | Description
 
 Get entity details
 
-Returns details for a single clustered entity.
+Deprecated alias for `GET /{currency}/clusters/{cluster}`. Returns details for a single address cluster.
 
 ### Example
 
@@ -192,7 +192,7 @@ Name | Type | Description  | Notes
 
 List entity addresses
 
-Returns paginated addresses that belong to the entity.
+Deprecated alias for `GET /{currency}/clusters/{cluster}/addresses`. Returns paginated addresses that belong to the cluster.
 
 ### Example
 

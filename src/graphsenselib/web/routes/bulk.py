@@ -29,13 +29,18 @@ logger = logging.getLogger(__name__)
 restrict_concurrency_on = [
     "list_entity_txs",
     "list_entity_addresses",
+    "list_cluster_txs",
+    "list_cluster_addresses",
     "list_tags_by_address",
 ]
 default_concurrency_by_operation = {
     "list_tags_by_address": 2,
 }
 
-apis = ["addresses", "entities", "blocks", "txs", "rates", "tags"]
+# `clusters` is listed before `entities` so new cluster-named operations resolve
+# against clusters_service first. `entities_service` is still present as a
+# back-compat shim re-exporting the same functions under their legacy names.
+apis = ["addresses", "clusters", "entities", "blocks", "txs", "rates", "tags"]
 
 error_field = "_error"
 info_field = "_info"

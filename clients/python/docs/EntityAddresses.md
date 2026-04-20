@@ -1,6 +1,6 @@
 # EntityAddresses
 
-Paginated list of addresses in an entity.
+Paginated list of addresses in a cluster (legacy name: EntityAddresses).
 
 ## Properties
 
