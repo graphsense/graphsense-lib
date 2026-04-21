@@ -184,12 +184,18 @@ def register_lookup_address(mcp, app, stack) -> None:
             if include_tag_summary:
                 result["tag_summary"] = _slim(
                     await _get_json(
-                        client, f"/{currency}/addresses/{address}/tag_summary"
+                        client,
+                        f"/{currency}/addresses/{address}/tag_summary",
+                        params={"include_best_cluster_tag": True},
                     )
                 )
             if include_tags:
                 result["tags"] = _slim(
-                    await _get_json(client, f"/{currency}/addresses/{address}/tags")
+                    await _get_json(
+                        client,
+                        f"/{currency}/addresses/{address}/tags",
+                        params={"include_best_cluster_tag": True},
+                    )
                 )
             if include_cross_chain_addresses:
                 related = await _get_json(

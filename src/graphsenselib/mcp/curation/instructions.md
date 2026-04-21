@@ -94,6 +94,25 @@ one cluster. Keep this in mind when presenting results:
   claim rests on cluster membership, say so explicitly and flag it
   as heuristic.
 
+## Tag data policy
+
+`lookup_address` returns three distinct tag-related fields. They are
+not equivalent — read them in the right order:
+
+1. **`best_cluster_tag`** (top-level) — always your first reference
+   for who this address/cluster is. Highest confidence, already picked
+   as "the" tag by the upstream ranking.
+2. **`tag_summary`** — the authoritative aggregated view. Prefer this
+   over the raw `tags` list for any conclusion about identity,
+   category, or actor. Counts, best label, best actor, and the
+   concept cloud are all already confidence-weighted here.
+3. **`tags` list** — last resort. Useful **only** for surfacing
+   lower-confidence leads that don't make it into `tag_summary` (e.g.
+   a single crowd-sourced label a user might still find relevant).
+   Do not promote an entry from `tags` over what `tag_summary` says;
+   if you cite something from `tags`, mark it as a low-confidence
+   lead.
+
 ## Safety rails
 
 - Currency codes are lowercase short slugs (`btc`, `eth`, `usdt`, ...).
