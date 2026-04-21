@@ -33,26 +33,35 @@ async def test_tool_surface_shape(bundled_mcp):
     # Must-have auto-generated passthroughs
     assert "get_statistics" in names
     assert "get_block" in names
-    assert "get_tx" in names
     assert "search" in names
     assert "list_taxonomies" in names
 
     # Consolidated wrappers
     assert "lookup_address" in names
-    assert "lookup_entity" in names
-    assert "lookup_tx_io" in names
+    assert "lookup_cluster" in names
+    assert "lookup_tx_details" in names
     assert "list_neighbors" in names
     assert "list_txs_for" in names
+
+    # Old wrapper names must be gone (renamed)
+    assert "lookup_entity" not in names
+    assert "lookup_tx_io" not in names
 
     # Replaced endpoints MUST NOT be exposed (consolidation wins)
     assert "get_address" not in names
     assert "get_address_entity" not in names
     assert "get_tag_summary_by_address" not in names
     assert "list_tags_by_address" not in names
+    assert "list_related_addresses" not in names
+    assert "get_entity" not in names
+    assert "get_cluster" not in names
+    assert "list_address_tags_by_entity" not in names
+    assert "list_address_tags_by_cluster" not in names
     assert "list_address_neighbors" not in names
     assert "list_entity_neighbors" not in names
     assert "list_cluster_neighbors" not in names
     assert "list_address_txs" not in names
+    assert "get_tx" not in names
     assert "get_tx_io" not in names
     assert "get_spending_txs" not in names
     assert "get_spent_in_txs" not in names
@@ -61,7 +70,6 @@ async def test_tool_surface_shape(bundled_mcp):
     assert "bulk_csv" not in names
     assert "bulk_json" not in names
     assert "report_tag" not in names
-    assert "list_related_addresses" not in names
 
 
 async def test_external_tool_skipped_without_config(bundled_mcp):

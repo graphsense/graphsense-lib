@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal, Optional
 
 import httpx
@@ -8,12 +9,32 @@ from fastmcp.exceptions import ToolError
 
 logger = logging.getLogger(__name__)
 
-EntityKind = Literal["address", "entity", "cluster"]
+# "entity" is a drop-in alias for "cluster" in the underlying graphsense API
+# (entities_service.get_entity literally delegates to clusters_service.get_cluster).
+# The MCP surface exposes only "cluster" to avoid conceptual duplication.
+AddressOrCluster = Literal["address", "cluster"]
 _KIND_TO_PATH = {
     "address": "addresses",
-    "entity": "entities",
     "cluster": "clusters",
 }
+
+# Regex guards on user-controlled path segments. httpx does not URL-encode
+# path components, so an unvalidated segment with '/' or '..' could escape
+# the intended endpoint — even though FastAPI routing would likely reject
+# it downstream. These patterns are deliberately conservative.
+_CURRENCY_PATTERN = re.compile(r"^[a-z0-9]{2,10}$")
+_ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{1,150}$")
+
+
+def _validate_currency(currency: str) -> None:
+    if not _CURRENCY_PATTERN.match(currency):
+        raise ToolError(f"Invalid currency identifier: {currency!r}")
+
+
+def _validate_id(name: str, value: str) -> None:
+    """Guard addresses, tx hashes, and opaque ids passed into URL segments."""
+    if not _ID_PATTERN.match(value):
+        raise ToolError(f"Invalid {name}: {value!r}")
 
 
 def _make_client(app) -> httpx.AsyncClient:
@@ -41,75 +62,190 @@ async def _get_json(
     return response.json()
 
 
+async def _get_json_optional(
+    client: httpx.AsyncClient,
+    path: str,
+    params: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Like _get_json, but returns None on 404 instead of raising.
+
+    Use when the absence of a resource is a valid, expected outcome —
+    e.g. an address that has no cluster association shouldn't fail the
+    whole lookup_address call.
+    """
+    response = await client.get(path, params=params)
+    if response.status_code == 404:
+        return None
+    if response.status_code >= 400:
+        try:
+            detail = response.json().get("detail")
+        except Exception:
+            detail = response.text
+        raise ToolError(
+            f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
+        )
+    return response.json()
+
+
+def _slim(obj: Any) -> Any:
+    """Recursively flatten graphsense's `{fiat_values: [{code, value}...], value}`
+    money objects into `{native: N, eur: V, usd: V, ...}`.
+
+    Saves roughly 40% of tokens on responses dominated by fiat conversions
+    (balance, totals, neighbor edges, tx values) by eliminating the repeated
+    `code` / `value` keys and the array wrapper.
+    """
+    if isinstance(obj, dict):
+        # Money object detection: has both fiat_values (list) and value (native)
+        fv = obj.get("fiat_values")
+        if (
+            isinstance(fv, list)
+            and "value" in obj
+            and all(isinstance(e, dict) and "code" in e and "value" in e for e in fv)
+        ):
+            flat: dict[str, Any] = {"native": obj["value"]}
+            for entry in fv:
+                flat[entry["code"]] = entry["value"]
+            # Preserve any extra keys alongside (rare but possible)
+            for k, v in obj.items():
+                if k not in {"fiat_values", "value"}:
+                    flat[k] = _slim(v)
+            return flat
+        return {k: _slim(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_slim(x) for x in obj]
+    return obj
+
+
+def _best_cluster_tag(
+    cluster_body: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    """Extract the graphsense `best_address_tag` field from a cluster response.
+
+    Graphsense's cluster endpoint returns this field by default when the
+    cluster has any tag attribution. We surface it at the top level of
+    lookup_address / lookup_cluster responses (renamed to `best_cluster_tag`
+    for clarity) regardless of which include flags the caller set, because
+    it's the single most useful datum when orienting on an unknown address.
+    """
+    if not isinstance(cluster_body, dict):
+        return None
+    tag = cluster_body.get("best_address_tag")
+    return tag if isinstance(tag, dict) else None
+
+
 def register_lookup_address(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_address-level", "gs_lookup"})
     async def lookup_address(
         currency: str,
         address: str,
         include_tags: bool = True,
-        include_entity: bool = True,
+        include_cluster: bool = True,
         include_tag_summary: bool = True,
+        include_cross_chain_addresses: bool = False,
     ) -> dict[str, Any]:
         """Look up a cryptocurrency address and return a consolidated view:
-        base details (balance, activity range), entity membership, tag summary,
-        and the list of tags attached to the address. One call replaces four
-        separate endpoint hits that LLMs otherwise chain.
+        base details (balance, activity range), cluster membership, the
+        cluster's best tag, tag summary, and the address's own tags. One
+        call replaces four or more separate endpoint hits that LLMs would
+        otherwise chain.
+
+        The `best_cluster_tag` field at the top level is always populated
+        when the cluster has any tag attribution — it's the single most
+        useful datum for orienting on an unknown address, so we surface it
+        unconditionally rather than burying it under an include flag.
 
         Args:
             currency: Network identifier (e.g. "btc", "eth").
             address: Address to look up.
             include_tags: Include the list of tags attached to the address.
-            include_entity: Include the entity/cluster the address belongs to.
+            include_cluster: Include the cluster the address belongs to.
             include_tag_summary: Include the aggregated tag_summary.
+            include_cross_chain_addresses: Include addresses derived from the
+                same public key on OTHER chains (e.g. same pubkey exposes a
+                BTC address and its BCH/LTC/... counterparts).
 
         Returns:
-            A dict with keys: "address" (always), "entity" (if requested),
-            "tag_summary" (if requested), "tags" (if requested).
+            A dict with keys: "address" (always), "best_cluster_tag" (always —
+            may be null if no tag exists), "cluster", "tag_summary", "tags",
+            and "cross_chain_addresses" — each populated when the
+            corresponding include_* flag is True.
         """
+        _validate_currency(currency)
+        _validate_id("address", address)
         client = _make_client(app)
         async with client:
             base = await _get_json(client, f"/{currency}/addresses/{address}")
-            result: dict[str, Any] = {"address": base}
-            if include_entity:
-                result["entity"] = await _get_json(
-                    client, f"/{currency}/addresses/{address}/entity"
-                )
+            # We always fetch the cluster body so best_cluster_tag can be
+            # surfaced at top level regardless of include_cluster. However,
+            # some addresses have no cluster association (freshly indexed,
+            # some non-UTXO cases) — a 404 there must not fail the whole
+            # lookup_address call, so we use the 404-tolerant variant.
+            cluster_body = await _get_json_optional(
+                client, f"/{currency}/addresses/{address}/entity"
+            )
+            result: dict[str, Any] = {
+                "address": _slim(base),
+                "best_cluster_tag": _slim(_best_cluster_tag(cluster_body)),
+            }
+            if include_cluster and cluster_body is not None:
+                result["cluster"] = _slim(cluster_body)
             if include_tag_summary:
-                result["tag_summary"] = await _get_json(
-                    client, f"/{currency}/addresses/{address}/tag_summary"
+                result["tag_summary"] = _slim(
+                    await _get_json(
+                        client, f"/{currency}/addresses/{address}/tag_summary"
+                    )
                 )
             if include_tags:
-                result["tags"] = await _get_json(
-                    client, f"/{currency}/addresses/{address}/tags"
+                result["tags"] = _slim(
+                    await _get_json(client, f"/{currency}/addresses/{address}/tags")
                 )
+            if include_cross_chain_addresses:
+                related = await _get_json(
+                    client,
+                    f"/{currency}/addresses/{address}/related_addresses",
+                    params={"address_relation_type": "pubkey"},
+                )
+                result["cross_chain_addresses"] = _slim(related)
         return result
 
 
-def register_lookup_entity(mcp, app, stack) -> None:
-    @mcp.tool(tags={"gs_entity-level", "gs_lookup"})
-    async def lookup_entity(
+def register_lookup_cluster(mcp, app, stack) -> None:
+    @mcp.tool(tags={"gs_cluster-level", "gs_lookup"})
+    async def lookup_cluster(
         currency: str,
-        entity: int,
+        cluster: int,
         include_tags: bool = True,
     ) -> dict[str, Any]:
-        """Look up an entity (address cluster) and return a consolidated view:
-        base details plus the tags attached to any of its addresses.
+        """Look up an address cluster and return a consolidated view: base
+        details (balance, activity range, root address, best tag) plus the
+        aggregated address tags attached to any of its addresses.
+
+        The `best_cluster_tag` field at the top level mirrors the
+        `cluster.best_address_tag` field for convenience — it's the single
+        most useful datum for orienting on an unknown cluster.
 
         Args:
             currency: Network identifier (e.g. "btc").
-            entity: Numeric entity id.
-            include_tags: Include aggregated address tags for the entity.
+            cluster: Numeric cluster id.
+            include_tags: Include aggregated address tags for the cluster.
 
         Returns:
-            A dict with keys: "entity" (always), "tags" (if requested).
+            A dict with keys: "cluster" (always), "best_cluster_tag" (always —
+            may be null if no tag exists), "tags" (when requested).
         """
+        _validate_currency(currency)
+        # `cluster` is typed as int by pydantic, so no path-injection risk.
         client = _make_client(app)
         async with client:
-            base = await _get_json(client, f"/{currency}/entities/{entity}")
-            result: dict[str, Any] = {"entity": base}
+            base = await _get_json(client, f"/{currency}/clusters/{cluster}")
+            result: dict[str, Any] = {
+                "cluster": _slim(base),
+                "best_cluster_tag": _slim(_best_cluster_tag(base)),
+            }
             if include_tags:
-                result["tags"] = await _get_json(
-                    client, f"/{currency}/entities/{entity}/tags"
+                result["tags"] = _slim(
+                    await _get_json(client, f"/{currency}/clusters/{cluster}/tags")
                 )
         return result
 
@@ -137,7 +273,7 @@ def register_list_neighbors(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_neighbors"})
     async def list_neighbors(
         currency: str,
-        kind: EntityKind,
+        kind: AddressOrCluster,
         id: str,
         direction: Literal["in", "out"] = "out",
         pagesize: Optional[int] = None,
@@ -146,15 +282,15 @@ def register_list_neighbors(mcp, app, stack) -> None:
         include_labels: Optional[bool] = None,
         include_actors: Optional[bool] = None,
     ) -> dict[str, Any]:
-        """List neighbors of an address, entity, or cluster in a network.
+        """List neighbors of an address or cluster in a network.
 
-        A single tool replaces three near-identical endpoints. Use `kind` to
-        choose the level of aggregation.
+        A single tool replaces the address-level and cluster-level endpoints.
+        Use `kind` to choose the level of aggregation.
 
         Args:
             currency: Network identifier (e.g. "btc").
-            kind: "address", "entity", or "cluster".
-            id: The address string, entity id, or cluster id.
+            kind: "address" or "cluster".
+            id: The address string or cluster id.
             direction: "in" (incoming) or "out" (outgoing).
             pagesize: Results per page.
             page: Pagination token from a previous response.
@@ -165,6 +301,8 @@ def register_list_neighbors(mcp, app, stack) -> None:
         Returns:
             A dict with the neighbor list and pagination cursor.
         """
+        _validate_currency(currency)
+        _validate_id("id", id)
         kind_segment = _KIND_TO_PATH[kind]
         params = _params_from(
             direction,
@@ -176,62 +314,97 @@ def register_list_neighbors(mcp, app, stack) -> None:
         )
         client = _make_client(app)
         async with client:
-            return await _get_json(
-                client, f"/{currency}/{kind_segment}/{id}/neighbors", params=params
+            return _slim(
+                await _get_json(
+                    client,
+                    f"/{currency}/{kind_segment}/{id}/neighbors",
+                    params=params,
+                )
             )
 
 
-def register_lookup_tx_io(mcp, app, stack) -> None:
-    @mcp.tool(tags={"gs_transaction-level", "gs_utxo"})
-    async def lookup_tx_io(
+def register_lookup_tx_details(mcp, app, stack) -> None:
+    @mcp.tool(tags={"gs_transaction-level"})
+    async def lookup_tx_details(
         currency: str,
         tx_hash: str,
         include_upstream: bool = False,
         include_downstream: bool = False,
+        include_heuristics: bool = False,
+        include_conversions: bool = False,
     ) -> dict[str, Any]:
-        """Inspect a UTXO transaction with optional upstream/downstream context.
+        """Fetch a transaction with full IO detail and optional trace context.
 
-        Always returns the transaction's inputs and outputs. Optionally
-        returns:
+        One call replaces get_tx, get_tx_io, get_spending_txs,
+        get_spent_in_txs, and get_tx_conversions. The tx body is retrieved
+        with io + nonstandard io + io indices always enabled, so UTXO txs
+        come back with a complete inputs/outputs list (including
+        non-standard scripts and their positional indices) and
+        account-model txs come back with the usual sender/receiver/value
+        fields.
 
-        - `upstream`: for each INPUT of this tx, the earlier tx whose output
-          funded it. Useful for **backward** tracing ("where did the money
-          come from?"). Each entry is
-          `{"tx_hash": str, "input_index": int, "output_index": int}` and
-          reads literally as "our input [input_index] was produced by
-          [tx_hash]'s output [output_index]".
-        - `downstream`: for each OUTPUT of this tx, the later tx that
-          consumed it. Useful for **forward** tracing ("where did the money
-          go next?"). Each entry reads as "our output [output_index] was
-          consumed by [tx_hash]'s input [input_index]". An output that
-          hasn't been spent yet simply doesn't appear in the list.
+        Optional add-ons:
 
-        For account-model chains (ETH etc.) use list_tx_flows instead — this
-        tool is for UTXO networks.
+        - `include_upstream=True` → appends an `upstream` list: for each
+          INPUT of this tx, the earlier tx whose output funded it. Backward
+          tracing ("where did the money come from?"). Each entry
+          `{"tx_hash": str, "input_index": int, "output_index": int}` reads
+          as "our input [input_index] was produced by [tx_hash]'s output
+          [output_index]".
+        - `include_downstream=True` → appends a `downstream` list: for each
+          OUTPUT of this tx, the later tx that consumed it. Forward tracing
+          ("where did the money go next?"). Outputs that haven't been spent
+          yet simply don't appear.
+        - `include_heuristics=True` → asks graphsense to compute all
+          supported UTXO heuristics (change-address detection, CoinJoin
+          identification — wasabi/whirlpool/joinmarket variants). The
+          results are embedded in the returned tx body under
+          implementation-specific fields. UTXO-chain only; a no-op on
+          account-model chains.
+        - `include_conversions=True` → appends a `conversions` list:
+          "conversion" is graphsense's internal term for any cross-asset
+          movement within a single tx. It covers BOTH DEX swaps (token A
+          → token B on the same chain) and bridge transactions (asset X
+          on chain A → asset Y on chain B). The returned entries share one
+          schema (`conversion_type: "dex_swap" | "bridge_tx"`, `from_address`,
+          `to_address`, `from_asset`, `to_asset`, `from_amount`, …) so the
+          LLM doesn't need to branch on the subtype to reason about the
+          cross-asset edge.
 
-        Note: this consolidation hides the underlying graphsense endpoint
-        names (/spending = upstream, /spent_in = downstream), whose naming
-        is counter-intuitive. The kwarg names here use the
-        source-of-the-direction semantics to avoid that pitfall.
+        Note on `spending` vs `spent_in`: the underlying graphsense
+        endpoints `/spending` and `/spent_in` are NAMED counter-intuitively
+        (/spending is backward, /spent_in is forward). This consolidation
+        hides that and uses `upstream` / `downstream` to mean what they say.
 
         Args:
-            currency: Network identifier (e.g. "btc", "bch", "ltc").
+            currency: Network identifier (e.g. "btc", "bch", "ltc", "eth").
             tx_hash: Transaction hash.
             include_upstream: Backward trace — where our inputs came from.
             include_downstream: Forward trace — where our outputs went next.
+            include_heuristics: Compute all supported UTXO heuristics.
+            include_conversions: DEX swaps and bridge transactions in this
+                tx, unified under one schema.
 
         Returns:
-            A dict with keys: "inputs", "outputs", plus "upstream" and/or
-            "downstream" when the corresponding include_* flag is true.
+            The full tx body (always includes io, nonstandard io, and io
+            indices) with optional top-level `upstream`, `downstream`, and
+            `conversions` keys.
         """
+        _validate_currency(currency)
+        _validate_id("tx_hash", tx_hash)
+        params: dict[str, Any] = {
+            "include_io": True,
+            "include_nonstandard_io": True,
+            "include_io_index": True,
+        }
+        if include_heuristics:
+            params["include_heuristics"] = ["all"]
+
         client = _make_client(app)
         async with client:
-            result: dict[str, Any] = {
-                "inputs": await _get_json(client, f"/{currency}/txs/{tx_hash}/inputs"),
-                "outputs": await _get_json(
-                    client, f"/{currency}/txs/{tx_hash}/outputs"
-                ),
-            }
+            result: dict[str, Any] = _slim(
+                await _get_json(client, f"/{currency}/txs/{tx_hash}", params=params)
+            )
             if include_upstream:
                 # graphsense endpoint /spending returns the BACKWARD trace
                 # (the txs that produced our inputs), despite its name.
@@ -244,6 +417,10 @@ def register_lookup_tx_io(mcp, app, stack) -> None:
                 result["downstream"] = await _get_json(
                     client, f"/{currency}/txs/{tx_hash}/spent_in"
                 )
+            if include_conversions:
+                result["conversions"] = _slim(
+                    await _get_json(client, f"/{currency}/txs/{tx_hash}/conversions")
+                )
         return result
 
 
@@ -251,7 +428,7 @@ def register_list_txs_for(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_transaction-level"})
     async def list_txs_for(
         currency: str,
-        kind: EntityKind,
+        kind: AddressOrCluster,
         id: str,
         direction: Optional[Literal["in", "out"]] = None,
         pagesize: Optional[int] = None,
@@ -261,15 +438,15 @@ def register_list_txs_for(mcp, app, stack) -> None:
         order: Optional[Literal["asc", "desc"]] = None,
         token_currency: Optional[str] = None,
     ) -> dict[str, Any]:
-        """List transactions involving an address, entity, or cluster.
+        """List transactions involving an address or cluster.
 
-        A single tool replaces three near-identical endpoints. Use `kind` to
-        choose the level of aggregation.
+        A single tool replaces the address-level and cluster-level endpoints.
+        Use `kind` to choose the level of aggregation.
 
         Args:
             currency: Network identifier.
-            kind: "address", "entity", or "cluster".
-            id: The address string, entity id, or cluster id.
+            kind: "address" or "cluster".
+            id: The address string or cluster id.
             direction: "in" / "out" / None to include both.
             pagesize: Results per page.
             page: Pagination token from a previous response.
@@ -281,6 +458,8 @@ def register_list_txs_for(mcp, app, stack) -> None:
         Returns:
             A dict with the tx list and pagination cursor.
         """
+        _validate_currency(currency)
+        _validate_id("id", id)
         kind_segment = _KIND_TO_PATH[kind]
         params = _params_from(
             direction,
@@ -293,6 +472,10 @@ def register_list_txs_for(mcp, app, stack) -> None:
         )
         client = _make_client(app)
         async with client:
-            return await _get_json(
-                client, f"/{currency}/{kind_segment}/{id}/txs", params=params
+            return _slim(
+                await _get_json(
+                    client,
+                    f"/{currency}/{kind_segment}/{id}/txs",
+                    params=params,
+                )
             )

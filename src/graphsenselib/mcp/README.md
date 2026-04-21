@@ -33,17 +33,18 @@ needs it.
 Every tool must earn its place by either **being structurally distinct**
 or by **collapsing a common chain**. Two corollaries:
 
-1. **Curate, don't auto-expose.** FastAPI has 44 routes; we surface
-   17. MCP tool schemas are loaded into the LLM's tool-selection context
-   in some clients; even where clients lazy-load (Claude Code does), a
-   tighter surface reduces "which-tool-should-I-pick?" ambiguity.
+1. **Curate, don't auto-expose.** FastAPI has 44 routes; we surface 16
+   (17 when `search_neighbors` is configured). MCP tool schemas are
+   loaded into the LLM's tool-selection context in some clients; even
+   where clients lazy-load (Claude Code does), a tighter surface reduces
+   "which-tool-should-I-pick?" ambiguity.
 2. **Consolidate when endpoints are always chained.** If an LLM needs
    four round-trips to answer a common question, merge them into one
    tool that returns the merged JSON. The win is round-trips, not tokens.
 3. **Don't consolidate what's merely similar.** Over-consolidation
-   hides legitimate optionality. We kept `get_tx` and `get_tx_io`
+   hides legitimate optionality. We kept `lookup_tx_details` and `list_tx_flows`
    distinct because the LLM has real reasons to choose one over the
-   other.
+   other (UTXO vs account-model semantics).
 
 ## Curation mechanism
 
@@ -72,9 +73,20 @@ Validation runs at boot via `validate_against_app`:
 CI gate: `uv run graphsense-cli mcp validate-curation` exits non-zero on
 drift.
 
-## The 17-tool surface
+## Response shape conventions
 
-### Orientation (4)
+All consolidated-tool responses go through a `_slim()` transform before
+returning (see `tools/consolidated.py`). It rewrites graphsense's
+`{"fiat_values": [{"code":"eur","value":X}, ...], "value": N}` money
+objects into a flat `{"native": N, "eur": X, "usd": Y, ...}` shape,
+eliminating the repeated `code` / `value` keys and the array wrapper.
+Typical savings: ~40% of the response body for address / tx lookups
+where most fields are value conversions. fastmcp already serializes
+dicts to compact JSON (no whitespace), so that lever is free.
+
+## The 16-tool surface (17 when `search_neighbors` is configured)
+
+### Orientation (5)
 
 Small, cheap passthroughs the LLM uses to figure out what's available.
 
@@ -93,30 +105,31 @@ bridge.
 
 `get_block`, `get_block_by_date`, `list_block_txs`
 
-### Transaction-level (2 passthroughs + 1 consolidation)
+### Transaction-level (1 passthrough + 1 consolidation)
 
 | Tool | Notes |
 |---|---|
-| `get_tx` | Single passthrough. |
-| `list_tx_flows` | Account-model (ETH family) passthrough. |
-| `lookup_tx_io` | **Consolidation** — replaces `get_tx_io` + `get_spending_txs` + `get_spent_in_txs`. UTXO-model inspection with optional `include_upstream` (backward trace — where inputs came from) and `include_downstream` (forward trace — where outputs went). The tool deliberately hides the underlying endpoint names: graphsense's `/spending` endpoint is actually the *backward* trace, and `/spent_in` is the *forward* trace — opposite of how the names read. The consolidation's kwargs (`include_upstream` / `include_downstream`) and return keys (`upstream` / `downstream`) use the unambiguous direction names instead. |
+| `list_tx_flows` | Account-model (ETH family) internal-transfer list — kept as a passthrough because its response shape is distinct from the tx body. |
+| `lookup_tx_details` | **Consolidation** — replaces `get_tx` + `get_tx_io` + `get_spending_txs` + `get_spent_in_txs` + `get_tx_conversions`. Calls `/txs/{hash}` with `include_io` / `include_nonstandard_io` / `include_io_index` always on, so UTXO txs come back with full (including non-standard) inputs/outputs and their positional indices in one shot; account-model txs come back with the usual sender/receiver/value fields. Optional `include_upstream` (backward trace) and `include_downstream` (forward trace) append trace lists. Optional `include_heuristics=True` asks graphsense to compute all UTXO heuristics (change-address detection + CoinJoin identification — wasabi/whirlpool/joinmarket variants). Optional `include_conversions=True` appends `conversions`: graphsense's internal term covering both DEX swaps and bridge txs under one unified schema (`conversion_type: "dex_swap" \| "bridge_tx"`, plus from/to address + asset + amount). ⚠️ The consolidation uses `upstream` / `downstream` names because the underlying graphsense endpoints `/spending` and `/spent_in` are named counter-intuitively (`/spending` is backward, `/spent_in` is forward). |
 
-UTXO and account models are genuinely different; we keep `get_tx_io`
-(now `lookup_tx_io`) and `list_tx_flows` as distinct tools so the LLM
-picks based on the chain it already knows.
+`list_tx_flows` is kept separate because its response shape is unrelated
+to the tx body and because account-model flow analysis has different
+intent than UTXO tx inspection.
 
 ### Rates / actor metadata (2)
 
 `get_exchange_rates` and `get_actor` — low-token, high-value
 passthroughs that LLMs naturally chain with others.
 
-### Address / entity / neighbors (4 consolidations)
+### Address / cluster / neighbors (4 consolidations)
+
+Note on terminology: graphsense has both "entity" and "cluster" endpoints, but `entities_service.get_entity` literally delegates to `clusters_service.get_cluster`. They're aliases. The MCP surface exposes only **cluster** to avoid conceptual duplication — entity op_ids are still hidden via `replaces` in the curation YAML, but the word "entity" does not appear in any tool name, kwarg, or response key.
 
 | Tool | Replaces | Why |
 |---|---|---|
-| `lookup_address` | `get_address` + `get_address_entity` + `get_tag_summary_by_address` + `list_tags_by_address` | "Tell me about this address" is the single most common question. One call, merged JSON. |
-| `lookup_entity` | `get_entity` + `list_address_tags_by_entity` | Same story at cluster/entity level. |
-| `list_neighbors` | `list_address_neighbors` + `list_entity_neighbors` + `list_cluster_neighbors` | Three near-identical endpoints; the consolidation takes `kind: Literal["address","entity","cluster"]`. One schema to reason about, not three. |
+| `lookup_address` | `get_address` + `get_address_entity` + `get_tag_summary_by_address` + `list_tags_by_address` + `list_related_addresses` | "Tell me about this address" is the single most common question. Always surfaces `best_cluster_tag` at the top level regardless of include flags — single most useful datum when orienting on an unknown address. Optional `include_cross_chain_addresses` uses the pubkey-relation endpoint to find the same address on BCH/LTC/... from a BTC lookup (and vice-versa). |
+| `lookup_cluster` | `get_entity` + `get_cluster` + `list_address_tags_by_entity` + `list_address_tags_by_cluster` | Cluster-level equivalent. Also always surfaces `best_cluster_tag`. |
+| `list_neighbors` | `list_address_neighbors` + `list_entity_neighbors` + `list_cluster_neighbors` | Near-identical endpoints collapsed under `kind: Literal["address","cluster"]`. One schema to reason about, not three. |
 | `list_txs_for` | `list_address_txs` + `list_entity_txs` + `list_cluster_txs` | Same justification as `list_neighbors`. |
 
 ### External (1)
@@ -142,11 +155,11 @@ Listed because "why isn't X a tool?" is as interesting as "why is it?":
 - **`list_*_links`** — low-value for LLM reasoning, high-token response
   shape.
 - **`get_cluster`, `list_cluster_addresses`, `list_address_tags_by_cluster`** —
-  at the currency level, `lookup_entity` + `list_txs_for(kind="cluster")` +
+  at the currency level, `lookup_cluster` + `list_txs_for(kind="cluster")` +
   `list_neighbors(kind="cluster")` cover the useful surface without
   duplicating the entity/cluster mental model for the LLM.
 - **`get_actor_tags`** — almost always redundant with `lookup_address` /
-  `lookup_entity` tag surfaces; re-add if it proves useful.
+  `lookup_cluster` tag surfaces; re-add if it proves useful.
 
 All filtered out at boot by absence from the positive-list. Trivial to
 re-enable later.
@@ -190,7 +203,7 @@ re-enable later.
 
 ## Context cost
 
-All 17 tool schemas plus the `search_neighbors` extension fit in roughly
+All 16 tool schemas (17 when `search_neighbors` is configured) fit in roughly
 300–500 tokens when serialized for transport. Claude Code lazy-loads
 (only the tools the LLM picks get read into context), so the observed
 cost is usually a few hundred tokens total. Other clients vary —
