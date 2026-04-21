@@ -46,8 +46,9 @@ before issuing per-network queries.
   the two (both directions — the underlying links endpoint has no
   direction filter, inspect each item's flow to tell inbound from
   outbound).
-- "Who does this address interact with?" → `list_neighbors` with
-  `kind="address"` or `kind="cluster"`.
+- "Who does this address interact with?" → `list_neighbors`
+  (address-level only; cluster-level neighbors are intentionally not
+  exposed).
 - Account-model (ETH-family) transaction flows → `list_tx_flows`, not
   `lookup_tx_details`; the internal-transfer list has a distinct shape.
 - Block by timestamp → `get_block_by_date` first to get the height,
@@ -62,7 +63,9 @@ before issuing per-network queries.
   cursors.
 - Cluster-level and entity-level REST endpoints are deprecated
   upstream; the MCP surface does not expose them directly. Use
-  `lookup_cluster` and `list_neighbors(kind="cluster")` instead.
+  `lookup_cluster` for cluster-level orientation. Cluster-level
+  neighbor traversal is deliberately not exposed — traverse
+  counterparty graphs at the address level.
 
 ## Cluster data policy
 
@@ -73,10 +76,11 @@ one cluster. Keep this in mind when presenting results:
 
 - **Trace at the address level.** When the user asks you to follow
   funds or walk a counterparty graph, use address-level tools
-  (`list_txs_for`, `list_neighbors(kind="address")`) rather than
-  cluster-level ones. Address-level data is on-chain fact; cluster-
-  level data is inference stacked on top of it. Staying at the
-  address level keeps the error rate low.
+  (`list_txs_for`, `list_neighbors`) rather than cluster-level ones.
+  Address-level data is on-chain fact; cluster-level data is
+  inference stacked on top of it. Staying at the address level keeps
+  the error rate low. (Cluster-level neighbor traversal is not
+  exposed by the MCP surface for this reason.)
 - **Do not surface cluster ids to the user.** Cluster ids are
   internal integers with no real-world meaning; mentioning them is
   confusing at best and misleading at worst (they can and do change

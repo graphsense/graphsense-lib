@@ -129,8 +129,8 @@ Note on terminology: graphsense has both "entity" and "cluster" endpoints, but `
 |---|---|---|
 | `lookup_address` | `get_address` + `get_address_entity` + `get_tag_summary_by_address` + `list_tags_by_address` + `list_related_addresses` | "Tell me about this address" is the single most common question. Always surfaces `best_cluster_tag` at the top level regardless of include flags — single most useful datum when orienting on an unknown address. Optional `include_cross_chain_addresses` uses the pubkey-relation endpoint to find the same address on BCH/LTC/... from a BTC lookup (and vice-versa). |
 | `lookup_cluster` | `get_entity` + `get_cluster` + `list_address_tags_by_entity` + `list_address_tags_by_cluster` | Cluster-level equivalent. Also always surfaces `best_cluster_tag`. |
-| `list_neighbors` | `list_address_neighbors` + `list_entity_neighbors` + `list_cluster_neighbors` | Near-identical endpoints collapsed under `kind: Literal["address","cluster"]`. One schema to reason about, not three. |
-| `list_txs_for` | `list_address_txs` + `list_entity_txs` + `list_cluster_txs` | Same justification as `list_neighbors`. |
+| `list_neighbors` | `list_address_neighbors` | Address-level only. Cluster-level neighbors are deliberately not exposed — follow counterparty graphs at the address level (on-chain fact) rather than the cluster level (inference stacked on top). |
+| `list_txs_for` | `list_address_txs` + `list_address_links` | Address-level only. Pass `neighbor=<addr>` to switch to the links endpoint (txs between two addresses). Cluster-/entity-level tx listings are deliberately not exposed — same rationale as `list_neighbors`. |
 
 ### External (1)
 
@@ -151,13 +151,25 @@ Listed because "why isn't X a tool?" is as interesting as "why is it?":
 - **`report_tag`** — write operation; LLMs shouldn't be reporting tags
   autonomously.
 - **`search_cluster_neighbors` / `search_entity_neighbors`** —
-  redundant with the consolidated `list_neighbors`.
-- **`list_*_links`** — low-value for LLM reasoning, high-token response
-  shape.
+  cluster-level neighbor search; redundant with the address-level
+  `list_neighbors` and we deliberately keep counterparty traversal at
+  the address level.
+- **`list_cluster_neighbors` / `list_entity_neighbors`** — cluster-level
+  neighbor listing. Address clustering is a heuristic; surfacing it as
+  a first-class traversal primitive encourages the LLM to reason on
+  inferred edges instead of on-chain fact. Use `list_neighbors` on an
+  address instead.
+- **`list_cluster_txs` / `list_entity_txs`** — cluster-level transaction
+  listing. Same rationale as the cluster-neighbor exclusion: traverse
+  at the address level. Use `list_txs_for` on an address instead.
+- **`list_cluster_links` / `list_entity_links`** — cluster-level
+  "txs between two clusters" endpoint. Not useful without a cluster-
+  level counterparty graph, which we also don't expose.
+  (`list_address_links` is still reachable via `list_txs_for` with
+  `neighbor=<addr>`.)
 - **`get_cluster`, `list_cluster_addresses`, `list_address_tags_by_cluster`** —
-  at the currency level, `lookup_cluster` + `list_txs_for(kind="cluster")` +
-  `list_neighbors(kind="cluster")` cover the useful surface without
-  duplicating the entity/cluster mental model for the LLM.
+  at the currency level, `lookup_cluster` covers the useful surface
+  without duplicating the entity/cluster mental model for the LLM.
 - **`get_actor_tags`** — almost always redundant with `lookup_address` /
   `lookup_cluster` tag surfaces; re-add if it proves useful.
 

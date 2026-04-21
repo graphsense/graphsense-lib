@@ -9,15 +9,6 @@ from fastmcp.exceptions import ToolError
 
 logger = logging.getLogger(__name__)
 
-# "entity" is a drop-in alias for "cluster" in the underlying graphsense API
-# (entities_service.get_entity literally delegates to clusters_service.get_cluster).
-# The MCP surface exposes only "cluster" to avoid conceptual duplication.
-AddressOrCluster = Literal["address", "cluster"]
-_KIND_TO_PATH = {
-    "address": "addresses",
-    "cluster": "clusters",
-}
-
 # Regex guards on user-controlled path segments. httpx does not URL-encode
 # path components, so an unvalidated segment with '/' or '..' could escape
 # the intended endpoint — even though FastAPI routing would likely reject
@@ -273,8 +264,7 @@ def register_list_neighbors(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_neighbors"})
     async def list_neighbors(
         currency: str,
-        kind: AddressOrCluster,
-        id: str,
+        address: str,
         direction: Literal["in", "out"] = "out",
         pagesize: Optional[int] = None,
         page: Optional[str] = None,
@@ -282,15 +272,15 @@ def register_list_neighbors(mcp, app, stack) -> None:
         include_labels: Optional[bool] = None,
         include_actors: Optional[bool] = None,
     ) -> dict[str, Any]:
-        """List neighbors of an address or cluster in a network.
+        """List neighbors of an address in a network.
 
-        A single tool replaces the address-level and cluster-level endpoints.
-        Use `kind` to choose the level of aggregation.
+        Address-level only: cluster-level neighbors are deliberately not
+        exposed. Follow counterparty graphs at the address level — that's
+        on-chain fact, whereas cluster edges are inference stacked on top.
 
         Args:
             currency: Network identifier (e.g. "btc").
-            kind: "address" or "cluster".
-            id: The address string or cluster id.
+            address: The address to list neighbors for.
             direction: "in" (incoming) or "out" (outgoing).
             pagesize: Results per page.
             page: Pagination token from a previous response.
@@ -302,8 +292,7 @@ def register_list_neighbors(mcp, app, stack) -> None:
             A dict with the neighbor list and pagination cursor.
         """
         _validate_currency(currency)
-        _validate_id("id", id)
-        kind_segment = _KIND_TO_PATH[kind]
+        _validate_id("address", address)
         params = _params_from(
             direction,
             pagesize,
@@ -317,7 +306,7 @@ def register_list_neighbors(mcp, app, stack) -> None:
             return _slim(
                 await _get_json(
                     client,
-                    f"/{currency}/{kind_segment}/{id}/neighbors",
+                    f"/{currency}/addresses/{address}/neighbors",
                     params=params,
                 )
             )
