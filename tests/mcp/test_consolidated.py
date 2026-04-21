@@ -272,3 +272,107 @@ async def test_invalid_address_rejected(stub_app_with_cluster):
                 "lookup_address",
                 {"currency": "btc", "address": "abc/../etc"},
             )
+
+
+@pytest.fixture
+def stub_app_with_txs_and_links() -> FastAPI:
+    """Stub exposing both /txs and /links for an address."""
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}/txs")
+    async def _txs(
+        currency: str,
+        address: str,
+        direction: str | None = Query(None),
+        neighbor: str | None = Query(None),
+    ):
+        return {
+            "address_txs": [
+                {"_endpoint": "txs", "direction": direction, "address": address}
+            ],
+            "next_page": None,
+        }
+
+    @app.get("/{currency}/addresses/{address}/links")
+    async def _links(
+        currency: str,
+        address: str,
+        neighbor: str = Query(...),
+    ):
+        return {
+            "links": [{"_endpoint": "links", "neighbor": neighbor, "address": address}],
+            "next_page": None,
+        }
+
+    return app
+
+
+async def test_list_txs_for_without_neighbor_hits_txs_endpoint(
+    stub_app_with_txs_and_links,
+):
+    from graphsenselib.mcp.tools.consolidated import register_list_txs_for
+
+    mcp = _tool(stub_app_with_txs_and_links, register_list_txs_for)
+    async with Client(mcp) as c:
+        r = await c.call_tool(
+            "list_txs_for",
+            {"currency": "btc", "address": "abc", "direction": "out"},
+        )
+        data = r.structured_content
+        assert data is not None
+        assert "address_txs" in data
+        assert data["address_txs"][0]["_endpoint"] == "txs"
+        assert data["address_txs"][0]["direction"] == "out"
+
+
+async def test_list_txs_for_with_neighbor_hits_links_endpoint(
+    stub_app_with_txs_and_links,
+):
+    from graphsenselib.mcp.tools.consolidated import register_list_txs_for
+
+    mcp = _tool(stub_app_with_txs_and_links, register_list_txs_for)
+    async with Client(mcp) as c:
+        r = await c.call_tool(
+            "list_txs_for",
+            {"currency": "btc", "address": "abc", "neighbor": "def"},
+        )
+        data = r.structured_content
+        assert data is not None
+        assert "links" in data
+        assert data["links"][0]["_endpoint"] == "links"
+        assert data["links"][0]["neighbor"] == "def"
+
+
+async def test_list_txs_for_rejects_direction_with_neighbor(
+    stub_app_with_txs_and_links,
+):
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import register_list_txs_for
+
+    mcp = _tool(stub_app_with_txs_and_links, register_list_txs_for)
+    async with Client(mcp) as c:
+        with pytest.raises(ToolError, match="direction cannot be combined"):
+            await c.call_tool(
+                "list_txs_for",
+                {
+                    "currency": "btc",
+                    "address": "abc",
+                    "neighbor": "def",
+                    "direction": "out",
+                },
+            )
+
+
+async def test_list_txs_for_validates_neighbor(stub_app_with_txs_and_links):
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import register_list_txs_for
+
+    mcp = _tool(stub_app_with_txs_and_links, register_list_txs_for)
+    async with Client(mcp) as c:
+        with pytest.raises(ToolError, match="Invalid neighbor"):
+            await c.call_tool(
+                "list_txs_for",
+                {"currency": "btc", "address": "abc", "neighbor": "bad/../path"},
+            )

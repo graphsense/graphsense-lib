@@ -79,6 +79,23 @@ class GSMCPConfig(BaseSettings):
         description="Fail boot if curation YAML references unknown operation_ids",
     )
 
+    instructions: Optional[str] = Field(
+        default=None,
+        description=(
+            "Server-provided 'instructions' text sent to MCP clients in the "
+            "initialize handshake (the MCP analogue of a system prompt). "
+            "When unset, the bundled instructions.md is loaded. Set to an "
+            "empty string to suppress instructions entirely."
+        ),
+    )
+    instructions_file: Optional[Path] = Field(
+        default=None,
+        description=(
+            "Override path to the instructions markdown (defaults to bundled "
+            "curation/instructions.md)"
+        ),
+    )
+
     search_neighbors: Optional[SearchNeighborsConfig] = Field(
         default=None,
         description=(
@@ -97,3 +114,20 @@ class GSMCPConfig(BaseSettings):
 
     def resolved_curation_path(self) -> Path:
         return self.curation_file or self.bundled_curation_path()
+
+    def bundled_instructions_path(self) -> Path:
+        return Path(__file__).parent / "curation" / "instructions.md"
+
+    def resolved_instructions(self) -> Optional[str]:
+        """Resolve the MCP 'instructions' text. Precedence: explicit
+        `instructions` (including empty string -> suppress), then
+        `instructions_file`, then the bundled instructions.md.
+        Returns None when the source file is missing, which tells
+        FastMCP to send no instructions at all.
+        """
+        if self.instructions is not None:
+            return self.instructions or None
+        path = self.instructions_file or self.bundled_instructions_path()
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8").strip() or None

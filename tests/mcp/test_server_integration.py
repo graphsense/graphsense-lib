@@ -61,6 +61,9 @@ async def test_tool_surface_shape(bundled_mcp):
     assert "list_entity_neighbors" not in names
     assert "list_cluster_neighbors" not in names
     assert "list_address_txs" not in names
+    assert "list_address_links" not in names
+    assert "list_entity_links" not in names
+    assert "list_cluster_links" not in names
     assert "get_tx" not in names
     assert "get_tx_io" not in names
     assert "get_spending_txs" not in names
@@ -127,6 +130,54 @@ async def test_spec_app_auto_mounts_mcp(monkeypatch):
         # or via the trailing-slash redirect (307).
         response = await client.get("/mcp")
         assert response.status_code in {307, 400, 405, 406, 415}
+
+
+async def test_instructions_sent_on_handshake(monkeypatch):
+    """FastMCP should forward config.resolved_instructions() to the client
+    via InitializeResult.instructions (MCP's server-provided system prompt).
+    """
+    monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__BASE_URL", raising=False)
+    monkeypatch.setenv("GS_MCP_INSTRUCTIONS", "marker-from-test")
+
+    from graphsenselib.mcp import GSMCPConfig, build_mcp
+    from graphsenselib.web.app import create_spec_app
+
+    app = create_spec_app()
+    mcp, stack = build_mcp(app, GSMCPConfig())
+    async with stack:
+        async with Client(mcp) as c:
+            assert c.initialize_result.instructions == "marker-from-test"
+
+
+async def test_mcp_trailing_slash_redirect_is_relative(monkeypatch):
+    """The /mcp -> /mcp/ redirect must use a relative Location. Starlette's
+    Mount default emits an absolute URL derived from the Host header, which
+    leaks the upstream hostname behind a reverse proxy that rewrites Host
+    to the internal upstream (e.g., APISIX with pass_host: node). A relative
+    Location keeps the client on the origin it already connected to.
+    """
+    import httpx
+
+    from graphsenselib.web.app import create_spec_app
+
+    monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__BASE_URL", raising=False)
+    monkeypatch.setenv("GS_MCP_PATH", "/mcp")
+
+    app = create_spec_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://graphsense"
+    ) as client:
+        for method in ("GET", "POST", "DELETE"):
+            r = await client.request(
+                method,
+                "/mcp",
+                headers={"Host": "gs-rest:9000"},
+                follow_redirects=False,
+            )
+            assert r.status_code == 307, (method, r.status_code)
+            location = r.headers.get("location")
+            assert location == "/mcp/", (method, location)
 
 
 async def test_attach_to_fastapi_twice_raises(monkeypatch):

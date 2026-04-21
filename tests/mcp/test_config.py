@@ -54,3 +54,35 @@ def test_nested_search_neighbors_config(monkeypatch):
 def test_search_neighbors_config_requires_fields():
     with pytest.raises(ValueError):
         SearchNeighborsConfig()  # base_url + api_key_env missing
+
+
+def test_bundled_instructions_loaded_by_default(monkeypatch):
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS_FILE", raising=False)
+
+    cfg = GSMCPConfig()
+    text = cfg.resolved_instructions()
+    assert text is not None
+    assert "GraphSense" in text
+
+
+def test_instructions_explicit_override_wins(monkeypatch):
+    monkeypatch.setenv("GS_MCP_INSTRUCTIONS", "Custom system prompt.")
+    cfg = GSMCPConfig()
+    assert cfg.resolved_instructions() == "Custom system prompt."
+
+
+def test_instructions_empty_string_suppresses(monkeypatch):
+    """Empty explicit value must opt out of sending any instructions."""
+    monkeypatch.setenv("GS_MCP_INSTRUCTIONS", "")
+    cfg = GSMCPConfig()
+    assert cfg.resolved_instructions() is None
+
+
+def test_instructions_file_override(monkeypatch, tmp_path):
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
+    custom = tmp_path / "custom.md"
+    custom.write_text("From a custom file.")
+    monkeypatch.setenv("GS_MCP_INSTRUCTIONS_FILE", str(custom))
+    cfg = GSMCPConfig()
+    assert cfg.resolved_instructions() == "From a custom file."

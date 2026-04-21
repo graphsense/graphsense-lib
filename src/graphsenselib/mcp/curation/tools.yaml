@@ -116,6 +116,9 @@ consolidated_tools:
       - list_address_txs
       - list_entity_txs
       - list_cluster_txs
+      - list_address_links
+      - list_entity_links
+      - list_cluster_links
     module: graphsenselib.mcp.tools.consolidated:register_list_txs_for
 
 # Tools that forward to an external service rather than the FastAPI app.

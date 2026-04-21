@@ -4,6 +4,9 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastmcp import FastMCP
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import RedirectResponse
+from starlette.routing import Route
 
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
@@ -37,6 +40,7 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     mcp = FastMCP.from_fastapi(
         app=app,
         name="graphsense-mcp",
+        instructions=config.resolved_instructions(),
         route_map_fn=route_map_fn,
         mcp_component_fn=component_fn,
     )
@@ -72,6 +76,29 @@ def attach_to_fastapi(app, config: GSMCPConfig) -> None:
                     yield
 
     app.router.lifespan_context = composed_lifespan
+
+    # Register an explicit trailing-slash redirect for the mount path with a
+    # relative Location. Starlette's Mount default builds an absolute URL from
+    # the incoming Host header, which leaks the upstream hostname when sat
+    # behind a reverse proxy that sets Host to the internal upstream (e.g.,
+    # APISIX with pass_host: node -> Location: http://gs-rest:9000/mcp/).
+    # A relative Location keeps the client on the same origin.
+    mount_path = config.path.rstrip("/")
+    if mount_path:
+        redirect_target = mount_path + "/"
+
+        async def _trailing_slash_redirect(request: StarletteRequest):
+            return RedirectResponse(url=redirect_target, status_code=307)
+
+        app.router.routes.append(
+            Route(
+                mount_path,
+                endpoint=_trailing_slash_redirect,
+                methods=["GET", "POST", "DELETE", "HEAD", "OPTIONS"],
+                include_in_schema=False,
+            )
+        )
+
     app.mount(config.path, mcp_asgi)
     app.state._graphsense_mcp_attached = True
     logger.info("graphsense MCP mounted at %s", config.path)

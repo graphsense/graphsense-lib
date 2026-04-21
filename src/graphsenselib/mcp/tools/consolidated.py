@@ -428,8 +428,8 @@ def register_list_txs_for(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_transaction-level"})
     async def list_txs_for(
         currency: str,
-        kind: AddressOrCluster,
-        id: str,
+        address: str,
+        neighbor: Optional[str] = None,
         direction: Optional[Literal["in", "out"]] = None,
         pagesize: Optional[int] = None,
         page: Optional[str] = None,
@@ -438,16 +438,23 @@ def register_list_txs_for(mcp, app, stack) -> None:
         order: Optional[Literal["asc", "desc"]] = None,
         token_currency: Optional[str] = None,
     ) -> dict[str, Any]:
-        """List transactions involving an address or cluster.
+        """List transactions involving an address.
 
-        A single tool replaces the address-level and cluster-level endpoints.
-        Use `kind` to choose the level of aggregation.
+        When `neighbor` is set, lists transactions between `address` and
+        `neighbor` (any direction — both "sent to" and "received from");
+        otherwise lists all transactions of `address`.
 
         Args:
             currency: Network identifier.
-            kind: "address" or "cluster".
-            id: The address string or cluster id.
-            direction: "in" / "out" / None to include both.
+            address: The address to list transactions for.
+            neighbor: Optional counterparty address. When set, narrows the
+                response to transactions between `address` and this
+                counterparty. The underlying links endpoint does not
+                accept a `direction` filter, so the two cannot be
+                combined — inspect each item's flow to tell inbound from
+                outbound.
+            direction: "in" / "out" / None to include both. Ignored when
+                `neighbor` is set (raises on combination).
             pagesize: Results per page.
             page: Pagination token from a previous response.
             min_height: Only include transactions at or above this block height.
@@ -456,26 +463,42 @@ def register_list_txs_for(mcp, app, stack) -> None:
             token_currency: Filter to a specific token (e.g. "usdt").
 
         Returns:
-            A dict with the tx list and pagination cursor.
+            A dict with `address_txs` (or `links` when `neighbor` is set)
+            and a `next_page` pagination cursor.
         """
         _validate_currency(currency)
-        _validate_id("id", id)
-        kind_segment = _KIND_TO_PATH[kind]
-        params = _params_from(
-            direction,
-            pagesize,
-            page,
-            min_height=min_height,
-            max_height=max_height,
-            order=order,
-            token_currency=token_currency,
-        )
+        _validate_id("address", address)
+
+        if neighbor is not None:
+            _validate_id("neighbor", neighbor)
+            if direction is not None:
+                raise ToolError(
+                    "direction cannot be combined with neighbor: the links "
+                    "endpoint has no direction filter."
+                )
+            params = _params_from(
+                None,
+                pagesize,
+                page,
+                neighbor=neighbor,
+                min_height=min_height,
+                max_height=max_height,
+                order=order,
+                token_currency=token_currency,
+            )
+            path = f"/{currency}/addresses/{address}/links"
+        else:
+            params = _params_from(
+                direction,
+                pagesize,
+                page,
+                min_height=min_height,
+                max_height=max_height,
+                order=order,
+                token_currency=token_currency,
+            )
+            path = f"/{currency}/addresses/{address}/txs"
+
         client = _make_client(app)
         async with client:
-            return _slim(
-                await _get_json(
-                    client,
-                    f"/{currency}/{kind_segment}/{id}/txs",
-                    params=params,
-                )
-            )
+            return _slim(await _get_json(client, path, params=params))
