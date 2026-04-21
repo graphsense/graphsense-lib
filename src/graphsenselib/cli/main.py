@@ -39,6 +39,14 @@ except ImportError:
     logger.debug("Web CLI not available.")
     web_cli_available = False
 
+try:
+    from ..mcp.cli import mcp_cli
+
+    mcp_cli_available = True
+except ImportError:
+    logger.debug("MCP CLI not available.")
+    mcp_cli_available = False
+
 __author__ = "iknaio"
 __copyright__ = "iknaio"
 __license__ = "MIT"
@@ -73,6 +81,7 @@ def version_cmd():
         ]
         + ([tagpacktool_cli, tagstore_cli] if tagpacktool_cli_available else [])
         + ([web_cli] if web_cli_available else [])
+        + ([mcp_cli] if mcp_cli_available else [])
     ),
     epilog="GraphSense - https://graphsense.github.io/",
 )

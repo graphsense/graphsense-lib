@@ -1,0 +1,238 @@
+# graphsense MCP
+
+This submodule exposes a curated subset of the graphsense REST API as a
+[Model Context Protocol](https://modelcontextprotocol.io) server so LLM
+clients (Claude Code, Claude Desktop, Cursor, custom agents) can query
+graphsense directly. It also forwards requests to the proprietary external
+`search_neighbors` service so consumers have a single endpoint.
+
+## Deployment model
+
+The MCP is **mounted inside the existing FastAPI app** — there is no
+separate `mcp serve` process. Run the usual web stack and `/mcp` is there:
+
+```bash
+uv run uvicorn --factory graphsenselib.web.app:create_app --port 8000
+# REST at /, MCP at /mcp
+```
+
+Auto-attach happens in `create_app`, `create_app_from_dict`, and
+`create_spec_app` at the end of their setup, via `_maybe_attach_mcp`. If
+the `[mcp]` extra isn't installed, the import fails silently and the REST
+app continues as normal. Set `GS_MCP_ENABLED=false` to disable the mount
+explicitly.
+
+**Transport**: streamable-http, `stateless_http=True` by default. Stateful
+mode holds SSE long-polls open and makes uvicorn hang on shutdown; none of
+our tools need server-initiated push notifications, so stateless is the
+right default. Flip with `GS_MCP_STATELESS_HTTP=false` if a future tool
+needs it.
+
+## Design principles
+
+Every tool must earn its place by either **being structurally distinct**
+or by **collapsing a common chain**. Two corollaries:
+
+1. **Curate, don't auto-expose.** FastAPI has 44 routes; we surface
+   17. MCP tool schemas are loaded into the LLM's tool-selection context
+   in some clients; even where clients lazy-load (Claude Code does), a
+   tighter surface reduces "which-tool-should-I-pick?" ambiguity.
+2. **Consolidate when endpoints are always chained.** If an LLM needs
+   four round-trips to answer a common question, merge them into one
+   tool that returns the merged JSON. The win is round-trips, not tokens.
+3. **Don't consolidate what's merely similar.** Over-consolidation
+   hides legitimate optionality. We kept `get_tx` and `get_tx_io`
+   distinct because the LLM has real reasons to choose one over the
+   other.
+
+## Curation mechanism
+
+The positive-list YAML at `curation/tools.yaml` is the source of truth.
+Anything not listed is excluded.
+
+Three categories:
+
+- `include:` — **passthroughs**. Keyed by FastAPI `operation_id`. The
+  handler is auto-generated from the OpenAPI schema by
+  `FastMCP.from_fastapi`. An optional `description` override replaces the
+  FastAPI docstring with LLM-tuned wording; an optional `tags:` list is
+  added as MCP tags (with `gs_` prefix).
+- `consolidated_tools:` — **hand-written** `@mcp.tool` wrappers. Their
+  `replaces:` list hides the underlying op_ids from auto-exposure.
+- `external_tools:` — forward to a different HTTP service. Currently
+  just `search_neighbors`.
+
+Validation runs at boot via `validate_against_app`:
+
+- Every `include` key must exist on the FastAPI app.
+- Every `replaces` entry must exist on the FastAPI app.
+- No op_id may appear in both `include` and a consolidated
+  `replaces` list (consolidation supersedes passthrough).
+
+CI gate: `uv run graphsense-cli mcp validate-curation` exits non-zero on
+drift.
+
+## The 17-tool surface
+
+### Orientation (4)
+
+Small, cheap passthroughs the LLM uses to figure out what's available.
+
+| Tool | Purpose |
+|---|---|
+| `get_statistics` | Per-network snapshot: heights, freshness, assets |
+| `search` | Cross-network free-text lookup |
+| `list_supported_tokens` | Token catalog for a network |
+| `list_taxonomies` + `list_concepts` | Tag vocabulary |
+
+### Block-level (3)
+
+Kept as separate passthroughs — each is used in a different narrative
+context. `get_block_by_date` in particular is the timestamp→height
+bridge.
+
+`get_block`, `get_block_by_date`, `list_block_txs`
+
+### Transaction-level (2 passthroughs + 1 consolidation)
+
+| Tool | Notes |
+|---|---|
+| `get_tx` | Single passthrough. |
+| `list_tx_flows` | Account-model (ETH family) passthrough. |
+| `lookup_tx_io` | **Consolidation** — replaces `get_tx_io` + `get_spending_txs` + `get_spent_in_txs`. UTXO-model inspection with optional `include_upstream` (backward trace — where inputs came from) and `include_downstream` (forward trace — where outputs went). The tool deliberately hides the underlying endpoint names: graphsense's `/spending` endpoint is actually the *backward* trace, and `/spent_in` is the *forward* trace — opposite of how the names read. The consolidation's kwargs (`include_upstream` / `include_downstream`) and return keys (`upstream` / `downstream`) use the unambiguous direction names instead. |
+
+UTXO and account models are genuinely different; we keep `get_tx_io`
+(now `lookup_tx_io`) and `list_tx_flows` as distinct tools so the LLM
+picks based on the chain it already knows.
+
+### Rates / actor metadata (2)
+
+`get_exchange_rates` and `get_actor` — low-token, high-value
+passthroughs that LLMs naturally chain with others.
+
+### Address / entity / neighbors (4 consolidations)
+
+| Tool | Replaces | Why |
+|---|---|---|
+| `lookup_address` | `get_address` + `get_address_entity` + `get_tag_summary_by_address` + `list_tags_by_address` | "Tell me about this address" is the single most common question. One call, merged JSON. |
+| `lookup_entity` | `get_entity` + `list_address_tags_by_entity` | Same story at cluster/entity level. |
+| `list_neighbors` | `list_address_neighbors` + `list_entity_neighbors` + `list_cluster_neighbors` | Three near-identical endpoints; the consolidation takes `kind: Literal["address","entity","cluster"]`. One schema to reason about, not three. |
+| `list_txs_for` | `list_address_txs` + `list_entity_txs` + `list_cluster_txs` | Same justification as `list_neighbors`. |
+
+### External (1)
+
+`search_neighbors` — forwards to the proprietary graph-search service
+with async task polling. Only registered when
+`GS_MCP_SEARCH_NEIGHBORS__BASE_URL` is set. API key is optional — leave
+`api_key_env` unset to talk to an unauthenticated backend.
+
+## What we deliberately don't expose
+
+Listed because "why isn't X a tool?" is as interesting as "why is it?":
+
+- **`bulk_csv` / `bulk_json`** — unbounded-size output, bad for LLM
+  context.
+- **`get_tx_conversions`** — niche bridge-tx conversions; re-add if a
+  use case emerges.
+- **`list_related_addresses`** — niche heuristic, adds noise.
+- **`report_tag`** — write operation; LLMs shouldn't be reporting tags
+  autonomously.
+- **`search_cluster_neighbors` / `search_entity_neighbors`** —
+  redundant with the consolidated `list_neighbors`.
+- **`list_*_links`** — low-value for LLM reasoning, high-token response
+  shape.
+- **`get_cluster`, `list_cluster_addresses`, `list_address_tags_by_cluster`** —
+  at the currency level, `lookup_entity` + `list_txs_for(kind="cluster")` +
+  `list_neighbors(kind="cluster")` cover the useful surface without
+  duplicating the entity/cluster mental model for the LLM.
+- **`get_actor_tags`** — almost always redundant with `lookup_address` /
+  `lookup_entity` tag surfaces; re-add if it proves useful.
+
+All filtered out at boot by absence from the positive-list. Trivial to
+re-enable later.
+
+## How to modify the surface
+
+### Add a passthrough
+
+1. Confirm the FastAPI `operation_id`:
+   `uv run graphsense-cli web openapi | jq '.paths[][].operationId'`
+2. Add an entry under `include:` in `curation/tools.yaml` with an
+   LLM-tuned `description` and useful `tags:`.
+3. `uv run graphsense-cli mcp validate-curation` — should stay green.
+
+### Add a consolidation
+
+1. Write a `register_<name>(mcp, app, stack)` function in
+   `tools/consolidated.py` that declares an `@mcp.tool` and dispatches
+   to the FastAPI app via `_make_client(app)` (ASGI in-process).
+2. Add an entry under `consolidated_tools:` in the YAML with `name`,
+   `replaces`, and `module`.
+3. Make sure every op_id in `replaces` also exists on the FastAPI app
+   and is not already under `include:` — the validator will fail
+   otherwise.
+
+### Add an external forward
+
+1. Write a module under `tools/` exposing a
+   `register(mcp, config, stack)` function. Use the `stack` to attach
+   the httpx client's lifecycle.
+2. Add a nested config class on `GSMCPConfig` for its base URL, auth
+   env var, etc.
+3. Add an entry under `external_tools:` in the YAML.
+4. Wire the registration in `tools/__init__.py::register_custom_tools`.
+
+### Drop a tool
+
+1. Remove its entry from `include:` or `consolidated_tools:`.
+2. If consolidated, delete the `register_*` function too.
+3. Run the validator.
+
+## Context cost
+
+All 17 tool schemas plus the `search_neighbors` extension fit in roughly
+300–500 tokens when serialized for transport. Claude Code lazy-loads
+(only the tools the LLM picks get read into context), so the observed
+cost is usually a few hundred tokens total. Other clients vary —
+Claude.ai custom connectors eager-load, so the full surface cost matters
+there.
+
+The dominant cost scaling factor is **descriptions, not count** — long
+docstrings and verbose schemas are the biggest levers. Keep descriptions
+action-oriented and under ~3 sentences.
+
+## Tests
+
+```bash
+uv run pytest tests/mcp/ tests/cli/test_mcp_cli_integration.py -v
+```
+
+Covers:
+
+- Config env-var parsing (including nested `SearchNeighborsConfig`).
+- Curation YAML loading + drift detection + `include`/`replaces` overlap.
+- Route filter and description-override logic.
+- `SearchNeighborsClient` polling loop, timeout, HTTP-error
+  translation, and three auth variants (no env, env unset, env set).
+- In-process integration with `fastmcp.Client` against `create_spec_app`
+  — asserts the curated tool set is exposed and replaced endpoints are
+  absent.
+- CLI `validate-curation` happy path.
+
+## Runtime layout
+
+```
+src/graphsenselib/mcp/
+  __init__.py              Public surface: GSMCPConfig, attach_to_fastapi, ...
+  config.py                GSMCPConfig + SearchNeighborsConfig (pydantic-settings, env_prefix GS_MCP_)
+  curation.py              CurationFile model + YAML loader + drift validator
+  routes.py                make_route_map_fn, make_component_fn for FastMCP
+  server.py                build_mcp, attach_to_fastapi (lifespan composition)
+  cli.py                   Click group for `graphsense-cli mcp validate-curation`
+  tools/
+    __init__.py            register_custom_tools dispatcher
+    consolidated.py        Hand-written @mcp.tool wrappers (ASGI in-process)
+    search_neighbors.py    External proprietary forward with polling
+  curation/
+    tools.yaml             The positive list — source of truth for the surface
+```

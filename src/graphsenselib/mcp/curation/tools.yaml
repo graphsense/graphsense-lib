@@ -1,0 +1,125 @@
+version: 1
+
+defaults:
+  tag_prefix: "gs_"
+
+# Positive list: every operation_id here becomes an auto-generated MCP tool.
+# Anything NOT here is excluded from the tool surface. Drift is caught at boot
+# (see graphsenselib.mcp.curation.validate_against_app).
+include:
+
+  get_statistics:
+    description: >
+      Snapshot of every supported network: latest indexed block, freshness,
+      supported tokens. Use this first when orienting yourself.
+    tags: ["network-level", "overview"]
+
+  search:
+    description: >
+      Global search across supported networks for a free-text query. Matches
+      addresses, transactions, blocks, and labels. Use this when the user gives
+      you an identifier but hasn't specified which network or which kind of
+      object it is.
+    tags: ["search", "network-level"]
+
+  get_block:
+    description: "Fetch a single block by height in the given network."
+    tags: ["block-level"]
+
+  get_block_by_date:
+    description: >
+      Find the block nearest to a given date/time in the given network. Use
+      this to translate timestamps into block heights before calling
+      block-level or rate-level tools.
+    tags: ["block-level", "time"]
+
+  list_block_txs:
+    description: "List transactions contained in a given block."
+    tags: ["block-level", "transaction-level"]
+
+  get_tx:
+    description: "Fetch a single transaction by hash."
+    tags: ["transaction-level"]
+
+  list_tx_flows:
+    description: >
+      Account-model transaction flows (ETH and similar). Returns sender,
+      receiver, and value for each internal transfer in the transaction.
+    tags: ["transaction-level", "account-model"]
+
+  get_exchange_rates:
+    description: >
+      Exchange rates for the given network at the given block height. Returns
+      the fiat value (USD, EUR, ...) of one unit of the native asset at that
+      height.
+    tags: ["rates", "network-level"]
+
+  list_supported_tokens:
+    description: >
+      Catalog of tokens the platform tracks for the given network (e.g. ERC-20
+      tokens on ETH). Needed before querying token-level data.
+    tags: ["network-level", "tokens"]
+
+  get_actor:
+    description: >
+      Metadata about a named actor (exchange, mixer, service). Returns the
+      actor's jurisdiction, categories, and descriptive fields. Use this to
+      expand an actor reference found on a tag.
+    tags: ["actor-level"]
+
+  list_taxonomies:
+    description: >
+      List the tag taxonomies (category vocabularies) used by the platform.
+      Cheap and useful when you want to build a filter of matching categories.
+    tags: ["metadata"]
+
+  list_concepts:
+    description: "List concepts (leaf labels) inside a given taxonomy."
+    tags: ["metadata"]
+
+# Hand-written tools that replace multiple auto-generated ones. These are
+# registered in Python (see module field); their presence here is what makes
+# the validator treat the 'replaces' op_ids as excluded from auto-exposure.
+consolidated_tools:
+
+  - name: lookup_address
+    replaces:
+      - get_address
+      - get_address_entity
+      - get_tag_summary_by_address
+      - list_tags_by_address
+    module: graphsenselib.mcp.tools.consolidated:register_lookup_address
+
+  - name: lookup_entity
+    replaces:
+      - get_entity
+      - list_address_tags_by_entity
+    module: graphsenselib.mcp.tools.consolidated:register_lookup_entity
+
+  - name: lookup_tx_io
+    replaces:
+      - get_tx_io
+      - get_spending_txs
+      - get_spent_in_txs
+    module: graphsenselib.mcp.tools.consolidated:register_lookup_tx_io
+
+  - name: list_neighbors
+    replaces:
+      - list_address_neighbors
+      - list_entity_neighbors
+      - list_cluster_neighbors
+    module: graphsenselib.mcp.tools.consolidated:register_list_neighbors
+
+  - name: list_txs_for
+    replaces:
+      - list_address_txs
+      - list_entity_txs
+      - list_cluster_txs
+    module: graphsenselib.mcp.tools.consolidated:register_list_txs_for
+
+# Tools that forward to an external service rather than the FastAPI app.
+external_tools:
+
+  search_neighbors:
+    module: graphsenselib.mcp.tools.search_neighbors:register
+    enabled: true

@@ -147,11 +147,18 @@ web = [
     "gunicorn>=23.0.0",
 ]
 
+mcp = [
+    "graphsense-lib[web]",
+    "fastmcp>=3.2,<4.0",
+    "pyyaml>=6.0",
+]
+
 all = [
     "graphsense-lib[ingest]",
     "graphsense-lib[conversions]",
     "graphsense-lib[tagpacks]",
     "graphsense-lib[web]",
+    "graphsense-lib[mcp]",
 ]
 
 [project.scripts]
@@ -251,11 +258,13 @@ include = ["src/graphsenselib/config/**",
           "src/graphsenselib/errors/**",
           "src/graphsenselib/datatypes/**",
           "src/graphsenselib/utils/**",
+          "src/graphsenselib/mcp/**",
           "tests/config/**",
           "tests/schema/**",
           "tests/errors/**",
           "tests/datatypes/**",
-          "tests/utils/**"
+          "tests/utils/**",
+          "tests/mcp/**"
 ]
 exclude = ["src/graphsenselib/ingest/tron/grpc/**"]
 
