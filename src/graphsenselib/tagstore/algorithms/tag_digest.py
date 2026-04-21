@@ -107,9 +107,18 @@ class TagDigestComputationConfig(BaseModel):
     only_propagate_high_confidence_actors: bool = False
     consider_n_confidence_buckets: int = 2
     max_confidence_drop: int = 20
+    # Exponent applied to confidence_level when used as a ranking weight
+    # (labels, actors, concepts). 1.0 = linear; higher values sharpen
+    # emphasis on high-confidence tags. Does not affect the displayed
+    # per-label confidence average or confidence-bucket thresholding.
+    confidence_weight_exponent: float = 2.0
 
     def with_only_propagate_high_confidence_actors(self, only: bool = True):
         self.only_propagate_high_confidence_actors = only
+        return self
+
+    def with_confidence_weight_exponent(self, exponent: float):
+        self.confidence_weight_exponent = exponent
         return self
 
 
@@ -148,6 +157,7 @@ def compute_tag_digest(
     ):
         if not _skipTag(t):
             conf = t.confidence_level or 0.1
+            w = conf**config.confidence_weight_exponent
 
             tags_count += 1
 
@@ -168,7 +178,7 @@ def compute_tag_digest(
             # add labels
             nlabel = _normalizeWord(t.label)
             ls = label_summary[nlabel]
-            full_label_counter.add(nlabel, conf)
+            full_label_counter.add(nlabel, w)
 
             # add actor
             if (
@@ -180,18 +190,18 @@ def compute_tag_digest(
                     or t.tag_type == "actor"
                 )
             ):
-                actor_labels[t.actor].add(nlabel, weight=conf)
-                actor_counter.add(t.actor, weight=conf)
+                actor_labels[t.actor].add(nlabel, weight=w)
+                actor_counter.add(t.actor, weight=w)
 
             if t.concepts:
                 for x in t.concepts:
-                    concepts_counter.add(x, weight=conf * _get_concept_weight(x))
+                    concepts_counter.add(x, weight=w * _get_concept_weight(x))
 
                     ls["concepts"].add(x)
             else:
                 # tags without categorization are added to unknown category in wordcloud
                 x = "unknown"
-                concepts_counter.add(x, weight=conf * _get_concept_weight(x))
+                concepts_counter.add(x, weight=w * _get_concept_weight(x))
 
                 ls["concepts"].add(x)
 
