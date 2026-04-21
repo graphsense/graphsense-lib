@@ -66,9 +66,9 @@ def test_tag_digest_cryptoDogs(tagsCryptoDogs):
     assert list(digest.concept_tag_cloud.keys()) == [
         "payment_processor",
         "defi_bridge",
-        "unknown",
         "search_engine",
         "service",
+        "unknown",
     ]
 
 
@@ -95,9 +95,9 @@ def test_tag_digest_cryptoDogs_obfuscated(tagsCryptoDogs):
     assert list(digest.concept_tag_cloud.keys()) == [
         "payment_processor",
         "defi_bridge",
-        "unknown",
         "search_engine",
         "service",
+        "unknown",
     ]
 
 

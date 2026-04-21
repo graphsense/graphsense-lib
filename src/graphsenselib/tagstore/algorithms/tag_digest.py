@@ -41,8 +41,8 @@ class wCounter:
         self.wctr = Counter()
         self.ctr = Counter()
 
-    def add(self, item, weight=1):
-        self.ctr.update({item: 1})
+    def add(self, item, weight=1.0):
+        self.ctr.update({item: 1.0})
         self.wctr.update({item: weight})
 
     def update(self, items):
@@ -85,6 +85,8 @@ def _get_concept_weight(c: str) -> float:
         return 0.5
     elif c == "exchange":
         return 1.1
+    elif c == "dark_web" or c == "unknown":
+        return 0.1
 
     return 1.0
 
