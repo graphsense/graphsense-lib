@@ -210,6 +210,8 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         """Export traces for specified block range."""
         from .tron.export_traces_job import TronExportTracesJob
 
+        assert self.batch_size is not None
+        assert self.max_workers is not None
         job = TronExportTracesJob(
             start_block=start_block,
             end_block=end_block,
@@ -226,6 +228,8 @@ class TronStreamerAdapter(AccountStreamerAdapter):
         """Export traces for specified block range."""
         from .tron.export_traces_job import TronExportTracesJob
 
+        assert self.batch_size is not None
+        assert self.max_workers is not None
         job = TronExportTracesJob(
             start_block=start_block,
             end_block=end_block,
@@ -988,7 +992,7 @@ class EthETLStrategy(AbstractETLStrategy):
         prepare_blocks_inplace_eth(blocks, block_bucket_size)
         return blocks
 
-    def get_source_adapter(self):
+    def get_source_adapter(self, ctx=None):
         return EthStreamerAdapter(
             get_connection_from_url(self.http_provider_uri, self.provider_timeout),
             batch_size=WEB3_QUERY_BATCH_SIZE,
@@ -1043,7 +1047,7 @@ class TrxETLStrategy(EthETLStrategy):
         prepare_trc10_tokens_inplace(token_infos)
         return token_infos
 
-    def get_source_adapter(self):
+    def get_source_adapter(self, ctx=None):
         return TronStreamerAdapter(
             get_connection_from_url(self.http_provider_uri, self.provider_timeout),
             grpc_endpoint=self.grpc_provider_uri,
@@ -1250,7 +1254,7 @@ def ingest_async(
                 # Update UI
                 last_block_date_str = "Unknown"
                 if not is_trace_only_mode:
-                    last_block = blocks[-1]  # ty: ignore[non-subscriptable]
+                    last_block = blocks[-1]  # ty: ignore[not-subscriptable]
                     last_block_ts = last_block["timestamp"]
                     last_blk_date = parse_timestamp(last_block_ts)
                     last_block_date_str = last_blk_date.strftime(

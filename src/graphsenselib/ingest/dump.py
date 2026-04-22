@@ -155,6 +155,7 @@ def export_delta(
 
     if directory is not None:
         if (write_mode == "overwrite") and not ignore_overwrite_safechecks:
+            assert start_block is not None
             is_start_of_partition = start_block % partition_batch_size == 0
             left_partition_start = start_block - (start_block % partition_batch_size)
             assert is_start_of_partition, (

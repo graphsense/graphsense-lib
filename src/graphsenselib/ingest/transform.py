@@ -210,6 +210,7 @@ class TransformerUTXO(Transformer):
         # 4. Init _next_tx_id from DB on first batch
         first_block_id = blocks[0]["block_id"]
         if self._next_tx_id is None:
+            assert self.db is not None
             latest_tx_id = self.db.raw.get_latest_tx_id_before_block(first_block_id)
             self._next_tx_id = latest_tx_id + 1
 
@@ -294,7 +295,7 @@ class TransformerUTXO(Transformer):
         }
         return block_range_content
 
-    def transform_blockindep(self, data):
+    def transform_blockindep(self, block_range_content):
         return BlockRangeContent(table_contents={})
 
 
@@ -462,5 +463,5 @@ class TransformerETH(Transformer):
         }
         return block_range_content
 
-    def transform_blockindep(self, data):
+    def transform_blockindep(self, block_range_content):
         return BlockRangeContent(table_contents={})

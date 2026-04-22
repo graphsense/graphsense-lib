@@ -39,6 +39,7 @@ class IngestRunner:
 
     def ingest_range(self, start_block, end_block):
         source = self.source
+        assert source is not None
         logger.debug("Reading blockrange...")
         data = source.read_blockrange(start_block, end_block)
 
@@ -56,6 +57,7 @@ class IngestRunner:
 
     def ingest_blockindep(self):
         source = self.source
+        assert source is not None
         data = source.read_blockindep()
 
         for transformer in self.transformers:
@@ -95,6 +97,8 @@ class IngestRunner:
         return data
 
     def run(self, start_block, end_block):
+        assert self.source is not None
+        source = self.source
         partitions = split_blockrange(
             (start_block, end_block), self.partition_batch_size
         )
@@ -121,16 +125,14 @@ class IngestRunner:
                         if prefetch_future is not None:
                             data = prefetch_future.result()
                         else:
-                            data = self.source.read_blockrange(
-                                file_chunk[0], file_chunk[1]
-                            )
+                            data = source.read_blockrange(file_chunk[0], file_chunk[1])
 
                         # Start prefetching next chunk while we
                         # transform + write the current one
                         if i + 1 < len(file_chunks):
                             next_chunk = file_chunks[i + 1]
                             prefetch_future = prefetch_executor.submit(
-                                self.source.read_blockrange,
+                                source.read_blockrange,
                                 next_chunk[0],
                                 next_chunk[1],
                             )
