@@ -70,13 +70,6 @@ def create_spark_session(
         builder = builder.config("spark.cassandra.auth.username", cassandra_username)
     if cassandra_password:
         builder = builder.config("spark.cassandra.auth.password", cassandra_password)
-    # Cassandra write tuning — reduce pressure, avoid timeouts
-    builder = (
-        builder.config("spark.cassandra.output.concurrent.writes", "2")
-        .config("spark.cassandra.output.batch.size.bytes", "4096")
-        .config("spark.cassandra.connection.timeoutMS", "600000")
-        .config("spark.cassandra.output.throughputMBPerSec", "1")
-    )
 
     # Spark performance defaults
     # Arrow-optimized Python UDFs (Spark 3.5+) use Arrow serialization
