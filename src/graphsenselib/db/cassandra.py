@@ -521,11 +521,14 @@ class CassandraDb:
         self.session.execute(batch)
 
     @needs_session
-    def execute_statements(self, statements: List[BoundStatement]):
+    def execute_statements(
+        self, statements: List[BoundStatement], concurrency: int = 100
+    ):
         return execute_concurrent(
             self.session,
             [(stmt, None) for stmt in statements],
             raise_on_first_error=True,
+            concurrency=concurrency,
         )
 
     @needs_session

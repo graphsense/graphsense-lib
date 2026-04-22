@@ -29,6 +29,7 @@ The web API requires two backend connections: a **Cassandra** cluster (blockchai
 ```bash
 GS_CASSANDRA_ASYNC_NODES='["<cassandra-host>"]' \
 GRAPHSENSE_TAGSTORE_READ_URL='postgresql+asyncpg://<user>:<password>@<host>:<port>/tagstore' \
+GS_CASSANDRA_ASYNC_CURRENCIES='{"btc":{"raw": "btc_raw", "transformed": "btc_transformed"},"eth":{}}' \
 uv run --extra web uvicorn graphsenselib.web.app:create_app --factory --host localhost --port 9000 --reload
 ```
 
@@ -77,11 +78,86 @@ make serve-web
 | Variable | Default | Description |
 |---|---|---|
 | `GSREST_DISABLE_AUTH` | `false` | Disable API key authentication |
+| `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP` | `false` | Auto-initialize TagStore tables/views at startup when missing |
+| `GRAPHSENSE_TAGSTORE_READ_URL` | — | TagStore database URL (e.g., `postgresql://user:password@host:5432/tagstore`) |
 | `GSREST_ALLOWED_ORIGINS` | `*` | CORS allowed origins |
 | `GSREST_LOGGING_LEVEL` | — | Logging level (DEBUG, INFO, …) |
 | `GS_CASSANDRA_ASYNC_PORT` | `9042` | Cassandra port |
 | `GS_CASSANDRA_ASYNC_USERNAME` | — | Cassandra username |
 | `GS_CASSANDRA_ASYNC_PASSWORD` | — | Cassandra password |
+
+When enabling `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP=true`, keep in mind:
+
+- The DB user must have DDL privileges (create tables/views/indexes/extensions/procedures).
+- Startup may be slower because schema checks and potential initialization run before the app serves traffic.
+- In multi-replica deployments, initialize schema once (migration/init job) to avoid startup races.
+
+If TagStore is not configured (`gs-tagstore` missing) or the TagStore URL is unreachable, the REST app now falls back to a mock TagStore so endpoints still work. In this mode, tag-specific responses (labels, actors, taxonomies, tag counts) are empty.
+
+### REST API evolution and deprecation policy
+
+The REST API follows semantic versioning via `info.version` in the OpenAPI spec
+and the `__api_version__` field in the library:
+
+- **Patch** (`2.10.x`): bug fixes, no schema changes.
+- **Minor** (`2.y.0`): additive changes — new endpoints, new fields, new
+  optional parameters. Deprecations may be introduced here but deprecated
+  surfaces continue to work.
+- **Major** (`x.0.0`): removal of deprecated surfaces and other breaking
+  changes. Major bumps are rare and announced in advance.
+
+Deprecated endpoints and fields remain fully functional for **at least two
+minor releases or six months**, whichever is longer. Deprecations are announced
+through three mechanisms, listed from most to least machine-readable:
+
+#### OpenAPI schema (`deprecated: true`)
+
+Deprecated paths and response fields carry `deprecated: true` in
+`/openapi.json`, which renders as a strikethrough in Swagger UI (`/docs`) and
+is propagated to the generated Python client's docstrings. Check the spec at
+build time to fail CI if you depend on a deprecated surface.
+
+#### HTTP response headers (RFC 9745 / RFC 8594)
+
+Responses from deprecated routes carry:
+
+- **`Deprecation: true`** — [RFC 9745](https://www.rfc-editor.org/rfc/rfc9745).
+  Signals that this specific endpoint is deprecated. Currently emitted as the
+  literal string `true`; future releases may upgrade it to an `@<epoch>`
+  timestamp indicating when deprecation took effect.
+- **`Link: </docs#section/Deprecation-policy>; rel="deprecation"; type="text/html"`** —
+  points clients at the authoritative policy page.
+- **`Sunset: <HTTP-date>`** — [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594).
+  Announces the committed removal date for the endpoint. For the
+  `/entities/...` endpoints (superseded by `/clusters/...`), the sunset is
+  set to `Sat, 31 Oct 2026 00:00:00 GMT`. After that date the deprecated
+  endpoints may be removed without further notice. Other deprecations may
+  be introduced with different sunset dates in future releases.
+
+To detect deprecation in your own client code, inspect the `Deprecation` and
+`Sunset` response headers and log a warning (or fail CI) when you hit a
+deprecated surface. Example with the generated Python client:
+
+```python
+from graphsense import ApiClient, Configuration
+from graphsense.api import ClustersApi
+
+cfg = Configuration(host="https://api.iknaio.com", api_key={"api_key": "..."})
+with ApiClient(cfg) as api_client:
+    clusters = ClustersApi(api_client)
+    response = clusters.get_cluster_with_http_info(currency="btc", cluster=264711)
+    headers = response.headers
+    if headers.get("Deprecation"):
+        sunset = headers.get("Sunset", "no sunset date set")
+        print(f"WARNING: endpoint deprecated (sunset: {sunset})")
+```
+
+#### CHANGELOG
+
+Every deprecation is recorded in [`CHANGELOG.md`](CHANGELOG.md) under the
+release that introduced it, and every removal is recorded in the major release
+that applies it. Use the changelog as the audit trail when planning client
+upgrades.
 
 ### Basic Usage
 
@@ -512,14 +588,31 @@ For comprehensive testing:
 make test
 ```
 
+#### Podman Notes
+
+If you run the test suite with Podman, make sure your shell points at the Podman socket:
+
+```bash
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/podman/podman.sock"
+```
+
+The test fixtures automatically disable Ryuk when `DOCKER_HOST` contains `podman.sock` and rely on explicit fixture cleanup instead.
+
 ### Release Process
 
 This repository uses two source-of-truth versions in the root `Makefile`:
 
-- **Library version**: `RELEASESEM` (released with `vX.Y.Z` tags)
+- **Library version**: `RELEASESEM` (released with `vX.Y.Z`, `vX.Y.Z-rc.N`, or `vX.Y.Z-dev.N` tags)
 - **OpenAPI/API version**: `WEBAPISEM` (written to `src/graphsenselib/web/version.py`)
 
 The Python client package version is derived from the API version and should match it.
+
+Library package versioning is dynamic via `setuptools_scm` (`pyproject.toml`):
+
+- Git tag `v2.9.8` -> package version `2.9.8`
+- Git tag `v2.9.8-rc.1` -> package version `2.9.8rc1`
+- Git tag `v2.9.8-dev.1` -> package version `2.9.8.dev1`
+- Commits after a tag append local metadata, for example `2.9.8.dev1+g<sha>.d<date>`
 
 Use the root Makefile helpers:
 
@@ -544,8 +637,25 @@ make tag-version
 
 Tagging behavior:
 
-- Library release tag: `vX.Y.Z` (from `RELEASESEM`)
+- Library release tag: `vX.Y.Z`, `vX.Y.Z-rc.N`, or `vX.Y.Z-dev.N` (from `RELEASESEM`)
 - Client release tag: `webapi-vA.B.C` (from `WEBAPISEM`)
+
+Recommended library versioning routine:
+
+1. For development prereleases, set `RELEASESEM` to `vX.Y.Z-dev.N` (for example `v2.10.0-dev.1`)
+2. For release candidates, set `RELEASESEM` to `vX.Y.Z-rc.N`
+3. For stable releases, set `RELEASESEM` to `vX.Y.Z`
+4. Create tags with `make tag-version`
+5. Push tags with `git push origin --tags`
+
+CI trigger background:
+
+- Stable library tags (`vX.Y.Z`) trigger:
+  - GitHub Release creation
+  - Python library package build/publish (`graphsense-lib`)
+  - Docker image build/publish
+- Client tags (`webapi-vA.B.C`) trigger Python client package build/publish (`clients/python`)
+- Other library tags (`vX.Y.Z-rc.N`, `vX.Y.Z-dev.N`) do not trigger GitHub Release or Python package publish; they only trigger Docker image build/publish
 
 1. Update CHANGELOG.md with new features and fixes
 2. Update relevant versions (library/API/client) based on what changed

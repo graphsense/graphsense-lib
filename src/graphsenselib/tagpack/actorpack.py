@@ -194,6 +194,8 @@ class ActorPack(object):
         domain_overlap = defaultdict(set)
         twitter_handle_overlap = defaultdict(set)
         github_organisation_overlap = defaultdict(set)
+        coingecko_id_overlap = defaultdict(set)
+        defilama_id_overlap = defaultdict(set)
         ids = defaultdict(int)
         for actor in self.get_unique_actors():
             # check if mandatory actor fields are defined
@@ -255,6 +257,12 @@ class ActorPack(object):
                         actor.identifier
                     )
 
+            for cg_id in actor.coingecko_ids:
+                coingecko_id_overlap[cg_id.strip().lower()].add(actor.identifier)
+
+            for dl_id in actor.defilama_ids:
+                defilama_id_overlap[dl_id.strip().lower()].add(actor.identifier)
+
         unique_actors = self.get_unique_actors()
         missing_mappings = []
         global_aliases = []
@@ -304,6 +312,20 @@ class ActorPack(object):
                 logger.warning(
                     "These actors share the same twitter_handle "
                     f" {twitter_handle}: {actors}. Consider Merge?"
+                )
+
+        for cg_id, actors in coingecko_id_overlap.items():
+            if len(actors) > 1:
+                logger.warning(
+                    f"Actors share the same coingecko_id {cg_id}: {actors}. "
+                    "Please consider merging them"
+                )
+
+        for dl_id, actors in defilama_id_overlap.items():
+            if len(actors) > 1:
+                logger.warning(
+                    f"Actors share the same defilama_id {dl_id}: {actors}. "
+                    "Please consider merging them"
                 )
 
         if self._duplicates:
@@ -376,6 +398,14 @@ class Actor(object):
     @property
     def github_organisation(self):
         return self.context.get("github_organisation", None)
+
+    @property
+    def coingecko_ids(self):
+        return self.context.get("coingecko_ids", []) or []
+
+    @property
+    def defilama_ids(self):
+        return self.context.get("defilama_ids", []) or []
 
     @property
     def identifier(self):

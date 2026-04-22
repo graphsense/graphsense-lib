@@ -69,18 +69,18 @@ class AddressAccount:
         else:
             raise Exception("Unknown address type")
 
-        if len(self.address_bytes) != 20:
+        if len(self.address_bytes) != 20:  # ty: ignore[invalid-argument-type]
             raise ValueError(
-                f"Address is not the right length {len(self.address_bytes)}"
+                f"Address is not the right length {len(self.address_bytes)}"  # ty: ignore[invalid-argument-type]
             )
 
     @property
     def hex(self) -> str:  # noqa
-        return self.address_bytes.hex()
+        return self.address_bytes.hex()  # ty: ignore[unresolved-attribute]
 
     @property
     def db_encoding(self) -> str:
-        return self.bytearray
+        return self.bytearray  # ty: ignore[invalid-return-type]
         # return f"0x{self.hex}"
 
     @property
@@ -93,7 +93,7 @@ class AddressAccount:
 
     @property
     def bytearray(self) -> bytearray:  # noqa
-        return self.address_bytes
+        return self.address_bytes  # ty: ignore[invalid-return-type]
 
 
 class AddressAccountTrx:

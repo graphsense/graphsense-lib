@@ -86,7 +86,10 @@ EOF
 
 RUN adduser --system --uid 1000 --home /home/graphsense graphsense
 RUN chown -R graphsense /opt/duckdb/extensions
-RUN mkdir -p /srv/graphsense-rest/instance && chown -R graphsense /srv/graphsense-rest
+RUN mkdir -p /srv/graphsense-rest/instance
+RUN mkdir -p /srv/graphsense-rest/docs/static
+ADD ./docs/static/ /srv/graphsense-rest/docs/static/
+RUN chown -R graphsense /srv/graphsense-rest
 USER graphsense
 WORKDIR /srv/graphsense-rest/
 

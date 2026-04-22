@@ -239,7 +239,7 @@ class Process:
     def get_one(self, sources, timeout=1):
         if isinstance(sources, list):
             q = random.choice(sources)
-            return q.get(timeout=timeout)
+            return q.get(timeout=timeout)  # ty: ignore[unresolved-attribute]
         else:
             return sources.get(timeout=timeout)
 
@@ -291,7 +291,7 @@ class Process:
 
     def __call__(self, source, sinks, panic_signal):
         if self.init_func:
-            self.init_func(self.context, *self.init_args)
+            self.init_func(self.context, *self.init_args)  # ty: ignore[not-iterable]
         try:
             while True:
                 try:
@@ -323,7 +323,7 @@ class Process:
 
 
 class SyncCollector(Process):
-    def get_one(self, sources):
+    def get_one(self, sources):  # ty: ignore[invalid-method-override]
         return [q.get() for q in sources]
 
     def handle_msg(self, sources, sinks) -> bool:

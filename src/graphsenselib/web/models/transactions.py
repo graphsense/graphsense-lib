@@ -2,6 +2,7 @@
 
 from typing import Optional, Union
 
+from graphsenselib.web.models.heuristics import UtxoHeuristics
 from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.values import VALUES_EXAMPLE, Values
 
@@ -161,6 +162,7 @@ class TxUtxo(APIModel):
     total_output: Values
     inputs: Optional[list[TxValue]] = None
     outputs: Optional[list[TxValue]] = None
+    heuristics: Optional[UtxoHeuristics] = None
 
 
 class TxAccount(APIModel):

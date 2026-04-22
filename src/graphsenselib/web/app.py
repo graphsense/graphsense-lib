@@ -1,19 +1,24 @@
 import importlib
+import asyncio
 import json
 import logging
 import logging.handlers
 import os
 import re
 import traceback
-from contextlib import asynccontextmanager
-from types import SimpleNamespace
+from contextlib import asynccontextmanager, suppress
+from html import escape
 from typing import Any, Optional
 
 import yaml
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError as PydanticValidationError
+from pydantic_core import ValidationError as PydanticCoreValidationError
 from graphsenselib.config import AppConfig
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
@@ -24,14 +29,18 @@ from graphsenselib.errors import (
     NotFoundException,
 )
 from graphsenselib.tagstore.db import TagstoreDbAsync, Taxonomies
-from graphsenselib.tagstore.db.database import get_db_engine_async
+from graphsenselib.tagstore.db.database import (
+    ensure_database_initialized,
+    get_db_engine_async,
+)
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
 from graphsenselib.web.config import GSRestConfig, LoggingConfig
-from graphsenselib.web.dependencies import ServiceContainer
+from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
+from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
@@ -39,6 +48,7 @@ from graphsenselib.web.routes import (
     addresses,
     blocks,
     bulk,
+    clusters,
     entities,
     general,
     rates,
@@ -49,6 +59,33 @@ from graphsenselib.web.routes import (
 from graphsenselib.web.security import get_api_key
 
 CONFIG_FILE = "./instance/config.yaml"
+DOCS_STATIC_DIR = "./docs/static"
+DOCS_STATIC_URL = "/docs_assets"
+DEFAULT_DOCS_LOGO_URL = f"{DOCS_STATIC_URL}/logo.png"
+DEFAULT_DOCS_FAVICON_ICO_URL = f"{DOCS_STATIC_URL}/favicon.ico"
+DEFAULT_DOCS_FAVICON_PNG_URL = f"{DOCS_STATIC_URL}/favicon.png"
+API_DESCRIPTION = """\
+GraphSense API provides programmatic access to blockchain analytics data across
+multiple ledgers. Use it to explore addresses, clusters, blocks, transactions,
+tags, token activity, and exchange-rate context, and to integrate investigation
+workflows into your own applications and automation.
+
+## Versioning and deprecation policy
+
+The API follows semantic versioning. Minor releases are additive and
+backwards-compatible; breaking changes only happen in major releases, which
+are rare and announced in advance.
+
+Deprecated endpoints and fields remain fully functional for at least six
+months after they are marked deprecated. During that window they are
+highlighted with a strikethrough in the docs and in generated clients, and
+responses from deprecated endpoints carry a `Deprecation` HTTP header that
+client tooling can detect. Replacement endpoints and fields are always
+introduced before the deprecated surface is removed.
+
+See the [full versioning and deprecation policy](https://github.com/graphsense/graphsense-lib/blob/master/README.md#rest-api-evolution-and-deprecation-policy)
+for details.
+"""
 logger = logging.getLogger(__name__)
 
 
@@ -213,6 +250,18 @@ def _promote_schema_examples_to_parameter_level(
     This post-processor promotes schema.examples[0] to parameter.example so
     that Swagger UI displays them correctly.
     """
+
+    def _to_python_literal(value: Any) -> str:
+        if value is None:
+            return "None"
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str):
+            return repr(value)
+        return repr(value)
+
     for path_val in schema.get("paths", {}).values():
         for method_val in path_val.values():
             if not isinstance(method_val, dict):
@@ -223,6 +272,48 @@ def _promote_schema_examples_to_parameter_level(
                     examples = param_schema.pop("examples")
                     if isinstance(examples, list) and examples:
                         param["example"] = examples[0]
+                        param["x-graphsense-python-example"] = _to_python_literal(
+                            examples[0]
+                        )
+    return schema
+
+
+def _normalize_parameter_examples_for_generated_clients(
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize selected OpenAPI parameter examples for generated client snippets.
+
+    Some generators eagerly include all optional parameters in example code. For a
+    few parameters this yields invalid/default placeholder combinations in snippets.
+    Keep these examples explicit and safe at the OpenAPI source.
+    """
+
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+
+            parameters = operation.get("parameters", [])
+            parameter_names = {p.get("name") for p in parameters if isinstance(p, dict)}
+            has_height_filters = (
+                "min_height" in parameter_names or "max_height" in parameter_names
+            )
+
+            for parameter in parameters:
+                if not isinstance(parameter, dict):
+                    continue
+
+                name = parameter.get("name")
+
+                if name in {"page", "token_tx_id"}:
+                    parameter["example"] = None
+                    parameter.pop("x-graphsense-python-example", None)
+                    continue
+
+                if has_height_filters and name in {"min_date", "max_date"}:
+                    parameter["example"] = None
+                    parameter.pop("x-graphsense-python-example", None)
+
     return schema
 
 
@@ -343,6 +434,26 @@ def setup_logging(
     app_logger.addHandler(handler)
 
 
+def log_slack_exception_notification_status(
+    slack_exception_hook, default_environment: Optional[str]
+):
+    """Log whether Slack exception notifications are configured at startup."""
+    hooks = slack_exception_hook.hooks if slack_exception_hook is not None else []
+    environment = default_environment or "unknown"
+
+    if hooks:
+        logger.info(
+            "Slack exception notifications enabled (hooks=%d, environment=%s)",
+            len(hooks),
+            environment,
+        )
+    else:
+        logger.info(
+            "Slack exception notifications disabled (no 'exceptions' slack hooks configured, environment=%s)",
+            environment,
+        )
+
+
 async def setup_database(app: FastAPI):
     """Setup database connections (Cassandra + TagStore)"""
     config = app.state.config
@@ -355,30 +466,73 @@ async def setup_database(app: FastAPI):
     app.state.db = cls(db_config, logger)
 
     ts_conf = config.tagstore
-    max_conn = ts_conf.pool_size
-    max_pool_time = ts_conf.pool_timeout
-    mo = ts_conf.max_overflow
-    recycle = ts_conf.pool_recycle
-    enable_prepared_statements_cache = ts_conf.enable_prepared_statements_cache
 
-    engine = get_db_engine_async(
-        ts_conf.url
-        + (
-            "?prepared_statement_cache_size=0"
-            if not enable_prepared_statements_cache
-            else ""
-        ),
-        pool_size=int(max_conn),
-        max_overflow=int(mo),
-        pool_recycle=int(recycle),
-        pool_timeout=int(max_pool_time),
-        pool_pre_ping=True,
-    )
+    def _activate_mock_tagstore(reason: str):
+        logger.warning(
+            "TagStore unavailable (%s). Falling back to mock TagStore.",
+            reason,
+        )
+        app.state.tagstore_engine = None
+        app.state.tagstore_db = MockTagstoreDb()
+        ConceptsCacheServiceFastAPI.setup_empty_cache(app)
 
-    app.state.tagstore_engine = engine
+    if ts_conf is None or not getattr(ts_conf, "url", None):
+        _activate_mock_tagstore("configuration missing")
+        logger.info("Database setup done")
+        return
 
-    # Setup taxonomy cache
-    await ConceptsCacheServiceFastAPI.setup_cache(engine, app)
+    engine = None
+    initialized = False
+    try:
+        if config.ensure_tagstore_schema_on_startup:
+            logger.info(
+                "TagStore schema auto-init is enabled; checking required tables/views"
+            )
+            initialized = await asyncio.to_thread(
+                ensure_database_initialized,
+                ts_conf.url,
+                False,
+            )
+
+        max_conn = ts_conf.pool_size
+        max_pool_time = ts_conf.pool_timeout
+        mo = ts_conf.max_overflow
+        recycle = ts_conf.pool_recycle
+        enable_prepared_statements_cache = ts_conf.enable_prepared_statements_cache
+
+        engine = get_db_engine_async(
+            ts_conf.url
+            + (
+                "?prepared_statement_cache_size=0"
+                if not enable_prepared_statements_cache
+                else ""
+            ),
+            pool_size=int(max_conn),
+            max_overflow=int(mo),
+            pool_recycle=int(recycle),
+            pool_timeout=int(max_pool_time),
+            pool_pre_ping=True,
+        )
+
+        tagstore_db = TagstoreDbAsync(engine)
+        await ConceptsCacheServiceFastAPI.setup_cache(tagstore_db, app)
+
+        app.state.tagstore_engine = engine
+        app.state.tagstore_db = tagstore_db
+
+        if config.ensure_tagstore_schema_on_startup:
+            if initialized:
+                logger.info("TagStore schema initialized during REST startup")
+            else:
+                logger.info("TagStore schema already initialized")
+    except Exception as exc:
+        if engine is not None:
+            with suppress(Exception):
+                await engine.dispose()
+        logger.warning("TagStore startup failed: %s", exc, exc_info=True)
+        _activate_mock_tagstore("URL unreachable or initialization failed")
+        logger.info("Database setup done")
+        return
 
     logger.info("Database setup done")
 
@@ -389,10 +543,16 @@ async def teardown_database(app: FastAPI):
     driver = app.state.config.database.driver.lower()
     app.state.db.close()
     logger.info(f"Closed {driver} connection.")
-    logger.info(app.state.tagstore_engine.pool.status())
-    await app.state.tagstore_engine.dispose()
-    logger.info(app.state.tagstore_engine.pool.status())
-    logger.info("Closed Tagstore connection.")
+    tagstore_engine = getattr(app.state, "tagstore_engine", None)
+    if tagstore_engine is not None:
+        with suppress(Exception):
+            logger.info(tagstore_engine.pool.status())
+        await tagstore_engine.dispose()
+        with suppress(Exception):
+            logger.info(tagstore_engine.pool.status())
+        logger.info("Closed Tagstore connection.")
+    else:
+        logger.info("TagStore mock active; no TagStore connection to close.")
 
     # Close Redis client if it exists
     if getattr(app.state, "redis_client", None):
@@ -413,17 +573,26 @@ class ConceptsCacheServiceFastAPI(ConceptProtocol):
         return self.app.state.taxonomy_cache["labels"][taxonomy].get(concept_id, None)
 
     @classmethod
-    async def setup_cache(cls, db_engine, app: FastAPI):
-        tagstore_db = TagstoreDbAsync(db_engine)
+    async def setup_cache(cls, tagstore_db, app: FastAPI):
         taxs = await tagstore_db.get_taxonomies(
             {Taxonomies.CONCEPT, Taxonomies.COUNTRY}
         )
         app.state.taxonomy_cache = {
             "labels": {
-                Taxonomies.CONCEPT: {x.id: x.label for x in taxs.concept},
-                Taxonomies.COUNTRY: {x.id: x.label for x in taxs.country},
+                Taxonomies.CONCEPT: {x.id: x.label for x in (taxs.concept or [])},
+                Taxonomies.COUNTRY: {x.id: x.label for x in (taxs.country or [])},
             },
-            "abuse": {x.id for x in taxs.concept if x.is_abuse},
+            "abuse": {x.id for x in (taxs.concept or []) if x.is_abuse},
+        }
+
+    @classmethod
+    def setup_empty_cache(cls, app: FastAPI):
+        app.state.taxonomy_cache = {
+            "labels": {
+                Taxonomies.CONCEPT: {},
+                Taxonomies.COUNTRY: {},
+            },
+            "abuse": set(),
         }
 
 
@@ -449,7 +618,7 @@ async def setup_services(app: FastAPI):
     app.state.services = ServiceContainer(
         config=config,
         db=app.state.db,
-        tagstore_engine=app.state.tagstore_engine,
+        tagstore_db=app.state.tagstore_db,
         concepts_cache_service=ConceptsCacheServiceFastAPI(app),
         logger=logger,
         redis_client=redis_client,
@@ -468,14 +637,23 @@ async def setup_plugins(app: FastAPI):
     )
 
     if obfuscate_private_tags:
-        logger.warning(
-            "Tag obfuscation plugin enabled, using built-in version. "
-            "Skipping load of external plugin."
-        )
         builtin_plugin = ObfuscateTags
         name = f"{builtin_plugin.__module__}"
         app.state.plugins.append(builtin_plugin)
         plugin_config = config.get_plugin_config(name)
+        if plugin_config is None:
+            # Backward compatibility: users often configure the builtin plugin
+            # under the plugin entry path from config.plugins.
+            for configured_name in config.plugins:
+                if configured_name.endswith("obfuscate_tags"):
+                    plugin_config = config.get_plugin_config(configured_name)
+                    if plugin_config is not None:
+                        break
+
+        logger.warning(
+            f"Tag obfuscation plugin enabled, using built-in version. "
+            f"Skipping load of external plugin. Config: {plugin_config}"
+        )
         app.state.plugin_contexts[name] = {"config": plugin_config}
         if hasattr(builtin_plugin, "setup"):
             setup_args = {
@@ -557,6 +735,17 @@ def _register_exception_handlers(app: FastAPI):
             content={"detail": exc.get_user_msg()},
         )
 
+    @app.exception_handler(PydanticValidationError)
+    @app.exception_handler(PydanticCoreValidationError)
+    async def pydantic_validation_handler(request: Request, exc: Exception):
+        logger.warning(
+            f"PydanticValidationError: {str(exc)} | {_get_request_context(request)}"
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": str(exc)},
+        )
+
     @app.exception_handler(FeatureNotAvailableException)
     async def feature_not_available_handler(
         request: Request, exc: FeatureNotAvailableException
@@ -588,41 +777,67 @@ def _register_exception_handlers(app: FastAPI):
 
 
 def _register_routers(app: FastAPI):
-    """Register all API routers on the app.
-
-    All routers require api_key authentication unless disable_auth is set.
-    """
-    config = app.state.config
-    api_key_dep = [] if config.disable_auth else [Depends(get_api_key)]
-    app.include_router(general.router, tags=["general"], dependencies=api_key_dep)
-    app.include_router(tags.router, tags=["tags"], dependencies=api_key_dep)
+    """Register all API routers on the app."""
+    app.include_router(general.router, tags=["general"])
+    app.include_router(tags.router, tags=["tags"])
     app.include_router(
         addresses.router,
         prefix="/{currency}",
         tags=["addresses"],
-        dependencies=api_key_dep,
     )
+    app.include_router(blocks.router, prefix="/{currency}", tags=["blocks"])
     app.include_router(
-        blocks.router, prefix="/{currency}", tags=["blocks"], dependencies=api_key_dep
+        clusters.router,
+        prefix="/{currency}",
+        tags=["clusters"],
     )
     app.include_router(
         entities.router,
         prefix="/{currency}",
         tags=["entities"],
-        dependencies=api_key_dep,
     )
-    app.include_router(
-        txs.router, prefix="/{currency}", tags=["txs"], dependencies=api_key_dep
-    )
-    app.include_router(
-        rates.router, prefix="/{currency}", tags=["rates"], dependencies=api_key_dep
-    )
-    app.include_router(
-        tokens.router, prefix="/{currency}", tags=["tokens"], dependencies=api_key_dep
-    )
-    app.include_router(
-        bulk.router, prefix="/{currency}", tags=["bulk"], dependencies=api_key_dep
-    )
+    app.include_router(txs.router, prefix="/{currency}", tags=["txs"])
+    app.include_router(rates.router, prefix="/{currency}", tags=["rates"])
+    app.include_router(tokens.router, prefix="/{currency}", tags=["tokens"])
+    app.include_router(bulk.router, prefix="/{currency}", tags=["bulk"])
+
+
+def _get_api_dependencies(config: GSRestConfig) -> list:
+    return [] if config.disable_auth else [Depends(get_api_key)]
+
+
+def _promote_common_security_to_global(schema: dict[str, Any]) -> dict[str, Any]:
+    """Promote repeated operation-level security to top-level OpenAPI security."""
+    operation_security: list[Any] = []
+
+    for path_item in schema.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            if "security" in operation:
+                operation_security.append(operation["security"])
+
+    if not operation_security:
+        return schema
+
+    first_security = operation_security[0]
+    if not all(sec == first_security for sec in operation_security):
+        return schema
+
+    schema["security"] = first_security
+
+    for path_item in schema.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            if operation.get("security") == first_security:
+                operation.pop("security", None)
+
+    return schema
 
 
 def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
@@ -717,21 +932,27 @@ def create_app(
 
     config = resolve_rest_config(config_file, config, gslib_config)
 
-    slack_exception_hook = gslib_config.get_slack_hooks_by_topic("exceptions")
-    slack_info_hook = gslib_config.get_slack_hooks_by_topic("info")
+    slack_exception_hook = config.get_slack_hooks_by_topic(
+        "exceptions"
+    ) or gslib_config.get_slack_hooks_by_topic("exceptions")
+    slack_info_hook = config.get_slack_hooks_by_topic(
+        "info"
+    ) or gslib_config.get_slack_hooks_by_topic("info")
     default_environment = config.environment or gslib_config.default_environment
     config.slack_info_hook = slack_info_hook
 
     setup_logging(logger, slack_exception_hook, default_environment, config.logging)
+    log_slack_exception_notification_status(slack_exception_hook, default_environment)
 
     app = FastAPI(
         title="GraphSense API",
-        description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
+        description=API_DESCRIPTION,
         version=__api_version__,
         lifespan=lifespan,
-        docs_url="/ui",
-        redoc_url="/redoc",
+        docs_url=None,
+        redoc_url=None,
         openapi_url="/openapi.json",
+        dependencies=_get_api_dependencies(config),
     )
 
     app.state.config = config
@@ -745,9 +966,13 @@ def create_app(
     # Empty params middleware (must be after PluginMiddleware to run first)
     app.add_middleware(EmptyQueryParamsMiddleware)
 
+    # Advertise deprecation on responses from routes marked deprecated=True.
+    app.add_middleware(DeprecationHeaderMiddleware)
+
     _register_exception_handlers(app)
     _register_routers(app)
     _setup_custom_openapi(app)
+    _setup_custom_docs_ui(app)
 
     return app
 
@@ -777,22 +1002,53 @@ def _setup_custom_openapi(app: FastAPI) -> None:
         # Add servers for client generator compatibility
         openapi_schema["servers"] = [{"url": ""}]
 
-        # Add contact info for backward compatibility
-        openapi_schema["info"]["contact"] = {
-            "email": "contact@iknaio.com",
-            "name": "Iknaio Cryptoasset Analytics GmbH",
+        info = openapi_schema["info"]
+        config = app.state.config
+
+        # Add documentation metadata for compatibility and richer docs rendering
+        info["contact"] = {
+            "name": config.docs_contact_name,
+            "email": config.docs_contact_email,
+            "url": config.docs_contact_url,
         }
-        openapi_schema["info"]["description"] = (
-            "GraphSense API provides programmatic access to various ledgers' "
-            "addresses, entities, blocks, transactions and tags for automated "
-            "and highly efficient forensics tasks."
-        )
+
+        openapi_schema["info"]["description"] = API_DESCRIPTION
+        external_docs_url = config.docs_external_url
+        if external_docs_url:
+            openapi_schema["externalDocs"] = {
+                "description": config.docs_external_label,
+                "url": external_docs_url,
+            }
+
+        python_client_docs_url = config.docs_python_client_url
+        if python_client_docs_url:
+            openapi_schema["x-relatedDocs"] = [
+                {
+                    "label": config.docs_python_client_label,
+                    "url": python_client_docs_url,
+                }
+            ]
+
+        logo_url = _get_docs_logo_url(app)
+        if logo_url:
+            openapi_schema["info"]["x-logo"] = {
+                "url": logo_url,
+                "altText": app.title,
+            }
 
         # Promote schema-level examples to parameter-level for Swagger UI
         openapi_schema = _promote_schema_examples_to_parameter_level(openapi_schema)
 
+        # Normalize selected parameter examples for generated SDK snippets
+        openapi_schema = _normalize_parameter_examples_for_generated_clients(
+            openapi_schema
+        )
+
         # Convert schema names to snake_case for backward compatibility
         openapi_schema = _convert_schema_names_to_snake_case(openapi_schema)
+
+        # Promote repeated operation security requirements to global OpenAPI security
+        openapi_schema = _promote_common_security_to_global(openapi_schema)
 
         app.openapi_schema = openapi_schema
         return app.openapi_schema
@@ -800,14 +1056,220 @@ def _setup_custom_openapi(app: FastAPI) -> None:
     app.openapi = custom_openapi
 
 
+def _get_docs_logo_url(app: FastAPI) -> Optional[str]:
+    config = app.state.config
+    custom_logo_url = config.docs_logo_url
+    if custom_logo_url:
+        return custom_logo_url
+    if os.path.isfile(f"{DOCS_STATIC_DIR}/logo.png"):
+        return DEFAULT_DOCS_LOGO_URL
+    return None
+
+
+def _get_docs_favicon_url(app: FastAPI) -> Optional[str]:
+    config = app.state.config
+    custom_favicon_url = config.docs_favicon_url
+    if custom_favicon_url:
+        return custom_favicon_url
+    if os.path.isfile(f"{DOCS_STATIC_DIR}/favicon.ico"):
+        return DEFAULT_DOCS_FAVICON_ICO_URL
+    if os.path.isfile(f"{DOCS_STATIC_DIR}/favicon.png"):
+        return DEFAULT_DOCS_FAVICON_PNG_URL
+    return None
+
+
+def _get_docs_links(app: FastAPI, page: str) -> list[tuple[str, str]]:
+    config = app.state.config
+    links: list[tuple[str, str]] = []
+
+    if page == "swagger":
+        crosslink_url = config.docs_swagger_crosslink_url
+        crosslink_label = config.docs_swagger_crosslink_label
+    else:
+        crosslink_url = config.docs_redoc_crosslink_url
+        crosslink_label = config.docs_redoc_crosslink_label
+
+    if crosslink_url:
+        links.append((crosslink_label, crosslink_url))
+
+    python_client_url = config.docs_python_client_url
+    if python_client_url:
+        python_client_label = config.docs_python_client_label
+        links.append((python_client_label, python_client_url))
+
+    external_url = config.docs_external_url
+    if external_url:
+        external_label = config.docs_external_label
+        links.append((external_label, external_url))
+
+    return links
+
+
+def _build_docs_links_block(links: list[tuple[str, str]], class_name: str) -> str:
+    if not links:
+        return ""
+    anchors = "".join(
+        f'<a class="gs-docs-link" href="{escape(url, quote=True)}">{escape(label)}</a>'
+        for label, url in links
+    )
+    return f"""
+<style>
+  .{class_name} {{
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 1000;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 70vw;
+  }}
+  .{class_name} .gs-docs-link {{
+    display: inline-block;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    background: rgba(37, 50, 56, 0.9);
+    color: #fff;
+  }}
+  .{class_name} .gs-docs-link:hover {{
+    background: rgba(37, 50, 56, 1);
+  }}
+</style>
+<div class="{class_name}">{anchors}</div>
+"""
+
+
+def _setup_custom_docs_ui(app: FastAPI) -> None:
+    app.mount(
+        DOCS_STATIC_URL,
+        StaticFiles(directory=DOCS_STATIC_DIR, check_dir=False),
+        name="docs-assets",
+    )
+
+    @app.get("/ui", include_in_schema=False)
+    async def custom_swagger_ui() -> HTMLResponse:
+        favicon_url = _get_docs_favicon_url(app)
+        swagger_kwargs = {
+            # Hide all OpenAPI vendor extensions (x-*) in Swagger UI.
+            "swagger_ui_parameters": {
+                "showExtensions": False,
+                "showCommonExtensions": False,
+            }
+        }
+        if favicon_url:
+            swagger_kwargs["swagger_favicon_url"] = favicon_url
+        response = get_swagger_ui_html(
+            openapi_url=app.openapi_url,
+            title=f"{app.title} - Swagger UI",
+            **swagger_kwargs,
+        )
+        links_block = _build_docs_links_block(
+            _get_docs_links(app, page="swagger"), class_name="gs-docs-links-swagger"
+        )
+        logo_url = _get_docs_logo_url(app)
+        if not logo_url and not links_block:
+            return response
+        html = response.body.decode("utf-8")
+        if logo_url:
+            swagger_ui_logo_inject = f"""
+<style>
+  .swagger-ui .gs-docs-logo-block {{
+    margin: 8px 0 16px 0;
+    padding: 6px 0;
+  }}
+  .swagger-ui .gs-docs-logo {{
+    display: block;
+    height: 40px;
+    width: auto;
+  }}
+</style>
+<script>
+  (function () {{
+    function applyLogo() {{
+      var infoContainer = document.querySelector(".swagger-ui div.information-container");
+      if (!infoContainer) return;
+      if (document.querySelector(".swagger-ui .gs-docs-logo-block")) return;
+
+      var section = infoContainer.nextElementSibling;
+      while (section && section.tagName !== "SECTION") {{
+        section = section.nextElementSibling;
+      }}
+
+      var target = section || infoContainer;
+      if (!target) return;
+
+      var wrapper = document.createElement("div");
+      wrapper.className = "gs-docs-logo-block";
+      var logo = document.createElement("img");
+      logo.src = "{logo_url}";
+      logo.alt = "{app.title}";
+      logo.className = "gs-docs-logo";
+      wrapper.appendChild(logo);
+      target.prepend(wrapper);
+    }}
+    var observer = new MutationObserver(applyLogo);
+    observer.observe(document.documentElement, {{ childList: true, subtree: true }});
+    window.addEventListener("load", applyLogo);
+    applyLogo();
+  }})();
+</script>
+"""
+            html = html.replace("</head>", f"{swagger_ui_logo_inject}</head>")
+        if links_block:
+            html = html.replace("</body>", f"{links_block}</body>")
+        return HTMLResponse(content=html, status_code=response.status_code)
+
+    @app.get("/docs", include_in_schema=False)
+    async def custom_redoc_ui() -> HTMLResponse:
+        favicon_url = _get_docs_favicon_url(app)
+        redoc_kwargs = {"redoc_favicon_url": favicon_url} if favicon_url else {}
+        response = get_redoc_html(
+            openapi_url=app.openapi_url,
+            title=f"{app.title} - ReDoc",
+            **redoc_kwargs,
+        )
+        links_block = _build_docs_links_block(
+            _get_docs_links(app, page="redoc"), class_name="gs-docs-links-redoc"
+        )
+        logo_url = _get_docs_logo_url(app)
+        if not logo_url and not links_block:
+            return response
+        html = response.body.decode("utf-8")
+        if logo_url:
+            redoc_logo_padding_css = """
+<style>
+  .redoc-wrap .menu-content img {
+    padding: 6px;
+  }
+</style>
+"""
+            html = html.replace("</head>", f"{redoc_logo_padding_css}</head>")
+        if links_block:
+            html = html.replace("</body>", f"{links_block}</body>")
+        return HTMLResponse(content=html, status_code=response.status_code)
+
+
 def create_spec_app() -> FastAPI:
     """Create a minimal FastAPI app for OpenAPI spec generation (no DB/config needed)."""
     app = FastAPI(
         title="GraphSense API",
-        description="GraphSense API provides programmatic access to various cryptocurrency analytics features.",
+        description=API_DESCRIPTION,
         version=__api_version__,
+        dependencies=[Depends(get_api_key)],
     )
-    app.state.config = SimpleNamespace(disable_auth=False)
+    app.state.config = GSRestConfig.model_validate(
+        {
+            "disable_auth": False,
+            "database": {"nodes": ["localhost"]},
+            "gs-tagstore": {
+                "url": "postgresql+asyncpg://user:password@localhost:5432/tagstore"
+            },
+        }
+    )
     _register_routers(app)
     _setup_custom_openapi(app)
     return app
@@ -821,6 +1283,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
         title="GraphSense API",
         version=__api_version__,
         lifespan=lifespan,
+        dependencies=_get_api_dependencies(config),
     )
 
     app.state.config = config

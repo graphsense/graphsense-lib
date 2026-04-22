@@ -55,3 +55,18 @@ gs-tagstore:
 # Optional: Plugins
 # plugins:
 #   - "graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags"
+
+# gsrest.builtin.plugins.obfuscate_tags.obfuscate_tags:
+#   obfuscate_tagpack_uri_rule: ".*xxx.*"
+#   # Optional: control private-tag obfuscation behavior
+#   # default: header/path based logic
+#   # force_enable: obfuscate private tags for all requests
+#   # force_disable: never obfuscate private tags
+#   # obfuscation_mode: default
+
+
+# Optional: Slack hooks for REST runtime events
+# slack_topics:
+#   exceptions:
+#     hooks:
+#       - "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"

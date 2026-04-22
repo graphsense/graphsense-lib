@@ -36,8 +36,7 @@ THOR_TO_GRAPHSENSE_NETWORK = {
 }
 GRAPHSENSE_TO_THOR_NETWORK = {v: k for k, v in THOR_TO_GRAPHSENSE_NETWORK.items()}
 THORNODE_URLS = [
-    "https://thornode.ninerealms.com/thorchain/tx/status/",
-    "https://thornode-v1.ninerealms.com/thorchain/tx/details/",
+    "https://gateway.liquify.com/chain/thorchain_api/thorchain/tx/status/",
 ]
 
 # Known THORChain router addresses (for validating deposit addresses)
@@ -60,6 +59,14 @@ ERC20_TRANSFER_TOPIC = bytes.fromhex(
 )
 
 
+class ThornodeUnavailableError(Exception):
+    """Raised when THORNode fallback endpoints are unavailable."""
+
+
+class ThornodeInvalidResponseError(Exception):
+    """Raised when THORNode fallback endpoints respond with invalid payloads."""
+
+
 async def try_thornode_endpoints(tx_hash_upper: str):
     """
     Try all THORNODE_URLS endpoints for the given transaction hash.
@@ -67,6 +74,9 @@ async def try_thornode_endpoints(tx_hash_upper: str):
     Used as fallback when OP_RETURN data is not available in DB.
     """
     client = RetryHTTPClient()
+    endpoint_errors = []
+    invalid_responses = 0
+    unavailable_responses = 0
 
     for base_url in THORNODE_URLS:
         try:
@@ -78,23 +88,42 @@ async def try_thornode_endpoints(tx_hash_upper: str):
                 try:
                     data = response.json()
                     if data.get("out_txs") is None or data.get("tx") is None:
+                        invalid_responses += 1
+                        endpoint_errors.append(f"{url}: missing expected fields")
+                        logger.warning(
+                            f"THORChain endpoint {url} returned 200 but missing expected fields"
+                        )
                         continue
 
                     logger.debug(f"Successfully got decodable response from {url}")
                     return data
                 except Exception as json_error:
+                    invalid_responses += 1
+                    endpoint_errors.append(f"{url}: non-decodable JSON ({json_error})")
                     logger.warning(
                         f"Response from {url} returned 200 but was not decodable JSON: {json_error}"
                     )
                     continue
             else:
+                unavailable_responses += 1
+                endpoint_errors.append(
+                    f"{url}: unexpected status {response.status_code}"
+                )
                 logger.debug(f"Endpoint {url} returned status {response.status_code}")
         except Exception as e:
+            unavailable_responses += 1
+            endpoint_errors.append(f"{base_url}: request failed ({e})")
             logger.warning(f"Error trying endpoint {base_url}: {e}")
             continue
 
-    raise ValueError(
-        "All THORChain endpoints failed or returned non-decodable responses"
+    if invalid_responses > 0 and unavailable_responses == 0:
+        raise ThornodeInvalidResponseError(
+            "All THORChain endpoints returned invalid payloads: "
+            + "; ".join(endpoint_errors)
+        )
+
+    raise ThornodeUnavailableError(
+        "THORChain endpoints unavailable or failed: " + "; ".join(endpoint_errors)
     )
 
 
@@ -946,7 +975,18 @@ async def preliminary_utxo_handling_receive(
             f"No script_hex data in DB for {receive_reference.toAddress}, "
             "falling back to Thornode API"
         )
-        return await _thornode_fallback_receive(receive_reference)
+        try:
+            return await _thornode_fallback_receive(receive_reference)
+        except ThornodeInvalidResponseError as exc:
+            logger.warning(
+                f"THORNode fallback returned invalid format for receive {receive_reference.fromTxHash}: {exc}"
+            )
+            return None
+        except ThornodeUnavailableError as exc:
+            logger.warning(
+                f"THORNode fallback unavailable for receive {receive_reference.fromTxHash}: {exc}"
+            )
+            return None
 
     return None
 
@@ -1013,7 +1053,18 @@ async def preliminary_utxo_handling_send(
             f"No script_hex data in DB for tx {send_reference.fromTxHash}, "
             "falling back to Thornode API"
         )
-        return await _thornode_fallback_send(fromNetwork, send_reference)
+        try:
+            return await _thornode_fallback_send(fromNetwork, send_reference)
+        except ThornodeInvalidResponseError as exc:
+            logger.warning(
+                f"THORNode fallback returned invalid format for send {send_reference.fromTxHash}: {exc}"
+            )
+            return None
+        except ThornodeUnavailableError as exc:
+            logger.warning(
+                f"THORNode fallback unavailable for send {send_reference.fromTxHash}: {exc}"
+            )
+            return None
 
     # Parse the swap memo to validate it's a THORChain deposit
     if memo:
@@ -1581,6 +1632,9 @@ async def get_bridges_from_thorchain_utxo_send(
         asset_code = swap_info.get("asset", "")
         target_network_thor = asset_code.split(".")[0] if asset_code else ""
         target_network = THOR_TO_GRAPHSENSE_NETWORK.get(target_network_thor, "unknown")
+
+        if target_network == "unknown":
+            logger.warning(f"Unknown target network in memo: {target_network_thor}")
 
         # Create a partial receive transfer with zero amount (pending)
         partial_receive = BridgeReceiveTransfer(

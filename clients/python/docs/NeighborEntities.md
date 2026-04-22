@@ -1,6 +1,6 @@
 # NeighborEntities
 
-Paginated list of neighbor entities.
+Paginated list of neighbor clusters (legacy name: NeighborEntities).
 
 ## Properties
 

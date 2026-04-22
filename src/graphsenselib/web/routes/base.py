@@ -10,6 +10,7 @@ from fastapi import Depends, Header, Request
 from fastapi.routing import APIRoute
 from starlette.responses import Response
 
+from graphsenselib.errors import BadUserInputException
 from graphsenselib.web.config import GSRestConfig
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.service import ServiceContext
@@ -79,7 +80,9 @@ def get_services(request: Request) -> ServiceContainer:
 
 
 def get_username(
-    x_consumer_username: Annotated[Optional[str], Header()] = None,
+    x_consumer_username: Annotated[
+        Optional[str], Header(include_in_schema=False)
+    ] = None,
 ) -> Optional[str]:
     """Extract username from header"""
     return x_consumer_username
@@ -160,7 +163,13 @@ def parse_datetime(dt_str: Optional[str]) -> Optional[datetime]:
         return None
     from dateutil import parser
 
-    return parser.parse(dt_str)
+    try:
+        return parser.parse(dt_str)
+    except (parser.ParserError, ValueError, OverflowError) as exc:
+        raise BadUserInputException(
+            "Invalid datetime format. Expected an ISO 8601 date/time like "
+            "2024-01-31 or 2024-01-31T12:34:56Z."
+        ) from exc
 
 
 def to_json_response(result: Any) -> dict:
@@ -197,7 +206,12 @@ def parse_comma_separated_ints(value: Optional[str]) -> Optional[list[int]]:
         return None
     if value.strip() == "":
         return None
-    return [int(x.strip()) for x in value.split(",") if x.strip()]
+    try:
+        return [int(x.strip()) for x in value.split(",") if x.strip()]
+    except ValueError as exc:
+        raise BadUserInputException(
+            "Invalid format for only_ids. Expected comma separated integers"
+        ) from exc
 
 
 def parse_comma_separated_strings(value: Optional[str]) -> Optional[list[str]]:

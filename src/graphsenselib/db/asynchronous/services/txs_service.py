@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Union, Tuple
 
 from graphsenselib.defi import Bridge, ExternalSwap
@@ -8,6 +9,7 @@ from graphsenselib.errors import (
     NotFoundException,
     TransactionNotFoundException,
 )
+from graphsenselib.errors.errors import NetworkNotFoundException
 from graphsenselib.utils.accountmodel import hex_to_bytes, strip_0x
 from graphsenselib.utils.function_call_parser import (
     parse_function_call,
@@ -20,6 +22,7 @@ from graphsenselib.utils.transactions import (
 from graphsenselib.utils.rest_utils import is_eth_like
 
 from .common import std_tx_from_row
+from .heuristics_service import CoinJoinDbCallbacks, calculate_heuristics
 from .models import (
     ExternalConversion,
     TxAccount,
@@ -32,6 +35,9 @@ from .rates_service import RatesService
 from graphsenselib.utils.constants import (
     replace_tron_dummy_address_with_valid_null_address,
 )
+
+
+from .tags_service import TagsService
 
 
 def is_supported_asset(
@@ -121,6 +127,10 @@ class DatabaseProtocol(Protocol):
         self, currency: str, tx: Dict[str, Any], trace_index: Optional[int]
     ) -> Optional[Dict[str, Any]]: ...
 
+    async def get_address(
+        self, currency: str, address: str
+    ) -> Optional[Dict[str, Any]]: ...
+
 
 class TxsService:
     def __init__(
@@ -128,10 +138,12 @@ class TxsService:
         db: DatabaseProtocol,
         rates_service: RatesService,
         logger: Any,
+        tags_service: TagsService = None,
     ):
         self.db = db
         self.rates_service = rates_service
         self.logger = logger
+        self.tags_service = tags_service
 
     async def get_tx(
         self,
@@ -141,6 +153,8 @@ class TxsService:
         include_io: bool = False,
         include_nonstandard_io: bool = False,
         include_io_index: bool = False,
+        include_heuristics: list[str] = [],
+        tagstore_groups: list[str] = [],
     ) -> Union[TxAccount, TxUtxo]:
         trace_index = None
         tx_ident = tx_hash
@@ -192,6 +206,39 @@ class TxsService:
             if result:
                 result["type"] = "external"
 
+            if len(include_heuristics) > 0:
+
+                async def _get_spent_in(tx_hash_hex, io_index):
+                    return await self.get_spent_in_txs(currency, tx_hash_hex, io_index)
+
+                async def _get_tx(tx_hash_hex):
+                    return await self.db.get_tx(currency, tx_hash_hex)
+
+                get_tag_summary = None
+                if self.tags_service is not None:
+
+                    async def _get_tag_summary(curr: str, address: str):
+                        return await self.tags_service.get_tag_summary_by_address(
+                            curr,
+                            address,
+                            tagstore_groups=tagstore_groups,
+                            include_best_cluster_tag=True,
+                        )
+
+                    get_tag_summary = _get_tag_summary
+
+                result["heuristics"] = await calculate_heuristics(
+                    result,
+                    currency,
+                    self.db,
+                    include_heuristics,
+                    coinjoin_callbacks=CoinJoinDbCallbacks(
+                        get_spent_in=_get_spent_in,
+                        get_tx=_get_tx,
+                        get_tag_summary=get_tag_summary,
+                    ),
+                )
+
             return await std_tx_from_row(
                 currency,
                 result,
@@ -225,18 +272,20 @@ class TxsService:
         if is_eth_like(network):
             if include_internal_txs:
                 traces = await self.db.fetch_transaction_traces(network, tx)
-                traces_converted = [
-                    await _raw_trace_to_std_tx(
-                        network,
-                        result,
-                        tx["block_timestamp"],
-                        rates,
-                        tokenConfig,
-                        trace_index=result["trace_index"],
-                        is_first_trace=(i == 0),
-                    )
-                    for i, result in enumerate(traces)
-                ]
+                traces_converted = await asyncio.gather(
+                    *[
+                        _raw_trace_to_std_tx(
+                            network,
+                            result,
+                            tx["block_timestamp"],
+                            rates,
+                            tokenConfig,
+                            trace_index=result["trace_index"],
+                            is_first_trace=(i == 0),
+                        )
+                        for i, result in enumerate(traces)
+                    ]
+                )
 
                 results_list.extend(traces_converted)
             else:
@@ -246,10 +295,12 @@ class TxsService:
 
             if include_token_txs:
                 tokens = await self.db.list_token_txs(network, tx_hash)
-                tokens_converted = [
-                    await std_tx_from_row(network, result, rates.rates, tokenConfig)
-                    for result in tokens
-                ]
+                tokens_converted = await asyncio.gather(
+                    *[
+                        std_tx_from_row(network, result, rates.rates, tokenConfig)
+                        for result in tokens
+                    ]
+                )
 
                 results_list.extend(tokens_converted)
 
@@ -301,6 +352,11 @@ class TxsService:
         if is_eth_like(currency):
             raise NotFoundException("get_tx_io not implemented for ETH")
 
+        if io not in {"inputs", "outputs"}:
+            raise BadUserInputException(
+                "Invalid io value. Expected one of: inputs, outputs"
+            )
+
         result = await self.get_tx(
             currency,
             tx_hash,
@@ -314,17 +370,34 @@ class TxsService:
         self, currency: str, tx_hash: str, token_tx_id: Optional[int] = None
     ) -> List[TxAccount]:
         results = await self.db.list_token_txs(currency, tx_hash, log_index=token_tx_id)
+        if not results:
+            return []
 
-        txs = []
-        for result in results:
-            rates = await self.rates_service.get_rates(currency, result["block_id"])
-            tx = await std_tx_from_row(
-                currency,
-                result,
-                rates.rates,
-                self.db.get_token_configuration(currency),
+        # Fetch rates once per unique block height instead of per result
+        unique_heights = {r["block_id"] for r in results}
+        rates_by_height = {}
+        for height, rates in zip(
+            unique_heights,
+            await asyncio.gather(
+                *[self.rates_service.get_rates(currency, h) for h in unique_heights]
+            ),
+        ):
+            rates_by_height[height] = rates
+
+        token_config = self.db.get_token_configuration(currency)
+        txs = list(
+            await asyncio.gather(
+                *[
+                    std_tx_from_row(
+                        currency,
+                        result,
+                        rates_by_height[result["block_id"]].rates,
+                        token_config,
+                    )
+                    for result in results
+                ]
             )
-            txs.append(tx)
+        )
 
         return txs
 
@@ -420,8 +493,24 @@ class TxsService:
         )
 
     def _conversion_from_bridge(self, bridge: Bridge) -> ExternalConversion:
-        token_config_from = self.db.get_token_configuration(bridge.fromNetwork)
-        token_config_to = self.db.get_token_configuration(bridge.toNetwork)
+        nnf_marker = "network not found"
+        try:
+            token_config_from = self.db.get_token_configuration(bridge.fromNetwork)
+        except NetworkNotFoundException:
+            token_config_from = nnf_marker
+        try:
+            token_config_to = self.db.get_token_configuration(bridge.toNetwork)
+        except NetworkNotFoundException:
+            token_config_to = nnf_marker
+
+        # If a network has no token config, mark assets on that side as unsupported.
+        from_is_supported_asset = (
+            token_config_from != nnf_marker
+            and is_supported_asset(bridge.fromAsset, token_config_from)
+        )
+        to_is_supported_asset = token_config_to != nnf_marker and is_supported_asset(
+            bridge.toAsset, token_config_to
+        )
 
         return ExternalConversion(
             conversion_type="bridge",
@@ -435,10 +524,8 @@ class TxsService:
             to_asset_transfer=bridge.toPayment,
             from_network=bridge.fromNetwork,
             to_network=bridge.toNetwork,
-            from_is_supported_asset=is_supported_asset(
-                bridge.fromAsset, token_config_from
-            ),
-            to_is_supported_asset=is_supported_asset(bridge.toAsset, token_config_to),
+            from_is_supported_asset=from_is_supported_asset,
+            to_is_supported_asset=to_is_supported_asset,
         )
 
     async def get_conversions(
@@ -446,13 +533,17 @@ class TxsService:
     ) -> List[ExternalConversion]:
         """Extract swap/bridge information from a single transaction hash."""
         # UTXO networks are supported for THORChain bridging (via OP_RETURN memo)
-        is_utxo_thorchain = (
+        supports_conversion_extraction = is_eth_like(currency) or (
             currency.lower() in UTXO_NETWORKS and "thorchain" in included_bridges
         )
-        if not is_eth_like(currency) and not is_utxo_thorchain:
-            raise BadUserInputException(
-                f"Swap extraction is only supported for EVM-like networks, not {currency}"
-            )
+        if not supports_conversion_extraction:
+            # currently we only support swap/bridge extraction for EVM-like networks and UTXO
+            # networks with thorchain bridging, so if it's not that, return empty list (instead of raising)
+            # since this is an optional endpoint and we don't want to break anything by raising errors for unsupported networks
+            return []
+            # raise BadUserInputException(
+            #     f"Swap extraction is only supported for EVM-like networks, not {currency}"
+            # )
 
         tx_obj = SubTransactionIdentifier.from_string(identifier)
         tx_hash = tx_obj.tx_hash
@@ -477,9 +568,21 @@ class TxsService:
             currency, self.db, tx, included_bridges=included_bridges
         )
 
+        # A sub-tx identifier pointing to the root trace of the tx (trace_address == "")
+        # is semantically equivalent to the whole tx, so treat it as such.
+        is_root_trace = False
+        if tx_obj.tx_type is SubTransactionType.InternalTx and is_eth_like(currency):
+            raw_traces = await self.db.fetch_transaction_traces(currency, tx)
+            for t in raw_traces:
+                if t.get("trace_index") == tx_obj.sub_index:
+                    trace_address = t.get("trace_address")
+                    if trace_address is None or trace_address == "":
+                        is_root_trace = True
+                    break
+
         # if it is a raw tx hash without a subtx, dont filter, otherwise
         # filter the conversions to the ones that have either fromPayment or toPayment as identifier
-        if tx_obj.tx_type is SubTransactionType.ExternalTx:
+        if tx_obj.tx_type is SubTransactionType.ExternalTx or is_root_trace:
             filtered_conversions = conversions_gslib
         else:
             filtered_conversions = [

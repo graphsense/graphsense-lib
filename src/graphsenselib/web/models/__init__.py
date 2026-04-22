@@ -13,8 +13,12 @@ from graphsenselib.web.models.base import APIModel
 from graphsenselib.web.models.blocks import Block, BlockAtDate
 from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.entities import (
+    Cluster,
+    ClusterAddresses,
     Entity,
     EntityAddresses,
+    NeighborCluster,
+    NeighborClusters,
     NeighborEntities,
     NeighborEntity,
 )
@@ -31,6 +35,21 @@ from graphsenselib.web.models.general import (
     Taxonomy,
     TokenConfig,
     TokenConfigs,
+)
+from graphsenselib.web.models.heuristics import (
+    AddressOutput,
+    ChangeHeuristics,
+    CoinJoinConsensus,
+    CoinJoinHeuristics,
+    ConsensusEntry,
+    DirectChangeHeuristic,
+    JoinMarketHeuristic,
+    MultiInputChangeHeuristic,
+    OneTimeChangeHeuristic,
+    UtxoHeuristics,
+    WasabiHeuristic,
+    WhirlpoolCoinJoinHeuristic,
+    WhirlpoolTx0Heuristic,
 )
 from graphsenselib.web.models.search import (
     SearchResult,
@@ -101,11 +120,16 @@ __all__ = [
     "Address",
     "NeighborAddress",
     "NeighborAddresses",
-    # Entities
+    # Entities (deprecated names, kept for backwards compatibility)
     "Entity",
     "NeighborEntity",
     "NeighborEntities",
     "EntityAddresses",
+    # Clusters (canonical names; aliases of Entity*)
+    "Cluster",
+    "NeighborCluster",
+    "NeighborClusters",
+    "ClusterAddresses",
     # Blocks
     "Block",
     "BlockAtDate",
@@ -127,6 +151,20 @@ __all__ = [
     "Concept",
     "ActorContext",
     "Actor",
+    # Heuristics
+    "AddressOutput",
+    "ConsensusEntry",
+    "OneTimeChangeHeuristic",
+    "DirectChangeHeuristic",
+    "MultiInputChangeHeuristic",
+    "ChangeHeuristics",
+    "CoinJoinConsensus",
+    "CoinJoinHeuristics",
+    "JoinMarketHeuristic",
+    "WasabiHeuristic",
+    "WhirlpoolTx0Heuristic",
+    "WhirlpoolCoinJoinHeuristic",
+    "UtxoHeuristics",
     "TokenConfig",
     "TokenConfigs",
     "RelatedAddress",

@@ -1,0 +1,43 @@
+name: Python examples
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  run-python-examples:
+    runs-on: ubuntu-latest
+    env:
+      GS_API_KEY: ${{ secrets.GS_API_KEY }}
+
+    steps:
+      - name: Skip when GS_API_KEY is not configured
+        if: ${{ env.GS_API_KEY == '' }}
+        run: echo "GS_API_KEY is not set; skipping Python example execution."
+
+      - name: Checkout
+        if: ${{ env.GS_API_KEY != '' }}
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: ${{ env.GS_API_KEY != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        if: ${{ env.GS_API_KEY != '' }}
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install client dependencies
+        if: ${{ env.GS_API_KEY != '' }}
+        working-directory: clients/python
+        run: uv sync
+
+      - name: Run generated Python examples
+        if: ${{ env.GS_API_KEY != '' }}
+        working-directory: clients/python
+        run: make run-examples

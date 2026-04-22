@@ -78,36 +78,46 @@ def out_file(required=True, append=False):
 
 
 def try_load_config(filename: str):
-    if (
-        len(sys.argv) > 1
-        and sys.argv[1][0] == "-"
-        and sys.argv[1][1:] == "v" * len(sys.argv[1][1:])
-    ):
-        remaining_args = sys.argv[2:]
-    else:
-        remaining_args = sys.argv[1:]
+    remaining_args = sys.argv[1:]
 
-    is_tagpack_tool = len(remaining_args) > 0 and remaining_args[0] in [
+    global_options_with_values = {"--config-file"}
+    top_level_command = None
+    skip_next = False
+    for arg in remaining_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in global_options_with_values:
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        top_level_command = arg
+        break
+
+    is_optional_config_command = top_level_command in [
         "tagpack-tool",
         "tagstore",
+        "web",
+        "convert",
     ]
 
     app_config = get_config()
     f = filename or app_config.underlying_file
 
     try:
-        if is_tagpack_tool:
+        if is_optional_config_command:
             success, errors = app_config.load_partial(filename=filename)
 
             if not success:
                 logger.debug(
-                    f"Partial config loading for {remaining_args[0]} with {len(errors)} issues:"
+                    f"Partial config loading for {top_level_command} with {len(errors)} issues:"
                 )
                 for error in errors:
                     logger.debug(f"  - {error}")
                 logger.debug("Continuing with partial/default configuration...")
             else:
-                logger.debug(f"Config created successfully for {remaining_args[0]}")
+                logger.debug(f"Config created successfully for {top_level_command}")
         else:
             # Use strict loading for other tools
             app_config.load(filename=filename)
@@ -117,7 +127,7 @@ def try_load_config(filename: str):
                 md5hash = hashlib.md5(file.read()).hexdigest()
         else:
             md5hash = "no-config-file"
-            if not is_tagpack_tool:
+            if not is_optional_config_command:
                 raise Exception("No config file loaded")
 
         return app_config, md5hash

@@ -4,20 +4,20 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**get_actor**](TagsApi.md#get_actor) | **GET** /tags/actors/{actor} | Get an actor by ID
-[**get_actor_tags**](TagsApi.md#get_actor_tags) | **GET** /tags/actors/{actor}/tags | Get tags associated with an actor
-[**list_address_tags**](TagsApi.md#list_address_tags) | **GET** /tags | Get address tags by label
+[**get_actor**](TagsApi.md#get_actor) | **GET** /tags/actors/{actor} | Get actor details by ID
+[**get_actor_tags**](TagsApi.md#get_actor_tags) | **GET** /tags/actors/{actor}/tags | List tags associated with an actor
+[**list_address_tags**](TagsApi.md#list_address_tags) | **GET** /tags | List address tags by label
 [**list_concepts**](TagsApi.md#list_concepts) | **GET** /tags/taxonomies/{taxonomy}/concepts | List concepts for a taxonomy
 [**list_taxonomies**](TagsApi.md#list_taxonomies) | **GET** /tags/taxonomies | List all taxonomies
-[**report_tag**](TagsApi.md#report_tag) | **POST** /tags/report-tag | Report a new tag
+[**report_tag**](TagsApi.md#report_tag) | **POST** /tags/report-tag | Submit a user-reported tag
 
 
 # **get_actor**
 > Actor get_actor(actor)
 
-Get an actor by ID
+Get actor details by ID
 
-Get an actor by ID
+Returns metadata for the actor identified by the actor ID.
 
 ### Example
 
@@ -53,7 +53,7 @@ with graphsense.ApiClient(configuration) as api_client:
     actor = 'binance' # str | The actor ID
 
     try:
-        # Get an actor by ID
+        # Get actor details by ID
         api_response = api_instance.get_actor(actor)
         print("The response of TagsApi->get_actor:\n")
         pprint(api_response)
@@ -87,17 +87,17 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | Actor metadata for the requested actor ID. |  -  |
+**422** | Validation error in path parameters. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **get_actor_tags**
 > AddressTags get_actor_tags(actor, page=page, pagesize=pagesize)
 
-Get tags associated with an actor
+List tags associated with an actor
 
-Get tags associated with an actor
+Returns paginated address tags associated with the specified actor.
 
 ### Example
 
@@ -131,11 +131,11 @@ with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
     actor = 'binance' # str | The actor ID
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get tags associated with an actor
+        # List tags associated with an actor
         api_response = api_instance.get_actor_tags(actor, page=page, pagesize=pagesize)
         print("The response of TagsApi->get_actor_tags:\n")
         pprint(api_response)
@@ -171,17 +171,17 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | Paginated address tags linked to the actor. |  -  |
+**422** | Validation error in path/query parameters. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **list_address_tags**
 > AddressTags list_address_tags(label, page=page, pagesize=pagesize)
 
-Get address tags by label
+List address tags by label
 
-Get address tags by label
+Returns paginated address tags matching the provided label.
 
 ### Example
 
@@ -215,11 +215,11 @@ with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
     label = 'cimedy' # str | The label to search for
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get address tags by label
+        # List address tags by label
         api_response = api_instance.list_address_tags(label, page=page, pagesize=pagesize)
         print("The response of TagsApi->list_address_tags:\n")
         pprint(api_response)
@@ -255,8 +255,8 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | Paginated address tags for the requested label. |  -  |
+**422** | Validation error in query parameters. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
@@ -265,7 +265,7 @@ Name | Type | Description  | Notes
 
 List concepts for a taxonomy
 
-List concepts for a taxonomy
+Returns all concepts defined for the specified taxonomy.
 
 ### Example
 
@@ -335,8 +335,8 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | List of concepts for the requested taxonomy. |  -  |
+**422** | Validation error in path parameters. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
@@ -345,7 +345,7 @@ Name | Type | Description  | Notes
 
 List all taxonomies
 
-List all taxonomies
+Returns all available tag taxonomies.
 
 ### Example
 
@@ -411,16 +411,16 @@ This endpoint does not need any parameter.
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
+**200** | List of available tag taxonomies. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **report_tag**
-> UserTagReportResponse report_tag(user_reported_tag, x_consumer_username=x_consumer_username)
+> UserTagReportResponse report_tag(user_reported_tag)
 
-Report a new tag
+Submit a user-reported tag
 
-Report a new tag
+Stores a user-reported tag submission for review.
 
 ### Example
 
@@ -455,11 +455,10 @@ with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = graphsense.TagsApi(api_client)
     user_reported_tag = graphsense.UserReportedTag() # UserReportedTag | 
-    x_consumer_username = 'x_consumer_username_example' # str |  (optional)
 
     try:
-        # Report a new tag
-        api_response = api_instance.report_tag(user_reported_tag, x_consumer_username=x_consumer_username)
+        # Submit a user-reported tag
+        api_response = api_instance.report_tag(user_reported_tag)
         print("The response of TagsApi->report_tag:\n")
         pprint(api_response)
     except Exception as e:
@@ -474,7 +473,6 @@ with graphsense.ApiClient(configuration) as api_client:
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **user_reported_tag** | [**UserReportedTag**](UserReportedTag.md)|  | 
- **x_consumer_username** | **str**|  | [optional] 
 
 ### Return type
 
@@ -493,8 +491,8 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | Confirmation that the tag report was accepted. |  -  |
+**422** | Validation error in request body. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

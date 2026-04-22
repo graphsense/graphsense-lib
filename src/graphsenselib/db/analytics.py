@@ -11,13 +11,19 @@ import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache, partial
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import pandas as pd
 from cassandra import OperationTimedOut, WriteTimeout
-from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
+from tenacity import (
+    Retrying,
+    before_sleep_log,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..config import keyspace_types
 from ..datatypes import DbChangeType
@@ -37,6 +43,23 @@ DATE_FORMAT = "%Y-%m-%d"
 FIRST_BLOCK = defaultdict(lambda: 0)
 FIRST_BLOCK["trx"] = 1
 logger = logging.getLogger(__name__)
+
+
+def _align_datetime_timezones(
+    left: datetime, right: datetime
+) -> tuple[datetime, datetime]:
+    left_tz = left.tzinfo
+    right_tz = right.tzinfo
+
+    if left_tz is None and right_tz is not None:
+        left = left.replace(tzinfo=right_tz)
+    elif left_tz is not None and right_tz is None:
+        right = right.replace(tzinfo=left_tz)
+    elif left_tz is None and right_tz is None:
+        left = left.replace(tzinfo=timezone.utc)
+        right = right.replace(tzinfo=timezone.utc)
+
+    return left, right
 
 
 @dataclass
@@ -76,6 +99,14 @@ class DbChange:
             raise Exception(
                 f"Don't know how to build statement for action {self.action}."
             )
+
+
+@dataclass(frozen=True)
+class ApplyChangesResult:
+    attempts_made: int
+    total_retry_wait_seconds: float
+    warning_threshold: Optional[str] = None
+    warning_text: Optional[str] = None
 
 
 class KeyspaceConfig:
@@ -306,7 +337,15 @@ class DbWriterMixin:
     self._db and requires the object to provide the WithinKeyspace mixin
     """
 
-    def apply_changes(self, changes: List[DbChange], atomic=True, nr_retries=10):
+    def apply_changes(
+        self,
+        changes: List[DbChange],
+        atomic=True,
+        nr_retries=100,
+        initial_concurrency: int = 100,
+        min_concurrency: int = 5,
+    ) -> ApplyChangesResult:
+        """Apply db changes and return retry/warning metadata."""
         statements = [
             (chng.get_cql_statement(keyspace=self.get_keyspace()), chng)
             for chng in changes
@@ -325,23 +364,53 @@ class DbWriterMixin:
         ]
 
         attempts_made = 0
+        total_retry_wait_seconds = 0.0
         for attempt in Retrying(
             retry=retry_if_exception_type((WriteTimeout, OperationTimedOut)),
             reraise=True,
             stop=stop_after_attempt(nr_retries),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=240),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
         ):
             # see https://tenacity.readthedocs.io/en/latest/#retrying-code-block
             with attempt:
                 attempts_made += 1
+                current_concurrency = max(
+                    min_concurrency,
+                    initial_concurrency // (2 ** (attempts_made - 1)),
+                )
                 if attempts_made > 1:
                     logger.warning(
                         "Applying changes ran into a write timeout. "
-                        f"Retrying {(nr_retries - attempts_made) + 1} more times."
+                        f"Retrying {(nr_retries - attempts_made) + 1} more times "
+                        f"with concurrency={current_concurrency}."
                     )
                 if atomic:
                     self._db.execute_statements_atomic(change_stmts)
                 else:
-                    self._db.execute_statements(change_stmts)
+                    self._db.execute_statements(
+                        change_stmts, concurrency=current_concurrency
+                    )
+                total_retry_wait_seconds = max(
+                    total_retry_wait_seconds, float(attempt.retry_state.idle_for or 0.0)
+                )
+
+        warning_threshold = None
+        warning_text = None
+        if total_retry_wait_seconds > 30:
+            warning_threshold = "retry_wait_gt_30s"
+            warning_text = (
+                "Total retry wait time exceeded threshold: "
+                f"{total_retry_wait_seconds:.1f}s > 30.0s "
+                f"(attempts={attempts_made})"
+            )
+
+        return ApplyChangesResult(
+            attempts_made=attempts_made,
+            total_retry_wait_seconds=total_retry_wait_seconds,
+            warning_threshold=warning_threshold,
+            warning_text=warning_text,
+        )
 
     def ensure_table_exists(
         self,
@@ -426,6 +495,7 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
         def get_item(date, index):
             daq = self.get_block_timestamp(index)
+            daq, date = _align_datetime_timezones(daq, date)
             return 0 if daq <= date else 1
 
         get_item_date = partial(get_item, date)

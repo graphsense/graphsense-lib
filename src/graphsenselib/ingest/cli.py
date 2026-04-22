@@ -303,7 +303,7 @@ def ingest(
                         mode=mode,
                     )
     except LockAcquisitionError as e:
-        logger.error(str(e))
+        logger.warning(str(e))
         sys.exit(911)
 
 
@@ -523,7 +523,7 @@ def dump_rawdata(
                         f"Auto-compaction conditions not met, last compaction was {last_vaccum_time}, skipping compaction"
                     )
     except LockAcquisitionError as e:
-        logger.error(str(e))
+        logger.warning(str(e))
         sys.exit(911)
 
 
@@ -601,7 +601,7 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
                 )
                 logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
     except LockAcquisitionError as e:
-        logger.error(str(e))
+        logger.warning(str(e))
         sys.exit(911)
 
 

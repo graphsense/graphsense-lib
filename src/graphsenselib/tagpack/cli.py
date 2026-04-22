@@ -13,7 +13,7 @@ from git import Repo
 from tabulate import tabulate
 from yaml.parser import ParserError, ScannerError
 
-from graphsenselib.tagpack import get_version
+from graphsenselib.tagpack import UniqueKeyLoader, get_version
 from graphsenselib.tagpack.actorpack import Actor, ActorPack
 from graphsenselib.tagpack.actorpack_schema import ActorPackSchema
 from graphsenselib.tagpack.graphsense import GraphSense
@@ -39,6 +39,8 @@ import logging
 from typing import Tuple
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ACTORPACK_URL = "https://raw.githubusercontent.com/graphsense/graphsense-tagpacks/master/actors/graphsense.actorpack.yaml"
 
 
 def override_postgres_url(url):
@@ -155,28 +157,44 @@ def load_actorpack_for_validation(actorpack_path, config):
     """Load and validate actorpack for actor checking"""
     import requests
 
-    # Download if not provided or doesn't exist
-    if actorpack_path is None or not os.path.isfile(actorpack_path):
-        if actorpack_path is None:
-            actorpack_path = "graphsense.actorpack.yaml"
+    def _is_http_url(path):
+        return isinstance(path, str) and path.startswith(("http://", "https://"))
 
-        if not os.path.isfile(actorpack_path):
-            logger.info("Downloading GraphSense actorpack...")
-            url = "https://raw.githubusercontent.com/graphsense/graphsense-tagpacks/master/actors/graphsense.actorpack.yaml"
-            try:
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()
-                with open(actorpack_path, "w") as f:
-                    f.write(response.text)
-                logger.info(f"Downloaded actorpack to {actorpack_path}")
-            except Exception as e:
-                logger.error(f"Failed to download actorpack: {e}")
-                return None
+    def _load_actorpack_from_text(uri, text, schema, taxonomies):
+        contents = yaml.load(text, UniqueKeyLoader)
+        if "header" in contents:
+            for k, v in contents["header"].items():
+                contents[k] = v
+            contents.pop("header")
+        return ActorPack(uri, contents, schema, taxonomies)
 
     schema = ActorPackSchema()
     taxonomies = _load_taxonomies(config)
 
-    ap = ActorPack.load_from_file("", actorpack_path, schema, taxonomies, None)
+    # Default behavior: fetch actorpack from remote URL in-memory.
+    if actorpack_path is None:
+        actorpack_path = DEFAULT_ACTORPACK_URL
+
+    try:
+        if _is_http_url(actorpack_path):
+            logger.info(f"Downloading actorpack from {actorpack_path}...")
+            response = requests.get(actorpack_path, timeout=30)
+            response.raise_for_status()
+            ap = _load_actorpack_from_text(
+                actorpack_path,
+                response.text,
+                schema,
+                taxonomies,
+            )
+        elif os.path.isfile(actorpack_path):
+            ap = ActorPack.load_from_file("", actorpack_path, schema, taxonomies, None)
+        else:
+            logger.error(f"Actorpack path does not exist: {actorpack_path}")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to load actorpack from {actorpack_path}: {e}")
+        return None
+
     ap.validate()
     logger.info(f"Loaded actorpack from {actorpack_path}")
     return ap
@@ -389,6 +407,7 @@ def validate_tagpack(
     path,
     no_address_validation,
     check_actor_references=False,
+    strict_actor_references=True,
     actorpack_path=None,
     use_pyyaml=False,
 ):
@@ -411,6 +430,9 @@ def validate_tagpack(
     actorpack = None
     existing_actor_ids = []
     similarity_threshold = 80  # Default threshold for fuzzy matching
+
+    if strict_actor_references:
+        check_actor_references = True
 
     if check_actor_references:
         # Check if rapidfuzz is installed
@@ -439,8 +461,14 @@ def validate_tagpack(
     try:
         for headerfile_dir, files in tagpack_files.items():
             for tagpack_file in files:
+                strict_file_failed = False
                 tagpack = TagPack.load_from_file(
-                    "", tagpack_file, schema, taxonomies, headerfile_dir, use_pyyaml
+                    tagpack_file,
+                    tagpack_file,
+                    schema,
+                    taxonomies,
+                    headerfile_dir,
+                    use_pyyaml,
                 )
 
                 logger.info(f"Validating {tagpack_file}")
@@ -471,7 +499,7 @@ def validate_tagpack(
                                     actor, existing_actor_ids, similarity_threshold
                                 )
                                 unique_unknown_actors[actor] = similar
-                                msg = "  Actor '{actor}' NOT FOUND in actorpack"
+                                msg = f"  Actor '{actor}' NOT FOUND in actorpack"
 
                                 if similar:
                                     suggestions = ", ".join(
@@ -485,13 +513,22 @@ def validate_tagpack(
                                     msg += (
                                         " (no existing actors with similar names found)"
                                     )
-                                logger.warning(msg)
+                                if strict_actor_references:
+                                    logger.error(msg)
+                                else:
+                                    logger.warning(msg)
+                            if strict_actor_references:
+                                strict_file_failed = True
                         else:
                             unique_known_actors.add(actor)
 
-                logger.info(f"PASSED: {tagpack_file}")
-
-                no_passed += 1
+                if strict_file_failed:
+                    logger.error(
+                        f"FAILED: {tagpack_file} - Actor validation failed in strict mode"
+                    )
+                else:
+                    logger.info(f"PASSED: {tagpack_file}")
+                    no_passed += 1
     except (ValidationError, TagPackFileError) as e:
         logger.error(f"FAILED: {e}")
 
@@ -506,7 +543,7 @@ def validate_tagpack(
         )
 
     # Print actor validation summary if enabled
-    if check_actor_references and actorpack:
+    if check_actor_references and actorpack and not strict_actor_references:
         click.secho("\n" + "=" * 80, fg="cyan")
         click.secho("ACTOR VALIDATION SUMMARY", fg="cyan")
         click.secho("=" * 80, fg="cyan")
@@ -686,7 +723,7 @@ def insert_tagpack(
         msg = f"Failed to load actor alias mapping from tagstore: {e}"
         logger.error(msg)
         try:
-            send_msg_to_topic("tagpack_insert_errors", msg)
+            send_msg_to_topic("info", msg)
         except Exception as slack_err:
             logger.warning(f"Failed to send Slack notification: {slack_err}")
 
@@ -782,14 +819,14 @@ def insert_tagpack(
         failed_count = n_ppacks - no_passed
         try:
             send_msg_to_topic(
-                "tagpack_insert_errors",
+                "info",
                 f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {path}",
             )
         except Exception as e:
             logger.warning(f"Failed to send Slack notification: {e}")
     else:
         click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
-    msg = "Don't forget to run 'graphsense-cli tagstore refresh-views' soon to keep the database"
+    msg = "Don't forget to run 'graphsense-cli tagpack-tool refresh-views' soon to keep the database"
     msg += " consistent!"
     print(msg)
 
@@ -815,9 +852,15 @@ def tagpack():
     help="Validates that actors referenced in tagpacks exist in actorpack",
 )
 @click.option(
+    "--strict-actor-references/--no-strict-actor-references",
+    default=True,
+    show_default=True,
+    help="Fails validation when actor references cannot be validated and suppresses actor summary output",
+)
+@click.option(
     "--actorpack-path",
     default=None,
-    help="Path to actorpack file (downloads graphsense actorpack if not provided)",
+    help="Path to actorpack file or HTTP(S) URL (downloads GraphSense actorpack in-memory if not provided)",
 )
 @click.option(
     "--use-pyyaml",
@@ -826,7 +869,13 @@ def tagpack():
 )
 @click.pass_context
 def validate_tagpack_cli(
-    ctx, path, no_address_validation, check_actor_references, actorpack_path, use_pyyaml
+    ctx,
+    path,
+    no_address_validation,
+    check_actor_references,
+    strict_actor_references,
+    actorpack_path,
+    use_pyyaml,
 ):
     """validate TagPacks"""
     config = _load_config(ctx.obj.get("config"))
@@ -835,6 +884,7 @@ def validate_tagpack_cli(
         path,
         no_address_validation,
         check_actor_references,
+        strict_actor_references,
         actorpack_path,
         use_pyyaml,
     )

@@ -19,6 +19,7 @@ async def get_tx(
     include_io=False,
     include_nonstandard_io=False,
     include_io_index=False,
+    include_heuristics=[],
 ):
     result = await ctx.services.txs_service.get_tx(
         currency,
@@ -27,6 +28,8 @@ async def get_tx(
         include_io,
         include_nonstandard_io,
         include_io_index,
+        include_heuristics,
+        tagstore_groups=ctx.tagstore_groups,
     )
     return to_api_tx(result)
 

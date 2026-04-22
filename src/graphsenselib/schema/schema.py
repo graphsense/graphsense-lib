@@ -145,7 +145,7 @@ class CreateTableStatement:
             self.table,
             not self.if_not_exists,
             self.keyspace,
-            with_stmt=self.with_stmt,
+            with_stmt=self.with_stmt,  # ty: ignore[invalid-argument-type]
         )
 
 
@@ -187,6 +187,7 @@ class GraphsenseSchemas:
     RESOUCE_PATH = f"{__package__}.resources"
     MIGRATIONS_PATH = f"{RESOUCE_PATH}.migrations"
 
+    @staticmethod
     def is_extension(filename, schema_type):
         return not any(
             filename.endswith(f"{kst}_{schema_type}_schema.sql")
@@ -204,7 +205,7 @@ class GraphsenseSchemas:
     ) -> List[tuple[str, Schema]]:
         schema_type = currency_to_schema_type[currency]
         if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
-            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
+            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]  # ty: ignore[invalid-argument-type]
         return [
             x
             for x in self.get_by_schema_type(
@@ -369,7 +370,7 @@ class GraphsenseSchemas:
         self, schema_type, keyspace_type=None
     ) -> List[tuple[str, Schema]]:
         if (schema_type, keyspace_type) in SCHEMA_TYPE_MAPPING_OVERWRITES:
-            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]
+            schema_type = SCHEMA_TYPE_MAPPING_OVERWRITES[(schema_type, keyspace_type)]  # ty: ignore[invalid-argument-type]
         return [
             (f, s)
             for (f, s) in self.get_all_schemas()

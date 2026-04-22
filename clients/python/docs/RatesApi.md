@@ -4,15 +4,15 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**get_exchange_rates**](RatesApi.md#get_exchange_rates) | **GET** /{currency}/rates/{height} | Get exchange rates for a given block height
+[**get_exchange_rates**](RatesApi.md#get_exchange_rates) | **GET** /{currency}/rates/{height} | Get fiat exchange rates at a block height
 
 
 # **get_exchange_rates**
 > Rates get_exchange_rates(currency, height)
 
-Get exchange rates for a given block height
+Get fiat exchange rates at a block height
 
-Get exchange rates for a given block height
+Returns fiat exchange rates for the requested currency at the given block height.
 
 ### Example
 
@@ -49,7 +49,7 @@ with graphsense.ApiClient(configuration) as api_client:
     height = 1 # int | The block height
 
     try:
-        # Get exchange rates for a given block height
+        # Get fiat exchange rates at a block height
         api_response = api_instance.get_exchange_rates(currency, height)
         print("The response of RatesApi->get_exchange_rates:\n")
         pprint(api_response)
@@ -84,8 +84,8 @@ Name | Type | Description  | Notes
 
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
-**200** | Successful Response |  -  |
-**422** | Validation Error |  -  |
+**200** | Fiat exchange rates at the requested block height. |  -  |
+**422** | Validation error in path/query parameters. |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

@@ -35,18 +35,18 @@ class TransactionHashAccount:
             raise Exception(f"Unknown type for txhash type: {type(txhash)}")
 
         # todo potentially different length for tron, also saved in bytearray though
-        if len(self.tx_hash_bytes) != 32:
+        if len(self.tx_hash_bytes) != 32:  # ty: ignore[invalid-argument-type]
             raise ValueError(
-                f"Address is not the right length {len(self.tx_hash_bytes)}"
+                f"Address is not the right length {len(self.tx_hash_bytes)}"  # ty: ignore[invalid-argument-type]
             )
 
     @property
     def hex(self) -> str:  # noqa
-        return self.tx_hash_bytes.hex()
+        return self.tx_hash_bytes.hex()  # ty: ignore[unresolved-attribute]
 
     @property
     def db_encoding(self) -> str:
-        return self.bytearray
+        return self.bytearray  # ty: ignore[invalid-return-type]
         # return f"0x{self.hex}"
 
     @property
@@ -59,4 +59,4 @@ class TransactionHashAccount:
 
     @property
     def bytearray(self) -> bytearray:  # noqa
-        return self.tx_hash_bytes
+        return self.tx_hash_bytes  # ty: ignore[invalid-return-type]

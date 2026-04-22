@@ -1,6 +1,7 @@
+import json
 import logging
-import tempfile
 import os
+import tempfile
 
 from graphsenselib.config import get_config, get_reorg_backoff_blocks
 from graphsenselib.config.config import AppConfig
@@ -76,3 +77,35 @@ top_level_typo: hello
         assert any("unknown_sink_key" in w and "FileSink" in w for w in warnings)
     finally:
         os.unlink(fname)
+
+
+def test_load_partial_parses_slack_topics_from_env(monkeypatch):
+    cfg = AppConfig(load=False)
+    monkeypatch.setenv(
+        "GRAPHSENSE_SLACK_TOPICS",
+        json.dumps(
+            {
+                "exceptions": {
+                    "hooks": ["https://hooks.slack.com/services/T000/B000/TESTHOOK"]
+                }
+            }
+        ),
+    )
+
+    ok, errors = cfg.load_partial(filename="/does/not/exist.yaml")
+
+    assert ok is True
+    assert errors == []
+    topic = cfg.get_slack_hooks_by_topic("exceptions")
+    assert topic is not None
+    assert topic.hooks == ["https://hooks.slack.com/services/T000/B000/TESTHOOK"]
+
+
+def test_load_partial_rejects_invalid_slack_topics_env(monkeypatch):
+    cfg = AppConfig(load=False)
+    monkeypatch.setenv("GRAPHSENSE_SLACK_TOPICS", "not-json")
+
+    ok, errors = cfg.load_partial(filename="/does/not/exist.yaml")
+
+    assert ok is False
+    assert any(e.startswith("GRAPHSENSE_SLACK_TOPICS:") for e in errors)

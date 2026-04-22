@@ -1,5 +1,6 @@
 """Tests for the ObfuscateTags builtin plugin."""
 
+from types import SimpleNamespace
 import pytest
 from unittest.mock import MagicMock
 
@@ -7,6 +8,9 @@ from starlette.requests import Request
 from starlette.datastructures import Headers, QueryParams
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
+    OBFUSCATION_MODE_CONFIG_KEY,
+    OBFUSCATION_MODE_FORCE_DISABLE,
+    OBFUSCATION_MODE_FORCE_ENABLE,
     ObfuscateTags,
     GROUPS_HEADER_NAME,
     OBFUSCATION_MARKER_GROUP,
@@ -14,11 +18,16 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     obfuscate_private_tags,
     obfuscate_tagpack_uri_by_rule,
 )
+from graphsenselib.web.app import setup_plugins
+from graphsenselib.web.routes.base import should_obfuscate_private_tags
 from graphsenselib.web.models import (
     AddressTag,
     AddressTags,
+    Cluster,
     Entity,
     LabeledItemRef,
+    NeighborCluster,
+    NeighborClusters,
     NeighborEntities,
     NeighborEntity,
     Rate,
@@ -59,6 +68,27 @@ def make_tag(is_public=True, label="Label", source="source", uri="uri", actor="a
 
 def make_entity(tag=None, actors=None):
     return Entity(
+        currency="btc",
+        entity=123,
+        root_address="addr",
+        balance=make_values(),
+        first_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        last_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        in_degree=1,
+        out_degree=1,
+        no_addresses=1,
+        no_incoming_txs=1,
+        no_outgoing_txs=1,
+        total_received=make_values(),
+        total_spent=make_values(),
+        actors=actors,
+        best_address_tag=tag,
+        no_address_tags=1,
+    )
+
+
+def make_cluster(tag=None, actors=None):
+    return Cluster(
         currency="btc",
         entity=123,
         root_address="addr",
@@ -176,6 +206,20 @@ def test_before_request_applies(path):
     }
 
 
+def test_before_request_force_enable_applies_for_all_requests():
+    req = make_request("/search")
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_ENABLE}}
+    assert ObfuscateTags.before_request(context, req) == {
+        GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP
+    }
+
+
+def test_before_request_force_disable_never_applies():
+    req = make_request("/btc/entities/123")
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}}
+    assert ObfuscateTags.before_request(context, req) is None
+
+
 # --- before_response Tests ---
 
 
@@ -201,6 +245,15 @@ class TestBeforeResponseEntity:
         req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
         ObfuscateTags.before_response({}, req, entity)
         assert entity.actors[0].id == "" and entity.actors[0].label == ""
+
+
+class TestBeforeResponseCluster:
+    def test_obfuscates_private_tag(self):
+        cluster = make_cluster(tag=make_tag(is_public=False, label="Private"))
+        req = make_request("/btc/clusters/123")
+        req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+        ObfuscateTags.before_response({}, req, cluster)
+        assert cluster.best_address_tag.label == ""
 
 
 class TestBeforeResponseAddressTags:
@@ -242,14 +295,102 @@ class TestBeforeResponseNeighborEntities:
         assert neighbors.neighbors[1].entity.best_address_tag.label == "Kept"
 
 
+class TestBeforeResponseNeighborClusters:
+    def test_obfuscates_neighbor_cluster_tags(self):
+        neighbors = NeighborClusters(
+            neighbors=[
+                NeighborCluster(
+                    entity=make_cluster(tag=make_tag(is_public=False)),
+                    value=make_values(),
+                    no_txs=1,
+                ),
+                NeighborCluster(
+                    entity=make_cluster(tag=make_tag(is_public=True, label="Kept")),
+                    value=make_values(),
+                    no_txs=1,
+                ),
+            ],
+            next_page=None,
+        )
+        req = make_request("/btc/clusters/123/neighbors")
+        req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+        ObfuscateTags.before_response({}, req, neighbors)
+        assert neighbors.neighbors[0].entity.best_address_tag.label == ""
+        assert neighbors.neighbors[1].entity.best_address_tag.label == "Kept"
+
+
 @pytest.mark.parametrize(
     "group", ["tags-private"]
-)  # Only 'tags-private' skips obfuscation
+)  # tags-private group skips obfuscation (unless FORCE_OBFUSCATE is enabled)
 def test_before_response_skips_with_no_obfuscation_group(group):
     entity = make_entity(tag=make_tag(is_public=False, label="Private"))
     req = make_request("/btc/entities/123", {GROUPS_HEADER_NAME: group})
     ObfuscateTags.before_response({}, req, entity)
     assert entity.best_address_tag.label == "Private"
+
+
+def test_before_response_obfuscates_when_force_enable_mode_is_set():
+    entity = make_entity(tag=make_tag(is_public=False, label="Private"))
+    req = make_request("/btc/entities/123", {GROUPS_HEADER_NAME: "tags-private"})
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_ENABLE}}
+    ObfuscateTags.before_response(context, req, entity)
+    assert entity.best_address_tag.label == ""  # Obfuscated despite tags-private group
+
+
+def test_before_response_skips_when_force_disable_mode_is_set():
+    entity = make_entity(tag=make_tag(is_public=False, label="Private"))
+    req = make_request("/btc/entities/123")
+    req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+    context = {"config": {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}}
+    ObfuscateTags.before_response(context, req, entity)
+    assert entity.best_address_tag.label == "Private"
+
+
+def test_should_obfuscate_private_tags_uses_plugin_marker():
+    req = make_request("/btc/entities/123")
+    req.state.plugin_state = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+    assert should_obfuscate_private_tags(req) is True
+
+
+def test_should_obfuscate_private_tags_false_without_marker():
+    req = make_request("/btc/entities/123")
+    req.state.plugin_state = {}
+    assert should_obfuscate_private_tags(req) is False
+
+
+def test_should_obfuscate_private_tags_uses_request_header_fallback():
+    req = make_request("/btc/entities/123")
+    req.state.plugin_state = {}
+    req.headers = Headers({GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP})
+    assert should_obfuscate_private_tags(req) is True
+
+
+@pytest.mark.asyncio
+async def test_setup_plugins_loads_builtin_obfuscate_config_from_gsrest_key():
+    plugin_name = "gsrest.builtin.plugins.obfuscate_tags.obfuscate_tags"
+    plugin_cfg = {OBFUSCATION_MODE_CONFIG_KEY: OBFUSCATION_MODE_FORCE_DISABLE}
+
+    class DummyConfig:
+        plugins = [plugin_name]
+
+        @staticmethod
+        def get_plugin_config(name):
+            if name == plugin_name:
+                return plugin_cfg
+            return None
+
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            config=DummyConfig(),
+            plugin_cleanup_generators=[],
+        )
+    )
+
+    await setup_plugins(app)
+
+    builtin_name = ObfuscateTags.__module__
+    assert builtin_name in app.state.plugin_contexts
+    assert app.state.plugin_contexts[builtin_name]["config"] == plugin_cfg
 
 
 class TestTagpackUriRule:

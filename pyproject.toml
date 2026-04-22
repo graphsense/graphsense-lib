@@ -26,11 +26,11 @@ dependencies = [
     "simplejson>=3.17.6",
     "goodconf[yaml]>=3.0.0",
     "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0,<2.13.0",
+    "pydantic-settings>=2.0.0",
     "requests>=2.32.5",
     "parsy>=2.0, <3.0",
     "rich>=12.6.0",
-"base58>=2.1",
+    "base58>=2.1",
     "bitarray>=2.9",
     "eth-event>=1.2.3",
     "eth-hash>=0.3.0",
@@ -53,7 +53,7 @@ content-type = "text/markdown; charset=UTF-8; variant=GFM"
 # Add here related links, for example:
 
 [project.urls]
-Homepage = "https://graphsense.github.io/"
+Homepage = "https://graphsense.org/"
 Source = "https://github.com/graphsense/graphsense-lib"
 Changelog = "https://github.com/graphsense/graphsense-lib/blob/master/CHANGELOG.md"
 Tracker = "https://github.com/graphsense/graphsense-lib/issues"
@@ -172,7 +172,7 @@ platforms = ["any"]
 [tool.setuptools_scm]
 # For smarter version schemes and other configuration options,
 # check out https://github.com/pypa/setuptools_scm
-version_scheme = "no-guess-dev"
+version_scheme = "only-version"
 
 
 [tool.setuptools.packages.find]

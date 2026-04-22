@@ -18,6 +18,7 @@ Name | Type | Description | Notes
 **total_output** | [**Values**](Values.md) |  | 
 **inputs** | [**List[TxValue]**](TxValue.md) |  | [optional] 
 **outputs** | [**List[TxValue]**](TxValue.md) |  | [optional] 
+**heuristics** | [**UtxoHeuristics**](UtxoHeuristics.md) |  | [optional] 
 
 ## Example
 

@@ -144,7 +144,7 @@ def get_ts(env: str, currency: str, block: int):
 @require_currency(required=False)
 @click.option(
     "--date",
-    type=click.DateTime(formats=["%Y-%m-%d %H:%M:%S"]),
+    type=click.DateTime(formats=["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S%z"]),
     required=True,
     help="Date to get the block nr for.",
 )

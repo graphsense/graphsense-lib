@@ -71,6 +71,11 @@ def bch_address_to_legacy(address: str) -> str:
         # Already a legacy address — return as-is
         return address
 
+    if ":" in base32str:
+        raise InvalidAddress(
+            "Cash address contains more than one colon character"
+        )
+
     # Bech32 decode, stripping 8-char checksum (we skip verification)
     payload_str = base32str[:-8]
     lookup = _CHARSET_LOOKUP

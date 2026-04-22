@@ -117,30 +117,31 @@ class AddressesService:
             core_addresses = [
                 addr for addr in raw_query_results if addr["currency"] == base_network
             ]
-            try:
-                fork_address = await self.get_address(
-                    fork_network, address, tagstore_groups=[], include_actors=False
-                )
-            except (AddressNotFoundException, NetworkNotFoundException):
-                fork_address = None
 
-            if fork_address is not None and len(core_addresses) > 0:
-                core_address = core_addresses[0]
-                results.append(
-                    CrossChainPubkeyRelatedAddress(
-                        currency=fork_address.currency,
-                        address=fork_address.address,
-                        type=core_address["type"],
-                        pubkey=core_address["pubkey"],
+            if not core_addresses:
+                continue
+
+            # Try each base-network address format on the fork chain.
+            # The original queried address (e.g. a ZEC address) won't
+            # exist on the fork network, so we use the derived
+            # base-network addresses instead.
+            for candidate in core_addresses:
+                try:
+                    fork_address = await self.get_address(
+                        fork_network,
+                        candidate["address"],
+                        tagstore_groups=[],
+                        include_actors=False,
                     )
-                )
-            elif fork_address is not None:
+                except (AddressNotFoundException, NetworkNotFoundException):
+                    continue
+
                 results.append(
                     CrossChainPubkeyRelatedAddress(
                         currency=fork_address.currency,
                         address=fork_address.address,
-                        type="fork_only",
-                        pubkey=None,
+                        type=candidate.get("type", "fork_only"),
+                        pubkey=candidate.get("pubkey"),
                     )
                 )
         return results
@@ -177,24 +178,35 @@ class AddressesService:
             # This is because TRX addresses can be derived from EVM addresses
             # and we want to ensure we find related addresses even if the TRX address is not
             # directly in the address_to_pubkey table.
-            evm_address = tron_address_to_evm_string(address)
-
             try:
-                results_trx = await self.db.get_cross_chain_pubkey_related_addresses(
-                    evm_address, "eth"
+                evm_address = tron_address_to_evm_string(address)
+            except Exception as exc:
+                self.logger.warning(
+                    "Skipping TRX pubkey-derived lookup due to invalid TRX address %s: %s",
+                    address,
+                    exc,
                 )
-            except NetworkNotFoundException:
-                results_trx = []
+            else:
+                try:
+                    results_trx = (
+                        await self.db.get_cross_chain_pubkey_related_addresses(
+                            evm_address, "eth"
+                        )
+                    )
+                except NetworkNotFoundException:
+                    results_trx = []
 
-            data = [
-                CrossChainPubkeyRelatedAddress.model_validate(addr)
-                for addr in results_trx
-                if addr["address"] != address
-                or (
-                    network is None
-                    or (network is not None and addr["currency"] != network)
-                )
-            ]
+                data = [
+                    CrossChainPubkeyRelatedAddress.model_validate(addr)
+                    for addr in results_trx
+                    if addr["address"] != address
+                    or (
+                        network is None
+                        or (network is not None and addr["currency"] != network)
+                    )
+                ]
+
+                raw_query_results = results_trx
 
         forked_addresses = await self._handle_fork_address_overlap(
             raw_query_results, address, network=network
