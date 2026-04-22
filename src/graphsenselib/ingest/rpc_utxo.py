@@ -62,6 +62,7 @@ _BLOCK_BLACKLIST = frozenset(
         "versionHex",  # hex representation of version, redundant
         "mediantime",  # median of last 11 blocks, not stored
         "target",  # compact target threshold, derived from bits
+        "coinbase_tx",  # parsed coinbase returned by some node variants; redundant with tx[0]
         # ZEC-specific consensus/mining fields
         "solution",  # Equihash PoW solution
         "anchor",  # Sprout note commitment tree anchor
