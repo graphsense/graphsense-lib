@@ -13,7 +13,11 @@ dependencies = [
     "docker>=7.0.0",
     "testcontainers>=4.0.0",
     "cassandra-driver>=3.28.0",
+    "graphsense-lib",
 ]
+
+[tool.uv.sources]
+graphsense-lib = { path = "../..", editable = true }
 
 [dependency-groups]
 dev = [
