@@ -38,7 +38,7 @@ class TestCassandraConfig:
     def test_valid_minimal_config(self):
         """Test valid minimal configuration."""
         config_dict = {"currencies": {"btc": None, "eth": None}, "nodes": ["127.0.0.1"]}
-        config = CassandraConfig(**config_dict)  # ty: ignore[invalid-argument-type]
+        config = CassandraConfig(**config_dict)
 
         assert len(config.currencies) == 2
         assert isinstance(config.currencies["btc"], CurrencyConfig)
@@ -62,7 +62,7 @@ class TestCassandraConfig:
             "retry_interval": 10,
             "list_address_txs_ordered_legacy": True,
         }
-        config = CassandraConfig(**config_dict)  # ty: ignore[invalid-argument-type]
+        config = CassandraConfig(**config_dict)
 
         assert config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
         assert config.currencies["btc"].transformed == "btc_transformed"  # ty: ignore[unresolved-attribute]
@@ -98,17 +98,17 @@ class TestCassandraConfig:
         """Test currencies field validation."""
         # Invalid type for currencies
         with pytest.raises(ValidationError) as exc_info:
-            CassandraConfig(currencies="invalid", nodes=["127.0.0.1"])  # ty: ignore[invalid-argument-type]
+            CassandraConfig(currencies="invalid", nodes=["127.0.0.1"])
         assert "currencies must be a dictionary" in str(exc_info.value)
 
         # Invalid currency config type
         with pytest.raises(ValidationError) as exc_info:
-            CassandraConfig(currencies={"btc": "invalid_config"}, nodes=["127.0.0.1"])  # ty: ignore[invalid-argument-type]
+            CassandraConfig(currencies={"btc": "invalid_config"}, nodes=["127.0.0.1"])
         assert "Invalid config type for currency btc" in str(exc_info.value)
 
         # Valid currency configs
         config = CassandraConfig(
-            currencies={  # ty: ignore[invalid-argument-type]
+            currencies={
                 "btc": None,
                 "eth": {"raw": "eth_raw"},
                 "ltc": CurrencyConfig(transformed="ltc_transformed"),
@@ -174,7 +174,7 @@ class TestCassandraConfig:
             CassandraConfig(
                 currencies={"btc": None},
                 nodes=["127.0.0.1"],
-                port="invalid_port",  # ty: ignore[invalid-argument-type]
+                port="invalid_port",
             )
 
         # Invalid retry_interval type
@@ -182,7 +182,7 @@ class TestCassandraConfig:
             CassandraConfig(
                 currencies={"btc": None},
                 nodes=["127.0.0.1"],
-                retry_interval="invalid_interval",  # ty: ignore[invalid-argument-type]
+                retry_interval="invalid_interval",
             )
 
         # Invalid list_address_txs_ordered_legacy type
@@ -190,7 +190,7 @@ class TestCassandraConfig:
             CassandraConfig(
                 currencies={"btc": None},
                 nodes=["127.0.0.1"],
-                list_address_txs_ordered_legacy="invalid_bool",  # ty: ignore[invalid-argument-type]
+                list_address_txs_ordered_legacy="invalid_bool",
             )
 
     def test_extra_fields_allowed(self):
@@ -198,8 +198,8 @@ class TestCassandraConfig:
         config = CassandraConfig(
             currencies={"btc": None},
             nodes=["127.0.0.1"],
-            custom_field="custom_value",  # ty: ignore[unknown-argument]
-            another_extra_field=123,  # ty: ignore[unknown-argument]
+            custom_field="custom_value",
+            another_extra_field=123,
         )
 
         # Extra fields should be accessible
@@ -211,7 +211,7 @@ class TestCassandraConfig:
     def test_config_serialization(self):
         """Test configuration serialization and deserialization."""
         original_config = CassandraConfig(
-            currencies={"btc": {"raw": "btc_raw"}, "eth": None},  # ty: ignore[invalid-argument-type]
+            currencies={"btc": {"raw": "btc_raw"}, "eth": None},
             nodes=["127.0.0.1"],
             port=9043,
             username="user",
@@ -235,7 +235,7 @@ class TestCassandraConfig:
     def test_json_serialization(self):
         """Test JSON serialization and deserialization."""
         config = CassandraConfig(
-            currencies={"btc": {"raw": "btc_raw"}},  # ty: ignore[invalid-argument-type]
+            currencies={"btc": {"raw": "btc_raw"}},
             nodes=["127.0.0.1"],
         )
 

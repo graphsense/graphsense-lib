@@ -265,6 +265,11 @@ class AppConfig(GoodConf):
         env_prefix="GRAPHSENSE_",
         file_env_var="GRAPHSENSE_CONFIG_YAML",
         default_files=[".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")],
+        # Tolerate top-level keys handled by the new consolidated Settings
+        # (cassandra, mcp, tagstore, tagstore_db, web). Without this AppConfig
+        # rejects valid YAMLs that include both layouts side-by-side.
+        # TODO(deprecation): remove with _legacy.py
+        extra="allow",
     )
 
     environments: Dict[str, Environment] = Field(

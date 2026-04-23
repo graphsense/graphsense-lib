@@ -1,6 +1,9 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from graphsenselib.config.cassandra_async_config import CassandraConfig
+
+# TODO(deprecation): remove with _legacy.py
+from graphsenselib.config._legacy import _emit_class_deprecation
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.config.tagstore_config import TagStoreReaderConfig
 from pydantic import ConfigDict, Field, ValidationError, model_validator
@@ -42,6 +45,11 @@ class TagAccessLoggerConfig(BaseSettings):
 
 class GSRestConfig(BaseSettings):
     model_config = ConfigDict(env_prefix="GSREST_", case_sensitive=False, extra="allow")
+
+    def __init__(self, **kwargs: Any) -> None:
+        # TODO(deprecation): remove with _legacy.py
+        _emit_class_deprecation("GSRestConfig", "graphsenselib.config.Settings.web")
+        super().__init__(**kwargs)
 
     environment: Optional[str] = Field(default=None, description="Environment name")
     logging: LoggingConfig = Field(

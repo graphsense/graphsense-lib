@@ -209,6 +209,16 @@ markers = [
     "vcr:",
 ]
 asyncio_mode = "auto"
+# Fail the build on any unexpected warning. Narrow exceptions below cover
+# warnings we intentionally emit as deprecation nudges during the config
+# consolidation migration window.
+filterwarnings = [
+    "error",
+    # TODO(deprecation): remove with _legacy.py
+    "default:Env var .* is deprecated; use .* instead\\.:DeprecationWarning",
+    "default:(CassandraConfig|TagStoreReaderConfig|TagstoreSettings|GSRestConfig|GSMCPConfig) is deprecated:DeprecationWarning",
+    "default:.*nested .environments\\..*. block is deprecated.*:DeprecationWarning",
+]
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.

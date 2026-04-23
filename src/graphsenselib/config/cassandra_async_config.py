@@ -1,6 +1,9 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# TODO(deprecation): remove with _legacy.py
+from ._legacy import _emit_class_deprecation
 
 
 class CurrencyConfig(BaseSettings):
@@ -13,6 +16,13 @@ class CurrencyConfig(BaseSettings):
 
 class CassandraConfig(BaseSettings):
     """Configuration for Cassandra database connection and settings."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        # TODO(deprecation): remove with _legacy.py
+        _emit_class_deprecation(
+            "CassandraConfig", "graphsenselib.config.Settings.cassandra"
+        )
+        super().__init__(**kwargs)
 
     # Driver field (accessed by setup_database)
     driver: str = Field(default="cassandra", description="Database driver")

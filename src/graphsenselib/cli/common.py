@@ -1,6 +1,7 @@
 import hashlib
 import os
 import sys
+import warnings
 
 import click
 
@@ -10,6 +11,7 @@ from ..config import (
     schema_types,
     supported_base_currencies,
 )
+from ..config.settings import Settings, set_settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -78,22 +80,45 @@ def out_file(required=True, append=False):
 
 
 def try_load_config(filename: str):
+    # Surface DeprecationWarning on the CLI by default — Python silences
+    # them otherwise, which would hide the legacy env-prefix and class
+    # warnings emitted by the consolidated config.
+    warnings.simplefilter("default", DeprecationWarning, append=True)
+
     remaining_args = sys.argv[1:]
 
-    global_options_with_values = {"--config-file"}
+    # Also sniff --env / -e so the new Settings loader can pick the
+    # right per-env overlay file. Click parses it too, later, but the
+    # Settings singleton needs to be built *before* the command body
+    # runs — otherwise consumers that call get_settings() see the wrong
+    # env. The sniff is best-effort; if missing, the overlay is skipped.
+    global_options_with_values = {"--config-file", "--env", "-e"}
     top_level_command = None
+    selected_env: str | None = None
     skip_next = False
+    prev_arg: str | None = None
     for arg in remaining_args:
         if skip_next:
+            if prev_arg in ("--env", "-e"):
+                selected_env = arg
             skip_next = False
+            prev_arg = arg
+            continue
+        # Handle --env=prod / --config-file=path form.
+        if arg.startswith("--env="):
+            selected_env = arg.split("=", 1)[1]
+            prev_arg = arg
             continue
         if arg in global_options_with_values:
             skip_next = True
+            prev_arg = arg
             continue
         if arg.startswith("-"):
+            prev_arg = arg
             continue
-        top_level_command = arg
-        break
+        if top_level_command is None:
+            top_level_command = arg
+        prev_arg = arg
 
     is_optional_config_command = top_level_command in [
         "tagpack-tool",
@@ -130,6 +155,18 @@ def try_load_config(filename: str):
             md5hash = "no-config-file"
             if not is_optional_config_command:
                 raise Exception("No config file loaded")
+
+        # Mirror into the new Settings singleton so `gs config show
+        # --resolved` (and any future Settings consumer) sees the same
+        # YAML the legacy AppConfig is reading. Errors are non-fatal here:
+        # the new model is partial-friendly and any consumer that needs a
+        # required field will surface its own error.
+        new_settings, settings_errors = Settings.try_load(filename=f, env=selected_env)
+        if new_settings is not None:
+            set_settings(new_settings)
+        elif settings_errors:
+            for err in settings_errors:
+                logger.debug("Settings load issue: %s", err)
 
         return app_config, md5hash
 
