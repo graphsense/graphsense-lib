@@ -163,6 +163,19 @@ class AccountTransformation:
         if "v" in df.columns:
             df = df.withColumn("v", F.col("v").cast("short"))
         df = _convert_varint_cols(df, _VARINT_COLS_TX)
+        # Cassandra UDT access_list_entry names the field `storage_keys`,
+        # but Delta keeps the JSON-RPC `storageKeys`. Rename at write time.
+        if "access_list" in df.columns:
+            df = df.withColumn(
+                "access_list",
+                F.transform(
+                    "access_list",
+                    lambda x: F.struct(
+                        x["address"].alias("address"),
+                        x["storageKeys"].alias("storage_keys"),
+                    ),
+                ),
+            )
         self._write_cassandra(df, "transaction")
 
     def transform_trace(self, start_block, end_block):
