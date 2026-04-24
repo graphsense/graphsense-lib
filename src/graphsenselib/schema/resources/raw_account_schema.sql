@@ -111,3 +111,9 @@ CREATE TABLE configuration (
     block_bucket_size int,
     tx_prefix_length int
 );
+
+CREATE TABLE IF NOT EXISTS state (
+    key text PRIMARY KEY,
+    value text,
+    updated_at timestamp
+);

@@ -3,6 +3,7 @@ from contextlib import ExitStack
 from typing import Callable, Dict, List, Optional
 
 from graphsenselib.db import AnalyticsDb
+from graphsenselib.db.state import mark_bootstrapped
 from graphsenselib.ingest.account import (
     BLOCK_BUCKET_SIZE,
     TX_HASH_PREFIX_LEN,
@@ -316,3 +317,5 @@ def export_delta(
                 ingest_configuration_cassandra(
                     db, BLOCK_BUCKET_SIZE, TX_HASH_PREFIX_LEN
                 )
+            # MUST stay last — see graphsenselib.db.state.mark_bootstrapped.
+            mark_bootstrapped(db, "raw")

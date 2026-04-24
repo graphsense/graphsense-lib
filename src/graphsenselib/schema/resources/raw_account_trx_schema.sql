@@ -104,6 +104,12 @@ CREATE TABLE configuration (
     tx_prefix_length int
 );
 
+CREATE TABLE IF NOT EXISTS state (
+    key text PRIMARY KEY,
+    value text,
+    updated_at timestamp
+);
+
 CREATE TYPE IF NOT EXISTS trc10_frozen_supply (
     frozen_amount bigint,
     frozen_days bigint
