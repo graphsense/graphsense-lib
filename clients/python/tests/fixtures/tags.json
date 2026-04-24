@@ -1,0 +1,14 @@
+{
+  "address_tags": [
+    {
+      "label": "binance-hot-wallet",
+      "category": "exchange",
+      "actor": "binance",
+      "confidence": "heuristic",
+      "confidence_level": 90,
+      "lastmod": 1234567890,
+      "currency": "btc"
+    }
+  ],
+  "next_page": null
+}
