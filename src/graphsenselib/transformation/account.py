@@ -35,6 +35,37 @@ def _binary_to_bigint_string_udf():
     return bin_to_str
 
 
+def _write_bootstrapped_marker(spark, write_cassandra_fn):
+    """Write the `bootstrapped` row to the per-keyspace `state` table.
+
+    Spark-side equivalent of `graphsenselib.db.state.mark_bootstrapped` for
+    callers that write via the cassandra-spark connector instead of an
+    AnalyticsDb. MUST be the very last write of a transformation run — REST
+    auto-discovery treats this row's presence as the readiness signal.
+    """
+    from datetime import datetime, timezone
+
+    from pyspark.sql.types import (
+        StringType,
+        StructField,
+        StructType,
+        TimestampType,
+    )
+
+    from graphsenselib.db.state import BOOTSTRAPPED_KEY
+
+    now = datetime.now(timezone.utc)
+    schema = StructType(
+        [
+            StructField("key", StringType(), False),
+            StructField("value", StringType(), False),
+            StructField("updated_at", TimestampType(), False),
+        ]
+    )
+    df = spark.createDataFrame([(BOOTSTRAPPED_KEY, now.isoformat(), now)], schema)
+    write_cassandra_fn(df, "state")
+
+
 def _convert_varint_cols(df, varint_cols):
     """Convert binary varint columns to decimal-string for Cassandra varint.
 
@@ -230,6 +261,9 @@ class AccountTransformationBase:
             "log": self.transform_log,
         }
 
+    def write_bootstrapped_marker(self):
+        _write_bootstrapped_marker(self.spark, self._write_cassandra)
+
     def run(self, start_block, end_block, tables=None):
         targets = list(tables) if tables else list(self.TABLES)
         cls_name = type(self).__name__
@@ -244,6 +278,9 @@ class AccountTransformationBase:
                 methods[table](start_block, end_block)
         logger.info("Writing configuration...")
         self.write_configuration()
+        # MUST stay last — see graphsenselib.db.state.mark_bootstrapped.
+        logger.info("Writing bootstrap marker...")
+        self.write_bootstrapped_marker()
         logger.info(f"{cls_name} complete.")
 
 

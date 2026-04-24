@@ -546,9 +546,18 @@ class UtxoTransformation:
         logger.info("Writing summary statistics...")
         self.write_summary_statistics(start_block, end_block)
 
+        # MUST stay last — see graphsenselib.db.state.mark_bootstrapped.
+        logger.info("Writing bootstrap marker...")
+        self.write_bootstrapped_marker()
+
         # Unpersist cached DataFrame
         if self._tx_df_cache is not None:
             self._tx_df_cache.unpersist()
             self._tx_df_cache = None
 
         logger.info("UtxoTransformation complete.")
+
+    def write_bootstrapped_marker(self):
+        from graphsenselib.transformation.account import _write_bootstrapped_marker
+
+        _write_bootstrapped_marker(self.spark, self._write_cassandra)

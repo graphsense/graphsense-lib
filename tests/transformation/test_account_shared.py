@@ -165,6 +165,27 @@ def test_transaction_pre_berlin_no_access_list(spark, transformer):
     assert out.count() == 1
 
 
+def test_bootstrapped_marker_writes_state_row(spark, transformer):
+    """REST auto-discovery treats this row's presence as the readiness signal."""
+    from datetime import datetime
+
+    from graphsenselib.db.state import BOOTSTRAPPED_KEY
+
+    transformer.write_bootstrapped_marker()
+    out = transformer._captured["state"]
+
+    assert set(out.columns) == {"key", "value", "updated_at"}
+    assert out.schema["updated_at"].dataType.simpleString() == "timestamp"
+    row = out.collect()[0].asDict()
+    assert row["key"] == BOOTSTRAPPED_KEY
+    # value is a tz-aware ISO string matching `updated_at` to the second.
+    parsed = datetime.fromisoformat(row["value"])
+    assert parsed.tzinfo is not None
+    # Spark normalizes timestamps through the session timezone and returns a
+    # naive datetime in local time. Compare epoch seconds for a tz-safe check.
+    assert abs(parsed.timestamp() - row["updated_at"].timestamp()) < 1
+
+
 def test_log_drops_partition_and_casts_indices(spark, transformer):
     from pyspark.sql.types import (
         BinaryType,
