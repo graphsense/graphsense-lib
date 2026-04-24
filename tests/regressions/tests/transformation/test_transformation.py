@@ -27,7 +27,9 @@ from tests.transformation.ingest_runner import (
 pytestmark = pytest.mark.transformation
 
 # Cassandra metadata tables — checked for existence but not content hash.
-METADATA_TABLES = {"configuration", "summary_statistics"}
+# `state` carries the per-run bootstrap-marker timestamp (`updated_at` and a
+# tz-aware ISO `value`), so its content legitimately differs across paths.
+METADATA_TABLES = {"configuration", "summary_statistics", "state"}
 
 
 def _table_content_hash(
