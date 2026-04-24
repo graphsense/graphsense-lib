@@ -6,12 +6,12 @@ reads single values, lists, CSV, JSON, or stdin.
 ## Install
 
 ```sh
-pip install graphsense-python[cli]
+uv add 'graphsense-python[cli]'
 ```
 
-This installs the optional `click` + `jmespath` dependencies and the `graphsense`
-command. Without the `[cli]` extra the Python package still works, just
-without the `graphsense` entry point.
+This installs the optional `click` + `jmespath` + `pygments` dependencies
+and the `graphsense` command. Without the `[cli]` extra the Python package
+still works as a library — just without the `graphsense` entry point.
 
 ## Synopsis
 

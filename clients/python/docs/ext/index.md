@@ -10,7 +10,7 @@ dependency group required.
 ## Install
 
 ```sh
-pip install graphsense-python
+uv add graphsense-python
 ```
 
 ## Quickstart

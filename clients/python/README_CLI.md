@@ -4,7 +4,7 @@ Query blockchain analytics from the command line. Pipe-friendly, handles
 single values, CSV, JSON, and stdin.
 
 ```sh
-pip install graphsense-python[cli]
+uv add 'graphsense-python[cli]'
 
 # Single lookup
 graphsense lookup-address btc 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa \
