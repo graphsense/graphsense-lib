@@ -1,4 +1,11 @@
-"""Account (ETH) transformation: Delta Lake → Cassandra raw keyspace."""
+"""Account-model transformation: Delta Lake → Cassandra raw keyspace.
+
+Defines `AccountTransformationBase` with all logic shared between EVM-style
+chains (read/write IO, block/transaction/log transforms, configuration write,
+run loop, access_list field rename), driven by class-attribute column sets.
+
+`AccountTransformation` is the ETH binding; TRX lives in `account_trx.py`.
+"""
 
 import logging
 
@@ -9,55 +16,12 @@ from graphsenselib.ingest.account import (
 
 logger = logging.getLogger(__name__)
 
-# Columns that exist in Delta (parquet) but NOT in the Cassandra raw schema.
-# These are dropped before writing to Cassandra.
-_DELTA_ONLY_COLS_BLOCK = {
-    "partition",
-    "withdrawals",
-    "excess_blob_gas",
-    "withdrawals_root",
-    "blob_gas_used",
-    "parent_beacon_block_root",
-    "uncles",
-    "requests_hash",
-}
-
-_DELTA_ONLY_COLS_TX = {
-    "partition",
-    "receipt_l1_gas_used",
-    "receipt_l1_fee",
-    "receipt_l1_fee_scalar",
-    "receipt_l1_gas_price",
-    "receipt_blob_gas_used",
-    "receipt_blob_gas_price",
-    "y_parity",
-    "authorization_list",
-}
-
-_DELTA_ONLY_COLS_TRACE = {"partition", "creation_method"}
-
-_DELTA_ONLY_COLS_LOG = {"partition"}
-
-# Columns stored as binary in Delta but typed as varint in Cassandra.
-# These need to be converted from big-endian bytes to Decimal.
-_VARINT_COLS_BLOCK = {"difficulty", "total_difficulty"}
-_VARINT_COLS_TX = {
-    "value",
-    "gas_price",
-    "receipt_cumulative_gas_used",
-    "receipt_gas_used",
-    "r",
-    "s",
-}
-_VARINT_COLS_TRACE = {"value"}
-
 
 def _binary_to_bigint_string_udf():
-    """Create a UDF converting big-endian binary bytes to decimal string.
+    """UDF: big-endian binary bytes → unsigned decimal string.
 
-    This is a Python UDF that runs on executors. Requires matching Python
-    versions between driver and workers. Set spark.pyspark.python in
-    spark_config if versions differ.
+    Runs on executors. Driver/worker Python versions must match — set
+    spark.pyspark.python in spark_config when they differ.
     """
     from pyspark.sql import functions as F
     from pyspark.sql.types import StringType
@@ -72,10 +36,10 @@ def _binary_to_bigint_string_udf():
 
 
 def _convert_varint_cols(df, varint_cols):
-    """Convert binary varint columns to string for Cassandra varint.
+    """Convert binary varint columns to decimal-string for Cassandra varint.
 
-    Only converts columns that are actually BinaryType — integer columns
-    are left as-is (the connector handles int→varint natively).
+    Integer columns are left alone — the connector handles int → varint
+    natively.
     """
     from pyspark.sql.types import BinaryType
 
@@ -88,8 +52,56 @@ def _convert_varint_cols(df, varint_cols):
     return df
 
 
-class AccountTransformation:
-    """Reads ETH Delta tables and writes to Cassandra raw keyspace."""
+class AccountTransformationBase:
+    """Shared transformation logic for account-model chains.
+
+    Subclasses set the class-attribute column sets and implement
+    `transform_trace`. They may also add chain-specific tables (e.g. TRX
+    fee/trc10) by overriding `_table_methods` and `TABLES`.
+    """
+
+    # Columns present in Delta but not in the Cassandra raw schema.
+    DELTA_ONLY_COLS_BLOCK = frozenset(
+        {
+            "partition",
+            "withdrawals",
+            "excess_blob_gas",
+            "withdrawals_root",
+            "blob_gas_used",
+            "parent_beacon_block_root",
+            "uncles",
+            "requests_hash",
+        }
+    )
+    DELTA_ONLY_COLS_TX = frozenset(
+        {
+            "partition",
+            "receipt_l1_gas_used",
+            "receipt_l1_fee",
+            "receipt_l1_fee_scalar",
+            "receipt_l1_gas_price",
+            "receipt_blob_gas_used",
+            "receipt_blob_gas_price",
+            "y_parity",
+            "authorization_list",
+        }
+    )
+    DELTA_ONLY_COLS_LOG = frozenset({"partition"})
+
+    # Columns stored as binary in Delta but typed as varint in Cassandra.
+    VARINT_COLS_BLOCK = frozenset()
+    VARINT_COLS_TX = frozenset(
+        {
+            "value",
+            "gas_price",
+            "receipt_cumulative_gas_used",
+            "receipt_gas_used",
+            "r",
+            "s",
+        }
+    )
+
+    TABLES = ("block", "transaction", "trace", "log")
 
     def __init__(
         self,
@@ -136,35 +148,30 @@ class AccountTransformation:
             "block_id_group",
             F.floor(F.col("block_id") / self.block_bucket_size).cast("int"),
         )
-        # Drop delta-only columns
-        drop_cols = [c for c in _DELTA_ONLY_COLS_BLOCK if c in df.columns]
+        drop_cols = [c for c in self.DELTA_ONLY_COLS_BLOCK if c in df.columns]
         df = df.drop(*drop_cols)
-        # Cast transaction_count to smallint to match Cassandra schema
         if "transaction_count" in df.columns:
             df = df.withColumn(
                 "transaction_count", F.col("transaction_count").cast("short")
             )
-        df = _convert_varint_cols(df, _VARINT_COLS_BLOCK)
+        df = _convert_varint_cols(df, self.VARINT_COLS_BLOCK)
         self._write_cassandra(df, "block")
 
     def transform_transaction(self, start_block, end_block):
         from pyspark.sql import functions as F
 
         df = self._read_delta("transaction", start_block, end_block)
-        # Drop delta-only columns
-        drop_cols = [c for c in _DELTA_ONLY_COLS_TX if c in df.columns]
+        drop_cols = [c for c in self.DELTA_ONLY_COLS_TX if c in df.columns]
         df = df.drop(*drop_cols)
-        # Cast types to match Cassandra schema
         if "transaction_index" in df.columns:
             df = df.withColumn(
-                "transaction_index",
-                F.col("transaction_index").cast("short"),
+                "transaction_index", F.col("transaction_index").cast("short")
             )
         if "v" in df.columns:
             df = df.withColumn("v", F.col("v").cast("short"))
-        df = _convert_varint_cols(df, _VARINT_COLS_TX)
-        # Cassandra UDT access_list_entry names the field `storage_keys`,
-        # but Delta keeps the JSON-RPC `storageKeys`. Rename at write time.
+        df = _convert_varint_cols(df, self.VARINT_COLS_TX)
+        # Cassandra UDT access_list_entry names the field `storage_keys`, but
+        # Delta keeps the JSON-RPC `storageKeys`. Rename at write time.
         if "access_list" in df.columns:
             df = df.withColumn(
                 "access_list",
@@ -178,28 +185,6 @@ class AccountTransformation:
             )
         self._write_cassandra(df, "transaction")
 
-    def transform_trace(self, start_block, end_block):
-        from pyspark.sql import functions as F
-
-        df = self._read_delta("trace", start_block, end_block)
-        df = df.withColumn(
-            "block_id_group",
-            F.floor(F.col("block_id") / self.block_bucket_size).cast("int"),
-        )
-        drop_cols = [c for c in _DELTA_ONLY_COLS_TRACE if c in df.columns]
-        df = df.drop(*drop_cols)
-        if "transaction_index" in df.columns:
-            df = df.withColumn(
-                "transaction_index",
-                F.col("transaction_index").cast("short"),
-            )
-        if "status" in df.columns:
-            df = df.withColumn("status", F.col("status").cast("short"))
-        df = _convert_varint_cols(df, _VARINT_COLS_TRACE)
-        # Repartition to eliminate stragglers from data skew (e.g. ETH DoS blocks)
-        df = df.repartitionByRange(2000, "block_id_group", "block_id")
-        self._write_cassandra(df, "trace")
-
     def transform_log(self, start_block, end_block):
         from pyspark.sql import functions as F
 
@@ -208,16 +193,18 @@ class AccountTransformation:
             "block_id_group",
             F.floor(F.col("block_id") / self.block_bucket_size).cast("int"),
         )
-        drop_cols = [c for c in _DELTA_ONLY_COLS_LOG if c in df.columns]
+        drop_cols = [c for c in self.DELTA_ONLY_COLS_LOG if c in df.columns]
         df = df.drop(*drop_cols)
         if "transaction_index" in df.columns:
             df = df.withColumn(
-                "transaction_index",
-                F.col("transaction_index").cast("short"),
+                "transaction_index", F.col("transaction_index").cast("short")
             )
         if "log_index" in df.columns:
             df = df.withColumn("log_index", F.col("log_index").cast("int"))
         self._write_cassandra(df, "log")
+
+    def transform_trace(self, start_block, end_block):
+        raise NotImplementedError
 
     def write_configuration(self):
         from pyspark.sql.types import IntegerType, StringType, StructField, StructType
@@ -235,29 +222,56 @@ class AccountTransformation:
         )
         self._write_cassandra(df, "configuration")
 
-    def run(self, start_block, end_block, tables=None):
-        all_tables = ["block", "transaction", "trace", "log"]
-        targets = tables if tables else all_tables
-
-        logger.info(
-            f"AccountTransformation: {self.raw_keyspace} "
-            f"blocks {start_block}-{end_block}, tables={targets}"
-        )
-
-        table_methods = {
+    def _table_methods(self):
+        return {
             "block": self.transform_block,
             "transaction": self.transform_transaction,
             "trace": self.transform_trace,
             "log": self.transform_log,
         }
 
+    def run(self, start_block, end_block, tables=None):
+        targets = list(tables) if tables else list(self.TABLES)
+        cls_name = type(self).__name__
+        logger.info(
+            f"{cls_name}: {self.raw_keyspace} blocks {start_block}-{end_block}, "
+            f"tables={targets}"
+        )
+        methods = self._table_methods()
         for table in targets:
-            if table in table_methods:
+            if table in methods:
                 logger.info(f"Transforming {table}...")
-                table_methods[table](start_block, end_block)
-
+                methods[table](start_block, end_block)
         logger.info("Writing configuration...")
         self.write_configuration()
+        logger.info(f"{cls_name} complete.")
 
-        # Account schema has no summary_statistics table
-        logger.info("AccountTransformation complete.")
+
+class AccountTransformation(AccountTransformationBase):
+    """ETH binding."""
+
+    VARINT_COLS_BLOCK = frozenset({"difficulty", "total_difficulty"})
+
+    DELTA_ONLY_COLS_TRACE = frozenset({"partition", "creation_method"})
+    VARINT_COLS_TRACE = frozenset({"value"})
+
+    def transform_trace(self, start_block, end_block):
+        from pyspark.sql import functions as F
+
+        df = self._read_delta("trace", start_block, end_block)
+        df = df.withColumn(
+            "block_id_group",
+            F.floor(F.col("block_id") / self.block_bucket_size).cast("int"),
+        )
+        drop_cols = [c for c in self.DELTA_ONLY_COLS_TRACE if c in df.columns]
+        df = df.drop(*drop_cols)
+        if "transaction_index" in df.columns:
+            df = df.withColumn(
+                "transaction_index", F.col("transaction_index").cast("short")
+            )
+        if "status" in df.columns:
+            df = df.withColumn("status", F.col("status").cast("short"))
+        df = _convert_varint_cols(df, self.VARINT_COLS_TRACE)
+        # Repartition to eliminate stragglers from data skew (e.g. ETH DoS blocks)
+        df = df.repartitionByRange(2000, "block_id_group", "block_id")
+        self._write_cassandra(df, "trace")
