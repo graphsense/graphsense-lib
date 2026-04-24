@@ -146,3 +146,9 @@ CREATE TABLE configuration (
     coinjoin_filtering boolean,
     fiat_currencies list<text>
 );
+
+CREATE TABLE IF NOT EXISTS state (
+    key text PRIMARY KEY,
+    value text,
+    updated_at timestamp
+);

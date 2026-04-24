@@ -18,6 +18,7 @@ from methodtools import lru_cache as mlru_cache
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..db import AnalyticsDb
+from ..db.state import mark_bootstrapped
 from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_0x
 from ..utils.account import get_id_group
 from ..utils.bch import bch_address_to_legacy
@@ -875,6 +876,8 @@ def ingest(
             total_blocks=last_block_id + 1,
             total_txs=last_tx["tx_id"] + 1,
         )
+        # MUST stay last — see graphsenselib.db.state.mark_bootstrapped.
+        mark_bootstrapped(db, "raw")
 
 
 def prepare_transactions_inplace_parquet(txs, currency):

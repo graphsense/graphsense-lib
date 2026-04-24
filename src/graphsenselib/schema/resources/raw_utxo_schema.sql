@@ -95,3 +95,9 @@ CREATE TABLE IF NOT EXISTS configuration (
     tx_prefix_length int,
     tx_bucket_size int
 );
+
+CREATE TABLE IF NOT EXISTS state (
+    key text PRIMARY KEY,
+    value text,
+    updated_at timestamp
+);
