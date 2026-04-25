@@ -906,11 +906,11 @@ def patch_entity_from_json(models_dir: Path) -> None:
         return
 
     # Simple pattern to match the recursive call
-    old_pattern = r'(instance\.actual_instance = Entity\.from_json\(json_str\))'
-    new_code = '''data = json.loads(json_str)
+    old_pattern = r"(instance\.actual_instance = Entity\.from_json\(json_str\))"
+    new_code = """data = json.loads(json_str)
             if isinstance(data, dict):
                 # PATCHED: Skip recursive Entity.from_json - use dict directly
-                instance.actual_instance = data'''
+                instance.actual_instance = data"""
 
     if re.search(old_pattern, content):
         print("  Patching Entity model to fix recursive from_json")
@@ -938,7 +938,7 @@ def patch_entity_validator(models_dir: Path) -> None:
     # Find and patch the validator to accept dict values
     # Pattern: the validator checks isinstance(v, Entity) and then tries int validation
     # We need to add a dict check before the Entity check
-    old_validator_start = '''    @field_validator('actual_instance')
+    old_validator_start = """    @field_validator('actual_instance')
     def actual_instance_must_validate_anyof(cls, v):
         if v is None:
             return v
@@ -946,9 +946,9 @@ def patch_entity_validator(models_dir: Path) -> None:
         instance = Entity.model_construct()
         error_messages = []
         # validate data type: Entity
-        if not isinstance(v, Entity):'''
+        if not isinstance(v, Entity):"""
 
-    new_validator_start = '''    @field_validator('actual_instance')
+    new_validator_start = """    @field_validator('actual_instance')
     def actual_instance_must_validate_anyof(cls, v):
         if v is None:
             return v
@@ -960,7 +960,7 @@ def patch_entity_validator(models_dir: Path) -> None:
         instance = Entity.model_construct()
         error_messages = []
         # validate data type: Entity
-        if not isinstance(v, Entity):'''
+        if not isinstance(v, Entity):"""
 
     if old_validator_start in content:
         print("  Patching Entity model validator to accept dict values")
@@ -1432,8 +1432,11 @@ def validate_call_compat(func):
     def wrapper(*args, **kwargs):
         # Capture async_req before removing it
         async_req = kwargs.pop('async_req', False)
-        kwargs.pop('_preload_content', None)
+        preload_content = kwargs.pop('_preload_content', None)
         kwargs.pop('_return_http_data_only', None)
+        # Remap legacy 'body' kwarg to 'request_body' (v5 -> v7 migration)
+        if 'body' in kwargs and 'request_body' not in kwargs:
+            kwargs['request_body'] = kwargs.pop('body')
         # Convert datetime to date string for date parameters (backward compatibility)
         # Preserve full ISO 8601 format when datetime has time/timezone info
         for key in list(kwargs.keys()):
@@ -1471,6 +1474,13 @@ def validate_call_compat(func):
                         UserWarning
                     )
             # No thread pool available, fall through to sync call
+
+        # Handle _preload_content=False by routing to _without_preload_content variant
+        if preload_content is False:
+            func_name = validated_func.__name__
+            without_preload = func_name + '_without_preload_content'
+            if args and hasattr(args[0], without_preload):
+                return getattr(args[0], without_preload)(*args[1:], **kwargs)
 
         return validated_func(*args, **kwargs)
     return wrapper

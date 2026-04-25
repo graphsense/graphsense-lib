@@ -14,9 +14,107 @@ from graphsenselib.db.asynchronous.services.tags_service import (
 from graphsenselib.db.asynchronous.services.tokens_service import TokensService
 from graphsenselib.db.asynchronous.services.txs_service import TxsService
 from graphsenselib.tagstore.db import TagstoreDbAsync
+from graphsenselib.tagstore.db.queries import (
+    LabelSearchResultPublic,
+    TagstoreStatisticsPublic,
+    Taxonomies,
+    TaxonomiesPublic,
+)
 from graphsenselib.tagstore.db.queries import TagPublic
 
 from graphsenselib.web.config import GSRestConfig
+
+
+class MockTagstoreDb:
+    """No-op TagStore implementation used when TagStore is unavailable."""
+
+    is_mock = True
+
+    async def get_actor_by_id(
+        self, actor_id: str, include_tag_count: bool = True
+    ) -> Optional[Any]:
+        return None
+
+    async def get_tags_by_actorid(
+        self, actor_id: str, offset: int, page_size: Optional[int], groups: list[str]
+    ) -> list[Any]:
+        return []
+
+    async def get_tags_by_label(
+        self, label: str, offset: int, page_size: Optional[int], groups: list[str]
+    ) -> list[Any]:
+        return []
+
+    async def get_taxonomies(self, include: Optional[set[Taxonomies]] = None) -> Any:
+        include = include or set(Taxonomies)
+        return TaxonomiesPublic(
+            confidence=[] if Taxonomies.CONFIDENCE in include else None,
+            country=[] if Taxonomies.COUNTRY in include else None,
+            tag_subject=[] if Taxonomies.TAG_SUBJECT in include else None,
+            tag_type=[] if Taxonomies.TAG_TYPE in include else None,
+            concept=[] if Taxonomies.CONCEPT in include else None,
+        )
+
+    async def add_user_reported_tag(self, tag: Any, acl_group: str) -> Optional[str]:
+        return None
+
+    async def get_actors_by_subjectid(
+        self, subject_id: str, groups: list[str]
+    ) -> list[Any]:
+        return []
+
+    async def get_tags_by_subjectid(
+        self, address: str, offset: int, limit: Optional[int], groups: list[str]
+    ) -> list[Any]:
+        return []
+
+    async def get_best_cluster_tag(
+        self, cluster_id: int, currency: str, groups: list[str]
+    ) -> Optional[Any]:
+        return None
+
+    async def get_nr_tags_by_clusterid(
+        self, cluster_id: int, currency: str, groups: list[str]
+    ) -> int:
+        return 0
+
+    async def get_actors_by_clusterid(
+        self, cluster_id: int, currency: str, groups: list[str]
+    ) -> list[Any]:
+        return []
+
+    async def get_tags_by_clusterid(
+        self,
+        cluster_id: int,
+        currency: str,
+        offset: int,
+        page_size: Optional[int],
+        groups: list[str],
+    ) -> list[Any]:
+        return []
+
+    async def get_labels_by_subjectid(
+        self, subject_id: str, groups: list[str]
+    ) -> list[str]:
+        return []
+
+    async def get_labels_by_clusterid(
+        self, cluster_id: str, groups: list[str]
+    ) -> list[str]:
+        return []
+
+    async def get_network_statistics_cached(self) -> TagstoreStatisticsPublic:
+        return TagstoreStatisticsPublic(by_network={})
+
+    async def search_labels(
+        self,
+        expression: str,
+        limit: int,
+        groups: list[str],
+        query_actors: bool,
+        query_labels: bool,
+    ) -> LabelSearchResultPublic:
+        return LabelSearchResultPublic(actor_labels=[], tag_labels=[])
 
 
 class TagAccessLoggerTagstoreProxy:
@@ -96,13 +194,15 @@ class ServiceContainer:
         self,
         config: GSRestConfig,
         db: any,
-        tagstore_engine: any,
+        tagstore_db: any,
         concepts_cache_service: ConceptProtocol,
         logger: any,
         redis_client: Optional[Any] = None,
         log_tag_access_prefix: Optional[str] = None,
     ):
-        tsdb = TagstoreDbAsync(tagstore_engine)
+        tsdb = tagstore_db if tagstore_db is not None else MockTagstoreDb()
+        if not hasattr(tsdb, "search_labels"):
+            tsdb = TagstoreDbAsync(tsdb)
         self.config = config
         self.db = db
         self.tagstore_db = (
@@ -129,7 +229,10 @@ class ServiceContainer:
             logger=logger,
         )
         self._txs_service = TxsService(
-            db=db, rates_service=self._rates_service, logger=logger
+            db=db,
+            rates_service=self._rates_service,
+            logger=logger,
+            tags_service=self._tags_service,
         )
         self._blocks_service = BlocksService(
             db=db,

@@ -160,12 +160,12 @@ class CassandraOutputResolver(OutputResolverBase):
 
     @mlru_cache(maxsize=OUTPUTS_CACHE_ITEMS)
     def get_output(self, tx_hash) -> Dict:
-        if tx_hash in self.cache.keys():
-            return self.cache.get(tx_hash)
+        if tx_hash in self.cache:
+            return self.cache[tx_hash]
         return self._get_from_db(tx_hash)
 
     def _get_from_db(self, tx_hash):
-        outputs = self.db.raw.get_tx_outputs(
+        outputs = self.db.raw.get_tx_outputs(  # ty: ignore[unresolved-attribute]
             tx_hash,
             tx_bucket_size=self.tx_bucket_size,
             tx_prefix_length=self.tx_prefix_length,

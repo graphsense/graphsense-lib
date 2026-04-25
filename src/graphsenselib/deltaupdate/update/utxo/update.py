@@ -7,6 +7,7 @@ from cassandra import InvalidRequest
 
 from graphsenselib.datatypes import DbChangeType, EntityType
 from graphsenselib.db import AnalyticsDb, DbChange
+from graphsenselib.db.analytics import ApplyChangesResult
 from graphsenselib.deltaupdate.update.abstractupdater import (
     TABLE_NAME_DELTA_HISTORY,
     UpdateStrategy,
@@ -26,6 +27,7 @@ from graphsenselib.deltaupdate.update.generic import (
 from graphsenselib.rates import convert_to_fiat
 from graphsenselib.utils import DataObject as MutableNamedTuple
 from graphsenselib.utils import group_by, no_nones
+from graphsenselib.monitoring.notifications import send_msg_to_topic
 from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.logging import LoggerScope
 from graphsenselib.utils.utxo import (
@@ -1210,8 +1212,23 @@ def validate_changes(db: AnalyticsDb, changes: List[DbChange]):
                 raise Exception(f"Have not found validation rule for {change}.")
 
 
+def _notify_db_retries(result: ApplyChangesResult, num_changes: int) -> None:
+    """Send retry warning notification using the monitoring topic."""
+    msg = (
+        f"{result.warning_text}; threshold={result.warning_threshold}; "
+        f"changes={num_changes}"
+    )
+    try:
+        send_msg_to_topic("info", f":warning: GraphSense DB alert: {msg}")
+    except Exception as e:
+        logger.warning(f"Failed to send retry notification: {e}")
+
+
 def apply_changes(
-    db: AnalyticsDb, changes: List[DbChange], pedantic: bool, try_atomic_writes: bool
+    db: AnalyticsDb,
+    changes: List[DbChange],
+    pedantic: bool,
+    try_atomic_writes: bool,
 ):
     """Apply a list of db-changes to the database. Changes are applied
     atomically and in order.
@@ -1219,7 +1236,8 @@ def apply_changes(
     Args:
         db (AnalyticsDb): Database instance
         changes (List[DbChange]): List of changes
-
+        pedantic (bool): Validate changes before applying
+        try_atomic_writes (bool): Attempt atomic batch writes first
     Returns:
         None: Nothing
 
@@ -1266,7 +1284,7 @@ def apply_changes(
             if try_atomic_writes:
                 # try to apply the changes atomic and in-order
                 try:
-                    db.transformed.apply_changes(changes, atomic=True)
+                    result = db.transformed.apply_changes(changes, atomic=True)
                 except InvalidRequest as e:
                     atomic = False
                     msg = getattr(e, "message", repr(e)).lower()
@@ -1275,10 +1293,12 @@ def apply_changes(
                             "Batch to large: Retrying to apply changes "
                             "without atomic write."
                         )
-                        db.transformed.apply_changes(changes, atomic=False)
+                        result = db.transformed.apply_changes(changes, atomic=False)
+                    else:
+                        raise e
             else:
                 atomic = False
-                db.transformed.apply_changes(changes, atomic=False)
+                result = db.transformed.apply_changes(changes, atomic=False)
 
         except Exception as e:
             atomicity_msg = (
@@ -1288,6 +1308,9 @@ def apply_changes(
             )
             logger.error(f"Failed to apply {len(changes)} changes.{atomicity_msg}")
             raise e
+
+        if result.warning_text is not None:
+            _notify_db_retries(result, len(changes))
 
 
 class UpdateStrategyUtxo(UpdateStrategy):

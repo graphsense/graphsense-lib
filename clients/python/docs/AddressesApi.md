@@ -5,13 +5,13 @@ All URIs are relative to *https://api.iknaio.com*
 Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**get_address**](AddressesApi.md#get_address) | **GET** /{currency}/addresses/{address} | Get an address
-[**get_address_entity**](AddressesApi.md#get_address_entity) | **GET** /{currency}/addresses/{address}/entity | Get the entity of an address
-[**get_tag_summary_by_address**](AddressesApi.md#get_tag_summary_by_address) | **GET** /{currency}/addresses/{address}/tag_summary | Get attribution tag summary for a given address
-[**list_address_links**](AddressesApi.md#list_address_links) | **GET** /{currency}/addresses/{address}/links | Get outgoing transactions between two addresses
-[**list_address_neighbors**](AddressesApi.md#list_address_neighbors) | **GET** /{currency}/addresses/{address}/neighbors | Get an address&#39;s neighbors in the address graph
-[**list_address_txs**](AddressesApi.md#list_address_txs) | **GET** /{currency}/addresses/{address}/txs | Get all transactions an address has been involved in
-[**list_related_addresses**](AddressesApi.md#list_related_addresses) | **GET** /{currency}/addresses/{address}/related_addresses | Get related addresses to the input address
-[**list_tags_by_address**](AddressesApi.md#list_tags_by_address) | **GET** /{currency}/addresses/{address}/tags | Get attribution tags for a given address
+[**get_address_entity**](AddressesApi.md#get_address_entity) | **GET** /{currency}/addresses/{address}/entity | Get the entity for an address
+[**get_tag_summary_by_address**](AddressesApi.md#get_tag_summary_by_address) | **GET** /{currency}/addresses/{address}/tag_summary | Get address attribution tag summary
+[**list_address_links**](AddressesApi.md#list_address_links) | **GET** /{currency}/addresses/{address}/links | List transactions between two addresses
+[**list_address_neighbors**](AddressesApi.md#list_address_neighbors) | **GET** /{currency}/addresses/{address}/neighbors | List neighboring addresses
+[**list_address_txs**](AddressesApi.md#list_address_txs) | **GET** /{currency}/addresses/{address}/txs | List transactions involving an address
+[**list_related_addresses**](AddressesApi.md#list_related_addresses) | **GET** /{currency}/addresses/{address}/related_addresses | List related addresses
+[**list_tags_by_address**](AddressesApi.md#list_tags_by_address) | **GET** /{currency}/addresses/{address}/tags | List attribution tags for an address
 
 
 # **get_address**
@@ -19,7 +19,7 @@ Method | HTTP request | Description
 
 Get an address
 
-Get an address
+Returns details for a single address, including attribution and optional actor information.
 
 ### Example
 
@@ -94,6 +94,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -101,9 +102,9 @@ Name | Type | Description  | Notes
 # **get_address_entity**
 > Entity get_address_entity(currency, address, include_actors=include_actors)
 
-Get the entity of an address
+Get the entity for an address
 
-Get the entity of an address
+Returns the clustered entity that contains the given address.
 
 ### Example
 
@@ -141,7 +142,7 @@ with graphsense.ApiClient(configuration) as api_client:
     include_actors = True # bool | Whether to include actor information (optional) (default to True)
 
     try:
-        # Get the entity of an address
+        # Get the entity for an address
         api_response = api_instance.get_address_entity(currency, address, include_actors=include_actors)
         print("The response of AddressesApi->get_address_entity:\n")
         pprint(api_response)
@@ -178,6 +179,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -185,9 +187,9 @@ Name | Type | Description  | Notes
 # **get_tag_summary_by_address**
 > TagSummary get_tag_summary_by_address(currency, address, include_best_cluster_tag=include_best_cluster_tag)
 
-Get attribution tag summary for a given address
+Get address attribution tag summary
 
-Get attribution tag summary for a given address
+Returns a summary of attribution tags for the address, including best-cluster tag information when requested.
 
 ### Example
 
@@ -222,10 +224,10 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.AddressesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    include_best_cluster_tag = True # bool | If the best cluster tag should be inherited to the address level (optional)
+    include_best_cluster_tag = None # bool | If the best cluster tag should be inherited to the address level (optional)
 
     try:
-        # Get attribution tag summary for a given address
+        # Get address attribution tag summary
         api_response = api_instance.get_tag_summary_by_address(currency, address, include_best_cluster_tag=include_best_cluster_tag)
         print("The response of AddressesApi->get_tag_summary_by_address:\n")
         pprint(api_response)
@@ -262,6 +264,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -269,9 +272,9 @@ Name | Type | Description  | Notes
 # **list_address_links**
 > Links list_address_links(currency, address, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
 
-Get outgoing transactions between two addresses
+List transactions between two addresses
 
-Get outgoing transactions between two addresses
+Returns paginated links (transactions) between the address and a specified neighbor address.
 
 ### Example
 
@@ -309,15 +312,15 @@ with graphsense.ApiClient(configuration) as api_client:
     neighbor = '1FKCzy3BEtiZDhRDtivp7Y7RVb9edg5BH7' # str | Neighbor address
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
+    min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
+    max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get outgoing transactions between two addresses
+        # List transactions between two addresses
         api_response = api_instance.list_address_links(currency, address, neighbor, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
         print("The response of AddressesApi->list_address_links:\n")
         pprint(api_response)
@@ -337,10 +340,10 @@ Name | Type | Description  | Notes
  **neighbor** | **str**| Neighbor address | 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
- **min_date** | **str**| Min date of txs | [optional] 
- **max_date** | **str**| Max date of txs | [optional] 
+ **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
+ **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -362,6 +365,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -369,9 +373,9 @@ Name | Type | Description  | Notes
 # **list_address_neighbors**
 > NeighborAddresses list_address_neighbors(currency, address, direction, only_ids=only_ids, include_labels=include_labels, include_actors=include_actors, page=page, pagesize=pagesize)
 
-Get an address's neighbors in the address graph
+List neighboring addresses
 
-Get an address's neighbors in the address graph
+Returns neighboring addresses connected to the given address in the transaction graph.
 
 ### Example
 
@@ -407,14 +411,14 @@ with graphsense.ApiClient(configuration) as api_client:
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
     direction = 'out' # str | Incoming or outgoing neighbors
-    only_ids = 'only_ids_example' # str | Restrict result to given set of comma separated addresses (optional)
-    include_labels = true # bool | Whether to include labels of first page of address tags (optional)
+    only_ids = '1,2,3' # str | Restrict result to given set of comma separated addresses (optional)
+    include_labels = True # bool | Whether to include labels of first page of address tags (optional)
     include_actors = True # bool | Whether to include actor information (optional) (default to True)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get an address's neighbors in the address graph
+        # List neighboring addresses
         api_response = api_instance.list_address_neighbors(currency, address, direction, only_ids=only_ids, include_labels=include_labels, include_actors=include_actors, page=page, pagesize=pagesize)
         print("The response of AddressesApi->list_address_neighbors:\n")
         pprint(api_response)
@@ -456,6 +460,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -463,9 +468,9 @@ Name | Type | Description  | Notes
 # **list_address_txs**
 > AddressTxs list_address_txs(currency, address, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
 
-Get all transactions an address has been involved in
+List transactions involving an address
 
-Get all transactions an address has been involved in
+Lists transactions involving the address, with optional filtering by direction, height, date range, and token.
 
 ### Example
 
@@ -503,15 +508,15 @@ with graphsense.ApiClient(configuration) as api_client:
     direction = 'out' # str | Incoming or outgoing transactions (optional)
     min_height = 1 # int | Return transactions starting from given height (optional)
     max_height = 2 # int | Return transactions up to (including) given height (optional)
-    min_date = '2017-07-21T17:32:28Z' # str | Min date of txs (optional)
-    max_date = '2017-07-21T17:32:28Z' # str | Max date of txs (optional)
+    min_date = None # str | Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
+    max_date = None # str | Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ (optional)
     order = 'desc' # str | Sorting order (optional)
-    token_currency = 'WETH' # str | Return transactions of given token or base currency (optional)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    token_currency = 'WETH' # str | Return transactions of given token or base currency e.g. 'WETH' (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get all transactions an address has been involved in
+        # List transactions involving an address
         api_response = api_instance.list_address_txs(currency, address, direction=direction, min_height=min_height, max_height=max_height, min_date=min_date, max_date=max_date, order=order, token_currency=token_currency, page=page, pagesize=pagesize)
         print("The response of AddressesApi->list_address_txs:\n")
         pprint(api_response)
@@ -531,10 +536,10 @@ Name | Type | Description  | Notes
  **direction** | **str**| Incoming or outgoing transactions | [optional] 
  **min_height** | **int**| Return transactions starting from given height | [optional] 
  **max_height** | **int**| Return transactions up to (including) given height | [optional] 
- **min_date** | **str**| Min date of txs | [optional] 
- **max_date** | **str**| Max date of txs | [optional] 
+ **min_date** | **str**| Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
+ **max_date** | **str**| Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ | [optional] 
  **order** | **str**| Sorting order | [optional] 
- **token_currency** | **str**| Return transactions of given token or base currency | [optional] 
+ **token_currency** | **str**| Return transactions of given token or base currency e.g. &#39;WETH&#39; | [optional] 
  **page** | **str**| Resumption token for retrieving the next page | [optional] 
  **pagesize** | **int**| Number of items returned in a single page | [optional] 
 
@@ -556,6 +561,8 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**400** | Invalid query parameter combination. |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -563,9 +570,9 @@ Name | Type | Description  | Notes
 # **list_related_addresses**
 > RelatedAddresses list_related_addresses(currency, address, address_relation_type=address_relation_type, page=page, pagesize=pagesize)
 
-Get related addresses to the input address
+List related addresses
 
-Get related addresses to the input address
+Returns addresses related to the input address by the selected relation type.
 
 ### Example
 
@@ -600,12 +607,12 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.AddressesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    address_relation_type = pubkey # str | What type of related addresses to return (optional) (default to pubkey)
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    address_relation_type = 'pubkey' # str | What type of related addresses to return (optional) (default to pubkey)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
 
     try:
-        # Get related addresses to the input address
+        # List related addresses
         api_response = api_instance.list_related_addresses(currency, address, address_relation_type=address_relation_type, page=page, pagesize=pagesize)
         print("The response of AddressesApi->list_related_addresses:\n")
         pprint(api_response)
@@ -644,6 +651,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
@@ -651,9 +659,9 @@ Name | Type | Description  | Notes
 # **list_tags_by_address**
 > AddressTags list_tags_by_address(currency, address, page=page, pagesize=pagesize, include_best_cluster_tag=include_best_cluster_tag)
 
-Get attribution tags for a given address
+List attribution tags for an address
 
-Get attribution tags for a given address
+Returns attribution tags assigned to the address with pagination support.
 
 ### Example
 
@@ -688,12 +696,12 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.AddressesApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
-    page = 'page_example' # str | Resumption token for retrieving the next page (optional)
+    page = None # str | Resumption token for retrieving the next page (optional)
     pagesize = 10 # int | Number of items returned in a single page (optional)
-    include_best_cluster_tag = True # bool | If the best cluster tag should be inherited to the address level (optional)
+    include_best_cluster_tag = None # bool | If the best cluster tag should be inherited to the address level (optional)
 
     try:
-        # Get attribution tags for a given address
+        # List attribution tags for an address
         api_response = api_instance.list_tags_by_address(currency, address, page=page, pagesize=pagesize, include_best_cluster_tag=include_best_cluster_tag)
         print("The response of AddressesApi->list_tags_by_address:\n")
         pprint(api_response)
@@ -732,6 +740,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

@@ -22,10 +22,12 @@ router = APIRouter(route_class=PluginRoute)
 
 @router.get(
     "/blocks/{height}",
-    summary="Get a block by its height",
+    summary="Get block details by height",
+    description="Returns block metadata for the given block height.",
     operation_id="get_block",
     response_model=Block,
     response_model_exclude_none=True,
+    responses={404: {"description": "Block not found for the selected currency."}},
 )
 async def get_block(
     request: Request,
@@ -44,10 +46,12 @@ async def get_block(
 
 @router.get(
     "/blocks/{height}/txs",
-    summary="Get block transactions",
+    summary="List transactions in a block",
+    description="Returns all transactions contained in the block at the given height.",
     operation_id="list_block_txs",
     response_model=list[Union[TxUtxo, TxAccount]],
     response_model_exclude_none=True,
+    responses={404: {"description": "Block not found for the selected currency."}},
 )
 async def list_block_txs(
     request: Request,
@@ -55,7 +59,7 @@ async def list_block_txs(
     height: HeightPath,
     ctx: ServiceContext = Depends(get_ctx_no_tags),
 ):
-    """Get block transactions"""
+    """List transactions in a block."""
     result = await service.list_block_txs(
         ctx,
         currency=currency.lower(),
@@ -66,10 +70,14 @@ async def list_block_txs(
 
 @router.get(
     "/block_by_date/{date}",
-    summary="Get block by date",
+    summary="Get block at or before a date",
+    description=(
+        "Returns the closest block for the provided timestamp and selected currency."
+    ),
     operation_id="get_block_by_date",
     response_model=BlockAtDate,
     response_model_exclude_none=True,
+    responses={404: {"description": "No block found for the provided date."}},
 )
 async def get_block_by_date(
     request: Request,

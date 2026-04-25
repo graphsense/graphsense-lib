@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
 
+from graphsenselib.tagpack import cli as tagpack_cli
 from graphsenselib.tagpack.tagstore import (
     _perform_address_modifications,
     _get_tag,
@@ -24,6 +25,20 @@ def test_bch_conversion():
     result = _perform_address_modifications(cashaddr, "BCH")
 
     assert expected == result
+
+
+def test_bch_conversion_warns_and_keeps_original_for_malformed_cashaddr(caplog):
+    cashaddr = "bitcoincash:bitcoincash:qq123"
+
+    result = _perform_address_modifications(cashaddr, "BCH")
+
+    assert cashaddr == result
+    log_messages = [
+        record.message for record in caplog.records if record.levelname == "WARNING"
+    ]
+    log_text = " ".join(log_messages)
+    assert "Could not normalize BCH cash address during insert" in log_text
+    assert "Cash address contains more than one colon character" in log_text
 
 
 def test_eth_conversion():
@@ -447,6 +462,53 @@ tags:
         "orphaned tagpack header was left in DB after failed tag insertion. "
         "Transaction should have been rolled back atomically."
     )
+
+
+def test_insert_tagpack_sends_slack_notification_for_failed_file(
+    db_setup, tmp_path, monkeypatch
+):
+    notified = []
+
+    def fake_send_msg_to_topic(topic, msg):
+        notified.append((topic, msg))
+
+    monkeypatch.setattr(tagpack_cli, "send_msg_to_topic", fake_send_msg_to_topic)
+
+    invalid_tagpack_content = """
+title: Slack Failure Test TagPack
+creator: Test Creator
+source: http://example.com/slack_failure_test
+confidence: this_confidence_does_not_exist_in_db
+currency: BTC
+lastmod: 2021-04-21
+tags:
+- address: 1slackfailuretestaddress123
+  label: slacktest
+"""
+    tagpack_file = tmp_path / "slack_failure_test_tagpack.yaml"
+    tagpack_file.write_text(invalid_tagpack_content)
+
+    m_succ, n_tagpacks = insert_tagpack(
+        db_setup["db_connection_string"],
+        DEFAULT_SCHEMA,
+        str(tagpack_file.resolve()),
+        batch_size=100,
+        public=True,
+        force=False,
+        add_new=False,
+        no_strict_check=True,
+        no_git=True,
+        n_workers=1,
+        no_validation=True,
+        tag_type_default="actor",
+        config=None,
+        update_flag=False,
+    )
+
+    assert m_succ == 0
+    assert n_tagpacks == 1
+    assert any(topic == "info" for topic, _ in notified)
+    assert any("failed" in msg.lower() for _, msg in notified)
 
 
 def test_remove_duplicates_keeps_tags_with_different_context(db_setup):

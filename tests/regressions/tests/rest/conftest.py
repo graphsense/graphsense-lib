@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.waiting_utils import wait_for_logs
+from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
 from tests.rest.version_utils import get_baseline_image
 
@@ -83,8 +83,8 @@ def baseline_server_url():
         .with_env("NUM_WORKERS", "1")
         .with_env("NUM_THREADS", "1")
     )
+    container.waiting_for(LogMessageWaitStrategy("Application startup complete").with_startup_timeout(120))
     container.start()
-    wait_for_logs(container, "Application startup complete", timeout=120)
 
     yield f"http://localhost:{baseline_port}"
 

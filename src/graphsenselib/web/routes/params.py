@@ -24,6 +24,11 @@ EntityPath = Annotated[
     Path(description="The entity ID", examples=[67065]),
 ]
 
+ClusterPath = Annotated[
+    int,
+    Path(description="The cluster ID", examples=[67065]),
+]
+
 TxHashPath = Annotated[
     str,
     Path(
@@ -68,12 +73,18 @@ MaxHeightQuery = Annotated[
 
 MinDateQuery = Annotated[
     Optional[str],
-    Query(description="Min date of txs", examples=["2017-07-21T17:32:28Z"]),
+    Query(
+        description="Min date of txs in the format YYYY-MM-DDTHH:MM:SSZ",
+        examples=["2017-07-21T17:32:28Z"],
+    ),
 ]
 
 MaxDateQuery = Annotated[
     Optional[str],
-    Query(description="Max date of txs", examples=["2017-07-21T17:32:28Z"]),
+    Query(
+        description="Max date of txs in the format YYYY-MM-DDTHH:MM:SSZ",
+        examples=["2017-07-21T17:32:28Z"],
+    ),
 ]
 
 OrderQuery = Annotated[
@@ -84,7 +95,7 @@ OrderQuery = Annotated[
 TokenCurrencyQuery = Annotated[
     Optional[str],
     Query(
-        description="Return transactions of given token or base currency",
+        description="Return transactions of given token or base currency e.g. 'WETH'",
         examples=["WETH"],
     ),
 ]
@@ -95,7 +106,7 @@ DirectionQuery = Annotated[
 ]
 
 OptionalDirectionQuery = Annotated[
-    Optional[str],
+    Optional[Literal["in", "out"]],
     Query(description="Incoming or outgoing transactions", examples=["out"]),
 ]
 

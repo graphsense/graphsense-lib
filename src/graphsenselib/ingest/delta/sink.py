@@ -9,7 +9,7 @@ try:
     import pyarrow as pa
     import pyarrow.compute  # noqa: F401 — explicit import for type checkers
     from deltalake import DeltaTable
-    from pyarrow.lib import ArrowInvalid
+    from pyarrow.lib import ArrowInvalid  # ty: ignore[unresolved-import]
 except ImportError:
     _has_ingest_dependencies = False
 else:
@@ -208,7 +208,7 @@ class DeltaTableWriter:
                 partition_by = None
 
             not_written = True
-            options = {}
+            writer_properties = _WRITER_PROPERTIES
             max_attempts = 20
             attempts = 0
             fraction = 0.5
@@ -228,8 +228,7 @@ class DeltaTableWriter:
                         schema_mode="merge",
                         predicate=predicate,
                         storage_options=storage_options,
-                        writer_properties=_WRITER_PROPERTIES,  # ty: ignore[invalid-argument-type]
-                        **options,
+                        writer_properties=writer_properties,  # ty: ignore[invalid-argument-type]
                     )
                     not_written = False
                 except ArrowInvalid as e:
@@ -238,10 +237,11 @@ class DeltaTableWriter:
                         new_row_group_size = int(len(data) * fraction)
                         if new_row_group_size < 100:
                             raise e
-                        options = {
-                            "max_rows_per_group": new_row_group_size,
-                            "min_rows_per_group": new_row_group_size,
-                        }
+                        writer_properties = WriterProperties(
+                            compression="ZSTD",
+                            compression_level=5,
+                            max_row_group_size=new_row_group_size,
+                        )
                         logger.warning(
                             "Could not write delta-file binary input col because "
                             "its too large (> 2GB uncompressed),"
@@ -458,8 +458,8 @@ class DeltaDumpWriter(Sink):
     def lock_name(self) -> str:
         return self._lock_name
 
-    def write(self, sink_content: BlockRangeContent):
-        for table_name, rows in sink_content.table_contents.items():
+    def write(self, block_range_content: BlockRangeContent):
+        for table_name, rows in block_range_content.table_contents.items():
             if not rows:
                 continue
             # Skip Cassandra-only tables that have no delta writer

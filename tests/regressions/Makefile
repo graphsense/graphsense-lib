@@ -210,7 +210,6 @@ rest-build-baseline: ## Build baseline REST image (REST_BASELINE= required)
 	@rm -rf /tmp/gslib-baseline && \
 	git clone $(GSLIB_REPO) /tmp/gslib-baseline && \
 	cd /tmp/gslib-baseline && git checkout $(REST_BASELINE) && \
-	cd /tmp/gslib-baseline && sed -i 's/"pydantic>=2.0.0"/"pydantic>=2.0.0",\n    "pydantic-settings>=2.0.0,<2.13.0"/' pyproject.toml && uv lock && \
 	docker build -t $(IMAGE_BASELINE) /tmp/gslib-baseline
 
 rest-ensure-baseline:

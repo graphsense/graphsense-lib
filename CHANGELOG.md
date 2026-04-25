@@ -10,6 +10,247 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.10.7] 2026-04-17
+
+### Library (v2.10.7)
+
+#### Fixed
+- loading tags with invalid tron addresses failed with unhandled error
+
+
+## [2.10.6] 2026-04-17
+
+### Library (v2.10.6)
+
+#### Changed
+- improved tag validation output (stdout)
+
+#### Fixed
+- reduced false positive rate for coinjoin detection module.
+- fixed disalignment of tag validation and db uniqueness constraints.
+
+
+## [2.10.5] 2026-04-16
+
+### Library (v2.10.5)
+
+#### Fixed
+- Tagpack validation now catches duplicate tags that would later violate the tagstore unique constraint after network/address normalization.
+- Malformed BCH CashAddr values no longer abort processing during normalization; they are reported as warnings in validation and insert paths.
+
+### Web API + Python client (webapi-2.10.0)
+no changes
+
+## [2.10.3] 2026-04-15
+
+### Library (v2.10.3)
+
+#### Fixed
+- Thorbridge issue with unsuppored return shape (9a645b5557accbe5f6ba139ea637dc9315a20d9bdfedebf642a429ace19d45da)
+- Swap issue with unspecified dst (b42ba68eb68bc4cff3b0f1069fd413912cc1ec0296e3e95f2c38d03bde337ced)
+
+## [2.10.4] 2026-04-15
+
+### Library (v2.10.4)
+
+#### Fixed
+- fix swap detection regression
+
+### Web API + Python client (webapi-2.10.0)
+no changes
+
+## [2.10.3] 2026-04-15
+
+### Library (v2.10.3)
+
+#### Fixed
+- Thorbridge issue with unsuppored return shape (9a645b5557accbe5f6ba139ea637dc9315a20d9bdfedebf642a429ace19d45da)
+- Swap issue with unspecified dst (b42ba68eb68bc4cff3b0f1069fd413912cc1ec0296e3e95f2c38d03bde337ced)
+
+### Web API + Python client (webapi-2.10.0)
+no changes
+
+## [2.10.2] 2026-04-15
+
+### Library (v2.10.2)
+
+#### Changed
+- Improved retry handling for delta updates
+- Sorted CoinJoin consensus sources by descending confidence for deterministic heuristics output
+- Updated utxo heuristic parameters
+
+#### Fixed
+- Fixed loading all conversions when input is `root_trace`
+- Fixed loading environment variables in Web subsystem (Tagstore parameters)
+- thorchain nodes changed, more resilient http requests.
+
+### Web API + Python client (webapi-2.10.0)
+
+#### Added
+- New `/{currency}/clusters/...` endpoints (`get_cluster`, `list_cluster_addresses`,
+  `list_cluster_neighbors`, `list_cluster_links`, `list_address_tags_by_cluster`,
+  `list_cluster_txs`, `search_cluster_neighbors`) that supersede the
+  corresponding `/entities/...` endpoints. Both sets return identical data;
+  new integrations should use `/clusters/...`.
+- New `cluster` field on `Address`, `Cluster`/`Entity`, and `AddressTag` response
+  models. Dual-emitted alongside the existing `entity` field.
+- New `Cluster`, `NeighborCluster`, `NeighborClusters`, `ClusterAddresses` types
+  in the generated Python client (subclasses of the `Entity*` types, so both
+  are usable during the deprecation window).
+- RFC 9745 `Deprecation: true` response header, RFC 8594 `Sunset` response
+  header (set to `2026-10-31` for the `/entities/...` endpoints), and a `Link`
+  header with `rel="deprecation"` on every deprecated route. Clients can
+  detect these without parsing the OpenAPI schema.
+- Written deprecation policy in the API description (visible in `/docs` and
+  in the generated spec).
+
+#### Deprecated
+- `/{currency}/entities/...` endpoints — use `/{currency}/clusters/...` instead.
+- `entity` field on `Address`, `Cluster`, `NeighborEntity`, and `AddressTag` —
+  use `cluster` instead.
+- `status` field on `Address` — legacy field, no replacement.
+
+All deprecated surfaces continue to work; see the "Deprecation policy" section
+of the API description for the support window.
+
+## [2.10.1] 2026-04-03
+
+### Library (v2.10.1)
+
+#### Fixed
+- Performance issues on large coinjoin txs e.g. 698a08f9d9fae6a4fde83501efd989e2b7392bbf9354ce60b921295315434a90
+- Fixed heuristics caused errors on coinbase txs (no inputs)
+
+### Web API + Python client (webapi-2.10.0)
+no changes
+
+#### Fixed
+- Fixed Python client documentation examples and bad user input handling
+
+## [2.10.0] 2026-04-02
+
+### Library (v2.10.0)
+
+#### Added
+- Coinjoin detection heuristics for UTXO transactions
+- Change address detection heuristics with configurable `include_heuristic` option (`all_change`)
+- Currency safeguards for heuristics to prevent applying heuristics on unsupported networks
+- Exchange tagging check for coinjoin heuristics
+- Default values for ingest data configurations
+- GitHub action to run examples on a regular basis
+- Strict actor mapping in tagpack tool validation
+
+#### Changed
+- Tagpack tool validate by default checks actor taxonomy
+- Updated dependencies
+
+#### Fixed
+- Fixed `TypeError: can't compare offset-naive and offset-aware datetimes` in exchange rates
+- Fixed bad user input handling on IO access REST API
+
+### Web API + Python client (webapi-2.10.0)
+
+#### Added
+- Heuristics for UTXO transactions (coinjoin and change detection)
+
+#### Changed
+- Removed extensions from Swagger/OpenAPI spec
+- Internal service headers no longer exposed in REST API
+
+#### Fixed
+- Fixed Python client documentation examples and bad user input handling
+
+
+## [2.9.12] 2026-03-25
+
+### Library (v2.9.12)
+
+#### Fixed
+- fixed unhandled exception in only_ids parsing
+- fixed loading of slack exception notification topics.
+
+### Web API + Python client (webapi-2.9.9)
+
+#### Fixed
+- fixed (internal) header explicitly exposed in report tag endpoint
+
+
+## [2.9.11] 2026-03-23
+
+### Library (v2.9.11)
+no changes
+
+### Web API + Python client (webapi-2.9.8)
+
+#### Fixed
+- Fixed handling of "body" parameter in bulk requests of python client
+- Fixed `_preload_content=False` being silently ignored in bulk requests, causing `FileNotFoundError` when streaming CSV into pandas
+
+
+## [2.9.10] 2026-03-13
+
+### Library (v2.9.10)
+
+#### Fixed
+- Fixed handling of swaps to unknown networks in utxo
+
+### Web API + Python client (webapi-2.9.6)
+no changes
+
+## [2.9.9] 2026-03-12
+
+### Library (v2.9.9)
+
+#### Added
+- REST startup now supports optional Tagstore schema initialization via `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP` when the Tagstore database has not been initialized yet.
+
+#### Changed
+- REST configuration can now be provided via the `web` section in `.graphsense.yaml`.
+- REST `direction` query parameters remain optional but now only accept `in` or `out` when provided.
+- REST API startup no longer fails when `gs-tagstore` is an optional dependency now. If it fails or is not configured a dummy tag provider is added.
+- Swap queries for thorchain no longer raise errors on UTXO networks.
+
+#### Fixed
+- `graphsense-cli db block get-nr --date` no longer fails with `TypeError: can't compare offset-naive and offset-aware datetimes` when using the documented `%Y-%m-%d %H:%M:%S` input format.
+- `graphsense-cli db block get-nr --date` now also accepts timezone-aware input in `%Y-%m-%d %H:%M:%S%z` format (e.g. `+00:00`).
+- Testcontainer-based tests now work in Podman setups.
+- Cross-chain fork handling now uses the correct address for cross-chain pubkey lookup.
+
+### Web API + Python client (webapi-2.9.6)
+#### Changed
+- direction parameter for /txs endpoints are now an enum (in, out) instead of a string.
+- /entities/{entity}/search is now deprecated.
+
+## [2.9.8] 2026-02-26
+
+### Library (v2.9.8)
+
+#### added
+- OpenAPI style-able docs with logo and better descriptions.
+- Copilot repository instructions
+
+#### changed
+- `setuptools_scm` versioning scheme now uses `only-version` to support semver-style prerelease tags like `vX.Y.Z-dev.N` and avoid build-time `.dev` bump errors.
+- Improved api documentation text.
+
+
+### Web API + Python client (webapi-2.9.5)
+no changes
+
+
+## [2.9.7] 2026-02-25
+
+### Library (v2.9.7)
+
+#### changed
+- CLI config loading now treats `web`, `tagpack-tool`, and `tagstore` as optional-config command groups, allowing these commands to run without a valid `.graphsense.yaml`.
+- Top-level command detection in CLI config loading now skips global options (including `--config-file`) before resolving command-specific loading behavior.
+
+#### added
+- Integration tests for `graphsense-cli web openapi`, `graphsense-cli tagpack-tool --version`, and `graphsense-cli tagstore version` to verify behavior without a loaded GraphSense config file.
+
+### Web API + Python client (webapi-2.9.5)
+no changes
 
 ## [Unreleased]
 

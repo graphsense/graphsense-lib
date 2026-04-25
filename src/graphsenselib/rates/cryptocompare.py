@@ -10,17 +10,20 @@ import requests
 from graphsenselib.db import DbFactory
 from graphsenselib.db.analytics import DATE_FORMAT
 from graphsenselib.rates.coingecko import fetch_ecb_rates
+from graphsenselib.rates.utils import as_utc_datetime, normalize_date_bounds
 
 logger = logging.getLogger(__name__)
 
 MIN_START = "2010-07-17T00:00:00.000000+00:00"
 
 
-def cryptocompare_historical_url(start: str, end: str, symbol: str, fiat: str):
+def cryptocompare_historical_url(
+    start: str | datetime, end: str | datetime, symbol: str, fiat: str
+):
     # https://min-api.cryptocompare.com/documentation?key=Historical&cat=dataHistoday
-    toDt = datetime.fromisoformat(end)
-    sDt = datetime.fromisoformat(start)
-    limit = (toDt - sDt).days + 1
+    toDt = as_utc_datetime(end)
+    sDt = as_utc_datetime(start)
+    limit = (toDt.date() - sDt.date()).days + 1
     toTS = toDt.timestamp()
     # Docs of cryptocompre say max record limit is 2k so if more just load
     # the entire dataset
@@ -80,22 +83,24 @@ def fetch_impl(
     dry_run: bool,
     abort_on_gaps: bool,
 ):
-    if datetime.fromisoformat(start_date) < datetime.fromisoformat(MIN_START):
-        start_date = MIN_START
-
-        # query most recent data
+    most_recent_date = None
     if not force and db:
         logger.info(f"Get last imported rate from {db.raw.get_keyspace()}")
         most_recent_date = db.raw.get_last_exchange_rate_date(table=table)
-        if most_recent_date is not None:
-            start_date = most_recent_date.strftime(DATE_FORMAT)
+
+    start_dt, end_dt = normalize_date_bounds(
+        start_date, end_date, MIN_START, most_recent_date
+    )
+
+    start_date = start_dt.isoformat()
+    end_date = end_dt.isoformat()
 
     logger.info(f"*** Fetch exchange rates for {currency} ***")
     logger.info(f"Start date: {start_date}")
     logger.info(f"End date: {end_date}")
     logger.info(f"Target fiat currencies: {fiat_currencies}")
 
-    if datetime.fromisoformat(start_date) > datetime.fromisoformat(end_date):
+    if start_dt > end_dt:
         logger.error("Error: start date after end date.")
         raise SystemExit
 
@@ -105,9 +110,7 @@ def fetch_impl(
 
     # query conversion rates and merge converted values in exchange rates
     exchange_rates = usd_rates
-    date_range = pd.date_range(
-        datetime.fromisoformat(start_date), datetime.fromisoformat(end_date)
-    )
+    date_range = pd.date_range(start_dt, end_dt)
     date_range = pd.DataFrame(date_range, columns=["date"])
     date_range = date_range["date"].dt.strftime("%Y-%m-%d")
 

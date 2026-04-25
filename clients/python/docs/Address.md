@@ -8,7 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **currency** | **str** |  | 
 **address** | **str** |  | 
-**entity** | **int** |  | 
+**entity** | **int** | Deprecated alias of &#x60;cluster&#x60;. Use &#x60;cluster&#x60; instead; this field is retained for backwards compatibility and will be removed in a future release. | 
 **fresh_cluster_id** | **int** |  | [optional] 
 **balance** | [**Values**](Values.md) |  | 
 **total_received** | [**Values**](Values.md) |  | 
@@ -24,7 +24,8 @@ Name | Type | Description | Notes
 **total_tokens_spent** | [**Dict[str, Values]**](Values.md) |  | [optional] 
 **actors** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | [optional] 
 **is_contract** | **bool** |  | [optional] 
-**status** | **str** |  | [optional] 
+**status** | **str** | Legacy field. Do not use — retained only for backwards compatibility and will be removed in a future release. | [optional] 
+**cluster** | **int** | Address cluster ID (preferred alias for the deprecated &#x60;entity&#x60; field). | [readonly] 
 
 ## Example
 

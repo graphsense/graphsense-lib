@@ -1533,6 +1533,94 @@ class Cassandra:
 
         return await self.finish_address(currency, result)
 
+    async def get_addresses_light(
+        self, currency: str, addresses: list[str]
+    ) -> dict[str, dict]:
+        """Batch-fetch lightweight address info for heuristics.
+
+        Returns {address: {cluster_id, no_incoming_txs, no_outgoing_txs, first_tx_id}}
+        without running finish_address (no balance, tx lookups, dirty checks).
+        """
+        if not addresses:
+            return {}
+
+        # Step 1: batch-resolve address -> address_id
+        prefix_length = self.get_prefix_lengths(currency)["address"]
+        id_params = []
+        for addr in addresses:
+            prefix = self.scrub_prefix(currency, addr)
+            if is_eth_like(currency):
+                prefix = prefix.upper()
+            id_params.append((prefix[:prefix_length], addr))
+
+        id_query = (
+            "SELECT address, address_id FROM address_ids_by_address_prefix "
+            "WHERE address_prefix = %s AND address = %s"
+        )
+        id_results = await self.concurrent_with_args(
+            currency, "transformed", id_query, id_params, filter_empty=True
+        )
+
+        # Step 2: batch-fetch address rows with only needed columns
+        addr_id_map = {}  # address_id -> address string
+        addr_params = []
+        for row in id_results:
+            aid = row["address_id"]
+            addr_id_map[aid] = row["address"]
+            gid = self.get_id_group(currency, aid)
+            addr_params.append((aid, gid))
+
+        if not addr_params:
+            return {}
+
+        addr_query = (
+            "SELECT address_id, cluster_id, no_incoming_txs, no_outgoing_txs, "
+            "first_tx_id FROM address "
+            "WHERE address_id = %s AND address_id_group = %s"
+        )
+        addr_results = await self.concurrent_with_args(
+            currency, "transformed", addr_query, addr_params, filter_empty=True
+        )
+
+        # Step 3: batch-resolve first_tx_id -> block_id (height) for all addresses
+        tx_ids = set()
+        for row in addr_results:
+            if row.get("first_tx_id") is not None:
+                tx_ids.add(row["first_tx_id"])
+
+        tx_height_map = {}  # tx_id -> block_id
+        if tx_ids:
+            tx_params = [(self.get_tx_id_group(currency, tid), tid) for tid in tx_ids]
+            tx_query = (
+                "SELECT tx_id, block_id FROM transaction "
+                "WHERE tx_id_group = %s AND tx_id = %s"
+            )
+            tx_results = await self.concurrent_with_args(
+                currency, "raw", tx_query, tx_params, filter_empty=True
+            )
+            for row in tx_results:
+                tx_height_map[row["tx_id"]] = row["block_id"]
+
+        # Build result dict keyed by original address string
+        result = {}
+        for row in addr_results:
+            addr = addr_id_map.get(row["address_id"])
+            if addr is None:
+                continue
+            first_tx_id = row.get("first_tx_id")
+            height = tx_height_map.get(first_tx_id) if first_tx_id is not None else None
+            first_tx = None
+            if height is not None:
+                first_tx = TxSummary(tx_hash=None, timestamp=None, height=height)
+            result[addr] = {
+                "cluster_id": row.get("cluster_id", -1),
+                "no_incoming_txs": row.get("no_incoming_txs", 0),
+                "no_outgoing_txs": row.get("no_outgoing_txs", 0),
+                "first_tx": first_tx,
+            }
+
+        return result
+
     async def get_address_tx_range(self, currency, address):
         """Get only first_tx_id and last_tx_id for an address."""
         address_id, address_id_group = await self.get_address_id_id_group(
@@ -1810,7 +1898,7 @@ class Cassandra:
                     for tx in results2
                     if tx["to_address"] == neighbor and tx["from_address"] == id
                 ]
-                self.logger.info(f"pruned {before - len(results2)}")
+                self.logger.debug(f"pruned {before - len(results2)}")
             final_results.extend(results2)
 
             if not is_eth_like(currency):

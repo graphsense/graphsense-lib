@@ -9,21 +9,15 @@ from tests.web.testdata.txs import (
 
 def test_get_tx(client):
     path = "/{currency}/txs/{tx_hash}?include_io={include_io}"
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", include_io=True
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", include_io=True)
     assert tx1.to_dict() == result
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", include_io=False
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", include_io=False)
     tx = tx1.to_dict()
     tx.pop("inputs")
     tx.pop("outputs")
     assert tx == result
 
-    result = get_json(
-        client, path, currency="eth", tx_hash="af6e0000", include_io=True
-    )
+    result = get_json(client, path, currency="eth", tx_hash="af6e0000", include_io=True)
     assert tx1_eth_with_identifier.to_dict() == result
 
     result = get_json(
@@ -68,6 +62,44 @@ def test_get_tx(client):
     assert (f"{invalid_hash} does not look like a valid transaction hash.") in body
 
 
+def test_get_tx_include_heuristics(client):
+    # valid heuristic name → 200
+    result = get_json(
+        client,
+        "/{currency}/txs/{tx_hash}?include_heuristics=one_time_change",
+        currency="btc",
+        tx_hash="ab1880",
+    )
+    assert "heuristics" in result
+    one_time = result["heuristics"]["change_heuristics"]["one_time_change"]
+    assert one_time is not None
+    assert "details" not in one_time
+
+    # unknown heuristic name → 422
+    status, _ = raw_request(
+        client,
+        "/{currency}/txs/{tx_hash}?include_heuristics=random_string",
+        currency="btc",
+        tx_hash="ab1880",
+    )
+    assert status == 422
+
+    # same heuristic repeated → 200
+    status, _ = raw_request(
+        client,
+        "/{currency}/txs/{tx_hash}?include_heuristics=one_time_change&include_heuristics=one_time_change",
+        currency="btc",
+        tx_hash="ab1880",
+    )
+    assert status == 200
+
+    # omitted → 200, no heuristics in response
+    result = get_json(
+        client, "/{currency}/txs/{tx_hash}", currency="btc", tx_hash="ab1880"
+    )
+    assert "heuristics" not in result
+
+
 def test_list_token_txs(client):
     path = "/{currency}/token_txs/{tx_hash}"
     results = get_json(client, path, currency="eth", tx_hash="0xaf6e0003")
@@ -78,15 +110,24 @@ def test_list_token_txs(client):
 
 def test_get_tx_io(client):
     path = "/{currency}/txs/{tx_hash}/{io}"
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", io="inputs"
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", io="inputs")
     assert tx1.to_dict()["inputs"] == result
 
-    result = get_json(
-        client, path, currency="btc", tx_hash="ab1880", io="outputs"
-    )
+    result = get_json(client, path, currency="btc", tx_hash="ab1880", io="outputs")
     assert tx1.to_dict()["outputs"] == result
+
+
+def test_get_tx_io_invalid_io_returns_400(client):
+    path = "/{currency}/txs/{tx_hash}/{io}"
+    status, body = raw_request(
+        client,
+        path,
+        currency="btc",
+        tx_hash="ab1880",
+        io="spending_addresses",
+    )
+    assert status == 400
+    assert "Invalid io value" in body
 
 
 def test_get_spending_txs(client):

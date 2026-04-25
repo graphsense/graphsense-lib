@@ -2,6 +2,7 @@ import contextlib
 from datetime import datetime
 from functools import cache, partial
 from importlib.resources import files as imprtlb_files
+from typing import Iterable
 
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import Session, SQLModel, create_engine, create_mock_engine, text
@@ -45,6 +46,14 @@ _MAIN_TABLES = [
     ConceptRelationAnnotation.__table__,
 ]
 
+_REQUIRED_MATERIALIZED_VIEWS = (
+    "statistics",
+    "tag_count_by_cluster",
+    "best_cluster_tag",
+)
+
+_QUALITY_MEASURES_MARKER = "-- Quality measures"
+
 
 def get_db_engine(db_url, **kwargs):
     return create_engine(db_url, **kwargs)
@@ -52,6 +61,13 @@ def get_db_engine(db_url, **kwargs):
 
 def get_db_engine_async(db_url, **kwargs):
     return create_async_engine(db_url, **kwargs)
+
+
+def to_sync_db_url(db_url: str) -> str:
+    """Convert async Postgres URLs to sync SQLAlchemy URLs."""
+    if db_url.startswith("postgresql+asyncpg://"):
+        return db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+    return db_url
 
 
 def get_table_ddl_sql():
@@ -66,9 +82,17 @@ def get_table_ddl_sql():
     return ";\n\n\n".join(out)
 
 
-def get_views_ddl_sql():
+def get_views_ddl_sql(include_quality_measures: bool = True):
     with imprtlb_files(db).joinpath("init.sql").open("r") as file:
-        return file.read()
+        ddl = file.read()
+
+    if include_quality_measures:
+        return ddl
+
+    marker_pos = ddl.find(_QUALITY_MEASURES_MARKER)
+    if marker_pos == -1:
+        return ddl
+    return ddl[:marker_pos]
 
 
 def create_tables(engine):
@@ -84,7 +108,7 @@ def with_session(engine):
         yield session
 
 
-def init_database(engine):
+def init_database(engine, include_quality_measures: bool = True):
     create_tables(engine)
 
     with Session(engine) as session:
@@ -93,11 +117,84 @@ def init_database(engine):
         session.commit()
 
         # create view etc.
-        views_sql_ddl = get_views_ddl_sql()
+        views_sql_ddl = get_views_ddl_sql(
+            include_quality_measures=include_quality_measures
+        )
 
         session.execute(text(views_sql_ddl))
 
         session.commit()
+
+
+def _relation_exists(session: Session, relation_name: str, relation_kind: str) -> bool:
+    query = text(
+        """
+        SELECT EXISTS(
+            SELECT 1
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relname = :relation_name
+              AND c.relkind = :relation_kind
+        )
+        """
+    )
+    return bool(
+        session.execute(
+            query,
+            {
+                "relation_name": relation_name,
+                "relation_kind": relation_kind,
+            },
+        ).scalar()
+    )
+
+
+def _all_relations_exist(
+    session: Session,
+    relation_names: Iterable[str],
+    relation_kind: str,
+) -> bool:
+    for relation_name in relation_names:
+        if not _relation_exists(session, relation_name, relation_kind):
+            return False
+    return True
+
+
+def is_database_initialized(engine) -> bool:
+    """Check whether core TagStore tables and runtime materialized views exist."""
+    required_tables = [table.name for table in _MAIN_TABLES]
+
+    with Session(engine) as session:
+        tables_ok = _all_relations_exist(session, required_tables, relation_kind="r")
+        if not tables_ok:
+            return False
+
+        views_ok = _all_relations_exist(
+            session,
+            _REQUIRED_MATERIALIZED_VIEWS,
+            relation_kind="m",
+        )
+        return views_ok
+
+
+def ensure_database_initialized(
+    db_url: str,
+    include_quality_measures: bool = False,
+) -> bool:
+    """Initialize TagStore schema only when required relations are missing.
+
+    Returns True when initialization was executed, False when schema already existed.
+    """
+    engine = get_db_engine(to_sync_db_url(db_url))
+    try:
+        if is_database_initialized(engine):
+            return False
+
+        init_database(engine, include_quality_measures=include_quality_measures)
+        return True
+    finally:
+        engine.dispose()
 
 
 @cache

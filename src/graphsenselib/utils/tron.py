@@ -39,7 +39,7 @@ def strip_tron_prefix(
 
 
 def evm_to_bytes(evm_address_hex: str, prefix: bytes = TRON_ADDRESS_PREFIX) -> bytes:
-    return strip_tron_prefix(hex_str_to_bytes(strip_0x(evm_address_hex)), prefix)  # type: ignore[invalid-argument-type]
+    return strip_tron_prefix(hex_str_to_bytes(strip_0x(evm_address_hex)), prefix)  # ty: ignore[invalid-argument-type]
 
 
 def evm_to_tron_address(
@@ -71,7 +71,7 @@ def tron_address_to_evm(taddress_str: str, validate: bool = True) -> bytes:
     # recompute checksum
     checkSumComputed = get_tron_address_checksum(a) if validate else None
 
-    if not validate or all(a == b for a, b in zip(checkSum, checkSumComputed)):  # ty: ignore[invalid-argument-type]
+    if not validate or all(a == b for a, b in zip(checkSum, checkSumComputed)):  # ty: ignore[invalid-argument-type, not-iterable]
         return strip_tron_prefix(a)
     else:
         raise ValueError(f"Invalid checksum on address {taddress_str}")

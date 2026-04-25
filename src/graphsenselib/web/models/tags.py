@@ -1,6 +1,8 @@
 """Tag-related API models."""
 
-from typing import Optional
+from typing import Any, Optional
+
+from pydantic import Field, computed_field
 
 from graphsenselib.web.models.base import APIModel, api_model_config
 
@@ -19,6 +21,7 @@ ADDRESS_TAG_EXAMPLE = {
     "tagpack_uri": "https://github.com/graphsense/graphsense-tagpacks/tree/master/packs/demo.yaml",
     "address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
     "entity": 264711,
+    "cluster": 264711,
 }
 
 TAG_SUMMARY_EXAMPLE = {
@@ -68,7 +71,25 @@ class AddressTag(Tag):
     model_config = api_model_config(ADDRESS_TAG_EXAMPLE)
 
     address: Optional[str] = None
-    entity: Optional[int] = None
+    entity: Optional[int] = Field(
+        default=None,
+        description="Deprecated alias of `cluster`. Use `cluster` instead; this "
+        "field is retained for backwards compatibility and will be removed in a "
+        "future release.",
+        json_schema_extra={"deprecated": True},
+    )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cluster(self) -> Optional[int]:
+        """Address cluster ID (preferred alias for the deprecated `entity` field)."""
+        return self.entity
+
+    def to_dict(self, shallow: bool = False) -> dict[str, Any]:
+        result = super().to_dict(shallow=shallow)
+        if shallow and "cluster" not in result:
+            result["cluster"] = self.entity
+        return result
 
 
 class AddressTags(APIModel):

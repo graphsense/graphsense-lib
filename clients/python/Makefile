@@ -42,6 +42,6 @@ test-compat:
 	uv run $(COMPAT_DIR)/test_compat.py .
 
 run-examples:
-	API_KEY=$(API_KEY) uv run test_examples.py
+	API_KEY=$(API_KEY) uv run --with pypandoc test_examples.py
 
 .PHONY: generate-openapi-client test-compat run-examples

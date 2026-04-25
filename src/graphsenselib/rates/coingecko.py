@@ -9,6 +9,7 @@ import requests
 from ..db import DbFactory
 from ..db.analytics import DATE_FORMAT
 from ..utils.generic import batch_date, generate_date_range_days
+from .utils import normalize_date_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -146,22 +147,24 @@ def fetch_impl(
     abort_on_gaps: bool,
     api_key: str,
 ):
-    if datetime.fromisoformat(start_date) < datetime.fromisoformat(MIN_START):
-        start_date = MIN_START
-
+    most_recent_date = None
     # query most recent data
     if not force and db:
         logger.info(f"Get last imported rate from {db.raw.get_keyspace()}")
         most_recent_date = db.raw.get_last_exchange_rate_date(table=table)
-        if most_recent_date is not None:
-            start_date = most_recent_date.strftime(DATE_FORMAT)
+
+    start_dt, end_dt = normalize_date_bounds(
+        start_date, end_date, MIN_START, most_recent_date
+    )
+    start_date = start_dt.date().isoformat()
+    end_date = end_dt.date().isoformat()
 
     logger.info(f"*** Fetch exchange rates for {currency} ***")
     logger.info(f"Start date: {start_date}")
     logger.info(f"End date: {end_date}")
     logger.info(f"Target fiat currencies: {fiat_currencies}")
 
-    if datetime.fromisoformat(start_date) > datetime.fromisoformat(end_date):
+    if start_dt > end_dt:
         logger.error("Error: start date after end date.")
         raise SystemExit
 
@@ -172,9 +175,7 @@ def fetch_impl(
 
     # query conversion rates and merge converted values in exchange rates
     exchange_rates = cmc_rates
-    date_range = pd.date_range(
-        date.fromisoformat(start_date), date.fromisoformat(end_date)
-    )
+    date_range = pd.date_range(start_dt.date(), end_dt.date())
     date_range = pd.DataFrame(date_range, columns=["date"])
     date_range = date_range["date"].dt.strftime("%Y-%m-%d")
 

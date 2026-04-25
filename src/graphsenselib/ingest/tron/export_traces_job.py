@@ -9,7 +9,9 @@ try:
 
     from .grpc.api.tron_api_pb2 import NumberMessage
     from .grpc.api.tron_api_pb2_grpc import WalletStub
-    from .grpc.core.response_pb2 import TransactionInfoList  # noqa: F401
+    from .grpc.core.response_pb2 import (  # noqa: F401
+        TransactionInfoList,  # ty: ignore[unresolved-import]
+    )
     from graphsenselib.utils.grpc import get_channel
 except ImportError:
     _has_ingest_dependencies = False

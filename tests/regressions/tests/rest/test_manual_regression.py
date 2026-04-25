@@ -444,3 +444,72 @@ class TestManualRegressionSearch(ManualRegressionTestBase):
         self.assert_call_equal(
             "search?q=0x42D529A72CECD6ECE546D5AC0D2A6C2A9407876B66478A33917D8928833433F"
         )
+
+
+# =============================================================================
+# Cross-chain related addresses (pubkey symmetry)
+# =============================================================================
+
+
+class TestManualRegressionRelatedAddresses(ManualRegressionTestBase):
+    """Tests that cross-chain pubkey clusters are symmetric.
+
+    Every address in a pubkey cluster must see the same full set of
+    related addresses (minus itself).  Querying from BTC, BCH, LTC,
+    ZEC, ETH, or TRX must all yield the same cluster members.
+    """
+
+    # A known cross-chain cluster
+    CLUSTER = [
+        ("btc", "1G47mSr3oANXMafVrR8UC4pzV7FEAzo3r9"),
+        ("bch", "1G47mSr3oANXMafVrR8UC4pzV7FEAzo3r9"),
+        ("ltc", "LaH52f9sspcacPMf2Z7mU5tkhKcWJxvAgA"),
+        ("zec", "t1YvimnGBmVA7xDiPnqwbKsvujmSJz4X5m2"),
+        ("eth", "0x0d0707963952f2fba59dd06f2b425ace40b492fe"),
+        ("trx", "TBA6CypYJizwA9XdC7Ubgc5F1bxrQ7SqPt"),
+    ]
+
+    def _get_full_cluster(self, base_url, currency, address):
+        """Query related_addresses and return the full cluster set (self + related)."""
+        call = f"{currency}/addresses/{address}/related_addresses"
+        data, _ = get_data_from_endpoint(base_url, call)
+        cluster = {(currency, address)}
+        for r in data["related_addresses"]:
+            cluster.add((r["currency"], r["address"]))
+        return cluster
+
+    @pytest.mark.regression
+    def test_crosschain_cluster_symmetry(self):
+        """All members of a pubkey cluster must yield the same full set."""
+        reference = None
+        reference_currency = None
+
+        for currency, address in self.CLUSTER:
+            cluster = self._get_full_cluster(self.current_url, currency, address)
+
+            if reference is None:
+                reference = cluster
+                reference_currency = currency
+                continue
+
+            if cluster != reference:
+                missing = reference - cluster
+                extra = cluster - reference
+                pytest.fail(
+                    f"Cluster mismatch querying from {currency} vs {reference_currency}.\n"
+                    f"  Missing: {missing}\n"
+                    f"  Extra:   {extra}"
+                )
+
+    @pytest.mark.regression
+    def test_crosschain_cluster_contains_bch(self):
+        """BCH must appear in related addresses when querying from any network."""
+        bch_member = ("bch", "1G47mSr3oANXMafVrR8UC4pzV7FEAzo3r9")
+
+        for currency, address in self.CLUSTER:
+            if currency == "bch":
+                continue
+            cluster = self._get_full_cluster(self.current_url, currency, address)
+            assert bch_member in cluster, (
+                f"BCH missing from related addresses when querying from {currency}"
+            )

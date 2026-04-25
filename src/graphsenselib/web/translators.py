@@ -138,6 +138,28 @@ from graphsenselib.web.models import (
     TxValue,
     Values,
 )
+from graphsenselib.web.models.heuristics import (
+    AddressOutput as ApiHeuristicAddressOutput,
+)
+from graphsenselib.web.models.heuristics import (
+    ChangeHeuristics as ApiChangeHeuristics,
+)
+from graphsenselib.web.models.heuristics import (
+    ConsensusEntry as ApiHeuristicConsensusEntry,
+)
+from graphsenselib.web.models.heuristics import (
+    DirectChangeHeuristic as ApiDirectChangeHeuristic,
+)
+from graphsenselib.web.models.heuristics import (
+    MultiInputChangeHeuristic as ApiMultiInputChangeHeuristic,
+)
+from graphsenselib.web.models.heuristics import (
+    OneTimeChangeHeuristic as ApiOneTimeChangeHeuristic,
+)
+from graphsenselib.web.models.heuristics import (
+    CoinJoinHeuristics as ApiCoinJoinHeuristics,
+    UtxoHeuristics as ApiUtxoHeuristics,
+)
 
 
 def to_api_values(pydantic_values: PydanticValues) -> Values:
@@ -263,6 +285,102 @@ def to_api_tx_value(pydantic_tx_value) -> TxValue:
     )
 
 
+def to_api_heuristics_address_output(addr_output) -> ApiHeuristicAddressOutput:
+    """Convert service heuristic address output to web heuristic address output."""
+    return ApiHeuristicAddressOutput(
+        address=addr_output.address,
+        index=addr_output.index,
+    )
+
+
+def to_api_one_time_change_heuristic(heuristic) -> ApiOneTimeChangeHeuristic | None:
+    """Convert service one-time-change heuristic without exposing details."""
+    if heuristic is None:
+        return None
+    return ApiOneTimeChangeHeuristic(
+        summary=[to_api_heuristics_address_output(out) for out in heuristic.summary],
+        confidence=heuristic.confidence,
+    )
+
+
+def to_api_direct_change_heuristic(heuristic) -> ApiDirectChangeHeuristic | None:
+    """Convert service direct-change heuristic without exposing details."""
+    if heuristic is None:
+        return None
+    return ApiDirectChangeHeuristic(
+        summary=[to_api_heuristics_address_output(out) for out in heuristic.summary],
+        confidence=heuristic.confidence,
+    )
+
+
+def to_api_multi_input_change_heuristic(
+    heuristic,
+) -> ApiMultiInputChangeHeuristic | None:
+    """Convert service multi-input-change heuristic without exposing details."""
+    if heuristic is None:
+        return None
+    return ApiMultiInputChangeHeuristic(
+        summary=[to_api_heuristics_address_output(out) for out in heuristic.summary],
+        confidence=heuristic.confidence,
+    )
+
+
+def to_api_utxo_heuristics(pydantic_heuristics) -> ApiUtxoHeuristics | None:
+    """Convert service UTXO heuristics to web heuristics.
+
+    The web model intentionally omits detailed evidence sections for now.
+    """
+    if pydantic_heuristics is None:
+        return None
+
+    change_heuristics = pydantic_heuristics.change_heuristics
+    api_change = None
+    if change_heuristics is not None:
+        api_change = ApiChangeHeuristics(
+            consensus=[
+                ApiHeuristicConsensusEntry(
+                    output=to_api_heuristics_address_output(entry.output),
+                    confidence=entry.confidence,
+                    sources=list(entry.sources),
+                )
+                for entry in change_heuristics.consensus
+            ],
+            one_time_change=to_api_one_time_change_heuristic(
+                change_heuristics.one_time_change
+            ),
+            direct_change=to_api_direct_change_heuristic(
+                change_heuristics.direct_change
+            ),
+            multi_input_change=to_api_multi_input_change_heuristic(
+                change_heuristics.multi_input_change
+            ),
+        )
+
+    # CoinJoin heuristics: flat models, pass through via model_validate
+    api_coinjoin = None
+    cj = pydantic_heuristics.coinjoin_heuristics
+    if cj is not None:
+        cj_data = cj.model_dump()
+
+        # Keep backward compatibility between service and API naming for
+        # JoinMarket denomination fields.
+        joinmarket = cj_data.get("joinmarket")
+        if joinmarket is not None and "denomination_sat" not in joinmarket:
+            if "pool_denomination" in joinmarket:
+                joinmarket["denomination_sat"] = joinmarket.pop("pool_denomination")
+            elif "common_input_denomination" in joinmarket:
+                joinmarket["denomination_sat"] = joinmarket.pop(
+                    "common_input_denomination"
+                )
+
+        api_coinjoin = ApiCoinJoinHeuristics.model_validate(cj_data)
+
+    return ApiUtxoHeuristics(
+        change_heuristics=api_change,
+        coinjoin_heuristics=api_coinjoin,
+    )
+
+
 def to_api_tx_utxo(pydantic_tx: PydanticTxUtxo) -> TxUtxo:
     """Convert service TxUtxo to API TxUtxo."""
     return TxUtxo(
@@ -282,6 +400,7 @@ def to_api_tx_utxo(pydantic_tx: PydanticTxUtxo) -> TxUtxo:
         outputs=[to_api_tx_value(out) for out in pydantic_tx.outputs]
         if pydantic_tx.outputs
         else None,
+        heuristics=to_api_utxo_heuristics(pydantic_tx.heuristics),
     )
 
 

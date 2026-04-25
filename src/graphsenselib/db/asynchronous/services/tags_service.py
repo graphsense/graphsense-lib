@@ -284,7 +284,17 @@ class TagsService:
                 if best_cluster_tag is not None:
                     is_direct_tag = best_cluster_tag.identifier == address
                     if not is_direct_tag:
-                        tags.append(best_cluster_tag)
+                        # Insert sorted by confidence_level descending
+                        insert_pos = next(
+                            (
+                                i
+                                for i, t in enumerate(tags)
+                                if t.confidence_level
+                                < best_cluster_tag.confidence_level
+                            ),
+                            len(tags),
+                        )
+                        tags.insert(insert_pos, best_cluster_tag)
         elif (
             include_best_cluster_tag
             and not is_eth_like(currency)

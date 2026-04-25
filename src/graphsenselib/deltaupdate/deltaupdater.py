@@ -25,7 +25,7 @@ def adjust_start_block(db, start_block) -> int:
 def find_import_range(
     db,
     start_block_overwrite,
-    end_block_overwrite,
+    end_block_overwrite=None,
     forward_fill_rates=False,
     disable_safety_checks=False,
 ):

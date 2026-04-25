@@ -262,10 +262,34 @@ class TagStore(object):
         tag_data = []
         address_data = []
         tag_concepts = []
+        seen_tag_keys = set()
+        skipped_count = 0
         for tag in tagpack.get_unique_tags():
-            tag_data.append(
-                _get_tag(tag, tagpack_id, tag_type_default, actor_resolve_mapping)
+            tag_tuple = _get_tag(
+                tag, tagpack_id, tag_type_default, actor_resolve_mapping
             )
+            # Extract unique key from tag_tuple: (identifier, network, label, source)
+            # Tuple indices: 0=label, 1=source, 2=identifier, 4=network
+            unique_key = (tag_tuple[2], tag_tuple[4], tag_tuple[0], tag_tuple[1])
+
+            if unique_key in seen_tag_keys:
+                # Duplicate in incoming payload, skip it
+                identifier, network, label, source = unique_key
+                context = tag.all_fields.get("context")
+                logger.warning(
+                    "Duplicate tag in incoming tagpack payload, skipping insertion: "
+                    "label=%s, identifier=%s, network=%s, source=%s, context=%s",
+                    label,
+                    identifier,
+                    network,
+                    source,
+                    context,
+                )
+                skipped_count += 1
+                continue
+
+            seen_tag_keys.add(unique_key)
+            tag_data.append(tag_tuple)
             adr_and_net = _get_network_and_address(tag)
             if adr_and_net is not None:
                 address_data.append(adr_and_net)
@@ -279,6 +303,12 @@ class TagStore(object):
 
         # insert remaining items
         insert_tags_batch(tag_data, tag_concepts, address_data)
+
+        if skipped_count > 0:
+            logger.info(
+                f"Skipped {skipped_count} tag(s) for tagpack {tagpack_id} "
+                "because they were duplicates in the incoming payload"
+            )
 
     def actorpack_exists(self, prefix, actorpack_name):
         if not self.existing_actorpacks:
@@ -965,7 +995,14 @@ def _get_tag(tag, tagpack_id, tag_type_default, actor_resolve_mapping=None):
 
 def _perform_address_modifications(address, network):
     if "BCH" == network.upper() and address.startswith("bitcoincash"):
-        address = to_legacy_address(address)
+        try:
+            address = to_legacy_address(address)
+        except Exception as exc:
+            logger.warning(
+                "Could not normalize BCH cash address during insert; using original address as-is: %s (%s)",
+                address,
+                exc,
+            )
 
     elif "ETH" == network.upper():
         address = address.lower()

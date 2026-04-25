@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.common import LabeledItemRef
@@ -13,6 +13,7 @@ ADDRESS_EXAMPLE = {
     "currency": "btc",
     "address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
     "entity": 264711,
+    "cluster": 264711,
     "fresh_cluster_id": 264800,
     "balance": VALUES_EXAMPLE,
     "total_received": VALUES_EXAMPLE,
@@ -34,7 +35,12 @@ class Address(APIModel):
 
     currency: str
     address: str
-    entity: int
+    entity: int = Field(
+        description="Deprecated alias of `cluster`. Use `cluster` instead; this "
+        "field is retained for backwards compatibility and will be removed in a "
+        "future release.",
+        json_schema_extra={"deprecated": True},
+    )
     fresh_cluster_id: Optional[int] = None
     balance: Values
     total_received: Values
@@ -50,14 +56,27 @@ class Address(APIModel):
     total_tokens_spent: Optional[dict[str, Values]] = None
     actors: Optional[list[LabeledItemRef]] = None
     is_contract: Optional[bool] = None
-    status: Optional[str] = None
+    status: Optional[str] = Field(
+        default=None,
+        description="Legacy field. Do not use — retained only for backwards "
+        "compatibility and will be removed in a future release.",
+        json_schema_extra={"deprecated": True},
+    )
     # tags field used by test fixtures only, excluded from serialization and schema
     tags: Optional[list[Any]] = Field(default=None, exclude=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cluster(self) -> int:
+        """Address cluster ID (preferred alias for the deprecated `entity` field)."""
+        return self.entity
 
     def to_dict(self, shallow: bool = False) -> dict[str, Any]:
         """Override to exclude test-only fields from serialization."""
         result = super().to_dict(shallow=shallow)
         result.pop("tags", None)
+        if shallow and "cluster" not in result:
+            result["cluster"] = self.entity
         return result
 
 

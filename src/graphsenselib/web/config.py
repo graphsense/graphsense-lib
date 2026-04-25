@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.config.tagstore_config import TagStoreReaderConfig
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -51,9 +51,9 @@ class GSRestConfig(BaseSettings):
         default_factory=CassandraConfig, description="Database configuration"
     )
     tagstore: Optional[TagStoreReaderConfig] = Field(
-        default_factory=TagStoreReaderConfig,
+        default=None,
         alias="gs-tagstore",
-        description="Tagstore configuration",
+        description="Tagstore configuration (optional)",
     )
     ALLOWED_ORIGINS: Union[str, List[str]] = Field(
         default="*", description="CORS allowed origins"
@@ -103,8 +103,71 @@ class GSRestConfig(BaseSettings):
         description="Disable API key authentication (removes security scheme from OpenAPI spec)",
     )
 
+    ensure_tagstore_schema_on_startup: bool = Field(
+        default=False,
+        alias="ensure-tagstore-schema-on-startup",
+        description=(
+            "Initialize TagStore schema during REST startup when required tables/views "
+            "are missing"
+        ),
+    )
+    docs_logo_url: Optional[str] = Field(
+        default=None, description="Custom logo URL shown in Swagger UI and ReDoc"
+    )
+    docs_favicon_url: Optional[str] = Field(
+        default=None, description="Custom favicon URL shown in Swagger UI and ReDoc"
+    )
+    docs_swagger_crosslink_url: Optional[str] = Field(
+        default="/docs",
+        description="URL linked from Swagger UI docs page",
+    )
+    docs_swagger_crosslink_label: str = Field(
+        default="ReDoc",
+        description="Label for cross-link shown on Swagger UI docs page",
+    )
+    docs_redoc_crosslink_url: Optional[str] = Field(
+        default="/ui",
+        description="URL linked from ReDoc docs page",
+    )
+    docs_redoc_crosslink_label: str = Field(
+        default="Try the API",
+        description="Label for cross-link shown on ReDoc docs page",
+    )
+    docs_external_url: Optional[str] = Field(
+        default=None,
+        description="External docs URL linked from Swagger UI and ReDoc pages",
+    )
+    docs_external_label: str = Field(
+        default="External Docs",
+        description="Label for external docs URL shown on docs pages",
+    )
+    docs_python_client_url: Optional[str] = Field(
+        default="https://github.com/graphsense/graphsense-lib/tree/master/clients/python",
+        description="Python client docs URL linked from Swagger UI and ReDoc pages",
+    )
+    docs_python_client_label: str = Field(
+        default="Python Client Docs",
+        description="Label for Python client docs URL shown on docs pages",
+    )
+    docs_contact_name: str = Field(
+        default="Iknaio Cryptoasset Analytics GmbH",
+        description="Contact name shown in OpenAPI info.contact",
+    )
+    docs_contact_email: str = Field(
+        default="contact@iknaio.com",
+        description="Contact email shown in OpenAPI info.contact",
+    )
+    docs_contact_url: str = Field(
+        default="https://www.iknaio.com/",
+        description="Contact website shown in OpenAPI info.contact",
+    )
+
     plugins: List[str] = Field(
         default_factory=list, description="List of plugin modules to load"
+    )
+    slack_topics: Dict[str, SlackTopic] = Field(
+        default_factory=dict,
+        description="Slack topics/hooks for REST app (e.g. exceptions, info)",
     )
     slack_info_hook: Dict[str, SlackTopic] = Field(
         default_factory=dict, description="Slack info hook"
@@ -113,6 +176,20 @@ class GSRestConfig(BaseSettings):
     tag_access_logger: Optional[TagAccessLoggerConfig] = Field(
         default=None, description="Tag access logger configuration"
     )
+
+    @model_validator(mode="after")
+    def load_tagstore_from_env(self) -> "GSRestConfig":
+        """Populate tagstore from GRAPHSENSE_TAGSTORE_READ_* env vars when unset."""
+        if self.tagstore is not None:
+            return self
+
+        try:
+            self.tagstore = TagStoreReaderConfig()
+        except ValidationError:
+            # No valid env-provided tagstore config; keep optional field unset.
+            return self
+
+        return self
 
     def get_plugin_config(self, plugin_name: str) -> Optional[Dict[str, Any]]:
         """Get configuration for a specific plugin"""
@@ -129,6 +206,9 @@ class GSRestConfig(BaseSettings):
             return getattr(self.database, config_key)
         # Fall back to default
         return default
+
+    def get_slack_hooks_by_topic(self, topic: str) -> Optional[SlackTopic]:
+        return self.slack_topics.get(topic)
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "GSRestConfig":
@@ -152,5 +232,16 @@ class GSRestConfig(BaseSettings):
             config_dict["gs-tagstore"] = TagStoreReaderConfig(
                 **config_dict["gs-tagstore"]
             )
+
+        if "slack_topics" in config_dict and isinstance(
+            config_dict["slack_topics"], dict
+        ):
+            converted_topics = {}
+            for topic_name, topic_data in config_dict["slack_topics"].items():
+                if isinstance(topic_data, dict):
+                    converted_topics[topic_name] = SlackTopic(**topic_data)
+                else:
+                    converted_topics[topic_name] = topic_data
+            config_dict["slack_topics"] = converted_topics
 
         return cls(**config_dict)

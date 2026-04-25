@@ -341,12 +341,51 @@ def test_list_address_txs(client):
     assert [x["currency"] for x in result["address_txs"]] == ["eth", "eth", "eth"]
     assert [x["timestamp"] for x in result["address_txs"]] == [17, 16, 15]
 
+
+def test_list_address_txs_direction_validation(client):
+    path = "/{currency}/addresses/{address}/txs"
+    path_with_direction = path + "?direction={direction}"
+    path_with_range = (
+        path_with_direction + "&min_height={min_height}&max_height={max_height}"
+    )
+    path_with_range_and_tc = path_with_range + "&token_currency={token_currency}"
+    path_with_range_and_tc_no_dir = (
+        path + "?min_height={min_height}&max_height={max_height}&token_currency={token_currency}"
+    )
+
+    # valid directions accepted
+    status, _ = raw_request(
+        client, path_with_direction, currency="btc", address=address2.address, direction="in"
+    )
+    assert status == 200
+
+    status, _ = raw_request(
+        client, path_with_direction, currency="btc", address=address2.address, direction="out"
+    )
+    assert status == 200
+
+    # omitting direction is also valid
+    status, _ = raw_request(
+        client, path, currency="btc", address=address2.address, direction=None
+    )
+    assert status == 200
+
+    # invalid direction rejected with 422
+    status, body = raw_request(
+        client, path_with_direction, currency="btc", address=address2.address, direction="invalid"
+    )
+    assert status == 422
+
+    status, body = raw_request(
+        client, path_with_direction, currency="eth", address=eth_address.address, direction="both"
+    )
+    assert status == 422
+
     result = get_json(
         client,
-        path_with_range_and_tc,
+        path_with_range_and_tc_no_dir,
         currency="eth",
         address=eth_address2.address,
-        direction="",
         min_height=2,
         max_height=2,
         token_currency="",
@@ -358,10 +397,9 @@ def test_list_address_txs(client):
 
     result = get_json(
         client,
-        path_with_range_and_tc,
+        path_with_range_and_tc_no_dir,
         currency="eth",
         address=eth_address2.address,
-        direction="",
         min_height=2,
         max_height=2,
         token_currency="weth",
