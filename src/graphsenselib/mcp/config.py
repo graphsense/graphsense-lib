@@ -1,9 +1,11 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# TODO(deprecation): remove with _legacy.py
+from graphsenselib.config._legacy import _emit_class_deprecation
 from graphsenselib.web.config import LoggingConfig
 
 
@@ -46,6 +48,11 @@ class GSMCPConfig(BaseSettings):
         env_nested_delimiter="__",
         extra="allow",
     )
+
+    def __init__(self, **kwargs: Any) -> None:
+        # TODO(deprecation): remove with _legacy.py
+        _emit_class_deprecation("GSMCPConfig", "graphsenselib.config.Settings.mcp")
+        super().__init__(**kwargs)
 
     enabled: bool = Field(
         default=True,

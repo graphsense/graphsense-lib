@@ -1,9 +1,21 @@
+from typing import Any
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# TODO(deprecation): remove with _legacy.py
+from ._legacy import _emit_class_deprecation
 
 
 class TagStoreReaderConfig(BaseSettings):
     """Configuration for TagStore database connection and settings."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        # TODO(deprecation): remove with _legacy.py
+        _emit_class_deprecation(
+            "TagStoreReaderConfig", "graphsenselib.config.Settings.tagstore"
+        )
+        super().__init__(**kwargs)
 
     # Required fields
     url: str = Field(..., description="Database connection URL")

@@ -41,11 +41,16 @@ dev: install-dev
 
 DANGEROUSLY_ACCELERATE_TESTS ?= 0
 
+# Warnings-as-errors is configured via [tool.pytest.ini_options]
+# filterwarnings in pyproject.toml (error + narrow whitelist for
+# intentional deprecation nudges). Passing -W error on the CLI here
+# would override those whitelist entries (Python checks CLI filters
+# before ini filters), so don't add it.
 ifeq ($(DANGEROUSLY_ACCELERATE_TESTS),1)
-PYTEST_OPTS := -x -rx -vv --capture=no -W error
+PYTEST_OPTS := -x -rx -vv --capture=no
 PYTEST_MARK := -m "not slow"
 else
-PYTEST_OPTS := -x -rx -vv --cov=src --capture=no -W error --cov-report term-missing
+PYTEST_OPTS := -x -rx -vv --cov=src --capture=no --cov-report term-missing
 PYTEST_MARK :=
 endif
 
@@ -53,7 +58,7 @@ test: install-dev
 	DANGEROUSLY_ACCELERATE_TESTS=$(DANGEROUSLY_ACCELERATE_TESTS) uv run --exact --all-extras pytest $(PYTEST_OPTS) $(PYTEST_MARK)
 
 test-ci:
-	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no -W error --cov-report term-missing
+	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
 
 test-with-base-dependencies-ci:
 	uv run --exact --no-dev --group testing --extra conversions --extra ingest --extra tagpacks --extra web pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
