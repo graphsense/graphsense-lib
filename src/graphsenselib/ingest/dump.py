@@ -129,6 +129,42 @@ PARTITIONSIZES = {
 }
 
 
+def _abort_on_sink_divergence(currency, sink_heights):
+    """Refuse to ingest if registered sinks disagree on their highest block.
+
+    Empty sinks (None) and sinks at the same height are aligned. Any other
+    combination is divergence: writing forward from one sink's value would
+    leave the others with a gap or duplicate writes.
+    """
+    distinct = {h for _, h in sink_heights if h is not None}
+    has_empty = any(h is None for _, h in sink_heights)
+    aligned = len(distinct) <= 1 and not (distinct and has_empty)
+    if aligned:
+        return
+
+    target = max(distinct)
+    rows = "\n".join(
+        f"  - {name}: " + (f"block {h:,}" if h is not None else "(empty)")
+        for name, h in sink_heights
+    )
+    laggards = [(name, h) for name, h in sink_heights if h != target]
+    recovery = "\n".join(
+        f"  graphsense-cli ingest from-node --currency {currency} "
+        f"--sinks {name} --start-block {h + 1 if h is not None else 0} "
+        f"--end-block {target}"
+        for name, h in laggards
+    )
+    logger.error(
+        "Sink divergence detected — refusing to ingest:\n"
+        f"{rows}\n\n"
+        f"Highest is block {target:,}. To catch up the lagging sinks, "
+        f"run each one alone:\n"
+        f"{recovery}\n"
+        "Then re-run this command."
+    )
+    sys.exit(13)
+
+
 def export_delta(
     currency: str,
     sources: List[str],
@@ -213,25 +249,30 @@ def export_delta(
 
         backoff = get_reorg_backoff_blocks(currency)
 
-        # Auto-detect start_block
-        if write_mode == "append" and delta_sink is not None:
-            highest_block = delta_sink.highest_block()
-            highest_block_node = source.get_last_synced_block_bo(backoff)
+        # Auto-detect start_block. In append mode every registered sink that
+        # tracks resume state must agree on its highest block — otherwise
+        # writing forward from any single sink's value silently leaves the
+        # others with a gap (cassandra) or duplicate writes (delta).
+        if write_mode == "append":
+            sink_heights = [(sink.name, sink.highest_block()) for sink in runner.sinks]
+            _abort_on_sink_divergence(currency, sink_heights)
 
-            if highest_block is not None:
-                if highest_block == highest_block_node:
+            agreed_height = next((h for _, h in sink_heights if h is not None), None)
+            if agreed_height is not None:
+                highest_block_node = source.get_last_synced_block_bo(backoff)
+                if agreed_height == highest_block_node:
                     logger.info(
-                        f"Data already present up to highest block {highest_block:,}, "
-                        f"no need to append."
+                        f"Data already present up to highest block "
+                        f"{agreed_height:,}, no need to append."
                     )
                     sys.exit(12)
 
                 if start_block is None:
-                    start_block = highest_block + 1
+                    start_block = agreed_height + 1
                 else:
-                    assert start_block > highest_block, (
-                        f"Start block ({start_block:,}) must be higher than the highest "
-                        f"block already written ({highest_block:,})"
+                    assert start_block > agreed_height, (
+                        f"Start block ({start_block:,}) must be higher than the "
+                        f"highest block already written ({agreed_height:,})"
                     )
             else:
                 assert start_block is not None, (
@@ -239,10 +280,6 @@ def export_delta(
                     "for append mode if no data is present "
                     "yet."
                 )
-        elif delta_sink is None and start_block is None and db is not None:
-            # No delta sink — auto-detect from Cassandra
-            highest_block = db.raw.get_highest_block()
-            start_block = (highest_block + 1) if highest_block is not None else 0
 
         start_block, end_block = source.validate_blockrange(
             start_block, end_block, backoff

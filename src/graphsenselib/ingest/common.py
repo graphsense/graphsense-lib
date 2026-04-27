@@ -175,10 +175,17 @@ class Transformer(ABC):
 
 
 class Sink(ABC):
+    name: str = "sink"
+
     @abstractmethod
     def write(self, block_range_content: BlockRangeContent):
         pass
 
     def lock_name(self) -> Optional[str]:
         """Return a lock name for this sink, or None if no locking is needed."""
+        return None
+
+    def highest_block(self) -> Optional[int]:
+        """Return the highest block already written, or None when this sink
+        does not track resume state (or has no data yet)."""
         return None

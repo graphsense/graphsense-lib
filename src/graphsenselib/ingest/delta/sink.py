@@ -407,6 +407,8 @@ UTXO_DBWRITE_CONFIG = DBWriteConfig(
 
 
 class DeltaDumpWriter(Sink):
+    name = "delta"
+
     def __init__(
         self,
         directory: str,
