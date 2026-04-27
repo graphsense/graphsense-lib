@@ -3,11 +3,23 @@ import re
 from pathlib import Path
 
 
-SEMVER_BASE = r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-SEMVER_ALLOWED_PRERELEASE = r"(?:-(?:rc|dev)\.(0|[1-9]\d*))?"
+SEMVER_BASE = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 
-SEMVER_CORE_RE = re.compile(rf"^{SEMVER_BASE}{SEMVER_ALLOWED_PRERELEASE}$")
-SEMVER_WITH_V_RE = re.compile(rf"^v{SEMVER_BASE}{SEMVER_ALLOWED_PRERELEASE}$")
+# Pre-release per SemVer 2.0 §9: dot-separated identifiers of [0-9A-Za-z-];
+# numeric identifiers must not have leading zeroes.
+_PRERELEASE_IDENT = r"(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9A-Za-z-]*)"
+SEMVER_ALLOWED_PRERELEASE = rf"(?:-{_PRERELEASE_IDENT}(?:\.{_PRERELEASE_IDENT})*)?"
+
+# Build metadata per SemVer 2.0 §10: dot-separated identifiers of [0-9A-Za-z-].
+_BUILD_IDENT = r"[0-9A-Za-z-]+"
+SEMVER_ALLOWED_BUILD = rf"(?:\+{_BUILD_IDENT}(?:\.{_BUILD_IDENT})*)?"
+
+SEMVER_CORE_RE = re.compile(
+    rf"^{SEMVER_BASE}{SEMVER_ALLOWED_PRERELEASE}{SEMVER_ALLOWED_BUILD}$"
+)
+SEMVER_WITH_V_RE = re.compile(
+    rf"^v{SEMVER_BASE}{SEMVER_ALLOWED_PRERELEASE}{SEMVER_ALLOWED_BUILD}$"
+)
 
 
 def _extract(pattern: re.Pattern[str], text: str, source: str) -> str:
@@ -70,12 +82,12 @@ def main() -> int:
     if not _is_semver_core(api_version):
         errors.append(
             "src/graphsenselib/web/version.py __api_version__ must be "
-            f"SemVer x.y.z or x.y.z-(rc|dev).N, got: {api_version}"
+            f"SemVer 2.0, got: {api_version}"
         )
     if not _is_semver_core(client_version):
         errors.append(
             "clients/python/pyproject.toml version must be "
-            f"SemVer x.y.z or x.y.z-(rc|dev).N, got: {client_version}"
+            f"SemVer 2.0, got: {client_version}"
         )
 
     if errors:
