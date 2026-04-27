@@ -7,6 +7,8 @@ from typing import Optional
 
 import click
 
+from graphsense.ext.client import _looks_like_date
+
 from graphsense.cli.context import CliContext
 from graphsense.ext import bulk as bulk_mod
 from graphsense.ext import io as io_mod
@@ -241,10 +243,39 @@ def lookup_cluster(
 @click.command(name="lookup-tx")
 @click.argument("currency")
 @click.argument("tx_hashes", nargs=-1)
-@click.option("--with-io", is_flag=True, default=False)
-@click.option("--with-flows", is_flag=True, default=False)
-@click.option("--with-upstream", is_flag=True, default=False)
-@click.option("--with-downstream", is_flag=True, default=False)
+@click.option(
+    "--with-io",
+    is_flag=True,
+    default=False,
+    help="UTXO-only: fetch /inputs and /outputs. Silently skipped on "
+    "account-model chains (eth, trx, ...).",
+)
+@click.option(
+    "--with-flows",
+    is_flag=True,
+    default=False,
+    help="Account-model only: fetch /flows. Silently skipped on UTXO "
+    "chains (btc, ltc, ...).",
+)
+@click.option(
+    "--with-upstream",
+    is_flag=True,
+    default=False,
+    help="UTXO-only: fetch the txs that funded each input.",
+)
+@click.option(
+    "--with-downstream",
+    is_flag=True,
+    default=False,
+    help="UTXO-only: fetch the txs that spent each output.",
+)
+@click.option(
+    "--with-heuristics",
+    is_flag=True,
+    default=False,
+    help="UTXO-only: compute every available heuristic (change, "
+    "coinjoin, etc.) and return them on the base tx.",
+)
 @pass_ctx
 def lookup_tx(
     ctx: CliContext,
@@ -254,6 +285,7 @@ def lookup_tx(
     with_flows: bool,
     with_upstream: bool,
     with_downstream: bool,
+    with_heuristics: bool,
 ) -> None:
     """Look up one or more transactions."""
     pairs = _collect_id_network_pairs(ctx, tx_hashes, default_network=currency)
@@ -271,6 +303,7 @@ def lookup_tx(
                 with_flows=with_flows,
                 with_upstream=with_upstream,
                 with_downstream=with_downstream,
+                with_heuristics=with_heuristics,
             ).to_dict()
 
         return _one
@@ -307,28 +340,96 @@ def statistics(ctx: CliContext) -> None:
     _write(ctx, ctx.gs().statistics())
 
 
+def _parse_height_or_date(value: str, *, param_name: str) -> int | str:
+    """Accept either an integer height or an ISO 8601 date / datetime string.
+
+    Date forms passed to the server are parsed with `dateutil.parser.parse`,
+    so we mirror that here. Anything else gets a click usage error
+    (instead of leaking a `ValueError` traceback from a downstream `int()`).
+    """
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    if _looks_like_date(value):
+        return value
+    raise click.BadParameter(
+        f"{value!r} is not a valid block height or ISO 8601 date/datetime "
+        "(e.g. 825000, 2024-01-15, or 2024-01-15T12:34:56Z)",
+        param_hint=param_name,
+    )
+
+
 @click.command(name="exchange-rates")
 @click.argument("currency")
-@click.argument("height", type=int)
+@click.argument("height_or_date")
 @pass_ctx
-def exchange_rates(ctx: CliContext, currency: str, height: int) -> None:
-    _write(ctx, ctx.gs().exchange_rates(height, currency=currency))
+def exchange_rates(ctx: CliContext, currency: str, height_or_date: str) -> None:
+    """Fiat exchange rates at a block height or at a `YYYY-MM-DD` date."""
+    _write(
+        ctx,
+        ctx.gs().exchange_rates(
+            _parse_height_or_date(height_or_date, param_name="HEIGHT_OR_DATE"),
+            currency=currency,
+        ),
+    )
 
 
 @click.command(name="block")
 @click.argument("currency")
-@click.argument("height", type=int)
+@click.argument("height_or_date")
 @pass_ctx
-def block(ctx: CliContext, currency: str, height: int) -> None:
-    _write(ctx, ctx.gs().block(height, currency=currency))
+def block(ctx: CliContext, currency: str, height_or_date: str) -> None:
+    """Look up a block by height or by `YYYY-MM-DD` date (closest block ≤ date)."""
+    _write(
+        ctx,
+        ctx.gs().block(
+            _parse_height_or_date(height_or_date, param_name="HEIGHT_OR_DATE"),
+            currency=currency,
+        ),
+    )
 
 
 @click.command(name="tags-for")
 @click.argument("currency")
 @click.argument("address")
+@click.option(
+    "--include-best-cluster-tag/--no-include-best-cluster-tag",
+    default=True,
+    help="Inherit the best cluster tag down to the address level (default on).",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Maximum number of tags to return. Default: unlimited (walk all pages).",
+)
+@click.option(
+    "--page-size",
+    type=int,
+    default=100,
+    help="Server page size for the underlying paginated request (default 100).",
+)
 @pass_ctx
-def tags_for(ctx: CliContext, currency: str, address: str) -> None:
-    _write(ctx, ctx.gs().tags_for(address, currency=currency))
+def tags_for(
+    ctx: CliContext,
+    currency: str,
+    address: str,
+    include_best_cluster_tag: bool,
+    limit: Optional[int],
+    page_size: int,
+) -> None:
+    """List attribution tags for an address (auto-paginates)."""
+    _write(
+        ctx,
+        ctx.gs().tags_for(
+            address,
+            currency=currency,
+            include_best_cluster_tag=include_best_cluster_tag,
+            limit=limit,
+            page_size=page_size,
+        ),
+    )
 
 
 @click.command(name="actor")

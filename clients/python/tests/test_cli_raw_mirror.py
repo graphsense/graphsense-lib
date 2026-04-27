@@ -55,14 +55,14 @@ def test_raw_addresses_has_stable_methods():
 
 
 def test_raw_entities_hidden_unless_flag_set(monkeypatch):
-    monkeypatch.delenv("GS_SHOW_DEPRECATED", raising=False)
+    monkeypatch.delenv("GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS", raising=False)
     # Re-import the built group to respect env at build time.
     from graphsense.cli.raw import build_raw_group
 
     group = build_raw_group()
     assert "entities" not in group.commands
 
-    monkeypatch.setenv("GS_SHOW_DEPRECATED", "1")
+    monkeypatch.setenv("GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS", "1")
     group2 = build_raw_group()
     assert "entities" in group2.commands
 

@@ -136,6 +136,65 @@ def test_lookup_address_without_bundling_does_only_one_call(
     assert len(http_mock.calls) == 1
 
 
+def test_lookup_tx_with_io_fetches_inputs_and_outputs(
+    gs: GraphSense, http_mock, sample_tx_utxo
+):
+    """`with_io=True` fans out to both /inputs and /outputs for UTXO txs."""
+    http_mock.add("GET", r"/btc/txs/0xabc/inputs(\?|$)", json_body=[])
+    http_mock.add("GET", r"/btc/txs/0xabc/outputs(\?|$)", json_body=[])
+    http_mock.add("GET", r"/btc/txs/0xabc(\?|$)", json_body=sample_tx_utxo)
+
+    bundle = gs.lookup_tx("0xabc", with_io=True)
+    assert bundle.io == {"inputs": [], "outputs": []}
+    urls = [c.url for c in http_mock.calls]
+    assert any("/inputs" in u for u in urls)
+    assert any("/outputs" in u for u in urls)
+
+
+def test_lookup_tx_with_io_skipped_for_account_chain(
+    gs: GraphSense, http_mock, sample_tx_account
+):
+    """Account-model chains (eth, ...) don't implement /io; we must skip it."""
+    http_mock.add("GET", r"/btc/txs/0xabc(\?|$)", json_body=sample_tx_account)
+    bundle = gs.lookup_tx("0xabc", with_io=True)
+    assert bundle.io is None
+    # No /inputs or /outputs requests went out.
+    urls = [c.url for c in http_mock.calls]
+    assert not any(u.endswith("/inputs") or "/inputs?" in u for u in urls)
+    assert not any(u.endswith("/outputs") or "/outputs?" in u for u in urls)
+
+
+def test_lookup_tx_with_flows_skipped_for_utxo_chain(
+    gs: GraphSense, http_mock, sample_tx_utxo
+):
+    """`/flows` is account-only; UTXO chains must not hit it."""
+    http_mock.add("GET", r"/btc/txs/0xabc(\?|$)", json_body=sample_tx_utxo)
+    bundle = gs.lookup_tx("0xabc", with_flows=True)
+    assert bundle.flows is None
+    assert not any("/flows" in c.url for c in http_mock.calls)
+
+
+def test_lookup_tx_with_flows_used_for_account_chain(
+    gs: GraphSense, http_mock, sample_tx_account
+):
+    http_mock.add("GET", r"/btc/txs/0xabc/flows(\?|$)", json_body={"flows": []})
+    http_mock.add("GET", r"/btc/txs/0xabc(\?|$)", json_body=sample_tx_account)
+    bundle = gs.lookup_tx("0xabc", with_flows=True)
+    assert bundle.flows is not None
+    assert any("/flows" in c.url for c in http_mock.calls)
+
+
+def test_lookup_tx_with_heuristics_passes_include_all(
+    gs: GraphSense, http_mock, sample_tx_utxo
+):
+    """`with_heuristics=True` must hit get_tx with `include_heuristics=all`."""
+    http_mock.add("GET", r"/btc/txs/0xabc(\?|$)", json_body=sample_tx_utxo)
+    gs.lookup_tx("0xabc", with_heuristics=True)
+    base_calls = [c for c in http_mock.calls if c.url.split("?")[0].endswith("/0xabc")]
+    assert base_calls, "base get_tx call missing"
+    assert "include_heuristics=all" in base_calls[0].url
+
+
 def test_search_passthrough(gs: GraphSense, http_mock):
     http_mock.add(
         "GET",

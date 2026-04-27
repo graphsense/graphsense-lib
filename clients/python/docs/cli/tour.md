@@ -18,9 +18,12 @@ graphsense lookup-address btc 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
 graphsense lookup-address btc 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa \
    --with-tags --with-cluster --with-tag-summary
 
-# A transaction with upstream + downstream traces
+# A UTXO transaction with upstream + downstream traces and heuristics
 graphsense lookup-tx btc a1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d \
-   --with-io --with-upstream --with-downstream
+   --with-io --with-upstream --with-downstream --with-heuristics
+
+# An account-model (eth) transaction with token/value flows
+graphsense lookup-tx eth 0x... --with-flows
 
 # A cluster with its top addresses
 graphsense lookup-cluster btc 17 --with-top-addresses

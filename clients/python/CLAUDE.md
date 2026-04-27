@@ -60,7 +60,7 @@ across regenerations.
 `EntitiesApi` (and related `entity`-prefixed fields) are deprecated; use
 `ClustersApi` / `cluster` instead. The ext layer hides deprecated API groups
 from `GraphSense.raw` by default (opt-in with `show_deprecated=True` or
-`GS_SHOW_DEPRECATED=1` env var). A response carrying an RFC 8594 `Deprecation`
+`GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1` env var). A response carrying an RFC 8594 `Deprecation`
 header triggers a one-shot stderr warning — see `graphsense/ext/deprecation.py`.
 
 ## Quality gates

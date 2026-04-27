@@ -43,7 +43,10 @@ class CliContext:
                 api_key=self.api_key,
                 host=self.host,
                 quiet_deprecation=self.quiet,
-                show_deprecated=os.environ.get("GS_SHOW_DEPRECATED") == "1",
+                show_deprecated=os.environ.get(
+                    "GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS"
+                )
+                == "1",
                 # Resolve click's current stderr stream on each write so
                 # `CliRunner(mix_stderr=False)` on click 8.1 captures it.
                 deprecation_stream=lambda: click.get_text_stream("stderr"),

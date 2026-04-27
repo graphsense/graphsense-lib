@@ -15,6 +15,7 @@ except ImportError as exc:  # pragma: no cover - only hit without [cli]
 from graphsense.cli.bulk_cmd import bulk_command
 from graphsense.cli.context import CliContext
 from graphsense.cli.convenience import register_convenience_commands
+from graphsense.cli.errors import FriendlyErrorGroup
 from graphsense.cli.raw import build_raw_group
 from graphsense.ext.client import API_KEY_ENV_VARS, HOST_ENV_VARS
 
@@ -26,6 +27,7 @@ INPUT_FORMATS = click.Choice(["auto", "json", "csv", "lines"], case_sensitive=Fa
 
 
 @click.group(
+    cls=FriendlyErrorGroup,
     help="GraphSense command-line interface. "
     "Query blockchain analytics, attribute addresses, and work with "
     "JSON/CSV pipelines (`jq`/`sed`-friendly).",

@@ -29,7 +29,9 @@ _PRIVATE_PREFIXES = ("_",)
 def build_raw_group() -> click.Group:
     """Assemble the `raw` group by reflecting on `graphsense.api` classes."""
 
-    show_deprecated = os.environ.get("GS_SHOW_DEPRECATED") == "1"
+    show_deprecated = (
+        os.environ.get("GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS") == "1"
+    )
 
     @click.group(
         name="raw",
@@ -117,10 +119,10 @@ def _make_method_command(
         gs = cli_ctx.gs()
         api_instance = getattr(gs.raw, api_key, None)
         if api_instance is None:
-            # deprecated API; surface via GS_SHOW_DEPRECATED
+            # deprecated API; surface via GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS
             raise click.UsageError(
                 f"API group {api_key!r} not available (deprecated? "
-                f"try GS_SHOW_DEPRECATED=1)"
+                f"try GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1)"
             )
         fn = getattr(api_instance, _method_name)
         call_kwargs: dict[str, Any] = {}

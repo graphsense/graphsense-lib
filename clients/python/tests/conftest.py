@@ -170,6 +170,11 @@ def sample_tx_account() -> dict[str, Any]:
 
 
 @pytest.fixture
+def sample_tx_utxo() -> dict[str, Any]:
+    return _load("tx_utxo_btc.json")
+
+
+@pytest.fixture
 def sample_tags() -> dict[str, Any]:
     return _load("tags.json")
 

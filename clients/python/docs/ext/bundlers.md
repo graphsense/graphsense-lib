@@ -28,16 +28,25 @@ route, keyed off the primary Address's `cluster` field — *not* the deprecated
 
 ## `lookup_tx`
 
-| Flag                     | Underlying call                      | Bundle attr   |
-| ------------------------ | ------------------------------------ | ------------- |
-| *(always)*               | `TxsApi.get_tx(currency, tx_hash)`    | `data`        |
-| `with_io=True`           | `TxsApi.get_tx_io(...)`               | `io`          |
-| `with_flows=True`        | `TxsApi.list_tx_flows(...)`           | `flows`       |
-| `with_upstream=True`     | `TxsApi.get_spending_txs(...)`        | `upstream`    |
-| `with_downstream=True`   | `TxsApi.get_spent_in_txs(...)`        | `downstream`  |
+| Flag                     | Underlying call                                    | Bundle attr   | Applies to |
+| ------------------------ | -------------------------------------------------- | ------------- | ---------- |
+| *(always)*               | `TxsApi.get_tx(currency, tx_hash)`                 | `data`        | both       |
+| `with_io=True`           | `TxsApi.get_tx_io(..., 'inputs')` + `'outputs'` (parallel) | `io` (`{"inputs": ..., "outputs": ...}`) | UTXO only |
+| `with_upstream=True`     | `TxsApi.get_spending_txs(...)`                     | `upstream`    | UTXO only  |
+| `with_downstream=True`   | `TxsApi.get_spent_in_txs(...)`                     | `downstream`  | UTXO only  |
+| `with_heuristics=True`   | `get_tx(..., include_heuristics=["all"])`          | (on `data`)   | UTXO only  |
+| `with_flows=True`        | `TxsApi.list_tx_flows(...)`                        | `flows`       | account only |
 
-Note: the `/spending` endpoint is the *backward* trace (counter-intuitive naming
-in the underlying REST API).
+The model split is detected from `tx_type` on the base `get_tx` response
+(`"utxo"` vs `"account"`). Flags that don't match the chain's model are
+silently skipped — the corresponding bundle attribute stays `None` —
+which lets the same invocation work across mixed-network inputs.
+
+Heuristic results land on the base tx model (under `data.heuristics`) and
+not as a separate bundle attribute, mirroring the REST shape.
+
+Note: the `/spending` endpoint is the *backward* trace (counter-intuitive
+naming in the underlying REST API).
 
 ## Response contract
 

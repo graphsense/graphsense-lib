@@ -38,7 +38,7 @@ graphsense raw addresses list-address-txs btc 1A1z... --pagesize 20
   the server trigger a one-line stderr warning (silence with `--quiet`).
 - **Non-deprecated endpoints only** on the flat commands. Deprecated APIs
   (`EntitiesApi`) are hidden under `graphsense raw` unless
-  `GS_SHOW_DEPRECATED=1` is set.
+  `GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1` is set.
 
 ## Full docs
 
