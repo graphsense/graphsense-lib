@@ -35,11 +35,11 @@ def _binary_to_bigint_string_udf():
     return bin_to_str
 
 
-def _write_bootstrapped_marker(spark, write_cassandra_fn):
-    """Write the `bootstrapped` row to the per-keyspace `state` table.
+def _write_ingest_complete_marker(spark, write_cassandra_fn):
+    """Write the `ingest_complete` row to the per-keyspace `state` table.
 
-    Spark-side equivalent of `graphsenselib.db.state.mark_bootstrapped` for
-    callers that write via the cassandra-spark connector instead of an
+    Spark-side equivalent of `graphsenselib.db.state.mark_ingest_complete`
+    for callers that write via the cassandra-spark connector instead of an
     AnalyticsDb. MUST be the very last write of a transformation run — REST
     auto-discovery treats this row's presence as the readiness signal.
     """
@@ -52,7 +52,7 @@ def _write_bootstrapped_marker(spark, write_cassandra_fn):
         TimestampType,
     )
 
-    from graphsenselib.db.state import BOOTSTRAPPED_KEY
+    from graphsenselib.db.state import INGEST_COMPLETE_KEY
 
     now = datetime.now(timezone.utc)
     schema = StructType(
@@ -62,7 +62,7 @@ def _write_bootstrapped_marker(spark, write_cassandra_fn):
             StructField("updated_at", TimestampType(), False),
         ]
     )
-    df = spark.createDataFrame([(BOOTSTRAPPED_KEY, now.isoformat(), now)], schema)
+    df = spark.createDataFrame([(INGEST_COMPLETE_KEY, now.isoformat(), now)], schema)
     write_cassandra_fn(df, "state")
 
 
@@ -261,8 +261,8 @@ class AccountTransformationBase:
             "log": self.transform_log,
         }
 
-    def write_bootstrapped_marker(self):
-        _write_bootstrapped_marker(self.spark, self._write_cassandra)
+    def write_ingest_complete_marker(self):
+        _write_ingest_complete_marker(self.spark, self._write_cassandra)
 
     def run(self, start_block, end_block, tables=None):
         targets = list(tables) if tables else list(self.TABLES)
@@ -278,9 +278,9 @@ class AccountTransformationBase:
                 methods[table](start_block, end_block)
         logger.info("Writing configuration...")
         self.write_configuration()
-        # MUST stay last — see graphsenselib.db.state.mark_bootstrapped.
-        logger.info("Writing bootstrap marker...")
-        self.write_bootstrapped_marker()
+        # MUST stay last — see graphsenselib.db.state.mark_ingest_complete.
+        logger.info("Writing ingest_complete marker...")
+        self.write_ingest_complete_marker()
         logger.info(f"{cls_name} complete.")
 
 

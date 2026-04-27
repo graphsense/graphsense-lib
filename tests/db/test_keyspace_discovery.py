@@ -61,21 +61,21 @@ def test_find_latest_raw_falls_back_to_static(discovery_db):
     assert discovery_db.find_latest_raw_keyspace("fallbacktest") == "fallbacktest_raw"
 
 
-def test_find_latest_raw_skips_unbootstrapped_newer(discovery_db):
+def test_find_latest_raw_skips_incomplete_newer(discovery_db):
     # disctest_btc_raw_20260401 is newer than _20260301 but its state table
-    # has no bootstrapped row -> must be skipped, _20260301 still wins.
+    # has no ingest_complete row -> must be skipped, _20260301 still wins.
     assert (
         discovery_db.find_latest_raw_keyspace("disctest_btc")
         == "disctest_btc_raw_20260301"
     )
 
 
-def test_find_latest_transformed_skips_unbootstrapped_with_higher_no_blocks(
+def test_find_latest_transformed_skips_incomplete_with_higher_no_blocks(
     discovery_db,
 ):
     # disctest_btc_transformed_20260501 has no_blocks=999 (highest) but its
-    # state table is missing the bootstrapped row -> must be skipped.
-    # _20260201 (no_blocks=500, bootstrapped) remains the winner.
+    # state table is missing the ingest_complete row -> must be skipped.
+    # _20260201 (no_blocks=500, ingest_complete) remains the winner.
     assert (
         discovery_db.find_latest_transformed_keyspace("disctest_btc")
         == "disctest_btc_transformed_20260201"
@@ -101,7 +101,7 @@ def test_find_latest_transformed_back_compat_no_state_table(discovery_db):
 
 def test_find_latest_raw_skips_state_table_with_only_other_keys(discovery_db):
     # discother_btc_raw_20260301 has a populated state table but no
-    # `bootstrapped` row (only an `in_progress` row). Discovery must skip it
-    # and fall back to the static name — the state table being non-empty
-    # must NOT count as bootstrapped.
+    # `ingest_complete` row (only an `in_progress` row). Discovery must skip
+    # it and fall back to the static name — the state table being non-empty
+    # must NOT count as ingest_complete.
     assert discovery_db.find_latest_raw_keyspace("discother_btc") == "discother_btc_raw"

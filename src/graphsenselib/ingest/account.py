@@ -9,7 +9,7 @@ import pandas as pd
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT, get_reorg_backoff_blocks
 from ..datatypes import BadUserInputError
 from ..db import AnalyticsDb
-from ..db.state import mark_bootstrapped
+from ..db.state import mark_ingest_complete
 from ..utils import (
     batch,
     check_timestamp,
@@ -854,8 +854,8 @@ def ingest(
         ingest_configuration_cassandra(
             db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN)
         )
-        # MUST stay last — see graphsenselib.db.state.mark_bootstrapped.
-        mark_bootstrapped(db, "raw")
+        # MUST stay last — see graphsenselib.db.state.mark_ingest_complete.
+        mark_ingest_complete(db, "raw")
 
 
 class LoadLogsTask(AbstractTask):
@@ -1294,8 +1294,8 @@ def ingest_async(
         ingest_configuration_cassandra(
             db, int(BLOCK_BUCKET_SIZE), int(TX_HASH_PREFIX_LEN)
         )
-        # MUST stay last — see graphsenselib.db.state.mark_bootstrapped.
-        mark_bootstrapped(db, "raw")
+        # MUST stay last — see graphsenselib.db.state.mark_ingest_complete.
+        mark_ingest_complete(db, "raw")
 
 
 def single_int_to_bytes(integer: int) -> bytes:

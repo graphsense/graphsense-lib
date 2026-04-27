@@ -165,19 +165,19 @@ def test_transaction_pre_berlin_no_access_list(spark, transformer):
     assert out.count() == 1
 
 
-def test_bootstrapped_marker_writes_state_row(spark, transformer):
+def test_ingest_complete_marker_writes_state_row(spark, transformer):
     """REST auto-discovery treats this row's presence as the readiness signal."""
     from datetime import datetime
 
-    from graphsenselib.db.state import BOOTSTRAPPED_KEY
+    from graphsenselib.db.state import INGEST_COMPLETE_KEY
 
-    transformer.write_bootstrapped_marker()
+    transformer.write_ingest_complete_marker()
     out = transformer._captured["state"]
 
     assert set(out.columns) == {"key", "value", "updated_at"}
     assert out.schema["updated_at"].dataType.simpleString() == "timestamp"
     row = out.collect()[0].asDict()
-    assert row["key"] == BOOTSTRAPPED_KEY
+    assert row["key"] == INGEST_COMPLETE_KEY
     # value is a tz-aware ISO string matching `updated_at` to the second.
     parsed = datetime.fromisoformat(row["value"])
     assert parsed.tzinfo is not None
