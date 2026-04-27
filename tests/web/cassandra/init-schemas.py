@@ -20,31 +20,31 @@ SIMPLE_REPLICATION_CONFIG = "{'class': 'SimpleStrategy', 'replication_factor': 1
 # Mirror of DISCOVERY_KEYSPACES in tests/conftest.py. Keep both in sync.
 DISCOVERY_KEYSPACES = [
     {"name": "disctest_btc_transformed_20260101", "kind": "transformed",
-     "no_blocks": 100, "has_state": True, "bootstrapped": True},
+     "no_blocks": 100, "has_state": True, "ingest_complete": True},
     {"name": "disctest_btc_transformed_20260201", "kind": "transformed",
-     "no_blocks": 500, "has_state": True, "bootstrapped": True},
+     "no_blocks": 500, "has_state": True, "ingest_complete": True},
     {"name": "disctest_btc_transformed_20260301", "kind": "transformed",
-     "no_blocks": None, "has_state": True, "bootstrapped": False},
+     "no_blocks": None, "has_state": True, "ingest_complete": False},
     {"name": "disctest_btc_transformed_20260401", "kind": "transformed",
-     "no_blocks": 200, "has_state": True, "bootstrapped": True},
+     "no_blocks": 200, "has_state": True, "ingest_complete": True},
     {"name": "disctest_btc_transformed_20260501", "kind": "transformed",
-     "no_blocks": 999, "has_state": True, "bootstrapped": False},
+     "no_blocks": 999, "has_state": True, "ingest_complete": False},
     {"name": "disctest_btc_raw", "kind": "raw",
-     "has_configuration": True, "has_state": True, "bootstrapped": True},
+     "has_configuration": True, "has_state": True, "ingest_complete": True},
     {"name": "disctest_btc_raw_20260101", "kind": "raw",
-     "has_configuration": True, "has_state": True, "bootstrapped": True},
+     "has_configuration": True, "has_state": True, "ingest_complete": True},
     {"name": "disctest_btc_raw_20260201_prod", "kind": "raw",
-     "has_configuration": True, "has_state": True, "bootstrapped": True},
+     "has_configuration": True, "has_state": True, "ingest_complete": True},
     {"name": "disctest_btc_raw_20260301", "kind": "raw",
-     "has_configuration": True, "has_state": True, "bootstrapped": True},
+     "has_configuration": True, "has_state": True, "ingest_complete": True},
     {"name": "disctest_btc_raw_20260401", "kind": "raw",
-     "has_configuration": True, "has_state": True, "bootstrapped": False},
+     "has_configuration": True, "has_state": True, "ingest_complete": False},
     {"name": "discbc_btc_transformed_20260301", "kind": "transformed",
-     "no_blocks": 700, "has_state": False, "bootstrapped": False},
+     "no_blocks": 700, "has_state": False, "ingest_complete": False},
     {"name": "discbc_btc_raw_20260301", "kind": "raw",
-     "has_configuration": True, "has_state": False, "bootstrapped": False},
+     "has_configuration": True, "has_state": False, "ingest_complete": False},
     {"name": "discother_btc_raw_20260301", "kind": "raw",
-     "has_configuration": True, "has_state": True, "bootstrapped": False,
+     "has_configuration": True, "has_state": True, "ingest_complete": False,
      "other_state_keys": ["in_progress"]},
 ]
 
@@ -81,10 +81,10 @@ def create_discovery_keyspaces(session):
                 f"CREATE TABLE IF NOT EXISTS {name}.state ("
                 "key text PRIMARY KEY, value text, updated_at timestamp)"
             )
-            if ks.get("bootstrapped"):
+            if ks.get("ingest_complete"):
                 session.execute(
                     f"INSERT INTO {name}.state (key, value, updated_at) "
-                    f"VALUES ('bootstrapped', '2026-04-24T00:00:00+00:00', "
+                    f"VALUES ('ingest_complete', '2026-04-24T00:00:00+00:00', "
                     f"toTimestamp(now()))"
                 )
             for other_key in ks.get("other_state_keys", []):

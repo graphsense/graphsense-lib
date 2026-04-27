@@ -92,7 +92,7 @@ SIMPLE_REPLICATION_CONFIG = "{'class': 'SimpleStrategy', 'replication_factor': 1
 # Per-entry fields:
 #   kind:            "raw" | "transformed"
 #   has_state:       True  -> create the state table
-#   bootstrapped:    True  -> insert a `bootstrapped` row in the state table
+#   ingest_complete: True  -> insert an `ingest_complete` row in the state table
 #   no_blocks:       (transformed) row to insert into summary_statistics; None
 #                    means create the table empty (used for the legacy "not
 #                    online" probe path when has_state is False)
@@ -104,36 +104,36 @@ DISCOVERY_KEYSPACES = [
         "kind": "transformed",
         "no_blocks": 100,
         "has_state": True,
-        "bootstrapped": True,
+        "ingest_complete": True,
     },
     {
         "name": "disctest_btc_transformed_20260201",
         "kind": "transformed",
         "no_blocks": 500,
         "has_state": True,
-        "bootstrapped": True,
+        "ingest_complete": True,
     },
     {
         "name": "disctest_btc_transformed_20260301",
         "kind": "transformed",
         "no_blocks": None,
         "has_state": True,
-        "bootstrapped": False,
+        "ingest_complete": False,
     },
     {
         "name": "disctest_btc_transformed_20260401",
         "kind": "transformed",
         "no_blocks": 200,
         "has_state": True,
-        "bootstrapped": True,
+        "ingest_complete": True,
     },
-    # 20260501 has the highest no_blocks but is NOT bootstrapped -> must be skipped.
+    # 20260501 has the highest no_blocks but is NOT ingest_complete -> must be skipped.
     {
         "name": "disctest_btc_transformed_20260501",
         "kind": "transformed",
         "no_blocks": 999,
         "has_state": True,
-        "bootstrapped": False,
+        "ingest_complete": False,
     },
     # === Raw: marker + date selection on the disctest network ===
     {
@@ -141,36 +141,36 @@ DISCOVERY_KEYSPACES = [
         "kind": "raw",
         "has_configuration": True,
         "has_state": True,
-        "bootstrapped": True,
+        "ingest_complete": True,
     },
     {
         "name": "disctest_btc_raw_20260101",
         "kind": "raw",
         "has_configuration": True,
         "has_state": True,
-        "bootstrapped": True,
+        "ingest_complete": True,
     },
     {
         "name": "disctest_btc_raw_20260201_prod",
         "kind": "raw",
         "has_configuration": True,
         "has_state": True,
-        "bootstrapped": True,
+        "ingest_complete": True,
     },
     {
         "name": "disctest_btc_raw_20260301",
         "kind": "raw",
         "has_configuration": True,
         "has_state": True,
-        "bootstrapped": True,
+        "ingest_complete": True,
     },
-    # 20260401 is newer than 20260301 but not bootstrapped -> must be skipped.
+    # 20260401 is newer than 20260301 but not ingest_complete -> must be skipped.
     {
         "name": "disctest_btc_raw_20260401",
         "kind": "raw",
         "has_configuration": True,
         "has_state": True,
-        "bootstrapped": False,
+        "ingest_complete": False,
     },
     # === Back-compat (state table missing) on the discbc network ===
     {
@@ -178,23 +178,23 @@ DISCOVERY_KEYSPACES = [
         "kind": "transformed",
         "no_blocks": 700,
         "has_state": False,
-        "bootstrapped": False,
+        "ingest_complete": False,
     },
     {
         "name": "discbc_btc_raw_20260301",
         "kind": "raw",
         "has_configuration": True,
         "has_state": False,
-        "bootstrapped": False,
+        "ingest_complete": False,
     },
-    # === State table populated with non-bootstrapped keys only ===
-    # Verifies the WHERE key='bootstrapped' filter (not just "any row exists").
+    # === State table populated with non-ingest_complete keys only ===
+    # Verifies the WHERE key='ingest_complete' filter (not just "any row exists").
     {
         "name": "discother_btc_raw_20260301",
         "kind": "raw",
         "has_configuration": True,
         "has_state": True,
-        "bootstrapped": False,
+        "ingest_complete": False,
         "other_state_keys": ["in_progress"],
     },
 ]
@@ -232,10 +232,10 @@ def create_discovery_keyspaces(session):
                 f"CREATE TABLE IF NOT EXISTS {name}.state ("
                 "key text PRIMARY KEY, value text, updated_at timestamp)"
             )
-            if ks.get("bootstrapped"):
+            if ks.get("ingest_complete"):
                 session.execute(
                     f"INSERT INTO {name}.state (key, value, updated_at) "
-                    f"VALUES ('bootstrapped', '2026-04-24T00:00:00+00:00', "
+                    f"VALUES ('ingest_complete', '2026-04-24T00:00:00+00:00', "
                     f"toTimestamp(now()))"
                 )
             for other_key in ks.get("other_state_keys", []):

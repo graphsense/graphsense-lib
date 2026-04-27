@@ -25,7 +25,7 @@ from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
-from graphsenselib.db.state import BOOTSTRAPPED_KEY
+from graphsenselib.db.state import INGEST_COMPLETE_KEY
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
@@ -636,17 +636,17 @@ class Cassandra:
         )
         return one(result) is not None
 
-    def _is_bootstrapped(self, keyspace, fallback_table):
-        # Primary signal: a `bootstrapped` row in the per-keyspace state table.
-        # Back-compat fallback for keyspaces that pre-date the state table:
-        # treat the existence of any row in `fallback_table`
+    def _is_ingest_complete(self, keyspace, fallback_table):
+        # Primary signal: an `ingest_complete` row in the per-keyspace state
+        # table. Back-compat fallback for keyspaces that pre-date the state
+        # table: treat the existence of any row in `fallback_table`
         # (configuration for raw, summary_statistics for transformed) as
-        # "bootstrapped". Drop the fallback once all production keyspaces
-        # have been migrated and re-ingested/re-transformed at least once.
+        # complete. Drop the fallback once all production keyspaces have been
+        # migrated and re-ingested/re-transformed at least once.
         if self._has_table(keyspace, "state"):
             row = self.session.execute(
                 f"SELECT value FROM {keyspace}.state WHERE key = %s",
-                [BOOTSTRAPPED_KEY],
+                [INGEST_COMPLETE_KEY],
             )
             return one(row) is not None
 
@@ -672,9 +672,9 @@ class Cassandra:
         prefix = f"{network.lower()}_transformed"
         res = []
         for ks, _ in self._dated_keyspaces(prefix):
-            if not self._is_bootstrapped(ks, "summary_statistics"):
+            if not self._is_ingest_complete(ks, "summary_statistics"):
                 if self.logger:
-                    self.logger.warning(f"{ks} is not bootstrapped. skipping")
+                    self.logger.warning(f"{ks} is not marked ingest_complete. skipping")
                 continue
             stats = self.session.execute(
                 f"SELECT no_blocks FROM {ks}.summary_statistics limit 1"
@@ -695,10 +695,10 @@ class Cassandra:
     def find_latest_raw_keyspace(self, network):
         prefix = f"{network.lower()}_raw"
         for ks, _ in self._dated_keyspaces(prefix):
-            if self._is_bootstrapped(ks, "configuration"):
+            if self._is_ingest_complete(ks, "configuration"):
                 return ks
             if self.logger:
-                self.logger.warning(f"{ks} is not bootstrapped. skipping")
+                self.logger.warning(f"{ks} is not marked ingest_complete. skipping")
 
         if self.logger:
             self.logger.info(
