@@ -10,6 +10,7 @@ from __future__ import annotations
 from contextlib import AsyncExitStack
 from typing import TypedDict
 
+import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Query
 from fastmcp import Client, FastMCP
@@ -524,6 +525,41 @@ async def test_list_neighbors_compact_default(stub_app_with_neighbors):
             assert "balance" not in n
             assert "actors" not in n
             assert "labels" not in n
+
+
+async def test_make_client_uses_asgi_transport_by_default():
+    """No `internal_base_url` on app.state → in-process ASGI dispatch
+    (the historic behavior). This is the default path most deployments
+    take; switching to HTTP loopback is an explicit opt-in.
+    """
+    from fastapi import FastAPI
+
+    from graphsenselib.mcp.tools.consolidated import _make_client
+
+    app = FastAPI()
+    client = _make_client(app)
+    # ASGITransport binds to the in-process app, not a real network host.
+    assert isinstance(client._transport, httpx.ASGITransport)
+    assert str(client.base_url) == "http://graphsense-mcp"
+    await client.aclose()
+
+
+async def test_make_client_uses_http_loopback_when_configured():
+    """When `internal_base_url` is set on app.state — i.e. the operator
+    opted into routing fan-out through the gateway so it counts against
+    rate limits — the wrapper must hand back an HTTP client bound to
+    that URL, NOT an ASGI-transport client.
+    """
+    from fastapi import FastAPI
+
+    from graphsenselib.mcp.tools.consolidated import _make_client
+
+    app = FastAPI()
+    app.state._graphsense_mcp_internal_base_url = "https://gateway.internal:9000"
+    client = _make_client(app)
+    assert not isinstance(client._transport, httpx.ASGITransport)
+    assert str(client.base_url) == "https://gateway.internal:9000"
+    await client.aclose()
 
 
 async def test_make_client_forwards_originating_request_headers():

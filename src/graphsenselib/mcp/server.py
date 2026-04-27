@@ -63,6 +63,11 @@ def attach_to_fastapi(app, config: GSMCPConfig) -> None:
     if getattr(app.state, "_graphsense_mcp_attached", False):
         raise MCPBootstrapError("MCP is already attached to this FastAPI app")
 
+    # The wrappers in tools/consolidated.py read this off `app.state` to
+    # decide whether to dispatch in-process via ASGITransport (the default)
+    # or to issue real HTTP requests against this base URL.
+    app.state._graphsense_mcp_internal_base_url = config.internal_base_url
+
     mcp, stack = build_mcp(app, config)
     mcp_asgi = mcp.http_app(path="/", stateless_http=config.stateless_http)
 

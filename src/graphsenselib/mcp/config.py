@@ -104,6 +104,21 @@ class GSMCPConfig(BaseSettings):
         ),
     )
 
+    internal_base_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Base URL the MCP wrappers should use for the REST calls they "
+            "fan out to. When unset (default), wrappers dispatch directly "
+            "to the FastAPI app via httpx ASGITransport — fast, no network "
+            "hop, but the calls don't traverse any external middleware "
+            "that may sit in front of the app. When set, wrappers use a "
+            "real HTTP client pointed at this URL, so each fan-out call "
+            "is a normal HTTP request observable by anything in the path. "
+            "Identity is preserved either way — the originating MCP "
+            "request's headers are forwarded on every internal call."
+        ),
+    )
+
     logging: LoggingConfig = Field(
         default_factory=LoggingConfig,
         description="Logging configuration (shared with the REST app)",

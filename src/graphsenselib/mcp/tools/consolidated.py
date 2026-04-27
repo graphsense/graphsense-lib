@@ -31,25 +31,38 @@ def _validate_id(name: str, value: str) -> None:
 
 
 def _make_client(app) -> httpx.AsyncClient:
-    """Build an httpx client that dispatches to the FastAPI app in-process,
+    """Build an httpx client for the MCP wrappers' fan-out REST calls,
     forwarding the originating MCP request's headers.
 
-    Header forwarding is load-bearing for tag access: the FastAPI app
+    Two modes, picked at attach time and read off `app.state`:
+
+    - **In-process (default)** — `httpx.ASGITransport(app=app)` dispatches
+      directly to the FastAPI app. Fast, no network hop. Calls do not
+      traverse any external HTTP middleware sitting in front of the app.
+    - **External HTTP (when `config.internal_base_url` is set)** — a real
+      HTTP client pointed at that URL. Each fan-out call becomes a
+      normal HTTP request observable by anything in the network path.
+
+    Header forwarding is load-bearing in either mode: the FastAPI app
     resolves `tagstore_groups` (and obfuscation, x-consumer-username,
     private-tag visibility) from request headers. Without forwarding,
     every in-process call resolves as anonymous public — so private-group
-    attribution (e.g. a Coinbase tag in a non-public tagpack) is invisible
-    to the wrapper while the same call made with the originating headers
-    sees it. `get_http_headers()` strips hop-by-hop and `authorization`
-    headers by default; the auth-shaped headers this app actually consults
-    (`x-consumer-username`, plugin group headers) pass through. Returns
-    `{}` when no HTTP request is active (stdio transport, unit tests via
-    in-process Client) — safe no-op.
+    attribution (e.g. a tag in a non-public tagpack) is invisible to the
+    wrapper while the same call made with the originating headers sees
+    it. `get_http_headers()` strips hop-by-hop and `authorization`
+    headers by default; the auth-shaped headers this app actually
+    consults (`x-consumer-username`, plugin group headers) pass through.
+    Returns `{}` when no HTTP request is active (stdio transport, unit
+    tests via in-process Client) — safe no-op.
     """
+    headers = get_http_headers()
+    base_url = getattr(app.state, "_graphsense_mcp_internal_base_url", None)
+    if base_url:
+        return httpx.AsyncClient(base_url=base_url, headers=headers)
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://graphsense-mcp",
-        headers=get_http_headers(),
+        headers=headers,
     )
 
 
