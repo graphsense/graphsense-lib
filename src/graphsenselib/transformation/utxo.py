@@ -8,6 +8,7 @@ from graphsenselib.ingest.utxo import (
     TX_HASH_PREFIX_LENGTH as UTXO_TX_HASH_PREFIX_LEN,
     _address_types as ADDRESS_TYPE_MAP,
 )
+from graphsenselib.transformation.account import _write_ingest_complete_marker
 
 logger = logging.getLogger(__name__)
 
@@ -558,8 +559,4 @@ class UtxoTransformation:
         logger.info("UtxoTransformation complete.")
 
     def write_ingest_complete_marker(self):
-        from graphsenselib.transformation.account import (
-            _write_ingest_complete_marker,
-        )
-
         _write_ingest_complete_marker(self.spark, self._write_cassandra)

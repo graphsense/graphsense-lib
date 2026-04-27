@@ -14,18 +14,19 @@ discoverable while data is still partial.
 from datetime import datetime, timezone
 
 
+STATE_TABLE = "state"
 INGEST_COMPLETE_KEY = "ingest_complete"
 
 
-def mark_ingest_complete(db, keyspace_type: str) -> None:
+def build_ingest_complete_row() -> dict:
+    """Row shared by direct-CQL and Spark writers of the marker.
+
+    Centralised so REST-side reads stay aligned with both writers if the
+    schema ever grows a column.
+    """
     now = datetime.now(timezone.utc)
-    db.by_ks_type(keyspace_type).ingest(
-        "state",
-        [
-            {
-                "key": INGEST_COMPLETE_KEY,
-                "value": now.isoformat(),
-                "updated_at": now,
-            }
-        ],
-    )
+    return {"key": INGEST_COMPLETE_KEY, "value": now.isoformat(), "updated_at": now}
+
+
+def mark_ingest_complete(db, keyspace_type: str) -> None:
+    db.by_ks_type(keyspace_type).ingest(STATE_TABLE, [build_ingest_complete_row()])

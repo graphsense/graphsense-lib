@@ -43,8 +43,6 @@ def _write_ingest_complete_marker(spark, write_cassandra_fn):
     AnalyticsDb. MUST be the very last write of a transformation run — REST
     auto-discovery treats this row's presence as the readiness signal.
     """
-    from datetime import datetime, timezone
-
     from pyspark.sql.types import (
         StringType,
         StructField,
@@ -52,9 +50,9 @@ def _write_ingest_complete_marker(spark, write_cassandra_fn):
         TimestampType,
     )
 
-    from graphsenselib.db.state import INGEST_COMPLETE_KEY
+    from graphsenselib.db.state import STATE_TABLE, build_ingest_complete_row
 
-    now = datetime.now(timezone.utc)
+    row = build_ingest_complete_row()
     schema = StructType(
         [
             StructField("key", StringType(), False),
@@ -62,8 +60,8 @@ def _write_ingest_complete_marker(spark, write_cassandra_fn):
             StructField("updated_at", TimestampType(), False),
         ]
     )
-    df = spark.createDataFrame([(INGEST_COMPLETE_KEY, now.isoformat(), now)], schema)
-    write_cassandra_fn(df, "state")
+    df = spark.createDataFrame([(row["key"], row["value"], row["updated_at"])], schema)
+    write_cassandra_fn(df, STATE_TABLE)
 
 
 def _convert_varint_cols(df, varint_cols):
