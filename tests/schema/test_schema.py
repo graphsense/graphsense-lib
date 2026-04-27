@@ -3,10 +3,43 @@
 from graphsenselib.schema.schema import (
     CreateTableStatement,
     GraphsenseSchemas,
+    build_seed_config_row,
     create_parser,
     remove_eol_comments,
     types,
 )
+
+
+def test_build_seed_config_row_uses_target_keyspace_for_dated_raw():
+    # Reproduces the prod issue: defaults from get_default_data_configuration
+    # omit `id`, so the seed must inject the actual target keyspace name. The
+    # earlier code wrote the un-suffixed "zec_raw" as id into the dated
+    # keyspace `zec_raw_20260423`, causing two rows after the first ingest.
+    defaults = {
+        "block_bucket_size": 100,
+        "tx_bucket_size": 25000,
+        "tx_prefix_length": 5,
+    }
+    row = build_seed_config_row(defaults, "zec_raw_20260423", "raw")
+    assert row["id"] == "zec_raw_20260423"
+    assert row["block_bucket_size"] == 100
+    # original defaults dict must not be mutated
+    assert "id" not in defaults
+
+
+def test_build_seed_config_row_uses_target_keyspace_for_dated_transformed():
+    defaults = {"address_prefix_length": 4, "bucket_size": 5000}
+    row = build_seed_config_row(defaults, "zec_transformed_20260423", "transformed")
+    assert row["keyspace_name"] == "zec_transformed_20260423"
+    assert row["bucket_size"] == 5000
+
+
+def test_build_seed_config_row_overrides_stale_pk_in_defaults():
+    # If a caller's YAML supplies a stale PK (e.g. legacy un-suffixed value),
+    # the helper must overwrite it so seed and real ingest land on the same row.
+    defaults = {"id": "zec_raw", "block_bucket_size": 100}
+    row = build_seed_config_row(defaults, "zec_raw_20260423", "raw")
+    assert row["id"] == "zec_raw_20260423"
 
 
 def test_create_parser_pkrow(capsys):

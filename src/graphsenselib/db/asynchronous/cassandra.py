@@ -25,6 +25,7 @@ from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
+from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
@@ -555,7 +556,9 @@ class Cassandra:
                 "raw" not in config["currencies"][currency]
                 or config["currencies"][currency]["raw"] is None
             ):
-                config["currencies"][currency]["raw"] = f"{currency}_raw"
+                config["currencies"][currency]["raw"] = self.find_latest_raw_keyspace(
+                    currency
+                )
 
             if (
                 "transformed" not in config["currencies"][currency]
@@ -625,33 +628,59 @@ class Cassandra:
         if self.logger:
             self.logger.info(f"Using keyspace: {keyspace}")
 
-    def find_latest_transformed_keyspace(self, network):
-        query = "SELECT keyspace_name FROM system_schema.keyspaces"
-        result = self.session.execute(query)
-        prefix = f"{network.lower()}_transformed"
-        candidates = [
-            getDateFromKeyspaceName(x["keyspace_name"])
+    def _has_table(self, keyspace, table):
+        result = self.session.execute(
+            "SELECT table_name FROM system_schema.tables "
+            "WHERE keyspace_name = %s AND table_name = %s",
+            [keyspace, table],
+        )
+        return one(result) is not None
+
+    def _is_ingest_complete(self, keyspace, fallback_table):
+        # Back-compat fallback (existence-of-any-row in `fallback_table`) covers
+        # keyspaces that pre-date the state table; drop once all production
+        # keyspaces have been re-ingested at least once.
+        if self._has_table(keyspace, STATE_TABLE):
+            row = self.session.execute(
+                f"SELECT key FROM {keyspace}.{STATE_TABLE} WHERE key = %s",
+                [INGEST_COMPLETE_KEY],
+            )
+            return one(row) is not None
+
+        row = self.session.execute(f"SELECT * FROM {keyspace}.{fallback_table} limit 1")
+        return one(row) is not None
+
+    def _dated_keyspaces(self, prefix):
+        # Return [(keyspace_name, date), ...] for keyspaces starting with
+        # `prefix` and ending in a parseable _YYYYMMDD suffix, sorted
+        # newest-date-first.
+        result = self.session.execute(
+            "SELECT keyspace_name FROM system_schema.keyspaces"
+        )
+        dated = [
+            (x["keyspace_name"], getDateFromKeyspaceName(x["keyspace_name"]))
             for x in result
             if x["keyspace_name"].startswith(prefix)
+            and getDateFromKeyspaceName(x["keyspace_name"]) is not None
         ]
+        return sorted(dated, key=lambda kd: kd[1], reverse=True)
 
+    def find_latest_transformed_keyspace(self, network):
+        prefix = f"{network.lower()}_transformed"
         res = []
-        for c in reversed(sorted(filter(lambda x: x is not None, candidates))):
-            ks = f"{prefix}_{c.strftime('%Y%m%d')}"
-            q = f"SELECT * FROM {ks}.summary_statistics limit 1"
-            result = self.session.execute(q)
-
-            if one(result) is None:
+        for ks, _ in self._dated_keyspaces(prefix):
+            if not self._is_ingest_complete(ks, "summary_statistics"):
                 if self.logger:
-                    self.logger.warning(
-                        f"{ks} is not online (missing summary_statistics row). skipping"
-                    )
+                    self.logger.warning(f"{ks} is not marked ingest_complete. skipping")
                 continue
-            else:
-                # return ks
-                res.append((ks, result[0]["no_blocks"]))
+            stats = self.session.execute(
+                f"SELECT no_blocks FROM {ks}.summary_statistics limit 1"
+            )
+            stats_row = one(stats)
+            no_blocks = stats_row["no_blocks"] if stats_row is not None else 0
+            res.append((ks, no_blocks))
 
-        res = list(reversed(sorted(res, key=lambda item: item[1])))
+        res = sorted(res, key=lambda item: item[1], reverse=True)
 
         if len(res) > 0:
             return res[0][0]
@@ -659,6 +688,20 @@ class Cassandra:
             raise Exception(
                 f"Automatic detection for transformed keyspace failed for network {network}."
             )
+
+    def find_latest_raw_keyspace(self, network):
+        prefix = f"{network.lower()}_raw"
+        for ks, _ in self._dated_keyspaces(prefix):
+            if self._is_ingest_complete(ks, "configuration"):
+                return ks
+            if self.logger:
+                self.logger.warning(f"{ks} is not marked ingest_complete. skipping")
+
+        if self.logger:
+            self.logger.info(
+                f"No dated raw keyspace found for {network}; falling back to {prefix}"
+            )
+        return prefix
 
     @eth
     def load_token_configuration(self, currency):

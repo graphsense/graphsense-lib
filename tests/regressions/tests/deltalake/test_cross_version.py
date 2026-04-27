@@ -9,18 +9,52 @@ Test flow
 1. **Reference-only** (baseline truth):
    ref ingests base blocks, ref appends more blocks → snapshot A
 2. **Mixed** (cross-version):
-   ref ingests same base blocks, *current* appends same blocks → snapshot B
+   ref ingests same base blocks (copied via S3), *current* appends same blocks → snapshot B
 3. **Compare**: A vs B — schema, row counts, content hashes, file metadata
 
-The test is parametrized over all currencies configured in .graphsense.yaml
-(filterable via ``DELTA_CURRENCIES`` env var).
+Performance notes:
+- Current version uses the project's .venv directly (no venv creation)
+- Base ingestion is done once and copied for the mixed path
+- Default range categories: ``mid`` only (set ``DELTA_RANGE_CATEGORIES=old,mid,new,protocol`` for full suite)
 """
 
 import pytest
 
 from tests.deltalake.comparison import compare_snapshots, format_report
-from tests.deltalake.ingest_runner import run_ingest
+from tests.deltalake.ingest_runner import copy_s3_prefix, run_ingest
 from tests.deltalake.snapshot import EnvironmentInfo, capture_snapshot
+
+# Column-level content divergences between the reference version (v25.11.18)
+# and the current version. Maps (currency, table) → set of column names that
+# are allowed to differ. Any column NOT listed here will fail the test.
+# BTC/BCH use verbosity 3 (prevout inline) → total_input and fee are now
+# correct. The reference version (verbosity 2) left total_input=0 and
+# fee=negative because inputs were never resolved.
+# outputs diverges because current version stores addresses as plain text
+# strings instead of the old binary encoding.
+# coinjoin was always in the schema but the reference version left it null;
+# the current version computes it in prepare_transactions_inplace_parquet.
+KNOWN_COLUMN_DIVERGENCES: dict[tuple[str, str], set[str]] = {
+    ("btc", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("bch", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("ltc", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("zec", "transaction"): {"total_input", "fee", "outputs", "coinjoin"},
+    ("trx", "fee"): {"energy_penalty_total"},  # was mapped to net_fee, now correct
+}
+
+# Schema additions in the current version that the reference version lacks.
+KNOWN_SCHEMA_ADDITIONS: set[tuple[str, str]] = {
+    ("btc", "transaction"),
+    ("bch", "transaction"),
+    ("ltc", "transaction"),
+    ("zec", "transaction"),
+    ("eth", "transaction"),  # y_parity, access_list, authorization_list
+    ("eth", "block"),  # parent_beacon_block_root, uncles, requests_hash
+    ("eth", "trace"),  # creation_method
+    ("trx", "transaction"),  # y_parity, access_list, authorization_list (shared schema)
+    ("trx", "block"),  # parent_beacon_block_root, uncles, requests_hash (shared schema)
+    ("trx", "trace"),  # creation_method (shared account schema)
+}
 
 
 @pytest.mark.deltalake
@@ -35,12 +69,15 @@ class TestCrossVersionCompatibility:
         delta_config,
         reference_venv,
         current_venv,
+        s3_client,
         ref_package_versions,
         current_package_versions,
     ):
         bucket = minio_config["bucket"]
         currency = delta_config.currency
+        range_id = delta_config.range_id
         tables = delta_config.tables
+        is_genesis = range_id == "genesis"
 
         minio_kw = dict(
             minio_endpoint=minio_config["endpoint"],
@@ -64,24 +101,41 @@ class TestCrossVersionCompatibility:
         # ------------------------------------------------------------------
         # Scenario A: reference-only (baseline truth)
         # ------------------------------------------------------------------
-        path_ref = f"s3://{bucket}/ref_only/{currency}"
+        path_ref = f"s3://{bucket}/ref_only/{currency}/{range_id}"
 
-        # Base ingestion (overwrite)
-        run_ingest(
-            reference_venv, delta_config, path_ref,
-            start_block=delta_config.start_block,
-            end_block=delta_config.base_end_block,
-            write_mode="overwrite",
-            **minio_kw,
-        )
-        # Append
-        run_ingest(
-            reference_venv, delta_config, path_ref,
-            start_block=delta_config.append_start_block,
-            end_block=delta_config.append_end_block,
-            write_mode="append",
-            **minio_kw,
-        )
+        if is_genesis:
+            run_ingest(
+                reference_venv,
+                delta_config,
+                path_ref,
+                start_block=delta_config.start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="overwrite",
+                **minio_kw,
+            )
+        else:
+            # Base ingestion (overwrite) — done once, reused for mixed path
+            run_ingest(
+                reference_venv, delta_config, path_ref,
+                start_block=delta_config.start_block,
+                end_block=delta_config.base_end_block,
+                write_mode="overwrite",
+                **minio_kw,
+            )
+
+            # Copy base data to mixed path before appending to either
+            ref_prefix = f"ref_only/{currency}/{range_id}/"
+            mixed_prefix = f"mixed/{currency}/{range_id}/"
+            copy_s3_prefix(s3_client, bucket, ref_prefix, mixed_prefix)
+
+            # Append to reference path
+            run_ingest(
+                reference_venv, delta_config, path_ref,
+                start_block=delta_config.append_start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="append",
+                **minio_kw,
+            )
 
         snapshot_ref = capture_snapshot(
             storage_options, path_ref, tables, f"reference ({delta_config.ref_version})",
@@ -92,24 +146,31 @@ class TestCrossVersionCompatibility:
         # ------------------------------------------------------------------
         # Scenario B: reference base + current append (cross-version)
         # ------------------------------------------------------------------
-        path_mixed = f"s3://{bucket}/mixed/{currency}"
+        path_mixed = f"s3://{bucket}/mixed/{currency}/{range_id}"
 
-        # Base ingestion with reference version
-        run_ingest(
-            reference_venv, delta_config, path_mixed,
-            start_block=delta_config.start_block,
-            end_block=delta_config.base_end_block,
-            write_mode="overwrite",
-            **minio_kw,
-        )
-        # Append with CURRENT version
-        run_ingest(
-            current_venv, delta_config, path_mixed,
-            start_block=delta_config.append_start_block,
-            end_block=delta_config.append_end_block,
-            write_mode="append",
-            **minio_kw,
-        )
+        if is_genesis:
+            # Genesis: current version does full overwrite
+            run_ingest(
+                current_venv,
+                delta_config,
+                path_mixed,
+                start_block=delta_config.start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="overwrite",
+                **minio_kw,
+            )
+        else:
+            # Base data already copied above via copy_s3_prefix.
+            # Append with current version.
+            run_ingest(
+                current_venv,
+                delta_config,
+                path_mixed,
+                start_block=delta_config.append_start_block,
+                end_block=delta_config.append_end_block,
+                write_mode="append",
+                **minio_kw,
+            )
 
         snapshot_mixed = capture_snapshot(
             storage_options, path_mixed, tables, "current (dev)",
@@ -127,20 +188,73 @@ class TestCrossVersionCompatibility:
 
         # Assertions with clear messages per table
         for name, diff in report.table_diffs.items():
-            assert not diff.schema_added_columns, (
-                f"{name}: columns added: {diff.schema_added_columns}"
-            )
+            if (currency, name) in KNOWN_SCHEMA_ADDITIONS:
+                if diff.schema_added_columns:
+                    print(
+                        f"  [{name}] KNOWN SCHEMA ADDITION: {diff.schema_added_columns} "
+                        f"(new input struct fields from verbosity 3 support)"
+                    )
+            else:
+                assert not diff.schema_added_columns, (
+                    f"{name}: columns added: {diff.schema_added_columns}"
+                )
             assert not diff.schema_removed_columns, (
                 f"{name}: columns removed: {diff.schema_removed_columns}"
             )
-            assert not diff.schema_type_changes, (
-                f"{name}: type changes detected: {diff.schema_type_changes}"
-            )
+            if (currency, name) in KNOWN_SCHEMA_ADDITIONS:
+                if diff.schema_type_changes:
+                    print(
+                        f"  [{name}] KNOWN TYPE CHANGE: {list(diff.schema_type_changes)} "
+                        f"(input struct evolved with new fields)"
+                    )
+            else:
+                assert not diff.schema_type_changes, (
+                    f"{name}: type changes detected: {diff.schema_type_changes}"
+                )
             assert diff.row_count_diff == 0, (
                 f"{name}: row count differs by {diff.row_count_diff} "
                 f"(ref={diff.row_count_ref}, cur={diff.row_count_current})"
             )
-            assert diff.content_hash_match, (
-                f"{name}: data content hash mismatch between reference-only "
-                f"and mixed (cross-version) runs"
-            )
+            allowed_cols = KNOWN_COLUMN_DIVERGENCES.get((currency, name), set())
+            if (currency, name) in KNOWN_SCHEMA_ADDITIONS:
+                if not diff.content_hash_match:
+                    print(
+                        f"  [{name}] EXPECTED: content hash differs due to "
+                        f"schema additions in input struct"
+                    )
+                # Verify data on common columns — only allowed columns may differ
+                if diff.common_columns_content_hash_match is not None:
+                    if not diff.common_columns_content_hash_match:
+                        unexpected = set(diff.differing_common_columns) - allowed_cols
+                        if diff.differing_common_columns:
+                            print(
+                                f"  [{name}] Differing common columns: "
+                                f"{diff.differing_common_columns}"
+                            )
+                        assert not unexpected, (
+                            f"{name}: unexpected column-level content divergence "
+                            f"on {sorted(unexpected)} — only {sorted(allowed_cols)} "
+                            f"are allowed to differ"
+                        )
+            elif allowed_cols:
+                # Table has known column divergences but no schema additions.
+                # Content hash will differ; verify only allowed columns diverge.
+                if not diff.content_hash_match:
+                    if diff.common_columns_content_hash_match is not None:
+                        if not diff.common_columns_content_hash_match:
+                            unexpected = set(diff.differing_common_columns) - allowed_cols
+                            if diff.differing_common_columns:
+                                print(
+                                    f"  [{name}] Differing columns: "
+                                    f"{diff.differing_common_columns}"
+                                )
+                            assert not unexpected, (
+                                f"{name}: unexpected column-level content divergence "
+                                f"on {sorted(unexpected)} — only {sorted(allowed_cols)} "
+                                f"are allowed to differ"
+                            )
+            else:
+                assert diff.content_hash_match, (
+                    f"{name}: data content hash mismatch between reference-only "
+                    f"and mixed (cross-version) runs"
+                )

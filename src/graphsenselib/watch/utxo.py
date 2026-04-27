@@ -2,11 +2,10 @@ import logging
 from typing import List, Optional, Tuple
 
 from ..datatypes.common import FlowDirection
+from ..ingest.rpc_utxo import BtcBlockExporter
 from ..ingest.utxo import (
-    BtcStreamerAdapter,
     OutputResolverBase,
     enrich_txs,
-    get_stream_adapter,
 )
 from ..utils import parse_timestamp
 from ..utils.logging import suppress_log_level
@@ -62,14 +61,16 @@ def parse_btcetl_txs(tx) -> List[FlowEvent]:
 
 class BitcoinEtlFlowProvider(FlowProvider):
     node_url: str
-    stream: BtcStreamerAdapter
+    exporter: BtcBlockExporter
     output_resolver: OutputResolverBase
 
     def __init__(
         self, currency: str, node_url: str, output_resolver: OutputResolverBase
     ):
         self.node_url = node_url
-        self.stream = get_stream_adapter(currency, node_url, batch_size=1)
+        self.exporter = BtcBlockExporter(
+            provider_uri=node_url, max_workers=1, timeout=60
+        )
         self.output_resolver = output_resolver
 
     def __enter__(self):
@@ -83,7 +84,7 @@ class BitcoinEtlFlowProvider(FlowProvider):
         self, block: int
     ) -> Optional[List[Tuple[FlowEvent, object]]]:
         with suppress_log_level(logging.INFO):
-            txs = self.stream.export_transactions(block, block)
+            _, txs = self.exporter.export_blocks_and_transactions(block, block)
             enrich_txs(txs, self.output_resolver, ignore_missing_outputs=True)
 
         events = []

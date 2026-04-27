@@ -81,6 +81,24 @@ def remove_eol_comments(statement: str) -> str:
     return re.sub(r"\s*?--.*?$", "", statement, count=0, flags=re.MULTILINE)
 
 
+def build_seed_config_row(
+    defaults: dict, target_ks_name: str, keyspace_type: str
+) -> dict:
+    """Configuration row to seed into a freshly-created keyspace.
+
+    Forces the PK column ("id" for raw, "keyspace_name" for transformed) to the
+    actual target keyspace name. The defaults from
+    ``get_default_data_configuration`` intentionally omit it; if a caller's
+    YAML supplies a different value, the override here keeps the seed and the
+    real-ingest writer aligned so they upsert into the same row instead of
+    creating two configuration rows in dated keyspaces.
+    """
+    row = dict(defaults)
+    pk_col = "id" if keyspace_type == "raw" else "keyspace_name"
+    row[pk_col] = target_ks_name
+    return row
+
+
 class CreateTableStatement:
     @classmethod
     def from_schema(Cls, schema_str):
@@ -307,10 +325,12 @@ class GraphsenseSchemas:
                 )
 
                 if not keyspacedb.is_configuration_populated():
-                    config_defaults = (
+                    config_defaults = build_seed_config_row(
                         config.get_keyspace_config(env, currency)
                         .keyspace_setup_config[keyspace_type]
-                        .data_configuration
+                        .data_configuration,
+                        target_ks_name,
+                        keyspace_type,
                     )
                     logger.warning(
                         "Config table in transformed not populated."

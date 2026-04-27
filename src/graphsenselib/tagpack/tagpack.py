@@ -313,7 +313,9 @@ class TagPack(object):
 
             # Apply network-specific address normalization (matches tagstore._perform_address_modifications)
             if network == "BCH" and address.startswith("bitcoincash"):
-                from cashaddress.convert import to_legacy_address
+                from graphsenselib.utils.bch import (
+                    bch_address_to_legacy as to_legacy_address,
+                )
 
                 try:
                     address = to_legacy_address(address)
