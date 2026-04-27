@@ -30,7 +30,6 @@ dependencies = [
     "requests>=2.32.5",
     "parsy>=2.0, <3.0",
     "rich>=12.6.0",
-    "cashaddress>=1.0.6",
     "base58>=2.1",
     "bitarray>=2.9",
     "eth-event>=1.2.3",
@@ -41,6 +40,7 @@ dependencies = [
     "coincurve>=21.0.0",
     "bech32>=1.2.0",
     "httpx>=0.28.1",
+    "orjson>=3.9.0",
     "ecdsa>=0.13",
     "eth-account>=0.13.7",
 ]
@@ -99,14 +99,14 @@ dev = [
 [project.optional-dependencies]
 # Core ingest infrastructure dependencies
 ingest = [
-    "graphsense-ethereum-etl>=2.4.6",
+    "web3>=6.0.0",
     "chainside-btcpy>=0.6",
-    "graphsense-bitcoin-etl>=1.5.5",
     "lz4>=4.3.2",
     "pyarrow>=23.0.0",
     "deltalake>=1.4.2",
     "duckdb>=1.0.0",
     "grpcio>=1.49.0",
+    "protobuf>=4.21.0",
     "redis>=5.0.0",
 ]
 conversions = [
@@ -251,6 +251,7 @@ include = ["src/graphsenselib/config/**",
           "src/graphsenselib/errors/**",
           "src/graphsenselib/datatypes/**",
           "src/graphsenselib/utils/**",
+          "src/graphsenselib/ingest/**",
           "tests/config/**",
           "tests/schema/**",
           "tests/errors/**",

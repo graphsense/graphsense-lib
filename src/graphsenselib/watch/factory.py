@@ -8,7 +8,7 @@ from ..config import (
 )
 from ..db import DbFactory
 from ..ingest.utxo import CassandraOutputResolver
-from .account import EthereumEtlFlowProvider
+from .account import AccountNodeFlowProvider
 from .flatfile import JsonWatcherState, JsonWatchpointProvider
 from .logging import LoggingEventNotifier
 from .slack import SlackEventNotifier
@@ -45,7 +45,7 @@ class FlowWatcherFactory:
             state=JsonWatcherState(state_file),
             watchpoints=JsonWatchpointProvider(watchpoints_file),
             flow_provider=(
-                EthereumEtlFlowProvider(node_ref)
+                AccountNodeFlowProvider(node_ref)
                 if schema == "account"
                 else BitcoinEtlFlowProvider(
                     currency,

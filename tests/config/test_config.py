@@ -1,7 +1,10 @@
 import json
+import logging
+import os
+import tempfile
 
-from graphsenselib.config.config import AppConfig
 from graphsenselib.config import get_config, get_reorg_backoff_blocks
+from graphsenselib.config.config import AppConfig, get_default_data_configuration
 
 
 def test_config_is_loaded_by_default():
@@ -35,6 +38,62 @@ def test_config_is_loaded_by_default():
 
 def test_get_approx_reorg_backoff_blocks():
     assert get_reorg_backoff_blocks("eth") == 70
+
+
+def test_default_data_configuration_omits_pk_column():
+    # The configuration-row PK ("id" for raw, "keyspace_name" for transformed)
+    # must NOT be in the defaults — it has to be injected at seed time with the
+    # actual target keyspace name, otherwise dated keyspaces get a stale row
+    # keyed by the un-suffixed prefix and the real ingest adds a duplicate.
+    for currency in ["btc", "ltc", "bch", "zec", "eth", "trx"]:
+        raw = get_default_data_configuration(currency, "raw")
+        assert "id" not in raw, (
+            f"defaults for {currency}/raw must not preset 'id': {raw}"
+        )
+        transformed = get_default_data_configuration(currency, "transformed")
+        assert "keyspace_name" not in transformed, (
+            f"defaults for {currency}/transformed must not preset "
+            f"'keyspace_name': {transformed}"
+        )
+
+
+def test_unknown_keys_emit_warnings(caplog):
+    cfg = """
+environments:
+  dev:
+    cassandra_nodes: [localhost]
+    typo_at_env_level: true
+    keyspaces:
+      btc:
+        raw_keyspace_name: btc_raw_dev
+        transformed_keyspace_name: btc_transformed_dev
+        schema_type: utxo
+        typo_in_keyspace: 123
+        ingest_config:
+          node_reference: http://localhost:8332
+          soruce_max_workers: 99
+          raw_keyspace_file_sinks:
+            delta:
+              directory: /tmp/test
+              unknown_sink_key: oops
+top_level_typo: hello
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg)
+        fname = f.name
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="graphsenselib.config.config"):
+            AppConfig(load=True, config_file=fname)
+
+        warnings = [r.message for r in caplog.records]
+        assert any("top_level_typo" in w for w in warnings)
+        assert any("typo_at_env_level" in w and "Environment" in w for w in warnings)
+        assert any("typo_in_keyspace" in w and "KeyspaceConfig" in w for w in warnings)
+        assert any("soruce_max_workers" in w and "IngestConfig" in w for w in warnings)
+        assert any("unknown_sink_key" in w and "FileSink" in w for w in warnings)
+    finally:
+        os.unlink(fname)
 
 
 def test_load_partial_parses_slack_topics_from_env(monkeypatch):

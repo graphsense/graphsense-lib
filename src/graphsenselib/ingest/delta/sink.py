@@ -2,13 +2,14 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional
 
 try:
     import deltalake as dl
     import pyarrow as pa
+    import pyarrow.compute  # noqa: F401 — explicit import for type checkers
     from deltalake import DeltaTable
-    from pyarrow.lib import ArrowInvalid
+    from pyarrow.lib import ArrowInvalid  # ty: ignore[unresolved-import]
 except ImportError:
     _has_ingest_dependencies = False
 else:
@@ -16,10 +17,24 @@ else:
 
 import pydantic
 
-from ...schema.resources.parquet.account import ACCOUNT_SCHEMA_RAW
-from ...schema.resources.parquet.account_trx import ACCOUNT_TRX_SCHEMA_RAW
+try:
+    from deltalake import WriterProperties
+
+    _WRITER_PROPERTIES = WriterProperties(compression="ZSTD", compression_level=5)
+except ImportError:
+    _WRITER_PROPERTIES = None
+
+from ...schema.resources.parquet.account import (
+    ACCOUNT_SCHEMA_RAW,
+    BINARY_COL_CONVERSION_MAP_ACCOUNT,
+)
+from ...schema.resources.parquet.account_trx import (
+    ACCOUNT_TRX_SCHEMA_RAW,
+    BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
+)
 from ...schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
 from ..common import BlockRangeContent, Sink
+from ..transform import _finalize_inplace
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +91,11 @@ def optimize_table(
         # some sources say 1GB, default in the lib is 256MB, we take 512MB
         # we strive for a manageable amount of Memory consumption, so we limit
         # the concurrency
-        metrics = table.optimize.compact(target_size=512 * MB, max_concurrent_tasks=15)
+        metrics = table.optimize.compact(
+            target_size=512 * MB,
+            max_concurrent_tasks=15,
+            writer_properties=_WRITER_PROPERTIES,
+        )
         logger.debug(f"Compaction metrics: {metrics}")
 
     if mode in ["both", "vacuum"]:
@@ -120,8 +139,9 @@ class DeltaTableWriter:
 
     def write_delta(
         self,
-        data: Iterable[dict],
+        data: List[dict],
     ) -> None:
+        time_write_start = time.time()
         logger.debug(f"Writing table {self.table_name}")
 
         if not data:
@@ -141,9 +161,9 @@ class DeltaTableWriter:
 
         fields_not_covered = unique_fields - set(table.column_names)
         if fields_not_covered:
-            logger.warning(
+            logger.debug(
                 f"Fields {fields_not_covered} in table {self.table_name}"
-                f" not covered by schema. "
+                f" not covered by schema (ignored)."
             )
 
         if self.s3_credentials:
@@ -158,8 +178,6 @@ class DeltaTableWriter:
             storage_options = {}
 
         if self.mode in ["overwrite", "append"]:
-            time_ = time.time()
-
             unique_partitions = table.column("partition").unique()
 
             # only 1 partition is allowed to be written at once in overwrite mode
@@ -190,7 +208,7 @@ class DeltaTableWriter:
                 partition_by = None
 
             not_written = True
-            options = {}
+            writer_properties = _WRITER_PROPERTIES
             max_attempts = 20
             attempts = 0
             fraction = 0.5
@@ -206,11 +224,11 @@ class DeltaTableWriter:
                         table_path,
                         table,
                         partition_by=partition_by,
-                        mode=delta_write_mode,
+                        mode=delta_write_mode,  # ty: ignore[invalid-argument-type]
                         schema_mode="merge",
                         predicate=predicate,
                         storage_options=storage_options,
-                        **options,
+                        writer_properties=writer_properties,  # ty: ignore[invalid-argument-type]
                     )
                     not_written = False
                 except ArrowInvalid as e:
@@ -219,10 +237,11 @@ class DeltaTableWriter:
                         new_row_group_size = int(len(data) * fraction)
                         if new_row_group_size < 100:
                             raise e
-                        options = {
-                            "max_rows_per_group": new_row_group_size,
-                            "min_rows_per_group": new_row_group_size,
-                        }
+                        writer_properties = WriterProperties(
+                            compression="ZSTD",
+                            compression_level=5,
+                            max_row_group_size=new_row_group_size,
+                        )
                         logger.warning(
                             "Could not write delta-file binary input col because "
                             "its too large (> 2GB uncompressed),"
@@ -235,14 +254,12 @@ class DeltaTableWriter:
             logger.debug(
                 f"Writing {len(table)} records in mode {self.mode} "
                 f"took "
-                f"{time.time() - time_} seconds"
+                f"{time.time() - time_write_start} seconds"
             )
 
             return
 
         elif self.mode == "merge":
-            time_ = time.time()
-
             target = DeltaTable(table_path, storage_options=storage_options)
             # can either use overwrite with predicate; or try to merge,
             # as of 0.19 merge is faster and doesnt read the entire partition
@@ -268,7 +285,7 @@ class DeltaTableWriter:
             )
             logger.warning(
                 f"Delta merge of length {len(table)} on {self.table_name} "
-                f"took {time.time() - time_} seconds"
+                f"took {time.time() - time_write_start} seconds"
             )
             return
 
@@ -381,28 +398,25 @@ UTXO_DBWRITE_CONFIG = DBWriteConfig(
             partition_cols=("partition",),
             primary_keys=["block_id", "index"],
         ),
-        # TableWriteConfig(
-        #     table_name="transaction_spending",
-        #     table_schema=UTXO_SCHEMA_RAW["transaction_spending"],
-        #     partition_cols=("partition",),
-        #     primary_keys=[
-        #         "spending_tx_hash",
-        #         "spent_tx_hash",
-        #         "spending_input_index",
-        #         "spent_output_index",
-        #     ],
-        # ),
+        # transaction_spending, transaction_spent_in, block_transactions,
+        # transaction_by_tx_prefix are derived/processed data computed from
+        # raw transactions for Cassandra's query patterns. They are not stored
+        # in the Delta Lake which holds only raw blockchain data.
     ]
 )
 
 
 class DeltaDumpWriter(Sink):
+    name = "delta"
+
     def __init__(
         self,
         directory: str,
         db_write_config: DBWriteConfig,
+        network: str = "",
         s3_credentials: Optional[dict] = None,
         write_mode: str = "overwrite",
+        finalize_int_cols: Optional[dict] = None,
     ) -> None:
         if not _has_ingest_dependencies:
             raise ImportError(
@@ -410,8 +424,12 @@ class DeltaDumpWriter(Sink):
             )
         self.directory = directory
         self.db_write_config = db_write_config
+        self.network = network
         self.s3_credentials = s3_credentials
         self.write_mode = write_mode
+        self.finalize_int_cols = finalize_int_cols or {}
+
+        self._lock_name = f"delta_ingest_{network}"
 
         self.writers = {
             # method instead the lookup we now have which is probably
@@ -435,13 +453,30 @@ class DeltaDumpWriter(Sink):
             s3_credentials=self.s3_credentials,
         )
 
-    def write_table(self, table_content: Tuple[str, List[dict]]):
-        writer = self.writers[table_content[0]]
-        writer.write_delta(table_content[1])
+    def write_table(self, table_name: str, rows: List[dict]):
+        writer = self.writers[table_name]
+        writer.write_delta(rows)
 
-    def write(self, sink_content: BlockRangeContent):
-        for table_content in sink_content.table_contents.items():
-            self.write_table(table_content)
+    def lock_name(self) -> str:
+        return self._lock_name
+
+    def write(self, block_range_content: BlockRangeContent):
+        for table_name, rows in block_range_content.table_contents.items():
+            if not rows:
+                continue
+            # Skip Cassandra-only tables that have no delta writer
+            if table_name not in self.writers:
+                continue
+            # Shallow copy to avoid mutating shared data
+            rows = [dict(r) for r in rows]
+            int_cols = self.finalize_int_cols.get(table_name, [])
+            if int_cols:
+                _finalize_inplace(rows, int_cols)
+            else:
+                # Still need to pop block_id_group for Delta even when no int cols
+                for row in rows:
+                    row.pop("block_id_group", None)
+            self.write_table(table_name, rows)
 
     def highest_block(self):
         logger.debug("Getting highest block")
@@ -458,7 +493,7 @@ class DeltaDumpWriter(Sink):
         dataset = DeltaTable(
             f"{self.directory}/block", storage_options=storage_options
         ).to_pyarrow_dataset()
-        highest_block = pa.compute.max(
+        highest_block = pa.compute.max(  # ty: ignore[unresolved-attribute]
             dataset.to_table(columns=["block_id"])["block_id"]
         ).as_py()
         logger.info(f"Highest block: {highest_block}")
@@ -475,18 +510,28 @@ CONFIG_MAP = {
 }
 
 
+FINALIZE_INT_COLS_MAP = {
+    "eth": BINARY_COL_CONVERSION_MAP_ACCOUNT,
+    "trx": BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
+}
+
+
 class DeltaDumpSinkFactory:  # todo could be a function
     @staticmethod
     def create_writer(
-        network: str, s3_credentials: dict, write_mode: str, directory: str
+        network: str, s3_credentials: Optional[dict], write_mode: str, directory: str
     ) -> DeltaDumpWriter:
         db_write_config = CONFIG_MAP.get(network)
         if not db_write_config:
             raise ValueError(f"Invalid network: {network}")
 
+        finalize_int_cols = FINALIZE_INT_COLS_MAP.get(network, {})
+
         return DeltaDumpWriter(
             db_write_config=db_write_config,
+            network=network,
             s3_credentials=s3_credentials,
             write_mode=write_mode,
             directory=directory,
+            finalize_int_cols=finalize_int_cols,
         )

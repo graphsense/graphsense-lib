@@ -15,6 +15,7 @@ import pytest
 from testcontainers.core.container import DockerContainer
 
 from tests.deltalake.config import build_delta_configs, get_minio_storage_options
+from tests.deltalake.perf_report import format_perf_report, save_perf_report
 from tests.deltalake.venv_manager import (
     get_or_create_current_venv,
     get_or_create_reference_venv,
@@ -46,9 +47,19 @@ def pytest_generate_tests(metafunc):
     if "delta_config" not in metafunc.fixturenames:
         return
     configs = build_delta_configs()
-    metafunc.parametrize(
-        "delta_config", configs, ids=[c.currency for c in configs]
-    )
+    if "table_name" in metafunc.fixturenames:
+        # Currency × table parametrization for table-level tests
+        argvalues = []
+        ids = []
+        for c in configs:
+            for table in c.tables:
+                argvalues.append((c, table))
+                ids.append(f"{c.test_id}-{table}")
+        metafunc.parametrize(["delta_config", "table_name"], argvalues, ids=ids)
+    else:
+        metafunc.parametrize(
+            "delta_config", configs, ids=[c.test_id for c in configs]
+        )
 
 
 @pytest.fixture(scope="session")
@@ -137,6 +148,18 @@ def current_venv():
 
 
 @pytest.fixture(scope="session")
+def s3_client(minio_config):
+    """Session-scoped boto3 S3 client for MinIO."""
+    return boto3.client(
+        "s3",
+        endpoint_url=minio_config["endpoint"],
+        aws_access_key_id=minio_config["access_key"],
+        aws_secret_access_key=minio_config["secret_key"],
+        region_name="us-east-1",
+    )
+
+
+@pytest.fixture(scope="session")
 def ref_package_versions(reference_venv) -> dict[str, str]:
     """Package versions from the reference venv (shared across currencies)."""
     return get_venv_package_versions(reference_venv)
@@ -146,3 +169,28 @@ def ref_package_versions(reference_venv) -> dict[str, str]:
 def current_package_versions(current_venv) -> dict[str, str]:
     """Package versions from the current venv (shared across currencies)."""
     return get_venv_package_versions(current_venv)
+
+
+@pytest.fixture(scope="session")
+def perf_report_collector():
+    """Session-scoped list to collect PerfComparison objects."""
+    return []
+
+
+@pytest.fixture(scope="session", autouse=True)
+def perf_report_finalizer(request, perf_report_collector):
+    """Generate performance report at end of session."""
+    yield
+
+    if not perf_report_collector:
+        return
+
+    terminalreporter = request.config.pluginmanager.get_plugin("terminalreporter")
+    write = terminalreporter.write_line if terminalreporter else print
+
+    report_text = format_perf_report(perf_report_collector)
+    for line in report_text.split("\n"):
+        write(line)
+
+    report_path = save_perf_report(perf_report_collector)
+    write(f"Performance report saved to: {report_path}")

@@ -1,10 +1,5 @@
-try:
-    import ethereumetl.streaming.enrich  # noqa
-except ImportError:
-    _has_ingest_dependencies = False
-else:
-    _has_ingest_dependencies = True
-
+import logging
+import time
 
 from graphsenselib.ingest.account import (
     BLOCK_BUCKET_SIZE,
@@ -20,74 +15,293 @@ from graphsenselib.ingest.account import (
     prepare_transactions_inplace_trx,
     prepare_trc10_tokens_inplace,
     prepare_blocks_inplace_eth,
-    to_bytes,
 )
 from graphsenselib.ingest.common import BlockRangeContent, Transformer
 from graphsenselib.ingest.utxo import (
+    BLOCK_BUCKET_SIZE as UTXO_BLOCK_BUCKET_SIZE,
+    TX_HASH_PREFIX_LENGTH,
+    TX_BUCKET_SIZE,
+    CassandraOutputResolver,
     enrich_txs,
+    get_tx_refs,
+    is_coinjoin,
     prepare_blocks_inplace,
     prepare_transactions_inplace_parquet,
+    preprocess_block_transactions,
+    preprocess_transaction_lookups,
+    tx_io_summary,
 )
-from graphsenselib.schema.resources.parquet.account import (
-    BINARY_COL_CONVERSION_MAP_ACCOUNT,
-)
-from graphsenselib.schema.resources.parquet.account_trx import (
-    BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX,
-)
-
-# drop block_id_group column
-from .utxo import drop_columns_from_list
+from graphsenselib.utils.account import get_id_group
+from graphsenselib.utils import flatten
 from graphsenselib.utils.constants import TRON_DUMMY_REPLACEMENT_ADDRESS
+
+logger = logging.getLogger(__name__)
+
+
+def _finalize_inplace(items, int_cols):
+    """Drop block_id_group and convert int columns to big-endian bytes in one pass.
+
+    Replaces separate drop_columns_from_list + to_bytes calls.
+    """
+    for item in items:
+        item.pop("block_id_group", None)
+        for col in int_cols:
+            v = item[col]
+            if v is not None:
+                item[col] = v.to_bytes((v.bit_length() + 7) // 8, "big")
 
 
 class TransformerUTXO(Transformer):
+    def __init__(
+        self,
+        partition_batch_size,
+        network,
+        db=None,
+        resolve_inputs_via_cassandra=False,
+        fill_unresolved_inputs=False,
+    ):
+        super().__init__(partition_batch_size, network)
+        self.db = db
+        self._has_cassandra = db is not None
+        self._resolve_via_cassandra = resolve_inputs_via_cassandra
+        self._fill_unresolved = fill_unresolved_inputs
+        if self._has_cassandra:
+            assert db is not None
+            self._resolver = CassandraOutputResolver(
+                db,
+                tx_bucket_size=TX_BUCKET_SIZE,
+                tx_prefix_length=TX_HASH_PREFIX_LENGTH,
+            )
+            self._next_tx_id = None  # lazy init on first batch
+            self._last_block_ts = None
+
     def transform(self, block_range_content: BlockRangeContent) -> BlockRangeContent:
+        if self._has_cassandra:
+            return self._transform_with_cassandra(block_range_content)
+        return self._transform_delta_only(block_range_content)
+
+    def _fill_unresolved_inputs(self, txs):
+        """Fill unresolved inputs (type=None) with dummy values.
+
+        When inputs can't be resolved (no txindex, mid-chain start, no
+        Cassandra), this prevents the pipeline from crashing. Logs a
+        warning for each unresolved input.
+        """
+        n_filled = 0
+        for tx in txs:
+            for inp in tx["inputs"]:
+                if inp["type"] is None and inp["spent_transaction_hash"]:
+                    logger.warning(
+                        f"Unresolved input in tx {tx.get('hash')}: "
+                        f"spent_tx={inp['spent_transaction_hash']}, "
+                        f"idx={inp['spent_output_index']} — "
+                        f"filling with dummy values"
+                    )
+                    inp["type"] = "nonstandard"
+                    inp["value"] = 0
+                    if not inp.get("addresses"):
+                        inp["addresses"] = ["nonstandard" + "0" * 40]
+                    n_filled += 1
+        if n_filled > 0:
+            logger.warning(
+                f"Filled {n_filled} unresolved inputs with dummy values. "
+                f"Data is incomplete — consider enabling txindex on the node "
+                f"or using resolve_inputs_via_cassandra=true."
+            )
+
+    def _transform_delta_only(
+        self, block_range_content: BlockRangeContent
+    ) -> BlockRangeContent:
+        t_total = time.monotonic()
         data = block_range_content.table_contents
 
         blocks = data["blocks"]
         txs = data["txs"]
 
+        t0 = time.monotonic()
         prepare_blocks_inplace(
             blocks, BLOCK_BUCKET_SIZE, process_fields=False, drop_fields=False
         )
+        t_prep_blocks = time.monotonic() - t0
 
-        # until bitcoin-etl progresses
-        # with https://github.com/blockchain-etl/bitcoin-etl/issues/43
+        t0 = time.monotonic()
         enrich_txs(
             txs,
             resolver=None,
             ignore_missing_outputs=True,
             input_reference_only=True,
         )
+        if self._fill_unresolved:
+            self._fill_unresolved_inputs(txs)
+        t_enrich = time.monotonic() - t0
 
+        t0 = time.monotonic()
         prepare_transactions_inplace_parquet(txs, self.network)
+        t_prep_txs = time.monotonic() - t0
 
-        partition = (
-            blocks[0]["block_id"] // self.partition_batch_size
-        )  # todo this can be a problem if the there are multiple partitions
+        partition = blocks[0]["block_id"] // self.partition_batch_size
+        assert partition == blocks[-1]["block_id"] // self.partition_batch_size
 
-        def with_partition(items: list) -> list:
-            for item in items:
-                item["partition"] = partition
-            return items
+        t0 = time.monotonic()
+        for item in blocks:
+            item["partition"] = partition
+        for item in txs:
+            item["partition"] = partition
+        t_partition = time.monotonic() - t0
+
+        t_transform_total = time.monotonic() - t_total
+        logger.info(
+            f"[transform-timing] UTXO: "
+            f"total={t_transform_total:.3f}s  "
+            f"prep_blocks={t_prep_blocks:.3f}s ({len(blocks)} blks)  "
+            f"enrich={t_enrich:.3f}s ({len(txs)} txs)  "
+            f"prep_txs={t_prep_txs:.3f}s  "
+            f"partition={t_partition:.3f}s"
+        )
 
         block_range_content.table_contents = {
-            "block": with_partition(blocks),
-            "transaction": with_partition(txs),
+            "block": blocks,
+            "transaction": txs,
         }
         return block_range_content
 
-    def transform_blockindep(self, data):
+    def _transform_with_cassandra(
+        self, block_range_content: BlockRangeContent
+    ) -> BlockRangeContent:
+        t_total = time.monotonic()
+        data = block_range_content.table_contents
+
+        blocks = data["blocks"]
+        txs = data["txs"]
+
+        # 1. get_tx_refs MUST run first, before any field renaming/modification
+        t0 = time.monotonic()
+        tx_refs = flatten(
+            [get_tx_refs(tx["hash"], tx["inputs"], TX_HASH_PREFIX_LENGTH) for tx in txs]
+        )
+        t_refs = time.monotonic() - t0
+
+        # 2. prepare_blocks_inplace — adds block_id_group, keeps all fields for parquet
+        t0 = time.monotonic()
+        prepare_blocks_inplace(blocks, UTXO_BLOCK_BUCKET_SIZE, drop_fields=False)
+        t_prep_blocks = time.monotonic() - t0
+
+        # 3. enrich_txs — resolves inputs via CassandraOutputResolver
+        #    (skipped when inputs are already resolved at the source)
+        t0 = time.monotonic()
+        if self._resolve_via_cassandra:
+            enrich_txs(
+                txs,
+                self._resolver,
+                ignore_missing_outputs=False,
+                input_reference_only=False,
+            )
+        else:
+            enrich_txs(
+                txs,
+                resolver=None,
+                ignore_missing_outputs=True,
+                input_reference_only=True,
+            )
+            if self._fill_unresolved:
+                self._fill_unresolved_inputs(txs)
+        t_enrich = time.monotonic() - t0
+
+        # 4. Init _next_tx_id from DB on first batch
+        first_block_id = blocks[0]["block_id"]
+        if self._next_tx_id is None:
+            assert self.db is not None
+            latest_tx_id = self.db.raw.get_latest_tx_id_before_block(first_block_id)
+            self._next_tx_id = latest_tx_id + 1
+
+        # 5. Sort txs to ensure tx_ids are assigned in deterministic order
+        txs.sort(key=lambda tx: (tx["block_number"], tx["index"]))
+
+        # 6. Pre-compute Cassandra-specific fields from raw (pre-parquet) data
+        t0 = time.monotonic()
+        next_tx_id = self._next_tx_id
+        cassandra_extras = []
+        for tx in txs:
+            cassandra_extras.append(
+                {
+                    "coinjoin": is_coinjoin(tx),
+                    "inputs_cassandra": [tx_io_summary(x) for x in tx["inputs"]],
+                    "outputs_cassandra": [tx_io_summary(x) for x in tx["outputs"]],
+                    "tx_id": next_tx_id,
+                    "tx_id_group": get_id_group(next_tx_id, TX_BUCKET_SIZE),
+                    "tx_prefix": tx["hash"][:TX_HASH_PREFIX_LENGTH],
+                    "block_hash": tx.get("block_hash"),
+                }
+            )
+            next_tx_id += 1
+        t_cassandra_fields = time.monotonic() - t0
+
+        # 7. Neutral parquet transform (renames fields, converts to bytes)
+        t0 = time.monotonic()
+        prepare_transactions_inplace_parquet(txs, self.network)
+        t_prep_txs = time.monotonic() - t0
+
+        # 8. Attach Cassandra extras to each tx
+        for tx, extras in zip(txs, cassandra_extras):
+            tx.update(extras)
+
+        # 9. Update _next_tx_id
+        self._next_tx_id = next_tx_id
+
+        # 10. preprocess_block_transactions → block_transactions table
+        t0 = time.monotonic()
+        block_transactions = preprocess_block_transactions(txs, UTXO_BLOCK_BUCKET_SIZE)
+        t_block_txs = time.monotonic() - t0
+
+        # 11. preprocess_transaction_lookups → transaction_by_tx_prefix table
+        t0 = time.monotonic()
+        tx_lookups = preprocess_transaction_lookups(txs)
+        t_lookups = time.monotonic() - t0
+
+        # 12. Add partition to blocks and txs
+        partition = blocks[0]["block_id"] // self.partition_batch_size
+        assert partition == blocks[-1]["block_id"] // self.partition_batch_size
+        t0 = time.monotonic()
+        for item in blocks:
+            item["partition"] = partition
+        for item in txs:
+            item["partition"] = partition
+        t_partition = time.monotonic() - t0
+
+        # 13. Store _last_block_ts for summary statistics
+        self._last_block_ts = blocks[-1]["timestamp"]
+
+        t_transform_total = time.monotonic() - t_total
+        logger.info(
+            f"[transform-timing] UTXO+cassandra: "
+            f"total={t_transform_total:.3f}s  "
+            f"tx_refs={t_refs:.3f}s  "
+            f"prep_blocks={t_prep_blocks:.3f}s ({len(blocks)} blks)  "
+            f"enrich={t_enrich:.3f}s ({len(txs)} txs)  "
+            f"cassandra_fields={t_cassandra_fields:.3f}s  "
+            f"prep_txs={t_prep_txs:.3f}s  "
+            f"block_txs={t_block_txs:.3f}s  "
+            f"lookups={t_lookups:.3f}s  "
+            f"partition={t_partition:.3f}s"
+        )
+
+        block_range_content.table_contents = {
+            "block": blocks,
+            "transaction": txs,
+            "block_transactions": block_transactions,
+            "transaction_by_tx_prefix": tx_lookups,
+            "transaction_spent_in": tx_refs,
+            "transaction_spending": tx_refs,
+        }
+        return block_range_content
+
+    def transform_blockindep(self, block_range_content):
         return BlockRangeContent(table_contents={})
 
 
 class TransformerTRX(Transformer):
     def transform(self, block_range_content: BlockRangeContent) -> BlockRangeContent:
-        if not _has_ingest_dependencies:
-            raise ImportError(
-                "Transform function needs ethereumetl installed. Please install gslib with ingest dependencies."
-            )
-
+        t_total = time.monotonic()
         data = block_range_content.table_contents
 
         blocks = data["blocks"]
@@ -98,60 +312,74 @@ class TransformerTRX(Transformer):
         fees = data["fees"]
         hash_to_type = data["hash_to_type"]
 
+        t0 = time.monotonic()
         prepare_blocks_inplace_trx(blocks, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        t_prep_blocks = time.monotonic() - t0
+
+        t0 = time.monotonic()
         txs = enrich_txs_with_vrs(txs, receipts)
+        t_enrich_vrs = time.monotonic() - t0
+
+        t0 = time.monotonic()
         txs = enrich_transactions_with_type(txs, hash_to_type)
-        # todo this can be a problem if the there are multiple partitions
+        t_enrich_type = time.monotonic() - t0
+
         partition = blocks[0]["block_id"] // self.partition_batch_size
+        assert partition == blocks[-1]["block_id"] // self.partition_batch_size
+
+        t0 = time.monotonic()
         prepare_fees_inplace(
             fees,
             TX_HASH_PREFIX_LEN,
             partition,
             keep_block_ids=True,
-            drop_tx_hash_prefix=True,
+            drop_tx_hash_prefix=False,
         )
+        t_prep_fees = time.monotonic() - t0
 
-        prepare_transactions_inplace = prepare_transactions_inplace_trx
-        prepare_traces_inplace = prepare_traces_inplace_trx
-
-        # COMMON
-        prepare_transactions_inplace(
+        t0 = time.monotonic()
+        prepare_transactions_inplace_trx(
             txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, self.partition_batch_size
         )
-        prepare_traces_inplace(traces, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        t_prep_txs = time.monotonic() - t0
+
+        t0 = time.monotonic()
+        prepare_traces_inplace_trx(traces, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        t_prep_traces = time.monotonic() - t0
+
+        t0 = time.monotonic()
         prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        t_prep_logs = time.monotonic() - t0
 
-        blocks = drop_columns_from_list(blocks, ["block_id_group"])
-        txs = drop_columns_from_list(txs, ["block_id_group"])
-        traces = drop_columns_from_list(traces, ["block_id_group"])
-        logs = drop_columns_from_list(logs, ["block_id_group"])
+        t0 = time.monotonic()
+        # Fix empty transferto_address (semantic data correction, not format conversion)
+        dummy_address = TRON_DUMMY_REPLACEMENT_ADDRESS
+        for trace in traces:
+            if len(trace["transferto_address"]) == 0:
+                trace["transferto_address"] = dummy_address
+        t_fixup = time.monotonic() - t0
 
-        def fix_transferToAddress(item):
-            if len(item["transferto_address"]) == 0:
-                # for some very rare txs
-                # e.g. f0b31777dcc58cbca074380ff6f25f8495898edba2da0c43b099b3f276ae3d74
-                # transferTo_address is empty which does not mach our schema.
-                # as a quick fix we set a dummy address for now.
+        t0 = time.monotonic()
+        txs.sort(key=lambda x: (x["block_id"], x["transaction_index"]))
+        blocks.sort(key=lambda x: x["block_id"])
+        traces.sort(key=lambda x: (x["block_id"], x["trace_index"]))
+        logs.sort(key=lambda x: (x["block_id"], x["log_index"]))
+        t_sort = time.monotonic() - t0
 
-                # CAUTION: THIS CAUSES PROBLEMS IN THE UI WHICH EXPECTS VALID ADDRESSES
-                # WE CURRENTLY HAVE A FIX IN THE LOADING CODE THAT REPLACES THIS
-                # DUMMY ADDRESS WITH THE NULL ADDRESS (T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb)
-
-                dummy_address = TRON_DUMMY_REPLACEMENT_ADDRESS  # noqa
-                item["transferto_address"] = dummy_address
-            return item
-
-        traces = [fix_transferToAddress(trace) for trace in traces]
-
-        txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["transaction"])
-        blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["block"])
-        traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["trace"])
-        logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT_TRX["log"])
-
-        txs = sorted(txs, key=lambda x: (x["block_id"], x["transaction_index"]))
-        blocks = sorted(blocks, key=lambda x: x["block_id"])
-        traces = sorted(traces, key=lambda x: (x["block_id"], x["trace_index"]))
-        logs = sorted(logs, key=lambda x: (x["block_id"], x["log_index"]))
+        t_transform_total = time.monotonic() - t_total
+        logger.info(
+            f"[transform-timing] TRX: "
+            f"total={t_transform_total:.3f}s  "
+            f"prep_blocks={t_prep_blocks:.3f}s ({len(blocks)} blks)  "
+            f"enrich_vrs={t_enrich_vrs:.3f}s  "
+            f"enrich_type={t_enrich_type:.3f}s  "
+            f"prep_fees={t_prep_fees:.3f}s ({len(fees) if fees else 0} fees)  "
+            f"prep_txs={t_prep_txs:.3f}s ({len(txs)} txs)  "
+            f"prep_traces={t_prep_traces:.3f}s ({len(traces)} traces)  "
+            f"prep_logs={t_prep_logs:.3f}s ({len(logs)} logs)  "
+            f"fixup={t_fixup:.3f}s  "
+            f"sort={t_sort:.3f}s"
+        )
 
         # fees should already be ordered coming out of the function called
         # export_hash_to_type_mappings_parallel
@@ -177,6 +405,7 @@ class TransformerTRX(Transformer):
 
 class TransformerETH(Transformer):
     def transform(self, block_range_content: BlockRangeContent) -> BlockRangeContent:
+        t_total = time.monotonic()
         data = block_range_content.table_contents
 
         blocks = data["blocks"]
@@ -185,28 +414,46 @@ class TransformerETH(Transformer):
         logs = data["logs"]
         traces = data["traces"]
 
+        t0 = time.monotonic()
         prepare_blocks_inplace_eth(blocks, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        t_prep_blocks = time.monotonic() - t0
+
+        t0 = time.monotonic()
         txs = enrich_txs_with_vrs(txs, receipts)
+        t_enrich_vrs = time.monotonic() - t0
+
+        t0 = time.monotonic()
         prepare_transactions_inplace_eth(
             txs, TX_HASH_PREFIX_LEN, BLOCK_BUCKET_SIZE, self.partition_batch_size
         )
+        t_prep_txs = time.monotonic() - t0
+
+        t0 = time.monotonic()
         prepare_traces_inplace_eth(traces, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        t_prep_traces = time.monotonic() - t0
+
+        t0 = time.monotonic()
         prepare_logs_inplace(logs, BLOCK_BUCKET_SIZE, self.partition_batch_size)
+        t_prep_logs = time.monotonic() - t0
 
-        blocks = drop_columns_from_list(blocks, ["block_id_group"])
-        txs = drop_columns_from_list(txs, ["block_id_group"])
-        traces = drop_columns_from_list(traces, ["block_id_group"])
-        logs = drop_columns_from_list(logs, ["block_id_group"])
+        t0 = time.monotonic()
+        txs.sort(key=lambda x: (x["block_id"], x["transaction_index"]))
+        blocks.sort(key=lambda x: x["block_id"])
+        traces.sort(key=lambda x: (x["block_id"], x["trace_index"]))
+        logs.sort(key=lambda x: (x["block_id"], x["log_index"]))
+        t_sort = time.monotonic() - t0
 
-        txs = to_bytes(txs, BINARY_COL_CONVERSION_MAP_ACCOUNT["transaction"])
-        blocks = to_bytes(blocks, BINARY_COL_CONVERSION_MAP_ACCOUNT["block"])
-        traces = to_bytes(traces, BINARY_COL_CONVERSION_MAP_ACCOUNT["trace"])
-        logs = to_bytes(logs, BINARY_COL_CONVERSION_MAP_ACCOUNT["log"])
-
-        txs = sorted(txs, key=lambda x: (x["block_id"], x["transaction_index"]))
-        blocks = sorted(blocks, key=lambda x: x["block_id"])
-        traces = sorted(traces, key=lambda x: (x["block_id"], x["trace_index"]))
-        logs = sorted(logs, key=lambda x: (x["block_id"], x["log_index"]))
+        t_transform_total = time.monotonic() - t_total
+        logger.info(
+            f"[transform-timing] ETH: "
+            f"total={t_transform_total:.3f}s  "
+            f"prep_blocks={t_prep_blocks:.3f}s ({len(blocks)} blks)  "
+            f"enrich_vrs={t_enrich_vrs:.3f}s  "
+            f"prep_txs={t_prep_txs:.3f}s ({len(txs)} txs)  "
+            f"prep_traces={t_prep_traces:.3f}s ({len(traces)} traces)  "
+            f"prep_logs={t_prep_logs:.3f}s ({len(logs)} logs)  "
+            f"sort={t_sort:.3f}s"
+        )
 
         block_range_content.table_contents = {
             "block": blocks,
@@ -216,5 +463,5 @@ class TransformerETH(Transformer):
         }
         return block_range_content
 
-    def transform_blockindep(self, data):
+    def transform_blockindep(self, block_range_content):
         return BlockRangeContent(table_contents={})
