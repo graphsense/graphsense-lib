@@ -8,6 +8,7 @@ addresses, and path-segment validation — without needing a real backend.
 from __future__ import annotations
 
 from contextlib import AsyncExitStack
+from typing import TypedDict
 
 import pytest
 from fastapi import FastAPI, HTTPException, Query
@@ -525,6 +526,115 @@ async def test_list_neighbors_compact_default(stub_app_with_neighbors):
             assert "labels" not in n
 
 
+async def test_make_client_forwards_originating_request_headers():
+    """The in-process httpx client must inherit headers from the
+    originating MCP HTTP request. The FastAPI app reads
+    `tagstore_groups` from headers (e.g. plugin group headers,
+    `x-consumer-username`), so an unauthenticated in-process call would
+    resolve as anonymous public — making private-group attribution
+    invisible to wrappers that fan out tag_summary lookups. This is the
+    smoking-gun bug from production: a Coinbase tag in a non-public
+    tagpack was visible via a direct curl-with-headers call but not via
+    the MCP wrapper's filter.
+    """
+    import contextvars
+
+    from fastapi import FastAPI, Header
+    from fastmcp.server.http import _current_http_request
+    from starlette.requests import Request
+
+    from graphsenselib.mcp.tools.consolidated import _make_client
+
+    app = FastAPI()
+    seen_headers: dict[str, str] = {}
+
+    @app.get("/probe")
+    async def _probe(
+        x_consumer_username: str | None = Header(default=None),
+        x_tagstore_groups: str | None = Header(default=None),
+    ):
+        if x_consumer_username is not None:
+            seen_headers["x-consumer-username"] = x_consumer_username
+        if x_tagstore_groups is not None:
+            seen_headers["x-tagstore-groups"] = x_tagstore_groups
+        return {"ok": True}
+
+    # Build a synthetic incoming HTTP request the way fastmcp would,
+    # carrying the headers a real reverse-proxy adds before the request
+    # reaches the MCP mount.
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/mcp/",
+            "raw_path": b"/mcp/",
+            "query_string": b"",
+            "headers": [
+                (b"x-consumer-username", b"alice"),
+                (b"x-tagstore-groups", b"private"),
+            ],
+            "client": None,
+            "server": None,
+            "root_path": "",
+        }
+    )
+
+    ctx = contextvars.copy_context()
+
+    async def _run():
+        _current_http_request.set(request)
+        client = _make_client(app)
+        async with client:
+            r = await client.get("/probe")
+            assert r.status_code == 200, r.text
+
+    await ctx.run(_run)
+
+    assert seen_headers.get("x-consumer-username") == "alice"
+    assert seen_headers.get("x-tagstore-groups") == "private"
+
+
+async def test_matches_tag_filter_real_world_coinbase_summary():
+    """Regression: a real upstream tag_summary for a Coinbase-attributed
+    address (best_actor='coinbase', best_label='Coinbase.com', label key
+    'coinbase com') must match `tag_filter='coinbase'` after the slim
+    transform — exercises the matcher against shape we actually receive
+    in production.
+    """
+    from graphsenselib.mcp.tools.consolidated import (
+        _matches_tag_filter,
+        _slim_tag_summary,
+    )
+
+    raw = {
+        "broad_category": "exchange",
+        "tag_count": 1,
+        "label_summary": {
+            "coinbase com": {
+                "label": "Coinbase.com",
+                "count": 1,
+                "confidence": 1.0,
+                "relevance": 1.0,
+                "creators": ["GraphSense Core Team"],
+                "sources": ["Manually executed transactions"],
+                "concepts": ["exchange"],
+                "lastmod": 1642118400,
+            }
+        },
+        "concept_tag_cloud": {"exchange": {"cnt": 1, "weighted": 1.0}},
+        "tag_count_indirect": 1,
+        "best_actor": "coinbase",
+        "best_label": "Coinbase.com",
+    }
+    slim = _slim_tag_summary(raw)
+    assert _matches_tag_filter(slim, "coinbase") is True
+    assert _matches_tag_filter(slim, "Coinbase") is True
+    assert _matches_tag_filter(slim, "exchange") is True
+    assert _matches_tag_filter(slim, "binance") is False
+
+
 async def test_list_neighbors_tag_filter_matches_label(stub_app_with_neighbors):
     """tag_filter is a case-insensitive substring match against best_actor,
     best_label, broad_category, label keys, and concept keys.
@@ -615,6 +725,170 @@ async def test_list_neighbors_enriches_tag_summary_by_default(stub_app_with_neig
         assert data is not None
         labels = {n["tag_summary"]["best_label"] for n in data["neighbors"]}
         assert labels == {"Coinbase 3", "label-for-n2"}
+
+
+class _PagedNeighborsState(TypedDict):
+    page_calls: int
+    ts_calls: list[str]
+
+
+@pytest.fixture
+def stub_app_with_paged_neighbors() -> tuple[FastAPI, _PagedNeighborsState]:
+    """Stub serving multiple pages of neighbors. Only the second page
+    contains a "coinbase"-tagged neighbor — verifies tag_filter walks
+    upstream pages instead of giving up on the first empty filtered page.
+    """
+    app = FastAPI()
+    state: _PagedNeighborsState = {"page_calls": 0, "ts_calls": []}
+
+    # Addresses are kept alphanumeric — the wrapper validates each
+    # neighbor address against `_ID_PATTERN` before fetching its
+    # tag_summary, and dashes would silently skip enrichment.
+    page_1 = [
+        {
+            "value": {"value": 1, "fiat_values": []},
+            "no_txs": 1,
+            "address": {
+                "address": f"a1n{i}",
+                "balance": {"value": 1, "fiat_values": []},
+            },
+        }
+        for i in range(3)
+    ]
+    page_2 = [
+        {
+            "value": {"value": 2, "fiat_values": []},
+            "no_txs": 2,
+            "address": {
+                "address": f"a2n{i}",
+                "balance": {"value": 2, "fiat_values": []},
+            },
+        }
+        for i in range(3)
+    ]
+    page_3 = [
+        {
+            "value": {"value": 3, "fiat_values": []},
+            "no_txs": 3,
+            "address": {
+                "address": f"a3n{i}",
+                "balance": {"value": 3, "fiat_values": []},
+            },
+        }
+        for i in range(2)
+    ]
+
+    @app.get("/{currency}/addresses/{address}/neighbors")
+    async def _neighbors(
+        currency: str,
+        address: str,
+        direction: str = Query("out"),
+        page: str | None = Query(None),
+        pagesize: int | None = Query(None),
+        include_actors: bool | None = Query(None),
+        include_labels: bool | None = Query(None),
+    ):
+        state["page_calls"] += 1
+        if page is None:
+            return {"neighbors": page_1, "next_page": "cursor-2"}
+        if page == "cursor-2":
+            return {"neighbors": page_2, "next_page": "cursor-3"}
+        if page == "cursor-3":
+            return {"neighbors": page_3, "next_page": None}
+        return {"neighbors": [], "next_page": None}
+
+    @app.get("/{currency}/addresses/{address}/tag_summary")
+    async def _ts(
+        currency: str,
+        address: str,
+        include_best_cluster_tag: str | None = Query(None),
+    ):
+        state["ts_calls"].append(address)
+        # Only one neighbor (a2n1) has Coinbase attribution.
+        if address == "a2n1":
+            return {
+                "tag_count": 1,
+                "broad_category": "exchange",
+                "best_label": "Coinbase 1",
+                "best_actor": "coinbase",
+                "label_summary": {
+                    "Coinbase 1": {"count": 1, "confidence": 0.9, "relevance": 1.0}
+                },
+                "concept_tag_cloud": {"exchange": {"cnt": 1, "weighted": 1.0}},
+            }
+        return {
+            "tag_count": 0,
+            "broad_category": "unknown",
+            "label_summary": {},
+            "concept_tag_cloud": {},
+        }
+
+    return app, state
+
+
+async def test_list_neighbors_tag_filter_auto_walks_upstream_pages(
+    stub_app_with_paged_neighbors,
+):
+    """When `tag_filter` is set, the wrapper must keep walking upstream
+    pages until it finds matches — instead of returning empty pages and
+    forcing the caller to walk by hand. Page 1 has no matches; page 2
+    has the only "coinbase" neighbor. With `pagesize=1` the wrapper
+    stops as soon as it has 1 match, so it returns the upstream cursor
+    that picks up after page 2.
+    """
+    app, state = stub_app_with_paged_neighbors
+    from graphsenselib.mcp.tools.consolidated import register_list_neighbors
+
+    mcp = _tool(app, register_list_neighbors)
+    async with Client(mcp) as c:
+        r = await c.call_tool(
+            "list_neighbors",
+            {
+                "currency": "btc",
+                "address": "abc",
+                "tag_filter": "coinbase",
+                "pagesize": 1,
+            },
+        )
+        data = r.structured_content
+        assert data is not None
+        # The wrapper should have found the match on page 2 and returned
+        # it, not an empty list.
+        addrs = [n["address"] for n in data["neighbors"]]
+        assert addrs == ["a2n1"]
+        # Walked exactly 2 upstream pages (page 1 had no match).
+        assert state["page_calls"] == 2
+        # next_page reflects the upstream cursor *after* the page we
+        # consumed, so the caller can resume scanning if they want more.
+        assert data["next_page"] == "cursor-3"
+
+
+async def test_list_neighbors_tag_filter_stops_when_target_hit(
+    stub_app_with_paged_neighbors,
+):
+    """If the target match count is reached on the first upstream page,
+    the wrapper must NOT keep walking — over-fetching is wasted upstream
+    work and (more importantly) wasted tag_summary lookups.
+    """
+    app, state = stub_app_with_paged_neighbors
+    from graphsenselib.mcp.tools.consolidated import register_list_neighbors
+
+    mcp = _tool(app, register_list_neighbors)
+    async with Client(mcp) as c:
+        # pagesize=1 + a needle that matches every neighbor (broad_category
+        # "unknown" or "exchange") → first upstream page satisfies.
+        r = await c.call_tool(
+            "list_neighbors",
+            {
+                "currency": "btc",
+                "address": "abc",
+                "tag_filter": "unknown",
+                "pagesize": 1,
+            },
+        )
+        assert r.structured_content is not None
+    # Only one upstream page should have been requested.
+    assert state["page_calls"] == 1
 
 
 async def test_list_neighbors_no_tag_summary_when_disabled(stub_app_with_neighbors):

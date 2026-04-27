@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 
 import httpx
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_http_headers
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,25 @@ def _validate_id(name: str, value: str) -> None:
 
 
 def _make_client(app) -> httpx.AsyncClient:
-    """Build an httpx client that dispatches to the FastAPI app in-process."""
+    """Build an httpx client that dispatches to the FastAPI app in-process,
+    forwarding the originating MCP request's headers.
+
+    Header forwarding is load-bearing for tag access: the FastAPI app
+    resolves `tagstore_groups` (and obfuscation, x-consumer-username,
+    private-tag visibility) from request headers. Without forwarding,
+    every in-process call resolves as anonymous public — so private-group
+    attribution (e.g. a Coinbase tag in a non-public tagpack) is invisible
+    to the wrapper while the same call made with the originating headers
+    sees it. `get_http_headers()` strips hop-by-hop and `authorization`
+    headers by default; the auth-shaped headers this app actually consults
+    (`x-consumer-username`, plugin group headers) pass through. Returns
+    `{}` when no HTTP request is active (stdio transport, unit tests via
+    in-process Client) — safe no-op.
+    """
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://graphsense-mcp",
+        headers=get_http_headers(),
     )
 
 
@@ -347,6 +363,20 @@ def _params_from(
     return params
 
 
+# Hard ceiling on candidates examined per filtered call. Each candidate
+# costs one upstream tag_summary lookup, so a runaway filter on a hub
+# address with thousands of neighbors would otherwise dwarf the rest of
+# the response. When this bound is hit, the wrapper returns what it has
+# plus the upstream cursor so the caller can resume.
+_TAG_FILTER_MAX_SCAN = 500
+# Minimum upstream pagesize when filtering. Filtering is only useful in
+# bulk: asking the upstream for 5 rows at a time when the caller's filter
+# matches one in fifty would multiply round-trips for nothing.
+_TAG_FILTER_MIN_UPSTREAM_PAGESIZE = 100
+# Default target match count when the caller didn't pass `pagesize`.
+_TAG_FILTER_DEFAULT_TARGET = 50
+
+
 def register_list_neighbors(mcp, app, stack) -> None:
     @mcp.tool(tags={"gs_neighbors"})
     async def list_neighbors(
@@ -380,10 +410,18 @@ def register_list_neighbors(mcp, app, stack) -> None:
         `tag_filter` runs a case-insensitive substring match against
         `best_actor`, `best_label`, `broad_category`, every key in the
         per-neighbor `labels` dict, and every key in `concepts`. Passing
-        it forces `include_tag_summary=True` regardless of the flag, then
-        filters in-memory before returning. Pagination still happens at
-        the upstream layer, so a filtered page may contain fewer rows
-        than `pagesize` (or zero) — keep walking `next_page`.
+        it forces `include_tag_summary=True` regardless of the flag.
+
+        Filtered pagination: when `tag_filter` is set the wrapper walks
+        upstream pages internally until it has accumulated `pagesize`
+        matches (default 50), the upstream is exhausted, or it has
+        examined ~500 candidate neighbors — whichever happens first.
+        That means a filtered call CAN do many upstream requests; the
+        cap exists so a hub address with thousands of neighbors can't
+        run away. The returned `next_page` is the upstream cursor *after*
+        the last page consumed, so passing it back continues the scan.
+        An empty list with a non-null `next_page` means the wrapper hit
+        the scan cap without finding matches — keep paging.
 
         For raw per-tag detail (provenance, tagpack info, lower-confidence
         leads) on a specific address, call `list_tags_by_address`.
@@ -392,7 +430,7 @@ def register_list_neighbors(mcp, app, stack) -> None:
             currency: Network identifier (e.g. "btc").
             address: The address to list neighbors for.
             direction: "in" (incoming) or "out" (outgoing).
-            pagesize: Results per page.
+            pagesize: Results per page (when filtering: target match count).
             page: Pagination token from a previous response.
             only_ids: Limit to specific neighbor ids.
             include_tag_summary: Enrich each neighbor with its `tag_summary`.
@@ -408,28 +446,19 @@ def register_list_neighbors(mcp, app, stack) -> None:
         """
         _validate_currency(currency)
         _validate_id("address", address)
-        # Suppress the legacy quick-aggregate fields at source. The MCP
-        # contract exposes tag context only via `tag_summary`.
-        params = _params_from(
-            direction,
-            pagesize,
-            page,
-            only_ids=only_ids,
-            include_actors=False,
-            include_labels=False,
-        )
         # tag_filter implies tag_summary — we need the data to match against.
         if tag_filter is not None:
             include_tag_summary = True
+
         client = _make_client(app)
         async with client:
-            body = await _get_json(
-                client,
-                f"/{currency}/addresses/{address}/neighbors",
-                params=params,
-            )
-            neighbors = body.get("neighbors") or []
-            if include_tag_summary and neighbors:
+
+            async def _enrich(neighbors: list[dict[str, Any]]) -> None:
+                """Attach `tag_summary` to each neighbor in place. One
+                upstream call per neighbor; gathered concurrently.
+                """
+                if not neighbors:
+                    return
 
                 async def _ts_for(n: dict[str, Any]) -> Optional[dict[str, Any]]:
                     nested = n.get("address")
@@ -449,12 +478,62 @@ def register_list_neighbors(mcp, app, stack) -> None:
                 for n, ts in zip(neighbors, summaries):
                     if ts is not None:
                         n["tag_summary"] = ts
-            if tag_filter is not None:
-                neighbors = [
-                    n
-                    for n in neighbors
-                    if _matches_tag_filter(n.get("tag_summary"), tag_filter)
-                ]
+
+            async def _fetch_page(cursor: Optional[str], size: Optional[int]) -> dict:
+                # Suppress the legacy quick-aggregate fields at source. The MCP
+                # contract exposes tag context only via `tag_summary`.
+                params = _params_from(
+                    direction,
+                    size,
+                    cursor,
+                    only_ids=only_ids,
+                    include_actors=False,
+                    include_labels=False,
+                )
+                return await _get_json(
+                    client,
+                    f"/{currency}/addresses/{address}/neighbors",
+                    params=params,
+                )
+
+            if tag_filter is None:
+                body = await _fetch_page(page, pagesize)
+                neighbors = body.get("neighbors") or []
+                if include_tag_summary:
+                    await _enrich(neighbors)
+            else:
+                # Auto-walk upstream pages until we have enough matches,
+                # the upstream is exhausted, or we hit the scan ceiling.
+                target = (
+                    pagesize
+                    if (pagesize and pagesize > 0)
+                    else _TAG_FILTER_DEFAULT_TARGET
+                )
+                upstream_size = max(target, _TAG_FILTER_MIN_UPSTREAM_PAGESIZE)
+                matched: list[dict[str, Any]] = []
+                scanned = 0
+                cursor = page
+                next_cursor: Optional[str] = None
+                while True:
+                    body = await _fetch_page(cursor, upstream_size)
+                    page_neighbors = body.get("neighbors") or []
+                    next_cursor = body.get("next_page")
+                    await _enrich(page_neighbors)
+                    scanned += len(page_neighbors)
+                    for n in page_neighbors:
+                        if _matches_tag_filter(n.get("tag_summary"), tag_filter):
+                            matched.append(n)
+                    if len(matched) >= target:
+                        break
+                    if next_cursor is None:
+                        break
+                    if scanned >= _TAG_FILTER_MAX_SCAN:
+                        break
+                    cursor = next_cursor
+                neighbors = matched
+                body["neighbors"] = neighbors
+                body["next_page"] = next_cursor
+
             cleaned = [_strip_neighbor_legacy(n) for n in neighbors]
             if compact:
                 cleaned = [_compact_neighbor(n) for n in cleaned]
