@@ -73,18 +73,6 @@ include:
     description: "List concepts (leaf labels) inside a given taxonomy."
     tags: ["metadata"]
 
-  list_tags_by_address:
-    description: >
-      Paginated list of raw attribution tags on a single address. Use this
-      ONLY for surfacing lower-confidence leads that don't make it into
-      `tag_summary` — the summary is the authoritative aggregated view and
-      should drive any conclusion about identity, category, or actor.
-      Cite tags from this list as low-confidence leads, not as facts.
-      Pass `pagesize` to cap the page (default is server-side); the
-      `next_page` cursor in the response can be passed back as `page` to
-      fetch the next batch.
-    tags: ["address-level", "tags"]
-
 # Hand-written tools that replace multiple auto-generated ones. These are
 # registered in Python (see module field); their presence here is what makes
 # the validator treat the 'replaces' op_ids as excluded from auto-exposure.
@@ -125,6 +113,11 @@ consolidated_tools:
       - list_address_txs
       - list_address_links
     module: graphsenselib.mcp.tools.consolidated:register_list_txs_for
+
+  - name: list_tags_by_address
+    replaces:
+      - list_tags_by_address
+    module: graphsenselib.mcp.tools.consolidated:register_list_tags_by_address
 
 # Tools that forward to an external service rather than the FastAPI app.
 external_tools:

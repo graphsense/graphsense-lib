@@ -733,3 +733,136 @@ async def test_list_txs_for_validates_neighbor(stub_app_with_txs_and_links):
                 "list_txs_for",
                 {"currency": "btc", "address": "abc", "neighbor": "bad/../path"},
             )
+
+
+@pytest.fixture
+def recording_tag_app() -> tuple[FastAPI, list[dict]]:
+    """Stub that records query params received on /tag_summary and /tags
+    so tests can assert the wrappers always send `include_best_cluster_tag`.
+    """
+    app = FastAPI()
+    received: list[dict] = []
+
+    @app.get("/{currency}/addresses/{address}")
+    async def _addr(currency: str, address: str):
+        return {"address": address}
+
+    @app.get("/{currency}/addresses/{address}/entity")
+    async def _cluster(currency: str, address: str):
+        raise HTTPException(status_code=404, detail="no cluster")
+
+    @app.get("/{currency}/addresses/{address}/tag_summary")
+    async def _ts(
+        currency: str,
+        address: str,
+        include_best_cluster_tag: str | None = Query(None),
+    ):
+        received.append(
+            {
+                "endpoint": "tag_summary",
+                "address": address,
+                "include_best_cluster_tag": include_best_cluster_tag,
+            }
+        )
+        return {"tag_count": 0, "broad_category": "unknown"}
+
+    @app.get("/{currency}/addresses/{address}/tags")
+    async def _tags(
+        currency: str,
+        address: str,
+        page: str | None = Query(None),
+        pagesize: int | None = Query(None),
+        include_best_cluster_tag: str | None = Query(None),
+    ):
+        received.append(
+            {
+                "endpoint": "tags",
+                "address": address,
+                "include_best_cluster_tag": include_best_cluster_tag,
+                "page": page,
+                "pagesize": pagesize,
+            }
+        )
+        return {"address_tags": [], "next_page": None}
+
+    return app, received
+
+
+async def test_lookup_address_passes_include_best_cluster_tag(recording_tag_app):
+    """The tag_summary call inside lookup_address must always send
+    `include_best_cluster_tag=true` for UI parity.
+    """
+    from graphsenselib.mcp.tools.consolidated import register_lookup_address
+
+    app, received = recording_tag_app
+    mcp = _tool(app, register_lookup_address)
+    async with Client(mcp) as c:
+        await c.call_tool(
+            "lookup_address",
+            {"currency": "btc", "address": "abc", "include_tag_summary": True},
+        )
+    ts_calls = [r for r in received if r["endpoint"] == "tag_summary"]
+    assert len(ts_calls) == 1
+    assert ts_calls[0]["include_best_cluster_tag"] == "true"
+
+
+async def test_list_tags_by_address_always_sends_include_best_cluster_tag(
+    recording_tag_app,
+):
+    """The list_tags_by_address wrapper always forwards
+    `include_best_cluster_tag=true` to the upstream (UI parity); it is
+    not exposed as a caller-overridable parameter.
+    """
+    from graphsenselib.mcp.tools.consolidated import register_list_tags_by_address
+
+    app, received = recording_tag_app
+    mcp = _tool(app, register_list_tags_by_address)
+    async with Client(mcp) as c:
+        await c.call_tool(
+            "list_tags_by_address",
+            {"currency": "btc", "address": "abc"},
+        )
+    tag_calls = [r for r in received if r["endpoint"] == "tags"]
+    assert len(tag_calls) == 1
+    assert tag_calls[0]["include_best_cluster_tag"] == "true"
+
+
+async def test_list_neighbors_passes_include_best_cluster_tag_in_enrichment():
+    """list_neighbors enriches each neighbor with tag_summary and the
+    enrichment call must pass include_best_cluster_tag=true.
+    """
+    from graphsenselib.mcp.tools.consolidated import register_list_neighbors
+
+    app = FastAPI()
+    received: list[dict] = []
+
+    @app.get("/{currency}/addresses/{address}/neighbors")
+    async def _neighbors(currency: str, address: str, direction: str = Query("out")):
+        return {
+            "neighbors": [
+                {
+                    "value": {"value": 1, "fiat_values": []},
+                    "no_txs": 1,
+                    "address": {"address": "n1"},
+                }
+            ],
+            "next_page": None,
+        }
+
+    @app.get("/{currency}/addresses/{address}/tag_summary")
+    async def _ts(
+        currency: str,
+        address: str,
+        include_best_cluster_tag: str | None = Query(None),
+    ):
+        received.append(
+            {"address": address, "include_best_cluster_tag": include_best_cluster_tag}
+        )
+        return {"tag_count": 0, "broad_category": "unknown"}
+
+    mcp = _tool(app, register_list_neighbors)
+    async with Client(mcp) as c:
+        await c.call_tool("list_neighbors", {"currency": "btc", "address": "abc"})
+    assert len(received) == 1
+    assert received[0]["address"] == "n1"
+    assert received[0]["include_best_cluster_tag"] == "true"

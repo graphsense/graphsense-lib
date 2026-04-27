@@ -276,8 +276,15 @@ def register_lookup_address(mcp, app, stack) -> None:
                 if cluster_body is not None:
                     result["cluster"] = _slim(_strip_cluster_legacy(cluster_body))
             if include_tag_summary:
+                # `include_best_cluster_tag=true` matches what the UI sends:
+                # when the address itself has no direct tag, the cluster's
+                # best tag is folded into the digest, surfacing useful
+                # cluster-derived attribution. The MCP server's `instructions`
+                # remind the LLM to qualify cluster-derived claims.
                 ts = await _get_json(
-                    client, f"/{currency}/addresses/{address}/tag_summary"
+                    client,
+                    f"/{currency}/addresses/{address}/tag_summary",
+                    params={"include_best_cluster_tag": "true"},
                 )
                 result["tag_summary"] = _slim_tag_summary(ts)
             if include_cross_chain_addresses:
@@ -432,7 +439,9 @@ def register_list_neighbors(mcp, app, stack) -> None:
                     if not isinstance(a, str) or not _ID_PATTERN.match(a):
                         return None
                     raw = await _get_json_optional(
-                        client, f"/{currency}/addresses/{a}/tag_summary"
+                        client,
+                        f"/{currency}/addresses/{a}/tag_summary",
+                        params={"include_best_cluster_tag": "true"},
                     )
                     return _slim_tag_summary(raw)
 
@@ -632,3 +641,52 @@ def register_list_txs_for(mcp, app, stack) -> None:
         client = _make_client(app)
         async with client:
             return _slim(await _get_json(client, path, params=params))
+
+
+def register_list_tags_by_address(mcp, app, stack) -> None:
+    @mcp.tool(tags={"gs_address-level", "gs_tags"})
+    async def list_tags_by_address(
+        currency: str,
+        address: str,
+        page: Optional[str] = None,
+        pagesize: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Paginated raw attribution tags for a single address.
+
+        Use this for surfacing lower-confidence leads or per-tag
+        provenance (tagpack, sources). The aggregated, confidence-weighted
+        view is `tag_summary` (returned by `lookup_address`); reach for
+        the raw list only when you need per-tag detail.
+
+        The wrapper always sends `include_best_cluster_tag=true` to the
+        upstream (UI parity): when the address has no direct tag, the
+        cluster's best-confidence tag is appended to the last page so
+        cluster-derived attribution still surfaces. Qualify any claim
+        drawn from a cluster-derived tag (see server `instructions`).
+
+        Args:
+            currency: Network identifier (e.g. "btc", "eth").
+            address: Address to list tags for.
+            page: Pagination token from a previous response.
+            pagesize: Results per page.
+
+        Returns:
+            A dict with `address_tags` and a `next_page` cursor.
+        """
+        _validate_currency(currency)
+        _validate_id("address", address)
+        params = _params_from(
+            None,
+            pagesize,
+            page,
+            include_best_cluster_tag="true",
+        )
+        client = _make_client(app)
+        async with client:
+            return _slim(
+                await _get_json(
+                    client,
+                    f"/{currency}/addresses/{address}/tags",
+                    params=params,
+                )
+            )

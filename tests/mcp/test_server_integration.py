@@ -110,11 +110,11 @@ async def test_curated_descriptions_applied(bundled_mcp):
 
 
 async def test_list_tags_by_address_exposes_pagination(bundled_mcp):
-    """The auto-tool generated for /addresses/{addr}/tags must expose
-    `page` and `pagesize` as input parameters — pagination is the whole
-    point of having a separate raw-tags-detail tool. Guards against a
-    future regression where the route's query params get dropped or
-    renamed by the auto-generation.
+    """The consolidated `list_tags_by_address` wrapper must expose `page`
+    and `pagesize` as input parameters — pagination is the whole point of
+    having a separate raw-tags-detail tool. `include_best_cluster_tag` is
+    always sent to the upstream (UI parity) and is NOT exposed as a
+    caller-overridable parameter.
     """
     async with Client(bundled_mcp) as c:
         tools = {t.name: t for t in await c.list_tools()}
@@ -123,6 +123,7 @@ async def test_list_tags_by_address_exposes_pagination(bundled_mcp):
     properties = schema.get("properties") or {}
     assert "page" in properties
     assert "pagesize" in properties
+    assert "include_best_cluster_tag" not in properties
     # Currency + address remain required; pagination is optional.
     required = set(schema.get("required") or [])
     assert "currency" in required

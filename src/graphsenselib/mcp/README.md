@@ -127,8 +127,9 @@ Note on terminology: graphsense has both "entity" and "cluster" endpoints, but `
 
 | Tool | Replaces | Why |
 |---|---|---|
-| `lookup_address` | `get_address` + `get_address_entity` + `get_tag_summary_by_address` + `list_tags_by_address` + `list_related_addresses` | "Tell me about this address" is the single most common question. Always surfaces `best_cluster_tag` at the top level regardless of include flags — single most useful datum when orienting on an unknown address. Optional `include_cross_chain_addresses` uses the pubkey-relation endpoint to find the same address on BCH/LTC/... from a BTC lookup (and vice-versa). |
-| `lookup_cluster` | `get_entity` + `get_cluster` + `list_address_tags_by_entity` + `list_address_tags_by_cluster` | Cluster-level equivalent. Also always surfaces `best_cluster_tag`. |
+| `lookup_address` | `get_address` + `get_address_entity` + `get_tag_summary_by_address` + `list_related_addresses` | "Tell me about this address" is the single most common question. The tag_summary call passes `include_best_cluster_tag=true` (UI parity): when the address has no direct tag, the cluster's best tag is folded into the digest. Optional `include_cross_chain_addresses` uses the pubkey-relation endpoint to find the same address on BCH/LTC/... from a BTC lookup (and vice-versa). |
+| `lookup_cluster` | `get_entity` + `get_cluster` + `list_address_tags_by_entity` + `list_address_tags_by_cluster` | Cluster-level equivalent. Tag context is intentionally NOT included — call `lookup_address`/`list_tags_by_address` on a member address. |
+| `list_tags_by_address` | `list_tags_by_address` | Raw per-tag detail with `include_best_cluster_tag=true` defaulted on (UI parity) — the cluster's best tag appears on the last page if the address has no direct tag. |
 | `list_neighbors` | `list_address_neighbors` | Address-level only. Cluster-level neighbors are deliberately not exposed — follow counterparty graphs at the address level (on-chain fact) rather than the cluster level (inference stacked on top). |
 | `list_txs_for` | `list_address_txs` + `list_address_links` | Address-level only. Pass `neighbor=<addr>` to switch to the links endpoint (txs between two addresses). Cluster-/entity-level tx listings are deliberately not exposed — same rationale as `list_neighbors`. |
 
