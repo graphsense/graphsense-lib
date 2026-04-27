@@ -33,8 +33,8 @@ needs it.
 Every tool must earn its place by either **being structurally distinct**
 or by **collapsing a common chain**. Two corollaries:
 
-1. **Curate, don't auto-expose.** FastAPI has 44 routes; we surface 16
-   (17 when `search_neighbors` is configured). MCP tool schemas are
+1. **Curate, don't auto-expose.** FastAPI has 44 routes; we surface 17
+   (18 when `search_neighbors` is configured). MCP tool schemas are
    loaded into the LLM's tool-selection context in some clients; even
    where clients lazy-load (Claude Code does), a tighter surface reduces
    "which-tool-should-I-pick?" ambiguity.
@@ -84,7 +84,7 @@ Typical savings: ~40% of the response body for address / tx lookups
 where most fields are value conversions. fastmcp already serializes
 dicts to compact JSON (no whitespace), so that lever is free.
 
-## The 16-tool surface (17 when `search_neighbors` is configured)
+## The 17-tool surface (18 when `search_neighbors` is configured)
 
 ### Orientation (5)
 
@@ -121,7 +121,7 @@ intent than UTXO tx inspection.
 `get_exchange_rates` and `get_actor` — low-token, high-value
 passthroughs that LLMs naturally chain with others.
 
-### Address / cluster / neighbors (4 consolidations)
+### Address / cluster / neighbors (5 consolidations)
 
 Note on terminology: graphsense has both "entity" and "cluster" endpoints, but `entities_service.get_entity` literally delegates to `clusters_service.get_cluster`. They're aliases. The MCP surface exposes only **cluster** to avoid conceptual duplication — entity op_ids are still hidden via `replaces` in the curation YAML, but the word "entity" does not appear in any tool name, kwarg, or response key.
 
@@ -142,37 +142,61 @@ with async task polling. Only registered when
 
 ## What we deliberately don't expose
 
-Listed because "why isn't X a tool?" is as interesting as "why is it?":
+Listed because "why isn't X a tool?" is as interesting as "why is it?".
+Two distinct categories.
+
+### Folded behind a flag on a consolidation (non-obvious access path)
+
+These op_ids look excluded on a quick scan of the tool list, but the
+underlying data is reachable. Spelled out so contributors don't re-add
+them as standalone tools:
+
+- **`get_tx_conversions`** → `lookup_tx_details(include_conversions=True)`
+  appends DEX swaps and bridge txs as a `conversions` list under the
+  unified schema.
+- **`list_related_addresses`** → `lookup_address(include_cross_chain_addresses=True)`
+  finds the same address on other chains via the pubkey-relation
+  endpoint.
+- **`list_address_links`** → `list_txs_for(neighbor=<addr>)` switches
+  to the links endpoint to list txs between two addresses.
+
+(Op_ids whose data lives in a same-named or obviously-named consolidation —
+`get_tx`, `get_address`, `get_cluster`, `get_entity`, `list_address_neighbors`,
+etc. — are documented in the consolidation table above.)
+
+### Excluded by absence (no tool exposes them)
 
 - **`bulk_csv` / `bulk_json`** — unbounded-size output, bad for LLM
   context.
-- **`get_tx_conversions`** — niche bridge-tx conversions; re-add if a
-  use case emerges.
-- **`list_related_addresses`** — niche heuristic, adds noise.
 - **`report_tag`** — write operation; LLMs shouldn't be reporting tags
   autonomously.
 - **`search_cluster_neighbors` / `search_entity_neighbors`** —
-  cluster-level neighbor search; redundant with the address-level
-  `list_neighbors` and we deliberately keep counterparty traversal at
-  the address level.
+  cluster-level multi-hop neighbor search. We deliberately keep
+  counterparty traversal at the address level (`list_neighbors` for
+  one-hop, the external `search_neighbors` for multi-hop).
 - **`list_cluster_neighbors` / `list_entity_neighbors`** — cluster-level
   neighbor listing. Address clustering is a heuristic; surfacing it as
   a first-class traversal primitive encourages the LLM to reason on
   inferred edges instead of on-chain fact. Use `list_neighbors` on an
   address instead.
 - **`list_cluster_txs` / `list_entity_txs`** — cluster-level transaction
-  listing. Same rationale as the cluster-neighbor exclusion: traverse
-  at the address level. Use `list_txs_for` on an address instead.
+  listing. Same rationale: traverse at the address level. Use
+  `list_txs_for` on an address instead.
 - **`list_cluster_links` / `list_entity_links`** — cluster-level
-  "txs between two clusters" endpoint. Not useful without a cluster-
-  level counterparty graph, which we also don't expose.
-  (`list_address_links` is still reachable via `list_txs_for` with
-  `neighbor=<addr>`.)
-- **`get_cluster`, `list_cluster_addresses`, `list_address_tags_by_cluster`** —
-  at the currency level, `lookup_cluster` covers the useful surface
-  without duplicating the entity/cluster mental model for the LLM.
+  "txs between two clusters". Not useful without a cluster-level
+  counterparty graph, which we also don't expose.
+- **`list_cluster_addresses` / `list_entity_addresses`** — enumerate
+  every address in a cluster. Encourages cluster-first reasoning and
+  blows up token budgets on big clusters; we'd rather the LLM stay at
+  the address level.
+- **`list_address_tags`** — the global cross-network `/tags` listing.
+  Not address-anchored; for per-address attribution use
+  `list_tags_by_address`.
+- **`list_token_txs`** — token-specific tx-by-hash variant. Niche; the
+  unified `lookup_tx_details` already covers token movements via the
+  conversion / flow surfaces.
 - **`get_actor_tags`** — almost always redundant with `lookup_address` /
-  `lookup_cluster` tag surfaces; re-add if it proves useful.
+  `list_tags_by_address` tag surfaces; re-add if it proves useful.
 
 All filtered out at boot by absence from the positive-list. Trivial to
 re-enable later.
@@ -216,7 +240,7 @@ re-enable later.
 
 ## Context cost
 
-All 16 tool schemas (17 when `search_neighbors` is configured) fit in roughly
+All 17 tool schemas (18 when `search_neighbors` is configured) fit in roughly
 300–500 tokens when serialized for transport. Claude Code lazy-loads
 (only the tools the LLM picks get read into context), so the observed
 cost is usually a few hundred tokens total. Other clients vary —
