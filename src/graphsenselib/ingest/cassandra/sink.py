@@ -19,6 +19,8 @@ class CassandraSink(Sink):
     have 'block_id_group' and 'tx_hash_prefix' from the prepare step.
     """
 
+    name = "cassandra"
+
     def __init__(
         self, db: AnalyticsDb, concurrency: int = CASSANDRA_INGEST_DEFAULT_CONCURRENCY
     ):
@@ -27,6 +29,9 @@ class CassandraSink(Sink):
 
     def lock_name(self) -> str:
         return f"{self.db.raw.get_keyspace()}_{self.db.transformed.get_keyspace()}"
+
+    def highest_block(self):
+        return self.db.raw.get_highest_block()
 
     def write(self, block_range_content: BlockRangeContent):
         for table_name, rows in block_range_content.table_contents.items():
