@@ -4,7 +4,7 @@ import os
 import tempfile
 
 from graphsenselib.config import get_config, get_reorg_backoff_blocks
-from graphsenselib.config.config import AppConfig
+from graphsenselib.config.config import AppConfig, get_default_data_configuration
 
 
 def test_config_is_loaded_by_default():
@@ -38,6 +38,23 @@ def test_config_is_loaded_by_default():
 
 def test_get_approx_reorg_backoff_blocks():
     assert get_reorg_backoff_blocks("eth") == 70
+
+
+def test_default_data_configuration_omits_pk_column():
+    # The configuration-row PK ("id" for raw, "keyspace_name" for transformed)
+    # must NOT be in the defaults — it has to be injected at seed time with the
+    # actual target keyspace name, otherwise dated keyspaces get a stale row
+    # keyed by the un-suffixed prefix and the real ingest adds a duplicate.
+    for currency in ["btc", "ltc", "bch", "zec", "eth", "trx"]:
+        raw = get_default_data_configuration(currency, "raw")
+        assert "id" not in raw, (
+            f"defaults for {currency}/raw must not preset 'id': {raw}"
+        )
+        transformed = get_default_data_configuration(currency, "transformed")
+        assert "keyspace_name" not in transformed, (
+            f"defaults for {currency}/transformed must not preset "
+            f"'keyspace_name': {transformed}"
+        )
 
 
 def test_unknown_keys_emit_warnings(caplog):

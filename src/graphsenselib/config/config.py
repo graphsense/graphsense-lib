@@ -67,17 +67,22 @@ def get_default_data_configuration(
     """
     currency = currency.lower()
 
+    # The PK column ("id" for raw, "keyspace_name" for transformed) is
+    # intentionally omitted: it must match the actual target keyspace name and
+    # is injected at seed time in schema.create_keyspace_if_not_exist.
+    # Hardcoding it here used to write a prefix-only row (e.g. id="zec_raw")
+    # into dated keyspaces (e.g. zec_raw_20260423), producing two configuration
+    # rows after the first real ingest.
+
     # Configuration for account-based currencies (eth, trx)
     if currency == "eth":
         if keyspace_type == "raw":
             return {
-                "id": "eth_raw",
                 "block_bucket_size": 1000,
                 "tx_prefix_length": 5,
             }
         else:  # transformed
             return {
-                "keyspace_name": "eth_transformed",
                 "address_prefix_length": 5,
                 "bucket_size": 25000,
                 "tx_prefix_length": 5,
@@ -86,13 +91,11 @@ def get_default_data_configuration(
     elif currency == "trx":
         if keyspace_type == "raw":
             return {
-                "id": "trx_raw",
                 "block_bucket_size": 1000,
                 "tx_prefix_length": 5,
             }
         else:  # transformed
             return {
-                "keyspace_name": "trx_transformed",
                 "address_prefix_length": 5,
                 "bucket_size": 10000,
                 "tx_prefix_length": 5,
@@ -103,7 +106,6 @@ def get_default_data_configuration(
     elif currency in ["btc", "bch", "ltc", "zec"]:
         if keyspace_type == "raw":
             return {
-                "id": f"{currency}_raw",
                 "block_bucket_size": 100,
                 "tx_bucket_size": 25000,
                 "tx_prefix_length": 5,
@@ -116,7 +118,6 @@ def get_default_data_configuration(
                 "zec": "",
             }
             return {
-                "keyspace_name": f"{currency}_transformed",
                 "address_prefix_length": 4,
                 "bech_32_prefix": bech32_prefixes.get(currency, ""),
                 "bucket_size": 5000,
