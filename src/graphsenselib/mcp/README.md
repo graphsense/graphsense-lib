@@ -42,9 +42,13 @@ or by **collapsing a common chain**. Two corollaries:
    four round-trips to answer a common question, merge them into one
    tool that returns the merged JSON. The win is round-trips, not tokens.
 3. **Don't consolidate what's merely similar.** Over-consolidation
-   hides legitimate optionality. We kept `lookup_tx_details` and `list_tx_flows`
-   distinct because the LLM has real reasons to choose one over the
-   other (UTXO vs account-model semantics).
+   hides legitimate optionality. We kept `lookup_tx_details` and
+   `list_tx_flows` distinct because the latter is a paginated walk
+   over an unbounded per-tx event list (account-model fan-out can run
+   into the hundreds) — folding it into the consolidated tx body would
+   either truncate or blow up the response. Same reason `list_tags_by_address`
+   stays separate from `lookup_address`: raw per-tag detail is a
+   pageable list, the confidence-weighted `tag_summary` is a digest.
 
 ## Curation mechanism
 
@@ -109,12 +113,14 @@ bridge.
 
 | Tool | Notes |
 |---|---|
-| `list_tx_flows` | Account-model (ETH family) internal-transfer list — kept as a passthrough because its response shape is distinct from the tx body. |
-| `lookup_tx_details` | **Consolidation** — replaces `get_tx` + `get_tx_io` + `get_spending_txs` + `get_spent_in_txs` + `get_tx_conversions`. Calls `/txs/{hash}` with `include_io` / `include_nonstandard_io` / `include_io_index` always on, so UTXO txs come back with full (including non-standard) inputs/outputs and their positional indices in one shot; account-model txs come back with the usual sender/receiver/value fields. Optional `include_upstream` (backward trace) and `include_downstream` (forward trace) append trace lists. Optional `include_heuristics=True` asks graphsense to compute all UTXO heuristics (change-address detection + CoinJoin identification — wasabi/whirlpool/joinmarket variants). Optional `include_conversions=True` appends `conversions`: graphsense's internal term covering both DEX swaps and bridge txs under one unified schema (`conversion_type: "dex_swap" \| "bridge_tx"`, plus from/to address + asset + amount). ⚠️ The consolidation uses `upstream` / `downstream` names because the underlying graphsense endpoints `/spending` and `/spent_in` are named counter-intuitively (`/spending` is backward, `/spent_in` is forward). |
+| `list_tx_flows` | Paginated per-event value-flow listing for one account-model tx (every base / internal / token transfer with sender, receiver, asset, value). Companion to `lookup_tx_details`. Kept as a separate paginated tool because account-model txs occasionally fan out into hundreds of events (aggregator/bundler txs, exploit chains) and the count isn't bounded. UTXO chains carry the equivalent info in the tx body's `inputs`/`outputs`, so this endpoint is account-model focused. |
+| `lookup_tx_details` | **Consolidation** — replaces `get_tx` + `get_tx_io` + `get_spending_txs` + `get_spent_in_txs` + `get_tx_conversions`. Calls `/txs/{hash}` with `include_io` / `include_nonstandard_io` / `include_io_index` always on, so UTXO txs come back with full (including non-standard) inputs/outputs and their positional indices in one shot; account-model txs come back with the usual sender/receiver/value fields. Optional `include_upstream` (backward trace) and `include_downstream` (forward trace) append trace lists. Optional `include_heuristics=True` asks graphsense to compute all UTXO heuristics (change-address detection + CoinJoin identification — wasabi/whirlpool/joinmarket variants). Optional `include_conversions=True` appends `conversions`: graphsense's internal term covering both DEX swaps and bridge txs under one unified schema (`conversion_type: "dex_swap" \| "bridge_tx"`, plus from/to address + asset + amount). For per-event sub-flow listings on account-model txs, call `list_tx_flows` separately — the count is unbounded and would not fit cleanly under an `include_*` flag. ⚠️ The consolidation uses `upstream` / `downstream` names because the underlying graphsense endpoints `/spending` and `/spent_in` are named counter-intuitively (`/spending` is backward, `/spent_in` is forward). |
 
-`list_tx_flows` is kept separate because its response shape is unrelated
-to the tx body and because account-model flow analysis has different
-intent than UTXO tx inspection.
+`list_tx_flows` is the paginated companion to `lookup_tx_details` for
+account-model fan-out. Use `lookup_tx_details` first for the consolidated
+tx body and trace context; reach for `list_tx_flows` only when you need
+to walk every flow event in an account-model tx and the count isn't
+bounded.
 
 ### Rates / actor metadata (2)
 
@@ -131,7 +137,7 @@ Note on terminology: graphsense has both "entity" and "cluster" endpoints, but `
 | `lookup_cluster` | `get_entity` + `get_cluster` + `list_address_tags_by_entity` + `list_address_tags_by_cluster` | Cluster-level equivalent. Tag context is intentionally NOT included — call `lookup_address`/`list_tags_by_address` on a member address. |
 | `list_tags_by_address` | `list_tags_by_address` | Raw per-tag detail with `include_best_cluster_tag=true` defaulted on (UI parity) — the cluster's best tag appears on the last page if the address has no direct tag. |
 | `list_neighbors` | `list_address_neighbors` | Address-level only. Cluster-level neighbors are deliberately not exposed — follow counterparty graphs at the address level (on-chain fact) rather than the cluster level (inference stacked on top). |
-| `list_txs_for` | `list_address_txs` + `list_address_links` | Address-level only. Pass `neighbor=<addr>` to switch to the links endpoint (txs between two addresses). Cluster-/entity-level tx listings are deliberately not exposed — same rationale as `list_neighbors`. |
+| `list_txs_for` | `list_address_txs` + `list_address_links` | Address-level only. Pass `neighbor=<addr>` to switch to the links endpoint, which is **directional**: it returns only `address → neighbor` flows (the reverse direction requires a second call with the two swapped). The underlying implementation fetches both sides of each tx for UTXO correctness — a tx where the same address appears as input *and* output would otherwise be missed — but the result set is filtered to the `address → neighbor` direction. Cluster-/entity-level tx listings are deliberately not exposed — same rationale as `list_neighbors`. |
 
 ### External (1)
 

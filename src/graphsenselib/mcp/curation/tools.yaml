@@ -39,8 +39,16 @@ include:
 
   list_tx_flows:
     description: >
-      Account-model transaction flows (ETH and similar). Returns sender,
-      receiver, and value for each internal transfer in the transaction.
+      Paginated per-event value-flow listing for ONE transaction. The
+      account-model companion to `lookup_tx_details`: every base / internal
+      / token transfer inside the tx (sender, receiver, asset, value),
+      paginated because aggregator/bundler/exploit txs can fan out into
+      hundreds of events. Use `lookup_tx_details` first for the consolidated
+      tx body (IO list, traces, conversions); reach for `list_tx_flows`
+      when you need to walk every flow event in an account-model tx and
+      the count isn't bounded. UTXO chains carry the equivalent
+      information in the tx's `inputs`/`outputs`, so this endpoint is
+      account-model focused.
     tags: ["transaction-level", "account-model"]
 
   get_exchange_rates:

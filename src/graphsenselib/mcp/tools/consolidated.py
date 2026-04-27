@@ -589,6 +589,14 @@ def register_lookup_tx_details(mcp, app, stack) -> None:
           LLM doesn't need to branch on the subtype to reason about the
           cross-asset edge.
 
+        For account-model txs, the per-event value-flow listing (every
+        base/internal/token transfer with sender, receiver, asset, value)
+        is *not* included here because the count is unbounded — an
+        aggregator or exploit tx can fan out into hundreds of events.
+        Call the dedicated `list_tx_flows` tool for that, paginated.
+        On UTXO chains the equivalent information is already present in
+        this response under `inputs`/`outputs`.
+
         Note on `spending` vs `spent_in`: the underlying graphsense
         endpoints `/spending` and `/spent_in` are NAMED counter-intuitively
         (/spending is backward, /spent_in is forward). This consolidation
@@ -658,19 +666,37 @@ def register_list_txs_for(mcp, app, stack) -> None:
     ) -> dict[str, Any]:
         """List transactions involving an address.
 
-        When `neighbor` is set, lists transactions between `address` and
-        `neighbor` (any direction — both "sent to" and "received from");
-        otherwise lists all transactions of `address`.
+        When `neighbor` is set, lists transactions flowing **from
+        `address` to `neighbor`** — i.e. only the `address → neighbor`
+        direction. Direction is *implicit* in the argument assignment,
+        not in a query flag: to get the reverse direction (txs from the
+        counterparty back to `address`), call again with the two values
+        swapped (`address=<counterparty>`, `neighbor=<original address>`).
+
+        Common confusion: the underlying links endpoint internally fetches
+        both sides of each tx for correctness (UTXO txs can have an
+        address as both input and output of the same transaction —
+        querying only one side would miss its representation in the
+        intersection). That is *not* the same as returning both
+        directions; the result is filtered to the `address → neighbor`
+        flow. So if a count looks higher than expected (e.g. the
+        neighbor-summary view says 3 outbound but `/links` returns 6),
+        the discrepancy is *not* "the extras are inbound" — it's that
+        the neighbor view aggregates per counterparty pair while the
+        links endpoint emits per-tx records.
+
+        When `neighbor` is not set, lists all transactions of `address`
+        (optionally filtered by `direction`).
 
         Args:
             currency: Network identifier.
             address: The address to list transactions for.
             neighbor: Optional counterparty address. When set, narrows the
-                response to transactions between `address` and this
-                counterparty. The underlying links endpoint does not
-                accept a `direction` filter, so the two cannot be
-                combined — inspect each item's flow to tell inbound from
-                outbound.
+                response to transactions flowing `address → neighbor`.
+                For the reverse flow, swap `address` and `neighbor` and
+                call again. Cannot be combined with `direction` —
+                directionality is already encoded in which value is
+                `address` and which is `neighbor`.
             direction: "in" / "out" / None to include both. Ignored when
                 `neighbor` is set (raises on combination).
             pagesize: Results per page.
@@ -692,7 +718,8 @@ def register_list_txs_for(mcp, app, stack) -> None:
             if direction is not None:
                 raise ToolError(
                     "direction cannot be combined with neighbor: the links "
-                    "endpoint has no direction filter."
+                    "endpoint is already directional (address -> neighbor). "
+                    "For the reverse flow, swap address and neighbor."
                 )
             params = _params_from(
                 None,
