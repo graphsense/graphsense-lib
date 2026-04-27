@@ -25,7 +25,7 @@ from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
-from graphsenselib.db.state import INGEST_COMPLETE_KEY
+from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
@@ -637,15 +637,12 @@ class Cassandra:
         return one(result) is not None
 
     def _is_ingest_complete(self, keyspace, fallback_table):
-        # Primary signal: an `ingest_complete` row in the per-keyspace state
-        # table. Back-compat fallback for keyspaces that pre-date the state
-        # table: treat the existence of any row in `fallback_table`
-        # (configuration for raw, summary_statistics for transformed) as
-        # complete. Drop the fallback once all production keyspaces have been
-        # migrated and re-ingested/re-transformed at least once.
-        if self._has_table(keyspace, "state"):
+        # Back-compat fallback (existence-of-any-row in `fallback_table`) covers
+        # keyspaces that pre-date the state table; drop once all production
+        # keyspaces have been re-ingested at least once.
+        if self._has_table(keyspace, STATE_TABLE):
             row = self.session.execute(
-                f"SELECT value FROM {keyspace}.state WHERE key = %s",
+                f"SELECT key FROM {keyspace}.{STATE_TABLE} WHERE key = %s",
                 [INGEST_COMPLETE_KEY],
             )
             return one(row) is not None
