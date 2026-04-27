@@ -47,11 +47,14 @@ async def test_tool_surface_shape(bundled_mcp):
     assert "lookup_entity" not in names
     assert "lookup_tx_io" not in names
 
+    # list_tags_by_address is the dedicated raw-tags-detail tool —
+    # exposed as a separate auto-tool, NOT consolidated into lookup_address.
+    assert "list_tags_by_address" in names
+
     # Replaced endpoints MUST NOT be exposed (consolidation wins)
     assert "get_address" not in names
     assert "get_address_entity" not in names
     assert "get_tag_summary_by_address" not in names
-    assert "list_tags_by_address" not in names
     assert "list_related_addresses" not in names
     assert "get_entity" not in names
     assert "get_cluster" not in names
@@ -104,6 +107,28 @@ async def test_curated_descriptions_applied(bundled_mcp):
     stats = tools["get_statistics"]
     assert "snapshot" in (stats.description or "").lower()
     assert "API: GET /stats" in (stats.description or "")
+
+
+async def test_list_tags_by_address_exposes_pagination(bundled_mcp):
+    """The auto-tool generated for /addresses/{addr}/tags must expose
+    `page` and `pagesize` as input parameters — pagination is the whole
+    point of having a separate raw-tags-detail tool. Guards against a
+    future regression where the route's query params get dropped or
+    renamed by the auto-generation.
+    """
+    async with Client(bundled_mcp) as c:
+        tools = {t.name: t for t in await c.list_tools()}
+    tool = tools["list_tags_by_address"]
+    schema = tool.inputSchema or {}
+    properties = schema.get("properties") or {}
+    assert "page" in properties
+    assert "pagesize" in properties
+    # Currency + address remain required; pagination is optional.
+    required = set(schema.get("required") or [])
+    assert "currency" in required
+    assert "address" in required
+    assert "page" not in required
+    assert "pagesize" not in required
 
 
 async def test_spec_app_auto_mounts_mcp(monkeypatch):

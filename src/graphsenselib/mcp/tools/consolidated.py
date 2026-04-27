@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, Literal, Optional
@@ -108,21 +109,120 @@ def _slim(obj: Any) -> Any:
     return obj
 
 
-def _best_cluster_tag(
-    cluster_body: Optional[dict[str, Any]],
-) -> Optional[dict[str, Any]]:
-    """Extract the graphsense `best_address_tag` field from a cluster response.
+# Legacy quick-aggregate fields the underlying REST surface still emits but
+# that we deliberately hide from the MCP shape. They predate `tag_summary`
+# and overlap with it (and with each other), which is exactly the kind of
+# thing the LLM gets confused by. The single source of truth for tag-derived
+# data is `tag_summary` (high-level) and `list_tags_by_address` (raw list).
+_LEGACY_ADDRESS_FIELDS = frozenset({"actors"})
+_LEGACY_CLUSTER_FIELDS = frozenset({"actors", "best_address_tag"})
+_LEGACY_NEIGHBOR_FIELDS = frozenset({"labels"})
 
-    Graphsense's cluster endpoint returns this field by default when the
-    cluster has any tag attribution. We surface it at the top level of
-    lookup_address / lookup_cluster responses (renamed to `best_cluster_tag`
-    for clarity) regardless of which include flags the caller set, because
-    it's the single most useful datum when orienting on an unknown address.
+
+def _strip_address_legacy(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in d.items() if k not in _LEGACY_ADDRESS_FIELDS}
+
+
+def _strip_cluster_legacy(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in d.items() if k not in _LEGACY_CLUSTER_FIELDS}
+
+
+def _strip_neighbor_legacy(neighbor: dict[str, Any]) -> dict[str, Any]:
+    cleaned = {k: v for k, v in neighbor.items() if k not in _LEGACY_NEIGHBOR_FIELDS}
+    nested = cleaned.get("address")
+    if isinstance(nested, dict):
+        cleaned["address"] = _strip_address_legacy(nested)
+    return cleaned
+
+
+def _compact_neighbor(neighbor: dict[str, Any]) -> dict[str, Any]:
+    """Flatten a neighbor row for counterparty scans: replace the nested
+    `address` dict with the address string itself, dropping the
+    balance/totals/activity-counts block (heavy, rarely useful when
+    scanning counterparties). The `tag_summary`, `value`, `no_txs`,
+    and `token_values` fields stay at top level.
     """
-    if not isinstance(cluster_body, dict):
+    nested = neighbor.get("address")
+    a = nested.get("address") if isinstance(nested, dict) else nested
+    cleaned = {k: v for k, v in neighbor.items() if k != "address"}
+    if isinstance(a, str):
+        cleaned["address"] = a
+    return cleaned
+
+
+def _matches_tag_filter(tag_summary: Optional[dict[str, Any]], needle: str) -> bool:
+    """Case-insensitive substring match against the LLM-relevant fields of
+    a slim tag_summary: best_actor, best_label, broad_category, every
+    label-dict key, and every concept-dict key. Used to pre-filter
+    `list_neighbors` results so the LLM doesn't have to iterate.
+    """
+    if not isinstance(tag_summary, dict):
+        return False
+    needle_lower = needle.lower()
+    for field in ("best_actor", "best_label", "broad_category"):
+        v = tag_summary.get(field)
+        if isinstance(v, str) and needle_lower in v.lower():
+            return True
+    labels = tag_summary.get("labels")
+    if isinstance(labels, dict):
+        for label in labels:
+            if isinstance(label, str) and needle_lower in label.lower():
+                return True
+    concepts = tag_summary.get("concepts")
+    if isinstance(concepts, dict):
+        for concept in concepts:
+            if isinstance(concept, str) and needle_lower in concept.lower():
+                return True
+    return False
+
+
+# Per-label fields kept in the slim tag_summary. Provenance/audit fields
+# (creators, lastmod, inherited_from) and per-label `concepts` (already
+# aggregated in the top-level concept cloud) are dropped. `sources` stays —
+# it's the LLM's only path to attribute claims to a tagpack.
+_LABEL_KEEP_FIELDS = frozenset({"count", "confidence", "relevance", "sources"})
+
+
+def _slim_tag_summary(ts: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Reshape graphsense's TagSummary into a leaner LLM-friendly form.
+
+    Keeps the analysis-relevant fields (counts, best label/actor, broad
+    category, per-label confidence/relevance/sources, concept weights)
+    and drops the provenance/audit ones (creators, lastmod,
+    inherited_from). The concept_tag_cloud's `{cnt, weighted}` pair is
+    flattened to a label→weight map. Renames `label_summary`→`labels`
+    and `concept_tag_cloud`→`concepts` for compactness.
+
+    Returns None when the input isn't a dict (404 on the tag_summary
+    endpoint surfaces here as None).
+    """
+    if not isinstance(ts, dict):
         return None
-    tag = cluster_body.get("best_address_tag")
-    return tag if isinstance(tag, dict) else None
+    out: dict[str, Any] = {
+        "tag_count": ts.get("tag_count"),
+        "broad_category": ts.get("broad_category"),
+        "best_label": ts.get("best_label"),
+        "best_actor": ts.get("best_actor"),
+    }
+    if ts.get("tag_count_indirect") is not None:
+        out["tag_count_indirect"] = ts["tag_count_indirect"]
+
+    label_summary = ts.get("label_summary")
+    if isinstance(label_summary, dict) and label_summary:
+        out["labels"] = {
+            label: {k: v for k, v in entry.items() if k in _LABEL_KEEP_FIELDS}
+            for label, entry in label_summary.items()
+            if isinstance(entry, dict)
+        }
+
+    cloud = ts.get("concept_tag_cloud")
+    if isinstance(cloud, dict) and cloud:
+        out["concepts"] = {
+            concept: (entry.get("weighted") if isinstance(entry, dict) else entry)
+            for concept, entry in cloud.items()
+        }
+
+    return out
 
 
 def register_lookup_address(mcp, app, stack) -> None:
@@ -130,26 +230,23 @@ def register_lookup_address(mcp, app, stack) -> None:
     async def lookup_address(
         currency: str,
         address: str,
-        include_tags: bool = True,
         include_cluster: bool = True,
         include_tag_summary: bool = True,
         include_cross_chain_addresses: bool = False,
     ) -> dict[str, Any]:
         """Look up a cryptocurrency address and return a consolidated view:
-        base details (balance, activity range), cluster membership, the
-        cluster's best tag, tag summary, and the address's own tags. One
-        call replaces four or more separate endpoint hits that LLMs would
-        otherwise chain.
+        base details (balance, activity range), cluster membership, and the
+        aggregated tag summary. One call replaces several separate endpoint
+        hits.
 
-        The `best_cluster_tag` field at the top level is always populated
-        when the cluster has any tag attribution — it's the single most
-        useful datum for orienting on an unknown address, so we surface it
-        unconditionally rather than burying it under an include flag.
+        For raw, lower-confidence per-tag detail (the long list), use the
+        separate `list_tags_by_address` tool — `tag_summary` carries the
+        confidence-weighted aggregate that should drive any conclusion
+        about identity, category, or actor.
 
         Args:
             currency: Network identifier (e.g. "btc", "eth").
             address: Address to look up.
-            include_tags: Include the list of tags attached to the address.
             include_cluster: Include the cluster the address belongs to.
             include_tag_summary: Include the aggregated tag_summary.
             include_cross_chain_addresses: Include addresses derived from the
@@ -157,46 +254,32 @@ def register_lookup_address(mcp, app, stack) -> None:
                 BTC address and its BCH/LTC/... counterparts).
 
         Returns:
-            A dict with keys: "address" (always), "best_cluster_tag" (always —
-            may be null if no tag exists), "cluster", "tag_summary", "tags",
-            and "cross_chain_addresses" — each populated when the
-            corresponding include_* flag is True.
+            A dict with keys: "address" (always), "cluster", "tag_summary",
+            and "cross_chain_addresses" — populated when their corresponding
+            include_* flag is True (cluster only present when one exists).
         """
         _validate_currency(currency)
         _validate_id("address", address)
         client = _make_client(app)
         async with client:
             base = await _get_json(client, f"/{currency}/addresses/{address}")
-            # We always fetch the cluster body so best_cluster_tag can be
-            # surfaced at top level regardless of include_cluster. However,
-            # some addresses have no cluster association (freshly indexed,
-            # some non-UTXO cases) — a 404 there must not fail the whole
-            # lookup_address call, so we use the 404-tolerant variant.
-            cluster_body = await _get_json_optional(
-                client, f"/{currency}/addresses/{address}/entity"
-            )
             result: dict[str, Any] = {
-                "address": _slim(base),
-                "best_cluster_tag": _slim(_best_cluster_tag(cluster_body)),
+                "address": _slim(_strip_address_legacy(base)),
             }
-            if include_cluster and cluster_body is not None:
-                result["cluster"] = _slim(cluster_body)
+            if include_cluster:
+                # Some addresses have no cluster association (freshly indexed,
+                # some non-UTXO cases) — a 404 here must not fail the whole
+                # call, so we use the 404-tolerant variant.
+                cluster_body = await _get_json_optional(
+                    client, f"/{currency}/addresses/{address}/entity"
+                )
+                if cluster_body is not None:
+                    result["cluster"] = _slim(_strip_cluster_legacy(cluster_body))
             if include_tag_summary:
-                result["tag_summary"] = _slim(
-                    await _get_json(
-                        client,
-                        f"/{currency}/addresses/{address}/tag_summary",
-                        params={"include_best_cluster_tag": True},
-                    )
+                ts = await _get_json(
+                    client, f"/{currency}/addresses/{address}/tag_summary"
                 )
-            if include_tags:
-                result["tags"] = _slim(
-                    await _get_json(
-                        client,
-                        f"/{currency}/addresses/{address}/tags",
-                        params={"include_best_cluster_tag": True},
-                    )
-                )
+                result["tag_summary"] = _slim_tag_summary(ts)
             if include_cross_chain_addresses:
                 related = await _get_json(
                     client,
@@ -212,39 +295,30 @@ def register_lookup_cluster(mcp, app, stack) -> None:
     async def lookup_cluster(
         currency: str,
         cluster: int,
-        include_tags: bool = True,
     ) -> dict[str, Any]:
-        """Look up an address cluster and return a consolidated view: base
-        details (balance, activity range, root address, best tag) plus the
-        aggregated address tags attached to any of its addresses.
+        """Look up an address cluster: balances, activity range, root
+        address, and member counts.
 
-        The `best_cluster_tag` field at the top level mirrors the
-        `cluster.best_address_tag` field for convenience — it's the single
-        most useful datum for orienting on an unknown cluster.
+        Tag context is intentionally NOT included on cluster lookups —
+        tag attribution at cluster scale is a heuristic stack on top of
+        the address-clustering heuristic, which compounds the error rate.
+        Use `lookup_address` (or `list_tags_by_address`) on a member
+        address for tag context, and present any cluster-level
+        attribution as a hint, not a conclusion.
 
         Args:
             currency: Network identifier (e.g. "btc").
             cluster: Numeric cluster id.
-            include_tags: Include aggregated address tags for the cluster.
 
         Returns:
-            A dict with keys: "cluster" (always), "best_cluster_tag" (always —
-            may be null if no tag exists), "tags" (when requested).
+            A dict with a single "cluster" key carrying the slimmed body.
         """
         _validate_currency(currency)
         # `cluster` is typed as int by pydantic, so no path-injection risk.
         client = _make_client(app)
         async with client:
             base = await _get_json(client, f"/{currency}/clusters/{cluster}")
-            result: dict[str, Any] = {
-                "cluster": _slim(base),
-                "best_cluster_tag": _slim(_best_cluster_tag(base)),
-            }
-            if include_tags:
-                result["tags"] = _slim(
-                    await _get_json(client, f"/{currency}/clusters/{cluster}/tags")
-                )
-        return result
+        return {"cluster": _slim(_strip_cluster_legacy(base))}
 
 
 def _params_from(
@@ -275,14 +349,37 @@ def register_list_neighbors(mcp, app, stack) -> None:
         pagesize: Optional[int] = None,
         page: Optional[str] = None,
         only_ids: Optional[list[str]] = None,
-        include_labels: Optional[bool] = None,
-        include_actors: Optional[bool] = None,
+        include_tag_summary: bool = True,
+        compact: bool = True,
+        tag_filter: Optional[str] = None,
     ) -> dict[str, Any]:
         """List neighbors of an address in a network.
 
         Address-level only: cluster-level neighbors are deliberately not
         exposed. Follow counterparty graphs at the address level — that's
         on-chain fact, whereas cluster edges are inference stacked on top.
+
+        Default shape (compact=True): each row is `{address, value,
+        no_txs, tag_summary}` — the address is a bare string and the
+        nested balance / totals / activity-counts block is dropped. Set
+        `compact=False` when you actually need that block (rare for a
+        counterparty scan).
+
+        When `include_tag_summary=True` (default), each row is enriched
+        with the address-level `tag_summary` via a per-neighbor lookup.
+        That's one extra in-process call per neighbor — pair with a
+        modest `pagesize` (start at 20–30 when shape is unknown).
+
+        `tag_filter` runs a case-insensitive substring match against
+        `best_actor`, `best_label`, `broad_category`, every key in the
+        per-neighbor `labels` dict, and every key in `concepts`. Passing
+        it forces `include_tag_summary=True` regardless of the flag, then
+        filters in-memory before returning. Pagination still happens at
+        the upstream layer, so a filtered page may contain fewer rows
+        than `pagesize` (or zero) — keep walking `next_page`.
+
+        For raw per-tag detail (provenance, tagpack info, lower-confidence
+        leads) on a specific address, call `list_tags_by_address`.
 
         Args:
             currency: Network identifier (e.g. "btc").
@@ -291,31 +388,69 @@ def register_list_neighbors(mcp, app, stack) -> None:
             pagesize: Results per page.
             page: Pagination token from a previous response.
             only_ids: Limit to specific neighbor ids.
-            include_labels: Include labels on each neighbor.
-            include_actors: Include actor metadata on each neighbor.
+            include_tag_summary: Enrich each neighbor with its `tag_summary`.
+            compact: Return a flattened, lean row shape (default True).
+            tag_filter: Case-insensitive substring; keep only rows whose
+                tag_summary names/categories match.
 
         Returns:
-            A dict with the neighbor list and pagination cursor.
+            A dict with the neighbor list and pagination cursor. In
+            compact mode each row is `{address, value, no_txs,
+            tag_summary?, token_values?}`; in non-compact mode `address`
+            is the full nested dict.
         """
         _validate_currency(currency)
         _validate_id("address", address)
+        # Suppress the legacy quick-aggregate fields at source. The MCP
+        # contract exposes tag context only via `tag_summary`.
         params = _params_from(
             direction,
             pagesize,
             page,
             only_ids=only_ids,
-            include_labels=include_labels,
-            include_actors=include_actors,
+            include_actors=False,
+            include_labels=False,
         )
+        # tag_filter implies tag_summary — we need the data to match against.
+        if tag_filter is not None:
+            include_tag_summary = True
         client = _make_client(app)
         async with client:
-            return _slim(
-                await _get_json(
-                    client,
-                    f"/{currency}/addresses/{address}/neighbors",
-                    params=params,
-                )
+            body = await _get_json(
+                client,
+                f"/{currency}/addresses/{address}/neighbors",
+                params=params,
             )
+            neighbors = body.get("neighbors") or []
+            if include_tag_summary and neighbors:
+
+                async def _ts_for(n: dict[str, Any]) -> Optional[dict[str, Any]]:
+                    nested = n.get("address")
+                    if not isinstance(nested, dict):
+                        return None
+                    a = nested.get("address")
+                    if not isinstance(a, str) or not _ID_PATTERN.match(a):
+                        return None
+                    raw = await _get_json_optional(
+                        client, f"/{currency}/addresses/{a}/tag_summary"
+                    )
+                    return _slim_tag_summary(raw)
+
+                summaries = await asyncio.gather(*[_ts_for(n) for n in neighbors])
+                for n, ts in zip(neighbors, summaries):
+                    if ts is not None:
+                        n["tag_summary"] = ts
+            if tag_filter is not None:
+                neighbors = [
+                    n
+                    for n in neighbors
+                    if _matches_tag_filter(n.get("tag_summary"), tag_filter)
+                ]
+            cleaned = [_strip_neighbor_legacy(n) for n in neighbors]
+            if compact:
+                cleaned = [_compact_neighbor(n) for n in cleaned]
+            body["neighbors"] = cleaned
+        return _slim(body)
 
 
 def register_lookup_tx_details(mcp, app, stack) -> None:
