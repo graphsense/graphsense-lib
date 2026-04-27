@@ -360,12 +360,8 @@ class GraphSense:
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             if with_io and is_utxo:
                 # `get_tx_io` is direction-keyed; fetch both halves in parallel.
-                jobs["io_inputs"] = pool.submit(
-                    txs.get_tx_io, ccy, tx_hash, "inputs"
-                )
-                jobs["io_outputs"] = pool.submit(
-                    txs.get_tx_io, ccy, tx_hash, "outputs"
-                )
+                jobs["io_inputs"] = pool.submit(txs.get_tx_io, ccy, tx_hash, "inputs")
+                jobs["io_outputs"] = pool.submit(txs.get_tx_io, ccy, tx_hash, "outputs")
             if with_flows and not is_utxo:
                 # `list_tx_flows` is account-model only.
                 jobs["flows"] = pool.submit(txs.list_tx_flows, ccy, tx_hash)
