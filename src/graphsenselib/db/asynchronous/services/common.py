@@ -602,6 +602,9 @@ def io_from_rows(
         if include_nonstandard_io and hasattr(i, "script_hex") and i.script_hex:
             script_hex = i.script_hex.hex()  # Convert blob to hex string
 
+        witness = getattr(i, "txinwitness", None)
+        has_witness = bool(witness) if witness is not None else None
+
         if i.address is not None:
             results.append(
                 TxValue(
@@ -609,6 +612,7 @@ def io_from_rows(
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
+                    has_witness=has_witness,
                 )
             )
         elif include_nonstandard_io:
@@ -618,6 +622,7 @@ def io_from_rows(
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
+                    has_witness=has_witness,
                 )
             )
     return results
