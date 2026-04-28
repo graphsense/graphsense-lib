@@ -10,6 +10,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.11.0] 2026-04-29
+
+### Library (v2.11.0)
+
+#### Added
+- **New ingest pipeline**: replaced ethereum-etl and bitcoin-etl with direct batch RPC for all chains.
+- **Dual-sink pipeline**: `from-node --sinks delta --sinks cassandra` ingests to both Delta Lake and Cassandra in a single pass.
+- **TRX gRPC source**: replaced HTTP-based TRX ingestion with native gRPC for higher throughput.
+- **UTXO prevout resolution**: verbosity 3 support for BTC/BCH; `getrawtransaction`-based input resolution for LTC/ZEC. Removes the Cassandra dependency on ingest and enables input resolution for Delta Lake ingest.
+- **ETH Pectra fields**: `requestsHash`, `authorizationList`, `y_parity`, `parentBeaconBlockRoot`, `uncles`, `creationMethod`.
+- **EIP-2930/4844 Cassandra fields**: `access_list` stored in Delta and Cassandra schema.
+- **Named S3 configs**: per-sink S3 references via `s3_configs` in `graphsense.yaml`.
+- **Config validation**: warn on unknown keys at all nesting levels instead of failing; optimal `source_max_workers` defaults per currency; new `source_max_workers` knob for tuning RPC concurrency.
+- **Sink-level locking**: independent locks for Delta and Cassandra sinks; single lock for ingest+compact.
+- **Sink divergence detection**: refuse to ingest when Delta and Cassandra sinks have diverged.
+- **`ingest_complete` marker**: bootstrap-marker state table for keyspace auto-discovery.
+- **Node-restart resilience**: HTTP RPC and Tron gRPC retries now tolerate up to ~5 minutes of node downtime.
+- `ingest` module added to ty type-checking scope.
+
+#### Changed
+- UTXO addresses stored as plain text instead of custom binary encoding in delta lake.
+- Delta Lake writes and compaction use ZSTD level 5 compression.
+- Reduced Delta pre-compaction file sizes by ~10× and lowered output cache limit.
+- Increased Cassandra driver heartbeat timeout to avoid spurious retries.
+- Tag summary: lower weight on `darkweb` and `unknown` tags; more emphasis on high-confidence tags.
+- `semver-check` now accepts full SemVer 2.0 prerelease and build-metadata identifiers.
+- Registry pattern for `dump.py`, decoupled transform/sink boundary.
+- Obfuscation plugin RESt: easier toggle flags for debugging
+
+#### Performance
+- Significantly sped up Tron and Ethereum ingest (parallelized source I/O, chunk-level pipelining, persistent gRPC channel, faster hex/bytes conversions, in-place sorts, merged transform passes).
+- Replaced the `cashaddress` dependency with an optimized in-tree implementation.
+
+### Web API + Python client (webapi-2.11.0)
+
+#### Added
+- New `/{currency}/clusters/...` endpoints (`get_cluster`, `list_cluster_addresses`,
+  `list_cluster_neighbors`, `list_cluster_links`, `list_address_tags_by_cluster`,
+  `list_cluster_txs`, `search_cluster_neighbors`) that supersede the
+  corresponding `/entities/...` endpoints. Both sets return identical data;
+  new integrations should use `/clusters/...`.
+- New `cluster` field on `Address`, `Cluster`/`Entity`, and `AddressTag` response
+  models. Dual-emitted alongside the existing `entity` field.
+- New `Cluster`, `NeighborCluster`, `NeighborClusters`, `ClusterAddresses` types
+  in the generated Python client (subclasses of the `Entity*` types, so both
+  are usable during the deprecation window).
+- RFC 9745 `Deprecation: true` response header, RFC 8594 `Sunset` response
+  header (per-route sunset dates) on the `/entities/...` endpoints, and a
+  `Link` header with `rel="deprecation"` on every deprecated route. Clients
+  can detect these without parsing the OpenAPI schema.
+- Written deprecation policy in the API description (visible in `/docs` and
+  in the generated spec).
+
+#### Deprecated
+- `/{currency}/entities/...` endpoints — use `/{currency}/clusters/...` instead.
+- `entity` field on `Address`, `Cluster`, `NeighborEntity`, and `AddressTag` —
+  use `cluster` instead.
+- `status` field on `Address` — legacy field, no replacement.
+
+All deprecated surfaces continue to work; see the "Deprecation policy" section
+of the API description for the support window.
+
 ## [2.10.7] 2026-04-17
 
 ### Library (v2.10.7)
@@ -85,33 +147,11 @@ no changes
 - thorchain nodes changed, more resilient http requests.
 
 ### Web API + Python client (webapi-2.10.0)
+no changes
 
-#### Added
-- New `/{currency}/clusters/...` endpoints (`get_cluster`, `list_cluster_addresses`,
-  `list_cluster_neighbors`, `list_cluster_links`, `list_address_tags_by_cluster`,
-  `list_cluster_txs`, `search_cluster_neighbors`) that supersede the
-  corresponding `/entities/...` endpoints. Both sets return identical data;
-  new integrations should use `/clusters/...`.
-- New `cluster` field on `Address`, `Cluster`/`Entity`, and `AddressTag` response
-  models. Dual-emitted alongside the existing `entity` field.
-- New `Cluster`, `NeighborCluster`, `NeighborClusters`, `ClusterAddresses` types
-  in the generated Python client (subclasses of the `Entity*` types, so both
-  are usable during the deprecation window).
-- RFC 9745 `Deprecation: true` response header, RFC 8594 `Sunset` response
-  header (set to `2026-10-31` for the `/entities/...` endpoints), and a `Link`
-  header with `rel="deprecation"` on every deprecated route. Clients can
-  detect these without parsing the OpenAPI schema.
-- Written deprecation policy in the API description (visible in `/docs` and
-  in the generated spec).
-
-#### Deprecated
-- `/{currency}/entities/...` endpoints — use `/{currency}/clusters/...` instead.
-- `entity` field on `Address`, `Cluster`, `NeighborEntity`, and `AddressTag` —
-  use `cluster` instead.
-- `status` field on `Address` — legacy field, no replacement.
-
-All deprecated surfaces continue to work; see the "Deprecation policy" section
-of the API description for the support window.
+(The `/clusters/...` rename and `/entities/...` deprecation that previously
+appeared here were merged after `webapi-v2.10.0` was tagged and ship in
+`webapi-2.11.0`; see the [2.11.0] entry for details.)
 
 ## [2.10.1] 2026-04-03
 
@@ -248,37 +288,6 @@ no changes
 
 #### added
 - Integration tests for `graphsense-cli web openapi`, `graphsense-cli tagpack-tool --version`, and `graphsense-cli tagstore version` to verify behavior without a loaded GraphSense config file.
-
-### Web API + Python client (webapi-2.9.5)
-no changes
-
-## [Unreleased]
-
-### Library
-
-#### added
-- **New ingest pipeline**: replaced ethereum-etl and bitcoin-etl with direct batch RPC for all chains
-- **Dual-sink pipeline**: `from-node --sinks delta --sinks cassandra` ingests to both Delta Lake and Cassandra in a single pass
-- **TRX gRPC source**: replaced HTTP-based TRX ingestion with native gRPC for higher throughput
-- **UTXO prevout resolution**: verbosity 3 support for BTC/BCH; `getrawtransaction`-based input resolution for LTC/ZEC, removes cassandra dependency on ingest, allows input resolution for delta lake ingest
-- **ETH Pectra fields**: `requestsHash`, `authorizationList`, `y_parity`, `parentBeaconBlockRoot`, `uncles`, `creationMethod`
-- **EIP-2930/4844 Cassandra fields**: `access_list` stored in delta and cassandra schema
-- **Named S3 configs**: per-sink S3 references via `s3_configs` in `graphsense.yaml`
-- **Config validation**: Instead of breaking, warn on unknown keys at all nesting levels; set optimal `source_max_workers` per currency
-- **Sink-level locking**: independent locks for delta and cassandra sinks, single lock for ingest+compact
-- **`ingest` module added to ty type checking scope**
-
-#### changed
-- UTXO addresses stored as plain text instead of custom binary encoding
-- Registry pattern for `dump.py`, decoupled transform/sink boundary
-
-#### fixed
-- Write correct `coinjoin` in delta sink
-- Handle missing delta config gracefully
-- Tron: map energy_penalty_total to correct protobuf field
-
-#### performance
-- Significantly sped up Tron and Ethereum ingest
 
 ### Web API + Python client (webapi-2.9.5)
 no changes
