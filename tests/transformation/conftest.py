@@ -63,7 +63,7 @@ def install_harness():
         def fake_read(table, start_block=None, end_block=None):
             return transformer._read_stub[table]
 
-        def fake_write(df, table):
+        def fake_write(df, table, **kwargs):
             transformer._captured[table] = df
 
         transformer._read_delta = fake_read
