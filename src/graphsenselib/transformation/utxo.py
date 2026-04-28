@@ -255,6 +255,7 @@ class UtxoTransformation:
                     ),
                     F.unhex(o["script_hex"]).alias("script_hex"),
                     F.lit(None).cast(ArrayType(BinaryType())).alias("txinwitness"),
+                    F.lit(None).cast("long").alias("sequence"),
                 ),
             ),
         )
@@ -274,6 +275,7 @@ class UtxoTransformation:
                     ),
                     F.unhex(i["script_hex"]).alias("script_hex"),
                     i["txinwitness"].alias("txinwitness"),
+                    i["sequence"].cast("long").alias("sequence"),
                 ),
             ),
         )
@@ -291,6 +293,8 @@ class UtxoTransformation:
             "inputs",
             "outputs",
             "coinjoin",
+            F.col("version").cast("int"),
+            F.col("lock_time").cast("long").alias("locktime"),
         )
 
         self._write_cassandra(result, "transaction", partition_key="tx_id_group")
