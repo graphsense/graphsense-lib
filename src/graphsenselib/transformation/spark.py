@@ -20,7 +20,6 @@ def create_spark_session(
     cassandra_nodes,
     cassandra_username=None,
     cassandra_password=None,
-    raw_keyspace=None,
     s3_credentials=None,
     spark_config=None,
 ):

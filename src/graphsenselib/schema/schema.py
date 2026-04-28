@@ -236,8 +236,48 @@ class GraphsenseSchemas:
             )
         ]
 
-    def apply_migrations(self, env, currency, keyspace_type: str):
-        with DbFactory().from_config(env, currency) as db:
+    @staticmethod
+    def _db_with_override(env, currency, keyspace_type, keyspace_name_override):
+        """Build an AnalyticsDb, optionally overriding the keyspace name for
+        the given keyspace_type. Falls back to YAML resolution otherwise.
+
+        Only the side matching keyspace_type is overridden; the other side
+        keeps its YAML-resolved name and is not touched by callers that scope
+        themselves to ``db.by_ks_type(keyspace_type)``.
+        """
+        if keyspace_name_override is None:
+            return DbFactory().from_config(env, currency)
+        config = get_config()
+        e = config.get_environment(env)
+        ks = config.get_keyspace_config(env, currency)
+        raw_name = (
+            keyspace_name_override if keyspace_type == "raw" else ks.raw_keyspace_name
+        )
+        transformed_name = (
+            keyspace_name_override
+            if keyspace_type == "transformed"
+            else ks.transformed_keyspace_name
+        )
+        return DbFactory().from_name(
+            raw_keyspace_name=raw_name,
+            transformed_keyspace_name=transformed_name,
+            schema_type=ks.schema_type,
+            cassandra_nodes=e.cassandra_nodes,
+            currency=currency,
+            username=e.username,
+            password=e.password,
+        )
+
+    def apply_migrations(
+        self,
+        env,
+        currency,
+        keyspace_type: str,
+        keyspace_name_override: Optional[str] = None,
+    ):
+        with self._db_with_override(
+            env, currency, keyspace_type, keyspace_name_override
+        ) as db:
             db_ks = db.by_ks_type(keyspace_type)
             schema_type = f"{keyspace_type}_{currency_to_schema_type[currency]}"
             db_conf = db_ks.get_configuration()
@@ -288,9 +328,17 @@ class GraphsenseSchemas:
         for kstype in keyspace_types:
             self.create_keyspace_if_not_exist(env, currency, kstype)
 
-    def create_keyspace_if_not_exist(self, env, currency, keyspace_type):
+    def create_keyspace_if_not_exist(
+        self,
+        env,
+        currency,
+        keyspace_type,
+        keyspace_name_override: Optional[str] = None,
+    ):
         config = get_config()
-        with DbFactory().from_config(env, currency) as db:
+        with self._db_with_override(
+            env, currency, keyspace_type, keyspace_name_override
+        ) as db:
             schema = self.get_by_currency(
                 currency, keyspace_type=keyspace_type, no_extensions=True
             )

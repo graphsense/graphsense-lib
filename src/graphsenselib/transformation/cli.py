@@ -44,6 +44,17 @@ def transformation():
     help="Create Cassandra keyspace/tables if they do not exist.",
 )
 @click.option(
+    "--raw-keyspace",
+    "raw_keyspace_override",
+    type=str,
+    default=None,
+    help=(
+        "Override the target raw Cassandra keyspace name (default: from "
+        "graphsense.yaml). Use to write into a fresh/dated keyspace while "
+        "continuous ingest and delta-update keep using the YAML name."
+    ),
+)
+@click.option(
     "--delta-lake-path",
     type=str,
     default=None,
@@ -69,6 +80,7 @@ def run_transformation(
     start_block,
     end_block,
     create_schema,
+    raw_keyspace_override,
     delta_lake_path,
     local,
     debug_write_audit,
@@ -86,15 +98,23 @@ def run_transformation(
     env_config = config.get_environment(env)
     ks_config = config.get_keyspace_config(env, currency)
 
+    raw_keyspace = raw_keyspace_override or ks_config.raw_keyspace_name
+
     # Schema creation runs BEFORE Spark (uses cassandra-driver, no Java needed)
     if create_schema:
-        logger.info("Creating Cassandra schema if not exists...")
+        logger.info(f"Creating Cassandra schema for {raw_keyspace} if not exists...")
         GraphsenseSchemas().create_keyspace_if_not_exist(
-            env, currency, keyspace_type="raw"
+            env,
+            currency,
+            keyspace_type="raw",
+            keyspace_name_override=raw_keyspace_override,
         )
-        GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="raw")
-
-    raw_keyspace = ks_config.raw_keyspace_name
+        GraphsenseSchemas().apply_migrations(
+            env,
+            currency,
+            keyspace_type="raw",
+            keyspace_name_override=raw_keyspace_override,
+        )
     cassandra_nodes = env_config.cassandra_nodes
     cassandra_username = env_config.username
     cassandra_password = env_config.password

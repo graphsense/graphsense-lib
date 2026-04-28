@@ -33,7 +33,6 @@ def run(
         cassandra_nodes=cassandra_nodes,
         cassandra_username=cassandra_username,
         cassandra_password=cassandra_password,
-        raw_keyspace=raw_keyspace,
         s3_credentials=s3_credentials,
         spark_config=spark_config,
     )
