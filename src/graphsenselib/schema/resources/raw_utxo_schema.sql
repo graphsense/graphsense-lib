@@ -17,7 +17,8 @@ CREATE TYPE IF NOT EXISTS tx_input_output (
     value bigint,
     address_type smallint,
     script_hex blob,
-    txinwitness list<blob>
+    txinwitness list<blob>,
+    sequence bigint
 );
 
 CREATE TABLE IF NOT EXISTS transaction (
@@ -32,6 +33,8 @@ CREATE TABLE IF NOT EXISTS transaction (
     inputs list<FROZEN<tx_input_output>>,
     outputs list<FROZEN<tx_input_output>>,
     coinjoin boolean,
+    version int,
+    locktime bigint,
     PRIMARY KEY (tx_id_group, tx_id)
 );
 
