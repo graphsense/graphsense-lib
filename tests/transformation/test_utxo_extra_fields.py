@@ -1,4 +1,4 @@
-"""Tests for sequence/version/locktime projection in transform_transaction."""
+"""Tests for sequence/version/lock_time projection in transform_transaction."""
 
 import pytest
 
@@ -125,7 +125,7 @@ def _transaction_schema():
     )
 
 
-def test_transform_emits_sequence_version_locktime(spark, transformer):
+def test_transform_emits_sequence_version_lock_time(spark, transformer):
     schema = _transaction_schema()
 
     rbf_inputs = [
@@ -238,7 +238,7 @@ def test_transform_emits_sequence_version_locktime(spark, transformer):
         "outputs",
         "coinjoin",
         "version",
-        "locktime",
+        "lock_time",
     }
     assert expected_cols == set(cols), f"got {set(cols)}"
     assert len(cols) == 13
@@ -255,9 +255,9 @@ def test_transform_emits_sequence_version_locktime(spark, transformer):
     final_row = by_hash[b"\xcd" * 32]
 
     assert rbf_row.version == 2
-    assert rbf_row.locktime == 500_000
+    assert rbf_row["lock_time"] == 500_000
     assert final_row.version == 1
-    assert final_row.locktime == 0
+    assert final_row["lock_time"] == 0
 
     rbf_in_seqs = [i["sequence"] for i in rbf_row.inputs]
     assert rbf_in_seqs == [0xFFFFFFFD, 0xFFFFFFFE]

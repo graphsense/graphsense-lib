@@ -294,7 +294,7 @@ class UtxoTransformation:
             "outputs",
             "coinjoin",
             F.col("version").cast("int"),
-            F.col("lock_time").cast("long").alias("locktime"),
+            F.col("lock_time").cast("long"),
         )
 
         self._write_cassandra(result, "transaction", partition_key="tx_id_group")

@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS transaction (
     outputs list<FROZEN<tx_input_output>>,
     coinjoin boolean,
     version int,
-    locktime bigint,
+    lock_time bigint,
     PRIMARY KEY (tx_id_group, tx_id)
 );
 

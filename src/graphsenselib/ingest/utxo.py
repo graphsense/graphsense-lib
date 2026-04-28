@@ -282,6 +282,7 @@ def tx_io_summary(x):
         addresstype_to_int(x["type"]),
         hex_to_bytes(x["script_hex"]),
         txinwitness,
+        x.get("sequence"),
     ]
 
 

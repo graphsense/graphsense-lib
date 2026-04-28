@@ -201,12 +201,13 @@ def test_transform_with_cassandra_produces_dual_format():
             "Parquet inputs should be list-of-dicts, not tx_io_summary"
         )
 
-    # Cassandra inputs should be tx_io_summary format: [address, value, type, script, witness]
+    # Cassandra inputs should be tx_io_summary format:
+    # [address, value, type, script_hex, txinwitness, sequence]
     cassandra_inp = tx2["inputs_cassandra"][0]
     assert isinstance(cassandra_inp, list), (
         "Cassandra inputs should be tx_io_summary lists"
     )
-    assert len(cassandra_inp) == 5  # [address, value, type, script_hex, txinwitness]
+    assert len(cassandra_inp) == 6
 
     # tx_ids should be sequential starting from 0
     assert result_txs[0]["tx_id"] == 0
