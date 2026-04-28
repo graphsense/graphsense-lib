@@ -170,6 +170,23 @@ def run_transformation(
     s3_credentials = config.get_s3_credentials(s3_config_name)
     spark_config = config.spark_config or {}
 
+    # Pin a top-block snapshot under the same lock that ingest/optimize use, so
+    # concurrent ingest writes past this boundary cannot tear our read. Block
+    # rows are committed last in each ingest batch, so any block_id <= top is
+    # guaranteed to have its dependent rows (tx/log/trace) already committed.
+    # The lock is held only for the boundary read; Spark runs unlocked.
+    from graphsenselib.ingest.delta.sink import delta_lake_highest_block
+    from graphsenselib.utils.locking import create_lock
+
+    with create_lock(f"delta_ingest_{currency}"):
+        top_block = delta_lake_highest_block(delta_lake_path, s3_credentials)
+    if top_block is None:
+        raise click.ClickException(
+            f"Cannot pin top-block: block Delta table at {delta_lake_path}/block is empty."
+        )
+    if end_block is None or end_block > top_block:
+        end_block = top_block
+
     logger.info(
         f"Starting transformation: env={env}, currency={currency}, "
         f"blocks={start_block}-{end_block}, delta={delta_lake_path}, "

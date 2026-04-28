@@ -39,6 +39,31 @@ from ..transform import _finalize_inplace
 logger = logging.getLogger(__name__)
 
 
+def delta_lake_highest_block(directory: str, s3_credentials: Optional[dict] = None):
+    """Return max(block_id) from the ``block`` Delta table at ``directory``.
+
+    Free function so callers (e.g. the transformation CLI) can pin a top-block
+    snapshot without instantiating a full ``DeltaDumpWriter``. Reads via
+    deltalake/pyarrow — no Spark dependency.
+    """
+    if s3_credentials:
+        storage_options = {
+            "AWS_ALLOW_HTTP": "true",
+            "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
+            "AWS_CONDITIONAL_PUT": "etag",
+        }
+        storage_options.update(s3_credentials)
+    else:
+        storage_options = {}
+
+    dataset = DeltaTable(
+        f"{directory}/block", storage_options=storage_options
+    ).to_pyarrow_dataset()
+    return pa.compute.max(  # ty: ignore[unresolved-attribute]
+        dataset.to_table(columns=["block_id"])["block_id"]
+    ).as_py()
+
+
 def optimize_tables(
     network: str,
     directory: str,
@@ -480,22 +505,7 @@ class DeltaDumpWriter(Sink):
 
     def highest_block(self):
         logger.debug("Getting highest block")
-        if self.s3_credentials:
-            storage_options = {
-                "AWS_ALLOW_HTTP": "true",
-                "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
-                "AWS_CONDITIONAL_PUT": "etag",
-            }
-            storage_options.update(self.s3_credentials)
-        else:
-            storage_options = {}
-
-        dataset = DeltaTable(
-            f"{self.directory}/block", storage_options=storage_options
-        ).to_pyarrow_dataset()
-        highest_block = pa.compute.max(  # ty: ignore[unresolved-attribute]
-            dataset.to_table(columns=["block_id"])["block_id"]
-        ).as_py()
+        highest_block = delta_lake_highest_block(self.directory, self.s3_credentials)
         logger.info(f"Highest block: {highest_block}")
         return highest_block
 

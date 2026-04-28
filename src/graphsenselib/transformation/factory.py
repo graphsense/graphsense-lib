@@ -38,18 +38,8 @@ def run(
     )
 
     if end_block is None:
-        # Spark/Hadoop uses s3a:// not s3://
-        block_path = delta_lake_path.rstrip("/").replace("s3://", "s3a://") + "/block"
-        block_df = spark.read.format("delta").load(block_path)
-        max_row = block_df.agg({"block_id": "max"}).collect()[0]
-        end_block = max_row[0]
-        if end_block is None:
-            spark.stop()
-            raise ValueError(
-                f"Cannot auto-detect end_block: block Delta table at "
-                f"{block_path} is empty."
-            )
-        logger.info(f"Auto-detected end_block={end_block} from Delta Lake.")
+        spark.stop()
+        raise ValueError("end_block must be set; pin a top-block before calling run().")
 
     if schema_type == "account":
         from graphsenselib.transformation.account import AccountTransformation
