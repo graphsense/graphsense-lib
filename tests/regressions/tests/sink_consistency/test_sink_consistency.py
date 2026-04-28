@@ -38,7 +38,9 @@ pytestmark = pytest.mark.sink_consistency
 KNOWN_DIVERGENCES: set[tuple[str, str]] = set()
 
 # Cassandra metadata tables — checked for row count but not content hash.
-METADATA_TABLES = {"configuration", "summary_statistics"}
+# `state` carries an updated_at timestamp that naturally differs between two
+# ingest runs over the same data.
+METADATA_TABLES = {"configuration", "summary_statistics", "state"}
 
 
 def _find_differing_columns(

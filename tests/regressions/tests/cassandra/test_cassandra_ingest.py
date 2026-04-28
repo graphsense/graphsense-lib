@@ -36,7 +36,40 @@ KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = {
 KNOWN_COLUMN_ADDITIONS: dict[tuple[str, str], set[str]] = {
     ("eth", "transaction"): {"max_fee_per_blob_gas", "blob_versioned_hashes", "access_list"},
     ("trx", "transaction"): {"max_fee_per_blob_gas", "blob_versioned_hashes", "access_list"},
+    ("btc", "transaction"): {"lock_time", "version"},
+    ("ltc", "transaction"): {"lock_time", "version"},
+    ("bch", "transaction"): {"lock_time", "version"},
+    ("zec", "transaction"): {"lock_time", "version"},
 }
+
+# UDT-internal fields added in the current version that the reference lacks.
+# Keyed by (currency, table) -> {column: {udt_field, ...}}. The named UDT
+# fields are stripped from each UDT instance in `column` before hashing.
+KNOWN_UDT_FIELD_ADDITIONS: dict[tuple[str, str], dict[str, set[str]]] = {
+    ("btc", "transaction"): {"inputs": {"sequence"}, "outputs": {"sequence"}},
+    ("ltc", "transaction"): {"inputs": {"sequence"}, "outputs": {"sequence"}},
+    ("bch", "transaction"): {"inputs": {"sequence"}, "outputs": {"sequence"}},
+    ("zec", "transaction"): {"inputs": {"sequence"}, "outputs": {"sequence"}},
+}
+
+
+def _strip_udt_fields(value, fields_to_strip: set[str]):
+    """Return a list-of-tuples representation of `value` with named fields
+    removed from each UDT. `value` is a list of namedtuple-like UDTs.
+    Falls back to the original value if it's not a list of UDTs.
+    """
+    if value is None:
+        return value
+    out = []
+    for item in value:
+        if hasattr(item, "_asdict"):
+            d = item._asdict()
+            for f in fields_to_strip:
+                d.pop(f, None)
+            out.append(tuple(sorted(d.items())))
+        else:
+            out.append(item)
+    return out
 
 # Tables that contain version-specific metadata (e.g. ingest timestamps,
 # software version strings). These are checked for existence and row count
@@ -50,25 +83,41 @@ def _cassandra_release(session) -> str:
     return row.release_version if row else "unknown"
 
 
+def _normalize_row(
+    row,
+    exclude_cols: set[str] | None,
+    udt_field_additions: dict[str, set[str]] | None,
+) -> str:
+    items = []
+    for k, v in row._asdict().items():
+        if exclude_cols and k in exclude_cols:
+            continue
+        if udt_field_additions and k in udt_field_additions:
+            v = _strip_udt_fields(v, udt_field_additions[k])
+        items.append((k, v))
+    return str(sorted(items, key=lambda kv: kv[0]))
+
+
 def _table_content_hash(
-    session, keyspace: str, table: str, exclude_cols: set[str] | None = None
+    session,
+    keyspace: str,
+    table: str,
+    exclude_cols: set[str] | None = None,
+    udt_field_additions: dict[str, set[str]] | None = None,
 ) -> tuple[int, str]:
     """Return (row_count, sha256_hex) for a table's full content.
 
     Rows are fetched, converted to sorted tuples, and hashed
     deterministically so that row ordering doesn't matter.
-    If *exclude_cols* is given, those columns are dropped before hashing.
+    *exclude_cols* drops top-level columns before hashing.
+    *udt_field_additions* maps a column name to a set of UDT field names that
+    should be stripped from each UDT instance in that column before hashing.
     """
     rows = list(session.execute(f"SELECT * FROM {keyspace}.{table}"))  # noqa: S608
     count = len(rows)
-    # Sort rows deterministically by converting each to a tuple of (col, val)
-    if exclude_cols:
-        sorted_rows = sorted(
-            str(sorted((k, v) for k, v in row._asdict().items() if k not in exclude_cols))
-            for row in rows
-        )
-    else:
-        sorted_rows = sorted(str(sorted(row._asdict().items())) for row in rows)
+    sorted_rows = sorted(
+        _normalize_row(row, exclude_cols, udt_field_additions) for row in rows
+    )
     h = hashlib.sha256()
     for row_str in sorted_rows:
         h.update(row_str.encode())
@@ -195,12 +244,15 @@ class TestCassandraIngest:
 
             # Columns added in current that ref lacks — exclude from comparison
             extra_cols = KNOWN_COLUMN_ADDITIONS.get((currency, table), set())
+            udt_extras = KNOWN_UDT_FIELD_ADDITIONS.get((currency, table))
 
             ref_count, ref_hash = _table_content_hash(
-                session, ref_ks, table, exclude_cols=extra_cols
+                session, ref_ks, table,
+                exclude_cols=extra_cols, udt_field_additions=udt_extras,
             )
             cur_count, cur_hash = _table_content_hash(
-                session, cur_ks, table, exclude_cols=extra_cols
+                session, cur_ks, table,
+                exclude_cols=extra_cols, udt_field_additions=udt_extras,
             )
 
             if table in METADATA_TABLES:
@@ -233,10 +285,7 @@ class TestCassandraIngest:
                     f"SELECT * FROM {cur_ks}.{table}"  # noqa: S608
                 ))
                 def _row_key(row):
-                    return str(sorted(
-                        (k, v) for k, v in row._asdict().items()
-                        if k not in extra_cols
-                    ))
+                    return _normalize_row(row, extra_cols, udt_extras)
 
                 ref_by_key = {_row_key(r): r._asdict() for r in ref_rows}
                 cur_by_key = {_row_key(r): r._asdict() for r in cur_rows}
