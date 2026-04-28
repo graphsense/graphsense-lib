@@ -28,7 +28,9 @@ def get_channel(url: str, enable_retries: bool = True):
         service_config = get_retry_service_config()
         options.extend(
             [
+                ("grpc.enable_retries", 1),
                 ("grpc.service_config", service_config),
+                ("grpc.max_retry_attempts", 9),
                 ("grpc.keepalive_time_ms", 30000),
                 ("grpc.keepalive_timeout_ms", 5000),
                 ("grpc.keepalive_permit_without_calls", True),
@@ -82,8 +84,8 @@ def get_retry_service_config():
     """
     Returns a gRPC service configuration with retry policy for RESOURCE_EXHAUSTED.
 
-    This enables automatic retries for RESOURCE_EXHAUSTED status codes with
-    exponential backoff.
+    Total backoff window covers ~5 minutes so calls survive a node restart:
+    3+6+12+24+48+60+60+60 ≈ 273s across 9 attempts.
     """
     return json.dumps(
         {
@@ -91,7 +93,7 @@ def get_retry_service_config():
                 {
                     "name": [{}],  # Apply to all methods
                     "retryPolicy": {
-                        "maxAttempts": 5,
+                        "maxAttempts": 9,
                         "initialBackoff": "3s",
                         "maxBackoff": "60s",
                         "backoffMultiplier": 2.0,

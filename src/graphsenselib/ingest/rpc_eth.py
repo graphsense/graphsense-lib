@@ -86,7 +86,7 @@ class BatchRpcClient:
             return True
         return False
 
-    def make_batch_request(self, rpc_requests, max_retries=5):
+    def make_batch_request(self, rpc_requests, max_retries=15):
         """POST a JSON-RPC batch and return list of responses."""
         session = self._get_session()
         last_error: Exception = Exception("no retries attempted")
@@ -117,7 +117,7 @@ class BatchRpcClient:
                     time.sleep(wait)
         raise last_error
 
-    def make_request(self, method, params, max_retries=5):
+    def make_request(self, method, params, max_retries=15):
         """Single JSON-RPC call with retries. Returns the 'result' field."""
         session = self._get_session()
         payload = {
