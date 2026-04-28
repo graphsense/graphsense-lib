@@ -192,6 +192,7 @@ class TxValue(BaseModel):
     value: Values
     index: Optional[int] = None
     script_hex: Optional[str] = None  # Raw script hex for OP_RETURN outputs
+    has_witness: Optional[bool] = None  # True if input carries witness data
 
 
 class TxRef(BaseModel):
