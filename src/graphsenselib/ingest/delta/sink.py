@@ -70,17 +70,38 @@ def optimize_tables(
     s3_credentials: Optional[dict] = None,
     mode="both",
     full_vacuum=False,
+    last_n_partitions: Optional[int] = None,
 ) -> None:
-    tables = [n.table_name for n in CONFIG_MAP[network].table_configs]
+    table_configs = CONFIG_MAP[network].table_configs
 
-    for table in tables:
+    for cfg in table_configs:
+        # blockindep tables (e.g. trc10) have no partition column; skip the
+        # partition filter for those — compact the whole table.
+        per_table_last_n = None if cfg.blockindep else last_n_partitions
         optimize_table(
             directory,
-            table,
+            cfg.table_name,
             s3_credentials=s3_credentials,
             mode=mode,
             full_vacuum=full_vacuum,
+            last_n_partitions=per_table_last_n,
         )
+
+
+def _recent_partition_filter(table: "DeltaTable", last_n: int) -> Optional[List[tuple]]:
+    """Build a partition_filters list restricting to the most recent `last_n`
+    partitions. Returns None if the table has no active partitions or fewer
+    than `last_n` partitions (compact everything in that case).
+    """
+    active = table._table.get_active_partitions()
+    if not active:
+        return None
+    # Each entry is a frozenset of (col, value) pairs; values are strings.
+    partitions = sorted(int(list(p)[0][1]) for p in active)
+    if len(partitions) <= last_n:
+        return None
+    threshold = partitions[-last_n]
+    return [("partition", ">=", str(threshold))]
 
 
 def optimize_table(
@@ -89,6 +110,7 @@ def optimize_table(
     s3_credentials: Optional[dict] = None,
     mode="both",
     full_vacuum=False,
+    last_n_partitions: Optional[int] = None,
 ):
     if not _has_ingest_dependencies:
         raise ImportError(
@@ -111,12 +133,23 @@ def optimize_table(
 
     table = DeltaTable(table_path, storage_options=storage_options)
     MB = 1024 * 1024
+
+    partition_filters = None
+    if last_n_partitions is not None:
+        partition_filters = _recent_partition_filter(table, last_n_partitions)
+        if partition_filters is not None:
+            logger.debug(
+                f"Restricting compaction of {table_name} to "
+                f"partition_filters={partition_filters}"
+            )
+
     if mode in ["both", "compact"]:
         logger.debug("Compacting table...")
         # some sources say 1GB, default in the lib is 256MB, we take 512MB
         # we strive for a manageable amount of Memory consumption, so we limit
         # the concurrency
         metrics = table.optimize.compact(
+            partition_filters=partition_filters,
             target_size=512 * MB,
             max_concurrent_tasks=15,
             writer_properties=_WRITER_PROPERTIES,

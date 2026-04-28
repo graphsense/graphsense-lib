@@ -417,6 +417,15 @@ def deltalake():
     help="Run autocompation, paramater controls age since last run and day the compaction should be run on, e.g. 7d;sunday means run on sundays iif the last compaction was more than 7 days ago days ago",
 )
 @click.option(
+    "--auto-compact-last-n",
+    type=int,
+    default=10,
+    help="When --auto-compact triggers, restrict compaction to the most "
+    "recent N partitions of each table (default: 10). Older partitions are "
+    "immutable raw data and don't accumulate small files. Has no effect on "
+    "tables without a partition column (e.g. trc10).",
+)
+@click.option(
     "--sinks",
     type=click.Choice(["delta", "cassandra"], case_sensitive=False),
     multiple=True,
@@ -433,6 +442,7 @@ def dump_rawdata(
     write_mode,
     ignore_overwrite_safechecks,
     auto_compact,
+    auto_compact_last_n,
     sinks,
 ):
     """Exports raw cryptocurrency data to parquet files either to s3
@@ -511,12 +521,16 @@ def dump_rawdata(
                     logger.info(
                         f"Auto-compaction conditions met, last compaction was {last_vaccum_time}, running compaction"
                     )
+                    # Compact only recently-touched partitions. Older
+                    # partitions are immutable raw data and don't accumulate
+                    # small files between runs.
                     optimize_tables(
                         currency,
                         parquet_directory,
                         s3_credentials,
                         mode="both",
                         full_vacuum=True,
+                        last_n_partitions=auto_compact_last_n,
                     )
                 else:
                     logger.info(
@@ -557,7 +571,23 @@ def dump_rawdata(
     help="Perform a full vacuum of the deltalake tables (default: False)",
     required=False,
 )
-def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False):
+@click.option(
+    "--last-n-partitions",
+    type=int,
+    default=None,
+    help="Restrict compaction to the most recent N partitions of each table. "
+    "Older partitions are immutable raw data and don't accumulate small files. "
+    "Has no effect on tables without a partition column (e.g. trc10).",
+    required=False,
+)
+def optimize_deltalake(
+    env,
+    currency,
+    mode="both",
+    table=None,
+    full_vacuum=False,
+    last_n_partitions=None,
+):
     """Optimize the deltalake tables
     \f
     Args:
@@ -589,6 +619,7 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
                     s3_credentials,
                     mode=mode,
                     full_vacuum=full_vacuum,
+                    last_n_partitions=last_n_partitions,
                 )
                 logger.info(f"Optimized deltalake tables in {parquet_directory}")
             else:
@@ -598,6 +629,7 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
                     s3_credentials,
                     mode=mode,
                     full_vacuum=full_vacuum,
+                    last_n_partitions=last_n_partitions,
                 )
                 logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
     except LockAcquisitionError as e:
