@@ -34,7 +34,6 @@ def _log_startup_banner(
     start_block,
     end_block,
     top_block,
-    end_block_clamped,
     local,
 ):
     from urllib.parse import urlparse
@@ -52,11 +51,6 @@ def _log_startup_banner(
     s3_endpoint = (s3_credentials or {}).get("AWS_ENDPOINT_URL")
 
     keyspace_label = raw_keyspace + ("  (override)" if raw_keyspace_overridden else "")
-    end_label = (
-        f"{end_block}  (pinned to top via delta_ingest lock)"
-        if end_block_clamped
-        else f"{end_block}  (top is {top_block})"
-    )
     schema_type = currency_to_schema_type.get(currency, "?")
 
     lines = [
@@ -75,7 +69,8 @@ def _log_startup_banner(
         f"  target keyspace  : {keyspace_label}",
         f"  cassandra nodes  : {', '.join(cassandra_nodes)}",
         f"  start block      : {start_block}",
-        f"  end block        : {end_label}",
+        f"  end block        : {end_block}",
+        f"  top block        : {top_block}",
         f"  spark mode       : {'local[*]' if local else 'cluster'}",
         "=" * 72,
     ]
@@ -258,7 +253,6 @@ def run_transformation(
         start_block=start_block,
         end_block=end_block,
         top_block=top_block,
-        end_block_clamped=end_block == top_block,
         local=local,
     )
 
