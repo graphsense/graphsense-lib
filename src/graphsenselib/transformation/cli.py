@@ -22,6 +22,66 @@ def transformation():
     pass
 
 
+def _log_startup_banner(
+    *,
+    env,
+    currency,
+    delta_lake_path,
+    s3_credentials,
+    raw_keyspace,
+    raw_keyspace_overridden,
+    cassandra_nodes,
+    start_block,
+    end_block,
+    top_block,
+    end_block_clamped,
+    local,
+):
+    from urllib.parse import urlparse
+
+    from graphsenselib.config import currency_to_schema_type
+
+    # Parse bucket / scheme from delta_lake_path. s3://bucket/path → bucket.
+    parsed = urlparse(delta_lake_path)
+    if parsed.scheme in ("s3", "s3a"):
+        bucket = parsed.netloc or "?"
+        delta_loc = f"{parsed.scheme}://{bucket}{parsed.path}"
+    else:
+        bucket = None
+        delta_loc = delta_lake_path
+    s3_endpoint = (s3_credentials or {}).get("AWS_ENDPOINT_URL")
+
+    keyspace_label = raw_keyspace + ("  (override)" if raw_keyspace_overridden else "")
+    end_label = (
+        f"{end_block}  (pinned to top via delta_ingest lock)"
+        if end_block_clamped
+        else f"{end_block}  (top is {top_block})"
+    )
+    schema_type = currency_to_schema_type.get(currency, "?")
+
+    lines = [
+        "=" * 72,
+        "PySpark Delta Lake -> Cassandra raw transformation",
+        "=" * 72,
+        f"  env              : {env}",
+        f"  currency         : {currency}  (schema={schema_type})",
+        f"  source delta     : {delta_loc}",
+    ]
+    if bucket is not None:
+        lines.append(f"  s3 bucket        : {bucket}")
+    if s3_endpoint:
+        lines.append(f"  s3 endpoint      : {s3_endpoint}")
+    lines += [
+        f"  target keyspace  : {keyspace_label}",
+        f"  cassandra nodes  : {', '.join(cassandra_nodes)}",
+        f"  start block      : {start_block}",
+        f"  end block        : {end_label}",
+        f"  spark mode       : {'local[*]' if local else 'cluster'}",
+        "=" * 72,
+    ]
+    logger.info("\n" + "\n".join(lines))
+
+
 @transformation.command("run", short_help="Run Delta Lake → Cassandra transformation.")
 @require_environment()
 @require_currency()
@@ -187,10 +247,19 @@ def run_transformation(
     if end_block is None or end_block > top_block:
         end_block = top_block
 
-    logger.info(
-        f"Starting transformation: env={env}, currency={currency}, "
-        f"blocks={start_block}-{end_block}, delta={delta_lake_path}, "
-        f"keyspace={raw_keyspace}, local={local}"
+    _log_startup_banner(
+        env=env,
+        currency=currency,
+        delta_lake_path=delta_lake_path,
+        s3_credentials=s3_credentials,
+        raw_keyspace=raw_keyspace,
+        raw_keyspace_overridden=raw_keyspace_override is not None,
+        cassandra_nodes=cassandra_nodes,
+        start_block=start_block,
+        end_block=end_block,
+        top_block=top_block,
+        end_block_clamped=end_block == top_block,
+        local=local,
     )
 
     # Deferred PySpark import
