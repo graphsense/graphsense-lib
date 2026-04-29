@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-import click
+import rich_click as click
 
 from graphsense.cli.context import CliContext
 from graphsense.ext import io as io_mod

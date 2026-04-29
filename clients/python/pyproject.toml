@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cli = [
-  "click>=8.1",
+  "rich-click>=1.7",
   "jmespath>=1.0",
   "pygments>=2.15",
 ]

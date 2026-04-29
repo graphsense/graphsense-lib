@@ -6,7 +6,7 @@ import sys
 from typing import Optional
 
 try:
-    import click
+    import rich_click as click
 except ImportError as exc:  # pragma: no cover - only hit without [cli]
     raise SystemExit(
         "graphsense CLI requires the [cli] extra: `pip install graphsense-python[cli]`"
@@ -24,6 +24,51 @@ pass_ctx = click.make_pass_decorator(CliContext)
 
 FORMATS = click.Choice(["json", "jsonl", "csv"], case_sensitive=False)
 INPUT_FORMATS = click.Choice(["auto", "json", "csv", "lines"], case_sensitive=False)
+
+
+# Group help-screen options by topic. Policy: only group when a command has a
+# UTXO-vs-account split, OR ≥4 options across ≥2 obvious buckets. Anything
+# unassigned falls into rich_click's default "Options" panel.
+click.rich_click.OPTION_GROUPS = {
+    "graphsense": [
+        {"name": "Connection", "options": ["--api-key", "--host"]},
+        {
+            "name": "Output",
+            "options": [
+                "--format",
+                "--output",
+                "--directory",
+                "--color",
+                "--no-color",
+            ],
+        },
+        {
+            "name": "Input",
+            "options": [
+                "--input",
+                "--input-format",
+                "--address-jq",
+                "--address-col",
+                "--network-jq",
+                "--network-col",
+            ],
+        },
+        {"name": "Bulk", "options": ["--bulk", "--bulk-threshold"]},
+        {"name": "Logging", "options": ["--quiet", "--verbose"]},
+    ],
+    "graphsense lookup-tx": [
+        {
+            "name": "UTXO-only",
+            "options": [
+                "--with-io",
+                "--with-upstream",
+                "--with-downstream",
+                "--with-heuristics",
+            ],
+        },
+        {"name": "Account-model only", "options": ["--with-flows"]},
+    ],
+}
 
 
 @click.group(

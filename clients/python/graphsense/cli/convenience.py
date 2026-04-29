@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Optional
 
-import click
+import rich_click as click
 
 from graphsense.ext.client import _looks_like_date
 
@@ -250,45 +250,44 @@ def lookup_cluster(
 @click.argument("currency")
 @click.argument("tx_hashes", nargs=-1)
 @click.option(
-    "--with-io",
-    is_flag=True,
-    default=False,
-    help="UTXO-only: fetch /inputs and /outputs. Silently skipped on "
-    "account-model chains (eth, trx, ...).",
-)
-@click.option(
     "--with-flows",
     is_flag=True,
     default=False,
-    help="Account-model only: fetch /flows. Silently skipped on UTXO "
-    "chains (btc, ltc, ...).",
+    help="Fetch /flows. Silently skipped on UTXO chains (btc, ltc, ...).",
+)
+@click.option(
+    "--with-io",
+    is_flag=True,
+    default=False,
+    help="Fetch /inputs and /outputs. Silently skipped on account-model "
+    "chains (eth, trx, ...).",
 )
 @click.option(
     "--with-upstream",
     is_flag=True,
     default=False,
-    help="UTXO-only: fetch the txs that funded each input.",
+    help="Fetch the txs that funded each input.",
 )
 @click.option(
     "--with-downstream",
     is_flag=True,
     default=False,
-    help="UTXO-only: fetch the txs that spent each output.",
+    help="Fetch the txs that spent each output.",
 )
 @click.option(
     "--with-heuristics",
     is_flag=True,
     default=False,
-    help="UTXO-only: compute every available heuristic (change, "
-    "coinjoin, etc.) and return them on the base tx.",
+    help="Compute every available heuristic (change, coinjoin, etc.) "
+    "and return them on the base tx.",
 )
 @pass_ctx
 def lookup_tx(
     ctx: CliContext,
     currency: str,
     tx_hashes: tuple[str, ...],
-    with_io: bool,
     with_flows: bool,
+    with_io: bool,
     with_upstream: bool,
     with_downstream: bool,
     with_heuristics: bool,

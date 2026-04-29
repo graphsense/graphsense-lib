@@ -13,7 +13,7 @@ import os
 import typing as t
 from typing import Any, Optional
 
-import click
+import rich_click as click
 
 import graphsense
 from graphsense.cli.context import CliContext

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import click
+import rich_click as click
 
 from graphsense.exceptions import ApiException
 
@@ -63,7 +63,7 @@ def exit_code_for(exc: ApiException) -> int:
     return _EXIT_OTHER_ERROR
 
 
-class FriendlyErrorGroup(click.Group):
+class FriendlyErrorGroup(click.RichGroup):
     """Top-level group that converts `ApiException` into a friendly error."""
 
     def invoke(self, ctx: click.Context) -> Any:

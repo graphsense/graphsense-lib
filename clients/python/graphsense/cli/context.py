@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
-import click
+import rich_click as click
 
 from graphsense.ext.client import GraphSense
 
