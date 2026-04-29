@@ -20,9 +20,15 @@ from cassandra.cluster import (
     ExecutionProfile,
     NoHostAvailable,
 )
-from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
+from cassandra.policies import (
+    ConstantSpeculativeExecutionPolicy,
+    DCAwareRoundRobinPolicy,
+    ExponentialReconnectionPolicy,
+    TokenAwarePolicy,
+)
 from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
+from graphsenselib.db.cassandra import GraphsenseRetryPolicy
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
@@ -580,6 +586,9 @@ class Cassandra:
 
     def connect(self):
         try:
+            # LOCAL_ONE is the recommended default for the read path: it tolerates
+            # any (RF - 1) replicas being down. LOCAL_QUORUM only adds value when
+            # RF >= 3 and read-after-write consistency is actually required.
             cl = ConsistencyLevel.name_to_value.get(
                 self.config.get("consistency_level", "LOCAL_ONE"),
                 ConsistencyLevel.LOCAL_ONE,
@@ -590,6 +599,12 @@ class Cassandra:
                 row_factory=dict_factory,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 consistency_level=cl,
+                retry_policy=GraphsenseRetryPolicy(max_retries=3),
+                # For idempotent reads (all REST queries are SELECTs), fire a second
+                # attempt at another host after 200 ms to mask slow/dead replicas.
+                speculative_execution_policy=ConstantSpeculativeExecutionPolicy(
+                    delay=0.2, max_attempts=2
+                ),
             )
 
             auth_provider = None
@@ -603,15 +618,22 @@ class Cassandra:
                 self.config["nodes"],
                 port=int(self.config.get("port", 9042)),
                 protocol_version=5,
-                connect_timeout=60,
+                connect_timeout=15,
                 execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
                 auth_provider=auth_provider,
+                reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
             )
             self.session = self.cluster.connect()
             # self.session.row_factory = dict_factory
             if self.logger:
                 self.logger.info(f"Connection ready. Using CL: {cl}")
         except NoHostAvailable:
+            # TODO: this reconnect path blocks the event loop (time.sleep) and
+            # recurses without a depth limit; it is also called synchronously from
+            # async code paths (execute_async_lowlevel) which freezes REST workers
+            # during outages. Replace with a bounded, non-blocking reconnect helper
+            # and let the retry policy + reconnection policy handle transient
+            # failures instead.
             retry = self.config.get("retry_interval", None)
             retry = 5 if retry is None else retry
             if self.logger:
@@ -910,10 +932,32 @@ class Cassandra:
         return result
 
     def get_prepared_statement(self, query):
+        # Guard: this helper marks every prepared statement as idempotent (a
+        # prerequisite for the speculative-execution policy). Lightweight
+        # transactions and UPDATEs are not safe to mark idempotent — retried or
+        # speculatively-executed copies can double-apply or race — so refuse to
+        # prepare them here. Mutating paths must use a dedicated helper that
+        # decides idempotency per statement.
+        normalized = " ".join(query.split())
+        if re.search(r"\bIF\s+(NOT\s+)?EXISTS\b", normalized, re.IGNORECASE):
+            raise ValueError(
+                "get_prepared_statement refuses LWT (IF [NOT] EXISTS): "
+                f"not idempotent. Query: {query!r}"
+            )
+        if re.match(r"\s*UPDATE\b", normalized, re.IGNORECASE):
+            raise ValueError(
+                "get_prepared_statement refuses UPDATE: not idempotent. "
+                f"Query: {query!r}"
+            )
+
         hash_object = hashlib.sha256(query.encode("utf-8"))
         hex_dig = hash_object.hexdigest()
         if hex_dig not in self.prepared_statements:
-            self.prepared_statements[hex_dig] = self.session.prepare(query)
+            ps = self.session.prepare(query)
+            # All REST queries are SELECTs and therefore idempotent. Required for
+            # the speculative-execution policy on the ExecutionProfile to fire.
+            ps.is_idempotent = True
+            self.prepared_statements[hex_dig] = ps
         return self.prepared_statements[hex_dig]
 
     def execute_async_core(
@@ -932,7 +976,7 @@ class Cassandra:
         response_future = self.session.execute_async(
             prep, params, timeout=60, paging_state=paging_state
         )
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         def safe_set_result():

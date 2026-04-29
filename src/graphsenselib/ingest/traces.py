@@ -274,7 +274,7 @@ class TraceExporter:
         self.trace_batch_size = trace_batch_size
         self.max_workers = max_workers
 
-    def _fetch_traces_for_blocks(self, block_numbers, max_retries=5):
+    def _fetch_traces_for_blocks(self, block_numbers, max_retries=15):
         """Fetch traces for a batch of blocks via a single batch JSON-RPC call.
 
         Returns dict mapping block_number -> list of trace dicts,
