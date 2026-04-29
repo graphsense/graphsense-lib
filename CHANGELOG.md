@@ -38,10 +38,10 @@ Use one changelog file, but separate entries by track in each release window.
 - `semver-check` now accepts full SemVer 2.0 prerelease and build-metadata identifiers.
 - Registry pattern for `dump.py`, decoupled transform/sink boundary.
 - Obfuscation plugin RESt: easier toggle flags for debugging
+- Replaced the `cashaddress` dependency with a local implementation.
 
 #### Performance
-- Significantly sped up Tron and Ethereum ingest (parallelized source I/O, chunk-level pipelining, persistent gRPC channel, faster hex/bytes conversions, in-place sorts, merged transform passes).
-- Replaced the `cashaddress` dependency with an optimized in-tree implementation.
+- Significantly sped up Tron and Ethereum ingest (parallelized source I/O, chunk-level pipelining, gRPC instead of REST for Tron, faster hex/bytes conversions, in-place sorts, merged transform passes).
 
 ### Web API + Python client (webapi-2.11.0)
 
