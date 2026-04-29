@@ -41,7 +41,30 @@ generate-openapi-client:
 test-compat:
 	uv run $(COMPAT_DIR)/test_compat.py .
 
+# Offline regression tests for graphsense.ext and the gs CLI.
+test:
+	uv run --extra cli pytest tests/ -q
+
+# Stricter variant for CI: treats warnings as errors.
+test-ci:
+	uv run --extra cli pytest tests/ -q -W error
+
+lint:
+	uv run --with ruff ruff check graphsense/ext graphsense/cli tests
+	uv run --with ruff ruff format --check graphsense/ext graphsense/cli tests
+
+format:
+	uv run --with ruff ruff format graphsense/ext graphsense/cli tests
+	uv run --with ruff ruff check --fix graphsense/ext graphsense/cli tests
+
+# ty picks up this workspace's first-party paths from --python, and
+# we pass explicit files because ty does not yet discover them from
+# directories in this mixed-project layout.
+type-check:
+	uv run --extra cli --with ty ty check --python .venv \
+		$$(find graphsense/ext graphsense/cli -name '*.py')
+
 run-examples:
 	API_KEY=$(API_KEY) uv run --with pypandoc test_examples.py
 
-.PHONY: generate-openapi-client test-compat run-examples
+.PHONY: generate-openapi-client test-compat test test-ci lint format type-check run-examples
