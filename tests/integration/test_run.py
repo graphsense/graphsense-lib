@@ -12,9 +12,6 @@ from click.testing import CliRunner
 from graphsenselib.ingest.cli import ingest
 
 
-pytest.importorskip("bitcoinetl")
-
-
 class MockLogger:
     level = 0
 
@@ -28,6 +25,9 @@ class MockLogger:
         pass
 
 
+@pytest.mark.skip(
+    reason="Legacy UTXO v1 Cassandra ingest removed; needs v2 pipeline test"
+)
 @pytest.mark.slow
 @pytest.mark.vcr(**vcr_default_params)
 def test_pipeline(gs_db_setup):

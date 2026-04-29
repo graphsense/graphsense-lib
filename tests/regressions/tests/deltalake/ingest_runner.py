@@ -1,8 +1,9 @@
-"""Run graphsense-cli ingest in a specific virtual environment via subprocess."""
+"""Run graphsense-cli ingest via subprocess."""
 
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import yaml
@@ -104,6 +105,8 @@ def run_ingest(
         "--end-block", str(end_block),
         "--write-mode", write_mode,
     ]
+    if write_mode == "overwrite":
+        cmd.append("--ignore-overwrite-safechecks")
 
     env = os.environ.copy()
     env.update({
@@ -129,3 +132,44 @@ def run_ingest(
             f"stdout: {result.stdout[-2000:]}\n"
             f"stderr: {result.stderr[-2000:]}"
         )
+
+
+def timed_run_ingest(
+    venv_dir: Path,
+    config: DeltaTestConfig,
+    delta_directory: str,
+    start_block: int,
+    end_block: int,
+    write_mode: str,
+    minio_endpoint: str,
+    minio_access_key: str,
+    minio_secret_key: str,
+) -> float:
+    """Run ingest via subprocess and return wall-clock seconds."""
+    t0 = time.perf_counter()
+    run_ingest(
+        venv_dir=venv_dir,
+        config=config,
+        delta_directory=delta_directory,
+        start_block=start_block,
+        end_block=end_block,
+        write_mode=write_mode,
+        minio_endpoint=minio_endpoint,
+        minio_access_key=minio_access_key,
+        minio_secret_key=minio_secret_key,
+    )
+    return time.perf_counter() - t0
+
+
+def copy_s3_prefix(s3_client, bucket: str, src_prefix: str, dst_prefix: str) -> None:
+    """Copy all objects under src_prefix to dst_prefix within the same bucket."""
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=src_prefix):
+        for obj in page.get("Contents", []):
+            src_key = obj["Key"]
+            dst_key = src_key.replace(src_prefix, dst_prefix, 1)
+            s3_client.copy_object(
+                Bucket=bucket,
+                CopySource={"Bucket": bucket, "Key": src_key},
+                Key=dst_key,
+            )

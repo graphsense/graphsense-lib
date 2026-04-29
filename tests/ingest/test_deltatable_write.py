@@ -330,7 +330,7 @@ def test_utxo_schema_data_coverage():
                 {
                     "index": 0,
                     "script_hex": "abcdef",
-                    "addresses": [b"addr1", b"addr2"],
+                    "addresses": ["addr1", "addr2"],
                     "required_signatures": 1,
                     "type": "p2pkh",
                     "value": 3000,
@@ -338,7 +338,7 @@ def test_utxo_schema_data_coverage():
                 {
                     "index": 1,
                     "script_hex": "123456",
-                    "addresses": [b"addr3"],
+                    "addresses": ["addr3"],
                     "required_signatures": 1,
                     "type": "p2sh",
                     "value": 1800,
@@ -348,10 +348,13 @@ def test_utxo_schema_data_coverage():
                 {
                     "spent_transaction_hash": b"\x01" * 32,
                     "spent_output_index": 0,
-                    "script_hex": "abcdef",
-                    "txinwitness": [b"witness1", b"witness2"],
                     "index": 0,
                     "sequence": 4294967295,
+                    "script_hex": "abcdef",
+                    "txinwitness": [b"witness1", b"witness2"],
+                    "type": None,
+                    "addresses": None,
+                    "value": None,
                 },
             ],
             "coinjoin": False,

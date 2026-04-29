@@ -1,22 +1,43 @@
 import importlib
 import json
 
-import pytest
-
-pytest.importorskip("bitcoinetl")
-
-from bitcoinetl.domain.block import BtcBlock
-from bitcoinetl.mappers.transaction_mapper import BtcTransactionMapper
-
+from graphsenselib.ingest.rpc_utxo import _parse_input, _parse_output
 from graphsenselib.ingest.utxo import is_coinjoin
 
 from . import resources
 
-mapper = BtcTransactionMapper()
-block = BtcBlock()
-block.number = 0
-block.timestamp = 0
-block.hash = 4
+
+def raw_tx_to_dict(raw_tx):
+    """Convert a raw Bitcoin RPC transaction JSON to the dict format expected by
+    is_coinjoin (same format as BtcBlockExporter output)."""
+    vin = raw_tx.get("vin", [])
+    vout = raw_tx.get("vout", [])
+
+    inputs = []
+    idx = 0
+    for v in vin:
+        if "coinbase" not in v:
+            inputs.append(_parse_input(v, idx))
+            idx += 1
+
+    outputs = [_parse_output(v) for v in vout]
+
+    input_value = sum(inp["value"] for inp in inputs if inp["value"] is not None)
+    output_value = sum(o["value"] for o in outputs if o["value"] is not None)
+
+    return {
+        "hash": raw_tx["txid"],
+        "inputs": inputs,
+        "outputs": outputs,
+        "input_count": len(inputs),
+        "output_count": len(outputs),
+        "input_value": input_value,
+        "output_value": output_value,
+        "is_coinbase": False,
+        "block_number": 0,
+        "block_timestamp": 0,
+        "index": 0,
+    }
 
 
 def test_c1():
@@ -29,9 +50,7 @@ def test_c1():
     ):
         tx = json.load(f)
 
-        converted = mapper.transaction_to_dict(
-            mapper.json_dict_to_transaction(tx, block, 0)
-        )
+        converted = raw_tx_to_dict(tx)
         converted["inputs"][0]["addresses"] = ["1EFabZzqMDZALgJmZ7DMHdLj9SPRSuXAvU"]
         converted["inputs"][0]["value"] = 600
         converted["inputs"][1]["addresses"] = ["12JYmnfYU2ghzjwUAspzJsSnmJtK9bZPYR"]
@@ -50,9 +69,7 @@ def test_c2():
     ):
         tx = json.load(f)
 
-        converted = mapper.transaction_to_dict(
-            mapper.json_dict_to_transaction(tx, block, 0)
-        )
+        converted = raw_tx_to_dict(tx)
         converted["inputs"][0]["addresses"] = ["3QxSEAwy5SirDifNnUYtrTmRFAkXcyF9xR"]
         converted["inputs"][0]["value"] = 2700
         converted["inputs"][1]["addresses"] = ["3KSZHyXAPLNmxs98CsAij8ksAENRkEa3zs"]

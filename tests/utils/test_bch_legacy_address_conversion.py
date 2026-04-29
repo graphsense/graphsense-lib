@@ -1,4 +1,6 @@
-from graphsenselib.utils.bch import bch_address_to_legacy
+import pytest
+
+from graphsenselib.utils.bch import InvalidAddress, bch_address_to_legacy
 
 
 def test_P2SH32():
@@ -104,6 +106,48 @@ def test_Other():
         bch_address_to_legacy("122c9XmGjeMcirALbBP1g2kh9N3uZZofbR")
         == "122c9XmGjeMcirALbBP1g2kh9N3uZZofbR"
     )
+
+
+def test_upstream_cashaddress_p2sh():
+    """From https://github.com/oskyk/cashaddress tests/test.py"""
+    assert (
+        bch_address_to_legacy("3CWFddi6m4ndiGyKqzYvsFYagqDLPVMTzC")
+        == "3CWFddi6m4ndiGyKqzYvsFYagqDLPVMTzC"
+    )
+    assert (
+        bch_address_to_legacy("bitcoincash:ppm2qsznhks23z7629mms6s4cwef74vcwvn0h829pq")
+        == "3CWFddi6m4ndiGyKqzYvsFYagqDLPVMTzC"
+    )
+
+
+def test_upstream_cashaddress_p2pkh():
+    """From https://github.com/oskyk/cashaddress tests/test.py"""
+    assert (
+        bch_address_to_legacy("155fzsEBHy9Ri2bMQ8uuuR3tv1YzcDywd4")
+        == "155fzsEBHy9Ri2bMQ8uuuR3tv1YzcDywd4"
+    )
+    assert (
+        bch_address_to_legacy("bitcoincash:qqkv9wr69ry2p9l53lxp635va4h86wv435995w8p2h")
+        == "155fzsEBHy9Ri2bMQ8uuuR3tv1YzcDywd4"
+    )
+
+
+def test_testnet_rejected():
+    """Testnet addresses use a different prefix and are not supported."""
+    with pytest.raises(InvalidAddress):
+        bch_address_to_legacy("bchtest:pqc3tyspqwn95retv5k3c5w4fdq0cxvv95u36gfk00")
+    with pytest.raises(InvalidAddress):
+        bch_address_to_legacy("bchtest:qpc0qh2xc3tfzsljq79w37zx02kwvzm4gydm222qg8")
+
+
+def test_invalid_addresses():
+    """Invalid inputs should raise InvalidAddress."""
+    with pytest.raises(InvalidAddress):
+        bch_address_to_legacy("bitcoincash:aqkv9wr69ry2p9l53lxp635va4h86wv435995w8p2h")
+    with pytest.raises(InvalidAddress):
+        bch_address_to_legacy(
+            "somethingelse:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        )
 
     # taken from
     # https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md#larger-test-vectors

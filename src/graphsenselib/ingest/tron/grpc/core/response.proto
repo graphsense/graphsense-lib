@@ -114,7 +114,7 @@ message ResourceReceipt {
   int64 net_fee = 6;
   Transaction.Result.contractResult result = 7;
   int64 energy_penalty_total = 8;
-}r
+}
 
 message TransactionInfo {
   enum code {

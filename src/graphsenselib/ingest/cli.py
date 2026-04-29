@@ -2,7 +2,7 @@
 import logging
 import sys
 import time
-from typing import Dict
+from contextlib import ExitStack
 
 import click
 
@@ -12,6 +12,7 @@ from graphsenselib.utils.locking import LockAcquisitionError, create_lock
 
 from ..cli.common import require_currency, require_environment
 from ..config import get_config
+from ..config.config import KeyspaceConfig
 from ..db import DbFactory
 from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
@@ -23,10 +24,18 @@ from .factory import IngestFactory
 logger = logging.getLogger(__name__)
 
 
-def create_sink_config(sink: str, network: str, ks_config: Dict):
-    sink_config = ks_config.ingest_config.model_dump().get(
-        "raw_keyspace_file_sinks", None
-    )
+def _require_ingest_config(ks_config: KeyspaceConfig, currency: str):
+    """Return the IngestConfig or exit if not configured."""
+    ic = ks_config.ingest_config
+    if ic is None:
+        logger.error(f"No ingest_config for {currency}. Check your graphsense.yaml.")
+        sys.exit(11)
+    return ic
+
+
+def create_sink_config(sink: str, network: str, ks_config: KeyspaceConfig):
+    ic = ks_config.ingest_config
+    sink_config = ic.model_dump().get("raw_keyspace_file_sinks", None) if ic else None
     if sink == "parquet":
         file_sink_dir = subkey_get(sink_config, f"{sink}.directory".split("."))
         if file_sink_dir is None:
@@ -71,11 +80,11 @@ def ingesting():
 )
 @click.option(
     "--sinks",
-    type=click.Choice(INGEST_SINKS, case_sensitive=False),
+    type=click.Choice(INGEST_SINKS + ["delta"], case_sensitive=False),
     multiple=True,
     default=["cassandra"],
-    help="Where the raw data is written to currently"
-    " either cassandra, parquet, or multiple (default: cassandra)",
+    help="Sinks to write to (default: cassandra). "
+    "Can be specified multiple times, e.g. --sinks cassandra --sinks delta.",
 )
 @click.option(
     "--start-block",
@@ -93,7 +102,8 @@ def ingesting():
     "--batch-size",
     type=int,
     default=10,
-    help="number of blocks to export (write) at a time (default: 10)",
+    help="[legacy only] number of blocks to export (write) at a time. "
+    "Ignored by the new pipeline (file batch size is fixed per currency).",
 )
 @click.option(
     "--timeout",
@@ -121,6 +131,22 @@ def ingesting():
     help="Create database schema if it does not exist",
 )
 @click.option(
+    "--write-mode",
+    type=click.Choice(
+        ["overwrite", "append"],
+        case_sensitive=False,
+    ),
+    help="Write mode for delta sink (default: append).",
+    default="append",
+    multiple=False,
+)
+@click.option(
+    "--ignore-overwrite-safechecks",
+    is_flag=True,
+    help="Ignore check in the overwrite mode that only lets you start at the "
+    "beginning of a partition.",
+)
+@click.option(
     "--mode",
     type=click.Choice(
         [
@@ -142,7 +168,7 @@ def ingesting():
     type=int,
     default=1,
     help="Which version of the ingest to use, 1: legacy (sequential), 2:parallel"
-    "(default: 1)",
+    "(default: 1). Note: version 1 has been removed for account chains (ETH/TRX).",
 )
 def ingest(
     env,
@@ -157,6 +183,8 @@ def ingest(
     info,
     previous_day,
     create_schema,
+    write_mode,
+    ignore_overwrite_safechecks,
     mode,
     version,
 ):
@@ -168,53 +196,170 @@ def ingest(
     """
     config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
-    sources = ks_config.ingest_config.all_node_references
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    sources = ingest_cfg.all_node_references
 
-    if (
-        (
-            ks_config.schema_type in ["account", "account_trx"]
-            and mode.startswith("utxo_")
+    if batch_size != 10:
+        logger.warning(
+            "--batch-size is ignored by the new ingest pipeline. "
+            "File batch size is fixed per currency."
         )
-        or ks_config.schema_type == "utxo"
-        and not mode.startswith("utxo_")
-    ):
-        logger.error(
-            f"Mode {mode} is not available for "
-            f"{ks_config.schema_type} type currencies. Exiting."
-        )
+
+    use_legacy = config.legacy_ingest
+
+    LEGACY_ONLY_MODES = {
+        "utxo_only_tx_graph",
+        "account_traces_only",
+        "account_fees_only",
+        "trx_update_transactions",
+    }
+    if not use_legacy and mode in LEGACY_ONLY_MODES:
+        logger.error(f"Mode '{mode}' requires GRAPHSENSE_LEGACY_INGEST=true.")
         sys.exit(11)
+
+    # Mode validation only applies to legacy paths
+    if use_legacy:
+        if mode != "legacy" and (
+            (
+                ks_config.schema_type in ["account", "account_trx"]
+                and mode.startswith("utxo_")
+            )
+            or (ks_config.schema_type == "utxo" and not mode.startswith("utxo_"))
+        ):
+            logger.error(
+                f"Mode {mode} is not available for "
+                f"{ks_config.schema_type} type currencies. Exiting."
+            )
+            sys.exit(11)
+        # Account chains require --version 2 in legacy mode
+        if ks_config.schema_type in ["account", "account_trx"]:
+            version = 2
+
+    use_cassandra = "cassandra" in sinks
 
     schema_tools = GraphsenseSchemas()
     ks_type = "raw"
-    if create_schema:
-        schema_tools.create_keyspace_if_not_exist(env, currency, keyspace_type=ks_type)
+    if use_cassandra:
+        if create_schema:
+            schema_tools.create_keyspace_if_not_exist(
+                env, currency, keyspace_type=ks_type
+            )
+        logger.info("Apply migrations to raw keyspace if necessary")
+        schema_tools.apply_migrations(env, currency, keyspace_type=ks_type)
 
-    logger.info("Apply migrations to raw keyspace if necessary")
-    schema_tools.apply_migrations(env, currency, keyspace_type=ks_type)
+    lock_disabled = no_lock or no_file_lock
+    try:
+        with ExitStack() as stack:
+            db = None
+            if use_cassandra:
+                db = stack.enter_context(DbFactory().from_config(env, currency))
 
-    sink_configs = [(k, create_sink_config(k, currency, ks_config)) for k in sinks]
-
-    with DbFactory().from_config(env, currency) as db:
-        lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
-        lock_disabled = no_lock or no_file_lock
-        try:
-            with create_lock(lock_name, disabled=lock_disabled):
-                IngestFactory().from_config(env, currency, version).ingest(
-                    db=db,
-                    currency=currency,
-                    sources=sources,
-                    sink_config={k: v for k, v in sink_configs if v is not None},
-                    user_start_block=start_block,
-                    user_end_block=end_block,
-                    batch_size=batch_size,
-                    info=info,
+            if not use_legacy:
+                _run_new_ingest(
+                    config,
+                    ks_config,
+                    db,
+                    currency,
+                    sources,
+                    sinks,
+                    start_block,
+                    end_block,
+                    timeout,
+                    lock_disabled,
                     previous_day=previous_day,
-                    provider_timeout=timeout,
-                    mode=mode,
+                    info=info,
+                    batch_size=batch_size,
+                    write_mode=write_mode,
+                    ignore_overwrite_safechecks=ignore_overwrite_safechecks,
                 )
-        except LockAcquisitionError as e:
-            logger.warning(str(e))
-            sys.exit(911)
+            else:
+                if db is None:
+                    logger.error(
+                        "Legacy ingest requires Cassandra. Add --sinks cassandra."
+                    )
+                    sys.exit(11)
+                assert db is not None
+                logger.warning(
+                    "DEPRECATED: The legacy ingest pipeline is deprecated and will be "
+                    "removed in a future release. Unset GRAPHSENSE_LEGACY_INGEST to "
+                    "use the new pipeline."
+                )
+                lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
+                with create_lock(lock_name, disabled=lock_disabled):
+                    sink_configs = [
+                        (k, create_sink_config(k, currency, ks_config)) for k in sinks
+                    ]
+                    IngestFactory().from_config(env, currency, version).ingest(
+                        db=db,
+                        currency=currency,
+                        sources=sources,
+                        sink_config={k: v for k, v in sink_configs if v is not None},
+                        user_start_block=start_block,
+                        user_end_block=end_block,
+                        batch_size=batch_size,
+                        info=info,
+                        previous_day=previous_day,
+                        provider_timeout=timeout,
+                        mode=mode,
+                    )
+    except LockAcquisitionError as e:
+        logger.warning(str(e))
+        sys.exit(911)
+
+
+def _run_new_ingest(
+    config,
+    ks_config,
+    db,
+    currency,
+    sources,
+    sinks,
+    start_block,
+    end_block,
+    timeout,
+    lock_disabled=False,
+    previous_day=False,
+    info=False,
+    batch_size=None,
+    write_mode="append",
+    ignore_overwrite_safechecks=False,
+):
+    """Route from-node to the IngestRunner-based pipeline."""
+    ic = ks_config.ingest_config
+    delta_directory = None
+    s3_credentials = None
+    if "delta" in sinks:
+        if ic is None:
+            logger.error("Delta sink requested but no ingest_config configured.")
+            sys.exit(11)
+        pdc = ic.raw_keyspace_file_sinks.get("delta", None)
+        if pdc is None:
+            logger.error(
+                "Delta sink requested but no delta directory configured "
+                "(raw_keyspace_file_sinks.delta.directory)"
+            )
+            sys.exit(11)
+        delta_directory = pdc.directory
+        s3_credentials = config.get_s3_credentials(pdc.s3_config)
+
+    source_max_workers = ic.source_max_workers if ic is not None else None
+
+    export_delta(
+        currency=currency,
+        sources=sources,
+        directory=delta_directory,
+        start_block=start_block,
+        end_block=end_block,
+        provider_timeout=timeout,
+        s3_credentials=s3_credentials,
+        write_mode=write_mode,
+        ignore_overwrite_safechecks=ignore_overwrite_safechecks,
+        db=db if "cassandra" in sinks else None,
+        lock_disabled=lock_disabled,
+        previous_day=previous_day,
+        info=info,
+        source_max_workers=source_max_workers,
+    )
 
 
 @ingesting.group("delta-lake")
@@ -271,6 +416,14 @@ def deltalake():
     default=None,
     help="Run autocompation, paramater controls age since last run and day the compaction should be run on, e.g. 7d;sunday means run on sundays iif the last compaction was more than 7 days ago days ago",
 )
+@click.option(
+    "--sinks",
+    type=click.Choice(["delta", "cassandra"], case_sensitive=False),
+    multiple=True,
+    default=["delta"],
+    help="Sinks to write to (default: delta). "
+    "Can be specified multiple times, e.g. --sinks delta --sinks cassandra.",
+)
 def dump_rawdata(
     env,
     currency,
@@ -280,6 +433,7 @@ def dump_rawdata(
     write_mode,
     ignore_overwrite_safechecks,
     auto_compact,
+    sinks,
 ):
     """Exports raw cryptocurrency data to parquet files either to s3
     or a local directory.
@@ -292,11 +446,9 @@ def dump_rawdata(
     logger.info(f"Dumping raw data for {currency} in {env}")
 
     ks_config = config.get_keyspace_config(env, currency)
-    sources = ks_config.ingest_config.all_node_references
-    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "delta", None
-    )
-    s3_credentials = config.get_s3_credentials()
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    sources = ingest_cfg.all_node_references
+    parquet_directory_config = ingest_cfg.raw_keyspace_file_sinks.get("delta", None)
 
     if parquet_directory_config is None:
         logger.error(
@@ -306,26 +458,49 @@ def dump_rawdata(
         sys.exit(11)
 
     parquet_directory = parquet_directory_config.directory
+    s3_credentials = config.get_s3_credentials(parquet_directory_config.s3_config)
 
+    use_cassandra = "cassandra" in sinks
+    use_delta = "delta" in sinks
+
+    if not use_delta:
+        logger.error("Delta sink is currently required.")
+        sys.exit(11)
+
+    if use_cassandra:
+        schema_tools = GraphsenseSchemas()
+        schema_tools.create_keyspace_if_not_exist(env, currency, keyspace_type="raw")
+        logger.info("Apply migrations to raw keyspace if necessary")
+        schema_tools.apply_migrations(env, currency, keyspace_type="raw")
+
+    # Use a single lock for both ingest and auto-compact to prevent a
+    # concurrent process from starting between the two operations.
     lock_name = f"delta_ingest_{currency}"
     try:
         with create_lock(lock_name):
-            export_delta(
-                currency=currency,
-                sources=sources,
-                directory=parquet_directory,
-                start_block=start_block,
-                end_block=end_block,
-                provider_timeout=timeout,
-                s3_credentials=s3_credentials,
-                write_mode=write_mode,
-                ignore_overwrite_safechecks=ignore_overwrite_safechecks,
-            )
+            with ExitStack() as stack:
+                db = None
+                if use_cassandra:
+                    db = stack.enter_context(DbFactory().from_config(env, currency))
+
+                export_delta(
+                    currency=currency,
+                    sources=sources,
+                    directory=parquet_directory,
+                    start_block=start_block,
+                    end_block=end_block,
+                    provider_timeout=timeout,
+                    s3_credentials=s3_credentials,
+                    write_mode=write_mode,
+                    ignore_overwrite_safechecks=ignore_overwrite_safechecks,
+                    db=db,
+                    lock_disabled=True,
+                    source_max_workers=ingest_cfg.source_max_workers,
+                )
 
             if auto_compact:
                 logger.info("Running auto-compaction check")
 
-                # currently just check when last vacuum was run on block table to figure out if we should run compaction
                 last_vaccum_time = DeltaTableConnector(
                     parquet_directory, s3_credentials
                 ).get_last_completed_vacuum_date("block")
@@ -347,7 +522,6 @@ def dump_rawdata(
                     logger.info(
                         f"Auto-compaction conditions not met, last compaction was {last_vaccum_time}, skipping compaction"
                     )
-
     except LockAcquisitionError as e:
         logger.warning(str(e))
         sys.exit(911)
@@ -392,9 +566,8 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
     """
     config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
-    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "delta", None
-    )
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    parquet_directory_config = ingest_cfg.raw_keyspace_file_sinks.get("delta", None)
 
     if parquet_directory_config is None:
         logger.error(
@@ -405,21 +578,31 @@ def optimize_deltalake(env, currency, mode="both", table=None, full_vacuum=False
 
     logger.info(f"Optimizing deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
-    s3_credentials = config.get_s3_credentials()
-    if table is None:
-        optimize_tables(
-            currency,
-            parquet_directory,
-            s3_credentials,
-            mode=mode,
-            full_vacuum=full_vacuum,
-        )
-        logger.info(f"Optimized deltalake tables in {parquet_directory}")
-    else:
-        optimize_table(
-            parquet_directory, table, s3_credentials, mode=mode, full_vacuum=full_vacuum
-        )
-        logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
+    s3_credentials = config.get_s3_credentials(parquet_directory_config.s3_config)
+    lock_name = f"delta_ingest_{currency}"
+    try:
+        with create_lock(lock_name):
+            if table is None:
+                optimize_tables(
+                    currency,
+                    parquet_directory,
+                    s3_credentials,
+                    mode=mode,
+                    full_vacuum=full_vacuum,
+                )
+                logger.info(f"Optimized deltalake tables in {parquet_directory}")
+            else:
+                optimize_table(
+                    parquet_directory,
+                    table,
+                    s3_credentials,
+                    mode=mode,
+                    full_vacuum=full_vacuum,
+                )
+                logger.info(f"Optimized deltalake table {table} in {parquet_directory}")
+    except LockAcquisitionError as e:
+        logger.warning(str(e))
+        sys.exit(911)
 
 
 # show data from the delta lake
@@ -462,9 +645,8 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
     """
     config = get_config()
     ks_config = config.get_keyspace_config(env, currency)
-    parquet_directory_config = ks_config.ingest_config.raw_keyspace_file_sinks.get(
-        "delta", None
-    )
+    ingest_cfg = _require_ingest_config(ks_config, currency)
+    parquet_directory_config = ingest_cfg.raw_keyspace_file_sinks.get("delta", None)
 
     if parquet_directory_config is None:
         logger.error(
@@ -475,7 +657,7 @@ def query_deltalake(env, currency, table, start_block, end_block, outfile):
 
     logger.info(f"Querying deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
-    s3_credentials = config.get_s3_credentials()
+    s3_credentials = config.get_s3_credentials(parquet_directory_config.s3_config)
 
     block_ids = list(range(start_block, end_block + 1))
 
