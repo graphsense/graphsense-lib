@@ -30,7 +30,7 @@ Use one changelog file, but separate entries by track in each release window.
 - `ingest` module added to ty type-checking scope.
 
 #### Changed
-- UTXO addresses stored as plain text instead of custom binary encoding in delta lake.
+- UTXO addresses stored as plain text instead of custom binary encoding in delta lake. (breaking, needs delta lake re-intest from node)
 - Delta Lake writes and compaction use ZSTD level 5 compression.
 - Reduced Delta pre-compaction file sizes by ~10× and lowered output cache limit.
 - Increased Cassandra driver heartbeat timeout to avoid spurious retries.
