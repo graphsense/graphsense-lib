@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import random
 import time
 from functools import wraps
 from typing import Iterable, List, Optional, Sequence, Union
@@ -57,14 +58,39 @@ class GraphsenseRetryPolicy(RetryPolicy):
             return (self.RETHROW, None)
 
     def __backoff(self, retry_num):
-        # exponential backoff delay
-        delay = min(self.base_delay * (2 ** (retry_num + 1)), self.max_delay)
-        logger.warning(f"Backing off for {delay} seconds (retry number {retry_num})")
+        # exponential backoff with full jitter to avoid thundering-herd on recovery
+        cap = min(self.base_delay * (2 ** (retry_num + 1)), self.max_delay)
+        delay = random.uniform(self.base_delay, cap)
+        logger.warning(
+            f"Backing off for {delay:.2f} seconds (retry number {retry_num})"
+        )
         time.sleep(delay)
 
-    def on_write_timeout(self, *args, **kwargs):
-        logger.warning("write timeout; propagate error to application")
-        return (self.RETHROW, None)
+    def on_write_timeout(
+        self,
+        query,
+        consistency,
+        write_type,
+        required_responses,
+        received_responses,
+        retry_num,
+    ):
+        # Only retry writes the application has marked idempotent — non-idempotent
+        # retries can silently double-apply on timeout.
+        if not getattr(query, "is_idempotent", False):
+            logger.warning(
+                f"write timeout (write_type={write_type}) on non-idempotent query; "
+                "propagating error to application"
+            )
+            return (self.RETHROW, None)
+        if retry_num >= self.max_retries:
+            return (self.RETHROW, None)
+        logger.warning(
+            f"write timeout (write_type={write_type}) on idempotent query; "
+            f"retry attempt #{retry_num}"
+        )
+        self.__backoff(retry_num)
+        return (self.RETRY, None)
 
     def on_request_error(self, query, consistency, error, retry_num):
         query_string = (
@@ -85,14 +111,30 @@ class GraphsenseRetryPolicy(RetryPolicy):
 
         return (self.RETHROW, None)
 
-    # def on_unavailable(self, *args, **kwargs):
-    #     if kwargs["retry_num"] < self.max_retries:
-    #         logger.debug(
-    #             "Retrying request after UE. Attempt #" + str(kwargs["retry_num"])
-    #         )
-    #         return (self.RETRY, None)
-    #     else:
-    #         return (self.RETHROW, None)
+    def on_unavailable(
+        self, query, consistency, required_replicas, alive_replicas, retry_num
+    ):
+        # Unavailable is often transient (node restart, GC pause, gossip flap).
+        # First try a different coordinator — its view of replica liveness may be
+        # stale. After that, back off and retry the same host.
+        if retry_num >= self.max_retries:
+            logger.warning(
+                f"Unavailable at {consistency} (need {required_replicas}, "
+                f"have {alive_replicas}); giving up after {retry_num} retries"
+            )
+            return (self.RETHROW, None)
+        if retry_num == 0:
+            logger.warning(
+                f"Unavailable at {consistency} (need {required_replicas}, "
+                f"have {alive_replicas}); retrying on next host"
+            )
+            return (self.RETRY_NEXT_HOST, None)
+        logger.warning(
+            f"Unavailable at {consistency} (need {required_replicas}, "
+            f"have {alive_replicas}); retry attempt #{retry_num}"
+        )
+        self.__backoff(retry_num)
+        return (self.RETRY, None)
 
 
 def normalize_cql_statement(stmt: str) -> str:
@@ -625,6 +667,9 @@ class CassandraDb:
                 )
                 if cl is not None:
                     ps.consistency_level = cl
+                # Upserts (INSERT without IF NOT EXISTS) are idempotent by PK;
+                # LWTs (upsert=False -> IF NOT EXISTS) are not.
+                ps.is_idempotent = upsert
                 return ps
             except (
                 NoHostAvailable,
