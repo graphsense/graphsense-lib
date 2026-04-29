@@ -16,15 +16,21 @@ from graphsense.ext import output as out_mod
 
 
 def register_convenience_commands(group: click.Group) -> None:
-    group.add_command(lookup_address)
-    group.add_command(lookup_cluster)
-    group.add_command(lookup_tx)
-    group.add_command(search)
-    group.add_command(statistics)
-    group.add_command(exchange_rates)
-    group.add_command(block)
-    group.add_command(tags_for)
-    group.add_command(actor)
+    commands = [
+        lookup_address,
+        lookup_cluster,
+        lookup_tx,
+        search,
+        statistics,
+        exchange_rates,
+        block,
+        tags_for,
+        actor,
+    ]
+    for cmd in commands:
+        if any(isinstance(p, click.Argument) for p in cmd.params):
+            cmd.no_args_is_help = True
+        group.add_command(cmd)
 
 
 pass_ctx = click.make_pass_decorator(CliContext)
