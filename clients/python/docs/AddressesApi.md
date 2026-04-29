@@ -5,6 +5,7 @@ All URIs are relative to *https://api.iknaio.com*
 Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**get_address**](AddressesApi.md#get_address) | **GET** /{currency}/addresses/{address} | Get an address
+[**get_address_cluster**](AddressesApi.md#get_address_cluster) | **GET** /{currency}/addresses/{address}/cluster | Get the cluster for an address
 [**get_address_entity**](AddressesApi.md#get_address_entity) | **GET** /{currency}/addresses/{address}/entity | Get the entity for an address
 [**get_tag_summary_by_address**](AddressesApi.md#get_tag_summary_by_address) | **GET** /{currency}/addresses/{address}/tag_summary | Get address attribution tag summary
 [**list_address_links**](AddressesApi.md#list_address_links) | **GET** /{currency}/addresses/{address}/links | List transactions between two addresses
@@ -99,12 +100,97 @@ Name | Type | Description  | Notes
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
+# **get_address_cluster**
+> Cluster get_address_cluster(currency, address, include_actors=include_actors)
+
+Get the cluster for an address
+
+Returns the address cluster that contains the given address.
+
+### Example
+
+* Api Key Authentication (api_key):
+
+```python
+import graphsense
+from graphsense.models.cluster import Cluster
+from graphsense.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to https://api.iknaio.com
+# See configuration.py for a list of all supported configuration parameters.
+configuration = graphsense.Configuration(
+    host = "https://api.iknaio.com"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
+
+# Enter a context with an instance of the API client
+with graphsense.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = graphsense.AddressesApi(api_client)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    address = '1Archive1n2C579dMsAu3iC6tWzuQJz8dN' # str | The cryptocurrency address
+    include_actors = True # bool | Whether to include actor information (optional) (default to True)
+
+    try:
+        # Get the cluster for an address
+        api_response = api_instance.get_address_cluster(currency, address, include_actors=include_actors)
+        print("The response of AddressesApi->get_address_cluster:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling AddressesApi->get_address_cluster: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **address** | **str**| The cryptocurrency address | 
+ **include_actors** | **bool**| Whether to include actor information | [optional] [default to True]
+
+### Return type
+
+[**Cluster**](Cluster.md)
+
+### Authorization
+
+[api_key](../README.md#api_key)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Successful Response |  -  |
+**404** | Address not found for the selected currency. |  -  |
+**422** | Validation Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
 # **get_address_entity**
 > Entity get_address_entity(currency, address, include_actors=include_actors)
 
 Get the entity for an address
 
-Returns the clustered entity that contains the given address.
+Deprecated alias for `GET /{currency}/addresses/{address}/cluster`. Returns the address cluster that contains the given address.
 
 ### Example
 

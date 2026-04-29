@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **entity** | [**Entity**](Entity.md) |  | [optional] 
 **labels** | **List[str]** |  | [optional] 
 **token_values** | [**Dict[str, Values]**](Values.md) |  | [optional] 
+**cluster** | [**Cluster**](Cluster.md) |  | 
 
 ## Example
 

@@ -133,6 +133,7 @@ All URIs are relative to *https://api.iknaio.com*
 Class | Method | HTTP request | Description
 ------------ | ------------- | ------------- | -------------
 *AddressesApi* | [**get_address**](docs/AddressesApi.md#get_address) | **GET** /{currency}/addresses/{address} | Get an address
+*AddressesApi* | [**get_address_cluster**](docs/AddressesApi.md#get_address_cluster) | **GET** /{currency}/addresses/{address}/cluster | Get the cluster for an address
 *AddressesApi* | [**get_address_entity**](docs/AddressesApi.md#get_address_entity) | **GET** /{currency}/addresses/{address}/entity | Get the entity for an address
 *AddressesApi* | [**get_tag_summary_by_address**](docs/AddressesApi.md#get_tag_summary_by_address) | **GET** /{currency}/addresses/{address}/tag_summary | Get address attribution tag summary
 *AddressesApi* | [**list_address_links**](docs/AddressesApi.md#list_address_links) | **GET** /{currency}/addresses/{address}/links | List transactions between two addresses
