@@ -1,0 +1,12 @@
+{
+  "tx_type": "account",
+  "identifier": "0xabc",
+  "currency": "eth",
+  "network": "eth",
+  "tx_hash": "0xabc",
+  "height": 1000,
+  "timestamp": 1234567890,
+  "value": {"value": 100, "fiat_values": []},
+  "from_address": "0xfff",
+  "to_address": "0xaaa"
+}

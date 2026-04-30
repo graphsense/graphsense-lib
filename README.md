@@ -406,7 +406,6 @@ environments:
   dev:
     # Cassandra cluster configuration
     cassandra_nodes: ["localhost"]
-    port: 9042
     # Optional authentication
     # username: "cassandra"
     # password: "cassandra"

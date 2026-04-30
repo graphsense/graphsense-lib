@@ -20,11 +20,18 @@ from cassandra.cluster import (
     ExecutionProfile,
     NoHostAvailable,
 )
-from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
+from cassandra.policies import (
+    ConstantSpeculativeExecutionPolicy,
+    DCAwareRoundRobinPolicy,
+    ExponentialReconnectionPolicy,
+    TokenAwarePolicy,
+)
 from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
+from graphsenselib.db.cassandra import GraphsenseRetryPolicy
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
+from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
@@ -555,7 +562,9 @@ class Cassandra:
                 "raw" not in config["currencies"][currency]
                 or config["currencies"][currency]["raw"] is None
             ):
-                config["currencies"][currency]["raw"] = f"{currency}_raw"
+                config["currencies"][currency]["raw"] = self.find_latest_raw_keyspace(
+                    currency
+                )
 
             if (
                 "transformed" not in config["currencies"][currency]
@@ -577,6 +586,9 @@ class Cassandra:
 
     def connect(self):
         try:
+            # LOCAL_ONE is the recommended default for the read path: it tolerates
+            # any (RF - 1) replicas being down. LOCAL_QUORUM only adds value when
+            # RF >= 3 and read-after-write consistency is actually required.
             cl = ConsistencyLevel.name_to_value.get(
                 self.config.get("consistency_level", "LOCAL_ONE"),
                 ConsistencyLevel.LOCAL_ONE,
@@ -587,6 +599,12 @@ class Cassandra:
                 row_factory=dict_factory,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 consistency_level=cl,
+                retry_policy=GraphsenseRetryPolicy(max_retries=3),
+                # For idempotent reads (all REST queries are SELECTs), fire a second
+                # attempt at another host after 200 ms to mask slow/dead replicas.
+                speculative_execution_policy=ConstantSpeculativeExecutionPolicy(
+                    delay=0.2, max_attempts=2
+                ),
             )
 
             auth_provider = None
@@ -600,15 +618,22 @@ class Cassandra:
                 self.config["nodes"],
                 port=int(self.config.get("port", 9042)),
                 protocol_version=5,
-                connect_timeout=60,
+                connect_timeout=15,
                 execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
                 auth_provider=auth_provider,
+                reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
             )
             self.session = self.cluster.connect()
             # self.session.row_factory = dict_factory
             if self.logger:
                 self.logger.info(f"Connection ready. Using CL: {cl}")
         except NoHostAvailable:
+            # TODO: this reconnect path blocks the event loop (time.sleep) and
+            # recurses without a depth limit; it is also called synchronously from
+            # async code paths (execute_async_lowlevel) which freezes REST workers
+            # during outages. Replace with a bounded, non-blocking reconnect helper
+            # and let the retry policy + reconnection policy handle transient
+            # failures instead.
             retry = self.config.get("retry_interval", None)
             retry = 5 if retry is None else retry
             if self.logger:
@@ -625,33 +650,59 @@ class Cassandra:
         if self.logger:
             self.logger.info(f"Using keyspace: {keyspace}")
 
-    def find_latest_transformed_keyspace(self, network):
-        query = "SELECT keyspace_name FROM system_schema.keyspaces"
-        result = self.session.execute(query)
-        prefix = f"{network.lower()}_transformed"
-        candidates = [
-            getDateFromKeyspaceName(x["keyspace_name"])
+    def _has_table(self, keyspace, table):
+        result = self.session.execute(
+            "SELECT table_name FROM system_schema.tables "
+            "WHERE keyspace_name = %s AND table_name = %s",
+            [keyspace, table],
+        )
+        return one(result) is not None
+
+    def _is_ingest_complete(self, keyspace, fallback_table):
+        # Back-compat fallback (existence-of-any-row in `fallback_table`) covers
+        # keyspaces that pre-date the state table; drop once all production
+        # keyspaces have been re-ingested at least once.
+        if self._has_table(keyspace, STATE_TABLE):
+            row = self.session.execute(
+                f"SELECT key FROM {keyspace}.{STATE_TABLE} WHERE key = %s",
+                [INGEST_COMPLETE_KEY],
+            )
+            return one(row) is not None
+
+        row = self.session.execute(f"SELECT * FROM {keyspace}.{fallback_table} limit 1")
+        return one(row) is not None
+
+    def _dated_keyspaces(self, prefix):
+        # Return [(keyspace_name, date), ...] for keyspaces starting with
+        # `prefix` and ending in a parseable _YYYYMMDD suffix, sorted
+        # newest-date-first.
+        result = self.session.execute(
+            "SELECT keyspace_name FROM system_schema.keyspaces"
+        )
+        dated = [
+            (x["keyspace_name"], getDateFromKeyspaceName(x["keyspace_name"]))
             for x in result
             if x["keyspace_name"].startswith(prefix)
+            and getDateFromKeyspaceName(x["keyspace_name"]) is not None
         ]
+        return sorted(dated, key=lambda kd: kd[1], reverse=True)
 
+    def find_latest_transformed_keyspace(self, network):
+        prefix = f"{network.lower()}_transformed"
         res = []
-        for c in reversed(sorted(filter(lambda x: x is not None, candidates))):
-            ks = f"{prefix}_{c.strftime('%Y%m%d')}"
-            q = f"SELECT * FROM {ks}.summary_statistics limit 1"
-            result = self.session.execute(q)
-
-            if one(result) is None:
+        for ks, _ in self._dated_keyspaces(prefix):
+            if not self._is_ingest_complete(ks, "summary_statistics"):
                 if self.logger:
-                    self.logger.warning(
-                        f"{ks} is not online (missing summary_statistics row). skipping"
-                    )
+                    self.logger.warning(f"{ks} is not marked ingest_complete. skipping")
                 continue
-            else:
-                # return ks
-                res.append((ks, result[0]["no_blocks"]))
+            stats = self.session.execute(
+                f"SELECT no_blocks FROM {ks}.summary_statistics limit 1"
+            )
+            stats_row = one(stats)
+            no_blocks = stats_row["no_blocks"] if stats_row is not None else 0
+            res.append((ks, no_blocks))
 
-        res = list(reversed(sorted(res, key=lambda item: item[1])))
+        res = sorted(res, key=lambda item: item[1], reverse=True)
 
         if len(res) > 0:
             return res[0][0]
@@ -659,6 +710,20 @@ class Cassandra:
             raise Exception(
                 f"Automatic detection for transformed keyspace failed for network {network}."
             )
+
+    def find_latest_raw_keyspace(self, network):
+        prefix = f"{network.lower()}_raw"
+        for ks, _ in self._dated_keyspaces(prefix):
+            if self._is_ingest_complete(ks, "configuration"):
+                return ks
+            if self.logger:
+                self.logger.warning(f"{ks} is not marked ingest_complete. skipping")
+
+        if self.logger:
+            self.logger.info(
+                f"No dated raw keyspace found for {network}; falling back to {prefix}"
+            )
+        return prefix
 
     @eth
     def load_token_configuration(self, currency):
@@ -867,10 +932,32 @@ class Cassandra:
         return result
 
     def get_prepared_statement(self, query):
+        # Guard: this helper marks every prepared statement as idempotent (a
+        # prerequisite for the speculative-execution policy). Lightweight
+        # transactions and UPDATEs are not safe to mark idempotent — retried or
+        # speculatively-executed copies can double-apply or race — so refuse to
+        # prepare them here. Mutating paths must use a dedicated helper that
+        # decides idempotency per statement.
+        normalized = " ".join(query.split())
+        if re.search(r"\bIF\s+(NOT\s+)?EXISTS\b", normalized, re.IGNORECASE):
+            raise ValueError(
+                "get_prepared_statement refuses LWT (IF [NOT] EXISTS): "
+                f"not idempotent. Query: {query!r}"
+            )
+        if re.match(r"\s*UPDATE\b", normalized, re.IGNORECASE):
+            raise ValueError(
+                "get_prepared_statement refuses UPDATE: not idempotent. "
+                f"Query: {query!r}"
+            )
+
         hash_object = hashlib.sha256(query.encode("utf-8"))
         hex_dig = hash_object.hexdigest()
         if hex_dig not in self.prepared_statements:
-            self.prepared_statements[hex_dig] = self.session.prepare(query)
+            ps = self.session.prepare(query)
+            # All REST queries are SELECTs and therefore idempotent. Required for
+            # the speculative-execution policy on the ExecutionProfile to fire.
+            ps.is_idempotent = True
+            self.prepared_statements[hex_dig] = ps
         return self.prepared_statements[hex_dig]
 
     def execute_async_core(
@@ -889,7 +976,7 @@ class Cassandra:
         response_future = self.session.execute_async(
             prep, params, timeout=60, paging_state=paging_state
         )
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         def safe_set_result():

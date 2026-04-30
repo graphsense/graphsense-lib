@@ -118,21 +118,15 @@ def configure_logging(loglevel):
         logger.debug("Logging set to verbose mode.")
         # Suppress cassandra driver logs to avoid interleaving with performance logs
         logging.getLogger("cassandra").setLevel(logging.WARNING)
-        logging.getLogger("ethereumetl").setLevel(logging.WARNING)
         logging.getLogger("web3").setLevel(logging.WARNING)
         logging.getLogger("Cluster").setLevel(logging.WARNING)
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.ERROR)
-        logging.getLogger("ProgressLogger").setLevel(logging.ERROR)
-        logging.getLogger("BatchWorkExecutor").setLevel(logging.ERROR)
     else:
         logging.getLogger("cassandra").setLevel(logging.ERROR)
-        logging.getLogger("ethereumetl").setLevel(logging.WARNING)
         logging.getLogger("Cluster").setLevel(logging.ERROR)
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.ERROR)
-        logging.getLogger("ProgressLogger").setLevel(logging.ERROR)
-        logging.getLogger("BatchWorkExecutor").setLevel(logging.ERROR)
 
 
 class IndentLogger(logging.LoggerAdapter):

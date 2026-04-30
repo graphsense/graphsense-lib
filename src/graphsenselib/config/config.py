@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
 from goodconf import _load_config
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from ..utils import first_or_default, flatten
 
@@ -67,17 +67,22 @@ def get_default_data_configuration(
     """
     currency = currency.lower()
 
+    # The PK column ("id" for raw, "keyspace_name" for transformed) is
+    # intentionally omitted: it must match the actual target keyspace name and
+    # is injected at seed time in schema.create_keyspace_if_not_exist.
+    # Hardcoding it here used to write a prefix-only row (e.g. id="zec_raw")
+    # into dated keyspaces (e.g. zec_raw_20260423), producing two configuration
+    # rows after the first real ingest.
+
     # Configuration for account-based currencies (eth, trx)
     if currency == "eth":
         if keyspace_type == "raw":
             return {
-                "id": "eth_raw",
                 "block_bucket_size": 1000,
                 "tx_prefix_length": 5,
             }
         else:  # transformed
             return {
-                "keyspace_name": "eth_transformed",
                 "address_prefix_length": 5,
                 "bucket_size": 25000,
                 "tx_prefix_length": 5,
@@ -86,13 +91,11 @@ def get_default_data_configuration(
     elif currency == "trx":
         if keyspace_type == "raw":
             return {
-                "id": "trx_raw",
                 "block_bucket_size": 1000,
                 "tx_prefix_length": 5,
             }
         else:  # transformed
             return {
-                "keyspace_name": "trx_transformed",
                 "address_prefix_length": 5,
                 "bucket_size": 10000,
                 "tx_prefix_length": 5,
@@ -103,7 +106,6 @@ def get_default_data_configuration(
     elif currency in ["btc", "bch", "ltc", "zec"]:
         if keyspace_type == "raw":
             return {
-                "id": f"{currency}_raw",
                 "block_bucket_size": 100,
                 "tx_bucket_size": 25000,
                 "tx_prefix_length": 5,
@@ -116,7 +118,6 @@ def get_default_data_configuration(
                 "zec": "",
             }
             return {
-                "keyspace_name": f"{currency}_transformed",
                 "address_prefix_length": 4,
                 "bech_32_prefix": bech32_prefixes.get(currency, ""),
                 "bucket_size": 5000,
@@ -143,14 +144,30 @@ def get_reorg_backoff_blocks(network: str) -> int:
     return reorg_backoff_blocks[network.lower()]
 
 
-class FileSink(BaseModel):
+class _WarnExtraModel(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_unknown_keys(cls, data):
+        if isinstance(data, dict):
+            known = set(cls.model_fields.keys())
+            unknown = set(data.keys()) - known
+            for key in sorted(unknown):
+                logger.warning(
+                    f"Unknown key '{key}' in {cls.__name__} config — ignoring"
+                )
+        return data
+
+
+class FileSink(_WarnExtraModel):
     directory: str
+    s3_config: Optional[str] = None
 
 
-class IngestConfig(BaseModel):
+class IngestConfig(_WarnExtraModel):
     node_reference: str = Field(default_factory=lambda: "")
     secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
+    source_max_workers: int = 5
 
     @property
     def all_node_references(self) -> List[str]:
@@ -162,7 +179,7 @@ class IngestConfig(BaseModel):
         )
 
 
-class KeyspaceSetupConfig(BaseModel):
+class KeyspaceSetupConfig(_WarnExtraModel):
     replication_config: str = Field(
         default_factory=lambda: CASSANDRA_DEFAULT_REPLICATION_CONFIG
     )
@@ -175,7 +192,7 @@ class DeltaUpdaterConfig(BaseModel):
     s3_credentials: Optional[Dict[str, str]]
 
 
-class KeyspaceConfig(BaseModel):
+class KeyspaceConfig(_WarnExtraModel):
     raw_keyspace_name: str
     transformed_keyspace_name: str
     schema_type: str
@@ -237,7 +254,7 @@ class KeyspaceConfig(BaseModel):
                         )
 
 
-class Environment(BaseModel):
+class Environment(_WarnExtraModel):
     cassandra_nodes: List[str]
     username: Optional[str] = Field(default_factory=lambda: None)
     password: Optional[str] = Field(default_factory=lambda: None)
@@ -252,7 +269,7 @@ class Environment(BaseModel):
         return self.keyspaces[currency]
 
 
-class SlackTopic(BaseModel):
+class SlackTopic(_WarnExtraModel):
     hooks: List[str] = Field(default_factory=lambda: [])
 
 
@@ -261,7 +278,18 @@ class AppConfig(GoodConf):
 
     default_environment: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_unknown_keys(cls, data):
+        if isinstance(data, dict):
+            known = set(cls.model_fields.keys())
+            unknown = set(data.keys()) - known
+            for key in sorted(unknown):
+                logger.warning(f"Unknown key '{key}' in config — ignoring")
+        return data
+
     model_config = GoodConfConfigDict(
+        extra="ignore",
         env_prefix="GRAPHSENSE_",
         file_env_var="GRAPHSENSE_CONFIG_YAML",
         default_files=[".graphsense.yaml", os.path.expanduser("~/.graphsense.yaml")],
@@ -316,6 +344,30 @@ class AppConfig(GoodConf):
     )
 
     s3_credentials: Optional[Dict[str, str]] = Field(default_factory=lambda: None)
+
+    s3_configs: Dict[str, Dict[str, str]] = Field(default_factory=lambda: {})
+
+    legacy_ingest: bool = Field(
+        default=False,
+        description="Use the legacy ingest pipeline instead of the new IngestRunner pipeline.",
+    )
+
+    resolve_inputs_via_cassandra: bool = Field(
+        default=False,
+        description=(
+            "Use Cassandra to resolve UTXO input values instead of RPC verbosity 3 "
+            "or explicit transaction fetching for LTC and ZEC."
+        ),
+    )
+
+    fill_unresolved_inputs: bool = Field(
+        default=False,
+        description=(
+            "Fill unresolved UTXO inputs with dummy values (value=0, type=nonstandard) "
+            "instead of failing. Useful for mid-chain delta-only ingests where the "
+            "node lacks txindex and no Cassandra is available."
+        ),
+    )
 
     use_redis_locks: bool = Field(
         default=False,
@@ -410,7 +462,17 @@ class AppConfig(GoodConf):
         else:
             return None
 
-    def get_s3_credentials(self) -> Optional[Dict[str, str]]:
+    def get_s3_credentials(
+        self, config_name: Optional[str] = None
+    ) -> Optional[Dict[str, str]]:
+        if config_name is not None:
+            creds = self.s3_configs.get(config_name)
+            if creds is None:
+                raise ValueError(
+                    f"s3_config '{config_name}' not found. "
+                    f"Available: {list(self.s3_configs.keys())}"
+                )
+            return creds
         return self.s3_credentials
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
@@ -469,7 +531,9 @@ class AppConfig(GoodConf):
 
         super().__init__(**defaults)
 
-    def get_deltaupdater_config(self, env: str, currency: str) -> DeltaUpdaterConfig:
+    def get_deltaupdater_config(
+        self, env: str, currency: str
+    ) -> Optional[DeltaUpdaterConfig]:
         delta_sink = (
             self.get_environment(env)
             .keyspaces[currency]
@@ -477,10 +541,12 @@ class AppConfig(GoodConf):
         )
         if delta_sink is None:
             logger.debug(f"Delta sink not configured for {currency} in {env}")
+            return None
+        s3_config_name = delta_sink.s3_config
         return DeltaUpdaterConfig(
             delta_sink=delta_sink,
             currency=currency,
-            s3_credentials=self.get_s3_credentials(),
+            s3_credentials=self.get_s3_credentials(s3_config_name),
         )
 
 

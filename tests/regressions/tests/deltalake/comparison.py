@@ -4,7 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from tests.deltalake.snapshot import IngestionSnapshot
+from tests.deltalake.snapshot import IngestionSnapshot, _compute_content_hash, _sortable_type
+
+
+def _format_bytes(num_bytes: int) -> str:
+    """Format byte count in IEC units for readability."""
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    value = float(num_bytes)
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    return f"{int(num_bytes)} B"
 
 
 @dataclass
@@ -19,10 +32,15 @@ class TableDiff:
     row_count_current: int = 0
     row_count_diff: int = 0
     content_hash_match: bool = False
+    common_columns_content_hash_match: bool | None = None  # None when schemas identical
+    differing_common_columns: list[str] = field(default_factory=list)  # columns that differ
+    column_diff_samples: dict[str, list[tuple]] = field(default_factory=dict)  # col → [(row, ref, cur)]
     file_count_ref: int = 0
     file_count_current: int = 0
     file_count_diff: int = 0
     file_names_changed: bool = False
+    file_size_ref_bytes: int = 0
+    file_size_current_bytes: int = 0
     file_size_diff_bytes: int = 0
 
     @property
@@ -47,6 +65,24 @@ class ComparisonReport:
     @property
     def all_identical(self) -> bool:
         return all(d.is_identical for d in self.table_diffs.values())
+
+
+MAX_DIFF_SAMPLES = 3
+
+
+def _truncate(s: str, maxlen: int = 120) -> str:
+    return s if len(s) <= maxlen else s[:maxlen - 3] + "..."
+
+
+def _collect_diff_samples(ref_col, cur_col, max_samples=MAX_DIFF_SAMPLES):
+    """Return up to max_samples (index, ref_value, cur_value) for differing elements."""
+    samples = []
+    for i in range(len(ref_col)):
+        if ref_col[i] != cur_col[i]:
+            samples.append((i, ref_col[i].as_py(), cur_col[i].as_py()))
+            if len(samples) >= max_samples:
+                break
+    return samples
 
 
 def _compare_schemas(
@@ -98,6 +134,75 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
             ref_table.schema, cur_table.schema
         )
 
+        # When schemas differ, compute hash on common columns to detect
+        # data regressions even when new columns have been added.
+        common_hash_match = None
+        differing_cols = []
+        diff_samples = {}
+        has_schema_diff = added or removed or type_changes
+        if (
+            has_schema_diff
+            and ref_table._arrow_table is not None
+            and cur_table._arrow_table is not None
+        ):
+            common_cols = sorted(
+                set(ref_table.column_names) & set(cur_table.column_names)
+            )
+            # Only compare columns whose types also match
+            common_cols = [
+                c for c in common_cols
+                if ref_table.schema.get(c) == cur_table.schema.get(c)
+            ]
+            if common_cols:
+                ref_projected = ref_table._arrow_table.select(common_cols)
+                cur_projected = cur_table._arrow_table.select(common_cols)
+                common_hash_match = (
+                    _compute_content_hash(ref_projected)
+                    == _compute_content_hash(cur_projected)
+                )
+                if not common_hash_match:
+                    # Two-phase comparison:
+                    # 1. Sortable columns: compare as independently sorted
+                    #    multisets (immune to row-order and cross-column
+                    #    contamination from differing values).
+                    # 2. Non-sortable columns (lists, structs): align rows
+                    #    by sorting on ALL sortable columns that matched in
+                    #    phase 1, then compare element-wise.
+                    import pyarrow.compute as pc
+
+                    sortable = [
+                        c for c in common_cols
+                        if _sortable_type(ref_projected.schema.field(c).type)
+                    ]
+                    non_sortable = [c for c in common_cols if c not in sortable]
+
+                    # Phase 1: per-column multiset comparison for sortable cols
+                    matching_sortable = []
+                    for c in sortable:
+                        rc = ref_projected.column(c).take(pc.sort_indices(ref_projected.column(c)))
+                        cc = cur_projected.column(c).take(pc.sort_indices(cur_projected.column(c)))
+                        if rc != cc:
+                            differing_cols.append(c)
+                            diff_samples[c] = _collect_diff_samples(rc, cc)
+                        else:
+                            matching_sortable.append(c)
+
+                    # Phase 2: align rows by stable sort keys, then compare
+                    # non-sortable columns element-wise.
+                    if non_sortable and matching_sortable:
+                        sort_keys = [(c, "ascending") for c in matching_sortable]
+                        ref_s = ref_projected.sort_by(sort_keys)
+                        cur_s = cur_projected.sort_by(sort_keys)
+                        for c in non_sortable:
+                            if ref_s.column(c) != cur_s.column(c):
+                                differing_cols.append(c)
+                                diff_samples[c] = _collect_diff_samples(
+                                    ref_s.column(c), cur_s.column(c),
+                                )
+                    elif non_sortable:
+                        # No stable sort keys — can't align, mark as differing
+                        differing_cols.extend(non_sortable)
+
         diff = TableDiff(
             table_name=name,
             schema_added_columns=added,
@@ -107,10 +212,15 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
             row_count_current=cur_table.row_count,
             row_count_diff=cur_table.row_count - ref_table.row_count,
             content_hash_match=(ref_table.content_hash == cur_table.content_hash),
+            common_columns_content_hash_match=common_hash_match,
+            differing_common_columns=differing_cols,
+            column_diff_samples=diff_samples,
             file_count_ref=len(ref_table.file_names),
             file_count_current=len(cur_table.file_names),
             file_count_diff=len(cur_table.file_names) - len(ref_table.file_names),
             file_names_changed=(ref_table.file_names != cur_table.file_names),
+            file_size_ref_bytes=ref_table.total_file_size_bytes,
+            file_size_current_bytes=cur_table.total_file_size_bytes,
             file_size_diff_bytes=cur_table.total_file_size_bytes - ref_table.total_file_size_bytes,
         )
         report.table_diffs[name] = diff
@@ -121,11 +231,18 @@ def compare_snapshots(ref: IngestionSnapshot, current: IngestionSnapshot) -> Com
 def _format_environment_section(ref: IngestionSnapshot, current: IngestionSnapshot) -> list[str]:
     """Format environment context as header lines."""
     lines = []
+    size_diff = current.total_file_size_bytes - ref.total_file_size_bytes
+    size_diff_human = _format_bytes(abs(size_diff))
 
     # Block range (same for both)
     lines.append(f"  Currency:     {ref.environment.currency or 'n/a'}")
     lines.append(f"  Node URL:     {ref.environment.node_url or 'n/a'}")
     lines.append(f"  Block range:  {ref.block_range[0]} - {ref.block_range[1]}")
+    lines.append(
+        f"  Output size:  ref={_format_bytes(ref.total_file_size_bytes)} "
+        f"cur={_format_bytes(current.total_file_size_bytes)} "
+        f"(diff={size_diff:+,} B / {size_diff_human})"
+    )
     lines.append("")
 
     # Package versions side by side
@@ -174,7 +291,26 @@ def format_report(
         lines.append(f"\n  [{status}] {name}")
         lines.append(f"    Rows: ref={diff.row_count_ref} cur={diff.row_count_current} (diff={diff.row_count_diff:+d})")
         lines.append(f"    Content hash match: {diff.content_hash_match}")
+        if diff.common_columns_content_hash_match is not None:
+            lines.append(f"    Common-columns hash match: {diff.common_columns_content_hash_match}")
+        if diff.differing_common_columns:
+            lines.append(f"    Differing columns: {', '.join(diff.differing_common_columns)}")
+            for col in diff.differing_common_columns:
+                samples = diff.column_diff_samples.get(col, [])
+                if samples:
+                    lines.append(f"      {col}:")
+                    for row_idx, ref_val, cur_val in samples:
+                        ref_str = _truncate(repr(ref_val), 120)
+                        cur_str = _truncate(repr(cur_val), 120)
+                        lines.append(f"        row {row_idx}: ref={ref_str}")
+                        lines.append(f"        {' ' * len(str(row_idx))}  cur={cur_str}")
         lines.append(f"    Files: ref={diff.file_count_ref} cur={diff.file_count_current}")
+        lines.append(
+            "    Size: "
+            f"ref={_format_bytes(diff.file_size_ref_bytes)} "
+            f"cur={_format_bytes(diff.file_size_current_bytes)} "
+            f"(diff={diff.file_size_diff_bytes:+,} B)"
+        )
 
         if diff.schema_added_columns:
             lines.append(f"    + Added columns: {', '.join(diff.schema_added_columns)}")

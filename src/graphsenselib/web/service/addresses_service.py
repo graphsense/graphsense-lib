@@ -179,3 +179,7 @@ async def get_address_entity(ctx, currency, address, include_actors=True):
     )
 
     return pydantic_to_openapi(pydantic_result)
+
+
+async def get_address_cluster(ctx, currency, address, include_actors=True):
+    return await get_address_entity(ctx, currency, address, include_actors)

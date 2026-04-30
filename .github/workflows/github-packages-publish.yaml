@@ -8,6 +8,10 @@ name: Publish to Github Docker Hub
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
+      - develop
+      - 'feature/**'
     tags: [ 'v*.*.*' ]
 
 env:
@@ -30,7 +34,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # Install the cosign tool except on PR
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
@@ -62,15 +68,23 @@ jobs:
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Disable the implicit latest tag from flavor=auto so only the
+          # explicit type=raw,value=latest rule below controls latest.
+          flavor: |
+            latest=false
           # Tag strategy:
-          # - always publish the exact Git tag (e.g. v1.2.3, v1.2.3-rc.1, v1.2.3-dev.1)
-          # - publish rolling channel aliases for prereleases (rc/dev)
-          # - publish latest only for stable releases (no -rc.* or -dev.* suffix)
+          # - tag pushes (rc / stable / opt-in -dev.N) preserve current behavior:
+          #   the exact Git tag plus a rolling channel alias.
+          # - branch pushes (no git tag) produce a per-branch slug + immutable
+          #   short-SHA so dev images are pin-friendly without hand-minted tags.
+          #   The 'develop' branch additionally gets the rolling 'dev' alias.
           tags: |
             type=ref,event=tag
-            type=raw,value=rc,enable=${{ contains(github.ref_name, '-rc.') }}
-            type=raw,value=dev,enable=${{ contains(github.ref_name, '-dev.') }}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-dev.') }}
+            type=raw,value=rc,enable=${{ github.ref_type == 'tag' && contains(github.ref_name, '-rc.') }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-dev.') }}
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/develop' }}
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
@@ -81,7 +95,6 @@ jobs:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

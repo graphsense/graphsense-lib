@@ -1,6 +1,6 @@
 # NeighborEntity
 
-Neighbor cluster model (legacy name: NeighborEntity).  Note: unlike the top-level `Entity`/`Cluster` models, this class does NOT dual-emit a `cluster` key at the neighbor level. The nested `entity` value is either an integer ID or a full `Entity` object (which itself already exposes both `entity` and `cluster` keys), so adding a sibling `cluster` key here would duplicate either an int or an entire object for no gain and introduce an OpenAPI schema name collision with the top-level `Cluster` type.
+Neighbor cluster model (legacy name: NeighborEntity).  Dual-emits the neighbor reference under both `entity` (deprecated) and `cluster` (preferred) keys, mirroring the alias pattern on the top-level `Entity`/`Cluster` models. The value is either an integer ID or a full `Entity`/`Cluster` object; whichever shape `entity` carries, `cluster` carries the same value.
 
 ## Properties
 
@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **entity** | [**Entity**](Entity.md) |  | [optional] 
 **labels** | **List[str]** |  | [optional] 
 **token_values** | [**Dict[str, Values]**](Values.md) |  | [optional] 
+**cluster** | [**Cluster**](Cluster.md) |  | 
 
 ## Example
 

@@ -17,6 +17,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.cluster import Cluster
 from graphsense.models.entity import Entity
 from graphsense.models.values import Values
 from typing import Optional, Set
@@ -24,14 +25,15 @@ from typing_extensions import Self
 
 class NeighborEntity(BaseModel):
     """
-    Neighbor cluster model (legacy name: NeighborEntity).  Note: unlike the top-level `Entity`/`Cluster` models, this class does NOT dual-emit a `cluster` key at the neighbor level. The nested `entity` value is either an integer ID or a full `Entity` object (which itself already exposes both `entity` and `cluster` keys), so adding a sibling `cluster` key here would duplicate either an int or an entire object for no gain and introduce an OpenAPI schema name collision with the top-level `Cluster` type.
+    Neighbor cluster model (legacy name: NeighborEntity).  Dual-emits the neighbor reference under both `entity` (deprecated) and `cluster` (preferred) keys, mirroring the alias pattern on the top-level `Entity`/`Cluster` models. The value is either an integer ID or a full `Entity`/`Cluster` object; whichever shape `entity` carries, `cluster` carries the same value.
     """ # noqa: E501
     value: Values
     no_txs: StrictInt
     entity: Optional[Entity] = None
     labels: Optional[List[StrictStr]] = None
     token_values: Optional[Dict[str, Values]] = None
-    __properties: ClassVar[List[str]] = ["value", "no_txs", "entity", "labels", "token_values"]
+    cluster: Optional[Cluster]
+    __properties: ClassVar[List[str]] = ["value", "no_txs", "entity", "labels", "token_values", "cluster"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -85,6 +87,9 @@ class NeighborEntity(BaseModel):
                 if self.token_values[_key_token_values]:
                     _field_dict[_key_token_values] = self.token_values[_key_token_values].to_dict()
             _dict['token_values'] = _field_dict
+        # override the default output from pydantic by calling `to_dict()` of cluster
+        if self.cluster:
+            _dict['cluster'] = self.cluster.to_dict()
 
         return _dict
 
@@ -107,7 +112,8 @@ class NeighborEntity(BaseModel):
                 for _k, _v in obj["token_values"].items()
             )
             if obj.get("token_values") is not None
-            else None
+            else None,
+            "cluster": Cluster.from_dict(obj["cluster"]) if obj.get("cluster") is not None else None
         })
         return _obj
 

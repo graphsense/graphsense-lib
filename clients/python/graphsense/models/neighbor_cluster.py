@@ -17,6 +17,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.cluster import Cluster
 from graphsense.models.entity import Entity
 from graphsense.models.values import Values
 from typing import Optional, Set
@@ -31,7 +32,8 @@ class NeighborCluster(BaseModel):
     entity: Optional[Entity] = None
     labels: Optional[List[StrictStr]] = None
     token_values: Optional[Dict[str, Values]] = None
-    __properties: ClassVar[List[str]] = ["value", "no_txs", "entity", "labels", "token_values"]
+    cluster: Optional[Cluster]
+    __properties: ClassVar[List[str]] = ["value", "no_txs", "entity", "labels", "token_values", "cluster"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -85,6 +87,9 @@ class NeighborCluster(BaseModel):
                 if self.token_values[_key_token_values]:
                     _field_dict[_key_token_values] = self.token_values[_key_token_values].to_dict()
             _dict['token_values'] = _field_dict
+        # override the default output from pydantic by calling `to_dict()` of cluster
+        if self.cluster:
+            _dict['cluster'] = self.cluster.to_dict()
 
         return _dict
 
@@ -107,7 +112,8 @@ class NeighborCluster(BaseModel):
                 for _k, _v in obj["token_values"].items()
             )
             if obj.get("token_values") is not None
-            else None
+            else None,
+            "cluster": Cluster.from_dict(obj["cluster"]) if obj.get("cluster") is not None else None
         })
         return _obj
 

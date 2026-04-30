@@ -163,3 +163,9 @@ CREATE TABLE token_configuration (
     decimal_divisor bigint,
     peg_currency text
 );
+
+CREATE TABLE IF NOT EXISTS state (
+    key text PRIMARY KEY,
+    value text,
+    updated_at timestamp
+);
