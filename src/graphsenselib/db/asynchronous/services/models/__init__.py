@@ -193,6 +193,7 @@ class TxValue(BaseModel):
     index: Optional[int] = None
     script_hex: Optional[str] = None  # Raw script hex for OP_RETURN outputs
     has_witness: Optional[bool] = None  # True if input carries witness data
+    sequence: Optional[int] = None  # Per-input nSequence (BIP125 RBF signaling)
 
 
 class TxRef(BaseModel):
@@ -260,6 +261,8 @@ class TxUtxo(BaseModel):
     total_input: Values
     total_output: Values
     heuristics: Optional[UtxoHeuristics] = None
+    version: Optional[int] = None
+    lock_time: Optional[int] = None
 
 
 class Block(BaseModel):

@@ -635,6 +635,7 @@ def io_from_rows(
 
         witness = getattr(i, "txinwitness", None)
         has_witness = bool(witness) if witness is not None else None
+        sequence = getattr(i, "sequence", None)
 
         if i.address is not None:
             results.append(
@@ -644,6 +645,7 @@ def io_from_rows(
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
                     has_witness=has_witness,
+                    sequence=sequence,
                 )
             )
         elif include_nonstandard_io:
@@ -654,6 +656,7 @@ def io_from_rows(
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
                     has_witness=has_witness,
+                    sequence=sequence,
                 )
             )
     return results
@@ -722,4 +725,6 @@ async def std_tx_from_row(
         total_input=total_input,
         total_output=total_output,
         heuristics=heuristics,
+        version=row.get("version"),
+        lock_time=row.get("lock_time"),
     )
