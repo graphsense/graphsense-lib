@@ -405,6 +405,9 @@ default_environment: dev
 environments:
   dev:
     # Cassandra cluster configuration
+    # Default port is 9042. To use a non-default port, embed it in the host
+    # string ("host:port"); all nodes should use the same port (a warning is
+    # logged and the first port wins if they differ).
     cassandra_nodes: ["localhost"]
     # Optional authentication
     # username: "cassandra"
