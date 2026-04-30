@@ -35,6 +35,7 @@ def _log_startup_banner(
     end_block,
     top_block,
     local,
+    patch=False,
 ):
     from urllib.parse import urlparse
 
@@ -72,6 +73,7 @@ def _log_startup_banner(
         f"  end block        : {end_block}",
         f"  top block        : {top_block}",
         f"  spark mode       : {'local[*]' if local else 'cluster'}",
+        f"  patch mode       : {'on' if patch else 'off'}",
         "=" * 72,
     ]
     logger.info("\n" + "\n".join(lines))
@@ -129,6 +131,17 @@ def _log_startup_banner(
         "diagnose stragglers. Adds one shuffle per write."
     ),
 )
+@click.option(
+    "--patch",
+    is_flag=True,
+    help=(
+        "Allow writing into a non-empty target keyspace. Existing rows in the "
+        "[start-block, end-block] range are overwritten by PK upsert; rows "
+        "outside the range are untouched. Account chains only (eth, trx); "
+        "rejected for UTXO chains because their derived spend tables are not "
+        "window-local."
+    ),
+)
 def run_transformation(
     env,
     currency,
@@ -139,6 +152,7 @@ def run_transformation(
     delta_lake_path,
     local,
     debug_write_audit,
+    patch,
 ):
     """Run PySpark transformation from Delta Lake to Cassandra raw keyspace.
 
@@ -147,13 +161,24 @@ def run_transformation(
     spark.pyspark.python in spark_config.
     \f
     """
-    from graphsenselib.config import get_config
+    from graphsenselib.config import currency_to_schema_type, get_config
 
     config = get_config()
     env_config = config.get_environment(env)
     ks_config = config.get_keyspace_config(env, currency)
 
     raw_keyspace = raw_keyspace_override or ks_config.raw_keyspace_name
+
+    schema_type = currency_to_schema_type.get(currency)
+    if patch and schema_type not in ("account", "account_trx"):
+        raise click.ClickException(
+            f"--patch is only supported for account chains (got {currency}, "
+            f"schema_type={schema_type}). UTXO derived tables "
+            f"(transaction_spending, transaction_spent_in) are computed across "
+            f"the full block range loaded by Spark; a partial rerun would "
+            f"silently miss spend links whose two endpoints straddle the "
+            f"window boundary. Re-run from a fresh keyspace instead."
+        )
 
     # Schema creation runs BEFORE Spark (uses cassandra-driver, no Java needed)
     if create_schema:
@@ -175,37 +200,44 @@ def run_transformation(
     cassandra_password = env_config.password
 
     # Safety check: verify the target keyspace block table is empty
-    # to prevent accidental data corruption from mixing sources
-    from cassandra.cluster import Cluster as CassCluster
+    # to prevent accidental data corruption from mixing sources. Skipped
+    # when --patch is set (account chains only — guarded above).
+    if not patch:
+        from cassandra.cluster import Cluster as CassCluster
 
-    host, _, port = cassandra_nodes[0].partition(":")
-    cass_port = int(port) if port else 9042
-    auth_provider = None
-    if cassandra_username and cassandra_password:
-        from cassandra.auth import PlainTextAuthProvider
+        host, _, port = cassandra_nodes[0].partition(":")
+        cass_port = int(port) if port else 9042
+        auth_provider = None
+        if cassandra_username and cassandra_password:
+            from cassandra.auth import PlainTextAuthProvider
 
-        auth_provider = PlainTextAuthProvider(
-            username=cassandra_username, password=cassandra_password
-        )
-    with CassCluster([host], port=cass_port, auth_provider=auth_provider) as cluster:
-        session = cluster.connect()
-        rows = list(
-            session.execute(
-                "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s",
-                (raw_keyspace,),
+            auth_provider = PlainTextAuthProvider(
+                username=cassandra_username, password=cassandra_password
             )
-        )
-        if rows:
-            # Keyspace exists — check if block table has data
-            block_row = session.execute(
-                f"SELECT block_id FROM {raw_keyspace}.block LIMIT 1"  # noqa: S608
-            ).one()
-            if block_row is not None:
-                raise click.ClickException(
-                    f"Keyspace {raw_keyspace} already contains data "
-                    f"(block table is not empty). Use a fresh keyspace or "
-                    f"truncate existing tables before running transformation."
+        with CassCluster(
+            [host], port=cass_port, auth_provider=auth_provider
+        ) as cluster:
+            session = cluster.connect()
+            rows = list(
+                session.execute(
+                    "SELECT table_name FROM system_schema.tables "
+                    "WHERE keyspace_name = %s",
+                    (raw_keyspace,),
                 )
+            )
+            if rows:
+                # Keyspace exists — check if block table has data
+                block_row = session.execute(
+                    f"SELECT block_id FROM {raw_keyspace}.block LIMIT 1"  # noqa: S608
+                ).one()
+                if block_row is not None:
+                    raise click.ClickException(
+                        f"Keyspace {raw_keyspace} already contains data "
+                        f"(block table is not empty). Use a fresh keyspace, "
+                        f"truncate existing tables, or pass --patch to "
+                        f"overwrite the requested block range (account "
+                        f"chains only)."
+                    )
 
     # Resolve delta path and S3 credentials from config if not overridden
     s3_config_name = None
@@ -254,6 +286,7 @@ def run_transformation(
         end_block=end_block,
         top_block=top_block,
         local=local,
+        patch=patch,
     )
 
     # Deferred PySpark import
