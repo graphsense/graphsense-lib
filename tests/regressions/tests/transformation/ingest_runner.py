@@ -113,8 +113,17 @@ def run_transformation(
     minio_endpoint: str,
     minio_access_key: str,
     minio_secret_key: str,
+    start_block: int | None = None,
+    end_block: int | None = None,
+    extra_args: list[str] | None = None,
 ) -> None:
-    """Run PySpark transformation inside Docker container (Path B, step 2)."""
+    """Run PySpark transformation inside Docker container (Path B, step 2).
+
+    `start_block` / `end_block` override `config.start_block` / `config.end_block`
+    when provided (used by the patch-mode regression test to drive the
+    transformation in two halves). `extra_args` are appended to the CLI invocation
+    after the standard arguments (used to pass `--patch`).
+    """
     gs_config = build_gs_config(
         currency=config.currency,
         node_url=config.node_url,
@@ -136,6 +145,8 @@ def run_transformation(
         yaml.dump(gs_config, f)
         config_path = f.name
 
+    sb = config.start_block if start_block is None else start_block
+    eb = config.end_block if end_block is None else end_block
     cmd = [
         "docker", "run", "--rm",
         "--network", "host",
@@ -147,10 +158,12 @@ def run_transformation(
         "--create-schema",
         "-e", "test",
         "-c", config.currency,
-        "--start-block", str(config.start_block),
-        "--end-block", str(config.end_block),
+        "--start-block", str(sb),
+        "--end-block", str(eb),
         "--delta-lake-path", delta_directory,
     ]
+    if extra_args:
+        cmd.extend(extra_args)
 
     try:
         result = subprocess.run(
