@@ -17,6 +17,16 @@ dependencies = [
   "typing-extensions (>=4.7.1)",
 ]
 
+[project.optional-dependencies]
+cli = [
+  "rich-click>=1.7",
+  "jmespath>=1.0",
+  "pygments>=2.15",
+]
+
+[project.scripts]
+graphsense = "graphsense.cli.main:cli"
+
 [project.urls]
 Homepage = "https://graphsense.github.io/"
 Source = "https://github.com/graphsense/graphsense-lib"
@@ -34,7 +44,15 @@ include = ["graphsense*"]
 dev = [
     "pandas>=2.3.3",
     "pytest>=8.4.2",
+    "click>=8.1",
+    "jmespath>=1.0",
+    "pygments>=2.15",
+    "responses>=0.25",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
 
 [tool.pylint.'MESSAGES CONTROL']
 extension-pkg-whitelist = "pydantic"

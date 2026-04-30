@@ -36,3 +36,13 @@ setup.py
 pyproject.toml
 compat/*
 templates/*
+
+# Hand-written extensions on top of the generated client (do not overwrite).
+graphsense/ext/*
+graphsense/cli/*
+tests/*
+docs/cli/*
+docs/ext/*
+README_CLI.md
+README_EXT.md
+CLAUDE.md

@@ -11,181 +11,130 @@
 
 
 from __future__ import annotations
+from inspect import getfullargspec
+import json
 import pprint
 import re  # noqa: F401
-import json
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError, field_validator
+from typing import Optional
+from graphsense.models.entity import Entity
+from typing import Union, Any, List, Set, TYPE_CHECKING, Optional, Dict
+from typing_extensions import Literal, Self
+from pydantic import Field
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.address_tag import AddressTag
-from graphsense.models.labeled_item_ref import LabeledItemRef
-from graphsense.models.tx_summary import TxSummary
-from graphsense.models.values import Values
-from typing import Optional, Set
-from typing_extensions import Self
+CLUSTER_ANY_OF_SCHEMAS = ["Entity", "int"]
 
 class Cluster(BaseModel):
     """
-    Address cluster (canonical name, supersedes `Entity`).
-    """ # noqa: E501
-    currency: StrictStr
-    entity: StrictInt = Field(description="Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release.")
-    root_address: StrictStr
-    balance: Values
-    total_received: Values
-    total_spent: Values
-    first_tx: TxSummary
-    last_tx: TxSummary
-    in_degree: StrictInt
-    out_degree: StrictInt
-    no_addresses: StrictInt
-    no_incoming_txs: StrictInt
-    no_outgoing_txs: StrictInt
-    no_address_tags: StrictInt
-    token_balances: Optional[Dict[str, Values]] = None
-    total_tokens_received: Optional[Dict[str, Values]] = None
-    total_tokens_spent: Optional[Dict[str, Values]] = None
-    actors: Optional[List[LabeledItemRef]] = None
-    best_address_tag: Optional[AddressTag] = None
-    cluster: StrictInt = Field(description="Cluster ID (preferred alias for the deprecated `entity` field).")
-    __properties: ClassVar[List[str]] = ["currency", "entity", "root_address", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_addresses", "no_incoming_txs", "no_outgoing_txs", "no_address_tags", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "best_address_tag", "cluster"]
+    Neighbor cluster reference (preferred alias for `entity`).
+    """
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        validate_assignment=True,
-        protected_namespaces=(),
-    )
+    # data type: Entity
+    anyof_schema_1_validator: Optional[Entity] = None
+    # data type: int
+    anyof_schema_2_validator: Optional[StrictInt] = None
+    if TYPE_CHECKING:
+        actual_instance: Optional[Union[Entity, int]] = None
+    else:
+        actual_instance: Any = None
+    any_of_schemas: Set[str] = { "Entity", "int" }
 
+    model_config = {
+        "validate_assignment": True,
+        "protected_namespaces": (),
+    }
 
-    def to_str(self) -> str:
-        """Returns the string representation of the model using alias"""
-        return pprint.pformat(self.model_dump(by_alias=True))
+    def __init__(self, *args, **kwargs) -> None:
+        if args:
+            if len(args) > 1:
+                raise ValueError("If a position argument is used, only 1 is allowed to set `actual_instance`")
+            if kwargs:
+                raise ValueError("If a position argument is used, keyword arguments cannot be used.")
+            super().__init__(actual_instance=args[0])
+        else:
+            super().__init__(**kwargs)
+
+    @field_validator('actual_instance')
+    def actual_instance_must_validate_anyof(cls, v):
+        if v is None:
+            return v
+
+        instance = Cluster.model_construct()
+        error_messages = []
+        # validate data type: Entity
+        if not isinstance(v, Entity):
+            error_messages.append(f"Error! Input type `{type(v)}` is not `Entity`")
+        else:
+            return v
+
+        # validate data type: int
+        try:
+            instance.anyof_schema_2_validator = v
+            return v
+        except (ValidationError, ValueError) as e:
+            error_messages.append(str(e))
+        if error_messages:
+            # no match
+            raise ValueError("No match found when setting the actual_instance in Cluster with anyOf schemas: Entity, int. Details: " + ", ".join(error_messages))
+        else:
+            return v
+
+    @classmethod
+    def from_dict(cls, obj: Dict[str, Any]) -> Self:
+        return cls.from_json(json.dumps(obj))
+
+    @classmethod
+    def from_json(cls, json_str: str) -> Self:
+        """Returns the object represented by the json string"""
+        instance = cls.model_construct()
+        if json_str is None:
+            return instance
+
+        error_messages = []
+        # anyof_schema_1_validator: Optional[Entity] = None
+        try:
+            instance.actual_instance = Entity.from_json(json_str)
+            return instance
+        except (ValidationError, ValueError) as e:
+             error_messages.append(str(e))
+        # deserialize data into int
+        try:
+            # validation
+            instance.anyof_schema_2_validator = json.loads(json_str)
+            # assign value to actual_instance
+            instance.actual_instance = instance.anyof_schema_2_validator
+            return instance
+        except (ValidationError, ValueError) as e:
+            error_messages.append(str(e))
+
+        if error_messages:
+            # no match
+            raise ValueError("No match found when deserializing the JSON string into Cluster with anyOf schemas: Entity, int. Details: " + ", ".join(error_messages))
+        else:
+            return instance
 
     def to_json(self) -> str:
-        """Returns the JSON representation of the model using alias"""
-        # TODO: pydantic v2: use .model_dump_json(by_alias=True, exclude_unset=True) instead
-        return json.dumps(self.to_dict())
+        """Returns the JSON representation of the actual instance"""
+        if self.actual_instance is None:
+            return "null"
 
-    @classmethod
-    def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of Cluster from a JSON string"""
-        return cls.from_dict(json.loads(json_str))
+        if hasattr(self.actual_instance, "to_json") and callable(self.actual_instance.to_json):
+            return self.actual_instance.to_json()
+        else:
+            return json.dumps(self.actual_instance)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Return the dictionary representation of the model using alias.
-
-        This has the following differences from calling pydantic's
-        `self.model_dump(by_alias=True)`:
-
-        * `None` is only added to the output dict for nullable fields that
-          were set at model initialization. Other fields with value `None`
-          are ignored.
-        * OpenAPI `readOnly` fields are excluded.
-        """
-        excluded_fields: Set[str] = set([
-            "cluster",
-        ])
-
-        _dict = self.model_dump(
-            by_alias=True,
-            exclude=excluded_fields,
-            exclude_none=True,
-        )
-        # override the default output from pydantic by calling `to_dict()` of balance
-        if self.balance:
-            _dict['balance'] = self.balance.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of total_received
-        if self.total_received:
-            _dict['total_received'] = self.total_received.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of total_spent
-        if self.total_spent:
-            _dict['total_spent'] = self.total_spent.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of first_tx
-        if self.first_tx:
-            _dict['first_tx'] = self.first_tx.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of last_tx
-        if self.last_tx:
-            _dict['last_tx'] = self.last_tx.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of each value in token_balances (dict)
-        _field_dict = {}
-        if self.token_balances:
-            for _key_token_balances in self.token_balances:
-                if self.token_balances[_key_token_balances]:
-                    _field_dict[_key_token_balances] = self.token_balances[_key_token_balances].to_dict()
-            _dict['token_balances'] = _field_dict
-        # override the default output from pydantic by calling `to_dict()` of each value in total_tokens_received (dict)
-        _field_dict = {}
-        if self.total_tokens_received:
-            for _key_total_tokens_received in self.total_tokens_received:
-                if self.total_tokens_received[_key_total_tokens_received]:
-                    _field_dict[_key_total_tokens_received] = self.total_tokens_received[_key_total_tokens_received].to_dict()
-            _dict['total_tokens_received'] = _field_dict
-        # override the default output from pydantic by calling `to_dict()` of each value in total_tokens_spent (dict)
-        _field_dict = {}
-        if self.total_tokens_spent:
-            for _key_total_tokens_spent in self.total_tokens_spent:
-                if self.total_tokens_spent[_key_total_tokens_spent]:
-                    _field_dict[_key_total_tokens_spent] = self.total_tokens_spent[_key_total_tokens_spent].to_dict()
-            _dict['total_tokens_spent'] = _field_dict
-        # override the default output from pydantic by calling `to_dict()` of each item in actors (list)
-        _items = []
-        if self.actors:
-            for _item_actors in self.actors:
-                if _item_actors:
-                    _items.append(_item_actors.to_dict())
-            _dict['actors'] = _items
-        # override the default output from pydantic by calling `to_dict()` of best_address_tag
-        if self.best_address_tag:
-            _dict['best_address_tag'] = self.best_address_tag.to_dict()
-
-        return _dict
-
-    @classmethod
-    def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of Cluster from a dict"""
-        if obj is None:
+    def to_dict(self) -> Optional[Union[Dict[str, Any], Entity, int]]:
+        """Returns the dict representation of the actual instance"""
+        if self.actual_instance is None:
             return None
 
-        if not isinstance(obj, dict):
-            return cls.model_validate(obj)
+        if hasattr(self.actual_instance, "to_dict") and callable(self.actual_instance.to_dict):
+            return self.actual_instance.to_dict()
+        else:
+            return self.actual_instance
 
-        _obj = cls.model_validate({
-            "currency": obj.get("currency"),
-            "entity": obj.get("entity"),
-            "root_address": obj.get("root_address"),
-            "balance": Values.from_dict(obj["balance"]) if obj.get("balance") is not None else None,
-            "total_received": Values.from_dict(obj["total_received"]) if obj.get("total_received") is not None else None,
-            "total_spent": Values.from_dict(obj["total_spent"]) if obj.get("total_spent") is not None else None,
-            "first_tx": TxSummary.from_dict(obj["first_tx"]) if obj.get("first_tx") is not None else None,
-            "last_tx": TxSummary.from_dict(obj["last_tx"]) if obj.get("last_tx") is not None else None,
-            "in_degree": obj.get("in_degree"),
-            "out_degree": obj.get("out_degree"),
-            "no_addresses": obj.get("no_addresses"),
-            "no_incoming_txs": obj.get("no_incoming_txs"),
-            "no_outgoing_txs": obj.get("no_outgoing_txs"),
-            "no_address_tags": obj.get("no_address_tags"),
-            "token_balances": dict(
-                (_k, Values.from_dict(_v))
-                for _k, _v in obj["token_balances"].items()
-            )
-            if obj.get("token_balances") is not None
-            else None,
-            "total_tokens_received": dict(
-                (_k, Values.from_dict(_v))
-                for _k, _v in obj["total_tokens_received"].items()
-            )
-            if obj.get("total_tokens_received") is not None
-            else None,
-            "total_tokens_spent": dict(
-                (_k, Values.from_dict(_v))
-                for _k, _v in obj["total_tokens_spent"].items()
-            )
-            if obj.get("total_tokens_spent") is not None
-            else None,
-            "actors": [LabeledItemRef.from_dict(_item) for _item in obj["actors"]] if obj.get("actors") is not None else None,
-            "best_address_tag": AddressTag.from_dict(obj["best_address_tag"]) if obj.get("best_address_tag") is not None else None,
-            "cluster": obj.get("cluster")
-        })
-        return _obj
+    def to_str(self) -> str:
+        """Returns the string representation of the actual instance"""
+        return pprint.pformat(self.model_dump())
 
 
