@@ -36,6 +36,7 @@ markers = [
     "deltalake_perf: Delta Lake ingest performance tests",
     "cassandra: Cassandra ingest regression tests",
     "sink_consistency: Sink consistency tests (individual vs dual-sink output)",
+    "sink_catchup: Sink catch-up tests (auto-catch-up vs sync-from-start output)",
     "continuation: Continuation tests (split-ingest vs one-shot output)",
     "transformation: Transformation tests (Delta Lake → PySpark → Cassandra equivalence)",
     "clustering: Clustering regression tests (Scala vs Rust partition equivalence)",
