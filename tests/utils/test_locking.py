@@ -9,6 +9,7 @@ from graphsenselib.utils.locking import (
     LockConfigurationError,
     create_lock,
 )
+from graphsenselib.utils.locking import delta_ingest_lock_name
 
 
 def _mock_config(use_redis_locks=False, redis_url=None):
@@ -147,3 +148,46 @@ class TestLockConfigurationError:
 
     def test_not_a_lock_acquisition_error(self):
         assert not issubclass(LockConfigurationError, LockAcquisitionError)
+
+
+class TestDeltaIngestLockName:
+    def test_s3_uri(self):
+        assert (
+            delta_ingest_lock_name("s3://my-bucket/foo/bar", "btc")
+            == "delta_ingest_my-bucket_foo_bar_btc"
+        )
+
+    def test_s3_uri_trailing_slash(self):
+        assert (
+            delta_ingest_lock_name("s3://my-bucket/foo/bar/", "btc")
+            == "delta_ingest_my-bucket_foo_bar_btc"
+        )
+
+    def test_local_absolute_path(self):
+        assert (
+            delta_ingest_lock_name("/data/delta", "btc")
+            == "delta_ingest_local_data_delta_btc"
+        )
+
+    def test_local_relative_path(self):
+        assert (
+            delta_ingest_lock_name("data/delta", "btc")
+            == "delta_ingest_local_data_delta_btc"
+        )
+
+    def test_empty_network_omitted(self):
+        assert (
+            delta_ingest_lock_name("s3://my-bucket/foo", "")
+            == "delta_ingest_my-bucket_foo"
+        )
+
+    def test_s3_no_prefix(self):
+        assert (
+            delta_ingest_lock_name("s3://my-bucket", "btc")
+            == "delta_ingest_my-bucket_btc"
+        )
+
+    def test_idempotent_for_same_inputs(self):
+        a = delta_ingest_lock_name("s3://b/p/q/", "eth")
+        b = delta_ingest_lock_name("s3://b/p/q", "eth")
+        assert a == b

@@ -112,3 +112,25 @@ def _redis_lock(lock_name, redis_url, blocking_timeout):
     finally:
         lock.release()
         logger.info(f"Redis lock {key} released.")
+
+
+def delta_ingest_lock_name(directory: str, network: str) -> str:
+    """Derive the lock name for a delta-lake raw resource.
+
+    Returns ``delta_ingest_{bucket}_{prefix}_{network}``. For ``s3://``
+    URIs, ``bucket`` is the S3 bucket and ``prefix`` is the rest of the
+    path. For local paths, ``bucket`` is ``local`` and ``prefix`` is the
+    path with separators replaced. ``network`` is appended unless empty.
+    """
+    raw = directory.strip().rstrip("/")
+    if raw.startswith("s3://"):
+        rest = raw[len("s3://") :]
+        bucket, _, prefix = rest.partition("/")
+        components = [bucket]
+        if prefix:
+            components.append(prefix.replace("/", "_"))
+    else:
+        components = ["local", raw.lstrip("/").replace("/", "_")]
+    if network:
+        components.append(network)
+    return "delta_ingest_" + "_".join(c for c in components if c)
