@@ -36,10 +36,18 @@
 - REST app config resolution order is intentional: explicit `config_file` parameter > `CONFIG_FILE` env var > `./instance/config.yaml` > `.graphsense.yaml` `web` key > env-only configuration.
 - For settings management, prefer Pydantic Settings models (`pydantic_settings.BaseSettings`) with typed fields and defaults, following existing patterns in `src/graphsenselib/web/config.py` and other config modules.
 - Tests rely on Testcontainers (`CassandraContainer`, `PostgresContainer`) from `tests/conftest.py`; accelerated mode uses `DANGEROUSLY_ACCELERATE_TESTS=1` with prebuilt `graphsense/cassandra-test:4.1.4`.
-- Release/version workflow uses two version tracks in `Makefile`: `RELEASESEM` (library tag `vX.Y.Z`, `vX.Y.Z-rc.N`, or `vX.Y.Z-dev.N`) and `WEBAPISEM` (API/client tag `webapi-vA.B.C`), with dedicated sync/check targets for client version alignment.
-- Library package version is dynamic via `setuptools_scm` (`version_scheme = "only-version"`); tags map as `vX.Y.Z -> X.Y.Z`, `vX.Y.Z-rc.N -> X.Y.ZrcN`, `vX.Y.Z-dev.N -> X.Y.Z.devN`.
-- For prerelease work, prefer `RELEASESEM=vX.Y.Z-dev.N`; create tags using `make tag-version` and publish with `git push origin --tags`.
-- CI trigger behavior by tag is intentional:
-  - `vX.Y.Z`: creates GitHub Release, publishes Python library package, and publishes Docker images.
-  - `webapi-vA.B.C`: publishes Python client package.
-  - `vX.Y.Z-rc.N` / `vX.Y.Z-dev.N`: publishes Docker images only (no GitHub Release, no Python package publish).
+- Release/version workflow uses two version tracks in `Makefile`: `RELEASESEM` (library tag `vX.Y.Z`, `vX.Y.Z-rc.N`, or optionally `vX.Y.Z-dev.N`) and `WEBAPISEM` (API/client tag `webapi-vA.B.C`), with dedicated sync/check targets for client version alignment.
+- Library package version is dynamic via `setuptools_scm` (`version_scheme = "release-branch-semver"`, `local_scheme = "node-and-date"`):
+  - on a tag, the wheel version is the tag verbatim (PEP 440 normalized): `vX.Y.Z -> X.Y.Z`, `vX.Y.Z-rc.N -> X.Y.ZrcN`, `vX.Y.Z-dev.N -> X.Y.Z.devN`;
+  - off-tag commits get a computed dev version with a local segment: `X.Y+1.0.devN+g<sha>.d<date>` on `master`/`develop`/`main`, `X.Y.Z+1.devN+g<sha>.d<date>` on `release/X.Y.x` branches, and patch-bump (same as a release branch) on other feature branches;
+  - dirty workspaces append `.dirty` to the local segment, so `make build` from uncommitted changes is honest about what it contains.
+- Dev builds use **branch-pushed Docker images**, not hand-minted git tags: every push to `master`, `develop`, or `feature/**` produces ghcr.io images tagged with the branch slug (rolling) and short SHA (immutable, pin-friendly). The `develop` branch also gets the rolling `dev` alias. Operators pin to the SHA tag; developers track the branch tag.
+- Mint a `vX.Y.Z-dev.N` git tag only when you want a clean, named ref (e.g. for cross-repo Python pinning or a milestone snapshot). Use plain SemVer pre-release form — do not use `+<branch>.N` build metadata. For routine dev work, branch-pushed Docker images are sufficient.
+- When stabilizing a minor (backporting fixes to `2.12.x` after `2.13.0` ships), cut a `release/2.12.x` branch — `release-branch-semver` then computes patch-bump dev versions on that branch instead of a minor bump.
+- Major-version bumps (e.g. `3.0.0`) require an explicit tag — `release-branch-semver` does not auto-detect majors.
+- CI trigger behavior is intentional:
+  - `vX.Y.Z` tag: creates GitHub Release, publishes Python library package, and publishes Docker images (`vX.Y.Z` + rolling `latest`).
+  - `webapi-vA.B.C` tag: publishes Python client package.
+  - `vX.Y.Z-rc.N` tag: publishes Docker images only (`vX.Y.Z-rc.N` + rolling `rc`); no GitHub Release, no Python package publish.
+  - `vX.Y.Z-dev.N` tag: publishes Docker image with the exact tag only (no rolling alias, since branch tags now serve that purpose); no GitHub Release, no Python package publish.
+  - Branch push to `master` / `develop` / `feature/**`: publishes Docker image tagged with branch slug + short SHA; `develop` additionally publishes the rolling `dev` alias.

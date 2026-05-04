@@ -373,10 +373,19 @@ class CassandraDb:
         username: Optional[str] = None,
         password: Optional[str] = None,
     ) -> None:
-        ports = {int(x.split(":")[1]) for x in db_nodes if ":" in x}
+        ports_in_order = [int(x.split(":")[1]) for x in db_nodes if ":" in x]
         nodes = [x.split(":")[0] for x in db_nodes]
         self.db_nodes = nodes
-        self.db_port = list(ports)[0] if len(ports) == 1 else 9042
+        unique_ports = set(ports_in_order)
+        if len(unique_ports) > 1:
+            logger.warning(
+                "cassandra_nodes specify conflicting ports %s; using the "
+                "first one (%d). Use the same port for all nodes to silence "
+                "this warning.",
+                sorted(unique_ports),
+                ports_in_order[0],
+            )
+        self.db_port = ports_in_order[0] if ports_in_order else 9042
         self.db_username = username
         self.db_password = password
         self.cluster = None

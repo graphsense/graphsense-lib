@@ -21,7 +21,9 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: fix openssl legacy mode
         run: sudo sed -i '/^default = default_sect/a legacy = legacy_sect' /etc/ssl/openssl.cnf &&  sudo sed -i 's/#openssl_conf/openssl_conf/g' /etc/ssl/openssl.cnf && sudo sed -i '/^\[default_sect\]/a activate = 1\n\[legacy_sect\]\nactivate = 1' /etc/ssl/openssl.cnf
       - name: Install the latest version of uv

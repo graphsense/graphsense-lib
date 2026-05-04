@@ -257,9 +257,19 @@ def export_delta(
             sink_heights = [(sink.name, sink.highest_block()) for sink in runner.sinks]
             _abort_on_sink_divergence(currency, sink_heights)
 
+            # Surface resume state so the user always sees where ingestion will
+            # pick up — parity with the legacy pipeline's print_block_info.
+            for name, h in sink_heights:
+                shown = f"{h:,}" if h is not None else "None"
+                logger.info(f"Sink '{name}' last ingested block: {shown}")
+
             agreed_height = next((h for _, h in sink_heights if h is not None), None)
             if agreed_height is not None:
                 highest_block_node = source.get_last_synced_block_bo(backoff)
+                logger.info(
+                    f"Last synced block at node (with reorg backoff "
+                    f"{backoff}): {highest_block_node:,}"
+                )
                 if agreed_height == highest_block_node:
                     logger.info(
                         f"Data already present up to highest block "
@@ -301,9 +311,10 @@ def export_delta(
                 return
 
         if info:
+            sink_names = [sink.name for sink in runner.sinks]
             logger.info(
-                f"Block range: {start_block:,} - {end_block:,} "
-                f"({end_block - start_block + 1:,} blocks)"
+                f"Would ingest block range {start_block:,} - {end_block:,} "
+                f"({end_block - start_block + 1:,} blocks) into {sink_names}"
             )
             return
 
