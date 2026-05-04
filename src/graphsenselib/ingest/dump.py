@@ -129,8 +129,8 @@ PARTITIONSIZES = {
 }
 
 
-def _abort_on_sink_divergence(currency, sink_heights):
-    """Refuse to ingest if registered sinks disagree on their highest block.
+def _diverged_sinks(sink_heights):
+    """Return (target, laggards) when registered sinks disagree, else (None, []).
 
     Empty sinks (None) and sinks at the same height are aligned. Any other
     combination is divergence: writing forward from one sink's value would
@@ -140,14 +140,27 @@ def _abort_on_sink_divergence(currency, sink_heights):
     has_empty = any(h is None for _, h in sink_heights)
     aligned = len(distinct) <= 1 and not (distinct and has_empty)
     if aligned:
+        return None, []
+    target = max(distinct)
+    laggards = [(name, h) for name, h in sink_heights if h != target]
+    return target, laggards
+
+
+def _abort_on_sink_divergence(currency, sink_heights):
+    """Refuse to ingest when sinks disagree on their highest block.
+
+    Used as the last-resort fallback after auto-catch-up has been skipped or
+    has failed; prints a per-sink heights table and concrete single-sink
+    recovery commands so an operator can fix the lag manually.
+    """
+    target, laggards = _diverged_sinks(sink_heights)
+    if target is None:
         return
 
-    target = max(distinct)
     rows = "\n".join(
         f"  - {name}: " + (f"block {h:,}" if h is not None else "(empty)")
         for name, h in sink_heights
     )
-    laggards = [(name, h) for name, h in sink_heights if h != target]
     recovery = "\n".join(
         f"  graphsense-cli ingest from-node --currency {currency} "
         f"--sinks {name} --start-block {h + 1 if h is not None else 0} "
@@ -163,6 +176,83 @@ def _abort_on_sink_divergence(currency, sink_heights):
         "Then re-run this command."
     )
     sys.exit(13)
+
+
+def _catch_up_diverged_sinks(
+    runner: "IngestRunner",
+    source,
+    transformer,
+    currency: str,
+    max_auto_catchup: int,
+):
+    """Bring lagging sinks up to the leader before the forward run.
+
+    For each laggard, run a single-sink ``IngestRunner`` over the missing
+    tail using the same source/transformer instances. The outer lock_stack
+    in :func:`export_delta` already holds every sink's lock, so the child
+    runners inherit that protection.
+
+    Aborts (via ``_abort_on_sink_divergence``) when:
+
+    * a laggard's gap exceeds ``max_auto_catchup`` — likely a misconfigured
+      run (wrong keyspace, empty bucket) rather than a genuine partial commit;
+    * after running, sinks still don't agree — catch-up itself failed or the
+      laggard's :py:meth:`Sink.highest_block` lies about the new state.
+
+    Source/transformer are reused across catch-up + forward runs. Account
+    transformers are stateless per-block; UTXO transformers allocate
+    ``_next_tx_id`` monotonically — running catch-up before forward keeps
+    that allocation contiguous.
+    """
+    sink_heights = [(s.name, s.highest_block()) for s in runner.sinks]
+    target, laggards = _diverged_sinks(sink_heights)
+    if target is None:
+        return
+
+    rows = ", ".join(
+        f"{name}=" + (f"{h:,}" if h is not None else "empty")
+        for name, h in sink_heights
+    )
+    logger.warning(
+        f"Sink divergence detected ({rows}); leader at block {target:,}. "
+        f"Auto-catching up {len(laggards)} laggard(s) before forward run."
+    )
+
+    laggard_names = {name for name, _ in laggards}
+    for sink in runner.sinks:
+        if sink.name not in laggard_names:
+            continue
+        h = sink.highest_block()
+        h_plus = (h + 1) if h is not None else 0
+        gap = target - h_plus + 1
+        if gap > max_auto_catchup:
+            logger.error(
+                f"Auto-catch-up refused for {sink.name}: gap {gap:,} blocks "
+                f"exceeds limit {max_auto_catchup:,}. Likely a misconfigured "
+                f"sink rather than a partial commit."
+            )
+            _abort_on_sink_divergence(currency, sink_heights)
+
+        logger.warning(
+            f"Catching up {sink.name}: blocks {h_plus:,}–{target:,} ({gap:,} blocks)"
+        )
+        catchup = IngestRunner(runner.partition_batch_size, runner.file_batch_size)
+        catchup.addSource(source)
+        catchup.addTransformer(transformer)
+        catchup.addSink(sink)
+        catchup.run(h_plus, target)
+
+    final_heights = [(s.name, s.highest_block()) for s in runner.sinks]
+    final_target, final_laggards = _diverged_sinks(final_heights)
+    if final_target is not None:
+        logger.error(
+            "Auto-catch-up completed but sinks still disagree: "
+            + ", ".join(
+                f"{n}=" + (f"{h:,}" if h is not None else "empty")
+                for n, h in final_heights
+            )
+        )
+        _abort_on_sink_divergence(currency, final_heights)
 
 
 def export_delta(
@@ -249,27 +339,41 @@ def export_delta(
 
         backoff = get_reorg_backoff_blocks(currency)
 
-        # Auto-detect start_block. In append mode every registered sink that
-        # tracks resume state must agree on its highest block — otherwise
-        # writing forward from any single sink's value silently leaves the
-        # others with a gap (cassandra) or duplicate writes (delta).
+        # Auto-detect start_block. In append mode every registered sink must
+        # agree on its highest block — otherwise writing forward from one
+        # value silently leaves the lagging sink with a gap (cassandra) or
+        # creates duplicate writes (delta). When sinks diverge, attempt to
+        # auto-catch-up the laggards via single-sink runs; only fall back to
+        # the abort-with-recovery-command path if catch-up exceeds the gap
+        # limit or fails to align the heights afterwards.
         if write_mode == "append":
+            _catch_up_diverged_sinks(
+                runner,
+                source,
+                transformer,
+                currency,
+                max_auto_catchup=partition_batch_size,
+            )
             sink_heights = [(sink.name, sink.highest_block()) for sink in runner.sinks]
-            _abort_on_sink_divergence(currency, sink_heights)
 
             agreed_height = next((h for _, h in sink_heights if h is not None), None)
+            has_monotonic_sink = any(s.requires_monotonic_append for s in runner.sinks)
             if agreed_height is not None:
                 highest_block_node = source.get_last_synced_block_bo(backoff)
-                if agreed_height == highest_block_node:
-                    logger.info(
-                        f"Data already present up to highest block "
-                        f"{agreed_height:,}, no need to append."
-                    )
-                    sys.exit(12)
 
                 if start_block is None:
+                    if agreed_height == highest_block_node:
+                        logger.info(
+                            f"Data already present up to highest block "
+                            f"{agreed_height:,}, no need to append."
+                        )
+                        sys.exit(12)
                     start_block = agreed_height + 1
-                else:
+                elif has_monotonic_sink:
+                    # Only enforce monotonicity when a sink that cannot
+                    # tolerate re-writing an existing range is registered.
+                    # Idempotent-only runs (e.g. cassandra-only catch-up)
+                    # are allowed to target an arbitrary start_block.
                     assert start_block > agreed_height, (
                         f"Start block ({start_block:,}) must be higher than the "
                         f"highest block already written ({agreed_height:,})"

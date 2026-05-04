@@ -20,6 +20,9 @@ class CassandraSink(Sink):
     """
 
     name = "cassandra"
+    # Cassandra writes are UPSERTs, so re-writing an already-ingested range
+    # is idempotent. This sink can be backfilled at any start_block.
+    requires_monotonic_append = False
 
     def __init__(
         self, db: AnalyticsDb, concurrency: int = CASSANDRA_INGEST_DEFAULT_CONCURRENCY

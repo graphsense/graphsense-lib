@@ -177,6 +177,13 @@ class Transformer(ABC):
 class Sink(ABC):
     name: str = "sink"
 
+    # When True, append-mode ingest must start strictly above this sink's
+    # highest_block — re-writing an existing range would corrupt data
+    # (e.g. Delta append duplicates rows). Sinks with idempotent writes
+    # (e.g. Cassandra UPSERT) override this to False so backfilling an
+    # already-ingested range is allowed.
+    requires_monotonic_append: bool = True
+
     @abstractmethod
     def write(self, block_range_content: BlockRangeContent):
         pass
