@@ -48,6 +48,15 @@ reorg_backoff_blocks = {
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GRAPHSENSE_VERBOSE_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
+
+def is_fresh_clustering_enabled() -> bool:
+    return os.environ.get("GRAPHSENSE_FRESH_CLUSTERING_ENABLED", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 )

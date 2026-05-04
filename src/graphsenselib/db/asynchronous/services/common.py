@@ -2,6 +2,7 @@ import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 import graphsenselib.utils.address
+from graphsenselib.config import is_fresh_clustering_enabled
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.db.asynchronous.cassandra import get_tx_identifier
 from graphsenselib.errors import (
@@ -469,7 +470,7 @@ async def get_address(
 
     # Look up fresh cluster ID if available (UTXO only)
     fresh_cluster_id = None
-    if result and not is_eth_like(currency):
+    if is_fresh_clustering_enabled() and result and not is_eth_like(currency):
         address_id = result.get("address_id")
         if address_id is not None:
             fresh_cluster_id = await db.get_fresh_cluster_id(currency, address_id)
