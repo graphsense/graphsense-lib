@@ -37,7 +37,21 @@ class CassandraSink(Sink):
         return self.db.raw.get_highest_block()
 
     def write(self, block_range_content: BlockRangeContent):
-        for table_name, rows in block_range_content.table_contents.items():
+        # Safety net: force `block` to be written LAST regardless of
+        # transformer dict order. `get_highest_block()` reads MAX(block_id)
+        # from the block table as the resume marker between runs; if the
+        # chunk crashes mid-write with `block` already written, the height
+        # advances while side tables are missing rows for that range and
+        # the next run silently resumes past the gap. Transformers in
+        # transform.py already emit `block` last for this reason; the sort
+        # here defends against a future transformer or refactor that
+        # accidentally puts it first. Stable sort preserves the relative
+        # order of the other tables.
+        items = sorted(
+            block_range_content.table_contents.items(),
+            key=lambda kv: kv[0] == "block",
+        )
+        for table_name, rows in items:
             if not rows:
                 continue
             # UTXO transactions carry Cassandra-specific io fields alongside

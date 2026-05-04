@@ -159,9 +159,16 @@ class TransformerUTXO(Transformer):
             f"partition={t_partition:.3f}s"
         )
 
+        # `block` MUST stay last. Sinks iterate this dict in insertion
+        # order, and `get_highest_block()` reads MAX(block_id) from the
+        # block table as the resume marker. If block lands first and the
+        # chunk crashes mid-write, the height advances while side tables
+        # are missing rows for that range and the next run silently
+        # resumes past the gap. CassandraSink also enforces this via a
+        # stable sort as a safety net — both layers must hold.
         block_range_content.table_contents = {
-            "block": blocks,
             "transaction": txs,
+            "block": blocks,
         }
         return block_range_content
 
@@ -285,13 +292,16 @@ class TransformerUTXO(Transformer):
             f"partition={t_partition:.3f}s"
         )
 
+        # `block` MUST stay last — see TransformerUTXO._transform_delta_only
+        # for the full rationale. CassandraSink enforces this via a stable
+        # sort as a safety net.
         block_range_content.table_contents = {
-            "block": blocks,
             "transaction": txs,
             "block_transactions": block_transactions,
             "transaction_by_tx_prefix": tx_lookups,
             "transaction_spent_in": tx_refs,
             "transaction_spending": tx_refs,
+            "block": blocks,
         }
         return block_range_content
 
@@ -385,12 +395,15 @@ class TransformerTRX(Transformer):
         # export_hash_to_type_mappings_parallel
         # and would need the tx_hash from the transaction table for ordering
 
+        # `block` MUST stay last — see TransformerUTXO._transform_delta_only
+        # for the full rationale. CassandraSink enforces this via a stable
+        # sort as a safety net.
         block_range_content.table_contents = {
-            "block": blocks,
             "transaction": txs,
             "log": logs,
             "trace": traces,
             "fee": fees,
+            "block": blocks,
         }
 
         return block_range_content
@@ -455,11 +468,14 @@ class TransformerETH(Transformer):
             f"sort={t_sort:.3f}s"
         )
 
+        # `block` MUST stay last — see TransformerUTXO._transform_delta_only
+        # for the full rationale. CassandraSink enforces this via a stable
+        # sort as a safety net.
         block_range_content.table_contents = {
-            "block": blocks,
             "transaction": txs,
             "log": logs,
             "trace": traces,
+            "block": blocks,
         }
         return block_range_content
 
