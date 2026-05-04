@@ -37,6 +37,12 @@ TRANSFORMATION_RANGES: dict[str, list[TransformationRange]] = {
     ],
     "eth": [
         TransformationRange("mid", 2_000_000, 2_000_010, "early PoW era"),
+        TransformationRange(
+            "merge_boundary",
+            15_537_390,
+            15_537_400,
+            "Merge straddle: 4 PoW + 7 PoS blocks (PoS starts at 15_537_394)",
+        ),
     ],
     "trx": [
         TransformationRange("mid", 50_000_001, 50_000_010, "mid-chain era"),
