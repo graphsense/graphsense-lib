@@ -110,6 +110,21 @@ Filtering tips:
 - When reporting a finding, name the level the attribution came
   from (address vs cluster).
 
+## Pathfinder links
+
+Always surface deep links to the Pathfinder web app alongside
+addresses and transactions you mention in user-facing replies, so
+the user can inspect them in context. Use the base URL
+`{pathfinder_base_url}` (the server substitutes it; do not rewrite
+it). Patterns:
+
+- Address: `{pathfinder_base_url}/pathfinder/<network>/address/<address>`
+- Transaction: `{pathfinder_base_url}/pathfinder/<network>/tx/<tx_hash>`
+
+`<network>` is the same lowercase short slug used by the tools
+(`btc`, `eth`, `trx`, …). Don't link cluster ids — they are internal
+and unstable; link the anchor address instead.
+
 ## Misc
 
 - Monetary values are flattened: `{native: N, usd: X, eur: Y, …}`.

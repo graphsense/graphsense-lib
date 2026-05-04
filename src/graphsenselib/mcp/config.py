@@ -95,6 +95,16 @@ class GSMCPConfig(BaseSettings):
             "curation/instructions.md)"
         ),
     )
+    pathfinder_base_url: str = Field(
+        default="https://app.iknaio.com",
+        description=(
+            "Base URL of the Pathfinder web app (works with the hosted and OSS "
+            "deployments). Substituted into the instructions placeholder "
+            "`{pathfinder_base_url}` so consumers can build deep links "
+            "(e.g. `{pathfinder_base_url}/pathfinder/btc/address/<addr>`). "
+            "Trailing slashes are stripped."
+        ),
+    )
 
     search_neighbors: Optional[SearchNeighborsConfig] = Field(
         default=None,
@@ -141,8 +151,14 @@ class GSMCPConfig(BaseSettings):
         FastMCP to send no instructions at all.
         """
         if self.instructions is not None:
-            return self.instructions or None
-        path = self.instructions_file or self.bundled_instructions_path()
-        if not path.exists():
+            text = self.instructions or None
+        else:
+            path = self.instructions_file or self.bundled_instructions_path()
+            if not path.exists():
+                return None
+            text = path.read_text(encoding="utf-8").strip() or None
+        if text is None:
             return None
-        return path.read_text(encoding="utf-8").strip() or None
+        return text.replace(
+            "{pathfinder_base_url}", self.pathfinder_base_url.rstrip("/")
+        )

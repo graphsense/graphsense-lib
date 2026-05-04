@@ -59,11 +59,15 @@ def test_search_neighbors_config_requires_fields():
 def test_bundled_instructions_loaded_by_default(monkeypatch):
     monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
     monkeypatch.delenv("GS_MCP_INSTRUCTIONS_FILE", raising=False)
+    monkeypatch.delenv("GS_MCP_PATHFINDER_BASE_URL", raising=False)
 
     cfg = GSMCPConfig()
     text = cfg.resolved_instructions()
     assert text is not None
     assert "GraphSense" in text
+    # Placeholder must be substituted, not leaked, with the default base URL.
+    assert "{pathfinder_base_url}" not in text
+    assert "https://app.iknaio.com/pathfinder" in text
 
 
 def test_instructions_explicit_override_wins(monkeypatch):
@@ -86,3 +90,17 @@ def test_instructions_file_override(monkeypatch, tmp_path):
     monkeypatch.setenv("GS_MCP_INSTRUCTIONS_FILE", str(custom))
     cfg = GSMCPConfig()
     assert cfg.resolved_instructions() == "From a custom file."
+
+
+def test_pathfinder_base_url_substituted_into_explicit_instructions(monkeypatch):
+    monkeypatch.setenv(
+        "GS_MCP_INSTRUCTIONS",
+        "see {pathfinder_base_url}/pathfinder/btc/address/abc",
+    )
+    monkeypatch.setenv("GS_MCP_PATHFINDER_BASE_URL", "https://pathfinder.local/")
+    cfg = GSMCPConfig()
+    # Trailing slash is stripped before substitution.
+    assert (
+        cfg.resolved_instructions()
+        == "see https://pathfinder.local/pathfinder/btc/address/abc"
+    )
