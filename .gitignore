@@ -6,6 +6,7 @@ instance/*
 local/
 tester.py
 .implementation_summary.md
+.worktrees/
 
 # Tagpack tool specific
 ks_map.json
