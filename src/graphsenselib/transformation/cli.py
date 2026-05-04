@@ -360,11 +360,18 @@ def run_clustering(
     (or a prior run) so that ``summary_statistics.no_addresses`` is populated.
     \f
     """
+    from graphsenselib.config import is_fresh_clustering_enabled
     from graphsenselib.db.factory import DbFactory
     from graphsenselib.schema.schema import GraphsenseSchemas
     from graphsenselib.transformation.clustering import (
         run_clustering_one_off_from_cassandra,
     )
+
+    if not is_fresh_clustering_enabled():
+        raise click.ClickException(
+            "Fresh clustering is disabled. Set "
+            "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
+        )
 
     # Ensure transformed keyspace schema is up to date
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")

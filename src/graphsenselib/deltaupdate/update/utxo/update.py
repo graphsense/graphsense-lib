@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from cassandra import InvalidRequest
 
+from graphsenselib.config import is_fresh_clustering_enabled
 from graphsenselib.datatypes import DbChangeType, EntityType
 from graphsenselib.db import AnalyticsDb, DbChange
 from graphsenselib.db.analytics import ApplyChangesResult
@@ -1393,11 +1394,18 @@ class UpdateStrategyUtxo(UpdateStrategy):
         Cost is ``O(new_blocks + new_txs + new_addresses)`` instead of
         ``O(total_chain)``.  Called once after all batches have been processed.
         """
-        from graphsenselib.transformation.clustering import iter_multi_input_tx_inputs
+        if not is_fresh_clustering_enabled():
+            logger.info(
+                "Fresh clustering disabled "
+                "(GRAPHSENSE_FRESH_CLUSTERING_ENABLED is not true), skipping"
+            )
+            return
 
         if not _check_gs_clustering():
             logger.warning("gs_clustering not available, skipping fresh clustering")
             return
+
+        from graphsenselib.transformation.clustering import iter_multi_input_tx_inputs
 
         with LoggerScope.debug(
             logger, f"Fresh clustering for blocks {start_block}-{end_block}"
