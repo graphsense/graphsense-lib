@@ -13,7 +13,7 @@ class TagStoreReaderConfig(BaseSettings):
         default=50, description="Number of connections to maintain in pool"
     )
     pool_timeout: int = Field(
-        default=300, description="Timeout in seconds to get connection from pool"
+        default=10, description="Timeout in seconds to get connection from pool"
     )
     max_overflow: int = Field(
         default=10, description="Maximum overflow connections beyond pool_size"

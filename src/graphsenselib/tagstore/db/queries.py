@@ -335,6 +335,25 @@ def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str])
     )
 
 
+def _get_best_cluster_tags_batch_stmt(
+    cluster_ids: List[int], network: str, groups: List[str]
+):
+    return (
+        select(BestClusterTagView.cluster_id, Tag, TagPack, Confidence)
+        .options(joinedload(Tag.confidence))
+        .options(joinedload(Tag.concepts))
+        .options(joinedload(Tag.tag_type))
+        .options(joinedload(Tag.tag_subject))
+        .where(BestClusterTagView.cluster_id.in_(cluster_ids))
+        .where(BestClusterTagView.network == network)
+        .where(Tag.tagpack_id == TagPack.id)
+        .where(BestClusterTagView.tag_id == Tag.id)
+        .where(TagPack.acl_group.in_(groups))
+        .where(Confidence.id == Tag.confidence_id)
+        .order_by(BestClusterTagView.cluster_id, Confidence.level.desc())
+    )
+
+
 def _get_tags_by_actorid_stmt(
     actor: str,
     offset: Optional[int],
@@ -446,6 +465,21 @@ def _get_count_by_cluster_stmt(cluster_id: int, network: str, groups: List[str])
     )
 
 
+def _get_count_by_clusters_batch_stmt(
+    cluster_ids: List[int], network: str, groups: List[str]
+):
+    return (
+        select(
+            TagCountByClusterView.gs_cluster_id,
+            func.sum(TagCountByClusterView.count).label("total"),
+        )
+        .where(TagCountByClusterView.network == network)
+        .where(TagCountByClusterView.gs_cluster_id.in_(cluster_ids))
+        .where(TagCountByClusterView.acl_group.in_(groups))
+        .group_by(TagCountByClusterView.gs_cluster_id)
+    )
+
+
 def _get_similar_actors_stmt(query: str, limit: int):
     return (
         select(
@@ -496,6 +530,23 @@ def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[s
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .order_by(Actor.label)
+        .distinct()
+    )
+
+
+def _get_actors_for_clusterids_batch_stmt(
+    cluster_ids: List[int], network: str, groups: List[str]
+):
+    return (
+        select(AddressClusterMapping.gs_cluster_id, Actor.id, Actor.label)
+        .where(AddressClusterMapping.gs_cluster_id.in_(cluster_ids))
+        .where(AddressClusterMapping.address == Tag.identifier)
+        .where(AddressClusterMapping.network == network)
+        .where(Actor.id.isnot(None))
+        .where(Actor.id == Tag.actor_id)
+        .where(Tag.tagpack_id == TagPack.id)
+        .where(TagPack.acl_group.in_(groups))
+        .order_by(AddressClusterMapping.gs_cluster_id, Actor.label)
         .distinct()
     )
 
@@ -771,6 +822,72 @@ class TagstoreDbAsync:
             _get_actors_for_clusterid_stmt(cluster_id, network, groups)
         )
         return [HumanReadableId(id=idt, label=lbl) for idt, lbl in results]
+
+    # Batched variants: collapse N per-cluster lookups into a single
+    # session/query each. Used by list_entity_neighbors to avoid the
+    # N×3 fan-out that triggered the 2026-05-04 pool exhaustion.
+    @_inject_session
+    async def get_best_cluster_tags_for_clusters(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        session=None,
+    ) -> Dict[int, TagPublic]:
+        if not cluster_ids:
+            return {}
+        # `.unique()` is required because the joinedload on Tag.concepts
+        # is a collection — same constraint as the other facades in this
+        # file that joinedload relationships.
+        results = (
+            await session.exec(
+                _get_best_cluster_tags_batch_stmt(cluster_ids, network, groups)
+            )
+        ).unique()
+        # Pick the highest-confidence row per cluster_id, matching the
+        # single-row query's `.order_by(Confidence.level.desc()).limit(1)`.
+        best: Dict[int, tuple] = {}
+        for cid, t, tp, c in results:
+            prev = best.get(cid)
+            if prev is None or c.level > prev[2].level:
+                best[cid] = (t, tp, c)
+        return {
+            cid: TagPublic.fromDB(t, tp, inherited_from=InheritedFrom.CLUSTER)
+            for cid, (t, tp, _c) in best.items()
+        }
+
+    @_inject_session
+    async def get_nr_tags_for_clusters(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        session=None,
+    ) -> Dict[int, int]:
+        if not cluster_ids:
+            return {}
+        results = await session.exec(
+            _get_count_by_clusters_batch_stmt(cluster_ids, network, groups)
+        )
+        return {cid: int(total or 0) for cid, total in results}
+
+    @_inject_session
+    async def get_actors_for_clusters(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        session=None,
+    ) -> Dict[int, List[HumanReadableId]]:
+        if not cluster_ids:
+            return {}
+        results = await session.exec(
+            _get_actors_for_clusterids_batch_stmt(cluster_ids, network, groups)
+        )
+        out: Dict[int, List[HumanReadableId]] = {}
+        for cid, idt, lbl in results:
+            out.setdefault(cid, []).append(HumanReadableId(id=idt, label=lbl))
+        return out
 
     # Actor
 
