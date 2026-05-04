@@ -36,6 +36,28 @@ SEARCH_RESULT_LEVEL_CLASSES = {
 MAX_DEPTH = 7
 SEARCH_TIMEOUT = 300
 
+# Cap on concurrent DB-touching coroutines per request. Each tagstore call
+# checks out its own pool connection (see _inject_session in
+# tagstore/db/queries.py); without this cap a wide BFS can fan out into
+# 100+ concurrent sessions and exhaust the pool — root cause of the
+# 2026-05-04 gs-rest pool exhaustion incident.
+DEFAULT_DB_CONCURRENCY = 8
+
+
+async def gather_bounded(sem, *coros):
+    """`asyncio.gather` with an upper bound on concurrent execution.
+
+    `sem` is an `asyncio.Semaphore`; pass `None` to disable bounding.
+    """
+    if sem is None:
+        return await asyncio.gather(*coros)
+
+    async def _run(coro):
+        async with sem:
+            return await coro
+
+    return await asyncio.gather(*(_run(c) for c in coros))
+
 
 async def get_cluster(
     ctx, currency, cluster, exclude_best_address_tag=False, include_actors=False
@@ -186,6 +208,7 @@ async def search_cluster_neighbors(
     with_tag = False
     addresses = []
     MAGIC_VALUE_ANY_CATEGORY = "--"
+    db_sem = asyncio.Semaphore(DEFAULT_DB_CONCURRENCY)
 
     def stop_neighbor(neighbor):
         return (
@@ -233,7 +256,7 @@ async def search_cluster_neighbors(
 
     elif "addresses" in key:
         aws = [get_address(ctx, currency, address) for address in value]
-        addresses = await asyncio.gather(*aws)
+        addresses = await gather_bounded(db_sem, *aws)
         addresses_list = [
             {"address": a.address, "entity": a.entity}
             for a in addresses
@@ -295,6 +318,7 @@ async def search_cluster_neighbors(
         match_neighbor,
         depth,
         skip_visited=True,
+        concurrency=db_sem,
     )
 
     async def resolve(neighbor):
@@ -304,7 +328,7 @@ async def search_cluster_neighbors(
 
     async def resolve_path(path):
         aws = [resolve(dst) for dst in path]
-        neighbors = list(enumerate(await asyncio.gather(*aws)))
+        neighbors = list(enumerate(await gather_bounded(db_sem, *aws)))
         neighbors.reverse()
         paths = []
         for i, neighbor in neighbors:
@@ -325,7 +349,7 @@ async def search_cluster_neighbors(
         return paths[0]
 
     aws = [resolve_path(path) for path in result]
-    return await asyncio.gather(*aws)
+    return await gather_bounded(db_sem, *aws)
 
 
 async def bfs(
@@ -337,7 +361,10 @@ async def bfs(
     match_neighbor,
     max_depth=3,
     skip_visited=True,
+    concurrency=None,
 ):
+    if concurrency is None:
+        concurrency = asyncio.Semaphore(DEFAULT_DB_CONCURRENCY)
     # collect matching paths
     matching_paths = []
 
@@ -390,7 +417,7 @@ async def bfs(
         no_requests += pop
 
         aws = [retrieve_neighbor(last) for last in lasts]
-        list_of_neighbors = await asyncio.gather(*aws)
+        list_of_neighbors = await gather_bounded(concurrency, *aws)
 
         for neighbors, path in zip(list_of_neighbors, paths):
             for neighbor in neighbors:
@@ -439,9 +466,12 @@ async def recursive_search(
     skip_num_addresses,
     direction,
     cache=None,
+    concurrency=None,
 ):
     if cache is None:
         cache = dict()
+    if concurrency is None:
+        concurrency = asyncio.Semaphore(DEFAULT_DB_CONCURRENCY)
     if depth <= 0:
         return []
 
@@ -551,6 +581,7 @@ async def recursive_search(
                 skip_num_addresses,
                 direction,
                 cache,
+                concurrency=concurrency,
             )
 
         if not subpaths:
@@ -566,7 +597,7 @@ async def recursive_search(
 
     paths = []
 
-    for result in await asyncio.gather(*aws):
+    for result in await gather_bounded(concurrency, *aws):
         if not result:
             continue
 
@@ -576,7 +607,7 @@ async def recursive_search(
                 get_address(ctx, currency, address)
                 for address in result["matching_addresses"]
             ]
-            addresses = await asyncio.gather(*aws)
+            addresses = await gather_bounded(concurrency, *aws)
             obj.matching_addresses = [
                 address for address in addresses if address is not None
             ]

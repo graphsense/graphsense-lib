@@ -1,5 +1,8 @@
 import asyncio
+import contextlib
 from typing import Any, Dict, List, Optional, Protocol
+
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import ClusterNotFoundException
@@ -29,6 +32,13 @@ from .models import (
 )
 from .rates_service import RatesService
 from .tags_service import TagsService
+
+# Cap on concurrent per-neighbor DB calls inside list_entity_neighbors.
+# The tagstore lookups are batched (one Postgres session each), so this
+# only bounds the Cassandra `db.get_entity` fan-out — kept as a hard
+# upper bound on per-request connection demand. Root cause context:
+# 2026-05-04 gs-rest pool exhaustion incident.
+_NEIGHBORS_DB_CONCURRENCY = 8
 
 
 class DatabaseProtocol(Protocol):
@@ -84,6 +94,24 @@ class EntitiesService:
         self.blocks_service = blocks_service
         self.rates_service = rates_service
         self.logger = logger
+
+    @contextlib.asynccontextmanager
+    async def _tagstore_session(self):
+        """Yield a shared AsyncSession for the duration of a hot path so
+        sequential tagstore calls reuse one pool connection instead of
+        opening one per call. Yields None when no real engine is
+        available (MockTagstoreDb in tests / fallback) — callers must
+        skip passing `session=` in that case via `_session_kwargs`."""
+        engine = getattr(self.tagstore, "engine", None)
+        if engine is None:
+            yield None
+            return
+        async with AsyncSession(engine) as session:
+            yield session
+
+    @staticmethod
+    def _session_kwargs(session: Optional[AsyncSession]) -> Dict[str, Any]:
+        return {"session": session} if session is not None else {}
 
     def _from_row(
         self,
@@ -143,26 +171,30 @@ class EntitiesService:
 
         best_tag = None
         count = 0
-        if not exclude_best_address_tag:
-            tag = await self.tagstore.get_best_cluster_tag(
-                int(entity_id), currency.upper(), tagstore_groups
-            )
-
-            if tag is not None:
-                best_tag = self.tags_service._address_tag_from_public_tag(
-                    tag, int(entity_id)
+        actors = None
+        # Share one Postgres session across the 3 sequential tagstore
+        # calls — collapses 3 pool checkouts to 1 per get_entity request.
+        async with self._tagstore_session() as ts:
+            ts_kw = self._session_kwargs(ts)
+            if not exclude_best_address_tag:
+                tag = await self.tagstore.get_best_cluster_tag(
+                    int(entity_id), currency.upper(), tagstore_groups, **ts_kw
                 )
 
-        count = await self.tagstore.get_nr_tags_by_clusterid(
-            int(entity_id), currency.upper(), tagstore_groups
-        )
+                if tag is not None:
+                    best_tag = self.tags_service._address_tag_from_public_tag(
+                        tag, int(entity_id)
+                    )
 
-        actors = None
-        if include_actors:
-            actor_res = await self.tagstore.get_actors_by_clusterid(
-                int(entity_id), currency.upper(), tagstore_groups
+            count = await self.tagstore.get_nr_tags_by_clusterid(
+                int(entity_id), currency.upper(), tagstore_groups, **ts_kw
             )
-            actors = [LabeledItemRef(id=a.id, label=a.label) for a in actor_res]
+
+            if include_actors:
+                actor_res = await self.tagstore.get_actors_by_clusterid(
+                    int(entity_id), currency.upper(), tagstore_groups, **ts_kw
+                )
+                actors = [LabeledItemRef(id=a.id, label=a.label) for a in actor_res]
 
         self.logger.debug(f"result address {result}")
 
@@ -248,17 +280,67 @@ class EntitiesService:
             return NeighborEntities(neighbors=[])
 
         if not relations_only:
-            aws = [
-                self.get_entity(
-                    currency,
-                    row[dst + "_cluster_id"],
-                    exclude_best_address_tag=exclude_best_address_tag,
-                    include_actors=include_actors,
-                    tagstore_groups=tagstore_groups,
+            cluster_ids = [row[dst + "_cluster_id"] for row in results]
+            net = currency.upper()
+
+            # Batched Postgres prefetch: 1 pool connection total (shared
+            # across the 3 batched queries) instead of N×3.
+            best_tags: Dict[int, Any] = {}
+            nr_tags: Dict[int, int] = {}
+            actors_by_cluster: Dict[int, list] = {}
+            async with self._tagstore_session() as ts:
+                ts_kw = self._session_kwargs(ts)
+                if (
+                    not exclude_best_address_tag
+                    and cluster_ids
+                    and self.tagstore is not None
+                ):
+                    best_tags = await self.tagstore.get_best_cluster_tags_for_clusters(
+                        cluster_ids, net, tagstore_groups, **ts_kw
+                    )
+                if cluster_ids and self.tagstore is not None:
+                    nr_tags = await self.tagstore.get_nr_tags_for_clusters(
+                        cluster_ids, net, tagstore_groups, **ts_kw
+                    )
+                if include_actors and cluster_ids and self.tagstore is not None:
+                    actors_by_cluster = await self.tagstore.get_actors_for_clusters(
+                        cluster_ids, net, tagstore_groups, **ts_kw
+                    )
+
+            rates = await self.rates_service.get_rates(currency)
+            token_config = self.db.get_token_configuration(currency)
+            sem = asyncio.Semaphore(_NEIGHBORS_DB_CONCURRENCY)
+
+            async def _build_node(cid: int) -> Entity:
+                async with sem:
+                    row = await self.db.get_entity(currency, cid)
+                if not row:
+                    raise ClusterNotFoundException(currency, cid)
+                tag_pub = best_tags.get(cid)
+                best_tag = (
+                    self.tags_service._address_tag_from_public_tag(tag_pub, cid)
+                    if tag_pub is not None
+                    else None
                 )
-                for row in results
-            ]
-            nodes = await asyncio.gather(*aws)
+                cluster_actors = (
+                    [
+                        LabeledItemRef(id=a.id, label=a.label)
+                        for a in actors_by_cluster.get(cid, [])
+                    ]
+                    if include_actors
+                    else None
+                )
+                return self._from_row(
+                    currency,
+                    row,
+                    rates,
+                    token_config,
+                    best_tag,
+                    nr_tags.get(cid, 0),
+                    cluster_actors,
+                )
+
+            nodes = await asyncio.gather(*[_build_node(cid) for cid in cluster_ids])
 
         else:
             nodes = [r[dst + "_cluster_id"] for r in results]
