@@ -392,3 +392,23 @@ def test_delta_only_vs_dual_sink_parquet_equivalence():
                 assert dt.get(field) == du.get(field), (
                     f"Field '{field}' differs: delta={dt.get(field)!r} vs dual={du.get(field)!r}"
                 )
+
+
+def test_cassandra_sink_lock_name_is_raw_keyspace_only():
+    db = MagicMock()
+    db.raw.get_keyspace.return_value = "btc_raw"
+    db.transformed.get_keyspace.return_value = "btc_transformed"
+    sink = CassandraSink(db)
+    assert sink.lock_name() == "btc_raw"
+
+
+def test_delta_dump_sink_lock_name_uses_path_helper():
+    from graphsenselib.ingest.delta.sink import DeltaDumpSinkFactory
+
+    sink = DeltaDumpSinkFactory.create_writer(
+        network="btc",
+        s3_credentials=None,
+        write_mode="append",
+        directory="s3://my-bucket/foo/bar",
+    )
+    assert sink.lock_name() == "delta_ingest_my-bucket_foo_bar_btc"

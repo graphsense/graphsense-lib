@@ -230,9 +230,11 @@ def update(
             )
             sys.exit(125)
 
-        lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
+        raw_ks = db.raw.get_keyspace()
+        transformed_ks = db.transformed.get_keyspace()
         try:
-            with create_lock(lock_name):
+            # Acquisition order: raw -> transformed (matches transformation/cli.py).
+            with create_lock(raw_ks), create_lock(transformed_ks):
                 start_block, end_block, patch_mode = find_import_range(
                     db,
                     start_block,

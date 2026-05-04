@@ -284,7 +284,7 @@ def ingest(
                     "removed in a future release. Unset GRAPHSENSE_LEGACY_INGEST to "
                     "use the new pipeline."
                 )
-                lock_name = f"{db.raw.get_keyspace()}_{db.transformed.get_keyspace()}"
+                lock_name = db.raw.get_keyspace()
                 with create_lock(lock_name, disabled=lock_disabled):
                     sink_configs = [
                         (k, create_sink_config(k, currency, ks_config)) for k in sinks
@@ -485,7 +485,9 @@ def dump_rawdata(
 
     # Use a single lock for both ingest and auto-compact to prevent a
     # concurrent process from starting between the two operations.
-    lock_name = f"delta_ingest_{currency}"
+    from graphsenselib.utils.locking import delta_ingest_lock_name
+
+    lock_name = delta_ingest_lock_name(parquet_directory, currency)
     try:
         with create_lock(lock_name):
             with ExitStack() as stack:
@@ -609,7 +611,9 @@ def optimize_deltalake(
     logger.info(f"Optimizing deltalake tables in {parquet_directory_config.directory}")
     parquet_directory = parquet_directory_config.directory
     s3_credentials = config.get_s3_credentials(parquet_directory_config.s3_config)
-    lock_name = f"delta_ingest_{currency}"
+    from graphsenselib.utils.locking import delta_ingest_lock_name
+
+    lock_name = delta_ingest_lock_name(parquet_directory, currency)
     try:
         with create_lock(lock_name):
             if table is None:

@@ -257,15 +257,17 @@ def run_transformation(
     s3_credentials = config.get_s3_credentials(s3_config_name)
     spark_config = config.spark_config or {}
 
-    # Pin a top-block snapshot under the same lock that ingest/optimize use, so
-    # concurrent ingest writes past this boundary cannot tear our read. Block
-    # rows are committed last in each ingest batch, so any block_id <= top is
-    # guaranteed to have its dependent rows (tx/log/trace) already committed.
-    # The lock is held only for the boundary read; Spark runs unlocked.
     from graphsenselib.ingest.delta.sink import delta_lake_highest_block
-    from graphsenselib.utils.locking import create_lock
+    from graphsenselib.utils.locking import create_lock, delta_ingest_lock_name
 
-    with create_lock(f"delta_ingest_{currency}"):
+    delta_lock_name = delta_ingest_lock_name(delta_lake_path, currency)
+    transformed_keyspace = ks_config.transformed_keyspace_name
+
+    # Phase 1: pin a top-block snapshot under the delta-ingest lock so
+    # concurrent ingest writes past this boundary cannot tear our read.
+    # Block rows are committed last in each ingest batch, so any
+    # block_id <= top is guaranteed to have its dependent rows committed.
+    with create_lock(delta_lock_name):
         top_block = delta_lake_highest_block(delta_lake_path, s3_credentials)
     if top_block is None:
         raise click.ClickException(
@@ -292,21 +294,26 @@ def run_transformation(
     # Deferred PySpark import
     from graphsenselib.transformation.factory import run as run_factory
 
-    run_factory(
-        env=env,
-        currency=currency,
-        delta_lake_path=delta_lake_path,
-        cassandra_nodes=cassandra_nodes,
-        cassandra_username=cassandra_username,
-        cassandra_password=cassandra_password,
-        raw_keyspace=raw_keyspace,
-        start_block=start_block,
-        end_block=end_block,
-        local=local,
-        s3_credentials=s3_credentials,
-        spark_config=spark_config,
-        debug_write_audit=debug_write_audit,
-    )
+    # Phase 2: hold the transformed-keyspace lock for the Spark run so
+    # only one transformation writes to a given transformed keyspace at
+    # a time. Ingest is not blocked: the delta-ingest lock from phase 1
+    # has already been released.
+    with create_lock(transformed_keyspace):
+        run_factory(
+            env=env,
+            currency=currency,
+            delta_lake_path=delta_lake_path,
+            cassandra_nodes=cassandra_nodes,
+            cassandra_username=cassandra_username,
+            cassandra_password=cassandra_password,
+            raw_keyspace=raw_keyspace,
+            start_block=start_block,
+            end_block=end_block,
+            local=local,
+            s3_credentials=s3_credentials,
+            spark_config=spark_config,
+            debug_write_audit=debug_write_audit,
+        )
 
 
 @transformation.command("cluster", short_help="Run one-off UTXO address clustering.")

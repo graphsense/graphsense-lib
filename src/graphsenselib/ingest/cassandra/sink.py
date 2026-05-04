@@ -31,7 +31,7 @@ class CassandraSink(Sink):
         self.concurrency = concurrency
 
     def lock_name(self) -> str:
-        return f"{self.db.raw.get_keyspace()}_{self.db.transformed.get_keyspace()}"
+        return self.db.raw.get_keyspace()
 
     def highest_block(self):
         return self.db.raw.get_highest_block()

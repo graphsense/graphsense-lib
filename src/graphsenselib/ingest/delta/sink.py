@@ -487,7 +487,9 @@ class DeltaDumpWriter(Sink):
         self.write_mode = write_mode
         self.finalize_int_cols = finalize_int_cols or {}
 
-        self._lock_name = f"delta_ingest_{network}"
+        from graphsenselib.utils.locking import delta_ingest_lock_name
+
+        self._lock_name = delta_ingest_lock_name(directory, network)
 
         self.writers = {
             # method instead the lookup we now have which is probably
