@@ -119,7 +119,7 @@ def capture_table_snapshot(
     add_actions = dt.get_add_actions(flatten=True)
     size_col_idx = add_actions.column_names.index("size_bytes")
     size_col = add_actions.column(size_col_idx)
-    file_sizes = sum(int(v) for v in pa.array(size_col))
+    file_sizes = sum(int(v) for v in size_col.to_pylist())
 
     return TableSnapshot(
         table_name=table_name,
