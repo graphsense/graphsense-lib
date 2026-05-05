@@ -1,5 +1,6 @@
 from typing import Iterable, Optional
 
+from ..errors.errors import DBInconsistencyException
 from ..utils import flatten, hex_to_bytes
 from ..utils.utxo import SlimTx, get_slim_tx_from_transaction
 from .analytics import RawDb, TransformedDb
@@ -105,7 +106,10 @@ class RawDbUtxo(RawDb):
         else:
             return None
 
-    def get_latest_tx_id_before_block(self, block_id: int) -> Optional[int]:
+    def get_latest_tx_id_before_block(self, block_id: int) -> int:
+        if block_id <= 0:
+            return -1
+
         last_block = block_id - 1
         bucket_size = self.get_block_bucket_size()
 
@@ -116,9 +120,20 @@ class RawDbUtxo(RawDb):
                 "block_id": last_block,
             },
         )
-        latest_tx_id = -1
+        if block is not None:
+            return max(tx.tx_id for tx in block.txs)
 
-        if not block:
-            return latest_tx_id
+        # block_transactions row for the preceding block is missing. If the
+        # keyspace is genuinely empty, returning -1 is correct (allocator
+        # starts at 0). If the block table already extends past last_block,
+        # restarting from 0 would silently overwrite existing tx_ids.
+        highest_block = self.get_highest_block(sanity_check=False)
+        if highest_block is None:
+            return -1
 
-        return max(tx.tx_id for tx in block.txs)
+        raise DBInconsistencyException(
+            f"block_transactions[{last_block}] is missing in keyspace "
+            f"{self.get_keyspace()!r} but the block table extends to "
+            f"{highest_block:,}. Refusing to start tx_id allocation at 0 — "
+            f"this would overwrite existing tx_ids."
+        )
