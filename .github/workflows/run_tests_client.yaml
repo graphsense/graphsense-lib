@@ -1,0 +1,48 @@
+name: Python client tests
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: clients/python
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Client pins requires-python = ">=3.9"; cover the full matrix.
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+
+      - name: Sync client dependencies (with [cli] extra)
+        run: uv sync --extra cli --python=${{ matrix.python }}
+
+      - name: Lint
+        run: make lint
+
+      - name: Type check
+        run: make type-check
+
+      - name: Offline regression tests
+        run: make test-ci
+
+      - name: Backward-compatibility tests
+        run: make test-compat

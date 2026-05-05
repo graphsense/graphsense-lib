@@ -1,0 +1,21 @@
+{
+  "currency": "btc",
+  "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+  "entity": 123,
+  "cluster": 123,
+  "balance": {"value": 100, "fiat_values": [{"code": "usd", "value": 1.0}]},
+  "total_received": {"value": 500, "fiat_values": [{"code": "usd", "value": 5.0}]},
+  "total_spent": {"value": 400, "fiat_values": [{"code": "usd", "value": 4.0}]},
+  "first_tx": {"height": 1, "timestamp": 1234567890, "tx_hash": "aa"},
+  "last_tx": {"height": 2, "timestamp": 1234567891, "tx_hash": "bb"},
+  "in_degree": 1,
+  "out_degree": 1,
+  "no_incoming_txs": 1,
+  "no_outgoing_txs": 1,
+  "token_balances": null,
+  "total_tokens_received": null,
+  "total_tokens_spent": null,
+  "actors": null,
+  "is_contract": false,
+  "status": "new"
+}

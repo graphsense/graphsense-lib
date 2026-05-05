@@ -1,0 +1,22 @@
+{
+  "broad_category": "exchange",
+  "tag_count": 3,
+  "tag_count_indirect": 1,
+  "label_summary": {
+    "binance": {
+      "label": "binance",
+      "count": 2,
+      "confidence": 90,
+      "relevance": 0.9,
+      "creators": ["graphsense"],
+      "sources": ["public"],
+      "concepts": ["exchange"],
+      "lastmod": 1234567890
+    }
+  },
+  "concept_tag_cloud": {
+    "exchange": {"cnt": 2, "weighted": 1.8}
+  },
+  "best_actor": "binance",
+  "best_label": "binance"
+}

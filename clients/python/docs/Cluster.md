@@ -1,6 +1,6 @@
 # Cluster
 
-Address cluster (canonical name, supersedes `Entity`).
+Neighbor cluster reference (preferred alias for `entity`).
 
 ## Properties
 

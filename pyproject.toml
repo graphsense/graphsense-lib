@@ -187,9 +187,11 @@ platforms = ["any"]
 
 
 [tool.setuptools_scm]
-# For smarter version schemes and other configuration options,
-# check out https://github.com/pypa/setuptools_scm
-version_scheme = "only-version"
+# release-branch-semver: bumps minor on master/develop, patch on release/X.Y.x.
+# node-and-date: tags non-release commits with +g<sha>.d<date> so dev wheels
+# are uniquely identifiable; dirty workspaces get a +...dirty marker.
+version_scheme = "release-branch-semver"
+local_scheme = "node-and-date"
 
 
 [tool.setuptools.packages.find]
