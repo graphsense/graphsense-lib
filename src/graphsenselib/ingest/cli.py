@@ -133,7 +133,7 @@ def ingesting():
 @click.option(
     "--write-mode",
     type=click.Choice(
-        ["overwrite", "append"],
+        ["overwrite", "append", "merge"],
         case_sensitive=False,
     ),
     help="Write mode for delta sink (default: append).",
@@ -145,6 +145,24 @@ def ingesting():
     is_flag=True,
     help="Ignore check in the overwrite mode that only lets you start at the "
     "beginning of a partition.",
+)
+@click.option(
+    "--auto-compact",
+    type=str,
+    default=None,
+    help="Run autocompation after ingest (delta sink only). Parameter "
+    "controls age since last run and day the compaction should be run on, "
+    "e.g. 7d;sunday means run on sundays iif the last compaction was more "
+    "than 7 days ago days ago",
+)
+@click.option(
+    "--auto-compact-last-n",
+    type=int,
+    default=10,
+    help="When --auto-compact triggers, restrict compaction to the most "
+    "recent N partitions of each table (default: 10). Older partitions are "
+    "immutable raw data and don't accumulate small files. Has no effect on "
+    "tables without a partition column (e.g. trc10).",
 )
 @click.option(
     "--mode",
@@ -185,6 +203,8 @@ def ingest(
     create_schema,
     write_mode,
     ignore_overwrite_safechecks,
+    auto_compact,
+    auto_compact_last_n,
     mode,
     version,
 ):
@@ -236,6 +256,11 @@ def ingest(
             version = 2
 
     use_cassandra = "cassandra" in sinks
+    use_delta = "delta" in sinks
+
+    if auto_compact and not use_delta:
+        logger.error("--auto-compact requires --sinks delta.")
+        sys.exit(11)
 
     schema_tools = GraphsenseSchemas()
     ks_type = "raw"
@@ -272,6 +297,16 @@ def ingest(
                     write_mode=write_mode,
                     ignore_overwrite_safechecks=ignore_overwrite_safechecks,
                 )
+
+                if auto_compact and use_delta:
+                    _run_auto_compact(
+                        config=config,
+                        ks_config=ks_config,
+                        currency=currency,
+                        auto_compact=auto_compact,
+                        auto_compact_last_n=auto_compact_last_n,
+                        lock_disabled=lock_disabled,
+                    )
             else:
                 if db is None:
                     logger.error(
@@ -360,6 +395,53 @@ def _run_new_ingest(
         info=info,
         source_max_workers=source_max_workers,
     )
+
+
+def _run_auto_compact(
+    config,
+    ks_config,
+    currency: str,
+    auto_compact: str,
+    auto_compact_last_n: int,
+    lock_disabled: bool = False,
+):
+    """Check the auto-compact run-spec and run optimize_tables if it triggers."""
+    from graphsenselib.utils.locking import delta_ingest_lock_name
+
+    ic = _require_ingest_config(ks_config, currency)
+    pdc = ic.raw_keyspace_file_sinks.get("delta", None)
+    if pdc is None:
+        logger.error("--auto-compact requires raw_keyspace_file_sinks.delta.directory.")
+        sys.exit(11)
+
+    parquet_directory = pdc.directory
+    s3_credentials = config.get_s3_credentials(pdc.s3_config)
+
+    lock_name = delta_ingest_lock_name(parquet_directory, currency)
+    with create_lock(lock_name, disabled=lock_disabled):
+        logger.info("Running auto-compaction check")
+        last_vaccum_time = DeltaTableConnector(
+            parquet_directory, s3_credentials
+        ).get_last_completed_vacuum_date("block")
+
+        if parse_older_than_run_spec(auto_compact, last_vaccum_time):
+            logger.info(
+                f"Auto-compaction conditions met, last compaction was "
+                f"{last_vaccum_time}, running compaction"
+            )
+            optimize_tables(
+                currency,
+                parquet_directory,
+                s3_credentials,
+                mode="both",
+                full_vacuum=True,
+                last_n_partitions=auto_compact_last_n,
+            )
+        else:
+            logger.info(
+                f"Auto-compaction conditions not met, last compaction was "
+                f"{last_vaccum_time}, skipping compaction"
+            )
 
 
 @ingesting.group("delta-lake")
@@ -511,33 +593,17 @@ def dump_rawdata(
                 )
 
             if auto_compact:
-                logger.info("Running auto-compaction check")
-
-                last_vaccum_time = DeltaTableConnector(
-                    parquet_directory, s3_credentials
-                ).get_last_completed_vacuum_date("block")
-
-                should_run = parse_older_than_run_spec(auto_compact, last_vaccum_time)
-
-                if should_run:
-                    logger.info(
-                        f"Auto-compaction conditions met, last compaction was {last_vaccum_time}, running compaction"
-                    )
-                    # Compact only recently-touched partitions. Older
-                    # partitions are immutable raw data and don't accumulate
-                    # small files between runs.
-                    optimize_tables(
-                        currency,
-                        parquet_directory,
-                        s3_credentials,
-                        mode="both",
-                        full_vacuum=True,
-                        last_n_partitions=auto_compact_last_n,
-                    )
-                else:
-                    logger.info(
-                        f"Auto-compaction conditions not met, last compaction was {last_vaccum_time}, skipping compaction"
-                    )
+                # Compact only recently-touched partitions. Older partitions
+                # are immutable raw data and don't accumulate small files
+                # between runs.
+                _run_auto_compact(
+                    config=config,
+                    ks_config=ks_config,
+                    currency=currency,
+                    auto_compact=auto_compact,
+                    auto_compact_last_n=auto_compact_last_n,
+                    lock_disabled=True,
+                )
     except LockAcquisitionError as e:
         logger.warning(str(e))
         sys.exit(911)
