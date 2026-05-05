@@ -1,9 +1,38 @@
+import logging
 from pathlib import Path
 
 import pytest
 import yaml
+from fastmcp.exceptions import FastMCPError
 
 from graphsenselib.mcp.config import GSMCPConfig
+
+
+class _SuppressExpectedToolErrors(logging.Filter):
+    """Drop fastmcp's ERROR-level traceback for ToolError / FastMCPError.
+
+    fastmcp's call_tool wrapper logs a full traceback before re-raising,
+    which floods the test output for negative-path tests that *expect*
+    validation to reject input. Real errors (anything not a FastMCPError)
+    still get through.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info
+        if exc and isinstance(exc[1], FastMCPError):
+            return False
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _silence_expected_fastmcp_tool_errors():
+    logger = logging.getLogger("fastmcp.server.server")
+    flt = _SuppressExpectedToolErrors()
+    logger.addFilter(flt)
+    try:
+        yield
+    finally:
+        logger.removeFilter(flt)
 
 
 @pytest.fixture

@@ -13,4 +13,7 @@ vcr_default_params = {
     "match_on": ["method", "path", "query", "raw_body", "headers"],
     "filter_headers": ["authorization", "User-Agent"],
     "before_record_response": vcr_strip_headers,
+    # Store responses already-decoded so playback works with urllib3 2.x,
+    # which no longer decompresses through vcrpy's mock transport.
+    "decode_compressed_response": True,
 }
