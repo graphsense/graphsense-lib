@@ -288,7 +288,15 @@ class GraphsenseSchemas:
                     f"in {schema_type} keyspace."
                 )
 
-            current_version = int(db_conf._asdict().get("schema_version", "0") or "0")
+            conf_dict = db_conf._asdict()
+            current_version = int(conf_dict.get("schema_version", "0") or "0")
+
+            # The configuration table's PK column differs between schema types:
+            # raw uses ``id``, transformed uses ``keyspace_name``.
+            if "keyspace_name" in conf_dict:
+                pk_column, pk_value = "keyspace_name", conf_dict["keyspace_name"]
+            else:
+                pk_column, pk_value = "id", conf_dict["id"]
 
             migrations_left = True
             while migrations_left:
@@ -316,7 +324,8 @@ class GraphsenseSchemas:
                                     raise e
                     current_version += 1
                     db_ks.execute_raw_cql(
-                        f"UPDATE configuration SET schema_version = {current_version} WHERE id = '{db_conf.id}';"
+                        f"UPDATE configuration SET schema_version = {current_version} "
+                        f"WHERE {pk_column} = '{pk_value}';"
                     )
                 else:
                     logger.info(
