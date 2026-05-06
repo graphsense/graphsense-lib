@@ -58,6 +58,7 @@ from graphsenselib.errors import (
 )
 from graphsenselib.utils.rest_utils import is_eth_like
 from graphsenselib.utils.account import get_block_from_tx_id
+from graphsenselib.db.asynchronous import btc_offset_hotfix
 
 
 SMALL_PAGE_SIZE = 1000
@@ -835,6 +836,15 @@ class Cassandra:
     def close(self):
         self.cluster.shutdown()
 
+    def _btc_hotfix_active(self, currency, keyspace_type):
+        if keyspace_type != "transformed":
+            return False
+        try:
+            raw_ks = self.get_keyspace_mapping(currency, "raw")
+        except Exception:
+            return False
+        return btc_offset_hotfix.is_active(currency, raw_ks)
+
     def execute(
         self,
         currency,
@@ -849,6 +859,10 @@ class Cassandra:
         # self.logger.debug(f'{query} {params}')
         q = SimpleStatement(q, fetch_size=fetch_size)
 
+        hotfix_active = self._btc_hotfix_active(currency, keyspace_type)
+        if hotfix_active:
+            params = btc_offset_hotfix.translate_params_inbound(params)
+
         try:
             result = self.session.execute(q, params, paging_state=paging_state)
         except NoHostAvailable:
@@ -862,6 +876,9 @@ class Cassandra:
                 fetch_size=fetch_size,
             )
 
+        if hotfix_active and result is not None:
+            btc_offset_hotfix.translate_rows_outbound(result.current_rows)
+
         return result
 
     async def execute_async(
@@ -873,7 +890,11 @@ class Cassandra:
         paging_state=None,
         fetch_size=None,
         autopaging=False,
+        _hotfix_skip_inbound=False,
     ):
+        hotfix_active = self._btc_hotfix_active(currency, keyspace_type)
+        if hotfix_active and not _hotfix_skip_inbound:
+            params = btc_offset_hotfix.translate_params_inbound(params)
         try:
             result = await self.execute_async_lowlevel(
                 currency,
@@ -889,6 +910,11 @@ class Cassandra:
             raise BadUserInputException(
                 "Invalid value for page. Please use handle from previous requests."
             )
+        # Translate this page's rows now, before any autopage merge, so each
+        # row is translated exactly once.
+        if hotfix_active and result is not None:
+            btc_offset_hotfix.translate_rows_outbound(result.current_rows)
+
         if not autopaging:
             return result
 
@@ -903,6 +929,7 @@ class Cassandra:
             paging_state=result.paging_state,
             fetch_size=fetch_size,
             autopaging=True,
+            _hotfix_skip_inbound=True,
         )
 
         for row in more.current_rows:
