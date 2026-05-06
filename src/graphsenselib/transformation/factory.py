@@ -28,7 +28,7 @@ def run(
     schema_type = currency_to_schema_type.get(currency)
 
     spark = create_spark_session(
-        app_name=f"graphsense-transformation-{currency}-{env}",
+        app_name=f"graphsense-bulk-ingest-{currency}-{env}",
         local=local,
         cassandra_nodes=cassandra_nodes,
         cassandra_username=cassandra_username,
