@@ -1243,6 +1243,111 @@ class Cassandra:
             pagesize=pagesize,
         )
 
+    def _verify_address_in_tx_btc(
+        self,
+        currency: str,
+        address: str,
+        tx: dict,
+        is_outgoing: Optional[bool],
+    ) -> None:
+        """Verify that the queried address actually appears in the resolved
+        tx's inputs/outputs as the address_transactions secondary index claims.
+        Guards against index misalignments where a tx_id resolves to a tx
+        that does not actually involve the queried address.
+
+        Direction-aware: is_outgoing=True checks inputs, False checks outputs,
+        None checks either. No-op when strict_data_validation is disabled.
+        """
+        if not self.tconfig.strict_data_validation:
+            return
+
+        def addresses_in_ios(ios):
+            if ios is None:
+                return []
+            return sum([x.address or [] for x in ios], [])
+
+        if is_outgoing is True:
+            side = "inputs"
+            candidates = addresses_in_ios(tx.get("inputs"))
+        elif is_outgoing is False:
+            side = "outputs"
+            candidates = addresses_in_ios(tx.get("outputs"))
+        else:
+            side = "inputs/outputs"
+            candidates = addresses_in_ios(tx.get("inputs")) + addresses_in_ios(
+                tx.get("outputs")
+            )
+
+        if address in candidates:
+            return
+
+        # coinbase txs have inputs=None; the only legitimate way to receive
+        # from one is via outputs (incoming).
+        if (
+            is_outgoing is False
+            and tx.get("inputs") is None
+            and tx.get("coinbase") is True
+        ):
+            return
+
+        tx_hash = tx.get("tx_hash")
+        tx_hash_hex = (
+            tx_hash.hex() if isinstance(tx_hash, (bytes, bytearray)) else str(tx_hash)
+        )
+        raise DBInconsistencyException(
+            f"Index misalignment in {currency}: queried address {address} "
+            f"not found in {side} of tx {tx_hash_hex}. "
+            f"Possible address_transactions secondary index corruption."
+        )
+
+    def _verify_address_in_tx_eth(
+        self,
+        currency: str,
+        queried_address,
+        row: dict,
+    ) -> None:
+        """Verify that the queried address actually appears as the expected
+        side (from_address when is_outgoing else to_address) of an eth-like
+        normalized address-transaction row. Guards against index misalignments
+        where a tx_id resolves to a transfer that does not involve the
+        queried address. No-op when strict_data_validation is disabled.
+        """
+        if not self.tconfig.strict_data_validation:
+            return
+
+        def to_bytes(addr):
+            if addr is None:
+                return None
+            if isinstance(addr, (bytes, bytearray)):
+                return bytes(addr)
+            if isinstance(addr, str):
+                return hex_str_to_bytes(strip_0x(addr))
+            return None
+
+        queried = to_bytes(queried_address)
+        if row.get("is_outgoing"):
+            side = "from_address"
+            candidate = to_bytes(row.get("from_address"))
+        else:
+            side = "to_address"
+            candidate = to_bytes(row.get("to_address"))
+
+        if queried is not None and candidate == queried:
+            return
+
+        tx_hash = row.get("tx_hash")
+        tx_hash_hex = (
+            tx_hash.hex() if isinstance(tx_hash, (bytes, bytearray)) else str(tx_hash)
+        )
+        queried_repr = bytes_to_hex(queried) if queried is not None else queried_address
+        candidate_repr = bytes_to_hex(candidate) if candidate is not None else candidate
+        raise DBInconsistencyException(
+            f"Index misalignment in {currency}: queried address "
+            f"{queried_repr} does not match {side}={candidate_repr} of tx "
+            f"{tx_hash_hex}. "
+            f"Possible address_transactions secondary index corruption."
+        )
+
     @eth
     async def list_txs_by_node_type(
         self,
@@ -1292,6 +1397,8 @@ class Cassandra:
         for row, tx in zip(results, txs):
             if tx is None:
                 continue
+            if node_type == NodeType.ADDRESS:
+                self._verify_address_in_tx_btc(currency, id, tx, row.get("is_outgoing"))
             row["tx_hash"] = tx["tx_hash"]
             row["height"] = tx["block_id"]
             row["timestamp"] = tx["timestamp"]
@@ -1909,6 +2016,16 @@ class Cassandra:
                     for k, v in tx.items():
                         row[k] = v
 
+                # results2 was indexed by `second`; assert each merged tx
+                # actually has `second` on the side its is_outgoing claims.
+                # Catches address_transactions index misalignments. Only
+                # checked for ADDRESS queries.
+                if node_type == NodeType.ADDRESS:
+                    for row in results2:
+                        self._verify_address_in_tx_btc(
+                            currency, second, row, row.get("is_outgoing")
+                        )
+
             if is_eth_like(currency):
                 # TODO probably this check is no longer necessary
                 # since we filtered on tx_ref level already
@@ -1916,6 +2033,14 @@ class Cassandra:
                 if node_type == NodeType.CLUSTER:
                     neighbor = dst_node["root_address"]
                     id = src_node["root_address"]
+
+                # results2 was indexed by `second`; assert each returned row
+                # actually has `second` on the side its is_outgoing claims.
+                # Catches address_transactions index misalignments.
+                second_address = neighbor if is_outgoing else id
+                for row in results2:
+                    self._verify_address_in_tx_eth(currency, second_address, row)
+
                 # Token/Trace transactions might not be between the requested
                 # nodes so only keep the relevant ones
                 before = len(results2)
@@ -3370,6 +3495,7 @@ class Cassandra:
         )
 
         for row in results:
+            self._verify_address_in_tx_eth(currency, address, row)
             row["value"] *= -1 if row["is_outgoing"] else 1
 
         return results, str(paging_state) if paging_state is not None else None
