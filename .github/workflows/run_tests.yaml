@@ -40,5 +40,7 @@ jobs:
         run: make lint
       - name: Run type check
         run: make type-check
+      - name: Validate MCP curation (drift gate)
+        run: make mcp-validate-curation
       - name: Build wheel
         run: make build
