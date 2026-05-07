@@ -12,6 +12,20 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.12.3] 2026-05-07
+
+### Library (v2.12.3)
+
+#### Changed
+- **Cluster-mapping staleness check is now per-network.** Sampling switched from a global `LIMIT N` (which was dominated by BTC's heavy-hitter clusters and effectively starved other chains) to `ROW_NUMBER() OVER (PARTITION BY network)`, so each eligible network gets up to `--staleness-sample-size` / `--cluster-staleness-sample-size` rows independently. The auto-rerun gate now triggers when the **maximum** per-network divergence rate ≥ threshold (was: weighted overall rate), so drift on smaller chains is no longer hidden by a clean BTC sample. Total Cassandra read cost grows from `sample_size` to `N × sample_size`.
+
+#### Fixed
+- **`LabelSummary.concepts` order is now deterministic** (`sorted(...)` instead of `list(set(...))`). The previous `set`-derived ordering was hash-dependent and could differ between Python versions, causing `TagSummary` equality comparisons to flake on 3.10 vs 3.11.
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
 ## [2.12.2] 2026-05-07
 
 ### Library (v2.12.2)

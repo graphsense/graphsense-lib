@@ -699,35 +699,44 @@ class TagStore(object):
         for record in self.cursor:
             yield record
 
-    def get_cluster_mapping_sample(self, limit, networks=None):
-        """Sample mapped addresses biased toward large clusters.
+    def get_cluster_mapping_sample(self, limit_per_network, networks=None):
+        """Sample mapped addresses per network, biased toward large clusters.
 
         Used by the staleness check to compare stored gs_cluster_id against
-        the current cluster assignment in the graph datastore.
+        the current cluster assignment in the graph datastore. Each
+        eligible network contributes up to `limit_per_network` rows; a
+        global LIMIT would be dominated by BTC's heavy-hitter clusters and
+        starve smaller chains, masking drift on them.
 
-        Returns rows of (address, network, gs_cluster_id) ordered by
-        gs_cluster_no_addr DESC. The deterministic ordering means repeated
-        runs sample the same heavy-hitter clusters first, which is the
-        intent: drift in big clusters is what users notice.
+        Returns rows of (address, network, gs_cluster_id). Within each
+        network the ordering is gs_cluster_no_addr DESC then address, so
+        repeated runs sample the same heavy-hitter clusters first.
         """
-        params = [limit]
         if networks:
             q = (
-                "SELECT address, network, gs_cluster_id "
-                "FROM address_cluster_mapping "
-                "WHERE network IN %s "
-                "ORDER BY gs_cluster_no_addr DESC NULLS LAST, network, address "
-                "LIMIT %s"
+                "SELECT address, network, gs_cluster_id FROM ("
+                "  SELECT address, network, gs_cluster_id, "
+                "    ROW_NUMBER() OVER ("
+                "      PARTITION BY network "
+                "      ORDER BY gs_cluster_no_addr DESC NULLS LAST, address"
+                "    ) AS rn "
+                "  FROM address_cluster_mapping "
+                "  WHERE network IN %s"
+                ") sub WHERE rn <= %s"
             )
-            self.cursor.execute(q, (tuple(networks), limit))
+            self.cursor.execute(q, (tuple(networks), limit_per_network))
         else:
             q = (
-                "SELECT address, network, gs_cluster_id "
-                "FROM address_cluster_mapping "
-                "ORDER BY gs_cluster_no_addr DESC NULLS LAST, network, address "
-                "LIMIT %s"
+                "SELECT address, network, gs_cluster_id FROM ("
+                "  SELECT address, network, gs_cluster_id, "
+                "    ROW_NUMBER() OVER ("
+                "      PARTITION BY network "
+                "      ORDER BY gs_cluster_no_addr DESC NULLS LAST, address"
+                "    ) AS rn "
+                "  FROM address_cluster_mapping"
+                ") sub WHERE rn <= %s"
             )
-            self.cursor.execute(q, params)
+            self.cursor.execute(q, (limit_per_network,))
         return self.cursor.fetchall()
 
     def get_tagstore_composition(self, by_network=False):

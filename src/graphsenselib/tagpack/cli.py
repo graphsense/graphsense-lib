@@ -285,7 +285,11 @@ def config(ctx, verbose):
     type=int,
     default=2000,
     show_default=True,
-    help="Sample size for --auto-rerun-cluster-mapping-with-env staleness check.",
+    help=(
+        "Sample size *per network* for --auto-rerun-cluster-mapping-with-env. "
+        "Each eligible (non-eth-like) network is sampled independently; a "
+        "global limit would be dominated by BTC's heavy-hitter clusters."
+    ),
 )
 @click.option(
     "--cluster-staleness-threshold",
@@ -294,7 +298,9 @@ def config(ctx, verbose):
     show_default=True,
     help=(
         "Divergence rate (0.0-1.0) at or above which "
-        "--auto-rerun-cluster-mapping-with-env triggers a full rerun."
+        "--auto-rerun-cluster-mapping-with-env triggers a full rerun. "
+        "Compared against the maximum per-network rate, so drift on any "
+        "one chain is enough to trigger."
     ),
 )
 @click.option(
@@ -508,18 +514,25 @@ def _sync_impl(
                     f"  {net}: {stats['diverged']}/{stats['checked']} "
                     f"diverged ({stats['rate']:.2%})"
                 )
-            if overall >= cluster_staleness_threshold:
+            if per_network:
+                max_net, max_stats = max(
+                    per_network.items(), key=lambda kv: kv[1]["rate"]
+                )
+                max_rate = float(max_stats["rate"])
+            else:
+                max_net, max_rate = None, 0.0
+            if max_rate >= cluster_staleness_threshold:
                 logger.info(
-                    f"Overall divergence {overall:.2%} >= threshold "
-                    f"{cluster_staleness_threshold:.2%}; rerunning full "
-                    "cluster mapping."
+                    f"Max per-network divergence {max_rate:.2%} on '{max_net}' "
+                    f">= threshold {cluster_staleness_threshold:.2%} "
+                    f"(overall {overall:.2%}); rerunning full cluster mapping."
                 )
                 effective_rerun_env = auto_rerun_cluster_mapping_with_env
             else:
                 logger.info(
-                    f"Overall divergence {overall:.2%} < threshold "
-                    f"{cluster_staleness_threshold:.2%}; mapping new "
-                    "addresses only."
+                    f"Max per-network divergence {max_rate:.2%} < threshold "
+                    f"{cluster_staleness_threshold:.2%} (overall {overall:.2%}); "
+                    "mapping new addresses only."
                 )
                 effective_run_env = auto_rerun_cluster_mapping_with_env
 
@@ -1585,7 +1598,11 @@ def check_cluster_mapping_staleness(
     use_gs_lib_config_env,
     sample_size,
 ):
-    """Sample mapped addresses, compare stored vs. current cluster_id.
+    """Sample mapped addresses per network, compare stored vs. current cluster_id.
+
+    Each eligible network contributes up to `sample_size` rows, biased
+    toward heavy-hitter clusters. A global limit would be dominated by
+    BTC and hide drift on smaller chains.
 
     Returns (overall_divergence_rate, per_network_stats). Skips eth-like
     networks (ETH/TRX) — they have no real clustering, so cluster_id ==
@@ -1895,14 +1912,21 @@ def init(schema, url):
     type=int,
     default=2000,
     show_default=True,
-    help="Sample size for --auto-rerun-if-stale.",
+    help=(
+        "Sample size *per network* for --auto-rerun-if-stale. Each eligible "
+        "(non-eth-like) network is sampled independently."
+    ),
 )
 @click.option(
     "--staleness-threshold",
     type=float,
     default=0.05,
     show_default=True,
-    help="Divergence rate (0.0-1.0) at or above which --auto-rerun-if-stale triggers a full update.",
+    help=(
+        "Divergence rate (0.0-1.0) at or above which --auto-rerun-if-stale "
+        "triggers a full update. Compared against the maximum per-network "
+        "rate, so drift on any one chain is enough to trigger."
+    ),
 )
 def insert_cluster_mappings(
     db_nodes,
@@ -1940,16 +1964,23 @@ def insert_cluster_mappings(
                 f"  {net}: {stats['diverged']}/{stats['checked']} "
                 f"diverged ({stats['rate']:.2%})"
             )
-        if overall >= staleness_threshold:
+        if per_network:
+            max_net, max_stats = max(per_network.items(), key=lambda kv: kv[1]["rate"])
+            max_rate = float(max_stats["rate"])
+        else:
+            max_net, max_rate = None, 0.0
+        if max_rate >= staleness_threshold:
             logger.info(
-                f"Overall divergence {overall:.2%} >= threshold "
-                f"{staleness_threshold:.2%}; running full update."
+                f"Max per-network divergence {max_rate:.2%} on '{max_net}' "
+                f">= threshold {staleness_threshold:.2%} "
+                f"(overall {overall:.2%}); running full update."
             )
             update = True
         else:
             logger.info(
-                f"Overall divergence {overall:.2%} < threshold "
-                f"{staleness_threshold:.2%}; mapping new addresses only."
+                f"Max per-network divergence {max_rate:.2%} < threshold "
+                f"{staleness_threshold:.2%} (overall {overall:.2%}); "
+                "mapping new addresses only."
             )
 
     insert_cluster_mapping(
