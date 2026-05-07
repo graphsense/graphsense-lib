@@ -277,7 +277,7 @@ def compute_tag_digest(
             relevance=ltc[key].weighted,
             creators=list(value["creators"]),
             sources=list(value["src"]),
-            concepts=list(value["concepts"]),
+            concepts=sorted(value["concepts"]),
             lastmod=value["lastmod"],
             inherited_from="cluster" if value["inherited"] else None,
         )
