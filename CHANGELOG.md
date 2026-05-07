@@ -12,7 +12,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
-### Library
+## [2.12.1] 2026-05-07
+
+### Library (v2.12.1)
 
 #### Added
 - **Cluster mapping staleness check** for `tagpack-tool`: a sample of mapped addresses (biased toward large clusters via `gs_cluster_no_addr`) is compared against the current clustering in the graph datastore, and a full cluster-mapping rerun is triggered only when divergence crosses a threshold. New flags:
@@ -21,6 +23,25 @@ Use one changelog file, but separate entries by track in each release window.
   - New diagnostic command `tagpack-tool tagstore check-cluster-mapping-staleness --use-gs-lib-config-env <env>` prints a per-network divergence table without writing to the DB.
 
   The existing `--rerun-cluster-mapping-with-env` and `--run-cluster-mapping-with-env` flags are unchanged. Eth-like networks (ETH/TRX) are skipped by the check since `cluster_id == address_id` and drift is not possible.
+
+- **`max_concurrency` field on `TagStoreReaderConfig`** (env: `GRAPHSENSE_TAGSTORE_READ_MAX_CONCURRENCY`) caps the number of concurrent Postgres-touching coroutines per gs-rest request. Defaults to `max(2, pool_size // 3)` so a single wide request leaves headroom for concurrent traffic; can be overridden per-deployment. A `model_validator` rejects configs where `pool_size + max_overflow < max_concurrency` at config load. The active value is read at runtime via `get_tagstore_max_concurrency()` and registered on REST startup via `set_active_tagstore_config()`.
+
+#### Changed
+- **`TagStoreReaderConfig.pool_timeout` default lowered from 300 → 10 seconds.** The previous 5-minute default turned slow tagstore queries into request-time deadlocks; 10 seconds fails fast and surfaces real saturation.
+
+#### Fixed
+- **gs-rest Postgres pool exhaustion** (root cause of the 2026-05-04 incident). Every wide tagstore-touching code path now bounds its `asyncio.gather` fan-out via a shared `gather_bounded` helper using `TagStoreReaderConfig.max_concurrency`. Sites covered:
+  - `_any_input_is_exchange` heuristic (`/<currency>/txs/{hash}?include_heuristics=all` on wide BTC txs)
+  - `_add_labels` (every `list_*_neighbors include_labels=true` request)
+  - `list_address_neighbors` per-neighbor `get_address` gather when `include_actors=true`
+  - BFS fan-out in `clusters_service` (`recursive_search`, `bfs`)
+  - Per-neighbor `db.get_entity` fan-out in `list_entity_neighbors`
+- **Per-call `AsyncSession` amplification** in `entities_service.list_entity_neighbors`: replaced N×3 per-neighbor tagstore calls with three batched queries (`get_best_cluster_tags_for_clusters`, `get_nr_tags_for_clusters`, `get_actors_for_clusters`) sharing one Postgres session. Per-request session demand for `pagesize=100&include_actors=true` drops from ~300 to 1.
+- **Per-call session reuse** in `entities_service.get_entity`: three sequential tagstore calls now share one `AsyncSession` (was 3).
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
 
 ## [2.12.0] 2026-04-07
 
