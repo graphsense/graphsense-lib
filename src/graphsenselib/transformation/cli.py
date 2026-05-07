@@ -118,6 +118,16 @@ def _log_startup_banner(
     help="Override Delta Lake base path (default: from config).",
 )
 @click.option(
+    "--s3-config",
+    "s3_config_name",
+    type=str,
+    default=None,
+    help=(
+        "Name of the s3_configs entry to use for S3/MinIO credentials. "
+        "Required when the Delta Lake path is on s3://."
+    ),
+)
+@click.option(
     "--local",
     is_flag=True,
     help="Run Spark in local mode with local[*].",
@@ -150,6 +160,7 @@ def run_transformation(
     create_schema,
     raw_keyspace_override,
     delta_lake_path,
+    s3_config_name,
     local,
     debug_write_audit,
     patch,
@@ -179,6 +190,40 @@ def run_transformation(
             f"silently miss spend links whose two endpoints straddle the "
             f"window boundary. Re-run from a fresh keyspace instead."
         )
+
+    # Resolve delta path from config if not overridden. S3 credentials are
+    # selected explicitly via --s3-config (not auto-derived from the sink) so
+    # the user picks read-time credentials independently of write-time config.
+    if delta_lake_path is None:
+        ingest_cfg = ks_config.ingest_config
+        if ingest_cfg and ingest_cfg.raw_keyspace_file_sinks:
+            delta_sink = ingest_cfg.raw_keyspace_file_sinks.get("delta")
+            if delta_sink:
+                delta_lake_path = delta_sink.directory
+        if delta_lake_path is None:
+            raise click.UsageError(
+                "No --delta-lake-path provided and no delta sink configured "
+                f"for {currency} in environment {env}."
+            )
+
+    is_s3_path = delta_lake_path.startswith("s3://") or delta_lake_path.startswith(
+        "s3a://"
+    )
+    if is_s3_path and s3_config_name is None:
+        available = sorted(config.s3_configs.keys())
+        if not available:
+            raise click.UsageError(
+                f"Delta Lake path {delta_lake_path} is on S3 but no s3_configs "
+                "are defined in the graphsense config. Add at least one named "
+                "entry under s3_configs and pass --s3-config NAME."
+            )
+        raise click.UsageError(
+            f"Delta Lake path {delta_lake_path} is on S3 but --s3-config was "
+            f"not provided. Available s3_configs: {', '.join(available)}."
+        )
+
+    s3_credentials = config.get_s3_credentials(s3_config_name)
+    spark_config = config.spark_config or {}
 
     # Schema creation runs BEFORE Spark (uses cassandra-driver, no Java needed)
     if create_schema:
@@ -238,24 +283,6 @@ def run_transformation(
                         f"overwrite the requested block range (account "
                         f"chains only)."
                     )
-
-    # Resolve delta path and S3 credentials from config if not overridden
-    s3_config_name = None
-    if delta_lake_path is None:
-        ingest_cfg = ks_config.ingest_config
-        if ingest_cfg and ingest_cfg.raw_keyspace_file_sinks:
-            delta_sink = ingest_cfg.raw_keyspace_file_sinks.get("delta")
-            if delta_sink:
-                delta_lake_path = delta_sink.directory
-                s3_config_name = delta_sink.s3_config
-        if delta_lake_path is None:
-            raise click.UsageError(
-                "No --delta-lake-path provided and no delta sink configured "
-                f"for {currency} in environment {env}."
-            )
-
-    s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.spark_config or {}
 
     from graphsenselib.ingest.delta.sink import delta_lake_highest_block
     from graphsenselib.utils.locking import create_lock, delta_ingest_lock_name

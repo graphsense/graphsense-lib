@@ -86,7 +86,7 @@ def build_gs_config(
     }
 
     if minio_endpoint:
-        gs_config["s3_credentials"] = {
+        creds = {
             "AWS_ENDPOINT_URL": minio_endpoint,
             "AWS_ACCESS_KEY_ID": minio_access_key or "",
             "AWS_SECRET_ACCESS_KEY": minio_secret_key or "",
@@ -94,6 +94,8 @@ def build_gs_config(
             "AWS_ALLOW_HTTP": "true",
             "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
         }
+        gs_config["s3_credentials"] = creds
+        gs_config["s3_configs"] = {"minio": creds}
 
     return gs_config
 

@@ -161,6 +161,7 @@ def run_transformation(
         "--start-block", str(sb),
         "--end-block", str(eb),
         "--delta-lake-path", delta_directory,
+        "--s3-config", "minio",
     ]
     if extra_args:
         cmd.extend(extra_args)
