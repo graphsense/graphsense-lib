@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Added
+- **Cluster mapping staleness check** for `tagpack-tool`: a sample of mapped addresses (biased toward large clusters via `gs_cluster_no_addr`) is compared against the current clustering in the graph datastore, and a full cluster-mapping rerun is triggered only when divergence crosses a threshold. New flags:
+  - `tagpack-tool sync --auto-rerun-cluster-mapping-with-env <env>` (with `--cluster-staleness-sample-size`, default 2000, and `--cluster-staleness-threshold`, default 0.05).
+  - `tagpack-tool tagstore insert-cluster-mappings --auto-rerun-if-stale` (with `--staleness-sample-size` / `--staleness-threshold`).
+  - New diagnostic command `tagpack-tool tagstore check-cluster-mapping-staleness --use-gs-lib-config-env <env>` prints a per-network divergence table without writing to the DB.
+
+  The existing `--rerun-cluster-mapping-with-env` and `--run-cluster-mapping-with-env` flags are unchanged. Eth-like networks (ETH/TRX) are skipped by the check since `cluster_id == address_id` and drift is not possible.
+
 ## [2.12.0] 2026-04-07
 
 ### Library (v2.12.0)
