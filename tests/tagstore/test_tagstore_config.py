@@ -11,7 +11,7 @@ class TestTagStoreReaderConfig:
         config = TagStoreReaderConfig(url="postgresql://localhost:5432/db")
         assert config.url == "postgresql://localhost:5432/db"
         assert config.pool_size == 50
-        assert config.pool_timeout == 300
+        assert config.pool_timeout == 10
         assert config.max_overflow == 10
         assert config.pool_recycle == 3600
         assert config.enable_prepared_statements_cache is False

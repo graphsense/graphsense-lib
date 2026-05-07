@@ -1,8 +1,34 @@
 import pytest
 
 from graphsenselib.db import DbFactory
-from graphsenselib.db.cassandra import build_delete_stmt, build_select_stmt
+from graphsenselib.db.cassandra import CassandraDb, build_delete_stmt, build_select_stmt
 from graphsenselib.schema.schema import GraphsenseSchemas
+
+
+def test_cassandra_db_default_port():
+    db = CassandraDb(["host-a", "host-b"])
+    assert db.db_nodes == ["host-a", "host-b"]
+    assert db.db_port == 9042
+
+
+def test_cassandra_db_explicit_port():
+    db = CassandraDb(["host-a:9043", "host-b:9043"])
+    assert db.db_nodes == ["host-a", "host-b"]
+    assert db.db_port == 9043
+
+
+def test_cassandra_db_partial_port_inherits():
+    db = CassandraDb(["host-a:9043", "host-b"])
+    assert db.db_nodes == ["host-a", "host-b"]
+    assert db.db_port == 9043
+
+
+def test_cassandra_db_mixed_ports_warn_and_use_first(caplog):
+    with caplog.at_level("WARNING"):
+        db = CassandraDb(["host-a:9042", "host-b:9043"])
+    assert db.db_port == 9042
+    assert db.db_nodes == ["host-a", "host-b"]
+    assert any("conflicting ports" in r.message for r in caplog.records)
 
 
 def test_build_select_stmt_limit():

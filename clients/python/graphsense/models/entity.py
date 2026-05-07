@@ -25,7 +25,7 @@ ENTITY_ANY_OF_SCHEMAS = ["Entity", "int"]
 
 class Entity(BaseModel):
     """
-    Legacy field name. When this carries a full `Entity`/`Cluster` object, prefer reading the `cluster` field on that nested object. The field name `entity` at the neighbor level is retained for backwards compatibility.
+    Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release.
     """
 
     # data type: Entity

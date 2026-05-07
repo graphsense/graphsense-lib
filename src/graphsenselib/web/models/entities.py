@@ -86,13 +86,11 @@ class Entity(APIModel):
 class NeighborEntity(APIModel):
     """Neighbor cluster model (legacy name: NeighborEntity).
 
-    Note: unlike the top-level `Entity`/`Cluster` models, this class does NOT
-    dual-emit a `cluster` key at the neighbor level. The nested `entity` value
-    is either an integer ID or a full `Entity` object (which itself already
-    exposes both `entity` and `cluster` keys), so adding a sibling `cluster`
-    key here would duplicate either an int or an entire object for no gain
-    and introduce an OpenAPI schema name collision with the top-level
-    `Cluster` type.
+    Dual-emits the neighbor reference under both `entity` (deprecated) and
+    `cluster` (preferred) keys, mirroring the alias pattern on the top-level
+    `Entity`/`Cluster` models. The value is either an integer ID or a full
+    `Entity`/`Cluster` object; whichever shape `entity` carries, `cluster`
+    carries the same value.
     """
 
     model_config = api_model_config(
@@ -100,6 +98,7 @@ class NeighborEntity(APIModel):
             "value": VALUES_EXAMPLE,
             "no_txs": 5,
             "entity": ENTITY_EXAMPLE,
+            "cluster": ENTITY_EXAMPLE,
             "labels": ["internet archive"],
         }
     )
@@ -108,14 +107,25 @@ class NeighborEntity(APIModel):
     no_txs: int
     entity: Optional[Union[Entity, int]] = Field(
         default=None,
-        description="Legacy field name. When this carries a full `Entity`/`Cluster` "
-        "object, prefer reading the `cluster` field on that nested object. The "
-        "field name `entity` at the neighbor level is retained for backwards "
-        "compatibility.",
+        description="Deprecated alias of `cluster`. Use `cluster` instead; this "
+        "field is retained for backwards compatibility and will be removed in a "
+        "future release.",
         json_schema_extra={"deprecated": True},
     )
     labels: Optional[list[str]] = None
     token_values: Optional[dict[str, Values]] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cluster(self) -> Optional[Union[Entity, int]]:
+        """Neighbor cluster reference (preferred alias for `entity`)."""
+        return self.entity
+
+    def to_dict(self, shallow: bool = False) -> dict[str, Any]:
+        result = super().to_dict(shallow=shallow)
+        if shallow and "cluster" not in result:
+            result["cluster"] = self.entity
+        return result
 
 
 class NeighborEntities(APIModel):

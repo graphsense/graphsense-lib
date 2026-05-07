@@ -1,0 +1,12 @@
+{
+  "tx_type": "utxo",
+  "currency": "btc",
+  "tx_hash": "0xabc",
+  "coinbase": false,
+  "height": 1000,
+  "no_inputs": 1,
+  "no_outputs": 1,
+  "timestamp": 1234567890,
+  "total_input": {"value": 100, "fiat_values": []},
+  "total_output": {"value": 100, "fiat_values": []}
+}

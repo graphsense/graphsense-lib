@@ -151,6 +151,7 @@ def test_list_cluster_neighbors(client):
     )
     ewton["neighbors"][0]["labels"] = ["labelX"]
     ewton["neighbors"][0]["entity"]["no_address_tags"] = 1
+    ewton["neighbors"][0]["cluster"]["no_address_tags"] = 1
     assert ewton == result
 
     result = get_json(
@@ -187,6 +188,7 @@ def test_list_cluster_neighbors(client):
     for n in ewton_eth["neighbors"]:
         n.pop("labels", None)
         n["entity"].pop("actors", None)
+        n["cluster"].pop("actors", None)
     assert ewton_eth == result
 
     path_only = basepath + "&only_ids={only_ids}"

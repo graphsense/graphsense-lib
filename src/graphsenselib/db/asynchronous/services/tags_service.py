@@ -62,6 +62,15 @@ class TagstoreProtocol(Protocol):
     async def get_best_cluster_tag(
         self, cluster_id: int, currency: str, groups: List[str]
     ) -> Optional[Any]: ...
+    async def get_best_cluster_tags_for_clusters(
+        self, cluster_ids: List[int], network: str, groups: List[str]
+    ) -> Dict[int, Any]: ...
+    async def get_nr_tags_for_clusters(
+        self, cluster_ids: List[int], network: str, groups: List[str]
+    ) -> Dict[int, int]: ...
+    async def get_actors_for_clusters(
+        self, cluster_ids: List[int], network: str, groups: List[str]
+    ) -> Dict[int, List[Any]]: ...
 
 
 class ConceptProtocol(Protocol):

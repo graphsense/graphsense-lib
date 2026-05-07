@@ -1,6 +1,7 @@
 # ruff: noqa: T201
 import json
 import os
+import pathlib
 import sys
 import tempfile
 import time
@@ -35,8 +36,10 @@ from graphsenselib.tagpack.constants import (
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
 from graphsenselib.monitoring.notifications import send_msg_to_topic
+from graphsenselib.utils.locking import create_lock, LockAcquisitionError
 import logging
 from typing import Tuple
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +285,17 @@ def config(ctx, verbose):
     is_flag=True,
     help="Do update quality metrinc. (better insert speed)",
 )
+@click.option(
+    "--no-lock",
+    is_flag=True,
+    help="Do not acquire a lock to avoid conflicting sync processes.",
+)
+@click.option(
+    "--no-file-lock",
+    is_flag=True,
+    hidden=True,
+    help="Deprecated alias for --no-lock.",
+)
 def sync(
     repos,
     force,
@@ -291,10 +305,55 @@ def sync(
     n_workers,
     no_validation,
     dont_update_quality_metrics,
+    no_lock,
+    no_file_lock,
 ):
     """syncs the tagstore with a list of git repos."""
     url = override_postgres_url(url)
 
+    lock_disabled = no_lock or no_file_lock
+
+    # Ensure AppConfig is populated (lock backend selection reads
+    # use_redis_locks / redis_url). The main `graphsense-cli` callback
+    # already calls load_partial; this is a defensive no-op for that path
+    # but makes the command safe if invoked via a different entry point.
+    if not lock_disabled:
+        from graphsenselib.config import get_config
+
+        cfg = get_config()
+        if not cfg.is_loaded():
+            cfg.load_partial()
+
+    db_name = urlparse(url).path.lstrip("/") or "default"
+    lock_name = f"tagpack_sync_{db_name}"
+
+    try:
+        with create_lock(lock_name, disabled=lock_disabled):
+            _sync_impl(
+                repos=repos,
+                force=force,
+                url=url,
+                run_cluster_mapping_with_env=run_cluster_mapping_with_env,
+                rerun_cluster_mapping_with_env=rerun_cluster_mapping_with_env,
+                n_workers=n_workers,
+                no_validation=no_validation,
+                dont_update_quality_metrics=dont_update_quality_metrics,
+            )
+    except LockAcquisitionError as e:
+        logger.warning(str(e))
+        sys.exit(911)
+
+
+def _sync_impl(
+    repos,
+    force,
+    url,
+    run_cluster_mapping_with_env,
+    rerun_cluster_mapping_with_env,
+    n_workers,
+    no_validation,
+    dont_update_quality_metrics,
+):
     if os.path.isfile(repos):
         with open(repos, "r") as f:
             repos_list = [x.strip() for x in f.readlines() if not x.startswith("#")]
@@ -813,19 +872,25 @@ def insert_tagpack(
     status = "fail" if no_passed < n_ppacks else "success"
 
     duration = round(time.time() - t0, 2)
-    msg = "Processed {}/{} TagPacks with {} Tags in {}s. "
+    try:
+        repo_name = pathlib.Path(str(base_url)).name or str(base_url) or "unknown"
+    except Exception:
+        repo_name = "unknown"
+    msg = "Processed {}/{} TagPacks with {} Tags in {}s from {}. "
     if status == "fail":
-        logger.error(msg.format(no_passed, n_ppacks, no_tags, duration))
+        logger.error(msg.format(no_passed, n_ppacks, no_tags, duration, repo_name))
         failed_count = n_ppacks - no_passed
         try:
             send_msg_to_topic(
                 "info",
-                f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {path}",
+                f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {repo_name}",
             )
         except Exception as e:
             logger.warning(f"Failed to send Slack notification: {e}")
     else:
-        click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
+        click.secho(
+            msg.format(no_passed, n_ppacks, no_tags, duration, repo_name), fg="green"
+        )
     msg = "Don't forget to run 'graphsense-cli tagpack-tool refresh-views' soon to keep the database"
     msg += " consistent!"
     print(msg)

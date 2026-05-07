@@ -36,7 +36,9 @@ jobs:
         python: ["3.10"]
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     - name: Validate version is not date-based
       run: |
         VERSION="${GITHUB_REF#refs/tags/}"

@@ -48,6 +48,34 @@ def lzw_unpack(codes: list[int]) -> str:
     return "".join(out)
 
 
+def lzw_pack(s: str) -> list[int]:
+    """Port of lzwcompress' LZWCompress.pack (npm `lzwcompress`).
+
+    Inverse of `lzw_unpack`. The dashboard's encoder pre-populates the
+    dictionary with chars 0..255 and always emits ``dictionary[w]`` (no
+    charCodeAt fallback) — this mirrors that exactly so a byte-identical
+    round-trip is possible.
+    """
+    if not s:
+        return []
+    dictionary: dict[str, int] = {chr(i): i for i in range(256)}
+    out: list[int] = []
+    dict_size = 256
+    w = ""
+    for c in s:
+        wc = w + c
+        if wc in dictionary:
+            w = wc
+        else:
+            out.append(dictionary[w])
+            dictionary[wc] = dict_size
+            dict_size += 1
+            w = c
+    if w:
+        out.append(dictionary[w])
+    return out
+
+
 def decode_gs_bytes(data: bytes) -> Any:
     if len(data) == 0 or len(data) % 4 != 0:
         raise ValueError("not a .gs file (size must be a non-zero multiple of 4)")

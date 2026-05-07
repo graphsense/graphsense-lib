@@ -20,6 +20,7 @@ from typing_extensions import Annotated
 from graphsense.models.address import Address
 from graphsense.models.address_tags import AddressTags
 from graphsense.models.address_txs import AddressTxs
+from graphsense.models.cluster import Cluster
 from graphsense.models.entity import Entity
 from graphsense.models.links import Links
 from graphsense.models.neighbor_addresses import NeighborAddresses
@@ -434,7 +435,7 @@ class AddressesApi:
 
 
     @validate_call_compat
-    def get_address_entity(
+    def get_address_cluster(
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         address: Annotated[StrictStr, Field(description="The cryptocurrency address")],
@@ -451,10 +452,10 @@ class AddressesApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> Entity:
-        """Get the entity for an address
+    ) -> Cluster:
+        """Get the cluster for an address
 
-        Returns the clustered entity that contains the given address.
+        Returns the address cluster that contains the given address.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -483,6 +484,306 @@ class AddressesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+
+        _param = self._get_address_cluster_serialize(
+            currency=currency,
+            address=address,
+            include_actors=include_actors,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "Cluster",
+            '404': None,
+            '422': "HTTPValidationError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        ).data
+
+
+    @validate_call_compat
+    def get_address_cluster_with_http_info(
+        self,
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
+        address: Annotated[StrictStr, Field(description="The cryptocurrency address")],
+        include_actors: Annotated[Optional[StrictBool], Field(description="Whether to include actor information")] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ApiResponse[Cluster]:
+        """Get the cluster for an address
+
+        Returns the address cluster that contains the given address.
+
+        :param currency: The cryptocurrency code (e.g., btc) (required)
+        :type currency: str
+        :param address: The cryptocurrency address (required)
+        :type address: str
+        :param include_actors: Whether to include actor information
+        :type include_actors: bool
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._get_address_cluster_serialize(
+            currency=currency,
+            address=address,
+            include_actors=include_actors,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "Cluster",
+            '404': None,
+            '422': "HTTPValidationError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        )
+
+
+    @validate_call_compat
+    def get_address_cluster_without_preload_content(
+        self,
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
+        address: Annotated[StrictStr, Field(description="The cryptocurrency address")],
+        include_actors: Annotated[Optional[StrictBool], Field(description="Whether to include actor information")] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> RESTResponseType:
+        """Get the cluster for an address
+
+        Returns the address cluster that contains the given address.
+
+        :param currency: The cryptocurrency code (e.g., btc) (required)
+        :type currency: str
+        :param address: The cryptocurrency address (required)
+        :type address: str
+        :param include_actors: Whether to include actor information
+        :type include_actors: bool
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._get_address_cluster_serialize(
+            currency=currency,
+            address=address,
+            include_actors=include_actors,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "Cluster",
+            '404': None,
+            '422': "HTTPValidationError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        return response_data.response
+
+
+    def _get_address_cluster_serialize(
+        self,
+        currency,
+        address,
+        include_actors,
+        _request_auth,
+        _content_type,
+        _headers,
+        _host_index,
+    ) -> RequestSerialized:
+
+        _host = None
+
+        _collection_formats: Dict[str, str] = {
+        }
+
+        _path_params: Dict[str, str] = {}
+        _query_params: List[Tuple[str, str]] = []
+        _header_params: Dict[str, Optional[str]] = _headers or {}
+        _form_params: List[Tuple[str, str]] = []
+        _files: Dict[
+            str, Union[str, bytes, List[str], List[bytes], List[Tuple[str, bytes]]]
+        ] = {}
+        _body_params: Optional[bytes] = None
+
+        # process the path parameters
+        if currency is not None:
+            _path_params['currency'] = currency
+        if address is not None:
+            _path_params['address'] = address
+        # process the query parameters
+        if include_actors is not None:
+            
+            _query_params.append(('include_actors', include_actors))
+            
+        # process the header parameters
+        # process the form parameters
+        # process the body parameter
+
+
+        # set the HTTP header `Accept`
+        if 'Accept' not in _header_params:
+            _header_params['Accept'] = self.api_client.select_header_accept(
+                [
+                    'application/json'
+                ]
+            )
+
+
+        # authentication setting
+        _auth_settings: List[str] = [
+            'api_key'
+        ]
+
+        return self.api_client.param_serialize(
+            method='GET',
+            resource_path='/{currency}/addresses/{address}/cluster',
+            path_params=_path_params,
+            query_params=_query_params,
+            header_params=_header_params,
+            body=_body_params,
+            post_params=_form_params,
+            files=_files,
+            auth_settings=_auth_settings,
+            collection_formats=_collection_formats,
+            _host=_host,
+            _request_auth=_request_auth
+        )
+
+
+
+
+    @validate_call_compat
+    def get_address_entity(
+        self,
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
+        address: Annotated[StrictStr, Field(description="The cryptocurrency address")],
+        include_actors: Annotated[Optional[StrictBool], Field(description="Whether to include actor information")] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> Entity:
+        """(Deprecated) Get the entity for an address
+
+        Deprecated alias for `GET /{currency}/addresses/{address}/cluster`. Returns the address cluster that contains the given address.
+
+        :param currency: The cryptocurrency code (e.g., btc) (required)
+        :type currency: str
+        :param address: The cryptocurrency address (required)
+        :type address: str
+        :param include_actors: Whether to include actor information
+        :type include_actors: bool
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+        warnings.warn("GET /{currency}/addresses/{address}/entity is deprecated.", DeprecationWarning)
 
         _param = self._get_address_entity_serialize(
             currency=currency,
@@ -529,9 +830,9 @@ class AddressesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[Entity]:
-        """Get the entity for an address
+        """(Deprecated) Get the entity for an address
 
-        Returns the clustered entity that contains the given address.
+        Deprecated alias for `GET /{currency}/addresses/{address}/cluster`. Returns the address cluster that contains the given address.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -560,6 +861,7 @@ class AddressesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /{currency}/addresses/{address}/entity is deprecated.", DeprecationWarning)
 
         _param = self._get_address_entity_serialize(
             currency=currency,
@@ -606,9 +908,9 @@ class AddressesApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Get the entity for an address
+        """(Deprecated) Get the entity for an address
 
-        Returns the clustered entity that contains the given address.
+        Deprecated alias for `GET /{currency}/addresses/{address}/cluster`. Returns the address cluster that contains the given address.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -637,6 +939,7 @@ class AddressesApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /{currency}/addresses/{address}/entity is deprecated.", DeprecationWarning)
 
         _param = self._get_address_entity_serialize(
             currency=currency,

@@ -10,6 +10,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.12.0] 2026-04-07
+
+### Library (v2.12.0)
+
+#### Added
+- **`.gs` tx-graph encoder**: new `convert/gs_files` encoder/CLI to produce `.gs` files from transactions, used to render tx-graphs on the dashboard.
+- **tx_id mismatch safety check** in async Cassandra access to surface inconsistencies early.
+- **`tagpack-tool sync` locking**: optional file/Redis lock (per target DB) to prevent conflicting concurrent sync runs. Disable with `--no-lock`.
+- **`tagpack-tool insert` repo logging**: the final "Processed N/M TagPacks…" message and Slack failure notification now include the repo/folder name.
+
+
+
+#### Changed
+- **Versioning**: documented dev-version scheme (new `VERSIONING.md`), reworked GitHub Actions publish workflows (PyPI + GitHub Packages) and CI tagging.
+- **FastAPI** dependency upgraded.
+- **Cassandra retries**: more robust retry handling in both sync and async drivers.
+
+#### Fixed
+- Block-range logging restored for `ingest --info`.
+- Port config docs in environment / Cassandra settings.
+- PostgreSQL session fan-out issues in tagstore-backed entity, tag, and cluster services (removes per-call `AsyncSession` amplification on BFS-style queries).
+- Remaining gaps in the entity → cluster transition (REST models, addresses route/service, generated Python client `Cluster`/`NeighborCluster`/`NeighborEntity` models).
+
+### Web API + Python client (webapi-2.12.0)
+
+#### Added
+- **Python client CLI MVP** (`graphsense` command): `raw` mirror of the OpenAPI surface, convenience commands, bulk command, output formatting/IO pipes, ext client/bundlers, full docs (`docs/cli/*`, `docs/ext/*`) and a dedicated test workflow.
+- Improved CLI ergonomics: `rich-click` based help (coloring, option grouping), help shown when no args are given, improved error handling, more convenience commands and tests.
+
+#### Changed
+- Documentation now advertises `uv` as the recommended install path.
+- Patched remaining gaps in the entity → cluster transition (Python client `Cluster`/`NeighborCluster`/`NeighborEntity` models).
+
+#### Fixed
+- CI workflow: correct tagging of `latest` for GitHub Packages publish.
+
 ## [2.11.0] 2026-04-29
 
 ### Library (v2.11.0)
