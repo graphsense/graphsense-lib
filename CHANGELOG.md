@@ -12,6 +12,26 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+## [2.12.2] 2026-05-07
+
+### Library (v2.12.2)
+
+#### Added
+- **Batched tag-summary lookup** for the CoinJoin/Wasabi-1.x exchange-FP-suppression heuristic. New tagstore facade `TagstoreDbAsync.get_tags_by_subjectids(subject_ids, groups, network=None)` runs a single `Tag.identifier IN (:ids)` query and returns `Dict[subject_id, List[TagPublic]]`. New service method `TagsService.get_tag_summaries_by_subject_ids(network, subject_ids, tagstore_groups, include_best_cluster_tag=False)` returns `Dict[subject_id, TagSummary]` using ≤2 Postgres queries (one for direct tags; one for cluster-definer tags via `get_best_cluster_tags_for_clusters` when requested). Cluster-id resolution runs upfront against Cassandra (separate pool) so no fan-out hits the tagstore pool.
+
+#### Changed
+- **`_any_input_is_exchange` heuristic** now calls the batched path, replacing the previous per-address `gather_bounded` over `tags_service.get_tag_summary_by_address`. Postgres traffic per heuristic check drops from `2N+1` to `≤2` queries regardless of the number of inputs.
+- **`CoinJoinDbCallbacks.get_tag_summary` renamed to `get_tag_summaries`** with batched signature `(currency, [subject_ids]) -> Dict[subject_id, TagSummary]`. The only caller (`txs_service`) is updated; external code constructing `CoinJoinDbCallbacks` directly must follow.
+
+### Build / packaging
+
+#### Changed
+- **Docker version computation moved to the host.** The Dockerfile no longer COPYs `.git/` into the image. setuptools_scm now reads `SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB`, computed on the host/runner where the full worktree and tags are available. `make build-docker` and both GitHub Actions workflows (`docker-build.yml` smoke test, `github-packages-publish.yaml` deploy) compute & pass the build-arg. No `fallback_version` — builds without the arg fail loudly rather than ship a sentinel-versioned image. Fixes images being labelled `2.13.0.dev0+gdb0370179.dYYYYMMDD` even when built from a clean release tag, caused by the previous selective-COPY pattern leaving the in-container git index reporting deleted tracked files.
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
 ## [2.12.1] 2026-05-07
 
 ### Library (v2.12.1)
