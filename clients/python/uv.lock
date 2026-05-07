@@ -210,7 +210,7 @@ wheels = [
 
 [[package]]
 name = "graphsense-python"
-version = "2.12.0rc102"
+version = "2.12.0rc103"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

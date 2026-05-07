@@ -67,6 +67,11 @@ try:
 except ValueError:
     threads = num
 
+try:
+    backlog = int(os.getenv("GUNICORN_BACKLOG", "8192"))
+except ValueError:
+    backlog = 8192
+
 
 def post_fork(server, worker):
     server.log.info("Worker spawned (pid: %s)", worker.pid)
