@@ -37,6 +37,7 @@ from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
 from graphsenselib.monitoring.notifications import send_msg_to_topic
 from graphsenselib.utils.locking import create_lock, LockAcquisitionError
+from graphsenselib.utils.rest_utils import is_eth_like
 import logging
 from typing import Tuple
 from urllib.parse import urlparse
@@ -270,6 +271,33 @@ def config(ctx, verbose):
     help="Environment in graphsense-lib config to use for the mapping process. Reinserts all mappings.",
 )
 @click.option(
+    "--auto-rerun-cluster-mapping-with-env",
+    help=(
+        "Environment in graphsense-lib config to use for an automatic "
+        "staleness check: a sample of mapped addresses is compared against "
+        "the current clustering, and a full rerun is triggered only if the "
+        "divergence rate is at or above --cluster-staleness-threshold. "
+        "Otherwise only newly-inserted addresses are mapped."
+    ),
+)
+@click.option(
+    "--cluster-staleness-sample-size",
+    type=int,
+    default=2000,
+    show_default=True,
+    help="Sample size for --auto-rerun-cluster-mapping-with-env staleness check.",
+)
+@click.option(
+    "--cluster-staleness-threshold",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help=(
+        "Divergence rate (0.0-1.0) at or above which "
+        "--auto-rerun-cluster-mapping-with-env triggers a full rerun."
+    ),
+)
+@click.option(
     "--n-workers",
     type=int,
     default=1,
@@ -302,6 +330,9 @@ def sync(
     url,
     run_cluster_mapping_with_env,
     rerun_cluster_mapping_with_env,
+    auto_rerun_cluster_mapping_with_env,
+    cluster_staleness_sample_size,
+    cluster_staleness_threshold,
     n_workers,
     no_validation,
     dont_update_quality_metrics,
@@ -335,6 +366,9 @@ def sync(
                 url=url,
                 run_cluster_mapping_with_env=run_cluster_mapping_with_env,
                 rerun_cluster_mapping_with_env=rerun_cluster_mapping_with_env,
+                auto_rerun_cluster_mapping_with_env=auto_rerun_cluster_mapping_with_env,
+                cluster_staleness_sample_size=cluster_staleness_sample_size,
+                cluster_staleness_threshold=cluster_staleness_threshold,
                 n_workers=n_workers,
                 no_validation=no_validation,
                 dont_update_quality_metrics=dont_update_quality_metrics,
@@ -350,6 +384,9 @@ def _sync_impl(
     url,
     run_cluster_mapping_with_env,
     rerun_cluster_mapping_with_env,
+    auto_rerun_cluster_mapping_with_env,
+    cluster_staleness_sample_size,
+    cluster_staleness_threshold,
     n_workers,
     no_validation,
     dont_update_quality_metrics,
@@ -440,16 +477,60 @@ def _sync_impl(
             calc_quality_measures(url, DEFAULT_SCHEMA)
             # click_ctx_tagpacktool_quality.invoke(calculate_quality, url=url)
 
-        if run_cluster_mapping_with_env or rerun_cluster_mapping_with_env:
+        effective_rerun_env = rerun_cluster_mapping_with_env
+        effective_run_env = run_cluster_mapping_with_env
+
+        if auto_rerun_cluster_mapping_with_env and not rerun_cluster_mapping_with_env:
+            if run_cluster_mapping_with_env:
+                logger.warning(
+                    "Both --run-cluster-mapping-with-env and "
+                    "--auto-rerun-cluster-mapping-with-env passed; "
+                    "--auto-rerun- takes precedence."
+                )
+            logger.info(
+                "Checking cluster mapping staleness against env "
+                f"'{auto_rerun_cluster_mapping_with_env}' "
+                f"(sample={cluster_staleness_sample_size}, "
+                f"threshold={cluster_staleness_threshold:.2%})..."
+            )
+            overall, per_network = check_cluster_mapping_staleness(
+                url=url,
+                schema=DEFAULT_SCHEMA,
+                db_nodes=["localhost"],
+                cassandra_username=None,
+                cassandra_password=None,
+                ks_file=None,
+                use_gs_lib_config_env=auto_rerun_cluster_mapping_with_env,
+                sample_size=cluster_staleness_sample_size,
+            )
+            for net, stats in per_network.items():
+                logger.info(
+                    f"  {net}: {stats['diverged']}/{stats['checked']} "
+                    f"diverged ({stats['rate']:.2%})"
+                )
+            if overall >= cluster_staleness_threshold:
+                logger.info(
+                    f"Overall divergence {overall:.2%} >= threshold "
+                    f"{cluster_staleness_threshold:.2%}; rerunning full "
+                    "cluster mapping."
+                )
+                effective_rerun_env = auto_rerun_cluster_mapping_with_env
+            else:
+                logger.info(
+                    f"Overall divergence {overall:.2%} < threshold "
+                    f"{cluster_staleness_threshold:.2%}; mapping new "
+                    "addresses only."
+                )
+                effective_run_env = auto_rerun_cluster_mapping_with_env
+
+        if effective_run_env or effective_rerun_env:
             logger.info("Import cluster mappings ...")
 
             click_ctx_tagpacktool_tagstore.invoke(
                 insert_cluster_mappings,
                 url=url,
-                use_gs_lib_config_env=(
-                    run_cluster_mapping_with_env or rerun_cluster_mapping_with_env
-                ),
-                update=rerun_cluster_mapping_with_env is not None,
+                use_gs_lib_config_env=(effective_run_env or effective_rerun_env),
+                update=effective_rerun_env is not None,
             )
 
             logger.info("Refreshing db views ...")
@@ -1494,6 +1575,80 @@ def _split_into_chunks(seq, size):
     return (seq[pos : pos + size] for pos in range(0, len(seq), size))
 
 
+def check_cluster_mapping_staleness(
+    url,
+    schema,
+    db_nodes,
+    cassandra_username,
+    cassandra_password,
+    ks_file,
+    use_gs_lib_config_env,
+    sample_size,
+):
+    """Sample mapped addresses, compare stored vs. current cluster_id.
+
+    Returns (overall_divergence_rate, per_network_stats). Skips eth-like
+    networks (ETH/TRX) — they have no real clustering, so cluster_id ==
+    address_id and drift is not possible.
+    """
+    args = ClusterMappingArgs(
+        url,
+        schema,
+        db_nodes,
+        cassandra_username,
+        cassandra_password,
+        ks_file,
+        use_gs_lib_config_env,
+        update=False,
+    )
+    ks_mapping = load_ks_mapping(args)
+    eligible_networks = [n for n in ks_mapping.keys() if not is_eth_like(n)]
+    if not eligible_networks:
+        return 0.0, {}
+
+    tagstore = TagStore(url, schema)
+    rows = tagstore.get_cluster_mapping_sample(sample_size, networks=eligible_networks)
+    if not rows:
+        return 0.0, {}
+
+    sample = pd.DataFrame(rows, columns=["address", "network", "stored_cluster_id"])
+    gs = GraphSense(
+        args.db_nodes,
+        ks_mapping,
+        username=args.cassandra_username,
+        password=args.cassandra_password,
+    )
+
+    per_network = {}
+    total_checked = 0
+    total_diverged = 0
+    for network_key, batch in sample.groupby("network"):
+        network = str(network_key)
+        if not gs.keyspace_for_network_exists(network):
+            logger.warning(f"Skipping staleness check for {network}: keyspace missing")
+            continue
+        current = gs.get_address_clusters(batch[["address"]].copy(), network)
+        if current.empty:
+            continue
+        merged = batch.merge(
+            current[["address", "cluster_id"]], on="address", how="inner"
+        )
+        if merged.empty:
+            continue
+        diverged = (merged["stored_cluster_id"] != merged["cluster_id"]).sum()
+        checked = len(merged)
+        per_network[network] = {
+            "checked": int(checked),
+            "diverged": int(diverged),
+            "rate": float(diverged) / checked if checked else 0.0,
+        }
+        total_checked += checked
+        total_diverged += int(diverged)
+
+    overall = (total_diverged / total_checked) if total_checked else 0.0
+    return overall, per_network
+
+
 def insert_cluster_mapping_wp(network, ks_mapping, args, batch):
     tagstore = TagStore(args.url, args.schema)
     gs = GraphSense(
@@ -1726,6 +1881,29 @@ def init(schema, url):
 )
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
 @click.option("--update", is_flag=True, help="update all cluster mappings")
+@click.option(
+    "--auto-rerun-if-stale",
+    is_flag=True,
+    help=(
+        "Run a staleness check first; only do a full update if the divergence "
+        "rate is at or above --staleness-threshold. Otherwise only newly-"
+        "inserted addresses are mapped. Ignored if --update is also set."
+    ),
+)
+@click.option(
+    "--staleness-sample-size",
+    type=int,
+    default=2000,
+    show_default=True,
+    help="Sample size for --auto-rerun-if-stale.",
+)
+@click.option(
+    "--staleness-threshold",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help="Divergence rate (0.0-1.0) at or above which --auto-rerun-if-stale triggers a full update.",
+)
 def insert_cluster_mappings(
     db_nodes,
     cassandra_username,
@@ -1735,9 +1913,45 @@ def insert_cluster_mappings(
     schema,
     url,
     update,
+    auto_rerun_if_stale,
+    staleness_sample_size,
+    staleness_threshold,
 ):
     """insert cluster mappings"""
     url = override_postgres_url(url)
+
+    if auto_rerun_if_stale and not update:
+        logger.info(
+            f"Checking cluster mapping staleness "
+            f"(sample={staleness_sample_size}, threshold={staleness_threshold:.2%})..."
+        )
+        overall, per_network = check_cluster_mapping_staleness(
+            url=url,
+            schema=schema,
+            db_nodes=list(db_nodes),
+            cassandra_username=cassandra_username,
+            cassandra_password=cassandra_password,
+            ks_file=ks_file,
+            use_gs_lib_config_env=use_gs_lib_config_env,
+            sample_size=staleness_sample_size,
+        )
+        for net, stats in per_network.items():
+            logger.info(
+                f"  {net}: {stats['diverged']}/{stats['checked']} "
+                f"diverged ({stats['rate']:.2%})"
+            )
+        if overall >= staleness_threshold:
+            logger.info(
+                f"Overall divergence {overall:.2%} >= threshold "
+                f"{staleness_threshold:.2%}; running full update."
+            )
+            update = True
+        else:
+            logger.info(
+                f"Overall divergence {overall:.2%} < threshold "
+                f"{staleness_threshold:.2%}; mapping new addresses only."
+            )
+
     insert_cluster_mapping(
         url,
         schema,
@@ -1748,6 +1962,77 @@ def insert_cluster_mappings(
         use_gs_lib_config_env,
         update,
     )
+
+
+@tagstore.command(name="check-cluster-mapping-staleness")
+@click.option(
+    "-d",
+    "--db-nodes",
+    multiple=True,
+    default=["localhost"],
+    help='Cassandra node(s); default "localhost"',
+)
+@click.option("--cassandra-username", default=None, help="Cassandra Username")
+@click.option("--cassandra-password", default=None, help="Cassandra password")
+@click.option(
+    "-f",
+    "--ks-file",
+    help="JSON file with Cassandra keyspaces that contain GraphSense cluster mappings",
+)
+@click.option(
+    "--use-gs-lib-config-env",
+    help="Load ks-mapping from global graphsense-lib config. Overrides --ks-file and --db-nodes",
+)
+@click.option(
+    "--schema",
+    default=DEFAULT_SCHEMA,
+    help="PostgreSQL schema for GraphSense cluster mapping table",
+)
+@click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
+@click.option(
+    "--sample-size",
+    type=int,
+    default=2000,
+    show_default=True,
+    help="Number of mapped addresses to sample (biased toward large clusters).",
+)
+def check_cluster_mapping_staleness_cli(
+    db_nodes,
+    cassandra_username,
+    cassandra_password,
+    ks_file,
+    use_gs_lib_config_env,
+    schema,
+    url,
+    sample_size,
+):
+    """Compare stored vs. current cluster_id for a sample of mapped addresses; print divergence."""
+    url = override_postgres_url(url)
+    overall, per_network = check_cluster_mapping_staleness(
+        url=url,
+        schema=schema,
+        db_nodes=list(db_nodes),
+        cassandra_username=cassandra_username,
+        cassandra_password=cassandra_password,
+        ks_file=ks_file,
+        use_gs_lib_config_env=use_gs_lib_config_env,
+        sample_size=sample_size,
+    )
+    if not per_network:
+        click.echo("No eligible addresses sampled (eth-like networks are skipped).")
+        return
+    rows = [
+        [net, stats["checked"], stats["diverged"], f"{stats['rate']:.2%}"]
+        for net, stats in sorted(per_network.items())
+    ]
+    click.echo(
+        tabulate(
+            rows,
+            headers=["network", "checked", "diverged", "rate"],
+            tablefmt="github",
+        )
+    )
+    click.echo(f"\nOverall divergence: {overall:.2%}")
 
 
 @tagstore.command()

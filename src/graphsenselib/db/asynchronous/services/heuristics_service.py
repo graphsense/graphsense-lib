@@ -5,7 +5,9 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict
 
-from .common import cannonicalize_address  # noqa: E402
+from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
+
+from .common import cannonicalize_address, gather_bounded  # noqa: E402
 from graphsenselib.db.asynchronous.services.heuristics import (
     AddressOutput,
     ChangeHeuristics,
@@ -1003,8 +1005,9 @@ async def _any_input_is_exchange(tx, currency, get_tag_summary) -> bool:
     if not unique_addrs:
         return False
 
-    summaries = await asyncio.gather(
-        *[get_tag_summary(currency, addr) for addr in unique_addrs]
+    sem = asyncio.Semaphore(get_tagstore_max_concurrency())
+    summaries = await gather_bounded(
+        sem, *[get_tag_summary(currency, addr) for addr in unique_addrs]
     )
     return any(s is not None and s.broad_category == "exchange" for s in summaries)
 

@@ -699,6 +699,37 @@ class TagStore(object):
         for record in self.cursor:
             yield record
 
+    def get_cluster_mapping_sample(self, limit, networks=None):
+        """Sample mapped addresses biased toward large clusters.
+
+        Used by the staleness check to compare stored gs_cluster_id against
+        the current cluster assignment in the graph datastore.
+
+        Returns rows of (address, network, gs_cluster_id) ordered by
+        gs_cluster_no_addr DESC. The deterministic ordering means repeated
+        runs sample the same heavy-hitter clusters first, which is the
+        intent: drift in big clusters is what users notice.
+        """
+        params = [limit]
+        if networks:
+            q = (
+                "SELECT address, network, gs_cluster_id "
+                "FROM address_cluster_mapping "
+                "WHERE network IN %s "
+                "ORDER BY gs_cluster_no_addr DESC NULLS LAST, network, address "
+                "LIMIT %s"
+            )
+            self.cursor.execute(q, (tuple(networks), limit))
+        else:
+            q = (
+                "SELECT address, network, gs_cluster_id "
+                "FROM address_cluster_mapping "
+                "ORDER BY gs_cluster_no_addr DESC NULLS LAST, network, address "
+                "LIMIT %s"
+            )
+            self.cursor.execute(q, params)
+        return self.cursor.fetchall()
+
     def get_tagstore_composition(self, by_network=False):
         if by_network:
             self.cursor.execute(
