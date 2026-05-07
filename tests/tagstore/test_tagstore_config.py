@@ -1,6 +1,10 @@
 import pytest
 from pydantic import ValidationError
-from graphsenselib.config.tagstore_config import TagStoreReaderConfig
+from graphsenselib.config.tagstore_config import (
+    TagStoreReaderConfig,
+    get_tagstore_max_concurrency,
+    set_tagstore_max_concurrency,
+)
 
 
 class TestTagStoreReaderConfig:
@@ -14,6 +18,7 @@ class TestTagStoreReaderConfig:
         assert config.pool_timeout == 10
         assert config.max_overflow == 10
         assert config.pool_recycle == 3600
+        assert config.max_concurrency == 8
         assert config.enable_prepared_statements_cache is False
 
     def test_pool_size_validation(self):
@@ -137,3 +142,57 @@ class TestTagStoreReaderConfig:
         with pytest.raises(ValidationError) as exc_info:
             TagStoreReaderConfig()
         assert "Field required" in str(exc_info.value)
+
+    def test_max_concurrency_validation(self):
+        """Test max_concurrency field validation."""
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db", max_concurrency=4
+        )
+        assert config.max_concurrency == 4
+
+        with pytest.raises(ValidationError) as exc_info:
+            TagStoreReaderConfig(
+                url="postgresql://localhost:5432/db", max_concurrency=0
+            )
+        assert "max_concurrency must be at least 1" in str(exc_info.value)
+
+    def test_pool_capacity_must_cover_max_concurrency(self):
+        """Pool capacity must satisfy the bounded fan-out cap."""
+        # boundary: capacity == max_concurrency is allowed
+        config = TagStoreReaderConfig(
+            url="postgresql://localhost:5432/db",
+            pool_size=2,
+            max_overflow=6,
+            max_concurrency=8,
+        )
+        assert config.pool_size + config.max_overflow == config.max_concurrency
+
+        # below boundary: must fail
+        with pytest.raises(ValidationError) as exc_info:
+            TagStoreReaderConfig(
+                url="postgresql://localhost:5432/db",
+                pool_size=2,
+                max_overflow=4,
+                max_concurrency=8,
+            )
+        assert "must be >= max_concurrency" in str(exc_info.value)
+
+
+class TestRuntimeMaxConcurrency:
+    """Test the module-level runtime accessor used by service code."""
+
+    def test_default_value(self):
+        # Default when no app startup has set a value.
+        assert get_tagstore_max_concurrency() >= 1
+
+    def test_set_and_get_roundtrip(self):
+        original = get_tagstore_max_concurrency()
+        try:
+            set_tagstore_max_concurrency(16)
+            assert get_tagstore_max_concurrency() == 16
+        finally:
+            set_tagstore_max_concurrency(original)
+
+    def test_set_rejects_invalid(self):
+        with pytest.raises(ValueError):
+            set_tagstore_max_concurrency(0)

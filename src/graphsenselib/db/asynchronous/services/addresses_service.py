@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Callable
 
+from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import (
     AddressNotFoundException,
@@ -15,6 +16,7 @@ from graphsenselib.tagstore.db import TagPublic
 from .blocks_service import BlocksService
 from .common import (
     cannonicalize_address,
+    gather_bounded,
     get_address,
     links_response,
     list_neighbors,
@@ -400,7 +402,10 @@ class AddressesService:
             for row in results
         ]
 
-        nodes = await asyncio.gather(*aws)
+        # Bound the per-neighbor fan-out: each get_address() with
+        # include_actors=True opens a Postgres session via tagstore.
+        sem = asyncio.Semaphore(get_tagstore_max_concurrency())
+        nodes = await gather_bounded(sem, *aws)
 
         for row, node in zip(results, nodes):
             nb = NeighborAddress(

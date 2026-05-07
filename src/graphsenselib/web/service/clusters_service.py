@@ -1,6 +1,8 @@
 import asyncio
 import time
 
+from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
+from graphsenselib.db.asynchronous.services.common import gather_bounded
 from graphsenselib.errors import BadUserInputException
 
 from graphsenselib.web.models import (
@@ -35,28 +37,6 @@ SEARCH_RESULT_LEVEL_CLASSES = {
 
 MAX_DEPTH = 7
 SEARCH_TIMEOUT = 300
-
-# Cap on concurrent DB-touching coroutines per request. Each tagstore call
-# checks out its own pool connection (see _inject_session in
-# tagstore/db/queries.py); without this cap a wide BFS can fan out into
-# 100+ concurrent sessions and exhaust the pool — root cause of the
-# 2026-05-04 gs-rest pool exhaustion incident.
-DEFAULT_DB_CONCURRENCY = 8
-
-
-async def gather_bounded(sem, *coros):
-    """`asyncio.gather` with an upper bound on concurrent execution.
-
-    `sem` is an `asyncio.Semaphore`; pass `None` to disable bounding.
-    """
-    if sem is None:
-        return await asyncio.gather(*coros)
-
-    async def _run(coro):
-        async with sem:
-            return await coro
-
-    return await asyncio.gather(*(_run(c) for c in coros))
 
 
 async def get_cluster(
@@ -208,7 +188,7 @@ async def search_cluster_neighbors(
     with_tag = False
     addresses = []
     MAGIC_VALUE_ANY_CATEGORY = "--"
-    db_sem = asyncio.Semaphore(DEFAULT_DB_CONCURRENCY)
+    db_sem = asyncio.Semaphore(get_tagstore_max_concurrency())
 
     def stop_neighbor(neighbor):
         return (
@@ -364,7 +344,7 @@ async def bfs(
     concurrency=None,
 ):
     if concurrency is None:
-        concurrency = asyncio.Semaphore(DEFAULT_DB_CONCURRENCY)
+        concurrency = asyncio.Semaphore(get_tagstore_max_concurrency())
     # collect matching paths
     matching_paths = []
 
@@ -471,7 +451,7 @@ async def recursive_search(
     if cache is None:
         cache = dict()
     if concurrency is None:
-        concurrency = asyncio.Semaphore(DEFAULT_DB_CONCURRENCY)
+        concurrency = asyncio.Semaphore(get_tagstore_max_concurrency())
     if depth <= 0:
         return []
 

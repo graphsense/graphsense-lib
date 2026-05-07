@@ -1,5 +1,33 @@
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Default cap on concurrent Postgres-touching coroutines per request.
+# Each tagstore call checks out its own pool connection (see _inject_session
+# in tagstore/db/queries.py); without bounding, a single request can fan out
+# into hundreds of concurrent sessions and exhaust the pool — root cause of
+# the 2026-05-04 gs-rest pool exhaustion incident.
+#
+# Used by clusters_service (BFS), entities_service (neighbors),
+# heuristics_service (input-is-exchange), and the shared _add_labels helper.
+# Override per-deployment via TagStoreReaderConfig.max_concurrency. Runtime
+# value is read by callers via get_tagstore_max_concurrency().
+_DEFAULT_TAGSTORE_MAX_CONCURRENCY = 8
+
+_runtime_max_concurrency = _DEFAULT_TAGSTORE_MAX_CONCURRENCY
+
+
+def get_tagstore_max_concurrency() -> int:
+    """Return the active fan-out cap; defaults until set at app startup."""
+    return _runtime_max_concurrency
+
+
+def set_tagstore_max_concurrency(value: int) -> None:
+    """Set the runtime fan-out cap. Called once during REST startup from the
+    resolved TagStoreReaderConfig."""
+    if value < 1:
+        raise ValueError("max_concurrency must be at least 1")
+    global _runtime_max_concurrency
+    _runtime_max_concurrency = value
 
 
 class TagStoreReaderConfig(BaseSettings):
@@ -20,6 +48,13 @@ class TagStoreReaderConfig(BaseSettings):
     )
     pool_recycle: int = Field(
         default=3600, description="Time in seconds to recycle connections"
+    )
+    max_concurrency: int = Field(
+        default=_DEFAULT_TAGSTORE_MAX_CONCURRENCY,
+        description=(
+            "Cap on concurrent Postgres-touching coroutines per request. "
+            "Must be <= pool_size + max_overflow."
+        ),
     )
 
     # Optional performance settings
@@ -58,6 +93,26 @@ class TagStoreReaderConfig(BaseSettings):
         if v < 1:
             raise ValueError("pool_recycle must be at least 1")
         return v
+
+    @field_validator("max_concurrency")
+    @classmethod
+    def validate_max_concurrency(cls, v):
+        """Validate max concurrency is positive."""
+        if v < 1:
+            raise ValueError("max_concurrency must be at least 1")
+        return v
+
+    @model_validator(mode="after")
+    def validate_pool_capacity(self):
+        """Ensure the pool can satisfy the bounded fan-out cap. Otherwise wide
+        requests deadlock on pool checkout."""
+        capacity = self.pool_size + self.max_overflow
+        if capacity < self.max_concurrency:
+            raise ValueError(
+                f"pool_size ({self.pool_size}) + max_overflow ({self.max_overflow}) "
+                f"= {capacity} must be >= max_concurrency ({self.max_concurrency})"
+            )
+        return self
 
     def get_connection_url(self) -> str:
         """Get the connection URL with prepared statement cache setting."""
