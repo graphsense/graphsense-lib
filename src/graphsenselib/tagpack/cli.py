@@ -1,6 +1,7 @@
 # ruff: noqa: T201
 import json
 import os
+import pathlib
 import sys
 import tempfile
 import time
@@ -813,19 +814,25 @@ def insert_tagpack(
     status = "fail" if no_passed < n_ppacks else "success"
 
     duration = round(time.time() - t0, 2)
-    msg = "Processed {}/{} TagPacks with {} Tags in {}s. "
+    try:
+        repo_name = pathlib.Path(str(base_url)).name or str(base_url) or "unknown"
+    except Exception:
+        repo_name = "unknown"
+    msg = "Processed {}/{} TagPacks with {} Tags in {}s from {}. "
     if status == "fail":
-        logger.error(msg.format(no_passed, n_ppacks, no_tags, duration))
+        logger.error(msg.format(no_passed, n_ppacks, no_tags, duration, repo_name))
         failed_count = n_ppacks - no_passed
         try:
             send_msg_to_topic(
                 "info",
-                f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {path}",
+                f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {repo_name}",
             )
         except Exception as e:
             logger.warning(f"Failed to send Slack notification: {e}")
     else:
-        click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
+        click.secho(
+            msg.format(no_passed, n_ppacks, no_tags, duration, repo_name), fg="green"
+        )
     msg = "Don't forget to run 'graphsense-cli tagpack-tool refresh-views' soon to keep the database"
     msg += " consistent!"
     print(msg)
