@@ -303,6 +303,29 @@ def _get_tags_by_subjectid_stmt(
     return q
 
 
+def _get_tags_by_subjectids_stmt(
+    identifiers: List[str],
+    groups: List[str],
+    network: Optional[str] = None,
+):
+    q = (
+        select(Tag, TagPack, Confidence)
+        .options(joinedload(Tag.confidence))
+        .options(joinedload(Tag.concepts))
+        .options(joinedload(Tag.tag_type))
+        .options(joinedload(Tag.tag_subject))
+        .where(Tag.identifier.in_(identifiers))
+        .where(Tag.tagpack_id == TagPack.id)
+        .where(TagPack.acl_group.in_(groups))
+        .where(Confidence.id == Tag.confidence_id)
+        .order_by(desc(Confidence.level))
+    )
+
+    if network is not None:
+        q = q.where(Tag.network == network)
+    return q
+
+
 def _get_tag_by_id_stmt(tag_id: int, groups: List[str]):
     return (
         select(Tag, TagPack)
@@ -691,6 +714,29 @@ class TagstoreDbAsync:
             session=session,
         )
         return [TagPublic.fromDB(t, tp) for t, tp, _ in results]
+
+    @_inject_session
+    async def get_tags_by_subjectids(
+        self,
+        subject_ids: List[str],
+        groups: List[str],
+        network: Optional[str] = None,
+        session=None,
+    ) -> Dict[str, List[TagPublic]]:
+        # Single-query batch lookup. Avoids the per-call session checkout
+        # pattern that amplified the 2026-05-04 pool-exhaustion incident.
+        if not subject_ids:
+            return {}
+        cleaned = [sid.strip() for sid in subject_ids]
+        results = (
+            await session.exec(
+                _get_tags_by_subjectids_stmt(cleaned, groups, network=network)
+            )
+        ).unique()
+        grouped: Dict[str, List[TagPublic]] = {sid: [] for sid in cleaned}
+        for t, tp, _ in results:
+            grouped.setdefault(t.identifier, []).append(TagPublic.fromDB(t, tp))
+        return grouped
 
     @_inject_session
     async def get_actors_by_subjectid(

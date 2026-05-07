@@ -214,18 +214,18 @@ class TxsService:
                 async def _get_tx(tx_hash_hex):
                     return await self.db.get_tx(currency, tx_hash_hex)
 
-                get_tag_summary = None
+                get_tag_summaries = None
                 if self.tags_service is not None:
 
-                    async def _get_tag_summary(curr: str, address: str):
-                        return await self.tags_service.get_tag_summary_by_address(
+                    async def _get_tag_summaries(curr: str, addrs: list[str]):
+                        return await self.tags_service.get_tag_summaries_by_subject_ids(
                             curr,
-                            address,
+                            addrs,
                             tagstore_groups=tagstore_groups,
                             include_best_cluster_tag=True,
                         )
 
-                    get_tag_summary = _get_tag_summary
+                    get_tag_summaries = _get_tag_summaries
 
                 result["heuristics"] = await calculate_heuristics(
                     result,
@@ -235,7 +235,7 @@ class TxsService:
                     coinjoin_callbacks=CoinJoinDbCallbacks(
                         get_spent_in=_get_spent_in,
                         get_tx=_get_tx,
-                        get_tag_summary=get_tag_summary,
+                        get_tag_summaries=get_tag_summaries,
                     ),
                 )
 

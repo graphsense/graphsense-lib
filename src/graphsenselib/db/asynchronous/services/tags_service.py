@@ -59,6 +59,12 @@ class TagstoreProtocol(Protocol):
     async def get_tags_by_subjectid(
         self, address: str, offset: int, limit: Optional[int], groups: List[str]
     ) -> List["TagPublic"]: ...  # noqa: F821
+    async def get_tags_by_subjectids(
+        self,
+        subject_ids: List[str],
+        groups: List[str],
+        network: Optional[str] = None,
+    ) -> Dict[str, List["TagPublic"]]: ...  # noqa: F821
     async def get_best_cluster_tag(
         self, cluster_id: int, currency: str, groups: List[str]
     ) -> Optional[Any]: ...
@@ -394,6 +400,87 @@ class TagsService:
             ),
         )
         return self._tag_summary_from_tag_digest(digest)
+
+    async def get_tag_summaries_by_subject_ids(
+        self,
+        network: str,
+        subject_ids: List[str],
+        tagstore_groups: List[str],
+        include_best_cluster_tag: bool = False,
+        only_propagate_high_confidence_actors: bool = True,
+    ) -> Dict[str, TagSummary]:
+        # Per-address summaries via batched queries. Unlike
+        # get_tag_summary_by_addresses (which aggregates many addresses into
+        # one summary), this returns one summary per input subject_id.
+        #
+        # Tagstore traffic is bounded to at most two Postgres queries
+        # regardless of input cardinality: one for direct tags, plus (when
+        # include_best_cluster_tag) one for cluster-definer tags. Per-
+        # address cluster_id resolution runs upfront against the main DB
+        # (Cassandra), which has its own pool.
+        try:
+            from graphsenselib.tagstore.algorithms.tag_digest import (
+                compute_tag_digest,
+                TagDigestComputationConfig,
+            )
+        except ImportError as e:
+            raise ImportError(
+                "tagstore is required for tag digest computation. "
+                "Please install it with: uv pip install tagstore"
+            ) from e
+
+        if not subject_ids:
+            return {}
+
+        canon_by_input: Dict[str, str] = {}
+        for sid in subject_ids:
+            canonical = cannonicalize_address(network, sid)
+            canon_by_input[sid] = address_to_user_format(network, canonical)
+
+        unique_canon = list(dict.fromkeys(canon_by_input.values()))
+
+        tags_by_subject = await self.tagstore.get_tags_by_subjectids(
+            unique_canon,
+            tagstore_groups,
+        )
+
+        if include_best_cluster_tag and not is_eth_like(network):
+            cluster_ids = await asyncio.gather(
+                *[try_get_cluster_id(self.db, network, addr) for addr in unique_canon]
+            )
+            addr_to_cluster: Dict[str, int] = {
+                addr: cid
+                for addr, cid in zip(unique_canon, cluster_ids)
+                if cid is not None
+            }
+            unique_cluster_ids = list(dict.fromkeys(addr_to_cluster.values()))
+            if unique_cluster_ids:
+                best_by_cluster = (
+                    await self.tagstore.get_best_cluster_tags_for_clusters(
+                        unique_cluster_ids, network.upper(), tagstore_groups
+                    )
+                )
+                for addr, cid in addr_to_cluster.items():
+                    bct = best_by_cluster.get(cid)
+                    # Skip when the cluster definer is the address itself —
+                    # already represented by its direct tag in tags_by_subject.
+                    if bct is None or bct.identifier == addr:
+                        continue
+                    tags_by_subject.setdefault(addr, []).append(bct)
+
+        config = (
+            TagDigestComputationConfig().with_only_propagate_high_confidence_actors(
+                only_propagate_high_confidence_actors
+            )
+        )
+
+        summaries_by_canon: Dict[str, TagSummary] = {}
+        for canon in unique_canon:
+            tags = tags_by_subject.get(canon, [])
+            digest = compute_tag_digest(tags, config=config)
+            summaries_by_canon[canon] = self._tag_summary_from_tag_digest(digest)
+
+        return {sid: summaries_by_canon[canon] for sid, canon in canon_by_input.items()}
 
     async def _get_best_cluster_tag_raw(
         self,

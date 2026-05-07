@@ -173,6 +173,10 @@ platforms = ["any"]
 # release-branch-semver: bumps minor on master/develop, patch on release/X.Y.x.
 # node-and-date: tags non-release commits with +g<sha>.d<date> so dev wheels
 # are uniquely identifiable; dirty workspaces get a +...dirty marker.
+# No fallback_version: the Dockerfile no longer COPYs .git, so an in-
+# container build that doesn't receive SETUPTOOLS_SCM_PRETEND_VERSION_FOR_*
+# must fail loudly rather than ship an unlabelled image. Both
+# `make build-docker` and the publish workflow compute and pass it.
 version_scheme = "release-branch-semver"
 local_scheme = "node-and-date"
 

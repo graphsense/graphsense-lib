@@ -5,9 +5,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict
 
-from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
-
-from .common import cannonicalize_address, gather_bounded  # noqa: E402
+from .common import cannonicalize_address  # noqa: E402
 from graphsenselib.db.asynchronous.services.heuristics import (
     AddressOutput,
     ChangeHeuristics,
@@ -35,7 +33,9 @@ logger = logging.getLogger(__name__)
 class CoinJoinDbCallbacks:
     get_spent_in: Callable
     get_tx: Callable
-    get_tag_summary: Callable | None = None
+    # (currency, [subject_ids]) -> Dict[subject_id, TagSummary]. Batched to
+    # keep tagstore traffic to one query/connection per heuristic check.
+    get_tag_summaries: Callable | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -987,10 +987,11 @@ async def _verify_tx0_forward(tx, pool_denomination, get_spent_in, get_tx) -> bo
     return any(results)
 
 
-async def _any_input_is_exchange(tx, currency, get_tag_summary) -> bool:
+async def _any_input_is_exchange(tx, currency, get_tag_summaries) -> bool:
     """Return True if any input address is tagged as an exchange (broad_category == 'exchange').
 
-    Fetches tag summaries for all unique input addresses concurrently.
+    All unique input addresses are resolved in a single batched tagstore
+    query (one Postgres connection, one round-trip).
     """
     unique_addrs = []
     seen = set()
@@ -1005,11 +1006,10 @@ async def _any_input_is_exchange(tx, currency, get_tag_summary) -> bool:
     if not unique_addrs:
         return False
 
-    sem = asyncio.Semaphore(get_tagstore_max_concurrency())
-    summaries = await gather_bounded(
-        sem, *[get_tag_summary(currency, addr) for addr in unique_addrs]
+    summaries = await get_tag_summaries(currency, unique_addrs)
+    return any(
+        s is not None and s.broad_category == "exchange" for s in summaries.values()
     )
-    return any(s is not None and s.broad_category == "exchange" for s in summaries)
 
 
 async def calculate_heuristics(
@@ -1154,7 +1154,7 @@ async def calculate_heuristics(
     if (
         coinjoin is not None
         and coinjoin_callbacks is not None
-        and coinjoin_callbacks.get_tag_summary is not None
+        and coinjoin_callbacks.get_tag_summaries is not None
         and (
             coinjoin.joinmarket is not None
             or (
@@ -1163,7 +1163,7 @@ async def calculate_heuristics(
             )
         )
         and await _any_input_is_exchange(
-            tx, currency, coinjoin_callbacks.get_tag_summary
+            tx, currency, coinjoin_callbacks.get_tag_summaries
         )
     ):
         coinjoin.joinmarket = None

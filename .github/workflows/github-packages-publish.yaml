@@ -37,6 +37,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # Compute the package version on the runner — where the full worktree
+      # and tags are present — and pass it into the Docker build as a
+      # build-arg. The Dockerfile only COPYs a subset of the tree, so an
+      # in-container `git describe` would see "deleted" tracked files and
+      # emit a dirty/dev0 version even for clean release tags.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Compute setuptools_scm version
+        id: scm
+        run: |
+          version=$(uvx --from 'setuptools-scm>=8.1.0' python -m setuptools_scm)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Computed version: $version"
+
       # Install the cosign tool except on PR
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
@@ -97,6 +113,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${{ steps.scm.outputs.version }}
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker

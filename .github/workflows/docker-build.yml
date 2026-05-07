@@ -11,7 +11,18 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Compute setuptools_scm version
+        id: scm
+        run: |
+          version=$(uvx --from 'setuptools-scm>=8.1.0' python -m setuptools_scm)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Docker Image smoke test
         run: |
-          docker build .
+          docker build \
+            --build-arg "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${{ steps.scm.outputs.version }}" \
+            .
