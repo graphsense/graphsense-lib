@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.12.5] 2026-05-08
+
+### Library (v2.12.5)
+
+#### Changed
+- **UTXO delta-update halves its relation read fan-out.** The address- and cluster-relation phases in `src/graphsenselib/deltaupdate/update/utxo/update.py` used to fire two batches of point reads per edge — one against `{address,cluster}_incoming_relations` and one against `{address,cluster}_outgoing_relations` — to look up the same edge from both sides. Both rows carry identical payload (`no_transactions`, `estimated_value`); only the partition keys differ, and those are derived from the address/cluster ids the updater already holds. `prepare_relations_for_ingest` in `src/graphsenselib/deltaupdate/update/generic.py` now reads only the incoming row and writes the merged result to both tables; Cassandra UPSERT covers the (asserted-impossible) case where the outgoing row was missing for an existing incoming row. Mirror of the account-side fix landed in v2.12.x (`DU: build outrelations from inrelations instead of querying`, ed8fea0). Net effect: ~50 % fewer relation point reads per UTXO delta-update batch across **both** address and cluster phases.
+
+#### Fixed
+- **`address_outgoing_relations.no_transactions` (and `cluster_outgoing_relations.no_transactions`) silently failed to increment on the update branch.** In `prepare_relations_for_ingest` (`src/graphsenselib/deltaupdate/update/generic.py`), the update path wrote `outr.no_transactions + delta.no_transactions` to the incoming row but only `outr.no_transactions` to the outgoing row — the delta was dropped on the outgoing side. Long-standing: present since the initial commit of the file (`d7818eb`, "delta updater version 2"). New-edge inserts were unaffected (they wrote `delta.no_transactions` to both sides correctly), so the drift accumulated only when an existing edge received additional transactions in a later batch. Outgoing-side `no_transactions` therefore reflected the count at the edge's first appearance, not the running total. As a side effect of the read-symmetry refactor above, both writes now derive from the same `inr.no_transactions + delta.no_transactions` expression and stay in sync. Backfill of historical drift is **not** included; rows correct themselves whenever the edge is touched again, but stale values otherwise persist.
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
 ## [2.12.4] 2026-05-08
 
 ### Library (v2.12.4)
