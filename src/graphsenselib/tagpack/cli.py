@@ -39,10 +39,28 @@ from graphsenselib.monitoring.notifications import send_msg_to_topic
 from graphsenselib.utils.locking import create_lock, LockAcquisitionError
 from graphsenselib.utils.rest_utils import is_eth_like
 import logging
+from contextlib import contextmanager
 from typing import Tuple
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _timed_phase(name: str):
+    """Bracket a sync sub-step with INFO start/done lines + wall-clock.
+
+    Used by `tagpack-tool sync` so an operator can read the log and see
+    where time actually went on a multi-repo / multi-step run, without
+    having to attach a profiler or time things by hand.
+    """
+    logger.info("%s ...", name)
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        logger.info("%s done in %.2fs", name, time.perf_counter() - t0)
+
 
 DEFAULT_ACTORPACK_URL = "https://raw.githubusercontent.com/graphsense/graphsense-tagpacks/master/actors/graphsense.actorpack.yaml"
 
@@ -398,10 +416,9 @@ def _sync_impl(
     dont_update_quality_metrics,
 ):
     if os.path.isfile(repos):
+        sync_t0 = time.perf_counter()
         with open(repos, "r") as f:
             repos_list = [x.strip() for x in f.readlines() if not x.startswith("#")]
-
-        logger.info("Init db and add taxonomies ...")
 
         from graphsenselib.tagstore.cli import (
             tagstore as tagstore_tool,
@@ -422,7 +439,8 @@ def _sync_impl(
         click_ctx_tagpacktool_quality = click.Context(quality)
         click_ctx_tagpacktool_quality.ensure_object(dict)
 
-        click_ctx_tagstore.invoke(init_tagstore_tool, db_url=url)
+        with _timed_phase("Init db and add taxonomies"):
+            click_ctx_tagstore.invoke(init_tagstore_tool, db_url=url)
 
         extra_option = "--force" if force else None
         extra_option = "--add-new" if extra_option is None else extra_option
@@ -430,58 +448,57 @@ def _sync_impl(
         for repo_url in repos_list:
             with tempfile.TemporaryDirectory(suffix="tagstore_sync") as temp_dir_tt:
                 logger.info(f"Syncing {repo_url}. Temp files in: {temp_dir_tt}")
+                with _timed_phase(f"Repo {repo_url}"):
+                    with _timed_phase("Cloning"):
+                        repo_url, *branch_etc = repo_url.split(" ")
+                        repo = Repo.clone_from(repo_url, temp_dir_tt)
+                        if len(branch_etc) > 0:
+                            branch = branch_etc[0]
+                            logger.info(f"Using branch {branch}")
+                            repo.git.checkout(branch)
 
-                logger.info("Cloning...")
-                repo_url, *branch_etc = repo_url.split(" ")
-                repo = Repo.clone_from(repo_url, temp_dir_tt)
-                if len(branch_etc) > 0:
-                    branch = branch_etc[0]
-                    logger.info(f"Using branch {branch}")
-                    repo.git.checkout(branch)
+                    with _timed_phase("Inserting actorpacks"):
+                        click_ctx_actorpack.invoke(
+                            insert_actorpack_cli, path=temp_dir_tt, url=url
+                        )
 
-                logger.info("Inserting actorpacks ...")
+                    public = len(branch_etc) > 1 and branch_etc[1].strip() == "public"
 
-                click_ctx_actorpack.invoke(
-                    insert_actorpack_cli, path=temp_dir_tt, url=url
-                )
+                    tag_type_default = (
+                        branch_etc[2].strip() if len(branch_etc) > 2 else None
+                    )
 
-                logger.info("Inserting tagpacks ...")
-                public = len(branch_etc) > 1 and branch_etc[1].strip() == "public"
+                    if public:
+                        logger.info("Caution: This repo is imported as public.")
 
-                tag_type_default = (
-                    branch_etc[2].strip() if len(branch_etc) > 2 else None
-                )
+                    args = {
+                        "path": temp_dir_tt,
+                        "url": url,
+                        "public": public,
+                        "force": force,
+                        "n_workers": n_workers,
+                        "no_validation": no_validation,
+                        "add_new": False,
+                        "update": not force,
+                        "tag_type_default": tag_type_default,
+                    }
 
-                if public:
-                    logger.info("Caution: This repo is imported as public.")
+                    if tag_type_default is None:
+                        args.pop("tag_type_default")
 
-                args = {
-                    "path": temp_dir_tt,
-                    "url": url,
-                    "public": public,
-                    "force": force,
-                    "n_workers": n_workers,
-                    "no_validation": no_validation,
-                    "add_new": False,
-                    "update": not force,
-                    "tag_type_default": tag_type_default,
-                }
+                    with _timed_phase("Inserting tagpacks"):
+                        click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
 
-                if tag_type_default is None:
-                    args.pop("tag_type_default")
+        with _timed_phase("Removing duplicates"):
+            click_ctx_tagstore.invoke(remove_duplicates, url=url)
 
-                click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
-
-        logger.info("Removing duplicates ...")
-        click_ctx_tagstore.invoke(remove_duplicates, url=url)
-
-        logger.info("Refreshing db views ...")
-        click_ctx_tagstore.invoke(refresh_views, url=url)
+        with _timed_phase("Refreshing db views"):
+            click_ctx_tagstore.invoke(refresh_views, url=url)
 
         if not dont_update_quality_metrics:
-            logger.info("Calc Quality metrics ...")
-            calc_quality_measures(url, DEFAULT_SCHEMA)
-            # click_ctx_tagpacktool_quality.invoke(calculate_quality, url=url)
+            with _timed_phase("Calc Quality metrics"):
+                calc_quality_measures(url, DEFAULT_SCHEMA)
+                # click_ctx_tagpacktool_quality.invoke(calculate_quality, url=url)
 
         effective_rerun_env = rerun_cluster_mapping_with_env
         effective_run_env = run_cluster_mapping_with_env
@@ -493,22 +510,22 @@ def _sync_impl(
                     "--auto-rerun-cluster-mapping-with-env passed; "
                     "--auto-rerun- takes precedence."
                 )
-            logger.info(
-                "Checking cluster mapping staleness against env "
+            with _timed_phase(
+                f"Checking cluster mapping staleness against env "
                 f"'{auto_rerun_cluster_mapping_with_env}' "
                 f"(sample={cluster_staleness_sample_size}, "
-                f"threshold={cluster_staleness_threshold:.2%})..."
-            )
-            overall, per_network = check_cluster_mapping_staleness(
-                url=url,
-                schema=DEFAULT_SCHEMA,
-                db_nodes=["localhost"],
-                cassandra_username=None,
-                cassandra_password=None,
-                ks_file=None,
-                use_gs_lib_config_env=auto_rerun_cluster_mapping_with_env,
-                sample_size=cluster_staleness_sample_size,
-            )
+                f"threshold={cluster_staleness_threshold:.2%})"
+            ):
+                overall, per_network = check_cluster_mapping_staleness(
+                    url=url,
+                    schema=DEFAULT_SCHEMA,
+                    db_nodes=["localhost"],
+                    cassandra_username=None,
+                    cassandra_password=None,
+                    ks_file=None,
+                    use_gs_lib_config_env=auto_rerun_cluster_mapping_with_env,
+                    sample_size=cluster_staleness_sample_size,
+                )
             for net, stats in per_network.items():
                 logger.info(
                     f"  {net}: {stats['diverged']}/{stats['checked']} "
@@ -537,19 +554,21 @@ def _sync_impl(
                 effective_run_env = auto_rerun_cluster_mapping_with_env
 
         if effective_run_env or effective_rerun_env:
-            logger.info("Import cluster mappings ...")
+            with _timed_phase("Import cluster mappings"):
+                click_ctx_tagpacktool_tagstore.invoke(
+                    insert_cluster_mappings,
+                    url=url,
+                    use_gs_lib_config_env=(effective_run_env or effective_rerun_env),
+                    update=effective_rerun_env is not None,
+                )
 
-            click_ctx_tagpacktool_tagstore.invoke(
-                insert_cluster_mappings,
-                url=url,
-                use_gs_lib_config_env=(effective_run_env or effective_rerun_env),
-                update=effective_rerun_env is not None,
-            )
+            with _timed_phase("Refreshing db views (post-cluster-mapping)"):
+                click_ctx_tagstore.invoke(refresh_views, url=url)
 
-            logger.info("Refreshing db views ...")
-            click_ctx_tagstore.invoke(refresh_views, url=url)
-
-        logger.info("Your tagstore is now up-to-date again.")
+        logger.info(
+            "Your tagstore is now up-to-date again. Total sync time: %.2fs",
+            time.perf_counter() - sync_t0,
+        )
 
     else:
         logger.error(f"Repos to sync file {repos} does not exist.")
