@@ -161,6 +161,14 @@ graphsense-cli = "graphsenselib.cli:main.main"
 zip-safe = true
 include-package-data = true
 package-dir = {"" = "src"}
+
+# Explicit data-file patterns. We keep include-package-data=true so the SCM
+# file finder still works for editable/local installs, but in Docker the
+# build context has no .git (see Dockerfile note) and no SCM finder runs.
+# Without this table, that build would ship a wheel with zero yaml/csv/sql
+# resources, breaking taxonomy + schema loading at runtime.
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.csv", "*.sql", "*.proto", "*.html", "*.js", "*.template", "*.json"]
 # Require a min/specific Python version (comma-separated conditions)
 # Add here dependencies of your project (line-separated), e.g. requests>=2.2,<3.0.
 # Version specifiers like >=2.2,<3.0 avoid problems due to API changes in

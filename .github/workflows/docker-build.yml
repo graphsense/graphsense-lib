@@ -25,4 +25,55 @@ jobs:
         run: |
           docker build \
             --build-arg "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${{ steps.scm.outputs.version }}" \
+            -t graphsense-lib:smoke \
             .
+      - name: Importlib resources guard
+        # Regression guard: v2.12.2 dropped .git from the build context. With
+        # include-package-data=true and no VCS root, the wheel shipped zero
+        # *.yaml / *.csv / *.sql resources and the container crashed at
+        # startup loading taxonomies. This step exercises every package
+        # whose data files are loaded at runtime.
+        run: |
+          docker run --rm -i --entrypoint python graphsense-lib:smoke - <<'PY'
+          import sys
+          import importlib.resources as r
+
+          probes = [
+              ("graphsenselib.tagpack.db", "concepts.yaml"),
+              ("graphsenselib.tagpack.db", "countries.csv"),
+              ("graphsenselib.tagpack.db", "confidence.csv"),
+              ("graphsenselib.tagpack.conf", "tagpack_schema.yaml"),
+              ("graphsenselib.tagpack.conf", "actorpack_schema.yaml"),
+              ("graphsenselib.schema.resources", "transformed_utxo_schema.sql"),
+              ("graphsenselib.schema.resources.migrations", "raw_account_0_to_1.sql"),
+              ("graphsenselib.tagstore.db", "init.sql"),
+              ("graphsenselib.ingest.resources", "eth_genesis_transfers.csv"),
+          ]
+          failures = []
+          for pkg, name in probes:
+              try:
+                  size = len(r.files(pkg).joinpath(name).read_bytes())
+                  print(f"OK   {pkg}/{name}  ({size} bytes)")
+              except Exception as e:
+                  failures.append(f"{pkg}/{name}: {e!r}")
+                  print(f"FAIL {pkg}/{name}: {e!r}", file=sys.stderr)
+
+          # Also drive the production code path that crashed in 2.12.2.
+          try:
+              from graphsenselib.tagpack.taxonomy import _load_taxonomies
+              _load_taxonomies({"taxonomies": {
+                  "country": "src/tagpack/db/countries.csv",
+                  "confidence": "src/tagpack/db/confidence.csv",
+                  "concept": "src/tagpack/db/concepts.yaml",
+              }})
+              print("taxonomy loader OK")
+          except Exception as e:
+              failures.append(f"_load_taxonomies: {e!r}")
+              print(f"FAIL taxonomy loader: {e!r}", file=sys.stderr)
+
+          if failures:
+              print(f"\n{len(failures)} resource(s) missing from image:", file=sys.stderr)
+              for f in failures:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          PY

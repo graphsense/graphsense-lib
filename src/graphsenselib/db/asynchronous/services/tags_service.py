@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, Callable
 
 from graphsenselib.config.config import SlackTopic
+from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.errors import FeatureNotAvailableException, NotFoundException
 from graphsenselib.utils.address import address_to_user_format
 from graphsenselib.utils.slack import send_message_to_slack
@@ -11,6 +12,7 @@ from graphsenselib.utils.slack import send_message_to_slack
 
 from .common import (
     cannonicalize_address,
+    gather_bounded,
     try_get_cluster_id,
 )
 from ....utils.rest_utils import is_eth_like
@@ -445,8 +447,15 @@ class TagsService:
         )
 
         if include_best_cluster_tag and not is_eth_like(network):
-            cluster_ids = await asyncio.gather(
-                *[try_get_cluster_id(self.db, network, addr) for addr in unique_canon]
+            # Cassandra fan-out: one cluster_id lookup per unique address.
+            # Bounded by the same per-request cap as Postgres-touching paths
+            # so a wide tx (hundreds of unique inputs) cannot saturate the
+            # Cassandra driver's inflight-request budget and stall the
+            # gunicorn worker past its timeout.
+            sem = asyncio.Semaphore(get_tagstore_max_concurrency())
+            cluster_ids = await gather_bounded(
+                sem,
+                *[try_get_cluster_id(self.db, network, addr) for addr in unique_canon],
             )
             addr_to_cluster: Dict[str, int] = {
                 addr: cid

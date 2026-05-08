@@ -10,7 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
+## [2.12.3] 2026-05-08
+
+### Library (v2.12.3)
+
+#### Changed
+- **Cluster-mapping staleness check is now per-network.** Sampling switched from a global `LIMIT N` (which was dominated by BTC's heavy-hitter clusters and effectively starved other chains) to `ROW_NUMBER() OVER (PARTITION BY network)`, so each eligible network gets up to `--staleness-sample-size` / `--cluster-staleness-sample-size` rows independently. The auto-rerun gate now triggers when the **maximum** per-network divergence rate ≥ threshold (was: weighted overall rate), so drift on smaller chains is no longer hidden by a clean BTC sample. Total Cassandra read cost grows from `sample_size` to `N × sample_size`.
+
+#### Fixed
+- **`LabelSummary.concepts` order is now deterministic** (`sorted(...)` instead of `list(set(...))`). The previous `set`-derived ordering was hash-dependent and could differ between Python versions, causing `TagSummary` equality comparisons to flake on 3.10 vs 3.11.
+- **Wide-tx hang in `_any_input_is_exchange` FP suppression** (regression introduced in v2.12.2's batched tag-summary path). The cluster_id resolution step in `TagsService.get_tag_summaries_by_subject_ids` was an unbounded `asyncio.gather` over `try_get_cluster_id`, which for a BTC tx with hundreds of unique inputs fired hundreds of concurrent Cassandra queries from a single request and could stall the gunicorn worker past its timeout (30 s). Now bounded by `gather_bounded(get_tagstore_max_concurrency())`, matching the cap previously enforced by the per-address path.
+- **Resource files missing from Docker image** (regression introduced in v2.12.2 when `.git/` was removed from the build context). With `include-package-data = true` but no VCS root, setuptools_scm's file finder returned an empty list, so the wheel shipped zero `*.yaml` / `*.csv` / `*.sql` / `*.proto` resources — taxonomy loading (`concepts.yaml`, `countries.csv`, `confidence.csv`) and schema loading (`*.sql`) blew up at container startup. Fixed by declaring an explicit `[tool.setuptools.package-data]` table in `pyproject.toml` so file inclusion no longer depends on a present `.git`. Verified: a no-git build now ships the same 35 data files as the with-git build.
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
 
 ## [2.12.2] 2026-05-07
 
