@@ -1,14 +1,15 @@
 """Ingest-complete marker writer for the per-keyspace `state` table.
 
-REST keyspace auto-discovery
-(graphsenselib.db.asynchronous.cassandra.find_latest_raw_keyspace and
-find_latest_transformed_keyspace) treats the presence of an
-`ingest_complete` row in this table as the "keyspace is ready to query"
-signal.
+REST raw-keyspace auto-discovery
+(graphsenselib.db.asynchronous.cassandra.find_latest_raw_keyspace) treats
+the presence of an `ingest_complete` row in this table as the "raw
+keyspace is ready to query" signal. Raw ingest callers MUST invoke
+`mark_ingest_complete` as the very last write of an ingest run.
 
-Callers MUST invoke `mark_ingest_complete` as the very last write of an
-ingest or transformation run. Earlier writes leave the keyspace
-discoverable while data is still partial.
+The marker is currently raw-only. Transformed keyspaces are produced by
+the transformation pipeline (no "ingest" step) and are discovered via a
+populated `summary_statistics` table — see
+`find_latest_transformed_keyspace`.
 """
 
 from datetime import datetime, timezone

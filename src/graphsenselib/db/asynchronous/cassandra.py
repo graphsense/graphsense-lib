@@ -688,18 +688,22 @@ class Cassandra:
         return sorted(dated, key=lambda kd: kd[1], reverse=True)
 
     def find_latest_transformed_keyspace(self, network):
+        # Transformed keyspaces are produced by the transformation pipeline,
+        # not ingested — nothing writes the `state.ingest_complete` marker on
+        # this side. Treat a populated `summary_statistics` table as the
+        # readiness signal instead.
         prefix = f"{network.lower()}_transformed"
         res = []
         for ks, _ in self._dated_keyspaces(prefix):
-            if not self._is_ingest_complete(ks, "summary_statistics"):
-                if self.logger:
-                    self.logger.warning(f"{ks} is not marked ingest_complete. skipping")
-                continue
             stats = self.session.execute(
                 f"SELECT no_blocks FROM {ks}.summary_statistics limit 1"
             )
             stats_row = one(stats)
-            no_blocks = stats_row["no_blocks"] if stats_row is not None else 0
+            if stats_row is None:
+                if self.logger:
+                    self.logger.warning(f"{ks} has empty summary_statistics. skipping")
+                continue
+            no_blocks = stats_row["no_blocks"] or 0
             res.append((ks, no_blocks))
 
         res = sorted(res, key=lambda item: item[1], reverse=True)
