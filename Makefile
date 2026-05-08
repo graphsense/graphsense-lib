@@ -104,7 +104,9 @@ build-rust:
 	cd rust/gs_clustering && maturin develop --release
 
 build-docker:
-	docker build -t graphsense-lib .
+	docker build \
+		--build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=$$(uv run python -m setuptools_scm) \
+		-t graphsense-lib .
 
 version:
 	uv run python -m setuptools_scm

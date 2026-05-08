@@ -366,10 +366,17 @@ def prepare_relations_for_ingest(
     delta: List[RelationDelta],
     resolve_identifier: Callable[[Union[str, int]], int],
     inrelations: dict,
-    outrelations: dict,
     id_bucket_size: int,
     mode: EntityType,
 ) -> Tuple[List[DbChange], dict, dict, int]:
+    """Prepare relation changes for database ingest.
+
+    Only queries incoming relations: the outgoing-relations row for the same
+    edge carries identical (no_transactions, estimated_value) data, and its
+    partition keys are derivable from the address/cluster ids. Both tables are
+    still written; Cassandra UPSERT covers the (asserted-impossible) case
+    where an outgoing row is missing for an existing incoming row.
+    """
     new_relations_in = defaultdict(int)
     new_relations_out = defaultdict(int)
     nr_new_rel = 0
@@ -377,21 +384,16 @@ def prepare_relations_for_ingest(
     changes = []
     """ Merging relations deltas """
     for relations_update in delta:
-        outr = outrelations[
-            (relations_update.src_identifier, relations_update.dst_identifier)
-        ].result_or_exc.one()
         inr = inrelations[
             (relations_update.src_identifier, relations_update.dst_identifier)
         ].result_or_exc.one()
-
-        assert (outr is None) == (inr is None)
 
         id_src = resolve_identifier(relations_update.src_identifier)
         id_dst = resolve_identifier(relations_update.dst_identifier)
         src_group = get_id_group(id_src, id_bucket_size)
         dst_group = get_id_group(id_dst, id_bucket_size)
 
-        if outr is None:
+        if inr is None:
             """new address/cluster relation to insert"""
             new_relations_out[relations_update.src_identifier] += 1
             new_relations_in[relations_update.dst_identifier] += 1
@@ -418,10 +420,11 @@ def prepare_relations_for_ingest(
             )
             nr_new_rel += 2
         else:
-            """update existing adddress relation"""
-            nv = DeltaValue.from_db(outr.estimated_value).merge(
+            """update existing address/cluster relation - same data on both sides"""
+            nv = DeltaValue.from_db(inr.estimated_value).merge(
                 relations_update.estimated_value
             )
+            new_no_tx = inr.no_transactions + relations_update.no_transactions
 
             chng_in = DbChange.update(
                 table=f"{mode}_incoming_relations",
@@ -429,8 +432,7 @@ def prepare_relations_for_ingest(
                     f"dst_{mode}_id_group": dst_group,
                     f"dst_{mode}_id": id_dst,
                     f"src_{mode}_id": id_src,
-                    "no_transactions": outr.no_transactions
-                    + relations_update.no_transactions,
+                    "no_transactions": new_no_tx,
                     "estimated_value": nv,
                 },
             )
@@ -441,7 +443,7 @@ def prepare_relations_for_ingest(
                     f"src_{mode}_id_group": src_group,
                     f"src_{mode}_id": id_src,
                     f"dst_{mode}_id": id_dst,
-                    "no_transactions": outr.no_transactions,
+                    "no_transactions": new_no_tx,
                     "estimated_value": nv,
                 },
             )

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Protocol
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import ClusterNotFoundException
 from graphsenselib.utils.address import address_to_user_format
@@ -32,13 +33,6 @@ from .models import (
 )
 from .rates_service import RatesService
 from .tags_service import TagsService
-
-# Cap on concurrent per-neighbor DB calls inside list_entity_neighbors.
-# The tagstore lookups are batched (one Postgres session each), so this
-# only bounds the Cassandra `db.get_entity` fan-out — kept as a hard
-# upper bound on per-request connection demand. Root cause context:
-# 2026-05-04 gs-rest pool exhaustion incident.
-_NEIGHBORS_DB_CONCURRENCY = 8
 
 
 class DatabaseProtocol(Protocol):
@@ -309,7 +303,7 @@ class EntitiesService:
 
             rates = await self.rates_service.get_rates(currency)
             token_config = self.db.get_token_configuration(currency)
-            sem = asyncio.Semaphore(_NEIGHBORS_DB_CONCURRENCY)
+            sem = asyncio.Semaphore(get_tagstore_max_concurrency())
 
             async def _build_node(cid: int) -> Entity:
                 async with sem:

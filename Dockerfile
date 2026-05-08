@@ -9,6 +9,13 @@ LABEL org.opencontainers.image.source="https://github.com/graphsense/graphsense-
 
 ENV UV_ONLY_BINARY=1
 
+# Version is computed on the host (where the full worktree + git tags are
+# available) and handed in here. Inside the container only a subset of the
+# tree is COPY'd, so an in-container `git describe` would see "deleted"
+# tracked files and emit a dirty/dev0 version even on a clean tag.
+ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB}
+
 # REST API environment variables
 ENV NUM_WORKERS=
 ENV NUM_THREADS=
@@ -33,7 +40,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p /opt/graphsense/
 ADD ./src/ /opt/graphsense/lib/src
-ADD ./.git/ /opt/graphsense/lib/.git
 ADD ./Makefile /opt/graphsense/lib/
 ADD ./pyproject.toml /opt/graphsense/lib/
 ADD ./uv.lock /opt/graphsense/lib/
@@ -61,7 +67,11 @@ COPY <<EOF /opt/gunicorn-conf.py
 import multiprocessing
 import os
 
-timeout = 30
+# Generous timeout for analytical endpoints. Wide BTC txs with
+# include_heuristics=all can legitimately need more than 30s when the
+# tagstore is warm but cold-cache. Set to 300s to match a typical APISIX
+# proxy_read_timeout — workers that go past this are genuinely stuck.
+timeout = 300
 capture_output = True
 accesslog = "-"
 errorlog = "-"
@@ -78,6 +88,11 @@ try:
     threads = int(os.getenv("NUM_THREADS", num))
 except ValueError:
     threads = num
+
+try:
+    backlog = int(os.getenv("GUNICORN_BACKLOG", "8192"))
+except ValueError:
+    backlog = 8192
 
 
 def post_fork(server, worker):

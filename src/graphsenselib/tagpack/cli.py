@@ -1,6 +1,7 @@
 # ruff: noqa: T201
 import json
 import os
+import pathlib
 import sys
 import tempfile
 import time
@@ -35,10 +36,31 @@ from graphsenselib.tagpack.constants import (
 from graphsenselib.tagstore.cli import tagstore
 from graphsenselib.tagpack.taxonomy import _load_taxonomies, _load_taxonomy
 from graphsenselib.monitoring.notifications import send_msg_to_topic
+from graphsenselib.utils.locking import create_lock, LockAcquisitionError
+from graphsenselib.utils.rest_utils import is_eth_like
 import logging
+from contextlib import contextmanager
 from typing import Tuple
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _timed_phase(name: str):
+    """Bracket a sync sub-step with INFO start/done lines + wall-clock.
+
+    Used by `tagpack-tool sync` so an operator can read the log and see
+    where time actually went on a multi-repo / multi-step run, without
+    having to attach a profiler or time things by hand.
+    """
+    logger.info("%s ...", name)
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        logger.info("%s done in %.2fs", name, time.perf_counter() - t0)
+
 
 DEFAULT_ACTORPACK_URL = "https://raw.githubusercontent.com/graphsense/graphsense-tagpacks/master/actors/graphsense.actorpack.yaml"
 
@@ -267,6 +289,39 @@ def config(ctx, verbose):
     help="Environment in graphsense-lib config to use for the mapping process. Reinserts all mappings.",
 )
 @click.option(
+    "--auto-rerun-cluster-mapping-with-env",
+    help=(
+        "Environment in graphsense-lib config to use for an automatic "
+        "staleness check: a sample of mapped addresses is compared against "
+        "the current clustering, and a full rerun is triggered only if the "
+        "divergence rate is at or above --cluster-staleness-threshold. "
+        "Otherwise only newly-inserted addresses are mapped."
+    ),
+)
+@click.option(
+    "--cluster-staleness-sample-size",
+    type=int,
+    default=2000,
+    show_default=True,
+    help=(
+        "Sample size *per network* for --auto-rerun-cluster-mapping-with-env. "
+        "Each eligible (non-eth-like) network is sampled independently; a "
+        "global limit would be dominated by BTC's heavy-hitter clusters."
+    ),
+)
+@click.option(
+    "--cluster-staleness-threshold",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help=(
+        "Divergence rate (0.0-1.0) at or above which "
+        "--auto-rerun-cluster-mapping-with-env triggers a full rerun. "
+        "Compared against the maximum per-network rate, so drift on any "
+        "one chain is enough to trigger."
+    ),
+)
+@click.option(
     "--n-workers",
     type=int,
     default=1,
@@ -282,24 +337,88 @@ def config(ctx, verbose):
     is_flag=True,
     help="Do update quality metrinc. (better insert speed)",
 )
+@click.option(
+    "--no-lock",
+    is_flag=True,
+    help="Do not acquire a lock to avoid conflicting sync processes.",
+)
+@click.option(
+    "--no-file-lock",
+    is_flag=True,
+    hidden=True,
+    help="Deprecated alias for --no-lock.",
+)
 def sync(
     repos,
     force,
     url,
     run_cluster_mapping_with_env,
     rerun_cluster_mapping_with_env,
+    auto_rerun_cluster_mapping_with_env,
+    cluster_staleness_sample_size,
+    cluster_staleness_threshold,
     n_workers,
     no_validation,
     dont_update_quality_metrics,
+    no_lock,
+    no_file_lock,
 ):
     """syncs the tagstore with a list of git repos."""
     url = override_postgres_url(url)
 
+    lock_disabled = no_lock or no_file_lock
+
+    # Ensure AppConfig is populated (lock backend selection reads
+    # use_redis_locks / redis_url). The main `graphsense-cli` callback
+    # already calls load_partial; this is a defensive no-op for that path
+    # but makes the command safe if invoked via a different entry point.
+    if not lock_disabled:
+        from graphsenselib.config import get_config
+
+        cfg = get_config()
+        if not cfg.is_loaded():
+            cfg.load_partial()
+
+    db_name = urlparse(url).path.lstrip("/") or "default"
+    lock_name = f"tagpack_sync_{db_name}"
+
+    try:
+        with create_lock(lock_name, disabled=lock_disabled):
+            _sync_impl(
+                repos=repos,
+                force=force,
+                url=url,
+                run_cluster_mapping_with_env=run_cluster_mapping_with_env,
+                rerun_cluster_mapping_with_env=rerun_cluster_mapping_with_env,
+                auto_rerun_cluster_mapping_with_env=auto_rerun_cluster_mapping_with_env,
+                cluster_staleness_sample_size=cluster_staleness_sample_size,
+                cluster_staleness_threshold=cluster_staleness_threshold,
+                n_workers=n_workers,
+                no_validation=no_validation,
+                dont_update_quality_metrics=dont_update_quality_metrics,
+            )
+    except LockAcquisitionError as e:
+        logger.warning(str(e))
+        sys.exit(911)
+
+
+def _sync_impl(
+    repos,
+    force,
+    url,
+    run_cluster_mapping_with_env,
+    rerun_cluster_mapping_with_env,
+    auto_rerun_cluster_mapping_with_env,
+    cluster_staleness_sample_size,
+    cluster_staleness_threshold,
+    n_workers,
+    no_validation,
+    dont_update_quality_metrics,
+):
     if os.path.isfile(repos):
+        sync_t0 = time.perf_counter()
         with open(repos, "r") as f:
             repos_list = [x.strip() for x in f.readlines() if not x.startswith("#")]
-
-        logger.info("Init db and add taxonomies ...")
 
         from graphsenselib.tagstore.cli import (
             tagstore as tagstore_tool,
@@ -320,7 +439,8 @@ def sync(
         click_ctx_tagpacktool_quality = click.Context(quality)
         click_ctx_tagpacktool_quality.ensure_object(dict)
 
-        click_ctx_tagstore.invoke(init_tagstore_tool, db_url=url)
+        with _timed_phase("Init db and add taxonomies"):
+            click_ctx_tagstore.invoke(init_tagstore_tool, db_url=url)
 
         extra_option = "--force" if force else None
         extra_option = "--add-new" if extra_option is None else extra_option
@@ -328,75 +448,127 @@ def sync(
         for repo_url in repos_list:
             with tempfile.TemporaryDirectory(suffix="tagstore_sync") as temp_dir_tt:
                 logger.info(f"Syncing {repo_url}. Temp files in: {temp_dir_tt}")
+                with _timed_phase(f"Repo {repo_url}"):
+                    with _timed_phase("Cloning"):
+                        repo_url, *branch_etc = repo_url.split(" ")
+                        repo = Repo.clone_from(repo_url, temp_dir_tt)
+                        if len(branch_etc) > 0:
+                            branch = branch_etc[0]
+                            logger.info(f"Using branch {branch}")
+                            repo.git.checkout(branch)
 
-                logger.info("Cloning...")
-                repo_url, *branch_etc = repo_url.split(" ")
-                repo = Repo.clone_from(repo_url, temp_dir_tt)
-                if len(branch_etc) > 0:
-                    branch = branch_etc[0]
-                    logger.info(f"Using branch {branch}")
-                    repo.git.checkout(branch)
+                    with _timed_phase("Inserting actorpacks"):
+                        click_ctx_actorpack.invoke(
+                            insert_actorpack_cli, path=temp_dir_tt, url=url
+                        )
 
-                logger.info("Inserting actorpacks ...")
+                    public = len(branch_etc) > 1 and branch_etc[1].strip() == "public"
 
-                click_ctx_actorpack.invoke(
-                    insert_actorpack_cli, path=temp_dir_tt, url=url
-                )
+                    tag_type_default = (
+                        branch_etc[2].strip() if len(branch_etc) > 2 else None
+                    )
 
-                logger.info("Inserting tagpacks ...")
-                public = len(branch_etc) > 1 and branch_etc[1].strip() == "public"
+                    if public:
+                        logger.info("Caution: This repo is imported as public.")
 
-                tag_type_default = (
-                    branch_etc[2].strip() if len(branch_etc) > 2 else None
-                )
+                    args = {
+                        "path": temp_dir_tt,
+                        "url": url,
+                        "public": public,
+                        "force": force,
+                        "n_workers": n_workers,
+                        "no_validation": no_validation,
+                        "add_new": False,
+                        "update": not force,
+                        "tag_type_default": tag_type_default,
+                    }
 
-                if public:
-                    logger.info("Caution: This repo is imported as public.")
+                    if tag_type_default is None:
+                        args.pop("tag_type_default")
 
-                args = {
-                    "path": temp_dir_tt,
-                    "url": url,
-                    "public": public,
-                    "force": force,
-                    "n_workers": n_workers,
-                    "no_validation": no_validation,
-                    "add_new": False,
-                    "update": not force,
-                    "tag_type_default": tag_type_default,
-                }
+                    with _timed_phase("Inserting tagpacks"):
+                        click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
 
-                if tag_type_default is None:
-                    args.pop("tag_type_default")
+        with _timed_phase("Removing duplicates"):
+            click_ctx_tagstore.invoke(remove_duplicates, url=url)
 
-                click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
-
-        logger.info("Removing duplicates ...")
-        click_ctx_tagstore.invoke(remove_duplicates, url=url)
-
-        logger.info("Refreshing db views ...")
-        click_ctx_tagstore.invoke(refresh_views, url=url)
-
-        if not dont_update_quality_metrics:
-            logger.info("Calc Quality metrics ...")
-            calc_quality_measures(url, DEFAULT_SCHEMA)
-            # click_ctx_tagpacktool_quality.invoke(calculate_quality, url=url)
-
-        if run_cluster_mapping_with_env or rerun_cluster_mapping_with_env:
-            logger.info("Import cluster mappings ...")
-
-            click_ctx_tagpacktool_tagstore.invoke(
-                insert_cluster_mappings,
-                url=url,
-                use_gs_lib_config_env=(
-                    run_cluster_mapping_with_env or rerun_cluster_mapping_with_env
-                ),
-                update=rerun_cluster_mapping_with_env is not None,
-            )
-
-            logger.info("Refreshing db views ...")
+        with _timed_phase("Refreshing db views"):
             click_ctx_tagstore.invoke(refresh_views, url=url)
 
-        logger.info("Your tagstore is now up-to-date again.")
+        if not dont_update_quality_metrics:
+            with _timed_phase("Calc Quality metrics"):
+                calc_quality_measures(url, DEFAULT_SCHEMA)
+                # click_ctx_tagpacktool_quality.invoke(calculate_quality, url=url)
+
+        effective_rerun_env = rerun_cluster_mapping_with_env
+        effective_run_env = run_cluster_mapping_with_env
+
+        if auto_rerun_cluster_mapping_with_env and not rerun_cluster_mapping_with_env:
+            if run_cluster_mapping_with_env:
+                logger.warning(
+                    "Both --run-cluster-mapping-with-env and "
+                    "--auto-rerun-cluster-mapping-with-env passed; "
+                    "--auto-rerun- takes precedence."
+                )
+            with _timed_phase(
+                f"Checking cluster mapping staleness against env "
+                f"'{auto_rerun_cluster_mapping_with_env}' "
+                f"(sample={cluster_staleness_sample_size}, "
+                f"threshold={cluster_staleness_threshold:.2%})"
+            ):
+                overall, per_network = check_cluster_mapping_staleness(
+                    url=url,
+                    schema=DEFAULT_SCHEMA,
+                    db_nodes=["localhost"],
+                    cassandra_username=None,
+                    cassandra_password=None,
+                    ks_file=None,
+                    use_gs_lib_config_env=auto_rerun_cluster_mapping_with_env,
+                    sample_size=cluster_staleness_sample_size,
+                )
+            for net, stats in per_network.items():
+                logger.info(
+                    f"  {net}: {stats['diverged']}/{stats['checked']} "
+                    f"diverged ({stats['rate']:.2%})"
+                )
+            if per_network:
+                max_net, max_stats = max(
+                    per_network.items(), key=lambda kv: kv[1]["rate"]
+                )
+                max_rate = float(max_stats["rate"])
+            else:
+                max_net, max_rate = None, 0.0
+            if max_rate >= cluster_staleness_threshold:
+                logger.info(
+                    f"Max per-network divergence {max_rate:.2%} on '{max_net}' "
+                    f">= threshold {cluster_staleness_threshold:.2%} "
+                    f"(overall {overall:.2%}); rerunning full cluster mapping."
+                )
+                effective_rerun_env = auto_rerun_cluster_mapping_with_env
+            else:
+                logger.info(
+                    f"Max per-network divergence {max_rate:.2%} < threshold "
+                    f"{cluster_staleness_threshold:.2%} (overall {overall:.2%}); "
+                    "mapping new addresses only."
+                )
+                effective_run_env = auto_rerun_cluster_mapping_with_env
+
+        if effective_run_env or effective_rerun_env:
+            with _timed_phase("Import cluster mappings"):
+                click_ctx_tagpacktool_tagstore.invoke(
+                    insert_cluster_mappings,
+                    url=url,
+                    use_gs_lib_config_env=(effective_run_env or effective_rerun_env),
+                    update=effective_rerun_env is not None,
+                )
+
+            with _timed_phase("Refreshing db views (post-cluster-mapping)"):
+                click_ctx_tagstore.invoke(refresh_views, url=url)
+
+        logger.info(
+            "Your tagstore is now up-to-date again. Total sync time: %.2fs",
+            time.perf_counter() - sync_t0,
+        )
 
     else:
         logger.error(f"Repos to sync file {repos} does not exist.")
@@ -813,19 +985,25 @@ def insert_tagpack(
     status = "fail" if no_passed < n_ppacks else "success"
 
     duration = round(time.time() - t0, 2)
-    msg = "Processed {}/{} TagPacks with {} Tags in {}s. "
+    try:
+        repo_name = pathlib.Path(str(base_url)).name or str(base_url) or "unknown"
+    except Exception:
+        repo_name = "unknown"
+    msg = "Processed {}/{} TagPacks with {} Tags in {}s from {}. "
     if status == "fail":
-        logger.error(msg.format(no_passed, n_ppacks, no_tags, duration))
+        logger.error(msg.format(no_passed, n_ppacks, no_tags, duration, repo_name))
         failed_count = n_ppacks - no_passed
         try:
             send_msg_to_topic(
                 "info",
-                f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {path}",
+                f"TagPack insert failed: {failed_count}/{n_ppacks} TagPacks failed in {repo_name}",
             )
         except Exception as e:
             logger.warning(f"Failed to send Slack notification: {e}")
     else:
-        click.secho(msg.format(no_passed, n_ppacks, no_tags, duration), fg="green")
+        click.secho(
+            msg.format(no_passed, n_ppacks, no_tags, duration, repo_name), fg="green"
+        )
     msg = "Don't forget to run 'graphsense-cli tagpack-tool refresh-views' soon to keep the database"
     msg += " consistent!"
     print(msg)
@@ -1429,6 +1607,84 @@ def _split_into_chunks(seq, size):
     return (seq[pos : pos + size] for pos in range(0, len(seq), size))
 
 
+def check_cluster_mapping_staleness(
+    url,
+    schema,
+    db_nodes,
+    cassandra_username,
+    cassandra_password,
+    ks_file,
+    use_gs_lib_config_env,
+    sample_size,
+):
+    """Sample mapped addresses per network, compare stored vs. current cluster_id.
+
+    Each eligible network contributes up to `sample_size` rows, biased
+    toward heavy-hitter clusters. A global limit would be dominated by
+    BTC and hide drift on smaller chains.
+
+    Returns (overall_divergence_rate, per_network_stats). Skips eth-like
+    networks (ETH/TRX) — they have no real clustering, so cluster_id ==
+    address_id and drift is not possible.
+    """
+    args = ClusterMappingArgs(
+        url,
+        schema,
+        db_nodes,
+        cassandra_username,
+        cassandra_password,
+        ks_file,
+        use_gs_lib_config_env,
+        update=False,
+    )
+    ks_mapping = load_ks_mapping(args)
+    eligible_networks = [n for n in ks_mapping.keys() if not is_eth_like(n)]
+    if not eligible_networks:
+        return 0.0, {}
+
+    tagstore = TagStore(url, schema)
+    rows = tagstore.get_cluster_mapping_sample(sample_size, networks=eligible_networks)
+    if not rows:
+        return 0.0, {}
+
+    sample = pd.DataFrame(rows, columns=["address", "network", "stored_cluster_id"])
+    gs = GraphSense(
+        args.db_nodes,
+        ks_mapping,
+        username=args.cassandra_username,
+        password=args.cassandra_password,
+    )
+
+    per_network = {}
+    total_checked = 0
+    total_diverged = 0
+    for network_key, batch in sample.groupby("network"):
+        network = str(network_key)
+        if not gs.keyspace_for_network_exists(network):
+            logger.warning(f"Skipping staleness check for {network}: keyspace missing")
+            continue
+        current = gs.get_address_clusters(batch[["address"]].copy(), network)
+        if current.empty:
+            continue
+        merged = batch.merge(
+            current[["address", "cluster_id"]], on="address", how="inner"
+        )
+        if merged.empty:
+            continue
+        diverged = (merged["stored_cluster_id"] != merged["cluster_id"]).sum()
+        checked = len(merged)
+        per_network[network] = {
+            "checked": int(checked),
+            "diverged": int(diverged),
+            "rate": float(diverged) / checked if checked else 0.0,
+        }
+        total_checked += checked
+        total_diverged += int(diverged)
+
+    overall = (total_diverged / total_checked) if total_checked else 0.0
+    return overall, per_network
+
+
 def insert_cluster_mapping_wp(network, ks_mapping, args, batch):
     tagstore = TagStore(args.url, args.schema)
     gs = GraphSense(
@@ -1661,6 +1917,36 @@ def init(schema, url):
 )
 @click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
 @click.option("--update", is_flag=True, help="update all cluster mappings")
+@click.option(
+    "--auto-rerun-if-stale",
+    is_flag=True,
+    help=(
+        "Run a staleness check first; only do a full update if the divergence "
+        "rate is at or above --staleness-threshold. Otherwise only newly-"
+        "inserted addresses are mapped. Ignored if --update is also set."
+    ),
+)
+@click.option(
+    "--staleness-sample-size",
+    type=int,
+    default=2000,
+    show_default=True,
+    help=(
+        "Sample size *per network* for --auto-rerun-if-stale. Each eligible "
+        "(non-eth-like) network is sampled independently."
+    ),
+)
+@click.option(
+    "--staleness-threshold",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help=(
+        "Divergence rate (0.0-1.0) at or above which --auto-rerun-if-stale "
+        "triggers a full update. Compared against the maximum per-network "
+        "rate, so drift on any one chain is enough to trigger."
+    ),
+)
 def insert_cluster_mappings(
     db_nodes,
     cassandra_username,
@@ -1670,9 +1956,52 @@ def insert_cluster_mappings(
     schema,
     url,
     update,
+    auto_rerun_if_stale,
+    staleness_sample_size,
+    staleness_threshold,
 ):
     """insert cluster mappings"""
     url = override_postgres_url(url)
+
+    if auto_rerun_if_stale and not update:
+        logger.info(
+            f"Checking cluster mapping staleness "
+            f"(sample={staleness_sample_size}, threshold={staleness_threshold:.2%})..."
+        )
+        overall, per_network = check_cluster_mapping_staleness(
+            url=url,
+            schema=schema,
+            db_nodes=list(db_nodes),
+            cassandra_username=cassandra_username,
+            cassandra_password=cassandra_password,
+            ks_file=ks_file,
+            use_gs_lib_config_env=use_gs_lib_config_env,
+            sample_size=staleness_sample_size,
+        )
+        for net, stats in per_network.items():
+            logger.info(
+                f"  {net}: {stats['diverged']}/{stats['checked']} "
+                f"diverged ({stats['rate']:.2%})"
+            )
+        if per_network:
+            max_net, max_stats = max(per_network.items(), key=lambda kv: kv[1]["rate"])
+            max_rate = float(max_stats["rate"])
+        else:
+            max_net, max_rate = None, 0.0
+        if max_rate >= staleness_threshold:
+            logger.info(
+                f"Max per-network divergence {max_rate:.2%} on '{max_net}' "
+                f">= threshold {staleness_threshold:.2%} "
+                f"(overall {overall:.2%}); running full update."
+            )
+            update = True
+        else:
+            logger.info(
+                f"Max per-network divergence {max_rate:.2%} < threshold "
+                f"{staleness_threshold:.2%} (overall {overall:.2%}); "
+                "mapping new addresses only."
+            )
+
     insert_cluster_mapping(
         url,
         schema,
@@ -1683,6 +2012,77 @@ def insert_cluster_mappings(
         use_gs_lib_config_env,
         update,
     )
+
+
+@tagstore.command(name="check-cluster-mapping-staleness")
+@click.option(
+    "-d",
+    "--db-nodes",
+    multiple=True,
+    default=["localhost"],
+    help='Cassandra node(s); default "localhost"',
+)
+@click.option("--cassandra-username", default=None, help="Cassandra Username")
+@click.option("--cassandra-password", default=None, help="Cassandra password")
+@click.option(
+    "-f",
+    "--ks-file",
+    help="JSON file with Cassandra keyspaces that contain GraphSense cluster mappings",
+)
+@click.option(
+    "--use-gs-lib-config-env",
+    help="Load ks-mapping from global graphsense-lib config. Overrides --ks-file and --db-nodes",
+)
+@click.option(
+    "--schema",
+    default=DEFAULT_SCHEMA,
+    help="PostgreSQL schema for GraphSense cluster mapping table",
+)
+@click.option("-u", "--url", help="postgresql://user:password@db_host:port/database")
+@click.option(
+    "--sample-size",
+    type=int,
+    default=2000,
+    show_default=True,
+    help="Number of mapped addresses to sample (biased toward large clusters).",
+)
+def check_cluster_mapping_staleness_cli(
+    db_nodes,
+    cassandra_username,
+    cassandra_password,
+    ks_file,
+    use_gs_lib_config_env,
+    schema,
+    url,
+    sample_size,
+):
+    """Compare stored vs. current cluster_id for a sample of mapped addresses; print divergence."""
+    url = override_postgres_url(url)
+    overall, per_network = check_cluster_mapping_staleness(
+        url=url,
+        schema=schema,
+        db_nodes=list(db_nodes),
+        cassandra_username=cassandra_username,
+        cassandra_password=cassandra_password,
+        ks_file=ks_file,
+        use_gs_lib_config_env=use_gs_lib_config_env,
+        sample_size=sample_size,
+    )
+    if not per_network:
+        click.echo("No eligible addresses sampled (eth-like networks are skipped).")
+        return
+    rows = [
+        [net, stats["checked"], stats["diverged"], f"{stats['rate']:.2%}"]
+        for net, stats in sorted(per_network.items())
+    ]
+    click.echo(
+        tabulate(
+            rows,
+            headers=["network", "checked", "diverged", "rate"],
+            tablefmt="github",
+        )
+    )
+    click.echo(f"\nOverall divergence: {overall:.2%}")
 
 
 @tagstore.command()

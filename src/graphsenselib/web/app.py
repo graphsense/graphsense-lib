@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError as PydanticValidationError
 from pydantic_core import ValidationError as PydanticCoreValidationError
 from graphsenselib.config import AppConfig
+from graphsenselib.config.tagstore_config import set_active_tagstore_config
 from graphsenselib.web.version import __api_version__
 from graphsenselib.db.asynchronous.services.tags_service import ConceptProtocol
 from graphsenselib.errors import (
@@ -500,6 +501,18 @@ async def setup_database(app: FastAPI):
         recycle = ts_conf.pool_recycle
         enable_prepared_statements_cache = ts_conf.enable_prepared_statements_cache
 
+        # Register this config as the runtime source of truth. The
+        # capacity invariant (pool_size + max_overflow >= max_concurrency)
+        # is enforced by the TagStoreReaderConfig model_validator, so by
+        # the time we reach this branch the value is known-safe.
+        set_active_tagstore_config(ts_conf)
+        logger.info(
+            "TagStore fan-out cap: max_concurrency=%d (pool_size=%d, max_overflow=%d)",
+            ts_conf.max_concurrency,
+            max_conn,
+            mo,
+        )
+
         engine = get_db_engine_async(
             ts_conf.url
             + (
@@ -540,6 +553,7 @@ async def setup_database(app: FastAPI):
 async def teardown_database(app: FastAPI):
     """Cleanup database connections"""
     logger.info("Begin app teardown")
+    set_active_tagstore_config(None)
     driver = app.state.config.database.driver.lower()
     app.state.db.close()
     logger.info(f"Closed {driver} connection.")

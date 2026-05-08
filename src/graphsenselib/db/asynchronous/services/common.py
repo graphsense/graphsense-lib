@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Protocol, Union
 
 import graphsenselib.utils.address
 from graphsenselib.config import is_fresh_clustering_enabled
+from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.db.asynchronous.cassandra import get_tx_identifier
 from graphsenselib.errors import (
@@ -31,6 +32,21 @@ from .models import (
     TxValue,
     Values,
 )
+
+
+async def gather_bounded(sem: Optional[asyncio.Semaphore], *coros):
+    """`asyncio.gather` with an upper bound on concurrent execution.
+
+    `sem` is an `asyncio.Semaphore`; pass `None` to disable bounding.
+    """
+    if sem is None:
+        return await asyncio.gather(*coros)
+
+    async def _run(coro):
+        async with sem:
+            return await coro
+
+    return await asyncio.gather(*(_run(c) for c in coros))
 
 
 def make_values(value, eur, usd):
@@ -547,7 +563,8 @@ async def _add_labels(
             for cluster_id in ids
         ]
 
-    tsresults = {k: v for k, v in zip(ids, await asyncio.gather(*tstasks))}
+    sem = asyncio.Semaphore(get_tagstore_max_concurrency())
+    tsresults = {k: v for k, v in zip(ids, await gather_bounded(sem, *tstasks))}
 
     for node in nodes:
         nid = node[thatfield]
