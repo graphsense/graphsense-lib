@@ -363,18 +363,8 @@ def get_transaction_changes(
         Reading relations to be updated.
     """
     with LoggerScope.debug(logger, "Reading address relations to be updated") as _:
-        rel_to_query = [
-            (addresses[update.src_identifier][0], addresses[update.dst_identifier][0])
-            for update in address_delta.relation_updates
-        ]
-        addr_outrelations_q = tdb.get_address_outgoing_relations_async_batch(
-            rel_to_query
-        )
-        addr_outrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(address_delta.relation_updates, addr_outrelations_q)
-        }
-
+        # Only query incoming relations: outgoing carries identical
+        # (no_transactions, estimated_value) data for the same edge.
         rel_to_query = [
             (addresses[update.dst_identifier][0], addresses[update.src_identifier][0])
             for update in address_delta.relation_updates
@@ -387,7 +377,7 @@ def get_transaction_changes(
             for update, qr in zip(address_delta.relation_updates, addr_inrelations_q)
         }
 
-        del rel_to_query, addr_inrelations_q, addr_outrelations_q
+        del rel_to_query, addr_inrelations_q
 
     with LoggerScope.debug(logger, "Reading clusters for addresses") as _:
         clusters_resolved = {  # noqa: C416
@@ -478,18 +468,7 @@ def get_transaction_changes(
         cluster_delta = address_delta.to_cluster_delta(address_to_cluster_id)
 
     with LoggerScope.debug(logger, "Reading cluster relations to be updated") as lg:
-        rel_to_query = [
-            (update.src_identifier, update.dst_identifier)
-            for update in cluster_delta.relation_updates
-        ]
-        clstr_outrelations_q = tdb.get_cluster_outgoing_relations_async_batch(
-            rel_to_query
-        )
-        clstr_outrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(cluster_delta.relation_updates, clstr_outrelations_q)
-        }
-
+        # Only query incoming relations: outgoing carries identical data.
         rel_to_query = [
             (update.dst_identifier, update.src_identifier)
             for update in cluster_delta.relation_updates
@@ -502,7 +481,7 @@ def get_transaction_changes(
             for update, qr in zip(cluster_delta.relation_updates, clstr_inrelations_q)
         }
 
-        del rel_to_query, clstr_inrelations_q, clstr_outrelations_q
+        del rel_to_query, clstr_inrelations_q
 
     """
         Merge Db Entries with deltas
@@ -518,7 +497,6 @@ def get_transaction_changes(
                 "id_transformation": address_to_address_id,
                 "get_entity": address_to_address_obj,
                 "incoming_relations_db": addr_inrelations,
-                "outgoing_relations_db": addr_outrelations,
             },
             EntityType.CLUSTER: {
                 "bucket_size": tdb.get_cluster_id_bucket_size(),
@@ -526,7 +504,6 @@ def get_transaction_changes(
                 "id_transformation": (lambda x: x),
                 "get_entity": cluster_id_to_cluster,
                 "incoming_relations_db": clstr_inrelations,
-                "outgoing_relations_db": clstr_outrelations,
             },
         }
 
@@ -558,7 +535,6 @@ def get_transaction_changes(
                 config["delta"].relation_updates,
                 config["id_transformation"],
                 config["incoming_relations_db"],
-                config["outgoing_relations_db"],
                 config["bucket_size"],
                 mode=mode,
             )
