@@ -55,7 +55,11 @@ COPY <<EOF /opt/gunicorn-conf.py
 import multiprocessing
 import os
 
-timeout = 30
+# Generous timeout for analytical endpoints. Wide BTC txs with
+# include_heuristics=all can legitimately need more than 30s when the
+# tagstore is warm but cold-cache. Set to 300s to match a typical APISIX
+# proxy_read_timeout — workers that go past this are genuinely stuck.
+timeout = 300
 capture_output = True
 accesslog = "-"
 errorlog = "-"

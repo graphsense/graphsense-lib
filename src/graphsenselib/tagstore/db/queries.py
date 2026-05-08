@@ -358,22 +358,39 @@ def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str])
     )
 
 
-def _get_best_cluster_tags_batch_stmt(
+def _get_best_cluster_tag_winners_stmt(
     cluster_ids: List[int], network: str, groups: List[str]
 ):
+    # Pick (cluster_id, winning_tag_id) per cluster at the DB layer using
+    # Postgres DISTINCT ON. The result-set size is at most
+    # len(cluster_ids), independent of how many cluster_definer tags any
+    # single cluster carries — without this guard a heavily-tagged
+    # cluster's tagset would be shipped back through the joinedloaded
+    # relationships and Cartesian'd by Tag.concepts, observed at >5min on
+    # a single cluster before this rewrite.
     return (
-        select(BestClusterTagView.cluster_id, Tag, TagPack, Confidence)
+        select(BestClusterTagView.cluster_id, Tag.id)
+        .distinct(BestClusterTagView.cluster_id)
+        .where(BestClusterTagView.cluster_id.in_(cluster_ids))
+        .where(BestClusterTagView.network == network)
+        .where(BestClusterTagView.tag_id == Tag.id)
+        .where(Tag.tagpack_id == TagPack.id)
+        .where(TagPack.acl_group.in_(groups))
+        .where(Confidence.id == Tag.confidence_id)
+        .order_by(BestClusterTagView.cluster_id, Confidence.level.desc())
+    )
+
+
+def _get_tags_with_joinedloads_by_ids_stmt(tag_ids: List[int]):
+    return (
+        select(Tag, TagPack, Confidence)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(BestClusterTagView.cluster_id.in_(cluster_ids))
-        .where(BestClusterTagView.network == network)
+        .where(Tag.id.in_(tag_ids))
         .where(Tag.tagpack_id == TagPack.id)
-        .where(BestClusterTagView.tag_id == Tag.id)
-        .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(BestClusterTagView.cluster_id, Confidence.level.desc())
     )
 
 
@@ -882,25 +899,34 @@ class TagstoreDbAsync:
     ) -> Dict[int, TagPublic]:
         if not cluster_ids:
             return {}
-        # `.unique()` is required because the joinedload on Tag.concepts
-        # is a collection — same constraint as the other facades in this
-        # file that joinedload relationships.
-        results = (
+        # Step 1: pick (cluster_id -> winning tag_id) at the DB level. No
+        # joinedloads here — the result set scales with len(cluster_ids),
+        # not with any single cluster's tag count.
+        winners = await session.exec(
+            _get_best_cluster_tag_winners_stmt(cluster_ids, network, groups)
+        )
+        cid_to_tag_id: Dict[int, int] = {cid: tid for cid, tid in winners}
+        if not cid_to_tag_id:
+            return {}
+
+        # Step 2: hydrate Tag (with collection joinedloads) for the
+        # winning tag_ids only. `.unique()` is required because the
+        # joinedload on Tag.concepts is a collection.
+        rows = (
             await session.exec(
-                _get_best_cluster_tags_batch_stmt(cluster_ids, network, groups)
+                _get_tags_with_joinedloads_by_ids_stmt(list(cid_to_tag_id.values()))
             )
         ).unique()
-        # Pick the highest-confidence row per cluster_id, matching the
-        # single-row query's `.order_by(Confidence.level.desc()).limit(1)`.
-        best: Dict[int, tuple] = {}
-        for cid, t, tp, c in results:
-            prev = best.get(cid)
-            if prev is None or c.level > prev[2].level:
-                best[cid] = (t, tp, c)
-        return {
-            cid: TagPublic.fromDB(t, tp, inherited_from=InheritedFrom.CLUSTER)
-            for cid, (t, tp, _c) in best.items()
-        }
+        tag_by_id = {t.id: (t, tp) for t, tp, _c in rows}
+
+        result: Dict[int, TagPublic] = {}
+        for cid, tid in cid_to_tag_id.items():
+            pair = tag_by_id.get(tid)
+            if pair is None:
+                continue
+            t, tp = pair
+            result[cid] = TagPublic.fromDB(t, tp, inherited_from=InheritedFrom.CLUSTER)
+        return result
 
     @_inject_session
     async def get_nr_tags_for_clusters(

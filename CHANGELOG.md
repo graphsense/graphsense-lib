@@ -10,6 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.12.4] 2026-05-08
+
+### Library (v2.12.4)
+
+#### Changed
+- **Gunicorn worker `timeout` raised 30 → 300 s** in the Dockerfile. Wide BTC txs with `?include_heuristics=all` legitimately need more than 30 s when the tagstore is cold; the previous limit silently SIGKILL'd the worker mid-request and APISIX returned 502 around 59 s (its own default route timeout retrying once on the upstream RST).
+- **`TagsService.get_tag_summaries_by_subject_ids` now logs per-phase timings** (`pg_tags`, `cassandra_cluster_ids`, `pg_best_cluster`, `digest`, `total`) at DEBUG and emits a `WARNING` when total ≥ 10 s. Future regressions in this hot path are pinpointable from logs without a profiler attach.
+
+#### Fixed
+- **`TagstoreDbAsync.get_best_cluster_tags_for_clusters` shipped every cluster_definer tag back to Python** (regression introduced in v2.12.1's pool-exhaustion fix). The batched SQL builder dropped the `LIMIT 1` from the singleton query and reduced in Python, which is fine when each cluster has a handful of cluster_definer tags, but pathological for a heavily-tagged cluster: with `joinedload(Tag.concepts)` (a collection), the result set grows as `cluster_tag_count × concepts_per_tag` for *each* requested cluster. Observed: **298 s for one cluster** on a wide BTC tx whose 78 inputs all mapped to the same heavily-tagged cluster (timing line: `pg_best_cluster=298.149s` out of `total=298.633s`). Rewritten as two queries: (1) `SELECT DISTINCT ON (cluster_id) cluster_id, tag_id ... ORDER BY cluster_id, confidence.level DESC` picks the winner per cluster at the DB layer with no joinedloads (result-set bounded by `len(cluster_ids)`), (2) hydrate Tag + relationships only for the winning tag_ids. Same external contract — parity tests in `tests/web/test_tag_summaries_batch_parity.py` continue to pass. Affects both call sites: `get_tag_summaries_by_subject_ids` (CoinJoin FP-suppression on wide UTXO txs) and `entities_service.list_entity_neighbors` with `include_labels=true`.
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
 ## [2.12.3] 2026-05-08
 
 ### Library (v2.12.3)
@@ -19,8 +34,12 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Fixed
 - **`LabelSummary.concepts` order is now deterministic** (`sorted(...)` instead of `list(set(...))`). The previous `set`-derived ordering was hash-dependent and could differ between Python versions, causing `TagSummary` equality comparisons to flake on 3.10 vs 3.11.
-- **Wide-tx hang in `_any_input_is_exchange` FP suppression** (regression introduced in v2.12.2's batched tag-summary path). The cluster_id resolution step in `TagsService.get_tag_summaries_by_subject_ids` was an unbounded `asyncio.gather` over `try_get_cluster_id`, which for a BTC tx with hundreds of unique inputs fired hundreds of concurrent Cassandra queries from a single request and could stall the gunicorn worker past its timeout (30 s). Now bounded by `gather_bounded(get_tagstore_max_concurrency())`, matching the cap previously enforced by the per-address path.
 - **Resource files missing from Docker image** (regression introduced in v2.12.2 when `.git/` was removed from the build context). With `include-package-data = true` but no VCS root, setuptools_scm's file finder returned an empty list, so the wheel shipped zero `*.yaml` / `*.csv` / `*.sql` / `*.proto` resources — taxonomy loading (`concepts.yaml`, `countries.csv`, `confidence.csv`) and schema loading (`*.sql`) blew up at container startup. Fixed by declaring an explicit `[tool.setuptools.package-data]` table in `pyproject.toml` so file inclusion no longer depends on a present `.git`. Verified: a no-git build now ships the same 35 data files as the with-git build.
+
+### Build / packaging
+
+#### Added
+- **CI guard for image resource files** (`.github/workflows/docker-build.yml`). After the existing smoke build, the workflow now `docker run`s an importlib probe inside the tagged image that asserts every package whose data files load at runtime (`graphsenselib.tagpack.db`, `graphsenselib.tagpack.conf`, `graphsenselib.schema.resources`, `graphsenselib.schema.resources.migrations`, `graphsenselib.tagstore.db`, `graphsenselib.ingest.resources`) and exercises the production `_load_taxonomies(...)` code path that crashed in 2.12.2. Catches future packaging regressions at the deployed-artifact layer on every push.
 
 ### Web API + Python client (webapi-2.12.0)
 
