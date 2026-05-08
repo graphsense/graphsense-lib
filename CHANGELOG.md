@@ -10,6 +10,134 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.12.4] 2026-05-08
+
+### Library (v2.12.4)
+
+#### Changed
+- **Gunicorn worker `timeout` raised 30 → 300 s** in the Dockerfile. Wide BTC txs with `?include_heuristics=all` legitimately need more than 30 s when the tagstore is cold; the previous limit silently SIGKILL'd the worker mid-request and APISIX returned 502 around 59 s (its own default route timeout retrying once on the upstream RST).
+- **`TagsService.get_tag_summaries_by_subject_ids` now logs per-phase timings** (`pg_tags`, `cassandra_cluster_ids`, `pg_best_cluster`, `digest`, `total`) at DEBUG and emits a `WARNING` when total ≥ 10 s. Future regressions in this hot path are pinpointable from logs without a profiler attach.
+- **`tagpack-tool sync` now logs per-phase wall-clock at INFO.** Each sub-step (init, per-repo clone / actorpack / tagpack insert, remove duplicates, refresh views, quality metrics, cluster-mapping staleness check, cluster-mapping import) is bracketed by start/done lines via a `_timed_phase` context manager, plus a final total. Operators can now see where time goes on multi-repo runs without instrumenting by hand.
+
+#### Fixed
+- **`TagstoreDbAsync.get_best_cluster_tags_for_clusters` shipped every cluster_definer tag back to Python** (regression introduced in v2.12.1's pool-exhaustion fix). The batched SQL builder dropped the `LIMIT 1` from the singleton query and reduced in Python, which is fine when each cluster has a handful of cluster_definer tags, but pathological for a heavily-tagged cluster: with `joinedload(Tag.concepts)` (a collection), the result set grows as `cluster_tag_count × concepts_per_tag` for *each* requested cluster. Observed: **298 s for one cluster** on a wide BTC tx whose 78 inputs all mapped to the same heavily-tagged cluster (timing line: `pg_best_cluster=298.149s` out of `total=298.633s`). Rewritten as two queries: (1) `SELECT DISTINCT ON (cluster_id) cluster_id, tag_id ... ORDER BY cluster_id, confidence.level DESC` picks the winner per cluster at the DB layer with no joinedloads (result-set bounded by `len(cluster_ids)`), (2) hydrate Tag + relationships only for the winning tag_ids. Same external contract — parity tests in `tests/web/test_tag_summaries_batch_parity.py` continue to pass. Affects both call sites: `get_tag_summaries_by_subject_ids` (CoinJoin FP-suppression on wide UTXO txs) and `entities_service.list_entity_neighbors` with `include_labels=true`.
+
+### Build / packaging
+
+#### Fixed
+- **GHCR package description shows "No description provided"** despite the Dockerfile setting `LABEL org.opencontainers.image.description`. Once buildx publishes an attestation manifest list (the default in build-push-action v5+, visible as "OS / Arch 2" on the GHCR page), the UI reads the description from the **manifest annotation**, not from the image-config LABEL. Fix in `.github/workflows/github-packages-publish.yaml`: set `DOCKER_METADATA_ANNOTATIONS_LEVELS=manifest,index` on `docker/metadata-action`, and pass both `labels: ${{ steps.meta.outputs.labels }}` and `annotations: ${{ steps.meta.outputs.annotations }}` to `docker/build-push-action`. Description text is sourced automatically from the GitHub repo description. Also bumped `docker/metadata-action` 5.0.0 → 5.10.0 (gains `outputs.annotations` + the `DOCKER_METADATA_ANNOTATIONS_LEVELS` env, both added in 5.5.0) and `docker/build-push-action` 5.0.0 → 6.19.2 (gains the `annotations` input, added in 5.1.0; v6 is a non-breaking bump that adds workflow-level build summaries).
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
+## [2.12.3] 2026-05-08
+
+### Library (v2.12.3)
+
+#### Changed
+- **Cluster-mapping staleness check is now per-network.** Sampling switched from a global `LIMIT N` (which was dominated by BTC's heavy-hitter clusters and effectively starved other chains) to `ROW_NUMBER() OVER (PARTITION BY network)`, so each eligible network gets up to `--staleness-sample-size` / `--cluster-staleness-sample-size` rows independently. The auto-rerun gate now triggers when the **maximum** per-network divergence rate ≥ threshold (was: weighted overall rate), so drift on smaller chains is no longer hidden by a clean BTC sample. Total Cassandra read cost grows from `sample_size` to `N × sample_size`.
+
+#### Fixed
+- **`LabelSummary.concepts` order is now deterministic** (`sorted(...)` instead of `list(set(...))`). The previous `set`-derived ordering was hash-dependent and could differ between Python versions, causing `TagSummary` equality comparisons to flake on 3.10 vs 3.11.
+- **Resource files missing from Docker image** (regression introduced in v2.12.2 when `.git/` was removed from the build context). With `include-package-data = true` but no VCS root, setuptools_scm's file finder returned an empty list, so the wheel shipped zero `*.yaml` / `*.csv` / `*.sql` / `*.proto` resources — taxonomy loading (`concepts.yaml`, `countries.csv`, `confidence.csv`) and schema loading (`*.sql`) blew up at container startup. Fixed by declaring an explicit `[tool.setuptools.package-data]` table in `pyproject.toml` so file inclusion no longer depends on a present `.git`. Verified: a no-git build now ships the same 35 data files as the with-git build.
+
+### Build / packaging
+
+#### Added
+- **CI guard for image resource files** (`.github/workflows/docker-build.yml`). After the existing smoke build, the workflow now `docker run`s an importlib probe inside the tagged image that asserts every package whose data files load at runtime (`graphsenselib.tagpack.db`, `graphsenselib.tagpack.conf`, `graphsenselib.schema.resources`, `graphsenselib.schema.resources.migrations`, `graphsenselib.tagstore.db`, `graphsenselib.ingest.resources`) and exercises the production `_load_taxonomies(...)` code path that crashed in 2.12.2. Catches future packaging regressions at the deployed-artifact layer on every push.
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
+## [2.12.2] 2026-05-07
+
+### Library (v2.12.2)
+
+#### Added
+- **Batched tag-summary lookup** for the CoinJoin/Wasabi-1.x exchange-FP-suppression heuristic. New tagstore facade `TagstoreDbAsync.get_tags_by_subjectids(subject_ids, groups, network=None)` runs a single `Tag.identifier IN (:ids)` query and returns `Dict[subject_id, List[TagPublic]]`. New service method `TagsService.get_tag_summaries_by_subject_ids(network, subject_ids, tagstore_groups, include_best_cluster_tag=False)` returns `Dict[subject_id, TagSummary]` using ≤2 Postgres queries (one for direct tags; one for cluster-definer tags via `get_best_cluster_tags_for_clusters` when requested). Cluster-id resolution runs upfront against Cassandra (separate pool) so no fan-out hits the tagstore pool.
+
+#### Changed
+- **`_any_input_is_exchange` heuristic** now calls the batched path, replacing the previous per-address `gather_bounded` over `tags_service.get_tag_summary_by_address`. Postgres traffic per heuristic check drops from `2N+1` to `≤2` queries regardless of the number of inputs.
+- **`CoinJoinDbCallbacks.get_tag_summary` renamed to `get_tag_summaries`** with batched signature `(currency, [subject_ids]) -> Dict[subject_id, TagSummary]`. The only caller (`txs_service`) is updated; external code constructing `CoinJoinDbCallbacks` directly must follow.
+
+### Build / packaging
+
+#### Changed
+- **Docker version computation moved to the host.** The Dockerfile no longer COPYs `.git/` into the image. setuptools_scm now reads `SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB`, computed on the host/runner where the full worktree and tags are available. `make build-docker` and both GitHub Actions workflows (`docker-build.yml` smoke test, `github-packages-publish.yaml` deploy) compute & pass the build-arg. No `fallback_version` — builds without the arg fail loudly rather than ship a sentinel-versioned image. Fixes images being labelled `2.13.0.dev0+gdb0370179.dYYYYMMDD` even when built from a clean release tag, caused by the previous selective-COPY pattern leaving the in-container git index reporting deleted tracked files.
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
+## [2.12.1] 2026-05-07
+
+### Library (v2.12.1)
+
+#### Added
+- **Cluster mapping staleness check** for `tagpack-tool`: a sample of mapped addresses (biased toward large clusters via `gs_cluster_no_addr`) is compared against the current clustering in the graph datastore, and a full cluster-mapping rerun is triggered only when divergence crosses a threshold. New flags:
+  - `tagpack-tool sync --auto-rerun-cluster-mapping-with-env <env>` (with `--cluster-staleness-sample-size`, default 2000, and `--cluster-staleness-threshold`, default 0.05).
+  - `tagpack-tool tagstore insert-cluster-mappings --auto-rerun-if-stale` (with `--staleness-sample-size` / `--staleness-threshold`).
+  - New diagnostic command `tagpack-tool tagstore check-cluster-mapping-staleness --use-gs-lib-config-env <env>` prints a per-network divergence table without writing to the DB.
+
+  The existing `--rerun-cluster-mapping-with-env` and `--run-cluster-mapping-with-env` flags are unchanged. Eth-like networks (ETH/TRX) are skipped by the check since `cluster_id == address_id` and drift is not possible.
+
+- **`max_concurrency` field on `TagStoreReaderConfig`** (env: `GRAPHSENSE_TAGSTORE_READ_MAX_CONCURRENCY`) caps the number of concurrent Postgres-touching coroutines per gs-rest request. Defaults to `max(2, pool_size // 3)` so a single wide request leaves headroom for concurrent traffic; can be overridden per-deployment. A `model_validator` rejects configs where `pool_size + max_overflow < max_concurrency` at config load. The active value is read at runtime via `get_tagstore_max_concurrency()` and registered on REST startup via `set_active_tagstore_config()`.
+
+#### Changed
+- **`TagStoreReaderConfig.pool_timeout` default lowered from 300 → 10 seconds.** The previous 5-minute default turned slow tagstore queries into request-time deadlocks; 10 seconds fails fast and surfaces real saturation.
+
+#### Fixed
+- **gs-rest Postgres pool exhaustion** (root cause of the 2026-05-04 incident). Every wide tagstore-touching code path now bounds its `asyncio.gather` fan-out via a shared `gather_bounded` helper using `TagStoreReaderConfig.max_concurrency`. Sites covered:
+  - `_any_input_is_exchange` heuristic (`/<currency>/txs/{hash}?include_heuristics=all` on wide BTC txs)
+  - `_add_labels` (every `list_*_neighbors include_labels=true` request)
+  - `list_address_neighbors` per-neighbor `get_address` gather when `include_actors=true`
+  - BFS fan-out in `clusters_service` (`recursive_search`, `bfs`)
+  - Per-neighbor `db.get_entity` fan-out in `list_entity_neighbors`
+- **Per-call `AsyncSession` amplification** in `entities_service.list_entity_neighbors`: replaced N×3 per-neighbor tagstore calls with three batched queries (`get_best_cluster_tags_for_clusters`, `get_nr_tags_for_clusters`, `get_actors_for_clusters`) sharing one Postgres session. Per-request session demand for `pagesize=100&include_actors=true` drops from ~300 to 1.
+- **Per-call session reuse** in `entities_service.get_entity`: three sequential tagstore calls now share one `AsyncSession` (was 3).
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
+## [2.12.0] 2026-04-07
+
+### Library (v2.12.0)
+
+#### Added
+- **`.gs` tx-graph encoder**: new `convert/gs_files` encoder/CLI to produce `.gs` files from transactions, used to render tx-graphs on the dashboard.
+- **tx_id mismatch safety check** in async Cassandra access to surface inconsistencies early.
+- **`tagpack-tool sync` locking**: optional file/Redis lock (per target DB) to prevent conflicting concurrent sync runs. Disable with `--no-lock`.
+- **`tagpack-tool insert` repo logging**: the final "Processed N/M TagPacks…" message and Slack failure notification now include the repo/folder name.
+
+
+
+#### Changed
+- **Versioning**: documented dev-version scheme (new `VERSIONING.md`), reworked GitHub Actions publish workflows (PyPI + GitHub Packages) and CI tagging.
+- **FastAPI** dependency upgraded.
+- **Cassandra retries**: more robust retry handling in both sync and async drivers.
+
+#### Fixed
+- Block-range logging restored for `ingest --info`.
+- Port config docs in environment / Cassandra settings.
+- PostgreSQL session fan-out issues in tagstore-backed entity, tag, and cluster services (removes per-call `AsyncSession` amplification on BFS-style queries).
+- Remaining gaps in the entity → cluster transition (REST models, addresses route/service, generated Python client `Cluster`/`NeighborCluster`/`NeighborEntity` models).
+
+### Web API + Python client (webapi-2.12.0)
+
+#### Added
+- **Python client CLI MVP** (`graphsense` command): `raw` mirror of the OpenAPI surface, convenience commands, bulk command, output formatting/IO pipes, ext client/bundlers, full docs (`docs/cli/*`, `docs/ext/*`) and a dedicated test workflow.
+- Improved CLI ergonomics: `rich-click` based help (coloring, option grouping), help shown when no args are given, improved error handling, more convenience commands and tests.
+
+#### Changed
+- Documentation now advertises `uv` as the recommended install path.
+- Patched remaining gaps in the entity → cluster transition (Python client `Cluster`/`NeighborCluster`/`NeighborEntity` models).
+
+#### Fixed
+- CI workflow: correct tagging of `latest` for GitHub Packages publish.
+
 ## [2.11.0] 2026-04-29
 
 ### Library (v2.11.0)

@@ -1,0 +1,32 @@
+{
+  "_comment": "Real ground-truth IDs for the PayJoin demo (block 557792, tx 7104bae6...). Sourced from scripts/payjoin_showcase_gs.py: INPUTS, OUTPUTS, PAYJOIN_TX, UPSTREAM_HASHES. Used by tests/convert/gs_files/test_encoder.py to lock the encoded layout. P2SH-SegWit (3xxx) inputs/outputs match the on-chain script types.",
+  "addresses": [
+    {"id": "38CNad4Jf6daL7Xki36S2uvWDrZr6hDKir", "side": "input",  "label": "in0",                       "color": [0.30, 0.55, 0.85, 1]},
+    {"id": "3FWi8EByrUXaH1DMNe2T9aGRrCsP6Y9AwD", "side": "input",  "label": "in1",                       "color": [0.30, 0.55, 0.85, 1]},
+    {"id": "366LLyvYr2Jm652q7kt1Wiq3QD1vQYbtQu", "side": "input",  "label": "in2",                       "color": [0.30, 0.55, 0.85, 1]},
+    {"id": "3MSyNbmsee6c3iwEKJrRnMiwJ4jswAeJHc", "side": "input",  "label": "in3 (sender)",              "color": [0.85, 0.40, 0.20, 1], "starting_point": true},
+    {"id": "38J7d7X92QiMVkN5Qk8Mu2f7ti9dZdFUgv", "side": "input",  "label": "in4 (sender)",              "color": [0.85, 0.40, 0.20, 1]},
+    {"id": "38vbyF9hyvB7bbibuey6BDUddEAggokYLu", "side": "output", "label": "out0 — sender change",      "color": [0.85, 0.40, 0.20, 1]},
+    {"id": "3QLPbQnwPk6fnGy1t8Sj3R4pGSPBeirzNR", "side": "output", "label": "out1 — receiver payment",   "color": [0.30, 0.55, 0.85, 1]}
+  ],
+  "txs": [
+    {"id": "86ca0da39f87016194549421a75ab75ae75f1b6dccfc3db9a2a1475175a87767", "x": -14, "y":  0, "label": "upstream funding tx for in0",            "color": [0.55, 0.55, 0.60, 1]},
+    {"id": "9e1bda94536c568f1572d75c2e8c57792848ebf08a2d4e13f7ebc1a95c875ea1", "x": -14, "y":  3, "label": "upstream funding tx for in1",            "color": [0.55, 0.55, 0.60, 1]},
+    {"id": "ee0c170a57b9b30553ec54d560afe8074a3b268fbf3241f00c03e4b84ccc2169", "x": -14, "y":  6, "label": "upstream funding tx for in2",            "color": [0.55, 0.55, 0.60, 1]},
+    {"id": "db8b8ebd86ecb581cd5f0656a2f67b7210937e786f1cbb232ad656b23cf6b17e", "x": -14, "y":  9, "label": "upstream funding tx for in3 (JoinMarket)","color": [0.50, 0.50, 0.55, 1]},
+    {"id": "2274ddc97d87d64d2a01ed918c246cfa03c61d5ba3e24f572a6a317468a357c5", "x": -14, "y": 12, "label": "upstream funding tx for in4 (JoinMarket)","color": [0.50, 0.50, 0.55, 1]},
+    {"id": "7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2", "x":   0, "y":  6, "label": "PayJoin tx",                             "color": [0.10, 0.10, 0.10, 1]}
+  ],
+  "agg_edges": [
+    {"a": "38CNad4Jf6daL7Xki36S2uvWDrZr6hDKir", "b": "38vbyF9hyvB7bbibuey6BDUddEAggokYLu", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "38CNad4Jf6daL7Xki36S2uvWDrZr6hDKir", "b": "3QLPbQnwPk6fnGy1t8Sj3R4pGSPBeirzNR", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "3FWi8EByrUXaH1DMNe2T9aGRrCsP6Y9AwD", "b": "38vbyF9hyvB7bbibuey6BDUddEAggokYLu", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "3FWi8EByrUXaH1DMNe2T9aGRrCsP6Y9AwD", "b": "3QLPbQnwPk6fnGy1t8Sj3R4pGSPBeirzNR", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "366LLyvYr2Jm652q7kt1Wiq3QD1vQYbtQu", "b": "38vbyF9hyvB7bbibuey6BDUddEAggokYLu", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "366LLyvYr2Jm652q7kt1Wiq3QD1vQYbtQu", "b": "3QLPbQnwPk6fnGy1t8Sj3R4pGSPBeirzNR", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "3MSyNbmsee6c3iwEKJrRnMiwJ4jswAeJHc", "b": "38vbyF9hyvB7bbibuey6BDUddEAggokYLu", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "3MSyNbmsee6c3iwEKJrRnMiwJ4jswAeJHc", "b": "3QLPbQnwPk6fnGy1t8Sj3R4pGSPBeirzNR", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "38J7d7X92QiMVkN5Qk8Mu2f7ti9dZdFUgv", "b": "38vbyF9hyvB7bbibuey6BDUddEAggokYLu", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]},
+    {"a": "38J7d7X92QiMVkN5Qk8Mu2f7ti9dZdFUgv", "b": "3QLPbQnwPk6fnGy1t8Sj3R4pGSPBeirzNR", "tx_ids": ["7104bae698587b3e75563b7ea7a9aada41d9c787788bc2bf26dd201fd7eca8a2"]}
+  ]
+}

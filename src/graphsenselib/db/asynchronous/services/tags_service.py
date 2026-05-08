@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, Callable
 
 from graphsenselib.config.config import SlackTopic
@@ -32,6 +33,13 @@ from graphsenselib.tagstore.db.queries import UserReportedAddressTag
 
 logger = logging.getLogger(__name__)
 
+# Warn at this elapsed wall-clock for the batched tag-summary path. Tuned for
+# wide BTC txs: cluster_id resolution + 2 Postgres queries + digest compute
+# should be a few seconds. Anything past this threshold means a real problem
+# (network saturation, pathological IN-list plan, partition-skew on
+# Cassandra) and should be visible in logs without needing a profiler attach.
+TAG_SUMMARIES_SLOW_WARN_S = 10.0
+
 
 class TagInsertConfigProtocol(Protocol):
     enable_user_tag_reporting: bool
@@ -59,6 +67,12 @@ class TagstoreProtocol(Protocol):
     async def get_tags_by_subjectid(
         self, address: str, offset: int, limit: Optional[int], groups: List[str]
     ) -> List["TagPublic"]: ...  # noqa: F821
+    async def get_tags_by_subjectids(
+        self,
+        subject_ids: List[str],
+        groups: List[str],
+        network: Optional[str] = None,
+    ) -> Dict[str, List["TagPublic"]]: ...  # noqa: F821
     async def get_best_cluster_tag(
         self, cluster_id: int, currency: str, groups: List[str]
     ) -> Optional[Any]: ...
@@ -394,6 +408,117 @@ class TagsService:
             ),
         )
         return self._tag_summary_from_tag_digest(digest)
+
+    async def get_tag_summaries_by_subject_ids(
+        self,
+        network: str,
+        subject_ids: List[str],
+        tagstore_groups: List[str],
+        include_best_cluster_tag: bool = False,
+        only_propagate_high_confidence_actors: bool = True,
+    ) -> Dict[str, TagSummary]:
+        # Per-address summaries via batched queries. Unlike
+        # get_tag_summary_by_addresses (which aggregates many addresses into
+        # one summary), this returns one summary per input subject_id.
+        #
+        # Tagstore traffic is bounded to at most two Postgres queries
+        # regardless of input cardinality: one for direct tags, plus (when
+        # include_best_cluster_tag) one for cluster-definer tags. Per-
+        # address cluster_id resolution runs unbounded against Cassandra:
+        # the driver multiplexes concurrent requests over its own
+        # connection-and-stream pool and is not the saturation point for
+        # this workload — bounding it here only adds latency.
+        try:
+            from graphsenselib.tagstore.algorithms.tag_digest import (
+                compute_tag_digest,
+                TagDigestComputationConfig,
+            )
+        except ImportError as e:
+            raise ImportError(
+                "tagstore is required for tag digest computation. "
+                "Please install it with: uv pip install tagstore"
+            ) from e
+
+        if not subject_ids:
+            return {}
+
+        t_total = time.perf_counter()
+
+        canon_by_input: Dict[str, str] = {}
+        for sid in subject_ids:
+            canonical = cannonicalize_address(network, sid)
+            canon_by_input[sid] = address_to_user_format(network, canonical)
+
+        unique_canon = list(dict.fromkeys(canon_by_input.values()))
+
+        t_pg_tags = time.perf_counter()
+        tags_by_subject = await self.tagstore.get_tags_by_subjectids(
+            unique_canon,
+            tagstore_groups,
+        )
+        d_pg_tags = time.perf_counter() - t_pg_tags
+
+        d_cassandra = 0.0
+        d_pg_best = 0.0
+        n_clusters = 0
+        if include_best_cluster_tag and not is_eth_like(network):
+            t_cassandra = time.perf_counter()
+            cluster_ids = await asyncio.gather(
+                *[try_get_cluster_id(self.db, network, addr) for addr in unique_canon]
+            )
+            d_cassandra = time.perf_counter() - t_cassandra
+
+            addr_to_cluster: Dict[str, int] = {
+                addr: cid
+                for addr, cid in zip(unique_canon, cluster_ids)
+                if cid is not None
+            }
+            unique_cluster_ids = list(dict.fromkeys(addr_to_cluster.values()))
+            n_clusters = len(unique_cluster_ids)
+            if unique_cluster_ids:
+                t_pg_best = time.perf_counter()
+                best_by_cluster = (
+                    await self.tagstore.get_best_cluster_tags_for_clusters(
+                        unique_cluster_ids, network.upper(), tagstore_groups
+                    )
+                )
+                d_pg_best = time.perf_counter() - t_pg_best
+                for addr, cid in addr_to_cluster.items():
+                    bct = best_by_cluster.get(cid)
+                    # Skip when the cluster definer is the address itself —
+                    # already represented by its direct tag in tags_by_subject.
+                    if bct is None or bct.identifier == addr:
+                        continue
+                    tags_by_subject.setdefault(addr, []).append(bct)
+
+        t_digest = time.perf_counter()
+        config = (
+            TagDigestComputationConfig().with_only_propagate_high_confidence_actors(
+                only_propagate_high_confidence_actors
+            )
+        )
+
+        summaries_by_canon: Dict[str, TagSummary] = {}
+        for canon in unique_canon:
+            tags = tags_by_subject.get(canon, [])
+            digest = compute_tag_digest(tags, config=config)
+            summaries_by_canon[canon] = self._tag_summary_from_tag_digest(digest)
+        d_digest = time.perf_counter() - t_digest
+
+        d_total = time.perf_counter() - t_total
+        timing = (
+            f"network={network} n_inputs={len(subject_ids)} "
+            f"n_unique={len(unique_canon)} n_clusters={n_clusters} "
+            f"total={d_total:.3f}s pg_tags={d_pg_tags:.3f}s "
+            f"cassandra_cluster_ids={d_cassandra:.3f}s "
+            f"pg_best_cluster={d_pg_best:.3f}s digest={d_digest:.3f}s"
+        )
+        if d_total >= TAG_SUMMARIES_SLOW_WARN_S:
+            self.logger.warning("get_tag_summaries_by_subject_ids slow: %s", timing)
+        else:
+            self.logger.debug("get_tag_summaries_by_subject_ids %s", timing)
+
+        return {sid: summaries_by_canon[canon] for sid, canon in canon_by_input.items()}
 
     async def _get_best_cluster_tag_raw(
         self,

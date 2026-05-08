@@ -272,6 +272,48 @@ To update ALL cluster-mappings in your tagstore, add the `--update` flag:
 
     graphsense-cli tagpack-tool tagstore insert-cluster-mappings --update -d $CASSANDRA_HOST -f ks_map.json
 
+#### Conditional rerun: cluster mapping staleness check
+
+When you re-run clustering on the GraphSense backend, addresses can be
+re-assigned to different `cluster_id`s, and the `cluster_id` column in
+`address_cluster_mapping` becomes stale. Running an unconditional `--update`
+on every sync is expensive; running only on first-insert leaves stale ids in
+place until the next manual rerun.
+
+To bridge that, the tool can sample mapped addresses (biased toward the
+largest clusters via `gs_cluster_no_addr`), look up their current `cluster_id`
+in the GraphSense graph datastore, compute a divergence rate, and only do a
+full rerun if it crosses a threshold. Eth-like networks (`ETH`/`TRX`) are
+skipped — they have no real clustering (`cluster_id == address_id`).
+
+Inside `sync` (uses graphsense-lib's named environment for the lookup):
+
+    graphsense-cli tagpack-tool sync \
+        --auto-rerun-cluster-mapping-with-env <env> \
+        [--cluster-staleness-sample-size 2000] \
+        [--cluster-staleness-threshold 0.05]
+
+Standalone insert with the same logic:
+
+    graphsense-cli tagpack-tool tagstore insert-cluster-mappings \
+        --use-gs-lib-config-env <env> \
+        --auto-rerun-if-stale \
+        [--staleness-sample-size 2000] \
+        [--staleness-threshold 0.05]
+
+Diagnostic-only check (no DB writes), prints a per-network divergence table:
+
+    graphsense-cli tagpack-tool tagstore check-cluster-mapping-staleness \
+        --use-gs-lib-config-env <env> \
+        [--sample-size 2000]
+
+Sampling is biased toward large clusters because that's where stale
+`cluster_id`s are most user-visible. Drift confined to small clusters won't
+trigger a rerun, so a periodic unconditional `--rerun-cluster-mapping-with-env`
+(e.g. weekly cron) is still recommended as a backstop. The existing
+`--rerun-cluster-mapping-with-env` and `--run-cluster-mapping-with-env` flags
+are unchanged and still bypass the staleness check.
+
 ### Remove duplicate tags
 
 Different tagpacks may contain identical tags - the same label and source for a particular address.

@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASESEM := 'v2.12.0-dev.0+mcp.4'
-WEBAPISEM := 'v2.11.0'
+RELEASESEM := 'v2.13.0'
+WEBAPISEM := 'v2.13.0'
 
 -include .env
 
@@ -98,7 +98,9 @@ build:
 	uv build
 
 build-docker:
-	docker build -t graphsense-lib .
+	docker build \
+		--build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=$$(uv run python -m setuptools_scm) \
+		-t graphsense-lib .
 
 version:
 	uv run python -m setuptools_scm

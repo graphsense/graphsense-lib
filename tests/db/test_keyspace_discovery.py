@@ -35,13 +35,13 @@ def discovery_db(gs_db_setup):
 
 
 def test_find_latest_transformed_picks_highest_no_blocks(discovery_db):
-    # Candidates with no_blocks: 20260101=100, 20260201=500, 20260401=200.
-    # 20260301 has an empty summary_statistics -> skipped as "not online".
-    # Date is only a prefilter; selection is by no_blocks, so 20260201 wins
-    # even though 20260401 is newer.
+    # Candidates with no_blocks: 20260101=100, 20260201=500, 20260401=200,
+    # 20260501=999. 20260301 has an empty summary_statistics -> skipped.
+    # Date is only a prefilter; selection is by no_blocks, so 20260501 wins.
+    # (20260501's state table is empty — see the marker-not-required test.)
     assert (
         discovery_db.find_latest_transformed_keyspace("disctest_btc")
-        == "disctest_btc_transformed_20260201"
+        == "disctest_btc_transformed_20260501"
     )
 
 
@@ -70,15 +70,15 @@ def test_find_latest_raw_skips_incomplete_newer(discovery_db):
     )
 
 
-def test_find_latest_transformed_skips_incomplete_with_higher_no_blocks(
-    discovery_db,
-):
-    # disctest_btc_transformed_20260501 has no_blocks=999 (highest) but its
-    # state table is missing the ingest_complete row -> must be skipped.
-    # _20260201 (no_blocks=500, ingest_complete) remains the winner.
+def test_find_latest_transformed_does_not_require_state_marker(discovery_db):
+    # Regression for the prod situation where transformed keyspaces ship a
+    # `state` table from the schema but the transformation pipeline never
+    # writes `ingest_complete`. With the raw-only marker contract, a
+    # populated `summary_statistics` is sufficient: _20260501 (no_blocks=999,
+    # state table present but empty) must win over _20260201 (no_blocks=500).
     assert (
         discovery_db.find_latest_transformed_keyspace("disctest_btc")
-        == "disctest_btc_transformed_20260201"
+        == "disctest_btc_transformed_20260501"
     )
 
 
