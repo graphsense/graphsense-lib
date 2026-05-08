@@ -40,6 +40,7 @@ markers = [
     "continuation: Continuation tests (split-ingest vs one-shot output)",
     "transformation: Transformation tests (Delta Lake → PySpark → Cassandra equivalence)",
     "clustering: Clustering regression tests (Scala vs Rust partition equivalence)",
+    "delta_update: UTXO delta-update regression tests (current vs reference release)",
 ]
 asyncio_mode = "auto"
 

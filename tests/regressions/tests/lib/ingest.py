@@ -26,6 +26,7 @@ def build_gs_config(
     cassandra_host: str | None = None,
     cassandra_port: int | None = None,
     keyspace_name: str | None = None,
+    transformed_keyspace_name: str | None = None,
     create_keyspace_setup: bool = False,
     block_bucket_size: int = 100,
     # Delta Lake settings (optional)
@@ -53,7 +54,9 @@ def build_gs_config(
     raw_ks = keyspace_name or f"{currency}_raw_{environment}"
     ks_config: dict = {
         "raw_keyspace_name": raw_ks,
-        "transformed_keyspace_name": f"{raw_ks}_transformed",
+        "transformed_keyspace_name": (
+            transformed_keyspace_name or f"{raw_ks}_transformed"
+        ),
         "schema_type": schema_type,
         "ingest_config": ingest_config,
     }

@@ -127,6 +127,23 @@ test-ingest-transformation: ## Ingest transformation: Delta Lake → PySpark →
 	uv run pytest tests/transformation/ -v -s -m transformation
 
 # ============================================================================
+# Delta-update: UTXO transformed-keyspace cross-version regression
+# ============================================================================
+
+# Reference release of graphsense-lib used as the regression baseline. Defaults
+# to v2.12.3 because that's the last release before the UTXO delta-update
+# perf rewrite -- override per run when you want to compare against a
+# different version.
+DELTA_UPDATE_REF_VERSION ?= v2.12.3
+DELTA_UPDATE_CURRENCIES ?= btc
+
+test-delta-update: ## Delta-update: current vs reference release on UTXO transformed keyspace
+	DELTA_UPDATE_REF_VERSION=$(DELTA_UPDATE_REF_VERSION) \
+	DELTA_UPDATE_CURRENCIES=$(DELTA_UPDATE_CURRENCIES) \
+	GSLIB_PATH=$(GSLIB_PATH) \
+	uv run pytest tests/delta_update/ -v -s -m delta_update
+
+# ============================================================================
 # Ingest: All suites combined
 # ============================================================================
 
@@ -299,6 +316,7 @@ clean: clean-rest clean-venvs ## Remove all test artifacts
 	test-ingest test-ingest-cassandra test-ingest-deltalake \
 	test-ingest-deltalake-cross-version test-ingest-deltalake-performance \
 	test-ingest-sink-consistency test-ingest-split-continuation test-ingest-transformation \
+	test-delta-update \
 	test-rest test-rest-fuzz test-rest-manual test-rest-loki \
 	generate-loki \
 	rest-build rest-build-current rest-build-baseline \
