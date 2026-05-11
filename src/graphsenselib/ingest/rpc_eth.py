@@ -260,6 +260,7 @@ _TX_KNOWN_KEYS = frozenset(
 _TX_BLACKLIST = frozenset(
     {
         "chainId",  # EIP-155, always 0x1 on mainnet
+        "blockTimestamp",  # redundant with block-level timestamp
     }
 )
 
