@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.12.6] 2026-05-11
+
+### Library (v2.12.6)
+
+#### Fixed
+- **Erigon 3.4 emits `blockTimestamp` on per-transaction RPC objects, which the field validator rejected.** `validate_rpc_fields` in `src/graphsenselib/ingest/rpc_eth.py` raised `Unknown RPC fields ['blockTimestamp'] in transaction` and aborted ingestion against nodes on the new release. `parse_transaction_json` already receives `block_timestamp` from the enclosing block, so the per-tx copy is redundant — it is added to `_TX_BLACKLIST` rather than to the parsed key set. Logs already carried the same field in newer Erigon releases and were already blacklisted; receipts (`eth_getTransactionReceipt`) and `eth_getBlockReceipts` were verified against `erigon/3.4.1/linux-amd64/go1.25.10` and need no change. Fix in commit `d8b5d5f` (`cover all rpc fields of erigon 3.4`).
+
+### Web API + Python client (webapi-2.12.0)
+
+No changes.
+
 ## [2.12.5] 2026-05-08
 
 ### Library (v2.12.5)
