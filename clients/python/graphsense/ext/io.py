@@ -131,27 +131,32 @@ def _extract_from_csv(
     rows = list(reader)
     if not rows:
         return []
-    header, body = rows[0], rows[1:]
-    has_header = _looks_like_header(header)
-    if has_header:
-        if col is None:
-            if len(header) != 1:
+    header = rows[0]
+
+    # Named --col: row 1 is the header, look the name up directly. This
+    # avoids relying on `_looks_like_header` heuristics for the path that
+    # users hit most often.
+    if col is not None:
+        try:
+            idx = int(col)
+        except ValueError:
+            try:
+                idx = header.index(col)
+            except ValueError as exc:
                 raise ValueError(
-                    "CSV has multiple columns; specify --col <name_or_index>"
-                )
-            idx = 0
-        else:
-            idx = _resolve_col_index(col, header)
-        return [_cell(row, idx) for row in body if _row_keep(row, idx, skip_empty)]
-    # No header: treat all rows as data
-    all_rows = [header] + body
-    if col is None:
-        if len(header) != 1:
-            raise ValueError("CSV has multiple columns; specify --col <index>")
-        idx = 0
-    else:
-        idx = _resolve_col_index(col, None)
-    return [_cell(row, idx) for row in all_rows if _row_keep(row, idx, skip_empty)]
+                    f"column {col!r} not found in header {header!r}"
+                ) from exc
+            return [_cell(r, idx) for r in rows[1:] if _row_keep(r, idx, skip_empty)]
+
+        data_rows = rows[1:] if _looks_like_header(header) else rows
+        return [_cell(r, idx) for r in data_rows if _row_keep(r, idx, skip_empty)]
+
+    # No --col: only single-column input is unambiguous.
+    has_header = _looks_like_header(header)
+    if len(header) != 1:
+        raise ValueError("CSV has multiple columns; specify --col <name_or_index>")
+    data_rows = rows[1:] if has_header else rows
+    return [_cell(r, 0) for r in data_rows if _row_keep(r, 0, skip_empty)]
 
 
 def _cell(row: list[str], idx: int) -> str:
@@ -164,35 +169,21 @@ def _row_keep(row: list[str], idx: int, skip_empty: bool) -> bool:
     return True
 
 
-def _resolve_col_index(col: str, header: Optional[list[str]]) -> int:
-    try:
-        return int(col)
-    except ValueError:
-        pass
-    if header is None:
-        raise ValueError(f"column name {col!r} given but CSV has no header")
-    try:
-        return header.index(col)
-    except ValueError as exc:
-        raise ValueError(f"column {col!r} not found in header {header!r}") from exc
-
-
 def _looks_like_header(row: list[str]) -> bool:
     """Treat the first row as a header unless every cell looks like an id."""
     if not row:
         return False
-    # If any cell contains characters that are common in plain-text headers
-    # but unusual in blockchain ids, treat it as a header. Simple heuristic:
-    # header cells tend to be short and contain only letters/_.
     for cell in row:
         c = cell.strip()
         if not c:
             return False
-        if not c.replace("_", "").isalnum():
+        # Header cells: letters + underscores only, capped length. Digits
+        # disqualify (would suggest an id like `1A1z…`, `0xabc…`, or a
+        # numeric cluster id).
+        stripped = c.replace("_", "")
+        if not stripped.isalpha() or len(c) > 32:
             return False
-    # As a pragmatic default: if each cell is purely alphabetic and <= 20
-    # chars, call it a header. Otherwise treat it as data.
-    return all(c.strip().isalpha() and len(c.strip()) <= 20 for c in row)
+    return True
 
 
 def _extract_from_lines(text: str, *, skip_empty: bool = True) -> list[str]:
