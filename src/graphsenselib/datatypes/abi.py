@@ -597,6 +597,62 @@ log_signatures = {
             "tags": ["symbiosis", "bridging", "send"],
         }
     ],
+    # Curve StableSwap TokenExchange (int128 coin ids) - e.g. 3pool
+    "0x8b3e96f2b889fa771c53c981b40daf005f63f637f1869f707052d15a3dd97140": [
+        {
+            "name": "TokenExchange",
+            "inputs": [
+                {"name": "buyer", "type": "address", "indexed": True},
+                {"name": "sold_id", "type": "int128", "indexed": False},
+                {"name": "tokens_sold", "type": "uint256", "indexed": False},
+                {"name": "bought_id", "type": "int128", "indexed": False},
+                {"name": "tokens_bought", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["curve", "swap"],
+        }
+    ],
+    # Curve StableSwap TokenExchangeUnderlying (int128 coin ids) - e.g. lending pools
+    "0xd013ca23e77a65003c2c659c5442c00c805371b7fc1ebd4c206c41d1536bd90b": [
+        {
+            "name": "TokenExchangeUnderlying",
+            "inputs": [
+                {"name": "buyer", "type": "address", "indexed": True},
+                {"name": "sold_id", "type": "int128", "indexed": False},
+                {"name": "tokens_sold", "type": "uint256", "indexed": False},
+                {"name": "bought_id", "type": "int128", "indexed": False},
+                {"name": "tokens_bought", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["curve", "swap"],
+        }
+    ],
+    # Curve CryptoSwap TokenExchange (uint256 coin ids) - e.g. tricrypto
+    "0xb2e76ae99761dc136e598d4a629bb347eccb9532a5f8bbd72e18467c3c34cc98": [
+        {
+            "name": "TokenExchange",
+            "inputs": [
+                {"name": "buyer", "type": "address", "indexed": True},
+                {"name": "sold_id", "type": "uint256", "indexed": False},
+                {"name": "tokens_sold", "type": "uint256", "indexed": False},
+                {"name": "bought_id", "type": "uint256", "indexed": False},
+                {"name": "tokens_bought", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["curve", "swap"],
+        }
+    ],
+    # Curve CryptoSwap TokenExchangeUnderlying (uint256 coin ids)
+    "0xadf5c0d3bc909b7784721a34c8651ffa00123015ef32b9d69cf6d5b2bba40756": [
+        {
+            "name": "TokenExchangeUnderlying",
+            "inputs": [
+                {"name": "buyer", "type": "address", "indexed": True},
+                {"name": "sold_id", "type": "uint256", "indexed": False},
+                {"name": "tokens_sold", "type": "uint256", "indexed": False},
+                {"name": "bought_id", "type": "uint256", "indexed": False},
+                {"name": "tokens_bought", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["curve", "swap"],
+        }
+    ],
 }
 
 

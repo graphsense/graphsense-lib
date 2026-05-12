@@ -242,6 +242,13 @@ class TestManualRegressionConversions(ManualRegressionTestBase):
             "eth/txs/e2948634dce13d0998dbd65a0f56ffa8d4f070088cce57cc09cc366981073f9f/conversions"
         )
 
+    @pytest.mark.regression
+    def test_conversions_curve_stableswap_usdc_usdt(self):
+        """Curve 3pool StableSwap USDC -> USDT (TokenExchange event)."""
+        self.assert_call_equal(
+            "eth/txs/0xd58399684daca775f09742e76e48395b4c6979fa9d46daaf20d6a97eac7c9272/conversions"
+        )
+
 
 #    @pytest.mark.regression
 #    def test_conversions_bridge_btc_eth_general(self):
