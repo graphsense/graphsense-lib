@@ -1,6 +1,10 @@
-from click.testing import CliRunner
+import pytest
 
-from graphsenselib.cli.main import cli
+pytest.importorskip("fastmcp", reason="MCP CLI tests require the [mcp] extra")
+
+from click.testing import CliRunner  # noqa: E402
+
+from graphsenselib.cli.main import cli  # noqa: E402
 
 
 def test_mcp_help_lists_subcommands(tmp_path, monkeypatch):
