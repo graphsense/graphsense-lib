@@ -280,7 +280,10 @@ class GraphSense:
                 cluster_id = getattr(base, "cluster", None)
                 if cluster_id is not None:
                     jobs["cluster"] = pool.submit(
-                        clusters.get_cluster, ccy, int(cluster_id)
+                        clusters.get_cluster,
+                        ccy,
+                        int(cluster_id),
+                        exclude_best_address_tag=True,
                     )
             results = {k: f.result() for k, f in jobs.items()}
 
@@ -302,7 +305,7 @@ class GraphSense:
         ccy = self._currency(currency)
         clusters = self.raw.clusters
         cid = int(cluster_id)
-        base = clusters.get_cluster(ccy, cid)
+        base = clusters.get_cluster(ccy, cid, exclude_best_address_tag=True)
 
         jobs: dict[str, Any] = {}
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
