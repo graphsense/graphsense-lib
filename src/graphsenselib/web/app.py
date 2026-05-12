@@ -988,7 +988,30 @@ def create_app(
     _setup_custom_openapi(app)
     _setup_custom_docs_ui(app)
 
+    _maybe_attach_mcp(app)
+
     return app
+
+
+def _maybe_attach_mcp(app: FastAPI) -> None:
+    """Attach the MCP endpoint to the FastAPI app when the [mcp] extra is
+    installed and not explicitly disabled. Silent no-op otherwise.
+    """
+    try:
+        from graphsenselib.mcp import GSMCPConfig, attach_to_fastapi
+    except ImportError:
+        logger.debug("fastmcp not installed; skipping MCP attachment.")
+        return
+
+    cfg = GSMCPConfig()
+    if not cfg.enabled:
+        logger.info("MCP attachment disabled via GS_MCP_ENABLED=false.")
+        return
+
+    try:
+        attach_to_fastapi(app, cfg)
+    except Exception:
+        logger.exception("Failed to attach MCP; continuing without it.")
 
 
 def _setup_custom_openapi(app: FastAPI) -> None:
@@ -1286,6 +1309,7 @@ def create_spec_app() -> FastAPI:
     )
     _register_routers(app)
     _setup_custom_openapi(app)
+    _maybe_attach_mcp(app)
     return app
 
 
@@ -1308,5 +1332,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
     _register_exception_handlers(app)
     _register_routers(app)
     _setup_custom_openapi(app)
+
+    _maybe_attach_mcp(app)
 
     return app

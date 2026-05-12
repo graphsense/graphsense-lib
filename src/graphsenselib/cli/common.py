@@ -100,6 +100,7 @@ def try_load_config(filename: str):
         "tagstore",
         "web",
         "convert",
+        "mcp",
     ]
 
     app_config = get_config()

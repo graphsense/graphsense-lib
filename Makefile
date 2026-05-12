@@ -1,8 +1,8 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASESEM := 'v2.12.6'
-WEBAPISEM := 'v2.12.0'
+RELEASESEM := 'v2.13.0'
+WEBAPISEM := 'v2.13.0'
 
 -include .env
 
@@ -77,6 +77,9 @@ lint:
 
 type-check:
 	uv run --all-extras ty check
+
+mcp-validate-curation:
+	uv run --exact --extra mcp graphsense-cli mcp validate-curation
 
 ty:
 	uv run --all-extras ty check
@@ -188,4 +191,4 @@ package-ui:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions
+.PHONY: all test install lint format build pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions mcp-validate-curation

@@ -94,6 +94,23 @@ When enabling `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP=true`, keep in mind:
 
 If TagStore is not configured (`gs-tagstore` missing) or the TagStore URL is unreachable, the REST app now falls back to a mock TagStore so endpoints still work. In this mode, tag-specific responses (labels, actors, taxonomies, tag counts) are empty.
 
+### MCP (Model Context Protocol) interface
+
+The web stack also serves a curated MCP endpoint at `/mcp` (path configurable via `GS_MCP_PATH`) so LLM clients — Claude Code, Claude Desktop, Cursor, custom agents — can query GraphSense directly without writing glue code. It is **mounted inside the main FastAPI app**: one `uvicorn` process serves both REST and MCP.
+
+```bash
+# Install with the mcp extra (pulls in fastmcp)
+uv add 'graphsense-lib[mcp]'
+
+# Start the stack — MCP comes up automatically at /mcp
+uv run uvicorn graphsenselib.web.app:create_app --factory --port 9000
+
+# Drift gate (suitable for CI; no DB needed):
+uv run graphsense-cli mcp validate-curation
+```
+
+The tool surface is strictly curated — **not** every REST endpoint becomes a tool. Consolidations merge endpoints that LLMs always chain (e.g. one `lookup_address` replaces four address-level calls). See [`src/graphsenselib/mcp/README.md`](src/graphsenselib/mcp/README.md) for the design principles, the full tool catalog, how to add or modify tools, deployment details (transport, lifespan composition), and the proprietary `search_neighbors` forward.
+
 ### REST API evolution and deprecation policy
 
 The REST API follows semantic versioning via `info.version` in the OpenAPI spec

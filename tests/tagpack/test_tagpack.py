@@ -593,6 +593,34 @@ def test_file_collection_with_multiple_yaml_include():
     assert f"{bdir}/2021/01/special/20210106-special.yaml" in files
 
 
+def test_load_from_file_resolves_yaml_include(taxonomies):
+    """`!include header.yaml` should be resolved at load time and the
+    referenced header fields merged into the tagpack's top-level contents."""
+    bdir = "tests/testfiles/yaml_inclusion"
+    target = f"{bdir}/2021/01/20210101.yaml"
+
+    tagpack = TagPack.load_from_file(
+        None, target, TagPackSchema(), taxonomies, header_dir=bdir
+    )
+
+    # Fields originating from header.yaml are merged onto the tagpack and
+    # the `header` key itself is consumed.
+    assert "header" not in tagpack.contents
+    assert tagpack.contents["title"] == "BadHack TagPack"
+    assert tagpack.contents["creator"] == "GraphSense Team"
+    assert tagpack.contents["currency"] == "BTC"
+    assert tagpack.contents["label"] == "BadHack"
+    assert tagpack.contents["confidence"] == "forensic"
+
+    # Date-file-local fields survive the merge.
+    assert tagpack.contents["lastmod"] == date(2020, 1, 3)
+    assert len(tagpack.tags) == 1
+    assert (
+        tagpack.tags[0].contents["address"]
+        == "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+    )
+
+
 def test_file_collection_with_missing_yaml_include_raises_exception():
     bdir = "tests/testfiles/yaml_inclusion_missing_header"
     h_files = collect_tagpack_files(bdir)
