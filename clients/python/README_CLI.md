@@ -39,6 +39,9 @@ graphsense raw addresses list-address-txs btc 1A1z... --pagesize 20
 - **Non-deprecated endpoints only** on the flat commands. Deprecated APIs
   (`EntitiesApi`) are hidden under `graphsense raw` unless
   `GRAPHSENSE_CLIENT_SHOW_DEPRECATED_ENDPOINTS=1` is set.
+- **`graphsense gs`** reads `.gs` save files (Pathfinder / Graph dashboards)
+  and emits `{network, id}` records that pipe straight into the lookup
+  commands — re-hydrate an entire saved graph in one line.
 
 ## Full docs
 

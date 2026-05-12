@@ -138,3 +138,52 @@ resume.
 ```
 graphsense actor ACTOR_ID
 ```
+
+## gs
+
+Read GraphSense `.gs` save files written by the Pathfinder / Graph
+dashboards. The extraction commands (`txs`, `addresses`) emit a uniform
+`{network, id}` shape that pipes directly into `lookup-tx` /
+`lookup-address` via the standard
+`--address-jq '[].id' --network-jq '[].network'` selectors.
+
+```
+graphsense gs txs       FILE [--dedupe/--no-dedupe]
+graphsense gs addresses FILE [--dedupe/--no-dedupe]
+graphsense gs decode    FILE [--raw]
+graphsense gs summary   FILE
+```
+
+| Command     | Pathfinder file | Graph file                  | Output records              |
+| ----------- | --------------- | --------------------------- | --------------------------- |
+| `txs`       | tx hashes       | empty (graphs have no txs)  | `{"network", "id"}`         |
+| `addresses` | addresses       | addresses                   | `{"network", "id"}`         |
+| `decode`    | structured JSON | structured JSON             | typed dataclasses → JSON; `--raw` emits the underlying payload as-is |
+| `summary`   | counts + kind   | counts + kind               | dict                        |
+
+Cluster references in Graph files (rare; legacy format) are not exposed
+as a dedicated subcommand — fetch them via `graphsense gs decode FILE`
+and pull from the `entities` array if needed.
+
+Records are deduped (by `(network, id)`) by default, preserving first-seen
+order. Pass `--no-dedupe` to keep repeats.
+
+`.gs` files cover multiple networks in one file — the per-row `network`
+column carries the right network into the downstream lookup. The
+positional `CURRENCY` on `lookup-tx` / `lookup-address` is the fallback
+for rows where the selector resolves to empty.
+
+```sh
+# every tx referenced in graph.gs, looked up
+graphsense gs txs graph.gs \
+  | graphsense --address-jq '[].id' --network-jq '[].network' lookup-tx btc
+
+# every address, bundled with tag summaries; honor each address's own network
+graphsense gs addresses graph.gs \
+  | graphsense --address-jq '[].id' --network-jq '[].network' \
+       lookup-address btc --with-tag-summary
+
+# inspect a file without touching the API
+graphsense gs summary graph.gs
+graphsense -f json gs decode graph.gs | jq '.addresses | length'
+```

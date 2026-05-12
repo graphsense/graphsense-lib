@@ -40,9 +40,11 @@ templates/*
 # Hand-written extensions on top of the generated client (do not overwrite).
 graphsense/ext/*
 graphsense/cli/*
+graphsense/gs_files/*
 tests/*
 docs/cli/*
 docs/ext/*
 README_CLI.md
 README_EXT.md
 CLAUDE.md
+scripts/*

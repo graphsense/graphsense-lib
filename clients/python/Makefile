@@ -41,6 +41,17 @@ generate-openapi-client:
 test-compat:
 	uv run $(COMPAT_DIR)/test_compat.py .
 
+# Vendor src/graphsenselib/convert/gs_files into graphsense/gs_files. The
+# client is published standalone, so we copy the pure-stdlib module rather
+# than depend on graphsenselib. cli.py is excluded — the client has its own
+# CLI integration in graphsense/cli/gs.py.
+sync-gs-files:
+	uv run python scripts/sync_gs_files.py
+
+# Drift check used by pre-commit / CI.
+check-gs-files:
+	uv run python scripts/sync_gs_files.py --check
+
 # Offline regression tests for graphsense.ext and the gs CLI.
 test:
 	uv run --extra cli pytest tests/ -q
@@ -67,4 +78,4 @@ type-check:
 run-examples:
 	API_KEY=$(API_KEY) uv run --with pypandoc test_examples.py
 
-.PHONY: generate-openapi-client test-compat test test-ci lint format type-check run-examples
+.PHONY: generate-openapi-client test-compat test test-ci lint format type-check run-examples sync-gs-files check-gs-files

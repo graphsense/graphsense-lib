@@ -27,7 +27,13 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Web API + Python client (webapi-2.13.0)
 
-No changes (REST surface unchanged; MCP is a new transport layered on top of the existing FastAPI app).
+#### Added
+- **`graphsense gs` CLI group** for reading `.gs` save files (Pathfinder / Graph dashboards) without installing `graphsenselib`. Subcommands: `txs FILE` and `addresses FILE` emit a uniform `{"network", "id"}` shape that pipes directly into `lookup-tx` / `lookup-address` (via the standard `--address-jq '[].id' --network-jq '[].network'` selectors), enabling one-line re-hydration of every reference in a saved graph. `decode FILE` (optionally `--raw`) and `summary FILE` round out the group. Records are deduped by `(network, id)` by default; `--no-dedupe` retains repeats.
+- **`graphsense.gs_files` Python API** — pure-stdlib decoder/encoder for `.gs` files, vendored from `src/graphsenselib/convert/gs_files/` so the standalone `graphsense-python` package picks up the reader without adding `graphsenselib` as a runtime dependency. Public surface mirrors the source: `decode_gs`, `structure`, `summarize`, `to_jsonable`, `GsBuilder`, plus the typed dataclasses (`PathfinderData`, `GraphData`, …).
+- **Sync tooling for the vendored module.** `clients/python/scripts/sync_gs_files.py` copies the source verbatim with a `DO NOT EDIT` header on each file; `make -C clients/python sync-gs-files` writes, `make -C clients/python check-gs-files` is the drift check. A repo-level pre-commit hook (`sync-gs-files`) runs the write step automatically when either the source dir, the vendored copy, or the sync script changes. `cli.py` is excluded from the sync — the client wires its own `rich_click`-integrated CLI in `graphsense/cli/gs.py` so it inherits the global `-f / -o / -d / --input` plumbing.
+
+#### Changed
+- `clients/python/.openapi-generator-ignore` now also covers `graphsense/gs_files/*` and `scripts/*` to keep the vendored copy and sync utilities out of the generator's overwrite path.
 
 ### Dependencies
 

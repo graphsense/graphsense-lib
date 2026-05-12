@@ -68,6 +68,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+    -   id: sync-gs-files
+        name: Sync gs_files into the python client
+        entry: make -C clients/python sync-gs-files
+        language: system
+        pass_filenames: false
+        files: ^src/graphsenselib/convert/gs_files/|^clients/python/graphsense/gs_files/|^clients/python/scripts/sync_gs_files\.py$
     -   id: ensure-env
         name: Ensure UV environment is ready
         entry: uv sync --dev --all-packages --all-extras
