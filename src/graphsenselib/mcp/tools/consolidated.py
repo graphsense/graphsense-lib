@@ -143,8 +143,10 @@ def _slim(obj: Any) -> Any:
 # and overlap with it (and with each other), which is exactly the kind of
 # thing the LLM gets confused by. The single source of truth for tag-derived
 # data is `tag_summary` (high-level) and `list_tags_by_address` (raw list).
-_LEGACY_ADDRESS_FIELDS = frozenset({"actors"})
-_LEGACY_CLUSTER_FIELDS = frozenset({"actors", "best_address_tag"})
+# `labels` is stripped everywhere it appears at the top level — the only
+# `labels` the LLM should see is the one nested inside `tag_summary`.
+_LEGACY_ADDRESS_FIELDS = frozenset({"actors", "labels"})
+_LEGACY_CLUSTER_FIELDS = frozenset({"actors", "best_address_tag", "labels"})
 _LEGACY_NEIGHBOR_FIELDS = frozenset({"labels"})
 
 

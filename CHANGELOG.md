@@ -10,6 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.13.1] - Unreleased
+
+### Library (v2.13.1)
+
+#### Changed
+- **MCP: `labels` removed from the top level of every address, cluster, and neighbor response.** The upstream REST surface attaches a quick-aggregate `labels` field alongside the structured `tag_summary`, which conflicted with `tag_summary.labels` (the renamed `label_summary`) and caused LLMs to double-count or mis-attribute tags. `labels` now appears in MCP output only inside `tag_summary` (from `lookup_address` / `list_tags_by_address`). Implemented by extending `_LEGACY_ADDRESS_FIELDS` and `_LEGACY_CLUSTER_FIELDS` in `src/graphsenselib/mcp/tools/consolidated.py`; the existing neighbor strip is unchanged.
+
+#### Fixed
+- **Tagpack reinsert was slow (~8 s per pack) due to a missing FK index.** `tag.tagpack` (FK to `tagpack.id` with `ON DELETE CASCADE`) had no index, so every `DELETE FROM tagpack` in the `--update`/`force_insert` path triggered a sequential scan of the entire `tag` table to resolve the cascade. On an 80 M-row tag table a single delete spent ~7.9 s inside the `tag_tagpack_fkey` trigger; 8 k packs took the better part of a day. Added `index=True` on `Tag.tagpack_id` in `src/graphsenselib/tagstore/db/models.py`. Existing deployments must also create the index on the live DB, e.g. `CREATE INDEX CONCURRENTLY IF NOT EXISTS tag_tagpack_idx ON tag (tagpack);`.
+- **`TagStore` read-only helpers leaked an `idle in transaction` connection for the entire dispatcher run.** `get_ingested_tagpacks`, `get_ingested_actorpacks`, and `get_actor_alias_mapping` issued SELECTs through a `psycopg2` connection with `autocommit=False` and never committed or rolled back, leaving the main process holding a transaction snapshot for hours during a tagpack insert. That pinned the DB-wide `xmin` horizon (blocking autovacuum cleanup on every table) and would have stalled `CREATE INDEX CONCURRENTLY` indefinitely. Each helper now calls `self.conn.rollback()` before returning.
+
+### Web API + Python client (webapi-2.13.0)
+
+No changes.
+
 ## [2.13.0] 2026-05-13
 
 ### Library (v2.13.0)

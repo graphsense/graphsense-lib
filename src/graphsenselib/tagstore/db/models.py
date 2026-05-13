@@ -191,6 +191,7 @@ class Tag(SQLModel, table=True):
             String,
             ForeignKey("tagpack.id", ondelete="CASCADE"),
             nullable=False,
+            index=True,
         )
     )
     tagpack: TagPack = Relationship()

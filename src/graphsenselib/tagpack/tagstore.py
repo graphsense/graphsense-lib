@@ -321,7 +321,9 @@ class TagStore(object):
 
     def get_ingested_actorpacks(self) -> List:
         self.cursor.execute("SELECT id from actorpack")
-        return [i[0] for i in self.cursor.fetchall()]
+        result = [i[0] for i in self.cursor.fetchall()]
+        self.conn.rollback()
+        return result
 
     def get_actor_alias_mapping(self) -> Dict[str, str]:
         """Load all actors and build alias -> actor_id mapping from context field."""
@@ -334,6 +336,7 @@ class TagStore(object):
             context = json.loads(context_json)
             for alias in context.get("aliases", []):
                 mapping[alias] = actor_id
+        self.conn.rollback()
         return mapping
 
     @auto_commit
@@ -796,6 +799,10 @@ class TagStore(object):
     def get_ingested_tagpacks(self) -> Dict[str, datetime]:
         self.cursor.execute("SELECT id, lastmod from tagpack")
         results = self.cursor.fetchall()
+        # Close the implicit read transaction so the connection doesn't
+        # sit idle-in-transaction for the whole dispatcher run, which
+        # pins the xmin horizon and stalls CREATE INDEX CONCURRENTLY.
+        self.conn.rollback()
         return {i[0]: i[1] for i in results}
 
     def get_tags_count(self, network="") -> int:
