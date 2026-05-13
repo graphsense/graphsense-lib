@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASESEM := 'v2.13.0-rc.1'
+RELEASESEM := 'v2.13.0'
 WEBAPISEM := 'v2.13.0'
 
 

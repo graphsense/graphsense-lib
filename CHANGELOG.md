@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased] — 2.13.0
+## [2.13.0] 2026-05-13
 
 ### Library (v2.13.0)
 
