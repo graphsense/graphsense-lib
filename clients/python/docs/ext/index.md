@@ -77,6 +77,26 @@ When the server returns the RFC 8594 `Deprecation` / `Sunset` headers, a
 one-shot warning is written to `stderr` per (method + path). Pass
 `quiet_deprecation=True` to silence it.
 
+## `graphsense.gs_files` — read `.gs` save files
+
+Pure-stdlib decoder/encoder for the `.gs` files written by the Pathfinder
+and Graph dashboards. Vendored from `graphsenselib.convert.gs_files`, so
+no extra dependency is needed.
+
+```python
+from graphsense.gs_files import decode_gs, structure, summarize
+
+raw = decode_gs("graph.gs")           # JSON payload
+data = structure(raw)                 # PathfinderData | GraphData
+print(summarize(data))
+for t in data.txs:                    # PathfinderData only
+    print(t.id.currency, t.id.id)
+```
+
+For ad-hoc shell pipelines (extract every tx / address / cluster id and
+pipe into `lookup-*`), see the [`graphsense gs`](../cli/commands.md#gs)
+CLI group.
+
 ## See also
 
 - [`GraphSense` reference](GraphSense.md)

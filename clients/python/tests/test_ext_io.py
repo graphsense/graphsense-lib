@@ -82,6 +82,30 @@ def test_parse_csv_missing_column_name():
         io_mod.parse_input(text, input_format="csv", col="nope")
 
 
+def test_parse_csv_named_col_with_underscore_header():
+    # Header columns with underscores must not defeat header detection;
+    # `_looks_like_header` used to require `.isalpha()` and would reject
+    # `btc_address`, breaking `--col btc_address`.
+    text = (
+        "btc_address,internal_id,seen_at\n"
+        "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa,A-1001,2026-05-04\n"
+        "bc1qgdjqv0av3rfu4qf8q5sjxqj5cu4r4qrlu0t0xt,A-1002,2026-05-05\n"
+    )
+    ids = io_mod.parse_input(text, input_format="csv", col="btc_address")
+    assert ids == [
+        "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+        "bc1qgdjqv0av3rfu4qf8q5sjxqj5cu4r4qrlu0t0xt",
+    ]
+
+
+def test_parse_csv_named_col_trusts_row_one_as_header():
+    # Even if the heuristic would say "this doesn't look like a header",
+    # a named --col implies row 1 is the header — just look it up there.
+    text = "0xfeed,balance\n0xdead,1\n0xbeef,2\n"
+    ids = io_mod.parse_input(text, input_format="csv", col="0xfeed")
+    assert ids == ["0xdead", "0xbeef"]
+
+
 def test_parse_csv_requires_col_for_multi_columns():
     text = "address,balance\n1A1z,100\n"
     with pytest.raises(ValueError):

@@ -10,6 +10,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased] — 2.13.0
+
+### Library (v2.13.0)
+
+#### Added
+- **MCP (Model Context Protocol) server** mounted inside the existing FastAPI app at `/mcp` (override via `GS_MCP_PATH`). LLM clients (Claude Code, Claude Desktop, Cursor, custom agents) can query graphsense directly without a separate process. Auto-attached in `create_app`, `create_app_from_dict`, and `create_spec_app` via `_maybe_attach_mcp`; silent no-op when the `[mcp]` extra is not installed. Transport: streamable-http, `stateless_http=True` by default (set `GS_MCP_STATELESS_HTTP=false` to opt in to stateful). Disable entirely with `GS_MCP_ENABLED=false`. Implementation in `src/graphsenselib/mcp/`.
+- **Curated tool surface** driven by a positive-list YAML at `src/graphsenselib/mcp/curation/tools.yaml`. Out of FastAPI's 44 routes, 17 are surfaced (18 with `search_neighbors` configured): 11 passthroughs (`get_statistics`, `search`, `get_block`, `get_block_by_date`, `list_block_txs`, `list_tx_flows`, `get_exchange_rates`, `list_supported_tokens`, `get_actor`, `list_taxonomies`, `list_concepts`), 6 hand-written consolidated tools that collapse common chains (`lookup_address`, `lookup_cluster`, `lookup_tx_details`, `list_neighbors`, `list_txs_for`, `list_tags_by_address`), and an optional external forward to the proprietary `search_neighbors` service. Curation drift is caught at boot and via the CI gate `graphsense-cli mcp validate-curation`.
+- **`graphsense-cli mcp validate-curation`** — CI-friendly subcommand that validates the curation YAML against the live FastAPI app (uses the minimal spec app, no DB required) and exits non-zero on drift.
+- **Pathfinder deep-link instructions** for MCP clients. Server-side `instructions` (the MCP analogue of a system prompt) are sourced from `curation/instructions.md` and substituted with the configured `pathfinder_base_url` (default `https://app.iknaio.com`) so LLMs can build links like `{base}/pathfinder/btc/address/<addr>`. Override via `GS_MCP_INSTRUCTIONS` / `GS_MCP_INSTRUCTIONS_FILE` / `GS_MCP_PATHFINDER_BASE_URL`.
+- **External request routing** for the MCP fan-out wrappers. By default, consolidated tools dispatch in-process via httpx `ASGITransport`; set `GS_MCP_INTERNAL_BASE_URL` to route fan-out calls through a real HTTP client so each call traverses upstream middleware. Originating MCP request headers are forwarded on every internal call in both modes.
+- **New `[mcp]` extra** in `pyproject.toml` (`fastmcp>=3.2,<4.0`, `pyyaml>=6.0`, transitively pulls `[web]`). Also added to the `[all]` extra.
+
+#### Changed
+- **Dependencies refreshed** (`uv.lock`); pyproject.toml constraints bumped where appropriate. See "Dependencies" below.
+
+### Web API + Python client (webapi-2.13.0)
+
+#### Added
+- **`graphsense gs` CLI group** for reading `.gs` save files (Pathfinder / Graph dashboards) without installing `graphsenselib`. Subcommands: `txs FILE` and `addresses FILE` emit a uniform `{"network", "id"}` shape that pipes directly into `lookup-tx` / `lookup-address` (via the standard `--address-jq '[].id' --network-jq '[].network'` selectors), enabling one-line re-hydration of every reference in a saved graph. `decode FILE` (optionally `--raw`) and `summary FILE` round out the group. Records are deduped by `(network, id)` by default; `--no-dedupe` retains repeats.
+- **`graphsense.gs_files` Python API** — pure-stdlib decoder/encoder for `.gs` files, vendored from `src/graphsenselib/convert/gs_files/` so the standalone `graphsense-python` package picks up the reader without adding `graphsenselib` as a runtime dependency. Public surface mirrors the source: `decode_gs`, `structure`, `summarize`, `to_jsonable`, `GsBuilder`, plus the typed dataclasses (`PathfinderData`, `GraphData`, …).
+- **Sync tooling for the vendored module.** `clients/python/scripts/sync_gs_files.py` copies the source verbatim with a `DO NOT EDIT` header on each file; `make -C clients/python sync-gs-files` writes, `make -C clients/python check-gs-files` is the drift check. A repo-level pre-commit hook (`sync-gs-files`) runs the write step automatically when either the source dir, the vendored copy, or the sync script changes. `cli.py` is excluded from the sync — the client wires its own `rich_click`-integrated CLI in `graphsense/cli/gs.py` so it inherits the global `-f / -o / -d / --input` plumbing.
+
+#### Changed
+- `clients/python/.openapi-generator-ignore` now also covers `graphsense/gs_files/*` and `scripts/*` to keep the vendored copy and sync utilities out of the generator's overwrite path.
+
+### Dependencies
+
+#### Changed
+- See commit `43aa309` (`update dependencies`) and the follow-up bump in this release window. `uv.lock` regenerated.
+
 ## [2.12.6] 2026-05-11
 
 ### Library (v2.12.6)

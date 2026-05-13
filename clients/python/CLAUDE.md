@@ -34,11 +34,14 @@ All hand-written code lives under paths listed in `.openapi-generator-ignore`:
 - `graphsense/ext/*` — the high-level `GraphSense` facade, selectors, I/O,
   output writers, deprecation hook.
 - `graphsense/cli/*` — the `graphsense` CLI.
+- `graphsense/gs_files/*` — **vendored** from `src/graphsenselib/convert/gs_files/`;
+  see "Vendored `gs_files`" below.
 - `tests/*` — regression tests.
 - `docs/ext/*`, `docs/cli/*` — hand-written docs.
 - `README_CLI.md`, `README_EXT.md`, `CLAUDE.md` (this file).
 - `compat/*` — OpenAPI v7 backward-compat patches.
 - `templates/*` — custom Mustache templates.
+- `scripts/*` — local utility scripts (e.g. `sync_gs_files.py`).
 
 Anything outside those trees is overwritten by `make generate-openapi-client`.
 Never put sticky edits in `graphsense/api/` or `graphsense/models/` — patch
@@ -55,6 +58,29 @@ That's the main reason the CLI survives regeneration — don't hand-mirror the
 API surface in convenience commands unless you also want to maintain it
 across regenerations.
 
+## Vendored `gs_files`
+
+The `graphsense/gs_files/` package is **not hand-written**: it is a
+verbatim copy of `src/graphsenselib/convert/gs_files/` from this repo,
+synced by `scripts/sync_gs_files.py`. We vendor (rather than depend on
+`graphsenselib`) so the published `graphsense-python` package stays
+small and standalone. The source module is pure stdlib, which makes
+vendoring cheap.
+
+**Rules**:
+
+- Edit the source (`src/graphsenselib/convert/gs_files/`), never the
+  vendored copy. Each vendored file carries an `AUTO-GENERATED — DO NOT
+  EDIT` header.
+- Run `make sync-gs-files` to refresh; `make check-gs-files` is the
+  drift check used by CI and the repo's pre-commit hook.
+- `cli.py` from the source is intentionally excluded — the client has
+  its own `rich_click`-based wrapper at `graphsense/cli/gs.py` that
+  integrates with the global `-f/-o/--input/--input-format` plumbing.
+- Public API: import `from graphsense.gs_files import decode_gs,
+  structure, summarize, to_jsonable, GsBuilder, ...` (mirrors
+  `graphsenselib.convert.gs_files`).
+
 ## Deprecated endpoints
 
 `EntitiesApi` (and related `entity`-prefixed fields) are deprecated; use
@@ -68,9 +94,10 @@ header triggers a one-shot stderr warning — see `graphsense/ext/deprecation.py
 Before landing changes, run from `clients/python/`:
 
 ```sh
-make lint         # ruff check + format --check
-make type-check   # ty on graphsense/ext + graphsense/cli
-make test-ci      # pytest with -W error
+make lint            # ruff check + format --check
+make type-check      # ty on graphsense/ext + graphsense/cli
+make test-ci         # pytest with -W error
+make check-gs-files  # vendored gs_files copy is in sync
 ```
 
 CI (`.github/workflows/run_tests_client.yaml`) runs all of the above plus

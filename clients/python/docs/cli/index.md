@@ -54,6 +54,7 @@ graphsense [GLOBAL OPTIONS] COMMAND [ARGS]
 - [`graphsense actor`](commands.md#actor)
 - [`graphsense bulk`](bulk.md) — direct access to `/bulk.json` / `/bulk.csv`
 - [`graphsense raw <group> <method> ...`](raw.md) — full auto-mirrored generated API
+- [`graphsense gs ...`](commands.md#gs) — read GraphSense `.gs` save files (Pathfinder / Graph dashboards)
 
 ## See also
 
