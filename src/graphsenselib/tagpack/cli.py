@@ -1,13 +1,16 @@
 # ruff: noqa: T201
+import hashlib
 import json
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import time
 from multiprocessing import Pool, cpu_count
 
 import click
+import giturlparse as gup
 import pandas as pd
 import yaml
 from git import Repo
@@ -22,6 +25,7 @@ from graphsenselib.tagpack.tagpack import (
     TagPack,
     TagPackFileError,
     collect_tagpack_files,
+    get_last_commit_times,
     get_repository,
     get_uri_for_tagpack,
 )
@@ -348,6 +352,16 @@ def config(ctx, verbose):
     hidden=True,
     help="Deprecated alias for --no-lock.",
 )
+@click.option(
+    "--repo-cache-dir",
+    default=None,
+    help=(
+        "Directory in which to keep synced git repositories between runs. "
+        "An existing checkout is refreshed with a git fetch instead of a "
+        "full re-clone. Defaults to a 'graphsense_tagstore_sync_repos' "
+        "folder inside the system temp directory."
+    ),
+)
 def sync(
     repos,
     force,
@@ -362,6 +376,7 @@ def sync(
     dont_update_quality_metrics,
     no_lock,
     no_file_lock,
+    repo_cache_dir,
 ):
     """syncs the tagstore with a list of git repos."""
     url = override_postgres_url(url)
@@ -396,10 +411,76 @@ def sync(
                 n_workers=n_workers,
                 no_validation=no_validation,
                 dont_update_quality_metrics=dont_update_quality_metrics,
+                repo_cache_dir=repo_cache_dir,
             )
     except LockAcquisitionError as e:
         logger.warning(str(e))
         sys.exit(911)
+
+
+def _repo_cache_dir(base):
+    """Resolve the directory used to keep synced git repositories between
+    runs. Defaults to a stable folder inside the system temp directory."""
+    if base:
+        d = pathlib.Path(base).expanduser()
+    else:
+        d = pathlib.Path(tempfile.gettempdir()) / "graphsense_tagstore_sync_repos"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _repo_workdir(cache_dir, repo_url):
+    """Stable per-repo subdirectory derived from the clone URL. The hash
+    keeps URL variants (credentials, .git suffix, scheme) from colliding
+    while the slug keeps the path human-readable."""
+    digest = hashlib.sha256(repo_url.encode("utf-8")).hexdigest()[:12]
+    try:
+        slug = gup.parse(repo_url).name or "repo"
+    except Exception:
+        slug = "repo"
+    return cache_dir / f"{slug}-{digest}"
+
+
+def _sync_repo(repo_url, branch, workdir):
+    """Clone `repo_url` into `workdir`, or fetch and hard-reset an existing
+    checkout. The returned repo's working tree matches the remote exactly,
+    so the result is equivalent to a fresh clone.
+
+    Any unusable cache (missing, corrupt, wrong remote, failed fetch) is
+    discarded and re-cloned, so a stale cache can never change the result.
+    """
+    repo = None
+    if workdir.exists():
+        try:
+            cached = Repo(workdir)
+            if repo_url in list(cached.remotes.origin.urls):
+                with _timed_phase("Fetching"):
+                    cached.remotes.origin.fetch(prune=True, tags=True)
+                repo = cached
+            else:
+                logger.info(f"Repo cache at {workdir} has a different remote.")
+        except Exception as e:
+            logger.warning(f"Repo cache at {workdir} is unusable ({e}).")
+
+    if repo is None:
+        if workdir.exists():
+            logger.info(f"Discarding repo cache at {workdir} and re-cloning.")
+            shutil.rmtree(workdir, ignore_errors=True)
+        with _timed_phase("Cloning"):
+            repo = Repo.clone_from(repo_url, workdir)
+
+    # Make the working tree authoritative for the requested ref, so a reused
+    # checkout is indistinguishable from a fresh clone.
+    if branch:
+        logger.info(f"Using branch {branch}")
+        repo.git.checkout(branch)
+        target = branch
+    else:
+        target = repo.active_branch.name
+    if f"origin/{target}" in {r.name for r in repo.remotes.origin.refs}:
+        repo.git.reset("--hard", f"origin/{target}")
+    repo.git.clean("-fdx")
+    return repo
 
 
 def _sync_impl(
@@ -414,6 +495,7 @@ def _sync_impl(
     n_workers,
     no_validation,
     dont_update_quality_metrics,
+    repo_cache_dir,
 ):
     if os.path.isfile(repos):
         sync_t0 = time.perf_counter()
@@ -445,49 +527,47 @@ def _sync_impl(
         extra_option = "--force" if force else None
         extra_option = "--add-new" if extra_option is None else extra_option
 
-        for repo_url in repos_list:
-            with tempfile.TemporaryDirectory(suffix="tagstore_sync") as temp_dir_tt:
-                logger.info(f"Syncing {repo_url}. Temp files in: {temp_dir_tt}")
-                with _timed_phase(f"Repo {repo_url}"):
-                    with _timed_phase("Cloning"):
-                        repo_url, *branch_etc = repo_url.split(" ")
-                        repo = Repo.clone_from(repo_url, temp_dir_tt)
-                        if len(branch_etc) > 0:
-                            branch = branch_etc[0]
-                            logger.info(f"Using branch {branch}")
-                            repo.git.checkout(branch)
+        repo_cache = _repo_cache_dir(repo_cache_dir)
+        logger.info(f"Using repo cache directory: {repo_cache}")
 
-                    with _timed_phase("Inserting actorpacks"):
-                        click_ctx_actorpack.invoke(
-                            insert_actorpack_cli, path=temp_dir_tt, url=url
-                        )
+        for repo_url_line in repos_list:
+            repo_url, *branch_etc = repo_url_line.split(" ")
+            branch = branch_etc[0] if branch_etc else None
+            workdir = _repo_workdir(repo_cache, repo_url)
+            path = str(workdir)
+            logger.info(f"Syncing {repo_url}. Repo files in: {path}")
+            with _timed_phase(f"Repo {repo_url}"):
+                _sync_repo(repo_url, branch, workdir)
 
-                    public = len(branch_etc) > 1 and branch_etc[1].strip() == "public"
+                with _timed_phase("Inserting actorpacks"):
+                    click_ctx_actorpack.invoke(insert_actorpack_cli, path=path, url=url)
 
-                    tag_type_default = (
-                        branch_etc[2].strip() if len(branch_etc) > 2 else None
-                    )
+                public = len(branch_etc) > 1 and branch_etc[1].strip() == "public"
 
-                    if public:
-                        logger.info("Caution: This repo is imported as public.")
+                tag_type_default = (
+                    branch_etc[2].strip() if len(branch_etc) > 2 else None
+                )
 
-                    args = {
-                        "path": temp_dir_tt,
-                        "url": url,
-                        "public": public,
-                        "force": force,
-                        "n_workers": n_workers,
-                        "no_validation": no_validation,
-                        "add_new": False,
-                        "update": not force,
-                        "tag_type_default": tag_type_default,
-                    }
+                if public:
+                    logger.info("Caution: This repo is imported as public.")
 
-                    if tag_type_default is None:
-                        args.pop("tag_type_default")
+                args = {
+                    "path": path,
+                    "url": url,
+                    "public": public,
+                    "force": force,
+                    "n_workers": n_workers,
+                    "no_validation": no_validation,
+                    "add_new": False,
+                    "update": not force,
+                    "tag_type_default": tag_type_default,
+                }
 
-                    with _timed_phase("Inserting tagpacks"):
-                        click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
+                if tag_type_default is None:
+                    args.pop("tag_type_default")
+
+                with _timed_phase("Inserting tagpacks"):
+                    click_ctx_tagpack.invoke(insert_tagpack_cli, **args)
 
         with _timed_phase("Removing duplicates"):
             click_ctx_tagstore.invoke(remove_duplicates, url=url)
@@ -903,10 +983,19 @@ def insert_tagpack(
 
     # resolve backlinks to remote repository and relative paths
     scheck, nogit = not no_strict_check, no_git
+    # Resolve every file's last-commit time in a single history walk rather
+    # than one `git log` per file (see get_last_commit_times).
+    commit_times = (
+        None
+        if nogit
+        else get_last_commit_times(
+            base_url, [a for fs in tagpack_files.values() for a in fs]
+        )
+    )
     prepared_packs = [
         (m, h, n[0], n[1], n[2], n[3], False)
         for m, h, n in [
-            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit))
+            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit, commit_times))
             for h, fs in tagpack_files.items()
             for a in fs
         ]
@@ -1295,10 +1384,19 @@ def insert_actorpacks(
     # resolve backlinks to remote repository and relative paths
     # For the URI we use the same logic for ActorPacks than for TagPacks
     scheck, nogit = not no_strict_check, no_git
+    # Resolve every file's last-commit time in a single history walk rather
+    # than one `git log` per file (see get_last_commit_times).
+    commit_times = (
+        None
+        if nogit
+        else get_last_commit_times(
+            base_url, [a for fs in actorpack_files.values() for a in fs]
+        )
+    )
     prepared_packs = [
         (m, h, n[0], n[1], n[2])
         for m, h, n in [
-            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit))
+            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit, commit_times))
             for h, fs in actorpack_files.items()
             for a in fs
         ]

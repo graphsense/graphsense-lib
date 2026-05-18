@@ -48,8 +48,56 @@ def get_repository(path: str) -> pathlib.Path:
     raise ValidationError(f"No repository root found in path {path}")
 
 
+def get_last_commit_times(repo_path, tagpack_files) -> dict:
+    """Resolve the most recent commit time of many files in one history walk.
+
+    `repo.iter_commits(paths=file)` runs a full `git log` over the whole
+    repository history per file; doing that once per tagpack is O(files x
+    history). This walks the history a single time instead: it reads every
+    commit newest-first via `git log --name-only` and records, for each
+    requested file, the committer timestamp of the first (newest) commit
+    that touched it.
+
+    `tagpack_files` are paths as the caller holds them (typically absolute);
+    the returned dict is keyed by those same strings. Files with no commit
+    history are absent from the result.
+    """
+    repo_root = pathlib.Path(repo_path).resolve()
+    # repo-relative posix path -> caller's original path string
+    rel_to_orig: dict = {}
+    for f in tagpack_files:
+        rel = pathlib.Path(f).resolve().relative_to(repo_root).as_posix()
+        rel_to_orig[rel] = str(f)
+
+    result: dict = {}
+    if not rel_to_orig:
+        return result
+
+    remaining = set(rel_to_orig)
+    with Repo(repo_path) as repo:
+        # One reverse-chronological pass over all commits. %x00 starts a
+        # record, %ct is the committer timestamp; --name-only lists the
+        # paths each (non-merge) commit touched. --no-renames keeps both
+        # sides of a rename visible regardless of the user's git config.
+        raw = repo.git(c="core.quotePath=false").log(
+            "--no-renames", "--name-only", "--pretty=format:%x00%ct"
+        )
+        ts = None
+        for line in raw.split("\n"):
+            if not line:
+                continue
+            if line[0] == "\x00":
+                ts = int(line[1:])
+            elif ts is not None and line in remaining:
+                result[rel_to_orig[line]] = datetime.fromtimestamp(ts)
+                remaining.discard(line)
+                if not remaining:
+                    break
+    return result
+
+
 def get_uri_for_tagpack(
-    repo_path, tagpack_file, strict_check, no_git
+    repo_path, tagpack_file, strict_check, no_git, commit_times=None
 ) -> Tuple[str, str, str, date]:
     """For a given path string
         '/home/anna/graphsense/graphsense-tagpacks/public/packs'
@@ -71,6 +119,11 @@ def get_uri_for_tagpack(
 
     If path does not contain any git information, the original path
     is returned.
+
+    `commit_times` may be a precomputed {file_path: datetime} map (see
+    `get_last_commit_times`); when given, the per-file git history walk is
+    skipped. When omitted, the file's most recent commit is looked up
+    directly with `max_count=1` so `git rev-list` stops at the first match.
     """
     default_prefix = hashlib.sha256("".encode("utf-8")).hexdigest()[:16]
     if no_git:
@@ -90,17 +143,19 @@ def get_uri_for_tagpack(
             logger.info(msg)
             sys.exit(0)
 
-        # Get the list of commits for the specified file
-        commits = list(repo.iter_commits(paths=tagpack_file))
-
-        if commits:
-            # Get the most recent commit
-            latest_commit = commits[0]
-
-            # Convert the commit date (Unix timestamp) to a readable format
-            commit_date = datetime.fromtimestamp(latest_commit.committed_date)
+        # Most recent commit touching the file. Use a precomputed map when
+        # available, otherwise ask git for just the newest commit.
+        if commit_times is not None:
+            commit_date = commit_times.get(str(tagpack_file))
         else:
-            commit_date = None
+            latest_commit = next(
+                repo.iter_commits(paths=tagpack_file, max_count=1), None
+            )
+            commit_date = (
+                datetime.fromtimestamp(latest_commit.committed_date)
+                if latest_commit is not None
+                else None
+            )
 
         if len(repo.remotes) > 1:
             msg = (

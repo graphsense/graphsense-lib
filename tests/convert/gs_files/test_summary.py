@@ -7,8 +7,8 @@ import pytest
 from graphsenselib.convert.gs_files.parser import (
     Color,
     GraphAddress,
+    GraphCluster,
     GraphData,
-    GraphEntity,
     Highlight,
     PathfinderAnnotation,
     PathfinderData,
@@ -68,11 +68,11 @@ class TestSummarize:
                     user_tag=None,
                 )
             ],
-            entities=[
-                GraphEntity(
+            clusters=[
+                GraphCluster(
                     currency="btc",
                     layer=0,
-                    entity_id=1,
+                    cluster_id=1,
                     root_address=None,
                     x=0.0,
                     y=0.0,
@@ -90,7 +90,7 @@ class TestSummarize:
             "kind": "graph",
             "version": "1.0.0",
             "n_addresses": 1,
-            "n_entities": 3,
+            "n_clusters": 3,
             "n_highlights": 2,
         }
 

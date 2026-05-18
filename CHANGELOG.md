@@ -10,7 +10,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.13.1] - Unreleased
+## [2.13.3] - Unreleased
+
+### Library (v2.13.3)
+
+#### Added
+- **`tagpack sync` keeps a persistent git repo cache instead of re-cloning every run.** Previously each repo in the sync list was cloned afresh into a throwaway temp directory. Synced repos are now kept under a stable cache directory and refreshed with a `git fetch` (`_sync_repo`/`_repo_workdir` in `src/graphsenselib/tagpack/cli.py`); only changed objects are downloaded. The refresh is authoritative — `fetch` + `checkout` + `reset --hard` + `clean -fdx` — so a reused checkout is identical to a fresh clone, and a missing/corrupt/wrong-remote cache is transparently re-cloned. New `--repo-cache-dir` option overrides the location (defaults to a `graphsense_tagstore_sync_repos` folder in the system temp directory). Non-breaking: no existing option changed and sync results are unaffected.
+
+### Web API + Python client (webapi-2.13.2)
+
+No changes.
+
+## [2.13.2] - 2026-05-18
+
+### Library (v2.13.2)
+
+#### Changed
+- **`.gs` save-file parser: `entity` renamed to `cluster` across the exposed interface.** `graphsenselib.convert.gs_files` now exports `GraphCluster` instead of `GraphEntity`; the structured dataclasses use `GraphData.clusters` (was `.entities`) and `GraphCluster.cluster_id` (was `.entity_id`). The `convert gs-files decode` JSON output emits `clusters`/`cluster_id`, and `summary` reports `n_clusters` (was `n_entities`). Breaking for downstream consumers of the structured output or the public dataclasses. The vendored copy in the `graphsense-python` client (`graphsense.gs_files`, used by `graphsense gs`) is synced to match.
+
+#### Fixed
+- **`tagpack insert` resolved each file's last-commit time with a separate full-history `git log` walk.** `get_uri_for_tagpack` called `list(repo.iter_commits(paths=file))` per tagpack — `O(files x history)` — and used only the newest commit. The most recent commit time of all files is now resolved in a single `git log --name-only` pass (`get_last_commit_times` in `src/graphsenselib/tagpack/tagpack.py`), and the per-file fallback uses `max_count=1` so `git rev-list` stops at the first match. Same results, applied to both `tagpack insert` and `actorpack insert`.
+
+### Web API + Python client (webapi-2.13.2)
+
+#### Changed
+- **`graphsense gs` CLI: `.gs` parser output renamed `entity` → `cluster`** (vendored `gs_files` module synced from graphsenselib). `decode` emits `clusters`/`cluster_id`; `summary` reports `n_clusters`. See the Library entry above.
+
+## [2.13.1] - 2026-05-13
 
 ### Library (v2.13.1)
 

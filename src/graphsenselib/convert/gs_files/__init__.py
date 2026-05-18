@@ -20,8 +20,8 @@ from .encoder import (
 from .parser import (
     Color,
     GraphAddress,
+    GraphCluster,
     GraphData,
-    GraphEntity,
     Highlight,
     PathfinderAggEdge,
     PathfinderAnnotation,
@@ -41,8 +41,8 @@ from .writer import to_jsonable, write_decoded, write_json
 __all__ = [
     "Color",
     "GraphAddress",
+    "GraphCluster",
     "GraphData",
-    "GraphEntity",
     "GsBuilder",
     "Highlight",
     "PathfinderAggEdge",

@@ -110,7 +110,7 @@ class TestSummaryCommand:
             "kind": "graph",
             "version": "1.0.0",
             "n_addresses": 1,
-            "n_entities": 1,
+            "n_clusters": 1,
             "n_highlights": 1,
         }
 
