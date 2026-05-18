@@ -3,8 +3,15 @@ import logging
 import os
 import tempfile
 
+import pytest
+from pydantic import ValidationError
+
 from graphsenselib.config import get_config, get_reorg_backoff_blocks
-from graphsenselib.config.config import AppConfig, get_default_data_configuration
+from graphsenselib.config.config import (
+    AppConfig,
+    Environment,
+    get_default_data_configuration,
+)
 
 
 def test_config_is_loaded_by_default():
@@ -126,3 +133,71 @@ def test_load_partial_rejects_invalid_slack_topics_env(monkeypatch):
 
     assert ok is False
     assert any(e.startswith("GRAPHSENSE_SLACK_TOPICS:") for e in errors)
+
+
+def test_environment_consistency_level_defaults():
+    # Defaults must preserve the previously hardcoded sync-connection behavior.
+    env = Environment(cassandra_nodes=["localhost"], keyspaces={})
+    assert env.consistency_level == "LOCAL_QUORUM"
+    assert env.serial_consistency_level == "LOCAL_SERIAL"
+
+
+def test_environment_consistency_level_custom_values():
+    env = Environment(
+        cassandra_nodes=["localhost"],
+        keyspaces={},
+        consistency_level="LOCAL_ONE",
+        serial_consistency_level="SERIAL",
+    )
+    assert env.consistency_level == "LOCAL_ONE"
+    assert env.serial_consistency_level == "SERIAL"
+
+
+def test_environment_rejects_invalid_consistency_level():
+    with pytest.raises(ValidationError) as exc_info:
+        Environment(
+            cassandra_nodes=["localhost"],
+            keyspaces={},
+            consistency_level="BOGUS",
+        )
+    assert "consistency_level must be one of" in str(exc_info.value)
+
+
+def test_environment_rejects_non_serial_serial_consistency_level():
+    # serial_consistency_level only accepts SERIAL / LOCAL_SERIAL; a regular
+    # level like QUORUM is a valid consistency_level but not a serial one.
+    with pytest.raises(ValidationError) as exc_info:
+        Environment(
+            cassandra_nodes=["localhost"],
+            keyspaces={},
+            serial_consistency_level="QUORUM",
+        )
+    assert "serial_consistency_level must be one of" in str(exc_info.value)
+
+
+def test_environment_consistency_level_loaded_from_yaml():
+    cfg = """
+environments:
+  dev:
+    cassandra_nodes: [localhost]
+    consistency_level: LOCAL_ONE
+    serial_consistency_level: SERIAL
+    keyspaces:
+      btc:
+        raw_keyspace_name: btc_raw_dev
+        transformed_keyspace_name: btc_transformed_dev
+        schema_type: utxo
+        ingest_config:
+          node_reference: http://localhost:8332
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg)
+        fname = f.name
+
+    try:
+        app = AppConfig(load=True, config_file=fname)
+        env = app.get_environment("dev")
+        assert env.consistency_level == "LOCAL_ONE"
+        assert env.serial_consistency_level == "SERIAL"
+    finally:
+        os.unlink(fname)

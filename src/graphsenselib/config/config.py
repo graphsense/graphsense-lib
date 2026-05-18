@@ -48,6 +48,21 @@ reorg_backoff_blocks = {
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GRAPHSENSE_VERBOSE_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
+VALID_CONSISTENCY_LEVELS = {
+    "ANY",
+    "ONE",
+    "TWO",
+    "THREE",
+    "QUORUM",
+    "ALL",
+    "LOCAL_QUORUM",
+    "EACH_QUORUM",
+    "SERIAL",
+    "LOCAL_SERIAL",
+    "LOCAL_ONE",
+}
+VALID_SERIAL_CONSISTENCY_LEVELS = {"SERIAL", "LOCAL_SERIAL"}
+
 
 def is_fresh_clustering_enabled() -> bool:
     return os.environ.get("GRAPHSENSE_FRESH_CLUSTERING_ENABLED", "false").lower() in (
@@ -269,7 +284,40 @@ class Environment(_WarnExtraModel):
     password: Optional[str] = Field(default_factory=lambda: None)
     readonly_username: Optional[str] = Field(default_factory=lambda: None)
     readonly_password: Optional[str] = Field(default_factory=lambda: None)
+    consistency_level: str = Field(
+        default="LOCAL_QUORUM",
+        description=(
+            "Cassandra consistency level for the synchronous (ingest/write) "
+            "connection. Applies to the whole ExecutionProfile."
+        ),
+    )
+    serial_consistency_level: str = Field(
+        default="LOCAL_SERIAL",
+        description=(
+            "Cassandra serial consistency level for the synchronous connection. "
+            "Only affects lightweight transactions (IF NOT EXISTS upserts)."
+        ),
+    )
     keyspaces: Dict[str, KeyspaceConfig]
+
+    @field_validator("consistency_level")
+    @classmethod
+    def _validate_consistency_level(cls, v):
+        if v not in VALID_CONSISTENCY_LEVELS:
+            raise ValueError(
+                f"consistency_level must be one of {sorted(VALID_CONSISTENCY_LEVELS)}"
+            )
+        return v
+
+    @field_validator("serial_consistency_level")
+    @classmethod
+    def _validate_serial_consistency_level(cls, v):
+        if v not in VALID_SERIAL_CONSISTENCY_LEVELS:
+            raise ValueError(
+                "serial_consistency_level must be one of "
+                f"{sorted(VALID_SERIAL_CONSISTENCY_LEVELS)}"
+            )
+        return v
 
     def get_configured_currencies(self) -> List[str]:
         return list(self.keyspaces.keys())

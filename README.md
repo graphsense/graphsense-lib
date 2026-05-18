@@ -430,6 +430,13 @@ environments:
     # username: "cassandra"
     # password: "cassandra"
 
+    # Consistency levels for the synchronous (ingest/write) connection.
+    # consistency_level applies to the whole ExecutionProfile (reads + writes);
+    # serial_consistency_level only affects lightweight transactions
+    # (IF NOT EXISTS upserts). Defaults shown below.
+    # consistency_level: "LOCAL_QUORUM"
+    # serial_consistency_level: "LOCAL_SERIAL"
+
     # Currency/keyspace configurations
     keyspaces:
       btc:

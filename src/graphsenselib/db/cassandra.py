@@ -30,6 +30,8 @@ from cassandra.query import (
 from ..utils import remove_multi_whitespace
 
 DEFAULT_TIMEOUT = 120
+DEFAULT_CONSISTENCY_LEVEL = "LOCAL_QUORUM"
+DEFAULT_SERIAL_CONSISTENCY_LEVEL = "LOCAL_SERIAL"
 
 # create logger
 logger = logging.getLogger(__name__)
@@ -372,6 +374,8 @@ class CassandraDb:
         default_timeout=DEFAULT_TIMEOUT,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        consistency_level: str = DEFAULT_CONSISTENCY_LEVEL,
+        serial_consistency_level: str = DEFAULT_SERIAL_CONSISTENCY_LEVEL,
     ) -> None:
         ports_in_order = [int(x.split(":")[1]) for x in db_nodes if ":" in x]
         nodes = [x.split(":")[0] for x in db_nodes]
@@ -392,6 +396,8 @@ class CassandraDb:
         self.session = None
         self.prep_stmts = {}
         self._default_timeout = default_timeout
+        self._consistency_level = consistency_level
+        self._serial_consistency_level = serial_consistency_level
         self._columns_cache = {}
         self._columns_cache_ttl = 600  # 10 minutes in seconds
 
@@ -407,6 +413,8 @@ class CassandraDb:
             self._default_timeout,
             self.db_username,
             self.db_password,
+            self._consistency_level,
+            self._serial_consistency_level,
         )
 
     def _is_cache_valid(self, cache_key: str) -> bool:
@@ -461,8 +469,10 @@ class CassandraDb:
         """Connect to given Cassandra cluster nodes."""
         exec_prof = ExecutionProfile(
             retry_policy=GraphsenseRetryPolicy(),
-            consistency_level=ConsistencyLevel.LOCAL_QUORUM,
-            serial_consistency_level=ConsistencyLevel.LOCAL_SERIAL,
+            consistency_level=ConsistencyLevel.name_to_value[self._consistency_level],
+            serial_consistency_level=ConsistencyLevel.name_to_value[
+                self._serial_consistency_level
+            ],
             request_timeout=self._default_timeout,
             load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
         )

@@ -11,7 +11,11 @@ from ..datatypes import (
 from .account import RawDbAccount, RawDbAccountTrx, TransformedDbAccount
 from .analytics import AnalyticsDb
 from .analytics import KeyspaceConfig as KeyspaceConfigDB
-from .cassandra import CassandraDb
+from .cassandra import (
+    DEFAULT_CONSISTENCY_LEVEL,
+    DEFAULT_SERIAL_CONSISTENCY_LEVEL,
+    CassandraDb,
+)
 from .utxo import RawDbUtxo, TransformedDbUtxo
 
 DbTypeStrategy = namedtuple(
@@ -64,6 +68,8 @@ class DbFactory:
             currency,
             username=user,
             password=pw,
+            consistency_level=e.consistency_level,
+            serial_consistency_level=e.serial_consistency_level,
         )
 
     def from_name(
@@ -75,6 +81,8 @@ class DbFactory:
         currency: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        consistency_level: str = DEFAULT_CONSISTENCY_LEVEL,
+        serial_consistency_level: str = DEFAULT_SERIAL_CONSISTENCY_LEVEL,
     ) -> AnalyticsDb:
         db_types = get_db_types_by_schema_type(schema_type)
         if currency is None:
@@ -94,5 +102,11 @@ class DbFactory:
                 db_types.transaction_type,
                 currency,
             ),
-            db=CassandraDb(cassandra_nodes, username=username, password=password),
+            db=CassandraDb(
+                cassandra_nodes,
+                username=username,
+                password=password,
+                consistency_level=consistency_level,
+                serial_consistency_level=serial_consistency_level,
+            ),
         )
