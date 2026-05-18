@@ -22,6 +22,7 @@ from graphsenselib.tagpack.tagpack import (
     TagPack,
     TagPackFileError,
     collect_tagpack_files,
+    get_last_commit_times,
     get_repository,
     get_uri_for_tagpack,
 )
@@ -903,10 +904,19 @@ def insert_tagpack(
 
     # resolve backlinks to remote repository and relative paths
     scheck, nogit = not no_strict_check, no_git
+    # Resolve every file's last-commit time in a single history walk rather
+    # than one `git log` per file (see get_last_commit_times).
+    commit_times = (
+        None
+        if nogit
+        else get_last_commit_times(
+            base_url, [a for fs in tagpack_files.values() for a in fs]
+        )
+    )
     prepared_packs = [
         (m, h, n[0], n[1], n[2], n[3], False)
         for m, h, n in [
-            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit))
+            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit, commit_times))
             for h, fs in tagpack_files.items()
             for a in fs
         ]
@@ -1295,10 +1305,19 @@ def insert_actorpacks(
     # resolve backlinks to remote repository and relative paths
     # For the URI we use the same logic for ActorPacks than for TagPacks
     scheck, nogit = not no_strict_check, no_git
+    # Resolve every file's last-commit time in a single history walk rather
+    # than one `git log` per file (see get_last_commit_times).
+    commit_times = (
+        None
+        if nogit
+        else get_last_commit_times(
+            base_url, [a for fs in actorpack_files.values() for a in fs]
+        )
+    )
     prepared_packs = [
         (m, h, n[0], n[1], n[2])
         for m, h, n in [
-            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit))
+            (a, h, get_uri_for_tagpack(base_url, a, scheck, nogit, commit_times))
             for h, fs in actorpack_files.items()
             for a in fs
         ]

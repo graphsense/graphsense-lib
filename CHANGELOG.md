@@ -10,12 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.13.2] - Unreleased
+## [2.13.2] - 2026-05-18
 
 ### Library (v2.13.2)
 
 #### Changed
 - **`.gs` save-file parser: `entity` renamed to `cluster` across the exposed interface.** `graphsenselib.convert.gs_files` now exports `GraphCluster` instead of `GraphEntity`; the structured dataclasses use `GraphData.clusters` (was `.entities`) and `GraphCluster.cluster_id` (was `.entity_id`). The `convert gs-files decode` JSON output emits `clusters`/`cluster_id`, and `summary` reports `n_clusters` (was `n_entities`). Breaking for downstream consumers of the structured output or the public dataclasses. The vendored copy in the `graphsense-python` client (`graphsense.gs_files`, used by `graphsense gs`) is synced to match.
+
+#### Fixed
+- **`tagpack insert` resolved each file's last-commit time with a separate full-history `git log` walk.** `get_uri_for_tagpack` called `list(repo.iter_commits(paths=file))` per tagpack — `O(files x history)` — and used only the newest commit. The most recent commit time of all files is now resolved in a single `git log --name-only` pass (`get_last_commit_times` in `src/graphsenselib/tagpack/tagpack.py`), and the per-file fallback uses `max_count=1` so `git rev-list` stops at the first match. Same results, applied to both `tagpack insert` and `actorpack insert`.
 
 ### Web API + Python client (webapi-2.13.1)
 
