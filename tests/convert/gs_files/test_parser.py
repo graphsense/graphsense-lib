@@ -157,19 +157,19 @@ class TestStructureGraphV100:
         data = structure(raw)
         assert isinstance(data, GraphData)
         assert data.version == "1.0.0"
-        assert data.addresses == data.entities == data.highlights == []
+        assert data.addresses == data.clusters == data.highlights == []
 
     def test_with_items(self):
         addr = [["btc", 0, "a1"], 10.0, 20.0, ["lab", "src", "cat", "ab"], None]
-        ent = [["btc", 0, 42], "root", 5.0, 6.0, [0.1, 0.2, 0.3, 1.0], None]
+        cluster = [["btc", 0, 42], "root", 5.0, 6.0, [0.1, 0.2, 0.3, 1.0], None]
         hl = ["title", [0.5, 0.5, 0.5, 1.0]]
-        raw = ["1.0.0", [addr], [ent], [hl]]
+        raw = ["1.0.0", [addr], [cluster], [hl]]
         data = structure(raw)
         assert isinstance(data, GraphData)
         assert data.addresses[0].user_tag.label == "lab"
-        assert data.entities[0].entity_id == 42
-        assert data.entities[0].root_address == "root"
-        assert data.entities[0].color is not None
+        assert data.clusters[0].cluster_id == 42
+        assert data.clusters[0].root_address == "root"
+        assert data.clusters[0].color is not None
         assert data.highlights[0].title == "title"
 
 
@@ -187,16 +187,16 @@ class TestStructureGraphOld:
         assert isinstance(data, GraphData)
         assert data.version == "0.4.5"
 
-    def test_v05_with_address_entity_highlight(self):
+    def test_v05_with_address_cluster_highlight(self):
         addr = [["addr1", 0, "btc"], [1.0, 2.0, 0.5, 0.5, "#ff0000"]]
-        ent = [[123, 0, "btc"], [3.0, 4.0, 0.0, 0.0, ["m1", "m2", "m3"], "#00ff00"]]
+        cluster = [[123, 0, "btc"], [3.0, 4.0, 0.0, 0.0, ["m1", "m2", "m3"], "#00ff00"]]
         hl = ["#abcdef", "hl-title"]
-        layers = [[], [], [], [], [ent], [addr]]
+        layers = [[], [], [], [], [cluster], [addr]]
         raw = ["0.5.1", [[], []], layers, [None, None, [hl]]]
         data = structure(raw)
         assert data.addresses[0].x == pytest.approx(1.5)
         assert data.addresses[0].color.r == pytest.approx(1.0)
-        assert data.entities[0].no_addresses == 3
+        assert data.clusters[0].no_addresses == 3
         assert data.highlights[0].title == "hl-title"
 
 

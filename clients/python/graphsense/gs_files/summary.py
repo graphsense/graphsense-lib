@@ -12,7 +12,7 @@ from .parser import GraphData, PathfinderData
 
 
 def summarize(data: PathfinderData | GraphData) -> dict[str, Any]:
-    """Return a concise summary (kind, version, entity counts) as a dict."""
+    """Return a concise summary (kind, version, cluster counts) as a dict."""
     if isinstance(data, PathfinderData):
         return {
             "kind": "pathfinder",
@@ -28,7 +28,7 @@ def summarize(data: PathfinderData | GraphData) -> dict[str, Any]:
             "kind": "graph",
             "version": data.version,
             "n_addresses": len(data.addresses),
-            "n_entities": len(data.entities),
+            "n_clusters": len(data.clusters),
             "n_highlights": len(data.highlights),
         }
     raise TypeError(f"unknown structured type: {type(data).__name__}")

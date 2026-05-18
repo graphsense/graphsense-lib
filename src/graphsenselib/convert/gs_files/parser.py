@@ -7,7 +7,7 @@ The inner payload's first element is a discriminator used by the dashboard
 to pick a decoder (src/Update/Graph.elm, src/Update/Pathfinder.elm):
 
     Pathfinder :  ["pathfinder", "<version>", name, addrs, txs, annots, aggEdges?]
-    Graph 1.0.x:  ["1.0.x", addrs, entities, highlights]
+    Graph 1.0.x:  ["1.0.x", addrs, clusters, highlights]
     Graph 0.5.x:  ["0.5.x", tagsPair, layers, highlightsWrap]
     Graph 0.4.x:  ["0.4.x", tagsPair, layers]
 """
@@ -140,10 +140,10 @@ class GraphAddress:
 
 
 @dataclass
-class GraphEntity:
+class GraphCluster:
     currency: str
     layer: int
-    entity_id: int
+    cluster_id: int
     root_address: str | None
     x: float
     y: float
@@ -165,7 +165,7 @@ class GraphData:
     kind: str = field(default="graph", init=False)
     version: str = ""
     addresses: list[GraphAddress] = field(default_factory=list)
-    entities: list[GraphEntity] = field(default_factory=list)
+    clusters: list[GraphCluster] = field(default_factory=list)
     highlights: list[Highlight] = field(default_factory=list)
 
 
@@ -295,14 +295,14 @@ def _graph100_address(v: list) -> GraphAddress:
     )
 
 
-def _graph100_entity(v: list) -> GraphEntity:
-    # v = [[currency, layer, entityId(int)], rootAddress, x, y, color?, userTag?]
-    cur, layer, eid = v[0]
+def _graph100_cluster(v: list) -> GraphCluster:
+    # v = [[currency, layer, clusterId(int)], rootAddress, x, y, color?, userTag?]
+    cur, layer, cid = v[0]
     color_raw = _get(v, 4)
-    return GraphEntity(
+    return GraphCluster(
         currency=cur,
         layer=int(layer),
-        entity_id=int(eid),
+        cluster_id=int(cid),
         root_address=str(v[1]) if v[1] is not None else None,
         x=float(v[2]),
         y=float(v[3]),
@@ -313,11 +313,11 @@ def _graph100_entity(v: list) -> GraphEntity:
 
 
 def decode_graph_v100(raw: list) -> GraphData:
-    # [version, addresses, entities, highlights]
+    # [version, addresses, clusters, highlights]
     return GraphData(
         version=raw[0],
         addresses=[_graph100_address(x) for x in raw[1]],
-        entities=[_graph100_entity(x) for x in raw[2]],
+        clusters=[_graph100_cluster(x) for x in raw[2]],
         highlights=[
             Highlight(title=h[0], color=Color.from_rgba_array(h[1])) for h in raw[3]
         ],
@@ -328,10 +328,10 @@ def decode_graph_v100(raw: list) -> GraphData:
 #
 # Shape summary from Decode/Graph04x.elm + Decode/Graph050.elm:
 #   raw = [version, tagsPair, layers, highlightsWrap?]
-#   tagsPair  = [addressTags, entityTags]         (ignored here)
-#   layers    = [ ..., addressesAt5, entitiesAt4 ]
-#     each addr  = [[address, layer, currency], [x, y, dx, dy, colorHex?, ...], ...]
-#     each ent   = [[address, layer, currency], [x, y, dx, dy, memberAddrs, colorHex?, ...]]
+#   tagsPair  = [addressTags, clusterTags]        (ignored here)
+#   layers    = [ ..., addressesAt5, clustersAt4 ]
+#     each addr     = [[address, layer, currency], [x, y, dx, dy, colorHex?, ...], ...]
+#     each cluster  = [[address, layer, currency], [x, y, dx, dy, memberAddrs, colorHex?, ...]]
 #   highlightsWrap (v0.5 only) = [_, _, [[colorHex, title], ...]]
 
 
@@ -344,8 +344,8 @@ def _old_address_id(v: list) -> tuple[str, int, str]:
     return str(v[2]), _old_int(v[1]), str(v[0])
 
 
-def _old_entity_id(v: list) -> tuple[str, int, int]:
-    # [entityId, layer, currency]
+def _old_cluster_id(v: list) -> tuple[str, int, int]:
+    # [clusterId, layer, currency]
     return str(v[2]), _old_int(v[1]), _old_int(v[0])
 
 
@@ -372,18 +372,18 @@ def _old_address(v: list) -> GraphAddress:
     )
 
 
-def _old_entity(v: list) -> GraphEntity | None:
+def _old_cluster(v: list) -> GraphCluster | None:
     try:
-        cur, layer, eid = _old_entity_id(v[0])
+        cur, layer, cid = _old_cluster_id(v[0])
     except (TypeError, ValueError):
         return None
     meta = v[1]
     x, y = _old_coords(meta)
     members = _get(meta, 4, []) or []
-    return GraphEntity(
+    return GraphCluster(
         currency=cur,
         layer=layer,
-        entity_id=eid,
+        cluster_id=cid,
         root_address=None,
         x=x,
         y=y,
@@ -395,7 +395,7 @@ def _old_entity(v: list) -> GraphEntity | None:
 def decode_graph_old(raw: list, version: str) -> GraphData:
     layers = raw[2]
     addresses_raw = layers[5] if len(layers) > 5 else []
-    entities_raw = layers[4] if len(layers) > 4 else []
+    clusters_raw = layers[4] if len(layers) > 4 else []
     highlights: list[Highlight] = []
     if version.startswith("0.5.") and len(raw) > 3:
         hl_wrap = raw[3]
@@ -405,11 +405,11 @@ def decode_graph_old(raw: list, version: str) -> GraphData:
                 if color is not None:
                     highlights.append(Highlight(title=item[1], color=color))
 
-    entities = [e for e in (_old_entity(x) for x in entities_raw) if e is not None]
+    clusters = [c for c in (_old_cluster(x) for x in clusters_raw) if c is not None]
     return GraphData(
         version=version,
         addresses=[_old_address(x) for x in addresses_raw],
-        entities=entities,
+        clusters=clusters,
         highlights=highlights,
     )
 
