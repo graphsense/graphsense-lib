@@ -232,6 +232,11 @@ def update(
 
         raw_ks = db.raw.get_keyspace()
         transformed_ks = db.transformed.get_keyspace()
+        # Pure auto-resume (no explicit range) is the only path that can
+        # silently double-count or skip blocks if the previous run's
+        # bookkeeping write was torn (e.g. a Cassandra outage). An explicit
+        # --start-block / --end-block means the operator is in manual control.
+        auto_resume = start_block is None and end_block is None
         try:
             # Acquisition order: raw -> transformed (matches transformation/cli.py).
             with create_lock(raw_ks), create_lock(transformed_ks):
@@ -242,6 +247,29 @@ def update(
                     forward_fill_rates=forward_fill_rates,
                     disable_safety_checks=disable_safety_checks,
                 )
+
+                if auto_resume and not disable_safety_checks:
+                    hb_du = db.transformed.get_highest_block_delta_updater()
+                    if (
+                        hb_du
+                        and not db.transformed.is_first_delta_update_run()
+                        and not db.transformed.delta_updater_history_has_block(hb_du)
+                    ):
+                        raise Exception(
+                            "Delta-updater state is inconsistent: "
+                            f"summary_statistics is at block {hb_du} but "
+                            "delta_updater_history has no matching row. The "
+                            "last batch's bookkeeping write was likely torn "
+                            "by a database outage, so data for the most "
+                            "recent batch may be only partially applied. "
+                            "Refusing to auto-resume to avoid silently "
+                            "double-counting or skipping blocks. Reconcile "
+                            "the affected block range (re-run the full "
+                            "transform for it) and pass an explicit "
+                            "--start-block to continue, or "
+                            "--disable-safety-checks to override."
+                        )
+
                 if end_block >= start_block:
                     is_first_delta_run = db.transformed.is_first_delta_update_run()
                     if is_first_delta_run:

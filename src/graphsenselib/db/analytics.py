@@ -16,7 +16,8 @@ from functools import lru_cache, partial
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import pandas as pd
-from cassandra import OperationTimedOut, WriteTimeout
+from cassandra import OperationTimedOut, Unavailable, WriteTimeout
+from cassandra.cluster import NoHostAvailable
 from tenacity import (
     Retrying,
     before_sleep_log,
@@ -365,8 +366,16 @@ class DbWriterMixin:
 
         attempts_made = 0
         total_retry_wait_seconds = 0.0
+        # change_stmts are bound once above with literal values, so every
+        # attempt re-submits identical upserts (no Cassandra counters, no
+        # re-read). Retrying is therefore idempotent. Unavailable /
+        # NoHostAvailable are included so a recoverable database outage is
+        # waited out (bounded by stop_after_attempt) instead of aborting a
+        # half-flushed batch and leaving the keyspace inconsistent.
         for attempt in Retrying(
-            retry=retry_if_exception_type((WriteTimeout, OperationTimedOut)),
+            retry=retry_if_exception_type(
+                (WriteTimeout, OperationTimedOut, Unavailable, NoHostAvailable)
+            ),
             reraise=True,
             stop=stop_after_attempt(nr_retries),
             wait=wait_exponential(multiplier=0.5, min=0.5, max=240),
@@ -857,6 +866,26 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             return self._get_only_row_from_table("delta_updater_status")
         else:
             return None
+
+    def delta_updater_history_has_block(self, block: Optional[int]) -> bool:
+        """Whether a delta_updater_history row exists for ``block``.
+
+        ``last_synced_block`` is the partition key, so this is a single
+        single-partition point read. summary_statistics (the resume
+        checkpoint) and delta_updater_history are written in the same
+        bookkeeping batch, so a missing row at the checkpoint block means
+        that batch's bookkeeping write was torn.
+        """
+        if block is None or not self._db.has_table(
+            self._keyspace, "delta_updater_history"
+        ):
+            return False
+        result = self.select(
+            "delta_updater_history",
+            columns=["last_synced_block"],
+            where={"last_synced_block": block},
+        )
+        return len(result.current_rows) > 0
 
     def get_address_prefix_length(self) -> Optional[int]:
         config = self.get_configuration()
