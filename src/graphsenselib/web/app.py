@@ -71,7 +71,7 @@ multiple ledgers. Use it to explore addresses, clusters, blocks, transactions,
 tags, token activity, and exchange-rate context, and to integrate investigation
 workflows into your own applications and automation.
 
-## Versioning and deprecation policy
+## Versioning & deprecation
 
 The API follows semantic versioning. Minor releases are additive and
 backwards-compatible; breaking changes only happen in major releases, which
@@ -86,6 +86,22 @@ introduced before the deprecated surface is removed.
 
 See the [full versioning and deprecation policy](https://github.com/graphsense/graphsense-lib/blob/master/README.md#rest-api-evolution-and-deprecation-policy)
 for details.
+
+## AI assistant access (MCP)
+
+In addition to this REST API, this deployment exposes a **Model
+Context Protocol (MCP)** interface that lets AI assistants query
+GraphSense directly in natural language, without writing code against
+the endpoints below.
+
+The MCP interface is available at the `/mcp` path of this server,
+relative to the address this documentation is served from. It offers a
+curated selection of the most useful operations, so an assistant can
+answer questions about addresses, transactions, clusters, and tags on
+your behalf.
+
+To use it, add that `/mcp` URL to an MCP-capable assistant as a new
+connector or tool source; the assistant then handles the rest.
 """
 logger = logging.getLogger(__name__)
 

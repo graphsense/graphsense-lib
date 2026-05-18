@@ -10,16 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.13.3] - Unreleased
+## [2.13.3] - 2026-05-18
 
 ### Library (v2.13.3)
 
 #### Added
 - **`tagpack sync` keeps a persistent git repo cache instead of re-cloning every run.** Previously each repo in the sync list was cloned afresh into a throwaway temp directory. Synced repos are now kept under a stable cache directory and refreshed with a `git fetch` (`_sync_repo`/`_repo_workdir` in `src/graphsenselib/tagpack/cli.py`); only changed objects are downloaded. The refresh is authoritative — `fetch` + `checkout` + `reset --hard` + `clean -fdx` — so a reused checkout is identical to a fresh clone, and a missing/corrupt/wrong-remote cache is transparently re-cloned. New `--repo-cache-dir` option overrides the location (defaults to a `graphsense_tagstore_sync_repos` folder in the system temp directory). Non-breaking: no existing option changed and sync results are unaffected.
 
-### Web API + Python client (webapi-2.13.2)
+#### Fixed
+- **Delta-update hardened against Cassandra-outage corruption mid-flush.** `DbWriterMixin.apply_changes` now also retries `Unavailable` and `NoHostAvailable` (previously only `WriteTimeout`/`OperationTimedOut`), so a recoverable database outage is waited out — bounded by `stop_after_attempt` — instead of aborting a half-flushed batch and leaving the keyspace inconsistent; statements are bound once with literal values, so retries are idempotent. Additionally, pure auto-resume runs (no explicit `--start-block`/`--end-block`) now refuse to continue when `summary_statistics` points at a block with no matching `delta_updater_history` row — a sign the last bookkeeping write was torn — turning a silent double-count/skip into an actionable stop. New `TransformedDb.delta_updater_history_has_block` point-read backs the guard, which can be bypassed with `--disable-safety-checks`. Changes in `src/graphsenselib/db/analytics.py` and `src/graphsenselib/deltaupdate/deltaupdater.py`.
 
-No changes.
+### Web API + Python client (webapi-2.13.3)
+
+#### Added
+- **API docs now describe the MCP (Model Context Protocol) interface.** A non-technical "AI assistant access (MCP)" section was added to the API description shown at the top of the Swagger UI / ReDoc pages (`API_DESCRIPTION` in `src/graphsenselib/web/app.py`). It explains, for a general audience, that the same deployment exposes an MCP endpoint at the `/mcp` path which lets AI assistants query GraphSense in natural language, and how to connect one. Docs-only and additive — no endpoint, schema, or generated-client behaviour changed.
 
 ## [2.13.2] - 2026-05-18
 
