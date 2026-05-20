@@ -48,7 +48,7 @@ def test_apply_migrations_updates_transformed_configuration_by_keyspace_name(
     # The transformed configuration table uses ``keyspace_name`` as PK,
     # not ``id`` (which only exists on raw configurations).
     TransformedRow = namedtuple(
-        "Row",
+        "TransformedRow",
         [
             "keyspace_name",
             "bucket_size",
@@ -85,7 +85,7 @@ def test_apply_migrations_updates_raw_configuration_by_id(monkeypatch):
     # Raw configurations keep their existing ``id`` PK; the fix must not
     # regress that path.
     RawRow = namedtuple(
-        "Row", ["id", "block_bucket_size", "tx_bucket_size", "tx_prefix_length"]
+        "RawRow", ["id", "block_bucket_size", "tx_bucket_size", "tx_prefix_length"]
     )
     row = RawRow(
         id="pytest_btc_raw",
