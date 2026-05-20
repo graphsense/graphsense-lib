@@ -145,9 +145,21 @@ def _slim(obj: Any) -> Any:
 # data is `tag_summary` (high-level) and `list_tags_by_address` (raw list).
 # `labels` is stripped everywhere it appears at the top level — the only
 # `labels` the LLM should see is the one nested inside `tag_summary`.
-_LEGACY_ADDRESS_FIELDS = frozenset({"actors", "labels"})
-_LEGACY_CLUSTER_FIELDS = frozenset({"actors", "best_address_tag", "labels"})
+#
+# `entity` is the deprecated alias of `cluster` (the same value is emitted
+# under both keys for backwards compatibility — see the `Address`,
+# `Entity`/`Cluster`, `NeighborEntity`/`NeighborCluster`, and `AddressTag`
+# response models, all of which mark the `entity` field deprecated in the
+# OpenAPI schema). We never want the LLM to see both — it should always
+# read `cluster`. `status` is the old "clean"/etc. address flag, also
+# marked deprecated in the OpenAPI schema with no replacement.
+_LEGACY_ADDRESS_FIELDS = frozenset({"actors", "entity", "labels", "status"})
+_LEGACY_CLUSTER_FIELDS = frozenset({"actors", "best_address_tag", "entity", "labels"})
 _LEGACY_NEIGHBOR_FIELDS = frozenset({"labels"})
+# Raw address-tag rows (from list_tags_by_address) only carry `entity` as a
+# deprecated field. Kept as a separate set so the intent stays explicit if
+# more get added.
+_LEGACY_TAG_FIELDS = frozenset({"entity"})
 
 
 def _strip_address_legacy(d: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +168,10 @@ def _strip_address_legacy(d: dict[str, Any]) -> dict[str, Any]:
 
 def _strip_cluster_legacy(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if k not in _LEGACY_CLUSTER_FIELDS}
+
+
+def _strip_tag_legacy(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in d.items() if k not in _LEGACY_TAG_FIELDS}
 
 
 def _strip_neighbor_legacy(neighbor: dict[str, Any]) -> dict[str, Any]:
@@ -804,10 +820,19 @@ def register_list_tags_by_address(mcp, app, stack) -> None:
         )
         client = _make_client(app)
         async with client:
-            return _slim(
-                await _get_json(
-                    client,
-                    f"/{currency}/addresses/{address}/tags",
-                    params=params,
-                )
+            response = await _get_json(
+                client,
+                f"/{currency}/addresses/{address}/tags",
+                params=params,
             )
+        # Strip deprecated `entity` from each raw tag row (the response also
+        # carries the new `cluster` alias — the LLM should only see one).
+        tags = response.get("address_tags")
+        if isinstance(tags, list):
+            response = {
+                **response,
+                "address_tags": [
+                    _strip_tag_legacy(t) if isinstance(t, dict) else t for t in tags
+                ],
+            }
+        return _slim(response)

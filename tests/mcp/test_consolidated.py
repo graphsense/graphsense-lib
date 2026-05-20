@@ -37,11 +37,19 @@ def stub_app_with_cluster() -> FastAPI:
             "address": address,
             "balance": {"value": 123, "fiat_values": []},
             "actors": [{"id": "actor-x", "label": "X"}],
+            # `entity` is the deprecated alias of `cluster`; the upstream
+            # dual-emits both for backwards compatibility.
+            "entity": 42,
+            "cluster": 42,
+            # `status` is the legacy address flag (no replacement); the
+            # MCP must hide it from the LLM.
+            "status": "clean",
         }
 
     @app.get("/{currency}/addresses/{address}/entity")
     async def _cluster(currency: str, address: str):
         return {
+            "entity": 42,
             "cluster": 42,
             "best_address_tag": {"label": "Known Exchange", "source": "test"},
             "actors": [{"id": "actor-x", "label": "X"}],
@@ -132,6 +140,16 @@ async def test_lookup_address_strips_legacy_fields(stub_app_with_cluster):
         assert "actors" not in data["address"]
         assert "actors" not in data["cluster"]
         assert "best_address_tag" not in data["cluster"]
+        # Deprecated `entity` (alias of `cluster`) and `status` (no
+        # replacement) must be hidden from the MCP shape — both are
+        # flagged deprecated in the OpenAPI schema and the LLM should
+        # only ever see `cluster`.
+        assert "entity" not in data["address"]
+        assert "status" not in data["address"]
+        assert "entity" not in data["cluster"]
+        # The non-deprecated `cluster` alias still surfaces.
+        assert data["address"].get("cluster") == 42
+        assert data["cluster"].get("cluster") == 42
         # tag_summary is reformatted to the slim LLM-friendly shape:
         # provenance fields (creators, lastmod, per-label concepts) gone,
         # `label_summary` -> `labels`, `concept_tag_cloud` -> `concepts`
@@ -1135,6 +1153,50 @@ async def test_list_tags_by_address_always_sends_include_best_cluster_tag(
     tag_calls = [r for r in received if r["endpoint"] == "tags"]
     assert len(tag_calls) == 1
     assert tag_calls[0]["include_best_cluster_tag"] == "true"
+
+
+async def test_list_tags_by_address_strips_deprecated_entity_from_rows():
+    """Each raw tag row carries `entity` (deprecated alias of `cluster`);
+    the MCP must hide it so the LLM only ever sees one of the two."""
+    from graphsenselib.mcp.tools.consolidated import register_list_tags_by_address
+
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}/tags")
+    async def _tags(currency: str, address: str):
+        return {
+            "address_tags": [
+                {
+                    "address": address,
+                    "currency": currency,
+                    "label": "Known Exchange",
+                    "entity": 42,
+                    "cluster": 42,
+                },
+                {
+                    "address": address,
+                    "currency": currency,
+                    "label": "Mixer",
+                    "entity": 99,
+                    "cluster": 99,
+                },
+            ],
+            "next_page": None,
+        }
+
+    mcp = _tool(app, register_list_tags_by_address)
+    async with Client(mcp) as c:
+        r = await c.call_tool(
+            "list_tags_by_address",
+            {"currency": "btc", "address": "abc"},
+        )
+        data = r.structured_content
+        assert data is not None
+        tags = data["address_tags"]
+        assert len(tags) == 2
+        for row in tags:
+            assert "entity" not in row, f"deprecated `entity` leaked: {row}"
+            assert row["cluster"] in (42, 99)  # non-deprecated alias survives
 
 
 async def test_list_neighbors_passes_include_best_cluster_tag_in_enrichment():
