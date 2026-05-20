@@ -20,15 +20,16 @@ defaults in :class:`GsBuilder` otherwise.
 
 from __future__ import annotations
 
-import base64
 import logging
 import re
 from contextlib import AsyncExitStack
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional
 
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
+from fastmcp.utilities.types import File
 from pydantic import BaseModel, ConfigDict, Field
 
 from graphsenselib.convert.gs_files import (
@@ -109,7 +110,13 @@ class _EdgeSpec(BaseModel):
     b: str = Field(description="Address id of the other endpoint.")
     tx_ids: Optional[list[str]] = Field(
         default=None,
-        description="Transaction hashes mediating the a↔b relationship.",
+        description=(
+            "Transaction hashes mediating the a↔b relationship. The hashes "
+            "listed here must also appear in the top-level `txs` list — that "
+            "is how pathfinder links an edge to the actual transactions. If "
+            "omitted, the edge renders as an abstract a↔b line and NO "
+            "transactions appear for it, even if you populated `txs`."
+        ),
     )
     network: Optional[str] = Field(default=None)
     a_network: Optional[str] = Field(default=None)
@@ -121,9 +128,24 @@ class PathfinderSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    addresses: list[_AddressSpec] = Field(default_factory=list)
-    txs: list[_TxSpec] = Field(default_factory=list)
-    agg_edges: list[_EdgeSpec] = Field(default_factory=list)
+    addresses: list[_AddressSpec] = Field(
+        default_factory=list,
+        description="All address nodes that should appear in pathfinder.",
+    )
+    txs: list[_TxSpec] = Field(
+        default_factory=list,
+        description=(
+            "Transaction nodes. To make a transaction appear in pathfinder "
+            "you must BOTH list it here AND reference its hash from "
+            "`agg_edges.tx_ids`. Leaving this empty while providing "
+            "`agg_edges` yields a graph of abstract a↔b lines with no "
+            "transactions."
+        ),
+    )
+    agg_edges: list[_EdgeSpec] = Field(
+        default_factory=list,
+        description="Aggregated address↔address relationships, optionally tx-mediated.",
+    )
 
 
 def _validate_currency(currency: str, *, field_name: str = "network") -> None:
@@ -175,6 +197,98 @@ def _should_use_hierarchical(spec: PathfinderSpec) -> bool:
     )
 
 
+# Cap how many unknown-ref ids we list in a single warning so a
+# malformed spec can't bloat the response. The truncation suffix tells
+# the agent how many more there were.
+_WARNING_REF_LIMIT = 10
+
+
+def _collect_warnings(spec: PathfinderSpec) -> list[str]:
+    """Surface common spec shapes that produce a syntactically valid .gs
+    file but visually wrong / empty pathfinder output.
+
+    These are warnings, not errors: sometimes the agent really does want
+    an abstract relationship graph with no txs. But silently shipping
+    a "no transactions appear" file (the historical failure mode) is
+    worse than telling the agent up front so it can fix and retry.
+    """
+    warnings: list[str] = []
+    address_ids = {a.id for a in spec.addresses}
+    tx_ids = {t.id for t in spec.txs}
+
+    if spec.agg_edges and not spec.txs:
+        warnings.append(
+            f"spec has {len(spec.agg_edges)} agg_edge(s) but no txs were "
+            "provided; pathfinder will show abstract address-to-address "
+            "links only (no transactions render). Populate `txs` and "
+            "reference the hashes from `agg_edges.tx_ids` to make "
+            "transactions appear."
+        )
+
+    edges_without_tx_ids = sum(1 for e in spec.agg_edges if not e.tx_ids)
+    if edges_without_tx_ids and spec.txs:
+        warnings.append(
+            f"{edges_without_tx_ids} of {len(spec.agg_edges)} agg_edge(s) "
+            "have no tx_ids; those edges will render as abstract a↔b lines "
+            "and the txs you provided will not be tied to them."
+        )
+
+    unknown_tx: list[str] = []
+    seen_tx: set[str] = set()
+    for e in spec.agg_edges:
+        for tid in e.tx_ids or []:
+            if tid not in tx_ids and tid not in seen_tx:
+                unknown_tx.append(tid)
+                seen_tx.add(tid)
+    if unknown_tx:
+        shown = unknown_tx[:_WARNING_REF_LIMIT]
+        more = len(unknown_tx) - len(shown)
+        suffix = f" (+{more} more)" if more > 0 else ""
+        warnings.append(
+            "agg_edge.tx_ids references tx hash(es) not in `txs`: "
+            f"{', '.join(shown)}{suffix}. Add them to `txs` or remove the "
+            "references."
+        )
+
+    unknown_addr: list[str] = []
+    seen_addr: set[str] = set()
+    for e in spec.agg_edges:
+        for endpoint in (e.a, e.b):
+            if endpoint not in address_ids and endpoint not in seen_addr:
+                unknown_addr.append(endpoint)
+                seen_addr.add(endpoint)
+    if unknown_addr:
+        shown = unknown_addr[:_WARNING_REF_LIMIT]
+        more = len(unknown_addr) - len(shown)
+        suffix = f" (+{more} more)" if more > 0 else ""
+        warnings.append(
+            "agg_edge endpoints reference address(es) not in `addresses`: "
+            f"{', '.join(shown)}{suffix}. Add them to `addresses` or fix the "
+            "typo."
+        )
+
+    return warnings
+
+
+class _PathfinderBuildSummary(BaseModel):
+    """Metadata about a built .gs file. Travels in `structured_content`
+    (i.e. the LLM-visible part of the response); the actual file bytes
+    travel separately as an embedded resource so they bypass the model
+    context."""
+
+    n_addresses: int
+    n_txs: int
+    n_agg_edges: int
+    layout: Literal["hierarchical", "columnar"]
+    byte_size: int
+    warnings: list[str]
+
+
+class _PathfinderBuildResult(BaseModel):
+    filename: str
+    summary: _PathfinderBuildSummary
+
+
 def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa: ARG001
     """Register the build_pathfinder_file tool on the given MCP instance.
 
@@ -189,7 +303,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         default_network: str,
         spec: PathfinderSpec,
         layout: Literal["auto", "hierarchical", "columnar"] = "auto",
-    ) -> dict[str, Union[str, dict[str, Any]]]:
+    ) -> ToolResult:
         """Build a Pathfinder .gs save file from an investigation graph.
 
         Pass the addresses, transactions, and address↔address relationships
@@ -197,9 +311,31 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         encoded) that the user can open in the pathfinder UI to verify
         your findings visually.
 
+        IMPORTANT — how transactions render in pathfinder: to make a
+        transaction appear you must do TWO things. (1) list it as an
+        entry in ``txs`` and (2) reference its hash from
+        ``agg_edges.tx_ids`` on the edge(s) it mediates. An ``agg_edge``
+        without ``tx_ids`` becomes an abstract a↔b line and no
+        transactions are shown for it. If you provide ``agg_edges`` but
+        leave ``txs`` empty, the response includes a warning and the
+        resulting .gs renders only abstract relationship lines.
+
         Mark the address(es) or tx(s) you started from with
         ``starting_point=true`` so the layout can place anchors at column
         0 and arrange the rest by hop distance.
+
+        Example (a single tx between two addresses, anchored at addrA)::
+
+            {
+              "addresses": [
+                {"id": "addrA", "starting_point": true, "label": "anchor"},
+                {"id": "addrB"}
+              ],
+              "txs": [{"id": "txhash1"}],
+              "agg_edges": [
+                {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]}
+              ]
+            }
 
         Args:
             name: Graph name embedded in the .gs file (shown in the UI).
@@ -212,8 +348,14 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 (addresses, txs, side-aware columns).
 
         Returns:
-            ``{filename, content_base64, summary}`` where ``summary``
-            reports the chosen layout and node/edge counts.
+            A tool result whose structured content carries
+            ``{filename, summary}`` (with ``summary.warnings`` flagging
+            common authoring mistakes — inspect them before showing the
+            file to the user) and whose content list carries the .gs
+            bytes as an embedded MCP resource. The binary blob is
+            transported as a resource so the MCP client can hand it to
+            the user as a downloadable attachment without flooding the
+            agent's context window with base64.
         """
         _validate_spec(spec, default_network)
 
@@ -235,14 +377,29 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             # surface that as a ToolError so the agent gets a clean message.
             raise ToolError(f"invalid spec: {exc}") from exc
 
-        return {
-            "filename": _safe_filename(name),
-            "content_base64": base64.b64encode(payload).decode("ascii"),
-            "summary": {
-                "n_addresses": len(spec.addresses),
-                "n_txs": len(spec.txs),
-                "n_agg_edges": len(spec.agg_edges),
-                "layout": chosen,
-                "byte_size": len(payload),
-            },
-        }
+        filename = _safe_filename(name)
+        # File() builds a BlobResourceContents wrapped in an
+        # EmbeddedResource. We pass the basename without extension and
+        # format="gs" separately because File appends the format as a
+        # dotted suffix when synthesising the URI; passing the name with
+        # the extension would yield "name.gs.gs" in the URI.
+        file_resource = File(
+            data=payload,
+            name=filename.removesuffix(".gs"),
+            format="gs",
+        ).to_resource_content(mime_type="application/octet-stream")
+        result = _PathfinderBuildResult(
+            filename=filename,
+            summary=_PathfinderBuildSummary(
+                n_addresses=len(spec.addresses),
+                n_txs=len(spec.txs),
+                n_agg_edges=len(spec.agg_edges),
+                layout=chosen,
+                byte_size=len(payload),
+                warnings=_collect_warnings(spec),
+            ),
+        )
+        return ToolResult(
+            content=[file_resource],
+            structured_content=result.model_dump(),
+        )

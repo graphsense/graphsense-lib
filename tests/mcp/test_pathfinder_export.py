@@ -4,13 +4,21 @@ Mirrors the pattern used by test_consolidated.py: register the tool on a
 local FastMCP, call it via fastmcp.Client, assert on the structured
 content. The tool does not call back into the FastAPI app, so we pass an
 empty FastAPI to satisfy the (mcp, app, stack) registrar signature.
+
+The tool returns a ToolResult: ``structured_content`` carries the JSON
+metadata (filename + summary + warnings) the model reads; ``content``
+carries a single EmbeddedResource with the .gs bytes as a base64 blob.
+These tests assert both halves: the metadata is well-formed, and the
+embedded resource round-trips back into a typed PathfinderData.
 """
 
 from __future__ import annotations
 
 import base64
 from contextlib import AsyncExitStack
+from typing import Any
 
+import mcp.types as mcp_types
 import pytest
 from fastapi import FastAPI
 from fastmcp import Client, FastMCP
@@ -31,13 +39,21 @@ def _mcp() -> FastMCP:
     return mcp
 
 
-async def _call(mcp: FastMCP, payload: dict):
+async def _call(mcp: FastMCP, payload: dict) -> Any:
+    """Return the full CallToolResult so tests can inspect both
+    structured_content (LLM-visible) and content (binary resource)."""
     async with Client(mcp) as c:
-        return (await c.call_tool("build_pathfinder_file", payload)).structured_content
+        return await c.call_tool("build_pathfinder_file", payload)
 
 
-def _decode(content: dict) -> PathfinderData:
-    raw_bytes = base64.b64decode(content["content_base64"])
+def _decode(call_result: Any) -> PathfinderData:
+    """Extract the .gs blob from the embedded resource and round-trip
+    it back to a typed PathfinderData."""
+    assert len(call_result.content) == 1, call_result.content
+    block = call_result.content[0]
+    assert isinstance(block, mcp_types.EmbeddedResource), type(block)
+    assert isinstance(block.resource, mcp_types.BlobResourceContents)
+    raw_bytes = base64.b64decode(block.resource.blob)
     data = structure(decode_gs_bytes(raw_bytes))
     # structure() returns PathfinderData | GraphData; the encoder always
     # emits a pathfinder-v1 payload, so the GraphData branch shouldn't fire.
@@ -45,10 +61,17 @@ def _decode(content: dict) -> PathfinderData:
     return data
 
 
+def _structured(call_result: Any) -> dict:
+    """Convenience accessor — tests mostly want the JSON metadata."""
+    assert call_result.structured_content is not None
+    return call_result.structured_content
+
+
 async def test_happy_path_round_trips_through_decoder() -> None:
-    """Build -> base64-decode -> parse -> typed PathfinderData; the
-    addresses, txs, and edges must survive the full pipeline."""
-    result = await _call(
+    """Structured metadata is well-formed, and the embedded resource
+    round-trips back through the decoder. Asserts both halves of the
+    split: model-visible JSON vs binary resource."""
+    call_result = await _call(
         _mcp(),
         {
             "name": "agent-finding",
@@ -63,17 +86,25 @@ async def test_happy_path_round_trips_through_decoder() -> None:
             },
         },
     )
-    assert result["filename"] == "agent-finding.gs"
-    assert result["summary"] == {
+    structured = _structured(call_result)
+    assert structured["filename"] == "agent-finding.gs"
+    assert structured["summary"] == {
         "n_addresses": 2,
         "n_txs": 1,
         "n_agg_edges": 1,
         "layout": "hierarchical",  # auto picked hierarchical (starting_point set)
-        "byte_size": result["summary"]["byte_size"],
+        "byte_size": structured["summary"]["byte_size"],
+        # Well-formed spec: tx is listed AND referenced from the edge, so
+        # nothing surprising for the agent to know about.
+        "warnings": [],
     }
-    assert result["summary"]["byte_size"] > 0
+    assert structured["summary"]["byte_size"] > 0
+    # The whole point of moving to an embedded resource: the structured
+    # content does NOT carry the file bytes. The model never sees them.
+    assert "content_base64" not in structured
+    assert "blob" not in structured
 
-    data = _decode(result)
+    data = _decode(call_result)
     assert data.name == "agent-finding"
     assert {a.id.id for a in data.addresses} == {"addrA", "addrB"}
     assert {t.id.id for t in data.txs} == {"txhash1"}
@@ -86,7 +117,7 @@ async def test_happy_path_round_trips_through_decoder() -> None:
 
 
 async def test_auto_layout_picks_columnar_without_starting_point() -> None:
-    result = await _call(
+    call_result = await _call(
         _mcp(),
         {
             "name": "no-anchor",
@@ -98,15 +129,15 @@ async def test_auto_layout_picks_columnar_without_starting_point() -> None:
             },
         },
     )
-    assert result["summary"]["layout"] == "columnar"
+    assert _structured(call_result)["summary"]["layout"] == "columnar"
 
-    data = _decode(result)
+    data = _decode(call_result)
     # Columnar default puts un-side-hinted addresses at GsBuilder._ADDR_COL_X.
     assert all(a.x == -5.0 for a in data.addresses)
 
 
 async def test_explicit_columnar_overrides_auto() -> None:
-    result = await _call(
+    call_result = await _call(
         _mcp(),
         {
             "name": "force-cols",
@@ -120,7 +151,7 @@ async def test_explicit_columnar_overrides_auto() -> None:
         },
     )
     # Despite starting_point=True the caller forced columnar.
-    assert result["summary"]["layout"] == "columnar"
+    assert _structured(call_result)["summary"]["layout"] == "columnar"
 
 
 async def test_invalid_address_id_rejected() -> None:
@@ -156,7 +187,7 @@ async def test_invalid_currency_rejected() -> None:
 async def test_filename_is_sanitised() -> None:
     """A graph name with path separators or unicode must not leak into
     the filename (clients may use it directly to save to disk)."""
-    result = await _call(
+    call_result = await _call(
         _mcp(),
         {
             "name": "../danger\\name with spaces",
@@ -164,7 +195,7 @@ async def test_filename_is_sanitised() -> None:
             "spec": {"addresses": [{"id": "a"}], "txs": [], "agg_edges": []},
         },
     )
-    fn = result["filename"]
+    fn = _structured(call_result)["filename"]
     assert fn.endswith(".gs")
     assert "/" not in fn and "\\" not in fn and ".." not in fn
     assert " " not in fn
@@ -173,7 +204,7 @@ async def test_filename_is_sanitised() -> None:
 async def test_hierarchical_explicit_with_no_anchors_still_runs() -> None:
     """If the caller forces hierarchical layout with no starting points,
     everything collapses to a single column (documented behaviour)."""
-    result = await _call(
+    call_result = await _call(
         _mcp(),
         {
             "name": "forced-hier",
@@ -186,9 +217,160 @@ async def test_hierarchical_explicit_with_no_anchors_still_runs() -> None:
             },
         },
     )
-    assert result["summary"]["layout"] == "hierarchical"
-    data = _decode(result)
+    assert _structured(call_result)["summary"]["layout"] == "hierarchical"
+    data = _decode(call_result)
     assert all(a.x == 0.0 for a in data.addresses)
+
+
+async def test_warning_when_agg_edges_present_but_no_txs() -> None:
+    """The historical agent failure: build agg_edges with no tx_ids and
+    no txs list, ship a .gs that shows only abstract a↔b lines. The
+    tool must still produce the file, but warn loudly so the agent can
+    fix and retry."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "no-txs",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                "txs": [],
+                "agg_edges": [{"a": "addrA", "b": "addrB"}],
+            },
+        },
+    )
+    summary = _structured(call_result)["summary"]
+    assert any("no txs were provided" in w for w in summary["warnings"]), summary
+    # File is still produced — warnings are advisory, not fatal.
+    assert summary["byte_size"] > 0
+
+
+async def test_warning_when_some_edges_have_no_tx_ids() -> None:
+    """When `txs` is populated but some edges still omit `tx_ids`, those
+    edges silently lose their tx linkage. Flag the count so the agent
+    can spot it."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "partial",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                    {"id": "addrC"},
+                ],
+                "txs": [{"id": "txhash1"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]},
+                    {"a": "addrA", "b": "addrC"},  # no tx_ids
+                ],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any("1 of 2 agg_edge(s) have no tx_ids" in w for w in warnings), warnings
+
+
+async def test_warning_when_edge_references_unknown_tx() -> None:
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "dangling-tx",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                "txs": [{"id": "txhash1"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1", "missing"]},
+                ],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any(
+        "references tx hash(es) not in `txs`" in w and "missing" in w for w in warnings
+    ), warnings
+
+
+async def test_warning_when_edge_references_unknown_address() -> None:
+    """Typos in `a`/`b` endpoints are the most likely silent failure —
+    pathfinder draws an edge to a node that doesn't exist."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "dangling-addr",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [{"id": "txhash1"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "typoB", "tx_ids": ["txhash1"]},
+                ],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any(
+        "reference address(es) not in `addresses`" in w and "typoB" in w
+        for w in warnings
+    ), warnings
+
+
+async def test_no_warnings_for_well_formed_abstract_graph() -> None:
+    """An addresses-only spec (no edges, no txs) is legitimately
+    abstract — no warning should fire."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "addrs-only",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "a"}, {"id": "b"}],
+                "txs": [],
+                "agg_edges": [],
+            },
+        },
+    )
+    assert _structured(call_result)["summary"]["warnings"] == []
+
+
+async def test_embedded_resource_carries_blob_with_filename_uri() -> None:
+    """Lock in the resource shape: the .gs bytes travel as a
+    BlobResourceContents wrapped in an EmbeddedResource, with a URI
+    that includes the filename so the MCP client can render it as a
+    downloadable attachment named after the graph."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "anchor-investigation",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [],
+                "agg_edges": [],
+            },
+        },
+    )
+    assert len(call_result.content) == 1
+    block = call_result.content[0]
+    assert isinstance(block, mcp_types.EmbeddedResource)
+    assert block.type == "resource"
+    assert isinstance(block.resource, mcp_types.BlobResourceContents)
+    # Filename should be embedded in the URI so the client can use it.
+    assert "anchor-investigation" in str(block.resource.uri)
+    assert str(block.resource.uri).endswith(".gs")
+    # Bytes must be real, decode cleanly, and structurally valid.
+    decoded = base64.b64decode(block.resource.blob)
+    assert len(decoded) > 0
+    pf = structure(decode_gs_bytes(decoded))
+    assert isinstance(pf, PathfinderData)
 
 
 async def test_extra_field_in_spec_rejected_by_pydantic() -> None:
