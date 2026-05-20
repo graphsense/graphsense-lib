@@ -39,6 +39,7 @@ from __future__ import annotations
 import base64
 import json
 import struct
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Union
@@ -334,3 +335,148 @@ def builder_from_spec(
             b_network=e.get("b_network"),
         )
     return b
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical (BFS) layout — for graphs that have starting-point anchors,
+# e.g. agent-generated investigation findings. Columns by hop distance,
+# rows centred within column.
+# ---------------------------------------------------------------------------
+
+
+_HIER_X_STEP = 4.0
+_HIER_Y_STEP = 3.0
+
+
+def _spec_item_to_dict(item: object) -> dict:
+    if isinstance(item, str):
+        return {"id": item}
+    if isinstance(item, dict):
+        return dict(item)
+    raise ValueError(f"spec item must be str or dict, got {type(item).__name__}")
+
+
+def apply_hierarchical_layout(spec: dict) -> dict:
+    """Return a copy of ``spec`` with ``x``/``y`` stamped onto every node.
+
+    Layout: multi-source BFS from every node flagged ``starting_point=True``.
+    Each level becomes a column at ``x = level * 4.0``; within a level,
+    nodes are ordered by the position they were first seen in the spec
+    (so listing the most relevant nodes first puts them near the top of
+    the column) and centred on ``y = 0`` with ``3.0`` row spacing. This
+    makes layout order-sensitive: reordering ``addresses`` / ``txs`` /
+    ``agg_edges`` in the input reorders the rendered graph. Nodes
+    unreachable from any starting point are appended to a trailing
+    column so they don't overlap the main graph. If the caller already
+    provided ``x`` or ``y`` on a node, that coordinate is preserved.
+
+    Intended for agent-built specs where ``starting_point`` marks the
+    addresses or txs that anchored the investigation. Without any
+    starting points the function still runs but degenerates to a single
+    column at ``x = 0`` — callers that want columnar address/tx/side
+    placement should use ``builder_from_spec`` directly.
+
+    Addresses, txs, and the tx ids referenced inside ``agg_edges`` are
+    all treated as graph nodes (the tx is connected to both endpoint
+    addresses of its agg edge); plain ``a``↔``b`` adjacency is added
+    too. Nodes are keyed by ``(kind, id)`` so an address and a tx that
+    happen to share a string id don't collide.
+    """
+    addresses = [_spec_item_to_dict(a) for a in spec.get("addresses", [])]
+    txs = [_spec_item_to_dict(t) for t in spec.get("txs", [])]
+    edges = list(spec.get("agg_edges", []))
+
+    # Node registry, preserving first-seen order for stable disconnected
+    # placement and so that addresses/txs declared but unmentioned in
+    # any edge still get coordinates.
+    nodes: list[tuple[str, str]] = []
+    adj: dict[tuple[str, str], set[tuple[str, str]]] = {}
+
+    def _register(key: tuple[str, str]) -> None:
+        if key not in adj:
+            adj[key] = set()
+            nodes.append(key)
+
+    for a in addresses:
+        _register(("addr", a["id"]))
+    for t in txs:
+        _register(("tx", t["id"]))
+    for e in edges:
+        a_key = ("addr", e["a"])
+        b_key = ("addr", e["b"])
+        _register(a_key)
+        _register(b_key)
+        tx_ids = list(e.get("tx_ids") or [])
+        if tx_ids:
+            # Route the relationship through the tx nodes so they fall
+            # between the endpoint addresses in the BFS columns. A direct
+            # a↔b edge here would shortcut the layout and collapse the
+            # tx onto the same column as one of its endpoints.
+            for tid in tx_ids:
+                t_key = ("tx", tid)
+                _register(t_key)
+                adj[a_key].add(t_key)
+                adj[t_key].add(a_key)
+                adj[b_key].add(t_key)
+                adj[t_key].add(b_key)
+        else:
+            adj[a_key].add(b_key)
+            adj[b_key].add(a_key)
+
+    # Starting points anchor level 0; multi-source BFS assigns hop levels.
+    starts: list[tuple[str, str]] = []
+    for a in addresses:
+        if a.get("starting_point"):
+            starts.append(("addr", a["id"]))
+    for t in txs:
+        if t.get("starting_point"):
+            starts.append(("tx", t["id"]))
+
+    level: dict[tuple[str, str], int] = {s: 0 for s in starts}
+    queue: deque[tuple[str, str]] = deque(starts)
+    while queue:
+        n = queue.popleft()
+        for m in adj[n]:
+            if m not in level:
+                level[m] = level[n] + 1
+                queue.append(m)
+
+    levels: dict[int, list[tuple[str, str]]] = {}
+    for key, lvl in level.items():
+        levels.setdefault(lvl, []).append(key)
+
+    disconnected = [n for n in nodes if n not in level]
+    if disconnected:
+        trailing = (max(levels) + 1) if levels else 0
+        levels[trailing] = disconnected
+
+    # Stable spec-order tiebreaker within a level: nodes the caller
+    # listed earlier float to the top of their column.
+    position = {key: i for i, key in enumerate(nodes)}
+
+    coords: dict[tuple[str, str], tuple[float, float]] = {}
+    for lvl, group in levels.items():
+        group_sorted = sorted(group, key=lambda k: position[k])
+        n_in_level = len(group_sorted)
+        for i, key in enumerate(group_sorted):
+            x = float(lvl) * _HIER_X_STEP
+            y = (i - (n_in_level - 1) / 2.0) * _HIER_Y_STEP
+            coords[key] = (x, y)
+
+    def _apply(items: list[dict], kind: str) -> list[dict]:
+        out: list[dict] = []
+        for item in items:
+            laid = coords.get((kind, item["id"]), (0.0, 0.0))
+            new = dict(item)
+            if new.get("x") is None:
+                new["x"] = laid[0]
+            if new.get("y") is None:
+                new["y"] = laid[1]
+            out.append(new)
+        return out
+
+    return {
+        **spec,
+        "addresses": _apply(addresses, "addr"),
+        "txs": _apply(txs, "tx"),
+    }

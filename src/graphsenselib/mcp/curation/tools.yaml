@@ -127,6 +127,10 @@ consolidated_tools:
       - list_tags_by_address
     module: graphsenselib.mcp.tools.consolidated:register_list_tags_by_address
 
+  - name: build_pathfinder_file
+    replaces: []
+    module: graphsenselib.mcp.tools.pathfinder_export:register
+
 # Tools that forward to an external service rather than the FastAPI app.
 external_tools:
 

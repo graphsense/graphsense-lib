@@ -14,6 +14,7 @@ Encode:
 
 from .encoder import (
     GsBuilder,
+    apply_hierarchical_layout,
     builder_from_spec,
     encode_gs_payload,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "PathfinderId",
     "PathfinderThing",
     "UserTag",
+    "apply_hierarchical_layout",
     "builder_from_spec",
     "decode_gs",
     "decode_gs_bytes",
