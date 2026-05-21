@@ -43,8 +43,19 @@ class BlockNotFoundException(NotFoundException):
         super().__init__(f"Block {height} not found in network {network}")
 
 
+def _format_tx_hash(tx_hash) -> str:
+    """Render a transaction hash for user-facing messages.
+
+    Hashes are stored as bytes in the DB; convert them to a hex string
+    instead of leaking the bytes repr (e.g. b'\\xe1\\xfc...')."""
+    if isinstance(tx_hash, (bytes, bytearray)):
+        return tx_hash.hex()
+    return str(tx_hash)
+
+
 class TransactionNotFoundException(NotFoundException):
     def __init__(self, network, tx_hash, token_id=None):
+        tx_hash = _format_tx_hash(tx_hash)
         msg = (
             (f"Token transaction {tx_hash}:{token_id} in network {network} not found")
             if token_id
