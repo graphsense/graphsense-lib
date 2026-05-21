@@ -444,5 +444,107 @@ class Txs(BaseModel):
     next_page: Optional[int] = None
 
 
+class TxCharacteristicsInternal(BaseModel):
+    inputs_script_types: List[str] = Field(default_factory=list)
+    outputs_script_types: List[str] = Field(default_factory=list)
+    # True/False if every input agrees, None if mixed or unresolvable.
+    # Prefers row-level TxValue.has_witness; falls back to script-type
+    # inference (which leaves P2SH ambiguous).
+    inputs_have_witness: Optional[bool] = None
+    n_inputs: int
+    n_outputs: int
+    total_input_sat: int
+    total_output_sat: int
+    fee_sat: Optional[int] = None
+    tx_version: Optional[int] = None
+    locktime: Optional[int] = None
+    # True if any input signals BIP125 opt-in RBF (sequence < 0xfffffffe);
+    # None when no inputs are available or all sequences are missing.
+    inputs_signal_rbf: Optional[bool] = None
+    # Block height the tx was mined in. Anchor for height-relative signals
+    # like locktime anti-fee-sniping classification.
+    block_height: Optional[int] = None
+    # True if outputs are strictly ascending by amount (BIP69-compatible).
+    # None when fewer than two outputs exist or amount ties prevent a
+    # definitive call (the schema only stores script_hex for OP_RETURNs,
+    # so amount-tie tiebreaking by script is unavailable).
+    bip69_outputs_sorted: Optional[bool] = None
+    # True if any input address is tagged as an exchange (broad_category ==
+    # "exchange"). When tags are unavailable (no tag service or no
+    # resolvable address), this is None.
+    inputs_have_exchange: Optional[bool] = None
+    # Canonicalized input addresses across all inputs of this tx. Populated
+    # during compare_txs orchestration (canonicalization needs ``currency``)
+    # and used by signal_direct_input_overlap / signal_change_chain.
+    input_addresses_canon: List[str] = Field(default_factory=list)
+    # Canonicalized change-output addresses for this tx, taken from the
+    # consensus entries of the change heuristics. Empty when no consensus
+    # change was detected. Populated during compare_txs orchestration.
+    change_addresses_canon: List[str] = Field(default_factory=list)
+    # Tx hashes whose outputs this tx spends (i.e., one-hop ancestors).
+    # Populated during compare_txs orchestration via get_spending_txs.
+    parent_tx_hashes: List[str] = Field(default_factory=list)
+    input_cluster_ids: List[int] = Field(default_factory=list)
+    coinjoin_detected: bool = False
+    coinjoin_protocol: Optional[str] = None
+    # Internal-only: indexes of *compared* txs whose outputs this tx directly
+    # spends. Populated during compare_txs orchestration; not surfaced on the
+    # API characteristics model.
+    utxo_parent_indexes: List[int] = Field(default_factory=list)
+
+
+class ComparisonSignalInternal(BaseModel):
+    name: str
+    kind: str  # "discriminator" | "score" | "linkage"
+    per_tx: List[Optional[str]]
+    verdict: str  # "match" | "mismatch" | "inconclusive"
+    weight: int = 0
+
+
+class LineageEdgeInternal(BaseModel):
+    from_idx: int
+    to_idx: int
+    kind: str
+    out_index: Optional[int] = None
+    in_index: Optional[int] = None
+
+
+class ComparisonSummaryInternal(BaseModel):
+    tx_count: int
+    currency: str
+    total_output_sat: int
+    total_inputs: int
+    total_outputs: int
+    block_min: int
+    block_max: int
+    timestamp_min: int
+    timestamp_max: int
+
+
+class ComparisonVerdictInternal(BaseModel):
+    relation: str
+    confidence: int
+    cluster_verdict: str
+    discriminator_hits: List[str] = Field(default_factory=list)
+    score_total: float = 0.0
+    notes: List[str] = Field(default_factory=list)
+
+
+class TxComparedItemInternal(BaseModel):
+    tx_hash: str
+    characteristics: Optional[TxCharacteristicsInternal] = None
+    details: Optional[Union[TxUtxo, TxAccount]] = None
+
+
+class TransactionComparisonInternal(BaseModel):
+    txs: List[TxComparedItemInternal] = Field(default_factory=list)
+    signals: List[ComparisonSignalInternal] = Field(default_factory=list)
+    lineage: List[LineageEdgeInternal] = Field(default_factory=list)
+    summary: ComparisonSummaryInternal
+    # None in summary-only mode (include_analysis=False). The fingerprinting
+    # verdict is not computed when the analysis is skipped.
+    verdict: Optional[ComparisonVerdictInternal] = None
+
+
 # Update forward references
 Values.model_rebuild()

@@ -1030,6 +1030,38 @@ def _maybe_attach_mcp(app: FastAPI) -> None:
         logger.exception("Failed to attach MCP; continuing without it.")
 
 
+def _reorder_txs_compare_after_tx_detail(schema: dict[str, Any]) -> dict[str, Any]:
+    """Render ``/txs/compare`` after the ``/txs/{tx_hash}`` endpoints in the docs.
+
+    ``/txs/compare`` must be *registered* before ``/txs/{tx_hash}`` so Starlette
+    does not match ``compare`` as a ``tx_hash`` path value. That registration
+    order also drives the order operations appear in the generated schema (and
+    therefore in ReDoc/Swagger), which puts ``compare`` ahead of the regular tx
+    endpoints. This reorders only the ``paths`` mapping of the generated schema
+    so ``compare`` follows the tx-detail group; routing is unaffected.
+    """
+    paths = schema.get("paths")
+    if not paths:
+        return schema
+
+    compare_key = next((k for k in paths if k.endswith("/txs/compare")), None)
+    detail_keys = [k for k in paths if "/txs/{tx_hash}" in k]
+    if compare_key is None or not detail_keys:
+        return schema
+
+    anchor = detail_keys[-1]  # last /txs/{tx_hash}... path, in registration order
+    compare_value = paths[compare_key]
+    reordered: dict[str, Any] = {}
+    for key, value in paths.items():
+        if key == compare_key:
+            continue  # re-inserted right after the anchor below
+        reordered[key] = value
+        if key == anchor:
+            reordered[compare_key] = compare_value
+    schema["paths"] = reordered
+    return schema
+
+
 def _setup_custom_openapi(app: FastAPI) -> None:
     """Set up custom OpenAPI schema generation with snake_case schema names.
 
@@ -1102,6 +1134,9 @@ def _setup_custom_openapi(app: FastAPI) -> None:
 
         # Promote repeated operation security requirements to global OpenAPI security
         openapi_schema = _promote_common_security_to_global(openapi_schema)
+
+        # Display /txs/compare after the /txs/{tx_hash} endpoints in the docs
+        openapi_schema = _reorder_txs_compare_after_tx_detail(openapi_schema)
 
         app.openapi_schema = openapi_schema
         return app.openapi_schema
