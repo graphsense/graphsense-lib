@@ -61,6 +61,7 @@ from graphsenselib.db.asynchronous.services.models import (
     TxAccount,
     TxCharacteristicsInternal,
     TxRef,
+    Txs,
     TxUtxo,
     TxValue,
     UtxoHeuristics,
@@ -1636,9 +1637,11 @@ class FakeTxsService:
         tx_map: dict[str, TxUtxo],
         spending_map: dict[str, list[TxRef]] | None = None,
         addresses_light: dict[str, dict] | None = None,
+        flows_map: dict[str, list] | None = None,
     ):
         self._tx_map = tx_map
         self._spending = spending_map or {}
+        self._flows = flows_map or {}
         self.db = MagicMock()
         self.db.get_addresses_light = AsyncMock(return_value=addresses_light or {})
         self.get_tx_calls: list[dict] = []
@@ -1656,6 +1659,14 @@ class FakeTxsService:
     async def get_spending_txs(self, currency, tx_hash, io_index):
         self.spending_calls += 1
         return self._spending.get(tx_hash, [])
+
+    async def get_asset_flows_within_tx(self, network, tx_hash, **kwargs):
+        # Full asset-flow set for a hash: base tx + token-transfer legs. Falls
+        # back to the single base tx when no flows are configured.
+        legs = self._flows.get(tx_hash)
+        if legs is None:
+            legs = [self._tx_map[tx_hash]]
+        return Txs(txs=legs)
 
 
 class TestCompareTxsOrchestration:
@@ -2017,6 +2028,35 @@ class TestCompareTxsOrchestration:
             assert item.characteristics is None
         # Expensive orchestration must be skipped entirely.
         assert svc.spending_calls == 0
+
+    async def test_account_summary_includes_token_usd_and_note(self):
+        # An account summary must fold token-transfer USD into total_value_usd
+        # and flag it, not just sum the base native tx. h1 is a USDT transfer:
+        # its base tx moves 0 native ETH; the value lives in the token leg.
+        h0, h1 = "aa" * 32, "bb" * 32
+        base0 = make_account_tx(tx_hash=h0, value=10**18, value_usd=3000.0)
+        base1 = make_account_tx(tx_hash=h1, value=0, value_usd=0.0)
+        token1 = make_account_tx(
+            tx_hash=h1, value=5_000_000, value_usd=1000.0, token_tx_id=0, asset="usdt"
+        )
+        svc = FakeTxsService(
+            tx_map={h0: base0, h1: base1},
+            flows_map={h0: [base0], h1: [base1, token1]},
+        )
+        result = await compare_txs(
+            svc,
+            "eth",
+            [h0, h1],
+            include_details=False,
+            include_characteristics=False,
+            include_signals=False,
+            include_analysis=False,
+            tagstore_groups=[],
+        )
+        s = result.summary
+        assert s.total_value == 10**18  # native only; token leg excluded
+        assert s.total_value_usd == 4000.0  # 3000 native + 1000 token
+        assert any("token" in n.lower() for n in s.notes)
         svc.db.get_addresses_light.assert_not_called()
         # Header-only fetch: no IO, no heuristics.
         assert svc.get_tx_calls[0]["include_io"] is False

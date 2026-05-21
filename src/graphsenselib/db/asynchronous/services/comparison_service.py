@@ -1162,11 +1162,34 @@ async def compare_txs(
             )
             for i in range(len(fetched))
         ]
+        # The summary must reflect all asset movements. For account chains
+        # ``get_tx`` returns only the base/native transaction (no token legs),
+        # so its token transfers would be invisible to ``build_summary`` and
+        # their USD never folded into ``total_value_usd``. Fetch the full
+        # asset-flow set per hash (base tx + token transfers) instead, so
+        # ``build_summary`` can sum token USD and flag the excluded token
+        # transfers. UTXO txs carry their full IO already, so reuse ``fetched``.
+        if account_like:
+            flow_lists = await asyncio.gather(
+                *[
+                    txs_service.get_asset_flows_within_tx(
+                        currency,
+                        h,
+                        include_internal_txs=False,
+                        include_token_txs=True,
+                        include_base_transaction=True,
+                    )
+                    for h in tx_hashes
+                ]
+            )
+            summary_txs = [leg for fl in flow_lists for leg in fl.txs]
+        else:
+            summary_txs = fetched
         return TransactionComparisonInternal(
             txs=items,
             signals=[],
             lineage=[],
-            summary=build_summary(currency, fetched),
+            summary=build_summary(currency, summary_txs),
             verdict=None,
         )
 
