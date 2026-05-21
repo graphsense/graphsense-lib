@@ -51,6 +51,9 @@ __all__ = [
     "ClusterAddresses",
     "CoinJoinConsensus",
     "CoinJoinHeuristics",
+    "ComparisonSignal",
+    "ComparisonSummary",
+    "ComparisonVerdict",
     "Concept",
     "ConsensusEntry",
     "CurrencyStats",
@@ -62,6 +65,7 @@ __all__ = [
     "JoinMarketHeuristic",
     "LabelSummary",
     "LabeledItemRef",
+    "LineageEdge",
     "Link",
     "LinkUtxo",
     "Links",
@@ -94,8 +98,11 @@ __all__ = [
     "Taxonomy",
     "TokenConfig",
     "TokenConfigs",
+    "TransactionComparison",
     "Tx",
     "TxAccount",
+    "TxCharacteristics",
+    "TxComparedItem",
     "TxRef",
     "TxSummary",
     "TxUtxo",
@@ -153,6 +160,9 @@ from graphsense.models.cluster import Cluster as Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses as ClusterAddresses
 from graphsense.models.coin_join_consensus import CoinJoinConsensus as CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics as CoinJoinHeuristics
+from graphsense.models.comparison_signal import ComparisonSignal as ComparisonSignal
+from graphsense.models.comparison_summary import ComparisonSummary as ComparisonSummary
+from graphsense.models.comparison_verdict import ComparisonVerdict as ComparisonVerdict
 from graphsense.models.concept import Concept as Concept
 from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats as CurrencyStats
@@ -164,6 +174,7 @@ from graphsense.models.http_validation_error import HTTPValidationError as HTTPV
 from graphsense.models.join_market_heuristic import JoinMarketHeuristic as JoinMarketHeuristic
 from graphsense.models.label_summary import LabelSummary as LabelSummary
 from graphsense.models.labeled_item_ref import LabeledItemRef as LabeledItemRef
+from graphsense.models.lineage_edge import LineageEdge as LineageEdge
 from graphsense.models.link import Link as Link
 from graphsense.models.link_utxo import LinkUtxo as LinkUtxo
 from graphsense.models.links import Links as Links
@@ -196,8 +207,11 @@ from graphsense.models.tag_summary import TagSummary as TagSummary
 from graphsense.models.taxonomy import Taxonomy as Taxonomy
 from graphsense.models.token_config import TokenConfig as TokenConfig
 from graphsense.models.token_configs import TokenConfigs as TokenConfigs
+from graphsense.models.transaction_comparison import TransactionComparison as TransactionComparison
 from graphsense.models.tx import Tx as Tx
 from graphsense.models.tx_account import TxAccount as TxAccount
+from graphsense.models.tx_characteristics import TxCharacteristics as TxCharacteristics
+from graphsense.models.tx_compared_item import TxComparedItem as TxComparedItem
 from graphsense.models.tx_ref import TxRef as TxRef
 from graphsense.models.tx_summary import TxSummary as TxSummary
 from graphsense.models.tx_utxo import TxUtxo as TxUtxo
