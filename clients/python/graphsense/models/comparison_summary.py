@@ -15,25 +15,28 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing import Optional, Set
 from typing_extensions import Self
 
 class ComparisonSummary(BaseModel):
     """
-    Aggregate stats over all compared transactions.
+    Aggregate stats over all compared transactions.  ``total_value`` and ``total_fee`` are in the chain's base unit (satoshi for UTXO, wei/sun for account chains); ``total_value`` sums native transfers only (token transfers carry no native-unit amount). ``total_value_usd`` sums the USD fiat value across all transfers, including tokens, so it is comparable across assets. ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for account-model (ETH/TRX) summaries. ``notes`` flags caveats (e.g. a partial USD total when some txs had no rate, or token transfers excluded from ``total_value``).
     """ # noqa: E501
     tx_count: StrictInt
     currency: StrictStr
-    total_output_sat: StrictInt
-    total_inputs: StrictInt
-    total_outputs: StrictInt
+    total_value: StrictInt
+    total_value_usd: Optional[Union[StrictFloat, StrictInt]] = None
+    total_fee: Optional[StrictInt] = None
+    total_inputs: Optional[StrictInt] = None
+    total_outputs: Optional[StrictInt] = None
     block_min: StrictInt
     block_max: StrictInt
     timestamp_min: StrictInt
     timestamp_max: StrictInt
-    __properties: ClassVar[List[str]] = ["tx_count", "currency", "total_output_sat", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max"]
+    notes: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["tx_count", "currency", "total_value", "total_value_usd", "total_fee", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max", "notes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -74,6 +77,7 @@ class ComparisonSummary(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+
         return _dict
 
     @classmethod
@@ -88,13 +92,16 @@ class ComparisonSummary(BaseModel):
         _obj = cls.model_validate({
             "tx_count": obj.get("tx_count"),
             "currency": obj.get("currency"),
-            "total_output_sat": obj.get("total_output_sat"),
+            "total_value": obj.get("total_value"),
+            "total_value_usd": obj.get("total_value_usd"),
+            "total_fee": obj.get("total_fee"),
             "total_inputs": obj.get("total_inputs"),
             "total_outputs": obj.get("total_outputs"),
             "block_min": obj.get("block_min"),
             "block_max": obj.get("block_max"),
             "timestamp_min": obj.get("timestamp_min"),
-            "timestamp_max": obj.get("timestamp_max")
+            "timestamp_max": obj.get("timestamp_max"),
+            "notes": obj.get("notes")
         })
         return _obj
 

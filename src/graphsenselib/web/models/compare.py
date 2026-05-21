@@ -70,17 +70,30 @@ class LineageEdge(APIModel):
 
 
 class ComparisonSummary(APIModel):
-    """Aggregate stats over all compared transactions."""
+    """Aggregate stats over all compared transactions.
+
+    ``total_value`` and ``total_fee`` are in the chain's base unit (satoshi
+    for UTXO, wei/sun for account chains); ``total_value`` sums native
+    transfers only (token transfers carry no native-unit amount).
+    ``total_value_usd`` sums the USD fiat value across all transfers,
+    including tokens, so it is comparable across assets. ``total_inputs`` /
+    ``total_outputs`` are UTXO-only and omitted for account-model (ETH/TRX)
+    summaries. ``notes`` flags caveats (e.g. a partial USD total when some
+    txs had no rate, or token transfers excluded from ``total_value``).
+    """
 
     tx_count: int
     currency: str
-    total_output_sat: int
-    total_inputs: int
-    total_outputs: int
+    total_value: int
+    total_value_usd: Optional[float] = None
+    total_fee: Optional[int] = None
+    total_inputs: Optional[int] = None
+    total_outputs: Optional[int] = None
     block_min: int
     block_max: int
     timestamp_min: int
     timestamp_max: int
+    notes: list[str] = Field(default_factory=list)
 
 
 class ComparisonVerdict(APIModel):
