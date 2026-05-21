@@ -1101,6 +1101,16 @@ async def compare_txs(
     tagstore_groups: list[str],
     include_analysis: bool = True,
 ) -> TransactionComparisonInternal:
+    # Dedup hashes (order-preserving) up front: a repeated hash would otherwise
+    # be fetched twice, double-counted in the summary, and trivially compare as
+    # linked to itself. Need 2+ distinct txs to have anything to compare.
+    seen: set[str] = set()
+    tx_hashes = [h for h in tx_hashes if not (h in seen or seen.add(h))]
+    if len(tx_hashes) < 2:
+        raise BadUserInputException(
+            "/txs/compare needs at least 2 distinct transaction hashes."
+        )
+
     # The fingerprinting analysis (signals, lineage, verdict) and the per-tx
     # characteristics are UTXO-only. Account chains (ETH/TRX) are supported in
     # summary-only mode (include_analysis=False), where we just aggregate tx
