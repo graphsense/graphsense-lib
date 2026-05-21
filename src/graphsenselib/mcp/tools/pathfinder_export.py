@@ -307,9 +307,19 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         """Build a Pathfinder .gs save file from an investigation graph.
 
         Pass the addresses, transactions, and address↔address relationships
-        you discovered. The tool returns the bytes of a .gs file (base64-
-        encoded) that the user can open in the pathfinder UI to verify
-        your findings visually.
+        you discovered. The tool encodes them into a Pathfinder ``.gs``
+        file and returns it to the MCP client as a downloadable attachment;
+        the user opens that file in the Pathfinder UI to verify your
+        findings visually.
+
+        YOU DO NOT RECEIVE THE FILE CONTENT. The ``.gs`` payload is binary
+        and is deliberately kept out of your context — it travels in the
+        tool result's resource channel, which you cannot read. Do not try
+        to read, decode, reconstruct, or base64-encode it, and never invent
+        a download link or a ``data:`` URL of your own. Once this tool
+        succeeds, simply tell the user their Pathfinder file (see
+        ``filename``) has been generated and can be downloaded from this
+        tool's result in their client, and surface any ``summary.warnings``.
 
         IMPORTANT — how transactions render in pathfinder: to make a
         transaction appear you must do TWO things. (1) list it as an
@@ -349,13 +359,13 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
 
         Returns:
             A tool result whose structured content carries
-            ``{filename, summary}`` (with ``summary.warnings`` flagging
-            common authoring mistakes — inspect them before showing the
-            file to the user) and whose content list carries the .gs
-            bytes as an embedded MCP resource. The binary blob is
-            transported as a resource so the MCP client can hand it to
-            the user as a downloadable attachment without flooding the
-            agent's context window with base64.
+            ``{filename, summary}`` — this, and only this, is what you
+            can read. Inspect ``summary.warnings`` (it flags common
+            authoring mistakes) and mention any to the user. The .gs
+            bytes travel separately as an embedded MCP resource so the
+            client can offer them as a downloadable attachment; that
+            resource never enters your context, so do not expect to
+            access the file here or relay its contents.
         """
         _validate_spec(spec, default_network)
 
