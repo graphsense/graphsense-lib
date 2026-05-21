@@ -61,7 +61,15 @@ class _AddressSpec(BaseModel):
         description="Network ticker (e.g. 'btc', 'eth'). Defaults to default_network.",
     )
     label: Optional[str] = Field(
-        default=None, description="Free-text label shown next to the node."
+        default=None,
+        description=(
+            "Free-text label shown next to the node. Do NOT restate "
+            "attribution tags here — the UI already renders an address's "
+            "tags on the node. Reserve the label for case-specific context "
+            "that is not derivable from tags, e.g. the role of the address "
+            "in the investigation ('victim wallet', 'attacker cash-out', "
+            "'first hop after the hack')."
+        ),
     )
     color: Optional[Color] = Field(
         default=None, description="RGBA tuple, each component in [0, 1]."
@@ -96,7 +104,15 @@ class _TxSpec(BaseModel):
     index: int = Field(
         default=0, description="Within-block index; almost always 0 for one-off txs."
     )
-    label: Optional[str] = Field(default=None)
+    label: Optional[str] = Field(
+        default=None,
+        description=(
+            "Free-text label shown next to the transaction node. Do NOT "
+            "restate the transaction's date or value here — the UI already "
+            "renders both. Reserve the label for case-specific context not "
+            "visible from the transaction data itself."
+        ),
+    )
     color: Optional[Color] = Field(default=None)
     starting_point: bool = Field(default=False)
     x: Optional[float] = Field(default=None)
@@ -329,6 +345,15 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         transactions are shown for it. If you provide ``agg_edges`` but
         leave ``txs`` empty, the response includes a warning and the
         resulting .gs renders only abstract relationship lines.
+
+        Labels — keep ``label`` (on addresses and txs) for case context
+        the UI cannot already show. Pathfinder renders attribution tags
+        on address nodes, and the date and value on transaction nodes,
+        by itself — so do NOT copy tag names, exchange names, dates or
+        amounts into ``label``; that is redundant. Reserve ``label`` for
+        context that comes from the investigation itself and is not
+        derivable from tags or transaction data, e.g. "victim wallet",
+        "attacker cash-out", "first hop after the hack".
 
         Mark the address(es) or tx(s) you started from with
         ``starting_point=true`` so the layout can place anchors at column
