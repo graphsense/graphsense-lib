@@ -18,6 +18,7 @@ from pydantic import Field, StrictBool, StrictInt, StrictStr, field_validator
 from typing import Any, List, Optional
 from typing_extensions import Annotated
 from graphsense.models.external_conversion import ExternalConversion
+from graphsense.models.transaction_comparison import TransactionComparison
 from graphsense.models.tx import Tx
 from graphsense.models.tx_account import TxAccount
 from graphsense.models.tx_ref import TxRef
@@ -128,6 +129,362 @@ class TxsApi:
         if api_client is None:
             api_client = ApiClient.get_default()
         self.api_client = api_client
+
+
+    @validate_call_compat
+    def compare_txs(
+        self,
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
+        tx_hash: Annotated[List[StrictStr], Field(min_length=2, max_length=100, description="Two or more transaction hashes to compare.")],
+        include_details: Annotated[Optional[StrictBool], Field(description="Embed full per-tx details in the response.")] = None,
+        include_characteristics: Annotated[Optional[StrictBool], Field(description="Embed per-tx extracted characteristics in the response.")] = None,
+        include_signals: Annotated[Optional[StrictBool], Field(description="Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.")] = None,
+        include_analysis: Annotated[Optional[StrictBool], Field(description="Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.")] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> TransactionComparison:
+        """Compare multiple transactions
+
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor.
+
+        :param currency: The cryptocurrency code (e.g., btc) (required)
+        :type currency: str
+        :param tx_hash: Two or more transaction hashes to compare. (required)
+        :type tx_hash: List[str]
+        :param include_details: Embed full per-tx details in the response.
+        :type include_details: bool
+        :param include_characteristics: Embed per-tx extracted characteristics in the response.
+        :type include_characteristics: bool
+        :param include_signals: Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.
+        :type include_signals: bool
+        :param include_analysis: Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.
+        :type include_analysis: bool
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._compare_txs_serialize(
+            currency=currency,
+            tx_hash=tx_hash,
+            include_details=include_details,
+            include_characteristics=include_characteristics,
+            include_signals=include_signals,
+            include_analysis=include_analysis,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "TransactionComparison",
+            '400': None,
+            '404': None,
+            '422': "HTTPValidationError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        ).data
+
+
+    @validate_call_compat
+    def compare_txs_with_http_info(
+        self,
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
+        tx_hash: Annotated[List[StrictStr], Field(min_length=2, max_length=100, description="Two or more transaction hashes to compare.")],
+        include_details: Annotated[Optional[StrictBool], Field(description="Embed full per-tx details in the response.")] = None,
+        include_characteristics: Annotated[Optional[StrictBool], Field(description="Embed per-tx extracted characteristics in the response.")] = None,
+        include_signals: Annotated[Optional[StrictBool], Field(description="Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.")] = None,
+        include_analysis: Annotated[Optional[StrictBool], Field(description="Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.")] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> ApiResponse[TransactionComparison]:
+        """Compare multiple transactions
+
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor.
+
+        :param currency: The cryptocurrency code (e.g., btc) (required)
+        :type currency: str
+        :param tx_hash: Two or more transaction hashes to compare. (required)
+        :type tx_hash: List[str]
+        :param include_details: Embed full per-tx details in the response.
+        :type include_details: bool
+        :param include_characteristics: Embed per-tx extracted characteristics in the response.
+        :type include_characteristics: bool
+        :param include_signals: Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.
+        :type include_signals: bool
+        :param include_analysis: Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.
+        :type include_analysis: bool
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._compare_txs_serialize(
+            currency=currency,
+            tx_hash=tx_hash,
+            include_details=include_details,
+            include_characteristics=include_characteristics,
+            include_signals=include_signals,
+            include_analysis=include_analysis,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "TransactionComparison",
+            '400': None,
+            '404': None,
+            '422': "HTTPValidationError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        response_data.read()
+        return self.api_client.response_deserialize(
+            response_data=response_data,
+            response_types_map=_response_types_map,
+        )
+
+
+    @validate_call_compat
+    def compare_txs_without_preload_content(
+        self,
+        currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
+        tx_hash: Annotated[List[StrictStr], Field(min_length=2, max_length=100, description="Two or more transaction hashes to compare.")],
+        include_details: Annotated[Optional[StrictBool], Field(description="Embed full per-tx details in the response.")] = None,
+        include_characteristics: Annotated[Optional[StrictBool], Field(description="Embed per-tx extracted characteristics in the response.")] = None,
+        include_signals: Annotated[Optional[StrictBool], Field(description="Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.")] = None,
+        include_analysis: Annotated[Optional[StrictBool], Field(description="Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.")] = None,
+        _request_timeout: Union[
+            None,
+            Annotated[StrictFloat, Field(gt=0)],
+            Tuple[
+                Annotated[StrictFloat, Field(gt=0)],
+                Annotated[StrictFloat, Field(gt=0)]
+            ]
+        ] = None,
+        _request_auth: Optional[Dict[StrictStr, Any]] = None,
+        _content_type: Optional[StrictStr] = None,
+        _headers: Optional[Dict[StrictStr, Any]] = None,
+        _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
+    ) -> RESTResponseType:
+        """Compare multiple transactions
+
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor.
+
+        :param currency: The cryptocurrency code (e.g., btc) (required)
+        :type currency: str
+        :param tx_hash: Two or more transaction hashes to compare. (required)
+        :type tx_hash: List[str]
+        :param include_details: Embed full per-tx details in the response.
+        :type include_details: bool
+        :param include_characteristics: Embed per-tx extracted characteristics in the response.
+        :type include_characteristics: bool
+        :param include_signals: Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.
+        :type include_signals: bool
+        :param include_analysis: Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.
+        :type include_analysis: bool
+        :param _request_timeout: timeout setting for this request. If one
+                                 number provided, it will be total request
+                                 timeout. It can also be a pair (tuple) of
+                                 (connection, read) timeouts.
+        :type _request_timeout: int, tuple(int, int), optional
+        :param _request_auth: set to override the auth_settings for an a single
+                              request; this effectively ignores the
+                              authentication in the spec for a single request.
+        :type _request_auth: dict, optional
+        :param _content_type: force content-type for the request.
+        :type _content_type: str, Optional
+        :param _headers: set to override the headers for a single
+                         request; this effectively ignores the headers
+                         in the spec for a single request.
+        :type _headers: dict, optional
+        :param _host_index: set to override the host_index for a single
+                            request; this effectively ignores the host_index
+                            in the spec for a single request.
+        :type _host_index: int, optional
+        :return: Returns the result object.
+        """ # noqa: E501
+
+        _param = self._compare_txs_serialize(
+            currency=currency,
+            tx_hash=tx_hash,
+            include_details=include_details,
+            include_characteristics=include_characteristics,
+            include_signals=include_signals,
+            include_analysis=include_analysis,
+            _request_auth=_request_auth,
+            _content_type=_content_type,
+            _headers=_headers,
+            _host_index=_host_index
+        )
+
+        _response_types_map: Dict[str, Optional[str]] = {
+            '200': "TransactionComparison",
+            '400': None,
+            '404': None,
+            '422': "HTTPValidationError",
+        }
+        response_data = self.api_client.call_api(
+            *_param,
+            _request_timeout=_request_timeout
+        )
+        return response_data.response
+
+
+    def _compare_txs_serialize(
+        self,
+        currency,
+        tx_hash,
+        include_details,
+        include_characteristics,
+        include_signals,
+        include_analysis,
+        _request_auth,
+        _content_type,
+        _headers,
+        _host_index,
+    ) -> RequestSerialized:
+
+        _host = None
+
+        _collection_formats: Dict[str, str] = {
+            'tx_hash': 'multi',
+        }
+
+        _path_params: Dict[str, str] = {}
+        _query_params: List[Tuple[str, str]] = []
+        _header_params: Dict[str, Optional[str]] = _headers or {}
+        _form_params: List[Tuple[str, str]] = []
+        _files: Dict[
+            str, Union[str, bytes, List[str], List[bytes], List[Tuple[str, bytes]]]
+        ] = {}
+        _body_params: Optional[bytes] = None
+
+        # process the path parameters
+        if currency is not None:
+            _path_params['currency'] = currency
+        # process the query parameters
+        if tx_hash is not None:
+            
+            _query_params.append(('tx_hash', tx_hash))
+            
+        if include_details is not None:
+            
+            _query_params.append(('include_details', include_details))
+            
+        if include_characteristics is not None:
+            
+            _query_params.append(('include_characteristics', include_characteristics))
+            
+        if include_signals is not None:
+            
+            _query_params.append(('include_signals', include_signals))
+            
+        if include_analysis is not None:
+            
+            _query_params.append(('include_analysis', include_analysis))
+            
+        # process the header parameters
+        # process the form parameters
+        # process the body parameter
+
+
+        # set the HTTP header `Accept`
+        if 'Accept' not in _header_params:
+            _header_params['Accept'] = self.api_client.select_header_accept(
+                [
+                    'application/json'
+                ]
+            )
+
+
+        # authentication setting
+        _auth_settings: List[str] = [
+            'api_key'
+        ]
+
+        return self.api_client.param_serialize(
+            method='GET',
+            resource_path='/{currency}/txs/compare',
+            path_params=_path_params,
+            query_params=_query_params,
+            header_params=_header_params,
+            body=_body_params,
+            post_params=_form_params,
+            files=_files,
+            auth_settings=_auth_settings,
+            collection_formats=_collection_formats,
+            _host=_host,
+            _request_auth=_request_auth
+        )
+
+
 
 
     @validate_call_compat

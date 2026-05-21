@@ -4,6 +4,7 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**compare_txs**](TxsApi.md#compare_txs) | **GET** /{currency}/txs/compare | Compare multiple transactions
 [**get_spending_txs**](TxsApi.md#get_spending_txs) | **GET** /{currency}/txs/{tx_hash}/spending | List source transactions
 [**get_spent_in_txs**](TxsApi.md#get_spent_in_txs) | **GET** /{currency}/txs/{tx_hash}/spent_in | List spending transactions
 [**get_tx**](TxsApi.md#get_tx) | **GET** /{currency}/txs/{tx_hash} | Get transaction details by hash
@@ -12,6 +13,98 @@ Method | HTTP request | Description
 [**list_token_txs**](TxsApi.md#list_token_txs) | **GET** /{currency}/token_txs/{tx_hash} | List token transfers in a transaction
 [**list_tx_flows**](TxsApi.md#list_tx_flows) | **GET** /{currency}/txs/{tx_hash}/flows | List transaction asset flows
 
+
+# **compare_txs**
+> TransactionComparison compare_txs(currency, tx_hash, include_details=include_details, include_characteristics=include_characteristics, include_signals=include_signals, include_analysis=include_analysis)
+
+Compare multiple transactions
+
+Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor.
+
+### Example
+
+* Api Key Authentication (api_key):
+
+```python
+import graphsense
+from graphsense.models.transaction_comparison import TransactionComparison
+from graphsense.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to https://api.iknaio.com
+# See configuration.py for a list of all supported configuration parameters.
+configuration = graphsense.Configuration(
+    host = "https://api.iknaio.com"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
+
+# Enter a context with an instance of the API client
+with graphsense.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = graphsense.TxsApi(api_client)
+    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
+    tx_hash = ['tx_hash_example'] # List[str] | Two or more transaction hashes to compare.
+    include_details = None # bool | Embed full per-tx details in the response. (optional) (default to False)
+    include_characteristics = None # bool | Embed per-tx extracted characteristics in the response. (optional) (default to True)
+    include_signals = None # bool | Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false. (optional) (default to True)
+    include_analysis = None # bool | Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true. (optional) (default to True)
+
+    try:
+        # Compare multiple transactions
+        api_response = api_instance.compare_txs(currency, tx_hash, include_details=include_details, include_characteristics=include_characteristics, include_signals=include_signals, include_analysis=include_analysis)
+        print("The response of TxsApi->compare_txs:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling TxsApi->compare_txs: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **currency** | **str**| The cryptocurrency code (e.g., btc) | 
+ **tx_hash** | [**List[str]**](str.md)| Two or more transaction hashes to compare. | 
+ **include_details** | **bool**| Embed full per-tx details in the response. | [optional] [default to False]
+ **include_characteristics** | **bool**| Embed per-tx extracted characteristics in the response. | [optional] [default to True]
+ **include_signals** | **bool**| Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false. | [optional] [default to True]
+ **include_analysis** | **bool**| Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true. | [optional] [default to True]
+
+### Return type
+
+[**TransactionComparison**](TransactionComparison.md)
+
+### Authorization
+
+[api_key](../README.md#api_key)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Successful Response |  -  |
+**400** | Invalid request (need 2+ tx hashes, ETH/TRX not supported). |  -  |
+**404** | One of the transactions was not found. |  -  |
+**422** | Validation Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **get_spending_txs**
 > List[TxRef] get_spending_txs(currency, tx_hash, io_index=io_index)

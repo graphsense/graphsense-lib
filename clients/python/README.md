@@ -174,6 +174,7 @@ Class | Method | HTTP request | Description
 *TagsApi* | [**list_taxonomies**](docs/TagsApi.md#list_taxonomies) | **GET** /tags/taxonomies | List all taxonomies
 *TagsApi* | [**report_tag**](docs/TagsApi.md#report_tag) | **POST** /tags/report-tag | Submit a user-reported tag
 *TokensApi* | [**list_supported_tokens**](docs/TokensApi.md#list_supported_tokens) | **GET** /{currency}/supported_tokens | List supported tokens for a currency
+*TxsApi* | [**compare_txs**](docs/TxsApi.md#compare_txs) | **GET** /{currency}/txs/compare | Compare multiple transactions
 *TxsApi* | [**get_spending_txs**](docs/TxsApi.md#get_spending_txs) | **GET** /{currency}/txs/{tx_hash}/spending | List source transactions
 *TxsApi* | [**get_spent_in_txs**](docs/TxsApi.md#get_spent_in_txs) | **GET** /{currency}/txs/{tx_hash}/spent_in | List spending transactions
 *TxsApi* | [**get_tx**](docs/TxsApi.md#get_tx) | **GET** /{currency}/txs/{tx_hash} | Get transaction details by hash
@@ -201,6 +202,9 @@ Class | Method | HTTP request | Description
  - [ClusterAddresses](docs/ClusterAddresses.md)
  - [CoinJoinConsensus](docs/CoinJoinConsensus.md)
  - [CoinJoinHeuristics](docs/CoinJoinHeuristics.md)
+ - [ComparisonSignal](docs/ComparisonSignal.md)
+ - [ComparisonSummary](docs/ComparisonSummary.md)
+ - [ComparisonVerdict](docs/ComparisonVerdict.md)
  - [Concept](docs/Concept.md)
  - [ConsensusEntry](docs/ConsensusEntry.md)
  - [CurrencyStats](docs/CurrencyStats.md)
@@ -212,6 +216,7 @@ Class | Method | HTTP request | Description
  - [JoinMarketHeuristic](docs/JoinMarketHeuristic.md)
  - [LabelSummary](docs/LabelSummary.md)
  - [LabeledItemRef](docs/LabeledItemRef.md)
+ - [LineageEdge](docs/LineageEdge.md)
  - [Link](docs/Link.md)
  - [LinkUtxo](docs/LinkUtxo.md)
  - [Links](docs/Links.md)
@@ -244,8 +249,11 @@ Class | Method | HTTP request | Description
  - [Taxonomy](docs/Taxonomy.md)
  - [TokenConfig](docs/TokenConfig.md)
  - [TokenConfigs](docs/TokenConfigs.md)
+ - [TransactionComparison](docs/TransactionComparison.md)
  - [Tx](docs/Tx.md)
  - [TxAccount](docs/TxAccount.md)
+ - [TxCharacteristics](docs/TxCharacteristics.md)
+ - [TxComparedItem](docs/TxComparedItem.md)
  - [TxRef](docs/TxRef.md)
  - [TxSummary](docs/TxSummary.md)
  - [TxUtxo](docs/TxUtxo.md)
