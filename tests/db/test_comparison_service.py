@@ -1928,6 +1928,41 @@ class TestCompareTxsOrchestration:
                 tagstore_groups=[],
             )
 
+    async def test_duplicate_hashes_collapse_to_one_rejected(self):
+        # The same hash repeated is a single distinct tx; with nothing to
+        # compare it against, the request must be rejected (not a self-link).
+        svc, hashes = self._make_two_linked_txs()
+        with pytest.raises(BadUserInputException):
+            await compare_txs(
+                svc,
+                CURRENCY,
+                [hashes[0], hashes[0]],
+                include_details=False,
+                include_characteristics=True,
+                include_signals=True,
+                include_analysis=True,
+                tagstore_groups=[],
+            )
+
+    async def test_duplicate_hashes_deduped_before_compare(self):
+        # An over-specified list (a hash repeated alongside distinct ones)
+        # dedups order-preserving: the summary counts each tx once and each tx
+        # is fetched once, so values are not double-counted.
+        svc, hashes = self._make_two_linked_txs()
+        result = await compare_txs(
+            svc,
+            CURRENCY,
+            [hashes[0], hashes[1], hashes[0]],  # hashes[0] repeated
+            include_details=False,
+            include_characteristics=False,
+            include_signals=True,
+            tagstore_groups=[],
+        )
+        assert result.summary.tx_count == 2
+        assert len(result.txs) == 2
+        # Each distinct hash fetched exactly once (no duplicate DB work).
+        assert len(svc.get_tx_calls) == 2
+
     @pytest.mark.parametrize("currency", ["eth", "trx", "ETH", "TRX"])
     async def test_eth_like_analysis_rejected(self, currency):
         # Fingerprinting analysis stays UTXO-only.
