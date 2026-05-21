@@ -512,13 +512,22 @@ class LineageEdgeInternal(BaseModel):
 class ComparisonSummaryInternal(BaseModel):
     tx_count: int
     currency: str
-    total_output_sat: int
-    total_inputs: int
-    total_outputs: int
+    # total_value is in the queried currency's native base unit (satoshi for
+    # UTXO, wei/sun for account chains) and sums native transfers only;
+    # total_value_usd sums the USD fiat value across all transfers (incl.
+    # tokens). total_fee stays in the native unit. notes flags caveats
+    # (partial USD totals, excluded token transfers).
+    total_value: int
+    total_value_usd: Optional[float] = None
+    total_fee: Optional[int] = None
+    # io counts are UTXO-only; None for account-model (ETH/TRX) summaries.
+    total_inputs: Optional[int] = None
+    total_outputs: Optional[int] = None
     block_min: int
     block_max: int
     timestamp_min: int
     timestamp_max: int
+    notes: List[str] = Field(default_factory=list)
 
 
 class ComparisonVerdictInternal(BaseModel):

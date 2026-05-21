@@ -112,7 +112,8 @@ def _build_api_response(
     summary = ComparisonSummary(
         tx_count=2,
         currency="btc",
-        total_output_sat=3500,
+        total_value=3500,
+        total_fee=200,
         total_inputs=3,
         total_outputs=2,
         block_min=100,

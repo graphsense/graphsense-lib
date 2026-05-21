@@ -84,13 +84,16 @@ def _make_summary() -> ComparisonSummaryInternal:
     return ComparisonSummaryInternal(
         tx_count=2,
         currency="btc",
-        total_output_sat=2000,
+        total_value=2000,
+        total_value_usd=42.5,
+        total_fee=150,
         total_inputs=2,
         total_outputs=2,
         block_min=100,
         block_max=101,
         timestamp_min=1_700_000_000,
         timestamp_max=1_700_000_500,
+        notes=["total_value_usd is partial: 1 of 2 txs had no USD rate"],
     )
 
 
@@ -376,7 +379,10 @@ def test_to_api_transaction_comparison_summary_round_trip():
 
     assert api.summary.tx_count == internal.summary.tx_count
     assert api.summary.currency == internal.summary.currency
-    assert api.summary.total_output_sat == internal.summary.total_output_sat
+    assert api.summary.total_value == internal.summary.total_value
+    assert api.summary.total_value_usd == internal.summary.total_value_usd
+    assert api.summary.total_fee == internal.summary.total_fee
+    assert api.summary.notes == internal.summary.notes
     assert api.summary.total_inputs == internal.summary.total_inputs
     assert api.summary.total_outputs == internal.summary.total_outputs
     assert api.summary.block_min == internal.summary.block_min
