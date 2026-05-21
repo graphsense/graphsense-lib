@@ -983,15 +983,10 @@ class Cassandra:
         loop = asyncio.get_running_loop()
         future = loop.create_future()
 
-        def safe_set_result():
-            try:
-                future.set_result(None)
-            except asyncio.exceptions.InvalidStateError:
-                pass
-
         def on_done(result):
             if future.cancelled():
-                loop.call_soon_threadsafe(safe_set_result)
+                # Cheap best-effort early-out on the driver thread; the
+                # authoritative guard runs on the loop thread below.
                 return
             result = Result(
                 current_rows=result,
@@ -1000,10 +995,23 @@ class Cassandra:
             )
             if success_callback is not None:
                 success_callback(result)
-            loop.call_soon_threadsafe(future.set_result, result)
 
-        def on_err(result):
-            loop.call_soon_threadsafe(future.set_exception, result)
+            # Delivery runs on the event loop thread, where cancellation also
+            # runs, so the done-check and the set cannot race across threads.
+            # A client disconnect may have cancelled the future between this
+            # driver callback and delivery; skip silently if so.
+            def deliver_result():
+                if not future.done():
+                    future.set_result(result)
+
+            loop.call_soon_threadsafe(deliver_result)
+
+        def on_err(exc):
+            def deliver_exception():
+                if not future.done():
+                    future.set_exception(exc)
+
+            loop.call_soon_threadsafe(deliver_exception)
 
         response_future.add_callbacks(on_done, on_err)
         return future
