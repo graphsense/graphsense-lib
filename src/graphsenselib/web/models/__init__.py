@@ -36,6 +36,15 @@ from graphsenselib.web.models.general import (
     TokenConfig,
     TokenConfigs,
 )
+from graphsenselib.web.models.compare import (
+    ComparisonSignal,
+    ComparisonSummary,
+    ComparisonVerdict,
+    LineageEdge,
+    TransactionComparison,
+    TxCharacteristics,
+    TxComparedItem,
+)
 from graphsenselib.web.models.heuristics import (
     AddressOutput,
     ChangeHeuristics,
@@ -170,4 +179,12 @@ __all__ = [
     "RelatedAddress",
     "RelatedAddresses",
     "ExternalConversion",
+    # Comparison
+    "TxCharacteristics",
+    "TxComparedItem",
+    "ComparisonSignal",
+    "LineageEdge",
+    "ComparisonSummary",
+    "ComparisonVerdict",
+    "TransactionComparison",
 ]
