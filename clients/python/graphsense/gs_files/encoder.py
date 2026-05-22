@@ -54,8 +54,8 @@ Color = tuple[float, float, float, float]
 # ---------------------------------------------------------------------------
 #
 # A node's label is drawn stacked with the node, so a label that wraps to
-# several lines makes the node taller. Both layouts size each node's vertical
-# slot from its label so multi-line labels don't overlap the row below.
+# several lines makes the node taller. Both layouts keep a column evenly
+# spaced and widen that uniform row step to fit the column's tallest label.
 
 # Roughly how many characters fit on one line of a node label in the UI.
 _LABEL_CHARS_PER_LINE = 12
@@ -76,15 +76,6 @@ def _label_line_count(label: object) -> int:
         seg_len = len(segment.strip())
         lines += max(1, -(-seg_len // _LABEL_CHARS_PER_LINE))
     return max(1, lines)
-
-
-def _label_slot_height(label: object, base: float) -> float:
-    """Vertical graph units a node occupies given its label.
-
-    ``base`` is the height of a node carrying at most a single-line label;
-    each additional wrapped line adds ``_LABEL_LINE_HEIGHT``.
-    """
-    return base + (_label_line_count(label) - 1) * _LABEL_LINE_HEIGHT
 
 
 # ---------------------------------------------------------------------------
@@ -162,40 +153,35 @@ class GsBuilder:
         self._addresses: list[_Item] = []
         self._txs: list[_Tx] = []
         self._agg_edges: list[_AggEdge] = []
-        # Per-column running placement: column name -> (last y, last slot
-        # height). Label-aware vertical stacking is computed off this.
-        self._col_last: dict[str, tuple[float, float]] = {}
+        # Auto-placed nodes: (item, column name). Their y is assigned in
+        # _apply_columnar_layout once every label is known, so each column
+        # gets one uniform row step sized to its tallest label.
+        self._auto: list[tuple[_Item, str]] = []
 
-    def _advance_column(self, column: str, slot: float) -> float:
-        """Return the y for the next node in ``column`` and record it.
-
-        The first node in a column sits at ``y = 0``; each later node is
-        placed so the gap to its predecessor is the mean of the two slot
-        heights — a node whose label wraps to several lines pushes its
-        neighbours apart instead of letting the text overlap.
-        """
-        prev = self._col_last.get(column)
-        if prev is None:
-            y = 0.0
-        else:
-            prev_y, prev_slot = prev
-            y = prev_y + (prev_slot + slot) / 2.0
-        self._col_last[column] = (y, slot)
-        return y
-
-    def _next_addr_pos(
-        self, side: Optional[str], label: Optional[str]
-    ) -> tuple[float, float]:
-        slot = _label_slot_height(label, self._ROW)
+    def _addr_column(self, side: Optional[str]) -> tuple[str, float]:
+        """Map an address ``side`` to its (column name, column x)."""
         if side in ("input", "left"):
-            return self._INPUT_COL_X, self._advance_column("input", slot)
+            return "input", self._INPUT_COL_X
         if side in ("output", "right"):
-            return self._OUTPUT_COL_X, self._advance_column("output", slot)
-        return self._ADDR_COL_X, self._advance_column("addr", slot)
+            return "output", self._OUTPUT_COL_X
+        return "addr", self._ADDR_COL_X
 
-    def _next_tx_pos(self, label: Optional[str]) -> tuple[float, float]:
-        slot = _label_slot_height(label, self._ROW)
-        return self._TX_COL_X, self._advance_column("tx", slot)
+    def _apply_columnar_layout(self) -> None:
+        """Assign y to every auto-placed node.
+
+        Each column is stacked with a single uniform row step, widened so
+        the column's tallest (multi-line) label still clears its
+        neighbour — the whole column stays aligned rather than going
+        ragged row by row.
+        """
+        by_column: dict[str, list[_Item]] = {}
+        for item, column in self._auto:
+            by_column.setdefault(column, []).append(item)
+        for items in by_column.values():
+            max_lines = max(_label_line_count(it.label) for it in items)
+            step = self._ROW + (max_lines - 1) * _LABEL_LINE_HEIGHT
+            for row, item in enumerate(items):
+                item.y = row * step
 
     def add_address(
         self,
@@ -210,18 +196,21 @@ class GsBuilder:
         side: Optional[str] = None,
     ) -> "GsBuilder":
         net = network or self.default_network
-        nx, ny = self._next_addr_pos(side, label)
-        self._addresses.append(
-            _Item(
-                net,
-                addr,
-                nx if x is None else x,
-                ny if y is None else y,
-                starting_point,
-                label,
-                color,
-            )
+        column, col_x = self._addr_column(side)
+        item = _Item(
+            net,
+            addr,
+            col_x if x is None else x,
+            0.0 if y is None else y,
+            starting_point,
+            label,
+            color,
         )
+        self._addresses.append(item)
+        if y is None:
+            # Defer y: assigned by _apply_columnar_layout once all labels
+            # are known, so the column shares one uniform row step.
+            self._auto.append((item, column))
         return self
 
     def add_tx(
@@ -237,19 +226,19 @@ class GsBuilder:
         y: Optional[float] = None,
     ) -> "GsBuilder":
         net = network or self.default_network
-        nx, ny = self._next_tx_pos(label)
-        self._txs.append(
-            _Tx(
-                net,
-                tx_hash,
-                nx if x is None else x,
-                ny if y is None else y,
-                starting_point,
-                label,
-                color,
-                index=index,
-            )
+        item = _Tx(
+            net,
+            tx_hash,
+            self._TX_COL_X if x is None else x,
+            0.0 if y is None else y,
+            starting_point,
+            label,
+            color,
+            index=index,
         )
+        self._txs.append(item)
+        if y is None:
+            self._auto.append((item, "tx"))
         return self
 
     def add_agg_edge(
@@ -272,6 +261,7 @@ class GsBuilder:
     def to_payload(self) -> list:
         """Materialize the raw JSON payload (the inner shape before
         json.dumps + base64 + LZW + uint32 packing)."""
+        self._apply_columnar_layout()
         addresses = [
             [[a.network, a.id], a.x, a.y, a.is_starting_point] for a in self._addresses
         ]
@@ -413,9 +403,9 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     Each level becomes a column at ``x = level * 4.0``; within a level,
     nodes are ordered by the position they were first seen in the spec
     (so listing the most relevant nodes first puts them near the top of
-    the column) and centred on ``y = 0``. Rows are ``3.0`` apart,
-    widened around any node whose label wraps to multiple lines so the
-    label text does not overlap its neighbours. This makes layout
+    the column) and centred on ``y = 0``. Rows are ``3.0`` apart; a level
+    that holds a label wrapping to multiple lines uses a wider uniform
+    spacing so the whole column stays aligned. This makes layout
     order-sensitive: reordering ``addresses`` / ``txs`` /
     ``agg_edges`` in the input reorders the rendered graph. Nodes
     unreachable from any starting point are appended to a trailing
@@ -506,34 +496,27 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     # listed earlier float to the top of their column.
     position = {key: i for i, key in enumerate(nodes)}
 
-    # Per-node vertical slot: a label that wraps to multiple lines makes
-    # the node taller. Nodes seen only in edges carry no label.
-    slot_height: dict[tuple[str, str], float] = {}
+    # Label line counts: a level that holds a multi-line label uses a
+    # wider uniform row step so the whole column stays aligned. Nodes
+    # seen only in edges carry no label.
+    label_lines: dict[tuple[str, str], int] = {}
     for a in addresses:
-        slot_height[("addr", a["id"])] = _label_slot_height(
-            a.get("label"), _HIER_Y_STEP
-        )
+        label_lines[("addr", a["id"])] = _label_line_count(a.get("label"))
     for t in txs:
-        slot_height[("tx", t["id"])] = _label_slot_height(t.get("label"), _HIER_Y_STEP)
+        label_lines[("tx", t["id"])] = _label_line_count(t.get("label"))
 
     coords: dict[tuple[str, str], tuple[float, float]] = {}
     for lvl, group in levels.items():
         group_sorted = sorted(group, key=lambda k: position[k])
+        n_in_level = len(group_sorted)
+        # One uniform row step for the whole level, widened to clear the
+        # tallest label in it so the column stays evenly aligned.
+        max_lines = max((label_lines.get(key, 1) for key in group_sorted), default=1)
+        y_step = _HIER_Y_STEP + (max_lines - 1) * _LABEL_LINE_HEIGHT
         x = float(lvl) * _HIER_X_STEP
-        # Cumulative placement: the gap between two adjacent nodes is the
-        # mean of their slot heights, so a multi-line label widens the
-        # gap to both neighbours.
-        slots = [slot_height.get(key, _HIER_Y_STEP) for key in group_sorted]
-        ys: list[float] = []
-        cursor = 0.0
-        for i, slot in enumerate(slots):
-            if i > 0:
-                cursor += (slots[i - 1] + slot) / 2.0
-            ys.append(cursor)
-        # Re-centre the column on y = 0.
-        mid = (ys[0] + ys[-1]) / 2.0 if ys else 0.0
-        for key, y in zip(group_sorted, ys):
-            coords[key] = (x, y - mid)
+        for i, key in enumerate(group_sorted):
+            y = (i - (n_in_level - 1) / 2.0) * y_step
+            coords[key] = (x, y)
 
     def _apply(items: list[dict], kind: str) -> list[dict]:
         out: list[dict] = []

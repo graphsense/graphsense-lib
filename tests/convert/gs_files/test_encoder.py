@@ -169,21 +169,23 @@ def test_label_line_count() -> None:
 
 
 def test_multiline_label_widens_columnar_spacing() -> None:
-    """A node whose label wraps to multiple lines pushes the next node in
-    its column further down; the first node stays pinned at y=0."""
-    plain = GsBuilder().add_address("a").add_address("b").to_payload()[3]
-    assert plain[0][2] == 0.0
-    assert plain[1][2] - plain[0][2] == GsBuilder._ROW
+    """A multi-line label widens the whole column's uniform row step, so
+    the column stays evenly aligned rather than ragged."""
+    plain = (
+        GsBuilder().add_address("a").add_address("b").add_address("c").to_payload()[3]
+    )
+    assert [row[2] for row in plain] == [0.0, GsBuilder._ROW, 2 * GsBuilder._ROW]
 
+    wide_step = GsBuilder._ROW + _LABEL_LINE_HEIGHT
     wide = (
         GsBuilder()
         .add_address("a", label="victim deposit addr")  # 19 chars -> 2 lines
         .add_address("b")
+        .add_address("c")
         .to_payload()[3]
     )
-    assert wide[0][2] == 0.0  # first node still pinned at y=0
-    # one extra label line, split across the single gap to the neighbour
-    assert wide[1][2] - wide[0][2] == GsBuilder._ROW + _LABEL_LINE_HEIGHT / 2
+    # Every row uses the same widened step -> the column stays aligned.
+    assert [row[2] for row in wide] == [0.0, wide_step, 2 * wide_step]
 
 
 def test_write_creates_file(tmp_path: Path) -> None:

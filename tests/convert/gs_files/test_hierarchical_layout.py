@@ -227,9 +227,11 @@ def test_multiline_label_widens_row_spacing() -> None:
 
     # No label: two single-line rows -> a 2 * Y_STEP gap top-to-bottom.
     assert plain["bot"][1] - plain["top"][1] == 2 * _HIER_Y_STEP
-    # Wrapped middle label adds one line of height, split across both gaps.
-    assert (
-        wrapped["bot"][1] - wrapped["top"][1] == 2 * _HIER_Y_STEP + _LABEL_LINE_HEIGHT
-    )
+    # The wrapped label widens the level's uniform row step, applied to
+    # every node in the column so it stays aligned (gaps stay equal).
+    wide_step = _HIER_Y_STEP + _LABEL_LINE_HEIGHT
+    assert wide_step > _HIER_Y_STEP
+    assert wrapped["mid"][1] - wrapped["top"][1] == wide_step
+    assert wrapped["bot"][1] - wrapped["mid"][1] == wide_step
     # The middle node stays centred on y = 0 either way.
     assert plain["mid"][1] == wrapped["mid"][1] == 0.0
