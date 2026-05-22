@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.13.5] - Unreleased
+
+### Library (v2.13.5)
+
+#### Changed
+- **`build_pathfinder_file` returns a `download_url` when a file store is configured.** The tool stashes the `.gs` file and returns a short-lived, unguessable download link in `structured_content`, usable on MCP hosts that drop embedded binary resources. The embedded resource is still sent unless `file_store.embed_resource` is false; files over `file_store.max_file_bytes` raise a `ToolError`. The tool is now async. Backwards compatible — without `file_store` config the only change is an additive `download_url: null` field.
+- **`build_pathfinder_file` label guidance.** The `label` field descriptions and docstring now tell the model not to restate attribution tags or transaction date/value (the Pathfinder UI shows those) and to reserve `label` for case context. Docstring only; `.gs` encoding unchanged.
+
+#### Fixed
+- **`build_pathfinder_file` docstring no longer claims the model receives the `.gs` bytes.** The bytes travel in the MCP resource channel the model cannot read; the old wording made models on hosts that drop the embedded resource fabricate base64 and `data:` URLs. Docstring only.
+
+### Web API + Python client (webapi-2.13.5)
+
+#### Added
+- **Optional Redis-backed file store and `/download/{token}` route.** New `web/file_store.py` (`RedisFileStore`, a reusable `FileStore` protocol) holds files as TTL'd Redis hashes keyed by a 256-bit CSPRNG token. New `FileStoreConfig` on `GSRestConfig`: `enabled` (default false), `redis_url`, `download_path` (`/download`), `ttl_s` (1800), `max_file_bytes` (5 MiB), `base_url`, `key_prefix`, `embed_resource`. When enabled, the route is a plain Starlette route — excluded from the OpenAPI spec and outside the API-key dependencies, so the token is the only credential; URLs derive from `X-Forwarded-*`/`Host` with a `base_url` override. Multi-worker safe; disabled by default, fully backwards compatible.
+
 ## [2.13.4] - 2026-05-20
 
 ### Library (v2.13.4)

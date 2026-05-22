@@ -33,10 +33,31 @@ from graphsenselib.convert.gs_files.encoder import _HIER_X_STEP
 from graphsenselib.mcp.tools.pathfinder_export import register
 
 
-def _mcp() -> FastMCP:
+def _mcp(app: FastAPI | None = None) -> FastMCP:
     mcp = FastMCP(name="test")
-    register(mcp, FastAPI(), AsyncExitStack())
+    register(mcp, app if app is not None else FastAPI(), AsyncExitStack())
     return mcp
+
+
+def _app_with_store(store, *, embed_resource: bool = True) -> FastAPI:
+    """A FastAPI whose state carries a file store, as the web app sets up."""
+    app = FastAPI()
+    app.state.file_store = store
+    app.state.file_store_embed_resource = embed_resource
+    return app
+
+
+# Minimal valid spec — the shape of the graph is irrelevant to the
+# download-link tests, only that a non-empty .gs file gets built.
+_MINIMAL_SPEC = {
+    "name": "linkable",
+    "default_network": "btc",
+    "spec": {
+        "addresses": [{"id": "addrA", "starting_point": True}],
+        "txs": [],
+        "agg_edges": [],
+    },
+}
 
 
 async def _call(mcp: FastMCP, payload: dict) -> Any:
@@ -371,6 +392,84 @@ async def test_embedded_resource_carries_blob_with_filename_uri() -> None:
     assert len(decoded) > 0
     pf = structure(decode_gs_bytes(decoded))
     assert isinstance(pf, PathfinderData)
+
+
+async def test_download_url_absent_without_file_store() -> None:
+    """With no file store on app.state the tool degrades to embedded-only:
+    download_url is null and the embedded resource is still present."""
+    call_result = await _call(_mcp(), _MINIMAL_SPEC)
+    assert _structured(call_result)["download_url"] is None
+    assert len(call_result.content) == 1
+
+
+async def test_download_url_present_with_file_store(
+    make_file_store, monkeypatch
+) -> None:
+    """With a file store configured the tool stashes the .gs file and
+    returns a download_url; the stored bytes match the embedded resource."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
+        lambda: None,
+    )
+    store = make_file_store()
+    call_result = await _call(_mcp(_app_with_store(store)), _MINIMAL_SPEC)
+
+    structured = _structured(call_result)
+    url = structured["download_url"]
+    assert url is not None
+    assert url.startswith("https://files.example.test/download/")
+
+    token = url.rsplit("/", 1)[-1]
+    assert token in store.files
+    stored = store.files[token]
+    assert stored.content_type == "application/octet-stream"
+    assert stored.filename == structured["filename"]
+    # embed_resource defaults True -> the resource is still attached, and
+    # its bytes are exactly what was stored.
+    assert len(call_result.content) == 1
+    block = call_result.content[0]
+    assert stored.data == base64.b64decode(block.resource.blob)
+
+
+async def test_embed_resource_false_yields_link_only(
+    make_file_store, monkeypatch
+) -> None:
+    """With embed_resource disabled the tool returns the link only — no
+    embedded resource in the content channel."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
+        lambda: None,
+    )
+    store = make_file_store()
+    mcp = _mcp(_app_with_store(store, embed_resource=False))
+    call_result = await _call(mcp, _MINIMAL_SPEC)
+
+    assert _structured(call_result)["download_url"] is not None
+    assert call_result.content == []
+
+
+async def test_embed_resource_false_still_embeds_when_link_unavailable(
+    make_file_store,
+) -> None:
+    """embed_resource is disabled, but with no HTTP request context the
+    link cannot be built — the tool must fall back to embedding the
+    resource so the result never lacks the file entirely."""
+    store = make_file_store()
+    mcp = _mcp(_app_with_store(store, embed_resource=False))
+    # get_http_request() is NOT monkeypatched: in the in-memory client it
+    # raises, so url_for fails and download_url stays null.
+    call_result = await _call(mcp, _MINIMAL_SPEC)
+
+    assert _structured(call_result)["download_url"] is None
+    assert len(call_result.content) == 1
+
+
+async def test_oversize_file_rejected_with_tool_error(make_file_store) -> None:
+    """When a file store is configured, a built .gs larger than the cap
+    fails hard with a ToolError (the hard size limit)."""
+    tiny_store = make_file_store(max_bytes=10)  # any real .gs exceeds 10 bytes
+    with pytest.raises(ToolError, match="too large"):
+        await _call(_mcp(_app_with_store(tiny_store)), _MINIMAL_SPEC)
 
 
 async def test_extra_field_in_spec_rejected_by_pydantic() -> None:

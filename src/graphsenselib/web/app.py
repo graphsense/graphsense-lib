@@ -17,6 +17,8 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.routing import Route
 from pydantic import ValidationError as PydanticValidationError
 from pydantic_core import ValidationError as PydanticCoreValidationError
 from graphsenselib.config import AppConfig
@@ -39,7 +41,7 @@ from graphsenselib.utils.slack import SlackLogHandler
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
-from graphsenselib.web.config import GSRestConfig, LoggingConfig
+from graphsenselib.web.config import FileStoreConfig, GSRestConfig, LoggingConfig
 from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
 from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
@@ -589,6 +591,12 @@ async def teardown_database(app: FastAPI):
         await app.state.redis_client.aclose()
         logger.info("Closed Redis connection.")
 
+    # Close the file-store Redis client if it exists
+    file_store = getattr(app.state, "file_store", None)
+    if file_store is not None:
+        await file_store.aclose()
+        logger.info("Closed file store Redis connection.")
+
 
 class ConceptsCacheServiceFastAPI(ConceptProtocol):
     """FastAPI-compatible concepts cache service"""
@@ -644,6 +652,31 @@ async def setup_services(app: FastAPI):
 
     # Store redis_client on app.state for cleanup during shutdown
     app.state.redis_client = redis_client
+
+    # Optional Redis-backed file store powering the /download route. Kept
+    # separate from the tag-access Redis client so the two features can be
+    # enabled independently.
+    if config.file_store and config.file_store.enabled:
+        from redis import asyncio as aioredis
+
+        from graphsenselib.web.file_store import RedisFileStore
+
+        fs_cfg = config.file_store
+        fs_redis_url = fs_cfg.redis_url or "redis://localhost"
+        logger.info("Connecting to Redis at %s for the file store.", fs_redis_url)
+        fs_redis = await aioredis.from_url(fs_redis_url)
+        app.state.file_store = RedisFileStore(
+            fs_redis,
+            key_prefix=fs_cfg.key_prefix,
+            ttl_s=fs_cfg.ttl_s,
+            max_bytes=fs_cfg.max_file_bytes,
+            download_path=fs_cfg.download_path,
+            base_url=fs_cfg.base_url,
+        )
+        app.state.file_store_embed_resource = fs_cfg.embed_resource
+    else:
+        app.state.file_store = None
+        app.state.file_store_embed_resource = True
 
     app.state.services = ServiceContainer(
         config=config,
@@ -832,6 +865,50 @@ def _register_routers(app: FastAPI):
     app.include_router(bulk.router, prefix="/{currency}", tags=["bulk"])
 
 
+async def _download_file(request: Request) -> Response:
+    """Serve a file previously stashed in the download file store.
+
+    Registered as a plain Starlette route (see _register_download_route) so it
+    stays out of the OpenAPI schema and bypasses the API-key dependencies: the
+    unguessable token in the URL is the only credential, which is what lets a
+    plain browser click fetch the file.
+    """
+    store = getattr(request.app.state, "file_store", None)
+    if store is None:
+        return Response(status_code=404)
+    stored = await store.get(request.path_params["token"])
+    if stored is None:
+        return Response(status_code=404)
+    return Response(
+        content=stored.data,
+        media_type=stored.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{stored.filename}"'},
+    )
+
+
+def _register_download_route(
+    app: FastAPI, file_store: Optional[FileStoreConfig]
+) -> None:
+    """Register the /download/{token} route when the file store is enabled.
+
+    A plain Starlette Route (not a FastAPI APIRoute): excluded from the
+    OpenAPI spec and not subject to the global API-key dependencies, so the
+    unguessable token in the URL is the only credential needed.
+    """
+    if file_store is None or not file_store.enabled:
+        return
+    download_path = "/" + file_store.download_path.strip("/")
+    app.router.routes.append(
+        Route(
+            f"{download_path}/{{token}}",
+            endpoint=_download_file,
+            methods=["GET"],
+            include_in_schema=False,
+        )
+    )
+    logger.info("File download route mounted at %s/{token}", download_path)
+
+
 def _get_api_dependencies(config: GSRestConfig) -> list:
     return [] if config.disable_auth else [Depends(get_api_key)]
 
@@ -1001,6 +1078,7 @@ def create_app(
 
     _register_exception_handlers(app)
     _register_routers(app)
+    _register_download_route(app, config.file_store)
     _setup_custom_openapi(app)
     _setup_custom_docs_ui(app)
 

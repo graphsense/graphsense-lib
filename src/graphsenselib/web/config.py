@@ -40,6 +40,61 @@ class TagAccessLoggerConfig(BaseSettings):
     )
 
 
+class FileStoreConfig(BaseSettings):
+    """Redis-backed download file store + the /download route.
+
+    A general web feature: any handler can stash a file in the store and hand
+    the user a short-lived, unguessable download link instead of streaming the
+    payload back inline. Backed by Redis so it works across multiple REST
+    workers. When disabled (the default) no route is registered and the
+    feature degrades cleanly.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable the Redis-backed download file store and the "
+        "/download route.",
+    )
+    redis_url: Optional[str] = Field(
+        default=None,
+        description="Redis URL backing the file store. Defaults to "
+        "redis://localhost when enabled.",
+    )
+    download_path: str = Field(
+        default="/download",
+        description="URL path prefix; the route is served at "
+        "{download_path}/{token} and is excluded from the OpenAPI spec.",
+    )
+    ttl_s: int = Field(
+        default=1800,
+        description="Seconds a stored file stays downloadable before Redis evicts it.",
+    )
+    max_file_bytes: int = Field(
+        default=5 * 1024 * 1024,
+        description="Hard upper bound on a single stored file; a larger "
+        "payload is rejected.",
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        description="Explicit public base URL override for download links. "
+        "When unset, the URL is derived per-request from X-Forwarded-Host/"
+        "-Proto, falling back to the Host header.",
+    )
+    key_prefix: str = Field(
+        default="gsrest:file:",
+        description="Redis key namespace for stored files, so the store can "
+        "share a Redis instance safely.",
+    )
+    embed_resource: bool = Field(
+        default=True,
+        description="When a download link is produced, also return the file "
+        "as an embedded MCP resource (an inline attachment good clients "
+        "render). Set false to deliver only the link — smaller tool "
+        "responses. When a link cannot be produced the file is always "
+        "embedded as a fallback, so the tool never returns no file at all.",
+    )
+
+
 class GSRestConfig(BaseSettings):
     model_config = ConfigDict(env_prefix="GSREST_", case_sensitive=False, extra="allow")
 
@@ -175,6 +230,10 @@ class GSRestConfig(BaseSettings):
 
     tag_access_logger: Optional[TagAccessLoggerConfig] = Field(
         default=None, description="Tag access logger configuration"
+    )
+
+    file_store: Optional[FileStoreConfig] = Field(
+        default=None, description="Download file store configuration"
     )
 
     @model_validator(mode="after")

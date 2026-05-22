@@ -77,3 +77,48 @@ else:
         monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__BASE_URL", raising=False)
         monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__API_KEY_ENV", raising=False)
         return GSMCPConfig(curation_file=sample_curation_file)
+
+    from graphsenselib.web.file_store import FileTooLargeError, StoredFile
+
+    class InMemoryFileStore:
+        """In-memory FileStore double for MCP tool tests.
+
+        Satisfies the graphsenselib.web.file_store.FileStore protocol without
+        Redis, and records every put so tests can assert on stored bytes.
+        """
+
+        def __init__(
+            self,
+            *,
+            max_bytes: int = 5 * 1024 * 1024,
+            base_url: str = "https://files.example.test",
+            download_path: str = "/download",
+        ) -> None:
+            self._max_bytes = max_bytes
+            self._base_url = base_url.rstrip("/")
+            self._download_path = "/" + download_path.strip("/")
+            self.files: dict[str, StoredFile] = {}
+            self._counter = 0
+
+        async def put(self, data, *, filename, content_type) -> str:
+            if len(data) > self._max_bytes:
+                raise FileTooLargeError(
+                    f"file is {len(data)} bytes, exceeds {self._max_bytes}"
+                )
+            self._counter += 1
+            token = f"testtoken{self._counter:020d}"
+            self.files[token] = StoredFile(
+                filename=filename, content_type=content_type, data=data
+            )
+            return token
+
+        async def get(self, token):
+            return self.files.get(token)
+
+        def url_for(self, request, token) -> str:  # noqa: ARG002 — fake ignores request
+            return f"{self._base_url}{self._download_path}/{token}"
+
+    @pytest.fixture
+    def make_file_store():
+        """Factory for InMemoryFileStore instances (optionally size-capped)."""
+        return InMemoryFileStore

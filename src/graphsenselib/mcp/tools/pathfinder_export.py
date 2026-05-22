@@ -28,6 +28,7 @@ from typing import Any, Literal, Optional
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools.base import ToolResult
 from fastmcp.utilities.types import File
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,6 +37,7 @@ from graphsenselib.convert.gs_files import (
     apply_hierarchical_layout,
     builder_from_spec,
 )
+from graphsenselib.web.file_store import FileTooLargeError
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +304,7 @@ class _PathfinderBuildSummary(BaseModel):
 
 class _PathfinderBuildResult(BaseModel):
     filename: str
+    download_url: Optional[str] = None
     summary: _PathfinderBuildSummary
 
 
@@ -314,7 +317,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
     """
 
     @mcp.tool(tags={"gs_pathfinder", "gs_export"})
-    def build_pathfinder_file(
+    async def build_pathfinder_file(
         name: str,
         default_network: str,
         spec: PathfinderSpec,
@@ -324,18 +327,23 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
 
         Pass the addresses, transactions, and address↔address relationships
         you discovered. The tool encodes them into a Pathfinder ``.gs``
-        file and returns it to the MCP client as a downloadable attachment;
-        the user opens that file in the Pathfinder UI to verify your
+        file; the user opens that file in the Pathfinder UI to verify your
         findings visually.
 
         YOU DO NOT RECEIVE THE FILE CONTENT. The ``.gs`` payload is binary
-        and is deliberately kept out of your context — it travels in the
-        tool result's resource channel, which you cannot read. Do not try
-        to read, decode, reconstruct, or base64-encode it, and never invent
-        a download link or a ``data:`` URL of your own. Once this tool
-        succeeds, simply tell the user their Pathfinder file (see
-        ``filename``) has been generated and can be downloaded from this
-        tool's result in their client, and surface any ``summary.warnings``.
+        and is deliberately kept out of your context. Do not try to read,
+        decode, reconstruct, or base64-encode it, and never invent a
+        download link or a ``data:`` URL of your own.
+
+        Once the tool succeeds, tell the user where their file is:
+
+        * If the result has a non-null ``download_url``, give that link to
+          the user verbatim — it is a real, time-limited download link.
+        * Otherwise the file is delivered as an attachment embedded in this
+          tool's result; tell the user to open or save it from their
+          client (the file is named ``filename``).
+
+        Either way, surface any ``summary.warnings`` to the user.
 
         IMPORTANT — how transactions render in pathfinder: to make a
         transaction appear you must do TWO things. (1) list it as an
@@ -384,13 +392,16 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
 
         Returns:
             A tool result whose structured content carries
-            ``{filename, summary}`` — this, and only this, is what you
-            can read. Inspect ``summary.warnings`` (it flags common
-            authoring mistakes) and mention any to the user. The .gs
-            bytes travel separately as an embedded MCP resource so the
-            client can offer them as a downloadable attachment; that
-            resource never enters your context, so do not expect to
-            access the file here or relay its contents.
+            ``{filename, download_url, summary}`` — this, and only this,
+            is what you can read. ``download_url`` is either a real,
+            time-limited download link or null (null when the server has
+            no file store configured, or could not address the link); the
+            file is then delivered as an embedded attachment instead.
+            Inspect ``summary.warnings`` (it flags common authoring
+            mistakes) and mention any to the user. The .gs bytes travel
+            as an embedded MCP resource and/or via the download link;
+            they never enter your context, so do not expect to access or
+            relay the file's contents.
         """
         _validate_spec(spec, default_network)
 
@@ -413,18 +424,62 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             raise ToolError(f"invalid spec: {exc}") from exc
 
         filename = _safe_filename(name)
-        # File() builds a BlobResourceContents wrapped in an
-        # EmbeddedResource. We pass the basename without extension and
-        # format="gs" separately because File appends the format as a
-        # dotted suffix when synthesising the URI; passing the name with
-        # the extension would yield "name.gs.gs" in the URI.
-        file_resource = File(
-            data=payload,
-            name=filename.removesuffix(".gs"),
-            format="gs",
-        ).to_resource_content(mime_type="application/octet-stream")
+
+        # Optional download link. When the web app has a file store
+        # configured, stash the payload and hand back an unguessable,
+        # time-limited URL — the channel weak MCP hosts can still use even
+        # when they drop embedded resources. The size cap lives in the
+        # store; exceeding it is a hard error.
+        download_url: Optional[str] = None
+        store = getattr(app.state, "file_store", None)
+        if store is not None:
+            try:
+                token = await store.put(
+                    payload,
+                    filename=filename,
+                    content_type="application/octet-stream",
+                )
+            except FileTooLargeError as exc:
+                raise ToolError(
+                    "the built Pathfinder file is too large to share "
+                    f"({exc}); reduce the number of addresses, transactions "
+                    "and edges in the spec, then retry"
+                ) from exc
+            try:
+                download_url = store.url_for(get_http_request(), token)
+            except Exception:
+                # The file is stored; we just could not derive an absolute
+                # URL (e.g. no HTTP request context). Never let link
+                # building sink the tool — fall through and embed instead.
+                logger.warning(
+                    "build_pathfinder_file: could not build a download URL; "
+                    "delivering the embedded resource only",
+                    exc_info=True,
+                )
+                download_url = None
+
+        # Embedded-resource delivery: included when the server is
+        # configured to (file_store_embed_resource), or whenever there is
+        # no download link to fall back on — so the result never lacks the
+        # file entirely.
+        embed_resource = getattr(app.state, "file_store_embed_resource", True)
+        content: list[Any] = []
+        if embed_resource or download_url is None:
+            # File() builds a BlobResourceContents wrapped in an
+            # EmbeddedResource. We pass the basename without extension and
+            # format="gs" separately because File appends the format as a
+            # dotted suffix when synthesising the URI; passing the name with
+            # the extension would yield "name.gs.gs" in the URI.
+            file_resource = File(
+                data=payload,
+                name=filename.removesuffix(".gs"),
+                format="gs",
+            ).to_resource_content(mime_type="application/octet-stream")
+            content = [file_resource]
+
         result = _PathfinderBuildResult(
             filename=filename,
+            download_url=download_url,
             summary=_PathfinderBuildSummary(
                 n_addresses=len(spec.addresses),
                 n_txs=len(spec.txs),
@@ -435,6 +490,6 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             ),
         )
         return ToolResult(
-            content=[file_resource],
+            content=content,
             structured_content=result.model_dump(),
         )
