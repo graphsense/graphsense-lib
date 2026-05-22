@@ -9,7 +9,11 @@ from graphsenselib.convert.gs_files import (
     decode_gs_bytes,
     structure,
 )
-from graphsenselib.convert.gs_files.encoder import _HIER_X_STEP, _HIER_Y_STEP
+from graphsenselib.convert.gs_files.encoder import (
+    _HIER_X_STEP,
+    _HIER_Y_STEP,
+    _LABEL_LINE_HEIGHT,
+)
 
 
 def _xy_by_id(items: list[dict]) -> dict[str, tuple[float, float]]:
@@ -190,3 +194,42 @@ def test_layout_round_trips_through_encoder() -> None:
     for thing in (*data.addresses, *data.txs):
         assert thing.x == thing.x  # not NaN
         assert thing.y == thing.y
+
+
+def test_multiline_label_widens_row_spacing() -> None:
+    """A node whose label wraps to multiple lines pushes its column
+    neighbours apart so the label text does not overlap them."""
+
+    def _spec(mid_label: str | None) -> dict:
+        mid: dict = {"id": "mid"}
+        if mid_label is not None:
+            mid["label"] = mid_label
+        return {
+            "addresses": [
+                {"id": "root", "starting_point": True},
+                {"id": "top"},
+                mid,
+                {"id": "bot"},
+            ],
+            "txs": [],
+            "agg_edges": [
+                {"a": "root", "b": "top"},
+                {"a": "root", "b": "mid"},
+                {"a": "root", "b": "bot"},
+            ],
+        }
+
+    plain = _xy_by_id(apply_hierarchical_layout(_spec(None))["addresses"])
+    # 19 chars -> wraps to 2 lines at ~12 chars per line.
+    wrapped = _xy_by_id(
+        apply_hierarchical_layout(_spec("victim deposit addr"))["addresses"]
+    )
+
+    # No label: two single-line rows -> a 2 * Y_STEP gap top-to-bottom.
+    assert plain["bot"][1] - plain["top"][1] == 2 * _HIER_Y_STEP
+    # Wrapped middle label adds one line of height, split across both gaps.
+    assert (
+        wrapped["bot"][1] - wrapped["top"][1] == 2 * _HIER_Y_STEP + _LABEL_LINE_HEIGHT
+    )
+    # The middle node stays centred on y = 0 either way.
+    assert plain["mid"][1] == wrapped["mid"][1] == 0.0

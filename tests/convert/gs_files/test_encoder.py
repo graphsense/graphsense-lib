@@ -17,6 +17,10 @@ from graphsenselib.convert.gs_files import (
     lzw_unpack,
     structure,
 )
+from graphsenselib.convert.gs_files.encoder import (
+    _LABEL_LINE_HEIGHT,
+    _label_line_count,
+)
 
 PAYJOIN_FIXTURE = (
     Path(__file__).parent.parent.parent
@@ -152,6 +156,34 @@ def test_builder_explicit_xy_overrides_layout() -> None:
     g = GsBuilder().add_address("only", x=1.5, y=-2.5)
     a = g.to_payload()[3][0]
     assert a[1] == 1.5 and a[2] == -2.5
+
+
+def test_label_line_count() -> None:
+    """Labels wrap at ~12 chars per line; explicit newlines are honoured."""
+    assert _label_line_count(None) == 1
+    assert _label_line_count("") == 1
+    assert _label_line_count("a" * 12) == 1
+    assert _label_line_count("a" * 13) == 2
+    assert _label_line_count("a" * 25) == 3
+    assert _label_line_count("two\nlines") == 2
+
+
+def test_multiline_label_widens_columnar_spacing() -> None:
+    """A node whose label wraps to multiple lines pushes the next node in
+    its column further down; the first node stays pinned at y=0."""
+    plain = GsBuilder().add_address("a").add_address("b").to_payload()[3]
+    assert plain[0][2] == 0.0
+    assert plain[1][2] - plain[0][2] == GsBuilder._ROW
+
+    wide = (
+        GsBuilder()
+        .add_address("a", label="victim deposit addr")  # 19 chars -> 2 lines
+        .add_address("b")
+        .to_payload()[3]
+    )
+    assert wide[0][2] == 0.0  # first node still pinned at y=0
+    # one extra label line, split across the single gap to the neighbour
+    assert wide[1][2] - wide[0][2] == GsBuilder._ROW + _LABEL_LINE_HEIGHT / 2
 
 
 def test_write_creates_file(tmp_path: Path) -> None:
