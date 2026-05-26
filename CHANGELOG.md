@@ -28,6 +28,9 @@ Use one changelog file, but separate entries by track in each release window.
 #### Added
 - **Optional Redis-backed file store and `/download/{token}` route.** New `web/file_store.py` (`RedisFileStore`, a reusable `FileStore` protocol) holds files as TTL'd Redis hashes keyed by a 256-bit CSPRNG token. New `FileStoreConfig` on `GSRestConfig`: `enabled` (default false), `redis_url`, `download_path` (`/download`), `ttl_s` (1800), `max_file_bytes` (5 MiB), `base_url`, `key_prefix`, `embed_resource`. When enabled, the route is a plain Starlette route — excluded from the OpenAPI spec and outside the API-key dependencies, so the token is the only credential; URLs derive from `X-Forwarded-*`/`Host` with a `base_url` override. Multi-worker safe; disabled by default, fully backwards compatible.
 
+#### Fixed
+- **Slack exception notifications now cover MCP tool failures.** The Slack handler is also attached to the `graphsenselib.mcp` logger tree (siblings, not children of `graphsenselib.web.app`, so handler propagation didn't reach them), and a new `ErrorLoggingMiddleware` (`mcp/error_logging.py`) registered on the FastMCP instance calls `logger.exception(...)` on any unhandled tool / resource / prompt exception before re-raising. Expected protocol errors (`ToolError`, `ResourceError`, `PromptError`) pass through silently — they're contract, not incidents.
+
 ## [2.13.4] - 2026-05-20
 
 ### Library (v2.13.4)

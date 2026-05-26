@@ -10,6 +10,7 @@ from starlette.routing import Route
 
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
+from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
 from graphsenselib.mcp.tools import register_custom_tools
 
@@ -44,6 +45,11 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         route_map_fn=route_map_fn,
         mcp_component_fn=component_fn,
     )
+
+    # Surface unhandled tool/resource/prompt exceptions to the graphsenselib.mcp
+    # logger so the same handlers the REST app uses for incident notifications
+    # (Slack/SMTP, set up in web/app.py:setup_logging) fire for MCP failures too.
+    mcp.add_middleware(ErrorLoggingMiddleware())
 
     stack = AsyncExitStack()
     register_custom_tools(mcp, app, curation, config, stack)

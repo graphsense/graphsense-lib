@@ -423,10 +423,21 @@ def setup_logging(
         )
 
     if slack_exception_hook is not None:
+        # MCP code (graphsenselib.mcp.*) is a sibling logger tree, not a child
+        # of graphsenselib.web.app, so handlers attached to app_logger never
+        # reach it via propagation. Attach the same Slack handler to the MCP
+        # tree explicitly — paired with mcp/error_logging.py middleware that
+        # raises logger.exception on unhandled tool failures, this fires Slack
+        # for MCP incidents the way the unhandled-exception handler does for
+        # REST routes.
+        mcp_logger = logging.getLogger("graphsenselib.mcp")
         for h in slack_exception_hook.hooks:
             slack_handler = SlackLogHandler(h, environment=default_environment)
             slack_handler.setLevel("ERROR")
             app_logger.addHandler(slack_handler)
+            mcp_handler = SlackLogHandler(h, environment=default_environment)
+            mcp_handler.setLevel("ERROR")
+            mcp_logger.addHandler(mcp_handler)
 
     smtp = logging_config.smtp
     if not smtp:
