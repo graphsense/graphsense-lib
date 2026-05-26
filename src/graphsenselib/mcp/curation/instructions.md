@@ -47,6 +47,12 @@ starting point.
 
 - Identifier with no context → `search` first to disambiguate
   network and type. `get_statistics` shows what's indexed.
+- "What currencies / networks / blockchains does the platform
+  support?" → `get_statistics`. It lists every supported network in
+  one call. Do NOT iterate `list_supported_tokens` over candidate
+  currencies — that tool is a per-network token catalog and will
+  return empty for chains without tokens (BTC, LTC, …), which does
+  not mean the chain is unsupported.
 - Address question → `lookup_address`.
 - Cluster question → `lookup_cluster`. Rare; only when the user
   explicitly asks about the cluster, not the address (cluster data

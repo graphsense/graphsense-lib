@@ -10,8 +10,14 @@ include:
 
   get_statistics:
     description: >
-      Snapshot of every supported network: latest indexed block, freshness,
-      supported tokens. Use this first when orienting yourself.
+      THE source for "what currencies / blockchains / networks does the
+      platform support". Returns a snapshot of every supported network
+      (e.g. BTC, ETH, LTC, BCH, ZEC, TRX), with its latest indexed block,
+      data freshness, and per-network token catalog. Use this first when
+      orienting yourself or whenever the user asks which currencies or
+      networks are available — DO NOT call `list_supported_tokens` for
+      that, which is a per-network drill-down and requires you to
+      already know the network.
     tags: ["network-level", "overview"]
 
   search:
@@ -60,8 +66,15 @@ include:
 
   list_supported_tokens:
     description: >
-      Catalog of tokens the platform tracks for the given network (e.g. ERC-20
-      tokens on ETH). Needed before querying token-level data.
+      Catalog of tokens (e.g. ERC-20 on ETH, TRC-20 on TRX) tracked WITHIN
+      one specific network — requires a `currency` argument naming that
+      network. Use only when the user is asking about tokens inside a
+      network you already know. NOT the tool to answer "what currencies
+      / networks does the platform support" — for that, call
+      `get_statistics`, which lists every supported network in one call.
+      Networks without an in-network token model (BTC, LTC, BCH, …)
+      return an empty list; that does not mean the network is
+      unsupported — it means it has no tokens to list.
     tags: ["network-level", "tokens"]
 
   get_actor:

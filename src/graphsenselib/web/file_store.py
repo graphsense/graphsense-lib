@@ -14,12 +14,15 @@ cannot send an API key.
 
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from typing import Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 from starlette.requests import Request
+
+logger = logging.getLogger(__name__)
 
 
 class FileTooLargeError(Exception):
@@ -150,6 +153,21 @@ class RedisFileStore:
         scheme = (
             _first_header_value(request.headers.get("x-forwarded-proto"))
             or request.url.scheme
+        )
+        # TEMPORARY DIAGNOSTIC — remove once we've confirmed which input
+        # (X-Forwarded-Proto vs request.url.scheme) is producing the wrong
+        # http:// scheme on api.test.iknaio.com.
+        logger.info(
+            "file_store url_for: xf-proto=%r xf-host=%r host=%r "
+            "request.url.scheme=%r netloc=%r -> %s://%s%s",
+            request.headers.get("x-forwarded-proto"),
+            request.headers.get("x-forwarded-host"),
+            request.headers.get("host"),
+            request.url.scheme,
+            request.url.netloc,
+            scheme,
+            host,
+            path,
         )
         return f"{scheme}://{host}{path}"
 
