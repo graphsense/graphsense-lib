@@ -344,6 +344,39 @@ async def test_warning_when_edge_references_unknown_address() -> None:
     ), warnings
 
 
+async def test_warning_when_tx_has_no_source_or_destination_edge() -> None:
+    """A tx listed in `txs` but never referenced from any `agg_edge.tx_ids`
+    has no source/destination address pairing, so pathfinder renders it
+    as a floating node. On ETH this can also trigger the renderer's
+    off-line drop. Warn the agent so they can attach the tx to an edge."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "floating-tx",
+            "default_network": "eth",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                # txhash1 is wired up; txhash2 is not referenced anywhere.
+                "txs": [{"id": "txhash1"}, {"id": "txhash2"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]},
+                ],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any(
+        "not referenced from any agg_edge.tx_ids" in w
+        and "txhash2" in w
+        # The wired-up tx must not be flagged.
+        and "txhash1" not in w
+        for w in warnings
+    ), warnings
+
+
 async def test_no_warnings_for_well_formed_abstract_graph() -> None:
     """An addresses-only spec (no edges, no txs) is legitimately
     abstract — no warning should fire."""

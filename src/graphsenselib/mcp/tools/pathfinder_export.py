@@ -285,6 +285,24 @@ def _collect_warnings(spec: PathfinderSpec) -> list[str]:
             "typo."
         )
 
+    referenced_tx_ids: set[str] = {
+        tid for e in spec.agg_edges for tid in (e.tx_ids or [])
+    }
+    orphan_txs = [t.id for t in spec.txs if t.id not in referenced_tx_ids]
+    if orphan_txs:
+        shown = orphan_txs[:_WARNING_REF_LIMIT]
+        more = len(orphan_txs) - len(shown)
+        suffix = f" (+{more} more)" if more > 0 else ""
+        warnings.append(
+            f"{len(orphan_txs)} tx(s) are not referenced from any agg_edge.tx_ids: "
+            f"{', '.join(shown)}{suffix}. These render as floating nodes with "
+            "no source or destination address. For proper visualisation, add an "
+            "`agg_edge` with the tx's `from`-address as `a` and `to`-address as "
+            "`b` (at least one source and one destination per tx is strongly "
+            "recommended; on ETH, edges with off-line tx positions can be "
+            "silently dropped by the renderer)."
+        )
+
     return warnings
 
 
@@ -353,6 +371,14 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         transactions are shown for it. If you provide ``agg_edges`` but
         leave ``txs`` empty, the response includes a warning and the
         resulting .gs renders only abstract relationship lines.
+
+        For every tx you include, provide at least one source and one
+        destination address — i.e. add an ``agg_edge`` with the tx's
+        ``from``-address as ``a`` and the tx's ``to``-address as ``b``,
+        with the tx hash in ``tx_ids``. Optional but strongly
+        recommended for proper visualisation: a tx not referenced from
+        any ``agg_edge`` renders as a floating node, and on ETH the
+        renderer can silently drop edges whose tx node is off-line.
 
         Labels — keep ``label`` (on addresses and txs) for case context
         the UI cannot already show. Pathfinder renders attribution tags
