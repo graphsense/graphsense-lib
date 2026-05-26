@@ -22,6 +22,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Fixed
 - **`build_pathfinder_file` docstring no longer claims the model receives the `.gs` bytes.** The bytes travel in the MCP resource channel the model cannot read; the old wording made models on hosts that drop the embedded resource fabricate base64 and `data:` URLs. Docstring only.
+- **Tagpack / actorpack `!include` now resolves against the repo root when called without an explicit `header_dir`.** `TagPack.load_from_file` and `ActorPack.load_from_file` used to register the pyyaml-include constructor with `base_dir=header_dir`; when `header_dir` was `None` (the single-file validation path) `!include header.yaml` resolved against CWD, so `gs tagpack validate <file>` only worked when run from the tagpack repo root. A new helper `find_pack_root` walks up from the file's directory (≤ 3 ancestors) looking for either a directory named `packs` (the tagpack-repo-root convention) or a directory containing `.git`; the first match becomes the include `base_dir`. Explicit `header_dir` arguments still take precedence; when no root is found within the bound, the loader falls back to pyyaml-include's CWD-relative default, so any pre-existing caller that depended on that behaviour keeps working.
 
 ### Web API + Python client (webapi-2.13.5)
 

@@ -9,13 +9,13 @@ import pathlib
 import sys
 from collections import UserDict, defaultdict
 from datetime import date, datetime
-from typing import Tuple
+from typing import Optional, Tuple
 
 from graphsenselib.config import supported_base_currencies
 import giturlparse as gup
 import yaml
 from git import Repo
-from yamlinclude import YamlIncludeConstructor
+import yaml_include
 
 from graphsenselib.tagpack import (
     TagPackFileError,
@@ -216,6 +216,43 @@ def check_for_null_characters(field_name: str, value, context=None) -> None:
                 raise ValidationError(
                     f"Field '{field_name}' item at index {i} contains null characters (\\x00 or \\u0000){context_str}"
                 )
+
+
+# Tagpack convention: header files live at the repo root, not next to the
+# tagpack file that includes them. The walk-up is therefore looking for a
+# repo-root marker, not a header file. It is bounded so it can't escape a
+# project and bind to an unrelated header.yaml higher up the filesystem.
+_PACK_ROOT_MAX_WALK_LEVELS = 3
+
+
+def find_pack_root(pathname: str) -> Optional[str]:
+    """Walk up from ``pathname``'s directory looking for a tagpack repo root.
+
+    A directory qualifies as a root if it:
+    - is named ``packs`` (the conventional tagpack repo root); or
+    - contains a ``.git`` entry (a git repo root).
+
+    Returns the absolute path of the root, or ``None`` if no root marker
+    is found within ``_PACK_ROOT_MAX_WALK_LEVELS`` ascents (i.e. checks
+    the file's own directory plus up to that many ancestors).
+
+    Used by ``TagPack.load_from_file`` / ``ActorPack.load_from_file`` to
+    resolve ``!include header.yaml`` against the repo root, so single-
+    file validation works from any working directory. When this returns
+    ``None``, the loader falls back to the pre-existing CWD-relative
+    behaviour for full backwards compatibility.
+    """
+    current = os.path.dirname(os.path.abspath(pathname))
+    for _ in range(_PACK_ROOT_MAX_WALK_LEVELS + 1):
+        if os.path.basename(current) == "packs":
+            return current
+        if os.path.isdir(os.path.join(current, ".git")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+    return None
 
 
 def collect_tagpack_files(path, search_actorpacks=False, max_mb=200):
@@ -440,8 +477,18 @@ class TagPack(object):
             has_include = b"!include" in f.read(4096)
 
         if use_pyyaml or header_dir is not None or has_include:
-            YamlIncludeConstructor.add_to_loader_class(
-                loader_class=UniqueKeyLoader, base_dir=header_dir
+            # Resolution order:
+            #   1. explicit `header_dir` (batch path via collect_tagpack_files);
+            #   2. the tagpack repo root inferred by walking up from the file;
+            #   3. None — falls through to pyyaml-include's CWD-relative
+            #      default, preserving the historical behaviour exactly.
+            # Steps 2/3 are why `gs tagpack validate <abs/file.yaml>` now
+            # works from any working directory inside a tagpack repo.
+            include_base = header_dir or find_pack_root(pathname)
+            yaml.add_constructor(
+                "!include",
+                yaml_include.Constructor(base_dir=include_base),
+                UniqueKeyLoader,
             )
             with open(pathname, "r") as f:
                 contents = yaml.load(f, UniqueKeyLoader)

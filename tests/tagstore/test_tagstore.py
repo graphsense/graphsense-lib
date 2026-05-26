@@ -2,7 +2,7 @@
 import pytest
 from types import SimpleNamespace
 
-pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
+pytest.importorskip("yaml_include", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack import cli as tagpack_cli
 from graphsenselib.tagpack.tagstore import (
