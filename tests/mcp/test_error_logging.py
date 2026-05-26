@@ -76,6 +76,34 @@ async def test_successful_call_is_not_logged(caplog) -> None:
 
 
 @pytest.mark.asyncio
+async def test_validation_error_passes_through_silently(caplog) -> None:
+    """Pydantic / FastMCP call-argument validation errors are caller-side
+    (the model passed bad input — same flavour as a 4xx, model-fixable).
+    They must not log at ERROR — routing them to Slack would just be
+    noise every time the LLM mistypes a field."""
+    import logging as _logging
+
+    from pydantic import BaseModel, ValidationError
+
+    middleware = ErrorLoggingMiddleware()
+
+    class _Schema(BaseModel):
+        n: int
+
+    async def bad_args(context: MiddlewareContext) -> None:
+        # Triggering a real Pydantic ValidationError so we know the
+        # middleware actually catches the same class FastMCP raises
+        # when call-arg validation fails.
+        _Schema.model_validate({"n": "not-a-number"})
+
+    with caplog.at_level(_logging.ERROR, logger="graphsenselib.mcp"):
+        with pytest.raises(ValidationError):
+            await middleware.on_call_tool(_ctx("build_pathfinder_file"), bad_args)
+
+    assert [r for r in caplog.records if r.levelno >= _logging.ERROR] == []
+
+
+@pytest.mark.asyncio
 async def test_resource_and_prompt_handlers_are_guarded(caplog) -> None:
     """on_read_resource and on_get_prompt share the same _guard, so a tool-only
     test isn't enough — exercise both so a future refactor that drops one of

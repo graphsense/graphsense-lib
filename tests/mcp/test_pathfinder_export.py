@@ -377,6 +377,52 @@ async def test_warning_when_tx_has_no_source_or_destination_edge() -> None:
     ), warnings
 
 
+async def test_layout_inside_spec_is_accepted() -> None:
+    """LLMs frequently nest `layout` inside `spec` because it reads as a
+    graph-shape option. Pydantic previously rejected it with an
+    extra_forbidden error that the model couldn't recover from. The spec
+    now accepts `layout` as a forgiving alias for the top-level argument."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "layout-in-spec",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [],
+                "agg_edges": [],
+                # nested where the model would naturally put it
+                "layout": "hierarchical",
+            },
+        },
+    )
+    summary = _structured(call_result)["summary"]
+    # Hierarchical was the explicit choice — confirm it landed.
+    assert summary["layout"] == "hierarchical"
+
+
+async def test_top_level_layout_wins_over_spec_layout() -> None:
+    """If the caller is explicit at the top level, that always wins
+    over a nested fallback — the nested form is forgiveness, not
+    precedence."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "explicit-tops",
+            "default_network": "btc",
+            "layout": "columnar",
+            "spec": {
+                "addresses": [{"id": "addrA"}],
+                "txs": [],
+                "agg_edges": [],
+                "layout": "hierarchical",
+            },
+        },
+    )
+    summary = _structured(call_result)["summary"]
+    assert summary["layout"] == "columnar"
+
+
 async def test_no_warnings_for_well_formed_abstract_graph() -> None:
     """An addresses-only spec (no edges, no txs) is legitimately
     abstract — no warning should fire."""

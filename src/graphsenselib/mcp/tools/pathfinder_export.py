@@ -164,6 +164,21 @@ class PathfinderSpec(BaseModel):
         default_factory=list,
         description="Aggregated address↔address relationships, optionally tx-mediated.",
     )
+    # Forgiving alias for the top-level `layout` argument. The model
+    # often nests layout inside `spec` because it reads as a graph-shape
+    # option; before this field existed that produced a Pydantic
+    # "extra_forbidden" error that the model couldn't recover from. When
+    # set here AND the top-level argument is the default ("auto"), the
+    # value here wins; otherwise the top-level argument wins.
+    layout: Optional[Literal["auto", "hierarchical", "columnar"]] = Field(
+        default=None,
+        description=(
+            "Layout name. This is also accepted as a top-level argument to "
+            "the tool, and the top-level argument is the preferred place — "
+            "but for backwards compatibility / agent forgiveness, putting "
+            "it here works too."
+        ),
+    )
 
 
 def _validate_currency(currency: str, *, field_name: str = "network") -> None:
@@ -430,6 +445,13 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             relay the file's contents.
         """
         _validate_spec(spec, default_network)
+
+        # If the caller put `layout` inside `spec` instead of at top
+        # level (a common LLM misplacement), respect it as long as the
+        # top-level arg is the default ("auto"). Explicit top-level
+        # always wins.
+        if layout == "auto" and spec.layout is not None:
+            layout = spec.layout
 
         chosen = layout
         if chosen == "auto":

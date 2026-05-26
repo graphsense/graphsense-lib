@@ -17,17 +17,33 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastmcp.exceptions import PromptError, ResourceError, ToolError
+from fastmcp.exceptions import (
+    PromptError,
+    ResourceError,
+    ToolError,
+    ValidationError as FastMCPValidationError,
+)
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from pydantic import ValidationError as PydanticValidationError
 
 logger = logging.getLogger(__name__)
 
-# Expected, user-visible MCP errors — emitted by tools to communicate a bad
-# request or precondition failure. Surfacing these on Slack would be noise.
+# Expected, user-visible MCP errors — emitted by tools or by FastMCP itself
+# to communicate a bad request, malformed payload, or precondition failure.
+# All of these are model-fixable (it can retry with corrected input), so
+# routing them to Slack would just be noise.
+#
+# ValidationError (both flavours) covers the case where FastMCP rejects
+# bad call arguments before the tool body even runs — e.g. an LLM that
+# nests a top-level argument inside `spec`, mistypes a field name, or
+# passes the wrong shape for a nested model. These look like 4xx HTTP
+# errors in spirit: caller-side, not an incident.
 _EXPECTED_MCP_ERRORS: tuple[type[BaseException], ...] = (
     ToolError,
     ResourceError,
     PromptError,
+    FastMCPValidationError,
+    PydanticValidationError,
 )
 
 

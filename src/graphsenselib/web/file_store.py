@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import sys
 from typing import Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -143,33 +144,46 @@ class RedisFileStore:
 
     def url_for(self, request: Request, token: str) -> str:
         path = f"{self._download_path}/{token}"
-        if self._base_url:
-            return f"{self._base_url}{path}"
-        host = (
+        # Compute the header-derived values up front so the diagnostic
+        # below can show what they would have produced, even when
+        # base_url is set and short-circuits the actual return.
+        header_host = (
             _first_header_value(request.headers.get("x-forwarded-host"))
             or request.headers.get("host")
             or request.url.netloc
         )
-        scheme = (
+        header_scheme = (
             _first_header_value(request.headers.get("x-forwarded-proto"))
             or request.url.scheme
         )
-        # TEMPORARY DIAGNOSTIC — remove once we've confirmed which input
-        # (X-Forwarded-Proto vs request.url.scheme) is producing the wrong
-        # http:// scheme on api.test.iknaio.com.
-        logger.info(
-            "file_store url_for: xf-proto=%r xf-host=%r host=%r "
-            "request.url.scheme=%r netloc=%r -> %s://%s%s",
-            request.headers.get("x-forwarded-proto"),
-            request.headers.get("x-forwarded-host"),
-            request.headers.get("host"),
-            request.url.scheme,
-            request.url.netloc,
-            scheme,
-            host,
-            path,
+        final_url = (
+            f"{self._base_url}{path}"
+            if self._base_url
+            else f"{header_scheme}://{header_host}{path}"
         )
-        return f"{scheme}://{host}{path}"
+        # TEMPORARY DIAGNOSTIC — emitted unconditionally (regardless of
+        # base_url) so we can compare what the header-derivation path
+        # WOULD have produced against the URL the caller actually
+        # configured. Two channels keep us safe against logging-config
+        # surprises in the deployed worker:
+        #   - `print(..., file=sys.stderr)` bypasses the Python logging
+        #     tree entirely; gunicorn's `capture_output` redirects worker
+        #     stderr into its own log stream, so this always lands.
+        #   - `logger.warning(...)` is the second data point.
+        diag_msg = (
+            f"file_store url_for: "
+            f"xf-proto={request.headers.get('x-forwarded-proto')!r} "
+            f"xf-host={request.headers.get('x-forwarded-host')!r} "
+            f"host={request.headers.get('host')!r} "
+            f"request.url.scheme={request.url.scheme!r} "
+            f"netloc={request.url.netloc!r} "
+            f"base_url={self._base_url!r} "
+            f"header_derived={header_scheme}://{header_host}{path} "
+            f"-> {final_url}"
+        )
+        print(f"DIAG {diag_msg}", file=sys.stderr, flush=True)  # noqa: T201
+        logger.warning(diag_msg)
+        return final_url
 
     async def aclose(self) -> None:
         await self._redis.aclose()

@@ -66,6 +66,36 @@ def _make_client(app) -> httpx.AsyncClient:
     )
 
 
+def _raise_backend_http_error(response: httpx.Response, path: str) -> None:
+    """Convert a non-2xx upstream response into a `ToolError`, and log at
+    ERROR level when the status is >= 500.
+
+    Splitting the report between channels keeps incident triage clean:
+    the model receives a `ToolError` either way (so its retry / recovery
+    logic doesn't need to know about transport details), and ops sees a
+    log record on `graphsenselib.mcp.tools.consolidated` only for
+    real backend failures. The Slack handler attached to
+    `graphsenselib.mcp` (see `web/app.py:setup_logging`) then picks up
+    the 5xx records but stays quiet for 4xx — those are model-side
+    mistakes (`tx not found`, `bad address`, ...) and would just be
+    noise.
+    """
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        detail = response.text
+    if response.status_code >= 500:
+        logger.error(
+            "graphsense backend returned HTTP %d for %s: %s",
+            response.status_code,
+            path,
+            detail,
+        )
+    raise ToolError(
+        f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
+    )
+
+
 async def _get_json(
     client: httpx.AsyncClient,
     path: str,
@@ -73,13 +103,7 @@ async def _get_json(
 ) -> dict[str, Any]:
     response = await client.get(path, params=params)
     if response.status_code >= 400:
-        try:
-            detail = response.json().get("detail")
-        except Exception:
-            detail = response.text
-        raise ToolError(
-            f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
-        )
+        _raise_backend_http_error(response, path)
     return response.json()
 
 
@@ -98,13 +122,7 @@ async def _get_json_optional(
     if response.status_code == 404:
         return None
     if response.status_code >= 400:
-        try:
-            detail = response.json().get("detail")
-        except Exception:
-            detail = response.text
-        raise ToolError(
-            f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
-        )
+        _raise_backend_http_error(response, path)
     return response.json()
 
 
