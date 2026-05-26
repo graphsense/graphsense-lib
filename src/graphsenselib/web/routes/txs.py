@@ -63,9 +63,9 @@ async def list_token_txs(
     description=(
         "Returns per-tx characteristics, pairwise similarity signals, and a "
         "rollup verdict on whether the supplied transactions are likely "
-        "linked to the same actor. The fingerprinting analysis is UTXO-only; "
-        "account chains (ETH/TRX) are supported in summary-only mode "
-        "(include_analysis=false)."
+        "linked to the same actor. The fingerprinting analysis is BTC-only; "
+        "other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are "
+        "supported in summary-only mode (include_analysis=false)."
     ),
     operation_id="compare_txs",
     response_model=TransactionComparison,
@@ -73,8 +73,8 @@ async def list_token_txs(
     responses={
         400: {
             "description": (
-                "Invalid request (need 2+ tx hashes, or ETH/TRX requested "
-                "with include_analysis=true)."
+                "Invalid request (need 2+ tx hashes, or non-BTC currency "
+                "requested with include_analysis=true)."
             )
         },
         404: {"description": "One of the transactions was not found."},
@@ -118,8 +118,9 @@ async def compare_txs(
     ),
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Compare two or more transactions. UTXO chains support the full
-    fingerprinting analysis; account chains (ETH/TRX) are summary-only."""
+    """Compare two or more transactions. Full fingerprinting analysis is
+    BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains
+    (ETH/TRX) are summary-only."""
     result = await service.compare_txs(
         ctx,
         currency=currency.lower(),

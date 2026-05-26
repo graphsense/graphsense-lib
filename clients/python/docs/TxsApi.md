@@ -19,7 +19,7 @@ Method | HTTP request | Description
 
 Compare multiple transactions
 
-Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is UTXO-only; account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
 
 ### Example
 
@@ -100,7 +100,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (need 2+ tx hashes, or ETH/TRX requested with include_analysis&#x3D;true). |  -  |
+**400** | Invalid request (need 2+ tx hashes, or non-BTC currency requested with include_analysis&#x3D;true). |  -  |
 **404** | One of the transactions was not found. |  -  |
 **422** | Validation Error |  -  |
 

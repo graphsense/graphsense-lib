@@ -155,7 +155,7 @@ class TxsApi:
     ) -> TransactionComparison:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is UTXO-only; account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -245,7 +245,7 @@ class TxsApi:
     ) -> ApiResponse[TransactionComparison]:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is UTXO-only; account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -335,7 +335,7 @@ class TxsApi:
     ) -> RESTResponseType:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is UTXO-only; account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str

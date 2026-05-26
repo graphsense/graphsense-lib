@@ -1080,15 +1080,17 @@ async def compare_txs(
             "/txs/compare needs at least 2 distinct transaction hashes."
         )
 
-    # The fingerprinting analysis (signals, lineage, verdict) and the per-tx
-    # characteristics are UTXO-only. Account chains (ETH/TRX) are supported in
-    # summary-only mode (include_analysis=False), where we just aggregate tx
-    # headers; characteristics stay off for them.
+    # The fingerprinting analysis (signals, lineage, verdict) is BTC-only:
+    # several signals (coinjoin variants, exchange overlap, change heuristics)
+    # are tuned to BTC. Other UTXO chains (BCH/LTC/ZEC) and account chains
+    # (ETH/TRX) are supported in summary-only mode (include_analysis=False),
+    # where we just aggregate tx headers. Characteristics are UTXO-only --
+    # they read inputs/outputs/scripts that account txs don't have.
     account_like = is_eth_like(currency)
-    if account_like and include_analysis:
+    if include_analysis and currency.lower() != "btc":
         raise BadUserInputException(
-            f"/txs/compare fingerprinting analysis is UTXO-only; '{currency}' "
-            "is account-based. Set include_analysis=false for a summary."
+            f"/txs/compare fingerprinting analysis is BTC-only; '{currency}' "
+            "is not supported. Set include_analysis=false for a summary."
         )
     want_characteristics = include_characteristics and not account_like
 

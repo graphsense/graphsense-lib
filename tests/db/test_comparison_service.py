@@ -1974,9 +1974,11 @@ class TestCompareTxsOrchestration:
         # Each distinct hash fetched exactly once (no duplicate DB work).
         assert len(svc.get_tx_calls) == 2
 
-    @pytest.mark.parametrize("currency", ["eth", "trx", "ETH", "TRX"])
-    async def test_eth_like_analysis_rejected(self, currency):
-        # Fingerprinting analysis stays UTXO-only.
+    @pytest.mark.parametrize(
+        "currency", ["eth", "trx", "ETH", "TRX", "bch", "ltc", "zec"]
+    )
+    async def test_non_btc_analysis_rejected(self, currency):
+        # Fingerprinting analysis is BTC-only.
         svc = FakeTxsService(tx_map={})
         with pytest.raises(BadUserInputException):
             await compare_txs(

@@ -179,9 +179,10 @@ def patch_compare(monkeypatch):
                 "include_analysis": include_analysis,
             }
         )
-        if currency in ("eth", "trx"):
+        if include_analysis and currency != "btc":
             raise BadUserInputException(
-                f"/txs/compare is UTXO-only; '{currency}' is account-based."
+                f"/txs/compare fingerprinting analysis is BTC-only; "
+                f"'{currency}' is not supported."
             )
         return _build_api_response(
             include_signals=include_signals,
@@ -240,11 +241,14 @@ def test_compare_txs_too_many_hashes_returns_422(client, patch_compare):
     assert status == 422
 
 
-def test_compare_txs_eth_returns_400(client, patch_compare):
-    path = f"/eth/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
+@pytest.mark.parametrize("currency", ["eth", "trx", "bch", "ltc", "zec"])
+def test_compare_txs_non_btc_analysis_returns_400(
+    client, patch_compare, currency
+):
+    path = f"/{currency}/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
     status, body = raw_request(client, path)
     assert status == 400
-    assert "UTXO-only" in body or "account-based" in body
+    assert "BTC-only" in body
 
 
 def test_compare_txs_minimal_payload_excludes_optionals(client, patch_compare):
