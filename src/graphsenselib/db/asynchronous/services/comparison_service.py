@@ -85,13 +85,11 @@ def _aggregate_inputs_have_witness(inputs: list, in_types: list[str]) -> Optiona
 
 
 def _unique_script_types(addrs_per_io: list[list[str]]) -> list[str]:
-    seen: list[str] = []
-    for addrs in addrs_per_io:
-        for a in addrs:
-            t = script_type_from_address(a)
-            if t not in seen:
-                seen.append(t)
-    return seen
+    return list(
+        dict.fromkeys(
+            script_type_from_address(a) for addrs in addrs_per_io for a in addrs
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -121,16 +119,13 @@ def _consensus_change_addresses(tx: TxUtxo) -> list[str]:
 def _canonical_input_addresses(currency: str, tx: TxUtxo) -> list[str]:
     """Canonicalized input addresses, deduplicated, in order of first
     appearance. Inputs without an address (e.g., coinbase) are skipped."""
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for inp in tx.inputs or []:
-        if inp is None or not inp.address:
-            continue
-        canon = cannonicalize_address(currency, inp.address[0])
-        if canon not in seen:
-            seen.add(canon)
-            ordered.append(canon)
-    return ordered
+    return list(
+        dict.fromkeys(
+            cannonicalize_address(currency, inp.address[0])
+            for inp in tx.inputs or []
+            if inp is not None and inp.address
+        )
+    )
 
 
 def _bip69_outputs_sorted(outputs: list) -> Optional[bool]:
@@ -492,6 +487,10 @@ def signal_change_chain(
     changes = [set(c.change_addresses_canon) for c in chars]
     inputs = [set(c.input_addresses_canon) for c in chars]
 
+    # all(empty), not any(empty) like sibling linkage signals: change addresses
+    # come from a heuristic that legitimately picks nothing for many txs (no
+    # consensus, single-output, coinjoin-shaped). Skipping the signal only when
+    # *no* tx has a candidate avoids over-suppressing for the common case.
     if all(not s for s in changes):
         return ComparisonSignalInternal(
             name="change_chain",
@@ -791,7 +790,7 @@ def aggregate_verdict(
         relation = "unlinked"
         confidence = 95
         notes.append(
-            "Cluster splits these txs and discriminators contradict — "
+            "Cluster splits these txs and discriminators contradict; "
             "strong evidence of separate actors."
         )
 
@@ -802,7 +801,7 @@ def aggregate_verdict(
             relation = "likely_linked"
             confidence = 65
             notes.append(
-                "Cluster overlap is exchange-tagged — exchanges merge "
+                "Cluster overlap is exchange-tagged; exchanges merge "
                 "many users, so this is weak evidence of linkage."
             )
         else:
@@ -813,7 +812,7 @@ def aggregate_verdict(
                 notes.append("All compared txs share at least one input cluster.")
             elif common_ancestor_match:
                 notes.append(
-                    "Compared txs share a one-hop ancestor — direct on-chain linkage."
+                    "Compared txs share a one-hop ancestor: direct on-chain linkage."
                 )
 
     # 3. likely_linked: any linkage gate fires. Includes the spec-gap case
@@ -825,7 +824,7 @@ def aggregate_verdict(
             # More negative weighted evidence past -30 lowers confidence.
             confidence = _clamp_confidence(60 + (mis_w + 30) // 5)
             notes.append(
-                "Cluster overlap despite discriminator mismatch — "
+                "Cluster overlap despite discriminator mismatch: "
                 "possible cluster-merge artifact or wallet upgrade."
             )
             if exchange_overlap:
@@ -906,12 +905,7 @@ async def _fetch_input_address_clusters(
         return {}
 
     addrs = list(unique)
-    if hasattr(db, "get_addresses_light"):
-        info = await db.get_addresses_light(currency, addrs)
-    else:
-        results = await asyncio.gather(*[db.get_address(currency, a) for a in addrs])
-        info = dict(zip(addrs, results))
-
+    info = await db.get_addresses_light(currency, addrs)
     return {a: ((info.get(a) or {}).get("cluster_id", -1) or -1) for a in addrs}
 
 
@@ -943,20 +937,15 @@ async def _fetch_input_address_exchange_flags(
         return {}
 
     addrs = list(unique)
-    summaries = await asyncio.gather(
-        *[
-            tags_service.get_tag_summary_by_address(
-                currency,
-                a,
-                tagstore_groups=tagstore_groups,
-                include_best_cluster_tag=True,
-            )
-            for a in addrs
-        ]
+    summaries = await tags_service.get_tag_summaries_by_subject_ids(
+        currency,
+        addrs,
+        tagstore_groups=tagstore_groups,
+        include_best_cluster_tag=True,
     )
     return {
         a: bool(s is not None and s.broad_category == "exchange")
-        for a, s in zip(addrs, summaries)
+        for a, s in summaries.items()
     }
 
 
@@ -1005,16 +994,7 @@ def _parent_hashes_from_refs(refs_per_tx: list[list[TxRef]]) -> list[list[str]]:
     matches on external ancestors too. Self references are already filtered
     by ``_fetch_parent_refs``.
     """
-    result: list[list[str]] = []
-    for refs in refs_per_tx:
-        seen: set[str] = set()
-        ordered: list[str] = []
-        for ref in refs:
-            if ref.tx_hash not in seen:
-                seen.add(ref.tx_hash)
-                ordered.append(ref.tx_hash)
-        result.append(ordered)
-    return result
+    return [list(dict.fromkeys(ref.tx_hash for ref in refs)) for refs in refs_per_tx]
 
 
 def _lineage_edges_from_refs(
@@ -1054,19 +1034,14 @@ def _utxo_parent_indexes_from_hashes(
     """Project per-tx parent hashes onto compared-tx indexes, in order of
     first appearance, with self-references already filtered out upstream."""
     h_to_idx = {h: i for i, h in enumerate(tx_hashes)}
-    result: list[list[int]] = []
-    for i, parents in enumerate(parent_hashes):
-        seen: set[int] = set()
-        ordered: list[int] = []
-        for h in parents:
-            j = h_to_idx.get(h)
-            if j is None or j == i:
-                continue
-            if j not in seen:
-                seen.add(j)
-                ordered.append(j)
-        result.append(ordered)
-    return result
+    return [
+        list(
+            dict.fromkeys(
+                j for h in parents if (j := h_to_idx.get(h)) is not None and j != i
+            )
+        )
+        for i, parents in enumerate(parent_hashes)
+    ]
 
 
 def _input_cluster_ids_for_tx(
@@ -1075,17 +1050,12 @@ def _input_cluster_ids_for_tx(
     """Distinct cluster ids for the input addresses of a single tx, in
     order of first appearance. Unresolved addresses (cluster_id == -1)
     are dropped."""
-    seen: set[int] = set()
-    ordered: list[int] = []
-    for inp in tx.inputs or []:
-        if inp is None or not inp.address:
-            continue
-        canon = cannonicalize_address(currency, inp.address[0])
-        cid = addr_to_cluster.get(canon, -1)
-        if cid != -1 and cid not in seen:
-            seen.add(cid)
-            ordered.append(cid)
-    return ordered
+    cids = (
+        addr_to_cluster.get(cannonicalize_address(currency, inp.address[0]), -1)
+        for inp in tx.inputs or []
+        if inp is not None and inp.address
+    )
+    return list(dict.fromkeys(cid for cid in cids if cid != -1))
 
 
 # ---------------------------------------------------------------------------
@@ -1104,8 +1074,7 @@ async def compare_txs(
     # Dedup hashes (order-preserving) up front: a repeated hash would otherwise
     # be fetched twice, double-counted in the summary, and trivially compare as
     # linked to itself. Need 2+ distinct txs to have anything to compare.
-    seen: set[str] = set()
-    tx_hashes = [h for h in tx_hashes if not (h in seen or seen.add(h))]
+    tx_hashes = list(dict.fromkeys(tx_hashes))
     if len(tx_hashes) < 2:
         raise BadUserInputException(
             "/txs/compare needs at least 2 distinct transaction hashes."

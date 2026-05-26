@@ -444,6 +444,11 @@ class Txs(BaseModel):
     next_page: Optional[int] = None
 
 
+# Comparison internal models. API counterparts live in web/models/compare.py;
+# the translator at web/translators.py:to_api_transaction_comparison maps
+# between the two. To add a field that should reach the API, update all three.
+
+
 class TxCharacteristicsInternal(BaseModel):
     inputs_script_types: List[str] = Field(default_factory=list)
     outputs_script_types: List[str] = Field(default_factory=list)
