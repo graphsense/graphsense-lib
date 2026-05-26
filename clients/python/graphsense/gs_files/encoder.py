@@ -139,7 +139,8 @@ class GsBuilder:
     comically zoomed out.
     """
 
-    _ROW = 3.0
+    # Pathfinder UI default nodeYOffset (Config/Pathfinder.elm:14-16).
+    _ROW = 2.5
     # Default column when side is unspecified.
     _ADDR_COL_X = -5.0
     _TX_COL_X = 0.0
@@ -384,8 +385,11 @@ def builder_from_spec(
 # ---------------------------------------------------------------------------
 
 
+# Match the Pathfinder UI defaults — Config/Pathfinder.elm nodeXOffset = 4,
+# nodeYOffset = 2.5 — so a fresh .gs file lays out at the same density the
+# UI would use if the user added these nodes manually.
 _HIER_X_STEP = 4.0
-_HIER_Y_STEP = 3.0
+_HIER_Y_STEP = 2.5
 
 
 def _spec_item_to_dict(item: object) -> dict:
@@ -399,18 +403,32 @@ def _spec_item_to_dict(item: object) -> dict:
 def apply_hierarchical_layout(spec: dict) -> dict:
     """Return a copy of ``spec`` with ``x``/``y`` stamped onto every node.
 
-    Layout: multi-source BFS from every node flagged ``starting_point=True``.
-    Each level becomes a column at ``x = level * 4.0``; within a level,
-    nodes are ordered by the position they were first seen in the spec
-    (so listing the most relevant nodes first puts them near the top of
-    the column) and centred on ``y = 0``. Rows are ``3.0`` apart; a level
-    that holds a label wrapping to multiple lines uses a wider uniform
-    spacing so the whole column stays aligned. This makes layout
-    order-sensitive: reordering ``addresses`` / ``txs`` /
-    ``agg_edges`` in the input reorders the rendered graph. Nodes
+    Layout: multi-source BFS from every node flagged ``starting_point=True``
+    builds a spanning tree (each non-start node's parent is whichever
+    node first discovered it). Each level becomes a column at
+    ``x = level * 4.0``. Within a tree, a naive tidy-tree (a.k.a. naive
+    Reingold-Tilford) places leaves on consecutive rows and centres
+    every internal node on the midpoint of its first and last child —
+    so a node's descendants stay clustered in its vertical
+    neighbourhood instead of spreading across the whole column. Sibling
+    order follows spec order, so listing the most relevant nodes first
+    puts them near the top of their column.
+
+    After the tree places addresses, every tx is snapped to the mean
+    ``y`` of the addresses it endpoints (across all agg edges that
+    reference it), so single-edge txs sit on the straight line between
+    their endpoints. A tx referenced by multiple edges (peel that funds
+    two outputs) averages all endpoint addresses — both lines through
+    it bend, but less than the BFS-centred position would.
+
+    Rows are ``_HIER_Y_STEP`` apart, widened to ``_LABEL_LINE_HEIGHT``
+    per extra label line if any node label wraps. The step is global
+    rather than per-column, because subtree alignment requires every
+    row index to land at the same ``y`` regardless of column. Multiple
+    starting trees are stacked vertically with a blank-row gap. Nodes
     unreachable from any starting point are appended to a trailing
-    column so they don't overlap the main graph. If the caller already
-    provided ``x`` or ``y`` on a node, that coordinate is preserved.
+    column so they don't overlap the main graph. Caller-provided ``x``
+    / ``y`` on an item is preserved verbatim.
 
     Intended for agent-built specs where ``starting_point`` marks the
     addresses or txs that anchored the investigation. Without any
@@ -465,7 +483,13 @@ def apply_hierarchical_layout(spec: dict) -> dict:
             adj[a_key].add(b_key)
             adj[b_key].add(a_key)
 
-    # Starting points anchor level 0; multi-source BFS assigns hop levels.
+    # Stable spec-order tiebreaker for siblings of the same parent: a
+    # node listed earlier floats above one listed later.
+    position = {key: i for i, key in enumerate(nodes)}
+
+    # Starting points anchor level 0; multi-source BFS assigns hop levels
+    # AND records the spanning-tree parent that first discovered each
+    # node. The tidy-tree layout below walks this parent->children map.
     starts: list[tuple[str, str]] = []
     for a in addresses:
         if a.get("starting_point"):
@@ -475,48 +499,94 @@ def apply_hierarchical_layout(spec: dict) -> dict:
             starts.append(("tx", t["id"]))
 
     level: dict[tuple[str, str], int] = {s: 0 for s in starts}
+    parent: dict[tuple[str, str], Optional[tuple[str, str]]] = {s: None for s in starts}
     queue: deque[tuple[str, str]] = deque(starts)
     while queue:
         n = queue.popleft()
-        for m in adj[n]:
+        # Sort neighbours by spec position so the spanning tree is
+        # deterministic when several starts could discover the same node.
+        for m in sorted(adj[n], key=lambda k: position[k]):
             if m not in level:
                 level[m] = level[n] + 1
+                parent[m] = n
                 queue.append(m)
 
-    levels: dict[int, list[tuple[str, str]]] = {}
-    for key, lvl in level.items():
-        levels.setdefault(lvl, []).append(key)
+    children: dict[tuple[str, str], list[tuple[str, str]]] = {k: [] for k in level}
+    for child, par in parent.items():
+        if par is not None:
+            children[par].append(child)
+    for child_list in children.values():
+        child_list.sort(key=lambda k: position[k])
 
-    disconnected = [n for n in nodes if n not in level]
-    if disconnected:
-        trailing = (max(levels) + 1) if levels else 0
-        levels[trailing] = disconnected
+    # Naive tidy-tree: leaves get sequential row indices in pre-order,
+    # internal nodes sit at the midpoint of their first and last child.
+    # Iterative post-order traversal (explicit stack) so a deep chain —
+    # e.g. a long peel trace — can't blow Python's recursion limit.
+    row: dict[tuple[str, str], float] = {}
+    next_row = 0
+    for s in starts:
+        stack: list[tuple[tuple[str, str], bool]] = [(s, False)]
+        while stack:
+            node, processed = stack.pop()
+            kids = children.get(node, [])
+            if not kids:
+                row[node] = float(next_row)
+                next_row += 1
+            elif processed:
+                row[node] = (row[kids[0]] + row[kids[-1]]) / 2.0
+            else:
+                stack.append((node, True))
+                for k in reversed(kids):
+                    stack.append((k, False))
+        next_row += 1  # blank row between independent starting trees
 
-    # Stable spec-order tiebreaker within a level: nodes the caller
-    # listed earlier float to the top of their column.
-    position = {key: i for i, key in enumerate(nodes)}
-
-    # Label line counts: a level that holds a multi-line label uses a
-    # wider uniform row step so the whole column stays aligned. Nodes
-    # seen only in edges carry no label.
+    # Labels widen the global row step so the tallest label still clears
+    # its neighbour. Per-column variation would break subtree alignment
+    # (the same row index must land at the same y in every column), so
+    # the widening is applied uniformly to the whole layout.
     label_lines: dict[tuple[str, str], int] = {}
     for a in addresses:
         label_lines[("addr", a["id"])] = _label_line_count(a.get("label"))
     for t in txs:
         label_lines[("tx", t["id"])] = _label_line_count(t.get("label"))
+    max_lines = max(label_lines.values(), default=1)
+    y_step = _HIER_Y_STEP + (max_lines - 1) * _LABEL_LINE_HEIGHT
+
+    # Recentre so the first starting tree's root sits at y=0. Additional
+    # starting trees, and disconnected nodes below, trail downward.
+    shift_row: float = row[starts[0]] if starts else 0.0
 
     coords: dict[tuple[str, str], tuple[float, float]] = {}
-    for lvl, group in levels.items():
-        group_sorted = sorted(group, key=lambda k: position[k])
-        n_in_level = len(group_sorted)
-        # One uniform row step for the whole level, widened to clear the
-        # tallest label in it so the column stays evenly aligned.
-        max_lines = max((label_lines.get(key, 1) for key in group_sorted), default=1)
-        y_step = _HIER_Y_STEP + (max_lines - 1) * _LABEL_LINE_HEIGHT
-        x = float(lvl) * _HIER_X_STEP
-        for i, key in enumerate(group_sorted):
-            y = (i - (n_in_level - 1) / 2.0) * y_step
-            coords[key] = (x, y)
+    for key in level:
+        coords[key] = (
+            float(level[key]) * _HIER_X_STEP,
+            (row[key] - shift_row) * y_step,
+        )
+
+    disconnected = [n for n in nodes if n not in level]
+    if disconnected:
+        trailing_x = float((max(level.values()) + 1) if level else 0) * _HIER_X_STEP
+        for i, key in enumerate(disconnected):
+            coords[key] = (trailing_x, float(i) * y_step)
+
+    # Straighten edges: snap each tx to the mean y of every address it
+    # endpoints, keeping its tree-assigned column x. A tx shared across
+    # edges (peel that funds two outputs) averages all of them — both
+    # lines through it still bend, but much less than the tree-assigned
+    # row would leave them.
+    tx_endpoints: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for e in edges:
+        a_key = ("addr", e["a"])
+        b_key = ("addr", e["b"])
+        for tid in e.get("tx_ids") or []:
+            tx_endpoints.setdefault(("tx", tid), []).extend([a_key, b_key])
+    for tx_key, addr_keys in tx_endpoints.items():
+        if tx_key not in coords:
+            continue
+        ys = [coords[k][1] for k in addr_keys if k in coords]
+        if not ys:
+            continue
+        coords[tx_key] = (coords[tx_key][0], sum(ys) / len(ys))
 
     def _apply(items: list[dict], kind: str) -> list[dict]:
         out: list[dict] = []

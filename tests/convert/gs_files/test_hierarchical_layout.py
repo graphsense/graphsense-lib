@@ -196,6 +196,114 @@ def test_layout_round_trips_through_encoder() -> None:
         assert thing.y == thing.y
 
 
+def test_subtree_stays_clustered_under_parent() -> None:
+    """A node's descendants must end up on the same side as the node
+    itself — the tree layout's defining property over BFS centring.
+
+    Topology::
+
+        root --- A --- B --- B_a (leaf)
+             \\               \\-- B_b (leaf)
+              \\-- C (leaf)
+
+    A and C are root's children, A listed first so A's subtree is the
+    top branch. With BFS-centred placement, B_a and B_b (level 3) would
+    land at the extremes of their column and one of them would cross
+    over to C's side. Tidy tree keeps both with A.
+    """
+    spec = {
+        "addresses": [
+            {"id": "root", "starting_point": True},
+            {"id": "A"},
+            {"id": "B"},
+            {"id": "B_a"},
+            {"id": "B_b"},
+            {"id": "C"},
+        ],
+        "txs": [],
+        "agg_edges": [
+            {"a": "root", "b": "A"},
+            {"a": "A", "b": "B"},
+            {"a": "B", "b": "B_a"},
+            {"a": "B", "b": "B_b"},
+            {"a": "root", "b": "C"},
+        ],
+    }
+    out = apply_hierarchical_layout(spec)
+    addrs = _xy_by_id(out["addresses"])
+
+    # A is listed before C -> A's subtree sits above (negative y).
+    assert addrs["A"][1] < addrs["C"][1]
+    # Every descendant of A (B, B_a, B_b) stays on A's side of C.
+    a_side_negative = addrs["A"][1] < addrs["C"][1]
+    for descendant in ("B", "B_a", "B_b"):
+        if a_side_negative:
+            assert addrs[descendant][1] < addrs["C"][1], (
+                f"{descendant} crossed to C's side of the tree"
+            )
+        else:
+            assert addrs[descendant][1] > addrs["C"][1]
+
+
+def test_tx_y_snaps_to_endpoint_address_midpoint() -> None:
+    """A tx between two addresses should sit on the straight line that
+    joins them, not at its column's BFS-centred position. With
+    asymmetric address y values this is the only way the edge renders
+    without a kink at the tx."""
+    spec = {
+        "addresses": [
+            {"id": "root", "starting_point": True},
+            # Two children of root land at y = -Y_STEP and +Y_STEP.
+            {"id": "top"},
+            {"id": "bot"},
+            # Grandchild of "top" — only child at level 2, would otherwise
+            # be centred at y=0, putting tx_g far off the top→leaf line.
+            {"id": "leaf"},
+        ],
+        "txs": ["tx_top", "tx_bot", "tx_g"],
+        "agg_edges": [
+            {"a": "root", "b": "top", "tx_ids": ["tx_top"]},
+            {"a": "root", "b": "bot", "tx_ids": ["tx_bot"]},
+            {"a": "top", "b": "leaf", "tx_ids": ["tx_g"]},
+        ],
+    }
+    out = apply_hierarchical_layout(spec)
+    addrs = _xy_by_id(out["addresses"])
+    txs = _xy_by_id(out["txs"])
+
+    # tx_top connects root (y=0) and top (y=-Y_STEP) -> midpoint -Y_STEP/2.
+    assert txs["tx_top"][1] == (addrs["root"][1] + addrs["top"][1]) / 2
+    assert txs["tx_bot"][1] == (addrs["root"][1] + addrs["bot"][1]) / 2
+    # tx_g connects top and leaf — both must be on the same straight line.
+    assert txs["tx_g"][1] == (addrs["top"][1] + addrs["leaf"][1]) / 2
+    # The straightened tx still keeps its BFS column x.
+    assert txs["tx_top"][0] == _HIER_X_STEP
+
+
+def test_shared_tx_averages_all_endpoints() -> None:
+    """A tx referenced by multiple agg_edges (peel that funds two outputs)
+    snaps to the mean y of every endpoint address — both edges through
+    it still bend, but less than the BFS-centred position."""
+    spec = {
+        "addresses": [
+            {"id": "root", "starting_point": True},
+            {"id": "top"},
+            {"id": "bot"},
+        ],
+        "txs": ["peel"],
+        "agg_edges": [
+            {"a": "root", "b": "top", "tx_ids": ["peel"]},
+            {"a": "root", "b": "bot", "tx_ids": ["peel"]},
+        ],
+    }
+    out = apply_hierarchical_layout(spec)
+    addrs = _xy_by_id(out["addresses"])
+    txs = _xy_by_id(out["txs"])
+
+    expected = (2 * addrs["root"][1] + addrs["top"][1] + addrs["bot"][1]) / 4
+    assert txs["peel"][1] == expected
+
+
 def test_multiline_label_widens_row_spacing() -> None:
     """A node whose label wraps to multiple lines pushes its column
     neighbours apart so the label text does not overlap them."""
