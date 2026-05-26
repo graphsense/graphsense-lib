@@ -912,41 +912,46 @@ async def _fetch_input_address_clusters(
 async def _fetch_input_address_exchange_flags(
     txs_service: Any,
     currency: str,
-    txs: list[TxUtxo],
+    addr_to_cluster: dict[str, int],
     tagstore_groups: list[str],
 ) -> dict[str, bool]:
-    """Return ``{canonical_address → is_exchange}`` for every input address
-    seen across the compared txs. ``True`` means ``broad_category == "exchange"``.
+    """Return ``{canonical_address → is_exchange}`` for every input address.
+
+    ``True`` iff the address's cluster has at least one cluster-definer tag
+    with ``concept_id="exchange"``. Uses the cheap existence query
+    ``which_clusters_have_concept`` instead of the cluster-size-dependent
+    ``best_cluster_tag`` digest path: the older implementation pulled a full
+    ``TagSummary`` per address only to read ``broad_category``, which on a
+    23M-address exchange cluster cost ~2 s per request.
+
+    Semantic shift vs the previous implementation: the previous check fired
+    only when the **weighted-most-common** concept across an address's tags
+    was ``"exchange"``; this one fires when **any** cluster-definer tag on
+    the cluster carries that concept. More inclusive, which is the right
+    direction for the demoting-qualifier caller
+    (``signal_exchange_input_overlap``): if there's meaningful evidence the
+    cluster is an exchange, the shared-cluster linkage signal should be
+    weakened.
 
     Returns an empty dict when no tags service is wired up; the caller then
-    treats per-tx ``inputs_have_exchange`` as ``None`` (signal becomes
-    inconclusive). Mirrors the pattern in ``_any_input_is_exchange`` in
-    heuristics_service.py.
+    treats per-tx ``inputs_have_exchange`` as ``None`` (signal inconclusive).
     """
     tags_service = getattr(txs_service, "tags_service", None)
-    if tags_service is None:
+    if tags_service is None or not addr_to_cluster:
         return {}
 
-    unique: set[str] = set()
-    for tx in txs:
-        for inp in tx.inputs or []:
-            if inp is None or not inp.address:
-                continue
-            unique.add(cannonicalize_address(currency, inp.address[0]))
-    if not unique:
-        return {}
-
-    addrs = list(unique)
-    summaries = await tags_service.get_tag_summaries_by_subject_ids(
-        currency,
-        addrs,
-        tagstore_groups=tagstore_groups,
-        include_best_cluster_tag=True,
+    # cluster_id == -1 marks "unresolved" (set in _fetch_input_address_clusters);
+    # filter those out so we don't pass garbage ids to the tagstore.
+    unique_cluster_ids = list(
+        {c for c in addr_to_cluster.values() if c is not None and c >= 0}
     )
-    return {
-        a: bool(s is not None and s.broad_category == "exchange")
-        for a, s in summaries.items()
-    }
+    if not unique_cluster_ids:
+        return {a: False for a in addr_to_cluster}
+
+    exchange_clusters = await tags_service.which_clusters_have_concept(
+        currency, unique_cluster_ids, tagstore_groups, "exchange"
+    )
+    return {a: (c in exchange_clusters) for a, c in addr_to_cluster.items()}
 
 
 def _inputs_have_exchange_for_tx(
@@ -1164,12 +1169,18 @@ async def compare_txs(
             verdict=None,
         )
 
-    addr_to_cluster, parent_refs, addr_to_is_exchange = await asyncio.gather(
+    # Exchange-flag lookup now needs the address→cluster map, so it can't run
+    # in parallel with cluster resolution like the old digest-based path did.
+    # Resolve clusters and parent refs in parallel first, then derive the
+    # exchange flags — the new lookup is cheap (existence query) so the lost
+    # parallelism costs ~tens of ms vs the seconds saved by avoiding the
+    # ``best_cluster_tag`` digest path.
+    addr_to_cluster, parent_refs = await asyncio.gather(
         _fetch_input_address_clusters(txs_service.db, currency, fetched),
         _fetch_parent_refs(txs_service, currency, tx_hashes),
-        _fetch_input_address_exchange_flags(
-            txs_service, currency, fetched, tagstore_groups
-        ),
+    )
+    addr_to_is_exchange = await _fetch_input_address_exchange_flags(
+        txs_service, currency, addr_to_cluster, tagstore_groups
     )
     parent_hashes = _parent_hashes_from_refs(parent_refs)
     parent_indexes = _utxo_parent_indexes_from_hashes(parent_hashes, tx_hashes)

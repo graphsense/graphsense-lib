@@ -20,6 +20,7 @@ from graphsenselib.db.asynchronous.services.comparison_service import (
     _classify_locktime,
     _connected_components,
     _consensus_change_addresses,
+    _fetch_input_address_exchange_flags,
     _has_witness_for_type,
     _input_cluster_ids_for_tx,
     _inputs_have_exchange_for_tx,
@@ -889,6 +890,65 @@ class TestInputsHaveExchangeForTx:
         # Map carries other addresses but not this tx's input → no info → None.
         flags = {"1Cc": True}
         assert _inputs_have_exchange_for_tx("btc", tx, flags) is None
+
+
+class TestFetchInputAddressExchangeFlags:
+    """The fast-path replacement for the old best_cluster_tag digest call:
+    a cluster-level existence check via ``which_clusters_have_concept``."""
+
+    def _svc(self, exchange_cluster_ids: set[int]):
+        svc = MagicMock()
+        tags = MagicMock()
+        tags.which_clusters_have_concept = AsyncMock(
+            return_value=set(exchange_cluster_ids)
+        )
+        svc.tags_service = tags
+        return svc, tags
+
+    async def test_returns_empty_when_no_tags_service(self):
+        svc = MagicMock(spec=[])  # no tags_service attribute
+        out = await _fetch_input_address_exchange_flags(svc, "btc", {"1Aa": 5}, [])
+        assert out == {}
+
+    async def test_returns_empty_when_no_addresses(self):
+        svc, _ = self._svc(set())
+        out = await _fetch_input_address_exchange_flags(svc, "btc", {}, [])
+        assert out == {}
+
+    async def test_address_in_exchange_cluster_flagged(self):
+        svc, tags = self._svc({7})
+        out = await _fetch_input_address_exchange_flags(
+            svc, "btc", {"1Aa": 7, "1Bb": 8}, ["public"]
+        )
+        assert out == {"1Aa": True, "1Bb": False}
+        # Should call the cheap path with the deduped cluster set, not the
+        # heavy ``get_tag_summaries_by_subject_ids`` digest path.
+        tags.which_clusters_have_concept.assert_awaited_once()
+        call_args = tags.which_clusters_have_concept.await_args
+        assert call_args.args[0] == "btc"
+        assert sorted(call_args.args[1]) == [7, 8]
+        assert call_args.args[2] == ["public"]
+        assert call_args.args[3] == "exchange"
+
+    async def test_unresolved_clusters_filtered_and_all_false(self):
+        # -1 marks unresolved in _fetch_input_address_clusters; nothing should
+        # be queried and everything reads as False.
+        svc, tags = self._svc(set())
+        out = await _fetch_input_address_exchange_flags(
+            svc, "btc", {"1Aa": -1, "1Bb": -1}, []
+        )
+        assert out == {"1Aa": False, "1Bb": False}
+        tags.which_clusters_have_concept.assert_not_called()
+
+    async def test_cluster_ids_deduped_in_query(self):
+        # Two addresses in the same cluster → one cluster id sent to tagstore.
+        svc, tags = self._svc({42})
+        out = await _fetch_input_address_exchange_flags(
+            svc, "btc", {"1Aa": 42, "1Bb": 42, "1Cc": 99}, []
+        )
+        assert out == {"1Aa": True, "1Bb": True, "1Cc": False}
+        sent_ids = tags.which_clusters_have_concept.await_args.args[1]
+        assert sorted(sent_ids) == [42, 99]
 
 
 class TestSignalExchangeInputOverlap:

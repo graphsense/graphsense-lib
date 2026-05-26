@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, Callable
+from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, Union, Callable
 
 from graphsenselib.config.config import SlackTopic
 from graphsenselib.errors import FeatureNotAvailableException, NotFoundException
@@ -85,6 +85,13 @@ class TagstoreProtocol(Protocol):
     async def get_actors_for_clusters(
         self, cluster_ids: List[int], network: str, groups: List[str]
     ) -> Dict[int, List[Any]]: ...
+    async def get_clusters_with_concept(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        concept_id: str,
+    ) -> Set[int]: ...
 
 
 class ConceptProtocol(Protocol):
@@ -519,6 +526,27 @@ class TagsService:
             self.logger.debug("get_tag_summaries_by_subject_ids %s", timing)
 
         return {sid: summaries_by_canon[canon] for sid, canon in canon_by_input.items()}
+
+    async def which_clusters_have_concept(
+        self,
+        network: str,
+        cluster_ids: List[int],
+        tagstore_groups: List[str],
+        concept_id: str,
+    ) -> Set[int]:
+        """Return the subset of ``cluster_ids`` that have at least one
+        cluster-definer tag carrying ``concept_id`` (e.g. ``"exchange"``).
+
+        Cheap existence query: one Postgres round-trip, cost independent of
+        per-cluster tag count. Use this when a caller only needs a boolean
+        category check; ``get_tag_summaries_by_subject_ids`` is the heavier
+        path that also ranks and digests the tags.
+        """
+        if not cluster_ids:
+            return set()
+        return await self.tagstore.get_clusters_with_concept(
+            cluster_ids, network.upper(), tagstore_groups, concept_id
+        )
 
     async def _get_best_cluster_tag_raw(
         self,
