@@ -323,3 +323,57 @@ async def test_rest_adapter_tx_addresses_returns_none_on_404() -> None:
     ) as client:
         backend = RestBackend(client)
         assert await backend.tx_addresses("btc", "missing") is None
+
+
+async def test_rest_adapter_round_trips_through_fastapi_route() -> None:
+    """End-to-end against an actual FastAPI route that mimics the real
+    graphsense contract: response_model_exclude_none=True, inputs /
+    outputs declared Optional, populated only when include_io is
+    truthy. This is the bug that produced `tx involves {}` warnings
+    on every BTC build in the wild — the adapter was hitting the
+    route without include_io, the route returned a body with no
+    inputs/outputs, and downstream the address set was empty.
+
+    By driving the adapter through a real FastAPI app via ASGI
+    transport, we verify both halves of the fix together: the params
+    arrive on the wire AND FastAPI's Pydantic bool validator
+    accepts the lowercase `true` httpx writes."""
+    from fastapi import FastAPI, Query
+    from pydantic import BaseModel
+
+    class TxValue(BaseModel):
+        address: list[str]
+        value: int
+
+    class TxUtxo(BaseModel):
+        tx_type: str = "utxo"
+        tx_hash: str
+        inputs: Optional[list[TxValue]] = None
+        outputs: Optional[list[TxValue]] = None
+
+    app = FastAPI()
+
+    @app.get(
+        "/btc/txs/{tx_hash}",
+        response_model=TxUtxo,
+        response_model_exclude_none=True,
+    )
+    async def get_tx(
+        tx_hash: str,
+        include_io: Optional[bool] = Query(None),
+        include_nonstandard_io: Optional[bool] = Query(None),
+    ) -> TxUtxo:
+        if include_io:
+            return TxUtxo(
+                tx_hash=tx_hash,
+                inputs=[TxValue(address=["addrA"], value=100)],
+                outputs=[TxValue(address=["addrB"], value=90)],
+            )
+        return TxUtxo(tx_hash=tx_hash)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        backend = RestBackend(client)
+        addrs = await backend.tx_addresses("btc", "tx1")
+    assert addrs == frozenset({"addrA", "addrB"})

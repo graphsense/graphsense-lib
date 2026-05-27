@@ -226,7 +226,10 @@ class RestBackend:
         # {}" mediation warning. Account-model bodies carry
         # from_address / to_address unconditionally, so the flags
         # are no-ops there.
-        params = {"include_io": "true", "include_nonstandard_io": "true"}
+        # Python booleans — httpx serializes them as lowercase
+        # `?include_io=true`. Matches what `lookup_tx_details` passes
+        # in `mcp/tools/consolidated.py`.
+        params = {"include_io": True, "include_nonstandard_io": True}
         response = await self._client.get(path, params=params)
         if response.status_code == 404:
             return None
