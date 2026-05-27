@@ -262,6 +262,35 @@ async def test_rest_adapter_tx_addresses_utxo_inputs_outputs() -> None:
         assert addrs == frozenset({"addrA", "addrB", "addrC"})
 
 
+async def test_rest_adapter_tx_addresses_requests_include_io() -> None:
+    """Load-bearing: the UTXO inputs/outputs are excluded from the
+    response body when `include_io` is not requested. Without it the
+    adapter returns an empty set, producing the misleading "tx
+    involves {}" mediation warning. Lock the query params in."""
+    seen_params: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_params.append(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json={
+                "tx_hash": "tx1",
+                "inputs": [{"address": ["addrA"], "value": 100, "index": 0}],
+                "outputs": [{"address": ["addrB"], "value": 90, "index": 0}],
+            },
+        )
+
+    async with httpx.AsyncClient(
+        transport=_transport_for(handler), base_url="http://test"
+    ) as client:
+        backend = RestBackend(client)
+        await backend.tx_addresses("btc", "tx1")
+
+    assert seen_params == [{"include_io": "true", "include_nonstandard_io": "true"}], (
+        seen_params
+    )
+
+
 async def test_rest_adapter_tx_addresses_account_from_to() -> None:
     """Account-model body shape: flat from_address / to_address."""
 

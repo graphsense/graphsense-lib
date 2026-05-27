@@ -54,7 +54,13 @@ logger = logging.getLogger(__name__)
 # so a malformed spec is rejected at the boundary instead of producing
 # an unopenable .gs.
 _CURRENCY_PATTERN = re.compile(r"^[a-z0-9]{2,10}$")
-_ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{1,150}$")
+# Underscore is included so account-model sub-payment identifiers
+# (e.g. `<hash>_I948` for internal traces, `<hash>_T3` for token
+# transfers) pass validation. Both `_` and bare alphanumerics are
+# URL-safe (RFC 3986 unreserved), and the REST endpoint resolves
+# identifier strings natively — see the
+# `project_tx_endpoint_identifier_resolution` memory.
+_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]{1,150}$")
 # Filenames are derived from the user-supplied graph name; keep the
 # derived basename safe for any OS the client might save to.
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -111,17 +117,24 @@ class _TxSpec(BaseModel):
 
     id: str = Field(
         description=(
-            "Transaction IDENTIFIER as it appears in the tx payload returned "
-            "by the graphsense tools (e.g. `lookup_tx_details`, "
-            "`list_txs_for`, `list_tx_flows`). On account-model chains "
-            "(ETH, TRX) a single transaction hash can carry many "
-            "sub-payments (the native transfer plus token transfers); the "
-            "response carries an `identifier` field that uniquely names "
-            "each sub-payment — copy it verbatim and use IT here, not the "
-            "bare `tx_hash`, otherwise pathfinder cannot tell which "
-            "sub-payment of the hash you mean. On UTXO chains (BTC, BCH, "
-            "LTC, ZEC) the response has only `tx_hash` and no separate "
-            "`identifier`; in that case pass `tx_hash`."
+            "Transaction identifier. On UTXO chains (BTC, BCH, LTC, ZEC) "
+            "use the bare `tx_hash` — there's nothing else to pass. On "
+            "account-model chains (ETH, TRX) a single on-chain transaction "
+            "can carry both the native transfer and one or more token / "
+            "internal sub-payments; the response carries an `identifier` "
+            "field for each. Two cases:\n"
+            "\n"
+            "  * For the native/base transfer, pass the bare `tx_hash` "
+            "    (simplest and what the validator expects most often).\n"
+            "  * To point at a SPECIFIC sub-payment (an internal trace or "
+            "    a token transfer), pass the corresponding `identifier` "
+            "    verbatim — it looks like `<hash>_I<n>` (internal) or "
+            "    `<hash>_T<n>` (token).\n"
+            "\n"
+            "Allowed characters: alphanumeric and underscore, 1-150 chars. "
+            "Anything else is a format error at the input boundary, NOT a "
+            "verify finding — do not toggle `verify` to work around a "
+            "format complaint."
         )
     )
     network: Optional[str] = Field(default=None)
@@ -210,7 +223,15 @@ def _validate_currency(currency: str, *, field_name: str = "network") -> None:
 
 def _validate_id(name: str, value: str) -> None:
     if not _ID_PATTERN.match(value):
-        raise ToolError(f"Invalid {name}: {value!r}")
+        # Make it clear this is a FORMAT complaint at input validation,
+        # not a verify finding about whether the value exists on chain
+        # — agents have re-tried with verify=false because the wording
+        # implied "verify rejected it".
+        raise ToolError(
+            f"{name} {value!r} has an invalid format (allowed: "
+            "alphanumeric and underscore, 1-150 chars). This is a "
+            "format check at the input boundary, NOT a verify finding."
+        )
 
 
 def _validate_spec(spec: PathfinderSpec, default_network: str) -> None:

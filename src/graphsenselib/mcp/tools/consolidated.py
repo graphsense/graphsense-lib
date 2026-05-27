@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 # the intended endpoint — even though FastAPI routing would likely reject
 # it downstream. These patterns are deliberately conservative.
 _CURRENCY_PATTERN = re.compile(r"^[a-z0-9]{2,10}$")
-_ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{1,150}$")
+# Underscore is included so account-model sub-payment identifiers
+# (e.g. `<hash>_I948` for internal traces, `<hash>_T3` for token
+# transfers) pass validation when callers pass them to lookup_tx_details
+# etc. Both `_` and alphanumerics are URL-safe (RFC 3986 unreserved),
+# and the REST endpoint resolves identifier strings in the tx path
+# segment directly.
+_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]{1,150}$")
 
 
 def _validate_currency(currency: str) -> None:
@@ -27,7 +33,12 @@ def _validate_currency(currency: str) -> None:
 def _validate_id(name: str, value: str) -> None:
     """Guard addresses, tx hashes, and opaque ids passed into URL segments."""
     if not _ID_PATTERN.match(value):
-        raise ToolError(f"Invalid {name}: {value!r}")
+        raise ToolError(
+            f"{name} {value!r} has an invalid format (allowed: "
+            "alphanumeric and underscore, 1-150 chars). This is a "
+            "format check at the input boundary, not a check against "
+            "whether the value exists on chain."
+        )
 
 
 def _make_client(app) -> httpx.AsyncClient:

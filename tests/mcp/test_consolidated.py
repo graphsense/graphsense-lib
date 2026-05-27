@@ -404,7 +404,7 @@ async def test_invalid_address_rejected(stub_app_with_cluster):
 
     mcp = _tool(stub_app_with_cluster, register_lookup_address)
     async with Client(mcp) as c:
-        with pytest.raises(ToolError, match="Invalid address"):
+        with pytest.raises(ToolError, match="address.*invalid format"):
             await c.call_tool(
                 "lookup_address",
                 {"currency": "btc", "address": "abc/../etc"},
@@ -1056,7 +1056,7 @@ async def test_list_txs_for_validates_neighbor(stub_app_with_txs_and_links):
 
     mcp = _tool(stub_app_with_txs_and_links, register_list_txs_for)
     async with Client(mcp) as c:
-        with pytest.raises(ToolError, match="Invalid neighbor"):
+        with pytest.raises(ToolError, match="neighbor.*invalid format"):
             await c.call_tool(
                 "list_txs_for",
                 {"currency": "btc", "address": "abc", "neighbor": "bad/../path"},

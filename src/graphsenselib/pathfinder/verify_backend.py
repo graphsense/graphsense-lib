@@ -217,7 +217,17 @@ class RestBackend:
 
     async def tx_addresses(self, network: str, tx_id: str) -> Optional[frozenset[str]]:
         path = f"/{network}/txs/{tx_id}"
-        response = await self._client.get(path)
+        # `include_io` / `include_nonstandard_io` are load-bearing for
+        # UTXO chains: the response model has `inputs` / `outputs`
+        # declared `Optional[...] = None` and they are EXCLUDED from
+        # the response body when not requested. Without these flags,
+        # _addresses_from_tx_body returns an empty set for every UTXO
+        # tx, which downstream produces the misleading "tx involves
+        # {}" mediation warning. Account-model bodies carry
+        # from_address / to_address unconditionally, so the flags
+        # are no-ops there.
+        params = {"include_io": "true", "include_nonstandard_io": "true"}
+        response = await self._client.get(path, params=params)
         if response.status_code == 404:
             return None
         if response.status_code >= 400:

@@ -238,6 +238,46 @@ async def test_invalid_address_id_rejected() -> None:
         )
 
 
+async def test_underscored_tx_identifier_accepted() -> None:
+    """Account-model sub-payment identifiers (`<hash>_I948`, `<hash>_T3`)
+    contain an underscore and must validate. Previously rejected as
+    "Invalid tx hash" — agents misread that as a verify failure and
+    retried with verify=false, which didn't help."""
+    await _call(
+        _mcp(),
+        {
+            "name": "subpayment",
+            "default_network": "eth",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}, {"id": "addrB"}],
+                "txs": [{"id": "0xabc_I948"}, {"id": "0xdef_T3"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["0xabc_I948", "0xdef_T3"]},
+                ],
+            },
+        },
+    )
+
+
+async def test_format_error_message_calls_out_format_vs_verify() -> None:
+    """When the id pattern fails, the error message must make clear
+    it's a FORMAT check at the boundary, not a verify finding — that
+    confusion caused a wasted retry in real usage."""
+    with pytest.raises(ToolError, match="format"):
+        await _call(
+            _mcp(),
+            {
+                "name": "bad",
+                "default_network": "btc",
+                "spec": {
+                    "addresses": [{"id": "addr/with/slashes"}],
+                    "txs": [],
+                    "agg_edges": [],
+                },
+            },
+        )
+
+
 async def test_invalid_currency_rejected() -> None:
     with pytest.raises(ToolError, match="default_network"):
         await _call(
