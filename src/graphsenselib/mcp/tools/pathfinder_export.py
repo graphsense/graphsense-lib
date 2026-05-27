@@ -542,12 +542,21 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         # Always include a TextContent block so MCP hosts that only
         # render `content` (and ignore `structured_content`) — Mistral Le
         # Chat is the known offender — show the user something usable.
+        warnings = _collect_warnings(spec)
         if download_url is not None:
             text = f"Pathfinder file `{filename}` is ready. Download: {download_url}"
         else:
             text = (
                 f"Pathfinder file `{filename}` is ready (embedded in this "
                 f"response; no download link configured)."
+            )
+        # Fold warnings into the text block too: hosts that drop
+        # `structured_content` (Mistral Le Chat) otherwise never see them,
+        # and silently shipping a broken .gs is the exact failure mode
+        # these warnings exist to prevent.
+        if warnings:
+            text += "\n\nWarnings — fix the spec and rebuild:\n" + "\n".join(
+                f"- {w}" for w in warnings
             )
         content.append(TextContent(type="text", text=text))
 
@@ -560,7 +569,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 n_agg_edges=len(spec.agg_edges),
                 layout=chosen,
                 byte_size=len(payload),
-                warnings=_collect_warnings(spec),
+                warnings=warnings,
             ),
         )
         return ToolResult(

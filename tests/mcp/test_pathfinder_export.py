@@ -392,6 +392,55 @@ async def test_warning_when_tx_has_no_source_or_destination_edge() -> None:
     ), warnings
 
 
+async def test_warnings_are_surfaced_in_text_content() -> None:
+    """Hosts that ignore `structured_content` (Mistral Le Chat) would
+    otherwise silently ship a broken .gs. The TextContent block must
+    repeat the warnings so the agent has a chance of seeing them."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "floating-tx-text",
+            "default_network": "eth",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                "txs": [{"id": "txhash1"}, {"id": "txhash2"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]},
+                ],
+            },
+        },
+    )
+    text = _text(call_result).text
+    assert "Warnings" in text
+    assert "txhash2" in text
+
+
+async def test_no_warning_preamble_when_spec_is_clean() -> None:
+    """The warnings preamble must not appear when there are none, so
+    well-formed builds stay terse."""
+    text = _text(
+        await _call(
+            _mcp(),
+            {
+                "name": "clean",
+                "default_network": "btc",
+                "spec": {
+                    "addresses": [
+                        {"id": "addrA", "starting_point": True},
+                        {"id": "addrB"},
+                    ],
+                    "txs": [{"id": "txhash1"}],
+                    "agg_edges": [{"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]}],
+                },
+            },
+        )
+    ).text
+    assert "Warnings" not in text
+
+
 async def test_layout_inside_spec_is_accepted() -> None:
     """LLMs frequently nest `layout` inside `spec` because it reads as a
     graph-shape option. Pydantic previously rejected it with an
