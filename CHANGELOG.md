@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.13.6] - Unreleased
+
+### Library (v2.13.6)
+
+#### Added
+- **Trivial cross-chain address detection for BTC↔BCH and TRX↔ETH, independent of the pubkey table.** A new `_handle_trivial_cross_chain_overlap` pass in `AddressesService.get_cross_chain_pubkey_related_addresses` runs alongside the existing pubkey-table flow and surfaces cross-chain hits even when `pubkey_by_address` has no entry for the queried address. For BTC↔BCH it normalizes the input via `bch_address_to_legacy` (handles cashaddr and legacy passthrough), skips bech32 (`bc1…` / `ltc1…`) since segwit addresses are not script-equivalent across the fork, and does a direct `get_address` on the other chain — emitted as `type="trivial_fork"`. For TRX↔ETH it converts in both directions via `tron_address_to_evm_string` / `evm_to_tron_address_string` (the existing TRX-only EVM retry on the pubkey lookup is unchanged; this new pass also covers ETH→TRX and the case where neither form is in the pubkey table) — emitted as `type="trivial_evm"`. Results are deduped against existing pubkey-backed entries so pubkey-derived rows win when both fire. The wire format is unchanged (`translators.py` still emits `relation_type="pubkey"`); the new `type` values are internal-only and exist for log/debug provenance.
+
 ## [2.13.5] - 2026-05-27
 
 ### Library (v2.13.5)
