@@ -25,6 +25,7 @@ import re
 from contextlib import AsyncExitStack
 from typing import Any, Literal, Optional
 
+import httpx
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -37,6 +38,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from graphsenselib.convert.gs_files import (
     apply_hierarchical_layout,
     builder_from_spec,
+)
+from graphsenselib.mcp.tools.consolidated import _make_client
+from graphsenselib.pathfinder import (
+    RestBackend,
+    verify_against_backend,
+    verify_structural,
 )
 from graphsenselib.web.file_store import FileTooLargeError
 
@@ -245,95 +252,9 @@ def _should_use_hierarchical(spec: PathfinderSpec) -> bool:
     )
 
 
-# Cap how many unknown-ref ids we list in a single warning so a
-# malformed spec can't bloat the response. The truncation suffix tells
-# the agent how many more there were.
-_WARNING_REF_LIMIT = 10
-
-
-def _collect_warnings(spec: PathfinderSpec) -> list[str]:
-    """Surface common spec shapes that produce a syntactically valid .gs
-    file but visually wrong / empty pathfinder output.
-
-    These are warnings, not errors: sometimes the agent really does want
-    an abstract relationship graph with no txs. But silently shipping
-    a "no transactions appear" file (the historical failure mode) is
-    worse than telling the agent up front so it can fix and retry.
-    """
-    warnings: list[str] = []
-    address_ids = {a.id for a in spec.addresses}
-    tx_ids = {t.id for t in spec.txs}
-
-    if spec.agg_edges and not spec.txs:
-        warnings.append(
-            f"spec has {len(spec.agg_edges)} agg_edge(s) but no txs were "
-            "provided; pathfinder will show abstract address-to-address "
-            "links only (no transactions render). Populate `txs` and "
-            "reference the hashes from `agg_edges.tx_ids` to make "
-            "transactions appear."
-        )
-
-    edges_without_tx_ids = sum(1 for e in spec.agg_edges if not e.tx_ids)
-    if edges_without_tx_ids and spec.txs:
-        warnings.append(
-            f"{edges_without_tx_ids} of {len(spec.agg_edges)} agg_edge(s) "
-            "have no tx_ids; those edges will render as abstract a↔b lines "
-            "and the txs you provided will not be tied to them."
-        )
-
-    unknown_tx: list[str] = []
-    seen_tx: set[str] = set()
-    for e in spec.agg_edges:
-        for tid in e.tx_ids or []:
-            if tid not in tx_ids and tid not in seen_tx:
-                unknown_tx.append(tid)
-                seen_tx.add(tid)
-    if unknown_tx:
-        shown = unknown_tx[:_WARNING_REF_LIMIT]
-        more = len(unknown_tx) - len(shown)
-        suffix = f" (+{more} more)" if more > 0 else ""
-        warnings.append(
-            "agg_edge.tx_ids references tx hash(es) not in `txs`: "
-            f"{', '.join(shown)}{suffix}. Add them to `txs` or remove the "
-            "references."
-        )
-
-    unknown_addr: list[str] = []
-    seen_addr: set[str] = set()
-    for e in spec.agg_edges:
-        for endpoint in (e.a, e.b):
-            if endpoint not in address_ids and endpoint not in seen_addr:
-                unknown_addr.append(endpoint)
-                seen_addr.add(endpoint)
-    if unknown_addr:
-        shown = unknown_addr[:_WARNING_REF_LIMIT]
-        more = len(unknown_addr) - len(shown)
-        suffix = f" (+{more} more)" if more > 0 else ""
-        warnings.append(
-            "agg_edge endpoints reference address(es) not in `addresses`: "
-            f"{', '.join(shown)}{suffix}. Add them to `addresses` or fix the "
-            "typo."
-        )
-
-    referenced_tx_ids: set[str] = {
-        tid for e in spec.agg_edges for tid in (e.tx_ids or [])
-    }
-    orphan_txs = [t.id for t in spec.txs if t.id not in referenced_tx_ids]
-    if orphan_txs:
-        shown = orphan_txs[:_WARNING_REF_LIMIT]
-        more = len(orphan_txs) - len(shown)
-        suffix = f" (+{more} more)" if more > 0 else ""
-        warnings.append(
-            f"{len(orphan_txs)} tx(s) are not referenced from any agg_edge.tx_ids: "
-            f"{', '.join(shown)}{suffix}. These render as floating nodes with "
-            "no source or destination address. For proper visualisation, add an "
-            "`agg_edge` with the tx's `from`-address as `a` and `to`-address as "
-            "`b` (at least one source and one destination per tx is strongly "
-            "recommended; on ETH, edges with off-line tx positions can be "
-            "silently dropped by the renderer)."
-        )
-
-    return warnings
+# The structural and backend-aware verifiers live in
+# `graphsenselib.pathfinder`. This module only adapts the MCP pydantic
+# spec to the dict shape they expect.
 
 
 class _PathfinderBuildSummary(BaseModel):
@@ -356,12 +277,42 @@ class _PathfinderBuildResult(BaseModel):
     summary: _PathfinderBuildSummary
 
 
+async def _run_verifier(
+    spec_dict: dict[str, Any],
+    default_network: str,
+    app: FastAPI,
+) -> list[str]:
+    """Backend-aware checks for the build tool. Wraps
+    :func:`verify_against_backend` with the existing MCP httpx client
+    lifecycle and downgrades transport errors to a single "verifier
+    unavailable" warning — the file is structurally valid, so a backend
+    hiccup shouldn't sink the call."""
+    client = _make_client(app)
+    try:
+        async with client:
+            backend = RestBackend(client)
+            return await verify_against_backend(
+                spec_dict, default_network=default_network, backend=backend
+            )
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        logger.warning(
+            "build_pathfinder_file: backend verifier failed (%s); "
+            "shipping file without backend-aware warnings",
+            exc,
+        )
+        return [
+            "backend verifier unavailable; backend-aware checks were "
+            "skipped — structural checks still ran."
+        ]
+
+
 def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa: ARG001
     """Register the build_pathfinder_file tool on the given MCP instance.
 
-    Matches the (mcp, app, stack) signature of other consolidated tools
-    even though this one needs neither the FastAPI app (no REST fan-out)
-    nor the exit stack (no httpx client lifecycle).
+    Matches the (mcp, app, stack) signature of other consolidated tools.
+    The exit stack is unused — the build path holds no long-lived
+    resources — but ``app`` is used when ``verify=True`` to mint the
+    httpx client the verifier needs (see ``_run_verifier``).
     """
 
     @mcp.tool(tags={"gs_pathfinder", "gs_export"})
@@ -370,6 +321,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         default_network: str,
         spec: PathfinderSpec,
         layout: Literal["auto", "hierarchical", "columnar"] = "auto",
+        verify: bool = True,
     ) -> ToolResult:
         """Build a Pathfinder .gs save file from an investigation graph.
 
@@ -445,6 +397,17 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 starting_point is set, else columnar. "hierarchical" forces
                 BFS-by-hop layout; "columnar" forces the GsBuilder default
                 (addresses, txs, side-aware columns).
+            verify: When True (the default), additionally cross-check
+                the spec against the backend: every address and tx hash
+                is looked up, and each agg_edge.tx_ids reference is
+                verified to actually mediate the claimed a↔b
+                relationship on chain. Findings are appended to
+                ``summary.warnings`` and to the text content block.
+                Adds N+M backend calls (capped by an internal
+                concurrency limit). Pass False to skip for fast
+                iteration while drafting; backend hiccups during verify
+                are downgraded to a soft warning so a flaky backend
+                cannot sink a structurally valid file.
 
         Returns:
             A tool result whose structured content carries
@@ -542,7 +505,9 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         # Always include a TextContent block so MCP hosts that only
         # render `content` (and ignore `structured_content`) — Mistral Le
         # Chat is the known offender — show the user something usable.
-        warnings = _collect_warnings(spec)
+        warnings = verify_structural(spec_dict)
+        if verify:
+            warnings.extend(await _run_verifier(spec_dict, default_network, app))
         if download_url is not None:
             text = f"Pathfinder file `{filename}` is ready. Download: {download_url}"
         else:

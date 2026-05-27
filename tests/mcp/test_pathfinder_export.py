@@ -30,13 +30,43 @@ from graphsenselib.convert.gs_files import (
     structure,
 )
 from graphsenselib.convert.gs_files.encoder import _HIER_X_STEP
-from graphsenselib.mcp.tools.pathfinder_export import register
+from graphsenselib.mcp.tools.pathfinder_export import (
+    _run_verifier as _real_run_verifier,
+    register,
+)
 
 
 def _mcp(app: FastAPI | None = None) -> FastMCP:
     mcp = FastMCP(name="test")
     register(mcp, app if app is not None else FastAPI(), AsyncExitStack())
     return mcp
+
+
+@pytest.fixture(autouse=True)
+def _stub_verifier(monkeypatch):
+    """Short-circuit the backend-aware verifier in every test.
+
+    The MCP tool now runs the verifier by default (verify=True). Without
+    this fixture, every test would call ``_run_verifier`` against the
+    bare ``FastAPI()`` used here, which 404s every URL and therefore
+    decorates every result with bogus "address does not exist" warnings.
+
+    Returns a list of (args, kwargs) tuples recording each invocation,
+    so tests that care about WHEN the verifier ran can assert on it.
+    Tests that need a different verifier behaviour can re-monkeypatch
+    ``_run_verifier`` themselves; the per-test override wins.
+    """
+    calls: list[tuple[tuple, dict]] = []
+
+    async def stub(*args, **kwargs):
+        calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export._run_verifier",
+        stub,
+    )
+    return calls
 
 
 def _app_with_store(store, *, embed_resource: bool = True) -> FastAPI:
@@ -441,6 +471,101 @@ async def test_no_warning_preamble_when_spec_is_clean() -> None:
     assert "Warnings" not in text
 
 
+async def test_verify_default_is_on(_stub_verifier) -> None:
+    """The tool now verifies by default — a call that omits the flag
+    invokes the verifier exactly once."""
+    await _call(_mcp(), _MINIMAL_SPEC)
+    assert len(_stub_verifier) == 1
+
+
+async def test_verify_flag_off_opts_out_of_backend_calls(_stub_verifier) -> None:
+    """Passing verify=False skips the verifier entirely so drafting
+    iterations stay fast (and don't require a reachable backend)."""
+    payload = {**_MINIMAL_SPEC, "verify": False}
+    await _call(_mcp(), payload)
+    assert _stub_verifier == []
+
+
+async def test_verify_flag_appends_backend_warnings(monkeypatch) -> None:
+    """The verifier's findings merge into summary.warnings AND the text
+    content block (so Mistral-style hosts see them)."""
+
+    async def fake_run_verifier(*args, **kwargs):
+        return [
+            "backend says these tx hash(es) do not exist on their declared "
+            "network: tx1."
+        ]
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export._run_verifier",
+        fake_run_verifier,
+    )
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "verified",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                "txs": [{"id": "tx1"}],
+                "agg_edges": [{"a": "addrA", "b": "addrB", "tx_ids": ["tx1"]}],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any("do not exist" in w and "tx1" in w for w in warnings), warnings
+    # Text content block must also carry the warning — that's the whole
+    # point of the channel-folding fix.
+    text = _text(call_result).text
+    assert "tx1" in text
+    assert "Warnings" in text
+
+
+async def test_verify_flag_downgrades_backend_error_to_warning(
+    monkeypatch,
+) -> None:
+    """A transport-level failure during verification must not sink the
+    build: the file is structurally valid, so we ship it with a single
+    "verifier unavailable" warning instead of raising."""
+    import httpx as _httpx
+
+    async def boom(*args, **kwargs):
+        raise _httpx.ConnectError("backend down")
+
+    # Override the autouse stub: restore the real _run_verifier so the
+    # error-downgrade path inside it actually runs. We captured the
+    # original at module load time (before the autouse stub replaces
+    # it). Then patch the verify_against_backend call site underneath
+    # it so it raises.
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export._run_verifier",
+        _real_run_verifier,
+    )
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.verify_against_backend",
+        boom,
+    )
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "flaky",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [],
+                "agg_edges": [],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any("verifier unavailable" in w for w in warnings), warnings
+    # Despite the verifier failure the file IS built (structurally valid).
+    assert _structured(call_result)["summary"]["byte_size"] > 0
+
+
 async def test_layout_inside_spec_is_accepted() -> None:
     """LLMs frequently nest `layout` inside `spec` because it reads as a
     graph-shape option. Pydantic previously rejected it with an
@@ -488,21 +613,78 @@ async def test_top_level_layout_wins_over_spec_layout() -> None:
 
 
 async def test_no_warnings_for_well_formed_abstract_graph() -> None:
-    """An addresses-only spec (no edges, no txs) is legitimately
-    abstract — no warning should fire."""
+    """An addresses-only spec where every address is explicitly an
+    anchor (starting_point) is legitimately abstract — no warning
+    should fire."""
     call_result = await _call(
         _mcp(),
         {
             "name": "addrs-only",
             "default_network": "btc",
             "spec": {
-                "addresses": [{"id": "a"}, {"id": "b"}],
+                "addresses": [
+                    {"id": "a", "starting_point": True},
+                    {"id": "b", "starting_point": True},
+                ],
                 "txs": [],
                 "agg_edges": [],
             },
         },
     )
     assert _structured(call_result)["summary"]["warnings"] == []
+
+
+async def test_warning_when_address_is_unreferenced_and_not_anchor() -> None:
+    """An address listed in `addresses` but never appearing as an edge
+    endpoint — and not declared a starting_point — renders as a
+    floating node. Flag it the same way we flag floating txs."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "stray-addr",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                    {"id": "addrStray"},  # not in any edge, not an anchor
+                ],
+                "txs": [{"id": "txhash1"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]},
+                ],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any(
+        "address(es) are not referenced" in w
+        and "addrStray" in w
+        # The wired-up and anchor addresses must not be flagged.
+        and "addrA" not in w
+        and "addrB" not in w
+        for w in warnings
+    ), warnings
+
+
+async def test_starting_point_address_with_no_edges_is_not_flagged() -> None:
+    """A starting_point address without any edges is the documented
+    "anchor only" case (matches _MINIMAL_SPEC). It must NOT be flagged
+    as stray — that's the explicit opt-out."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "anchor-only",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [],
+                "agg_edges": [],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert not any("are not referenced" in w for w in warnings), warnings
 
 
 async def test_embedded_resource_carries_blob_with_filename_uri() -> None:
