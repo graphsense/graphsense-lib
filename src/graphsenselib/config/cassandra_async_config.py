@@ -42,6 +42,15 @@ class CassandraConfig(BaseSettings):
     consistency_level: str = Field(
         default="LOCAL_ONE", description="Cassandra consistency level"
     )
+    consistency_level_fallback: bool = Field(
+        default=False,
+        description=(
+            "If true and consistency_level=LOCAL_QUORUM, allow the read path "
+            "to downgrade to LOCAL_ONE on the first Unavailable / ReadTimeout "
+            "when at least one replica is alive. Lets the web tier survive "
+            "rolling restarts on RF=2 at the cost of read-after-write guarantees."
+        ),
+    )
 
     strict_data_validation: bool = Field(
         default=True, description="Enable strict data validation"

@@ -143,3 +143,156 @@ async def test_normal_exception_delivery_still_propagates():
     rf.on_err(RuntimeError("driver boom"))
     with pytest.raises(RuntimeError, match="driver boom"):
         await fut
+
+
+# ---------------------------------------------------------------------------
+# GraphsenseFallbackToLocalOneRetryPolicy
+# ---------------------------------------------------------------------------
+#
+# The policy's job is one specific thing: on the FIRST attempt of a read at
+# LOCAL_QUORUM, if at least one replica is alive/responding, downgrade to
+# LOCAL_ONE. Everything else (further retries, other consistency levels,
+# unrelated error types, writes) must delegate to the parent's behavior
+# unchanged. The tests below cover both the downgrade branches and a
+# representative pass-through.
+
+from cassandra import ConsistencyLevel  # noqa: E402
+from cassandra.policies import RetryPolicy  # noqa: E402
+
+from graphsenselib.db.asynchronous.cassandra import (  # noqa: E402
+    GraphsenseFallbackToLocalOneRetryPolicy,
+)
+
+
+def _policy() -> GraphsenseFallbackToLocalOneRetryPolicy:
+    # max_retries=3 mirrors the production wire-up in Cassandra.connect().
+    return GraphsenseFallbackToLocalOneRetryPolicy(max_retries=3)
+
+
+class TestFallbackToLocalOneOnUnavailable:
+    def test_first_attempt_at_local_quorum_with_alive_replica_downgrades(self):
+        decision, new_cl = _policy().on_unavailable(
+            query=None,
+            consistency=ConsistencyLevel.LOCAL_QUORUM,
+            required_replicas=2,
+            alive_replicas=1,
+            retry_num=0,
+        )
+        assert decision == RetryPolicy.RETRY
+        assert new_cl == ConsistencyLevel.LOCAL_ONE
+
+    def test_first_attempt_at_local_quorum_with_no_alive_replicas_does_not_downgrade(
+        self,
+    ):
+        # Downgrading to LOCAL_ONE would still fail, so don't paper over —
+        # delegate to the parent policy.
+        decision, new_cl = _policy().on_unavailable(
+            query=None,
+            consistency=ConsistencyLevel.LOCAL_QUORUM,
+            required_replicas=2,
+            alive_replicas=0,
+            retry_num=0,
+        )
+        assert decision != RetryPolicy.RETRY or new_cl != ConsistencyLevel.LOCAL_ONE
+
+    def test_second_attempt_does_not_downgrade(self):
+        # After the first attempt the parent's retry/backoff machinery takes
+        # over; the downgrade is a one-shot, not a loop.
+        decision, new_cl = _policy().on_unavailable(
+            query=None,
+            consistency=ConsistencyLevel.LOCAL_QUORUM,
+            required_replicas=2,
+            alive_replicas=1,
+            retry_num=1,
+        )
+        assert new_cl is None or new_cl != ConsistencyLevel.LOCAL_ONE
+
+    def test_stronger_consistency_is_not_downgraded(self):
+        # If the caller picked QUORUM the availability/consistency trade-off
+        # was deliberate — don't silently weaken it.
+        decision, new_cl = _policy().on_unavailable(
+            query=None,
+            consistency=ConsistencyLevel.QUORUM,
+            required_replicas=2,
+            alive_replicas=1,
+            retry_num=0,
+        )
+        assert new_cl is None or new_cl != ConsistencyLevel.LOCAL_ONE
+
+    def test_local_one_is_not_downgraded(self):
+        # Already at the floor — nothing to downgrade to.
+        decision, new_cl = _policy().on_unavailable(
+            query=None,
+            consistency=ConsistencyLevel.LOCAL_ONE,
+            required_replicas=1,
+            alive_replicas=0,
+            retry_num=0,
+        )
+        assert new_cl is None or new_cl != ConsistencyLevel.LOCAL_ONE
+
+
+class TestFallbackToLocalOneOnReadTimeout:
+    def test_first_attempt_at_local_quorum_with_partial_responses_downgrades(self):
+        decision, new_cl = _policy().on_read_timeout(
+            query=None,
+            consistency=ConsistencyLevel.LOCAL_QUORUM,
+            required_responses=2,
+            received_responses=1,
+            data_retrieved=True,
+            retry_num=0,
+        )
+        assert decision == RetryPolicy.RETRY
+        assert new_cl == ConsistencyLevel.LOCAL_ONE
+
+    def test_first_attempt_with_zero_responses_does_not_downgrade(self):
+        # Zero responses = nothing to read at LOCAL_ONE either; fall back to
+        # the parent's plain retry-and-backoff behavior.
+        result = _policy().on_read_timeout(
+            query=None,
+            consistency=ConsistencyLevel.LOCAL_QUORUM,
+            required_responses=2,
+            received_responses=0,
+            data_retrieved=False,
+            retry_num=0,
+        )
+        # Parent retries (subject to max_retries) without changing CL.
+        assert result[1] is None or result[1] != ConsistencyLevel.LOCAL_ONE
+
+    def test_second_attempt_does_not_downgrade(self):
+        result = _policy().on_read_timeout(
+            query=None,
+            consistency=ConsistencyLevel.LOCAL_QUORUM,
+            required_responses=2,
+            received_responses=1,
+            data_retrieved=True,
+            retry_num=1,
+        )
+        assert result[1] is None or result[1] != ConsistencyLevel.LOCAL_ONE
+
+    def test_stronger_consistency_is_not_downgraded(self):
+        result = _policy().on_read_timeout(
+            query=None,
+            consistency=ConsistencyLevel.QUORUM,
+            required_responses=2,
+            received_responses=1,
+            data_retrieved=True,
+            retry_num=0,
+        )
+        assert result[1] is None or result[1] != ConsistencyLevel.LOCAL_ONE
+
+
+class TestFallbackToLocalOneInheritedBehavior:
+    def test_write_timeout_path_is_inherited_unchanged(self):
+        # The web reader is read-only, but if a write ever flows through
+        # this policy it must NOT be silently downgraded. The parent's
+        # contract (only retry idempotent writes) must keep applying.
+        non_idempotent_query = SimpleNamespace(is_idempotent=False)
+        decision, _ = _policy().on_write_timeout(
+            query=non_idempotent_query,
+            consistency=ConsistencyLevel.LOCAL_QUORUM,
+            write_type="SIMPLE",
+            required_responses=2,
+            received_responses=1,
+            retry_num=0,
+        )
+        assert decision == RetryPolicy.RETHROW

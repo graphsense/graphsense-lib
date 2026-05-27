@@ -66,6 +66,70 @@ from graphsenselib.utils.rest_utils import is_eth_like
 from graphsenselib.utils.account import get_block_from_tx_id
 
 
+logger = logging.getLogger(__name__)
+
+
+class GraphsenseFallbackToLocalOneRetryPolicy(GraphsenseRetryPolicy):
+    """Read-path policy that downgrades LOCAL_QUORUM to LOCAL_ONE on the
+    first Unavailable / ReadTimeout when at least one replica is alive.
+
+    Lets the web tier survive a rolling restart on RF=2 (where losing one
+    of two replicas takes LOCAL_QUORUM below quorum) at the cost of
+    read-after-write consistency for those downgraded reads.
+
+    Scope is intentionally narrow:
+      * Only the first attempt downgrades. Subsequent retries delegate to
+        the parent policy (retry-on-next-host / backoff / RETHROW).
+      * Only LOCAL_QUORUM is downgraded. Stronger CLs (QUORUM, ALL,
+        EACH_QUORUM) are left alone — if the caller picked them, the
+        availability trade-off was deliberate.
+      * Writes are NOT downgraded — `on_write_timeout` is inherited
+        unchanged. The web reader is read-only; if a write path ever
+        starts using this policy, downgrading writes would silently
+        weaken durability and is the wrong default.
+    """
+
+    def on_unavailable(
+        self, query, consistency, required_replicas, alive_replicas, retry_num
+    ):
+        if (
+            retry_num == 0
+            and consistency == ConsistencyLevel.LOCAL_QUORUM
+            and alive_replicas >= 1
+        ):
+            logger.warning(
+                "Unavailable at LOCAL_QUORUM (need %d, have %d); "
+                "downgrading to LOCAL_ONE for this read",
+                required_replicas,
+                alive_replicas,
+            )
+            return (self.RETRY, ConsistencyLevel.LOCAL_ONE)
+        return super().on_unavailable(
+            query, consistency, required_replicas, alive_replicas, retry_num
+        )
+
+    def on_read_timeout(self, *args, **kwargs):
+        retry_num = kwargs.get("retry_num")
+        consistency = kwargs.get("consistency")
+        received = kwargs.get("received_responses")
+        required = kwargs.get("required_responses")
+        if (
+            retry_num == 0
+            and consistency == ConsistencyLevel.LOCAL_QUORUM
+            and received is not None
+            and required is not None
+            and 1 <= received < required
+        ):
+            logger.warning(
+                "Read timeout at LOCAL_QUORUM (got %d/%d responses); "
+                "downgrading to LOCAL_ONE for this read",
+                received,
+                required,
+            )
+            return (self.RETRY, ConsistencyLevel.LOCAL_ONE)
+        return super().on_read_timeout(*args, **kwargs)
+
+
 SMALL_PAGE_SIZE = 1000
 BIG_PAGE_SIZE = 5000
 SEARCH_PAGE_SIZE = 100
@@ -593,13 +657,18 @@ class Cassandra:
                 self.config.get("consistency_level", "LOCAL_ONE"),
                 ConsistencyLevel.LOCAL_ONE,
             )
+            retry_policy_cls = (
+                GraphsenseFallbackToLocalOneRetryPolicy
+                if self.config.get("consistency_level_fallback", False)
+                else GraphsenseRetryPolicy
+            )
 
             exec_prof = ExecutionProfile(
                 request_timeout=60,
                 row_factory=dict_factory,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 consistency_level=cl,
-                retry_policy=GraphsenseRetryPolicy(max_retries=3),
+                retry_policy=retry_policy_cls(max_retries=3),
                 # For idempotent reads (all REST queries are SELECTs), fire a second
                 # attempt at another host after 200 ms to mask slow/dead replicas.
                 speculative_execution_policy=ConstantSpeculativeExecutionPolicy(
