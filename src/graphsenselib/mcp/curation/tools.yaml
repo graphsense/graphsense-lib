@@ -54,7 +54,11 @@ include:
       when you need to walk every flow event in an account-model tx and
       the count isn't bounded. UTXO chains carry the equivalent
       information in the tx's `inputs`/`outputs`, so this endpoint is
-      account-model focused.
+      account-model focused. Each event carries its own `identifier`
+      (the sub-payment id within the parent `tx_hash`); pass that
+      `identifier` — not the bare `tx_hash` — when feeding the event
+      into `build_pathfinder_file`, so pathfinder can render the
+      specific sub-payment.
     tags: ["transaction-level", "account-model"]
 
   get_exchange_rates:

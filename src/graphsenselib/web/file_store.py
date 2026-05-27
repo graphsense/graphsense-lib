@@ -6,10 +6,9 @@ instead of streaming the whole payload back inline. Files live in Redis with a
 TTL, so the store works correctly across multiple REST workers and cleans up
 after itself.
 
-The download URL carries an unguessable random token as its only credential
-(256 bits of CSPRNG entropy). It is therefore safe to expose the ``/download``
-route without API-key auth — which is required, since a plain browser click
-cannot send an API key.
+The download URL carries an unguessable random token (256 bits of CSPRNG
+entropy) — i.e. possession of the URL IS the authorization, so the URL
+must be treated as a bearer credential by anything that hands it out.
 """
 
 from __future__ import annotations

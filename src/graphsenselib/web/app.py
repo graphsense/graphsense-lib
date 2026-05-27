@@ -880,9 +880,8 @@ async def _download_file(request: Request) -> Response:
     """Serve a file previously stashed in the download file store.
 
     Registered as a plain Starlette route (see _register_download_route) so it
-    stays out of the OpenAPI schema and bypasses the API-key dependencies: the
-    unguessable token in the URL is the only credential, which is what lets a
-    plain browser click fetch the file.
+    stays out of the OpenAPI schema: the unguessable token in the URL is the
+    only credential, which is what lets a plain browser click fetch the file.
     """
     store = getattr(request.app.state, "file_store", None)
     if store is None:
@@ -903,8 +902,8 @@ def _register_download_route(
     """Register the /download/{token} route when the file store is enabled.
 
     A plain Starlette Route (not a FastAPI APIRoute): excluded from the
-    OpenAPI spec and not subject to the global API-key dependencies, so the
-    unguessable token in the URL is the only credential needed.
+    OpenAPI spec, with the unguessable token in the URL as the only
+    credential.
     """
     if file_store is None or not file_store.enabled:
         return

@@ -415,7 +415,12 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     reference it), so single-edge txs sit on the straight line between
     their endpoints. A tx referenced by multiple edges (peel that funds
     two outputs) averages all endpoint addresses — both lines through
-    it bend, but less than the BFS-centred position would.
+    it bend, but less than the BFS-centred position would. When several
+    txs share the same snap point — typical of one anchor↔destination
+    edge that carries N transactions — they would otherwise stack on
+    top of each other; they are spread symmetrically along ``y`` around
+    the snap point with the same ``_HIER_Y_STEP`` spacing as addresses,
+    in deterministic id order.
 
     Rows are ``_HIER_Y_STEP`` apart, widened to ``_LABEL_LINE_HEIGHT``
     per extra label line if any node label wraps. The step is global
@@ -576,13 +581,63 @@ def apply_hierarchical_layout(spec: dict) -> dict:
         b_key = ("addr", e["b"])
         for tid in e.get("tx_ids") or []:
             tx_endpoints.setdefault(("tx", tid), []).extend([a_key, b_key])
+    snapped: dict[tuple[str, str], tuple[float, float]] = {}
     for tx_key, addr_keys in tx_endpoints.items():
         if tx_key not in coords:
             continue
         ys = [coords[k][1] for k in addr_keys if k in coords]
         if not ys:
             continue
-        coords[tx_key] = (coords[tx_key][0], sum(ys) / len(ys))
+        snapped[tx_key] = (coords[tx_key][0], sum(ys) / len(ys))
+
+    # De-overlap: a multi-tx edge produces N txs at the same snap point,
+    # which renders as a single node visually. Per column, sort txs by
+    # current y and single-linkage-cluster on a half-step threshold:
+    # two y values within ``y_step / 2`` of each other belong to the
+    # same pile (they would visually collide). The half-step threshold
+    # is deliberate — sibling edges produce midpoints exactly y_step/2
+    # apart (e.g. root→top and root→bot, each at distance ±y_step/2
+    # from root) and that case must stay on the straight line, not get
+    # nudged. Piles of size > 1 spread symmetrically along y around the
+    # pile's mean y with the same pitch addresses use.
+    #
+    # Spreading widens a pile to ``(n - 1) * y_step``, which can push
+    # spread slots onto previously-singleton neighbours that were just
+    # outside the original cluster. Iterate the pass until stable; each
+    # iteration either grows a pile or no-ops, so it terminates in O(N)
+    # rounds. Initialize from snapped positions, then re-cluster from
+    # the resulting coords until no movement.
+    overlap_eps = y_step / 2.0
+    for tx_key, xy in snapped.items():
+        coords[tx_key] = xy
+    snapped_keys = list(snapped.keys())
+    for _ in range(len(snapped_keys) + 1):
+        moved = False
+        by_col: dict[float, list[tuple[tuple[str, str], float]]] = {}
+        for tx_key in snapped_keys:
+            x, y = coords[tx_key]
+            by_col.setdefault(x, []).append((tx_key, y))
+        for x, items in by_col.items():
+            items.sort(key=lambda kv: (kv[1], kv[0][1]))
+            clusters: list[list[tuple[tuple[str, str], float]]] = []
+            for tx_key, y in items:
+                if clusters and y - clusters[-1][-1][1] < overlap_eps:
+                    clusters[-1].append((tx_key, y))
+                else:
+                    clusters.append([(tx_key, y)])
+            for cluster in clusters:
+                if len(cluster) == 1:
+                    continue
+                centre = sum(y for _k, y in cluster) / len(cluster)
+                n = len(cluster)
+                offset = -(n - 1) / 2.0 * y_step
+                for i, (tx_key, _y) in enumerate(cluster):
+                    new_y = centre + offset + i * y_step
+                    if coords[tx_key][1] != new_y:
+                        coords[tx_key] = (x, new_y)
+                        moved = True
+        if not moved:
+            break
 
     def _apply(items: list[dict], kind: str) -> list[dict]:
         out: list[dict] = []

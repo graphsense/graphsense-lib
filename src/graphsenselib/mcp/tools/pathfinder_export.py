@@ -102,7 +102,21 @@ class _AddressSpec(BaseModel):
 class _TxSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(description="Transaction hash on the given network.")
+    id: str = Field(
+        description=(
+            "Transaction IDENTIFIER as it appears in the tx payload returned "
+            "by the graphsense tools (e.g. `lookup_tx_details`, "
+            "`list_txs_for`, `list_tx_flows`). On account-model chains "
+            "(ETH, TRX) a single transaction hash can carry many "
+            "sub-payments (the native transfer plus token transfers); the "
+            "response carries an `identifier` field that uniquely names "
+            "each sub-payment — copy it verbatim and use IT here, not the "
+            "bare `tx_hash`, otherwise pathfinder cannot tell which "
+            "sub-payment of the hash you mean. On UTXO chains (BTC, BCH, "
+            "LTC, ZEC) the response has only `tx_hash` and no separate "
+            "`identifier`; in that case pass `tx_hash`."
+        )
+    )
     network: Optional[str] = Field(default=None)
     index: int = Field(
         default=0, description="Within-block index; almost always 0 for one-off txs."

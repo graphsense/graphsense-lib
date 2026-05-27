@@ -651,6 +651,15 @@ def register_lookup_tx_details(mcp, app, stack) -> None:
         (/spending is backward, /spent_in is forward). This consolidation
         hides that and uses `upstream` / `downstream` to mean what they say.
 
+        Note on `identifier` vs `tx_hash`: account-model responses carry
+        both. `tx_hash` names the on-chain transaction; `identifier`
+        names a specific sub-payment within it (one tx hash can carry
+        many sub-payments — the native transfer plus token transfers,
+        each with its own `identifier`). When feeding a tx into
+        `build_pathfinder_file`, pass the `identifier` so pathfinder can
+        disambiguate which sub-payment is meant. UTXO responses have
+        only `tx_hash` and no `identifier`; use `tx_hash` there.
+
         Args:
             currency: Network identifier (e.g. "btc", "bch", "ltc", "eth").
             tx_hash: Transaction hash.
@@ -758,6 +767,14 @@ def register_list_txs_for(mcp, app, stack) -> None:
         Returns:
             A dict with `address_txs` (or `links` when `neighbor` is set)
             and a `next_page` pagination cursor.
+
+        Note on `identifier` vs `tx_hash`: account-model rows carry both.
+        `tx_hash` names the on-chain transaction; `identifier` names a
+        specific sub-payment within it (one tx hash can carry many
+        sub-payments — the native transfer plus token transfers). When
+        feeding txs into `build_pathfinder_file`, pass the `identifier`
+        so pathfinder can disambiguate which sub-payment is meant. UTXO
+        rows have only `tx_hash`; use `tx_hash` there.
         """
         _validate_currency(currency)
         _validate_id("address", address)
