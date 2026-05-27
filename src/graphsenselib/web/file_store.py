@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 import re
 import secrets
-import sys
 from typing import Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -161,28 +160,21 @@ class RedisFileStore:
             if self._base_url
             else f"{header_scheme}://{header_host}{path}"
         )
-        # TEMPORARY DIAGNOSTIC — emitted unconditionally (regardless of
-        # base_url) so we can compare what the header-derivation path
-        # WOULD have produced against the URL the caller actually
-        # configured. Two channels keep us safe against logging-config
-        # surprises in the deployed worker:
-        #   - `print(..., file=sys.stderr)` bypasses the Python logging
-        #     tree entirely; gunicorn's `capture_output` redirects worker
-        #     stderr into its own log stream, so this always lands.
-        #   - `logger.warning(...)` is the second data point.
-        diag_msg = (
-            f"file_store url_for: "
-            f"xf-proto={request.headers.get('x-forwarded-proto')!r} "
-            f"xf-host={request.headers.get('x-forwarded-host')!r} "
-            f"host={request.headers.get('host')!r} "
-            f"request.url.scheme={request.url.scheme!r} "
-            f"netloc={request.url.netloc!r} "
-            f"base_url={self._base_url!r} "
-            f"header_derived={header_scheme}://{header_host}{path} "
-            f"-> {final_url}"
+        logger.warning(
+            "file_store url_for: "
+            "xf-proto=%r xf-host=%r host=%r request.url.scheme=%r "
+            "netloc=%r base_url=%r header_derived=%s://%s%s -> %s",
+            request.headers.get("x-forwarded-proto"),
+            request.headers.get("x-forwarded-host"),
+            request.headers.get("host"),
+            request.url.scheme,
+            request.url.netloc,
+            self._base_url,
+            header_scheme,
+            header_host,
+            path,
+            final_url,
         )
-        print(f"DIAG {diag_msg}", file=sys.stderr, flush=True)  # noqa: T201
-        logger.warning(diag_msg)
         return final_url
 
     async def aclose(self) -> None:
