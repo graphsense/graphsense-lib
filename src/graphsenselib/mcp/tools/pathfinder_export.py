@@ -31,6 +31,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools.base import ToolResult
 from fastmcp.utilities.types import File
+from mcp.types import TextContent
 from pydantic import BaseModel, ConfigDict, Field
 
 from graphsenselib.convert.gs_files import (
@@ -523,7 +524,18 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 name=filename.removesuffix(".gs"),
                 format="gs",
             ).to_resource_content(mime_type="application/octet-stream")
-            content = [file_resource]
+            content.append(file_resource)
+        # Always include a TextContent block so MCP hosts that only
+        # render `content` (and ignore `structured_content`) — Mistral Le
+        # Chat is the known offender — show the user something usable.
+        if download_url is not None:
+            text = f"Pathfinder file `{filename}` is ready. Download: {download_url}"
+        else:
+            text = (
+                f"Pathfinder file `{filename}` is ready (embedded in this "
+                f"response; no download link configured)."
+            )
+        content.append(TextContent(type="text", text=text))
 
         result = _PathfinderBuildResult(
             filename=filename,

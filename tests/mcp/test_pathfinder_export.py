@@ -67,12 +67,27 @@ async def _call(mcp: FastMCP, payload: dict) -> Any:
         return await c.call_tool("build_pathfinder_file", payload)
 
 
+def _embedded(call_result: Any) -> mcp_types.EmbeddedResource:
+    """Find the EmbeddedResource block in the content list. The tool
+    also emits a TextContent block (for clients that only render
+    `content`), so we can't index by position."""
+    blocks = [
+        b for b in call_result.content if isinstance(b, mcp_types.EmbeddedResource)
+    ]
+    assert len(blocks) == 1, call_result.content
+    return blocks[0]
+
+
+def _text(call_result: Any) -> mcp_types.TextContent:
+    blocks = [b for b in call_result.content if isinstance(b, mcp_types.TextContent)]
+    assert len(blocks) == 1, call_result.content
+    return blocks[0]
+
+
 def _decode(call_result: Any) -> PathfinderData:
     """Extract the .gs blob from the embedded resource and round-trip
     it back to a typed PathfinderData."""
-    assert len(call_result.content) == 1, call_result.content
-    block = call_result.content[0]
-    assert isinstance(block, mcp_types.EmbeddedResource), type(block)
+    block = _embedded(call_result)
     assert isinstance(block.resource, mcp_types.BlobResourceContents)
     raw_bytes = base64.b64decode(block.resource.blob)
     data = structure(decode_gs_bytes(raw_bytes))
@@ -458,9 +473,7 @@ async def test_embedded_resource_carries_blob_with_filename_uri() -> None:
             },
         },
     )
-    assert len(call_result.content) == 1
-    block = call_result.content[0]
-    assert isinstance(block, mcp_types.EmbeddedResource)
+    block = _embedded(call_result)
     assert block.type == "resource"
     assert isinstance(block.resource, mcp_types.BlobResourceContents)
     # Filename should be embedded in the URI so the client can use it.
@@ -478,7 +491,9 @@ async def test_download_url_absent_without_file_store() -> None:
     download_url is null and the embedded resource is still present."""
     call_result = await _call(_mcp(), _MINIMAL_SPEC)
     assert _structured(call_result)["download_url"] is None
-    assert len(call_result.content) == 1
+    # Embedded resource + text fallback for content-only MCP hosts.
+    _embedded(call_result)
+    _text(call_result)
 
 
 async def test_download_url_present_with_file_store(
@@ -505,16 +520,20 @@ async def test_download_url_present_with_file_store(
     assert stored.filename == structured["filename"]
     # embed_resource defaults True -> the resource is still attached, and
     # its bytes are exactly what was stored.
-    assert len(call_result.content) == 1
-    block = call_result.content[0]
+    block = _embedded(call_result)
+    assert isinstance(block.resource, mcp_types.BlobResourceContents)
     assert stored.data == base64.b64decode(block.resource.blob)
+    # The text fallback should carry the download URL verbatim.
+    assert url in _text(call_result).text
 
 
 async def test_embed_resource_false_yields_link_only(
     make_file_store, monkeypatch
 ) -> None:
     """With embed_resource disabled the tool returns the link only — no
-    embedded resource in the content channel."""
+    embedded resource in the content channel, but the TextContent
+    fallback IS still emitted so MCP hosts that only render `content`
+    (Mistral Le Chat) still show the user the download URL."""
     monkeypatch.setattr(
         "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
         lambda: None,
@@ -523,8 +542,15 @@ async def test_embed_resource_false_yields_link_only(
     mcp = _mcp(_app_with_store(store, embed_resource=False))
     call_result = await _call(mcp, _MINIMAL_SPEC)
 
-    assert _structured(call_result)["download_url"] is not None
-    assert call_result.content == []
+    url = _structured(call_result)["download_url"]
+    assert url is not None
+    # No embedded blob in the content channel.
+    assert [
+        b for b in call_result.content if isinstance(b, mcp_types.EmbeddedResource)
+    ] == []
+    # But a single TextContent carrying the download URL.
+    text_block = _text(call_result)
+    assert url in text_block.text
 
 
 async def test_embed_resource_false_still_embeds_when_link_unavailable(
@@ -540,7 +566,8 @@ async def test_embed_resource_false_still_embeds_when_link_unavailable(
     call_result = await _call(mcp, _MINIMAL_SPEC)
 
     assert _structured(call_result)["download_url"] is None
-    assert len(call_result.content) == 1
+    _embedded(call_result)
+    _text(call_result)
 
 
 async def test_oversize_file_rejected_with_tool_error(make_file_store) -> None:
