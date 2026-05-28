@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 def run_pubkey(
     env: str,
     currency: str,
-    source_delta_path: str,
-    pubkey_delta_path: str,
+    source_path: str,
+    sink_path: str,
     cassandra_nodes=None,
     cassandra_username: Optional[str] = None,
     cassandra_password: Optional[str] = None,
@@ -20,7 +20,7 @@ def run_pubkey(
     s3_credentials=None,
     spark_config=None,
     pubkey_keyspace: str = "pubkey",
-    sink: str = "cassandra",
+    sink_type: str = "cassandra",
 ) -> None:
     from graphsenselib.pubkey.job import (
         ACCOUNT_CURRENCIES,
@@ -33,16 +33,16 @@ def run_pubkey(
 
     if currency not in UTXO_CURRENCIES and currency not in ACCOUNT_CURRENCIES:
         raise ValueError(f"Unsupported currency for pubkey update: {currency}")
-    if sink not in VALID_SINKS:
-        raise ValueError(f"sink must be one of {VALID_SINKS}, got {sink!r}")
+    if sink_type not in VALID_SINKS:
+        raise ValueError(f"sink_type must be one of {VALID_SINKS}, got {sink_type!r}")
     if end_block is None:
         raise ValueError(
             "end_block must be set; pin a top-block before calling run_pubkey()."
         )
-    if sink == SINK_CASSANDRA and not cassandra_nodes:
-        raise ValueError("cassandra_nodes is required when sink='cassandra'.")
+    if sink_type == SINK_CASSANDRA and not cassandra_nodes:
+        raise ValueError("cassandra_nodes is required when sink_type='cassandra'.")
     # Spark's Cassandra connector wants a host even if we never read/write;
-    # use a harmless placeholder when running with sink=delta and no nodes.
+    # use a harmless placeholder when running with sink_type=delta and no nodes.
     spark_cassandra_nodes = cassandra_nodes or ["localhost:9042"]
 
     spark = create_spark_session(
@@ -58,10 +58,10 @@ def run_pubkey(
         PubkeyUpdate(
             spark=spark,
             currency=currency,
-            source_delta_path=source_delta_path,
-            pubkey_delta_path=pubkey_delta_path,
+            source_path=source_path,
+            sink_path=sink_path,
             cassandra_keyspace=pubkey_keyspace,
-            sink=sink,
+            sink_type=sink_type,
         ).run(start_block=start_block, end_block=end_block)
     finally:
         spark.stop()

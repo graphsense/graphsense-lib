@@ -147,30 +147,28 @@ class PubkeyUpdate:
         self,
         spark,
         currency: str,
-        source_delta_path: str,
-        pubkey_delta_path: str,
+        source_path: str,
+        sink_path: str,
         cassandra_keyspace: str = PUBKEY_KEYSPACE,
-        sink: str = SINK_CASSANDRA,
+        sink_type: str = SINK_CASSANDRA,
     ) -> None:
-        if sink not in VALID_SINKS:
-            raise ValueError(f"sink must be one of {VALID_SINKS}, got {sink!r}")
+        if sink_type not in VALID_SINKS:
+            raise ValueError(
+                f"sink_type must be one of {VALID_SINKS}, got {sink_type!r}"
+            )
         self.spark = spark
         self.currency = currency
         # Spark/Hadoop uses s3a:// not s3://
-        self.source_delta_path = source_delta_path.rstrip("/").replace(
-            "s3://", "s3a://"
-        )
-        self.pubkey_delta_path = pubkey_delta_path.rstrip("/").replace(
-            "s3://", "s3a://"
-        )
+        self.source_path = source_path.rstrip("/").replace("s3://", "s3a://")
+        self.sink_path = sink_path.rstrip("/").replace("s3://", "s3a://")
         self.cassandra_keyspace = cassandra_keyspace
-        self.sink = sink
+        self.sink_type = sink_type
         self.network = currency
 
-        self.observed_path = f"{self.pubkey_delta_path}/observed"
-        self.materialised_path = f"{self.pubkey_delta_path}/materialised"
-        self.state_path = f"{self.pubkey_delta_path}/state"
-        self.pubkey_by_address_path = f"{self.pubkey_delta_path}/{PUBKEY_TABLE}"
+        self.observed_path = f"{self.sink_path}/observed"
+        self.materialised_path = f"{self.sink_path}/materialised"
+        self.state_path = f"{self.sink_path}/state"
+        self.pubkey_by_address_path = f"{self.sink_path}/{PUBKEY_TABLE}"
 
     # ------------------------------------------------------------------
     # State
@@ -220,7 +218,7 @@ class PubkeyUpdate:
     # ------------------------------------------------------------------
 
     def _read_source_transactions(self, start_block: int, end_block: int):
-        path = f"{self.source_delta_path}/transaction"
+        path = f"{self.source_path}/transaction"
         df = self.spark.read.format("delta").load(path)
         return df.filter((df["block_id"] > start_block) & (df["block_id"] <= end_block))
 
@@ -337,7 +335,7 @@ class PubkeyUpdate:
             F.col("addr_struct.address").alias("address"),
             F.col("pubkey").alias("pubkey"),
         )
-        if self.sink == SINK_CASSANDRA:
+        if self.sink_type == SINK_CASSANDRA:
             (
                 out_rows.write.format("org.apache.spark.sql.cassandra")
                 .options(table=PUBKEY_TABLE, keyspace=self.cassandra_keyspace)

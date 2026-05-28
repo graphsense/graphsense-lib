@@ -343,6 +343,92 @@ def run_transformation(
         )
 
 
+def _log_pubkey_startup_banner(
+    *,
+    env,
+    currency,
+    schema_type,
+    source_path,
+    sink_path,
+    sink_type,
+    pubkey_keyspace,
+    pubkey_table,
+    cassandra_nodes,
+    s3_credentials,
+    start_block,
+    end_block,
+    local,
+):
+    """Print a structured banner so it's obvious what this run will do.
+
+    For ``sink_type=cassandra`` we additionally emit a WARNING with the
+    fully-qualified target so a misconfigured run can't silently scribble
+    over a production keyspace.
+    """
+    from urllib.parse import urlparse
+
+    def _classify(path):
+        """Return (display_path, kind_tag). kind_tag is one of 'local'|'s3'|<scheme>."""
+        parsed = urlparse(path)
+        if parsed.scheme in ("s3", "s3a"):
+            return (
+                f"{parsed.scheme}://{parsed.netloc or '?'}{parsed.path}",
+                "s3",
+            )
+        if parsed.scheme in ("", "file"):
+            return (path, "local")
+        return (path, parsed.scheme)
+
+    def _fmt(path):
+        loc, kind = _classify(path)
+        return f"{loc}  [{kind}]"
+
+    s3_endpoint = (s3_credentials or {}).get("AWS_ENDPOINT_URL")
+
+    lines = [
+        "=" * 72,
+        "Cross-chain pubkey → address materialisation",
+        "=" * 72,
+        f"  env              : {env or '(none — local-only)'}",
+        f"  currency         : {currency}  (schema={schema_type})",
+        f"  source path      : {_fmt(source_path)}",
+        f"  sink path        : {_fmt(sink_path)}",
+    ]
+    if s3_endpoint:
+        lines.append(f"  s3 endpoint      : {s3_endpoint}")
+    lines.append(f"  sink type        : {sink_type}")
+    if sink_type == "cassandra":
+        lines += [
+            f"  cassandra ks     : {pubkey_keyspace}",
+            f"  cassandra table  : {pubkey_table}",
+            f"  cassandra nodes  : {', '.join(cassandra_nodes or [])}",
+        ]
+    else:
+        sink_loc, sink_kind = _classify(sink_path)
+        lines.append(f"  delta target     : {sink_loc}/{pubkey_table}  [{sink_kind}]")
+    lines += [
+        f"  start block      : {start_block if start_block is not None else '(resume from state)'}",
+        f"  end block        : {end_block}",
+        f"  spark mode       : {'local[*]' if local else 'cluster'}",
+        "=" * 72,
+    ]
+    logger.info("\n" + "\n".join(lines))
+
+    if sink_type == "cassandra":
+        nodes_str = ", ".join(cassandra_nodes or []) or "(unset)"
+        logger.warning(
+            "Cassandra write target: %s.%s on nodes [%s]. "
+            "Rows are upserted by `address` PK — any existing row with a "
+            "matching address WILL be overwritten with the recomputed pubkey. "
+            "Verify env=%s is correct before this run completes; "
+            "use --sink-type=delta for a no-write dry run.",
+            pubkey_keyspace,
+            pubkey_table,
+            nodes_str,
+            env,
+        )
+
+
 @transformation.command(
     "pubkey-update",
     short_help="Update cross-chain pubkey → address lookup from Delta Lake.",
@@ -370,18 +456,22 @@ def run_transformation(
     help="Create the Cassandra pubkey keyspace/table if it does not exist.",
 )
 @click.option(
-    "--delta-lake-path",
+    "--source-path",
     type=str,
     default=None,
-    help="Override source Delta Lake base path for this currency (default: from config).",
+    help=(
+        "Source Delta Lake base path for this currency (read). Defaults to "
+        "the path configured in graphsense.yaml for this env/currency."
+    ),
 )
 @click.option(
-    "--pubkey-delta-path",
+    "--sink-path",
     type=str,
     required=True,
     help=(
-        "Delta Lake base path for the shared cross-chain pubkey intermediate "
-        "(observed / materialised / state). Same path is used for every chain."
+        "Delta Lake base path for the shared cross-chain pubkey store "
+        "(read+write: observed / materialised / state, plus pubkey_by_address "
+        "when --sink-type=delta). Same path is used for every chain."
     ),
 )
 @click.option(
@@ -391,7 +481,7 @@ def run_transformation(
     default=None,
     help=(
         "Name of the s3_configs entry to use for S3/MinIO credentials. "
-        "Required when either Delta Lake path is on s3://."
+        "Required when either path is on s3://."
     ),
 )
 @click.option(
@@ -400,15 +490,15 @@ def run_transformation(
     help="Run Spark in local mode with local[*].",
 )
 @click.option(
-    "--sink",
+    "--sink-type",
     type=click.Choice(["cassandra", "delta"]),
     default="cassandra",
     show_default=True,
     help=(
-        "Where to write the final (address, pubkey) rows. 'cassandra' "
-        "appends to pubkey.pubkey_by_address; 'delta' writes a Delta table "
-        "at <pubkey-delta-path>/pubkey_by_address (useful for local tests "
-        "without a Cassandra cluster)."
+        "Backend for the final (address, pubkey) rows. 'cassandra' appends "
+        "to pubkey.pubkey_by_address; 'delta' writes a Delta table at "
+        "<sink-path>/pubkey_by_address (useful for local tests without a "
+        "Cassandra cluster)."
     ),
 )
 def run_pubkey_update(
@@ -417,19 +507,20 @@ def run_pubkey_update(
     start_block,
     end_block,
     create_schema,
-    delta_lake_path,
-    pubkey_delta_path,
+    source_path,
+    sink_path,
     s3_config_name,
     local,
-    sink,
+    sink_type,
 ):
-    """Update cross-chain pubkey → address Cassandra lookup for ``currency``.
+    """Update cross-chain pubkey → address lookup for ``currency``.
 
     Reads new transactions from the source Delta Lake for ``currency``,
     extracts signing pubkeys, merges them into a shared cross-chain Delta
-    Lake intermediate at ``--pubkey-delta-path``, and writes derived
-    addresses for any pubkey newly observed on 2+ chains to the
-    Cassandra ``pubkey.pubkey_by_address`` table.
+    Lake store at ``--sink-path``, and writes derived addresses for any
+    pubkey newly observed on 2+ chains to the configured ``--sink-type``
+    backend (Cassandra ``pubkey.pubkey_by_address`` table, or a Delta
+    table under ``--sink-path``).
     """
     from graphsenselib.config import (
         currency_to_schema_type,
@@ -440,6 +531,7 @@ def run_pubkey_update(
     from graphsenselib.pubkey.job import (
         ACCOUNT_CURRENCIES,
         PUBKEY_KEYSPACE,
+        PUBKEY_TABLE,
         UTXO_CURRENCIES,
     )
     from graphsenselib.schema.schema import GraphsenseSchemas
@@ -452,15 +544,15 @@ def run_pubkey_update(
         )
 
     # -e is only required when we actually need env-scoped config:
-    # writing to Cassandra, or resolving the source delta path from
-    # graphsense.yaml. For a fully-local --sink delta run with an
-    # explicit --delta-lake-path we can skip the lookups entirely.
+    # writing to Cassandra, or resolving the source path from
+    # graphsense.yaml. For a fully-local --sink-type delta run with an
+    # explicit --source-path we can skip the lookups entirely.
     if env is None:
-        if sink != "delta":
-            raise click.UsageError("--env is required when --sink=cassandra.")
-        if delta_lake_path is None:
+        if sink_type != "delta":
+            raise click.UsageError("--env is required when --sink-type=cassandra.")
+        if source_path is None:
             raise click.UsageError(
-                "--delta-lake-path is required when --env is omitted "
+                "--source-path is required when --env is omitted "
                 "(no env config available to resolve it from)."
             )
 
@@ -468,34 +560,34 @@ def run_pubkey_update(
     env_config = config.get_environment(env) if env is not None else None
     ks_config = config.get_keyspace_config(env, currency) if env is not None else None
 
-    # Resolve source delta path from config if not overridden — same as
+    # Resolve source path from config if not overridden — same as
     # `transformation run`.
-    if delta_lake_path is None:
+    if source_path is None:
         assert ks_config is not None  # guarded above: env must be set here
         ingest_cfg = ks_config.ingest_config
         if ingest_cfg and ingest_cfg.raw_keyspace_file_sinks:
             delta_sink = ingest_cfg.raw_keyspace_file_sinks.get("delta")
             if delta_sink:
-                delta_lake_path = delta_sink.directory
-        if delta_lake_path is None:
+                source_path = delta_sink.directory
+        if source_path is None:
             raise click.UsageError(
-                "No --delta-lake-path provided and no delta sink configured "
+                "No --source-path provided and no delta sink configured "
                 f"for {currency} in environment {env}."
             )
 
     is_s3 = any(
         p.startswith("s3://") or p.startswith("s3a://")
-        for p in (delta_lake_path, pubkey_delta_path)
+        for p in (source_path, sink_path)
     )
     if is_s3 and s3_config_name is None:
         available = sorted(config.s3_configs.keys())
         if not available:
             raise click.UsageError(
-                "An S3 Delta Lake path was given but no s3_configs are "
+                "An S3 path was given but no s3_configs are "
                 "defined in the graphsense config."
             )
         raise click.UsageError(
-            f"An S3 Delta Lake path was given but --s3-config was not "
+            f"An S3 path was given but --s3-config was not "
             f"provided. Available s3_configs: {', '.join(available)}."
         )
 
@@ -503,46 +595,49 @@ def run_pubkey_update(
     spark_config = config.spark_config or {}
 
     if create_schema:
-        if sink != "cassandra":
+        if sink_type != "cassandra":
             raise click.UsageError(
-                "--create-schema only applies when --sink=cassandra."
+                "--create-schema only applies when --sink-type=cassandra."
             )
         logger.info(f"Creating Cassandra keyspace '{PUBKEY_KEYSPACE}' if not exists...")
         GraphsenseSchemas().create_pubkey_keyspace_if_not_exist(env)
 
     schema_type = currency_to_schema_type.get(currency)
-    logger.info(
-        "Pubkey update: env=%s currency=%s schema=%s source=%s pubkey=%s "
-        "start=%s end=%s local=%s sink=%s",
-        env,
-        currency,
-        schema_type,
-        delta_lake_path,
-        pubkey_delta_path,
-        start_block,
-        end_block,
-        local,
-        sink,
-    )
 
     if end_block is None:
-        top = delta_lake_highest_block(delta_lake_path, s3_credentials)
+        top = delta_lake_highest_block(source_path, s3_credentials)
         if top is None:
             raise click.ClickException(
                 f"Cannot auto-detect end_block: block Delta table at "
-                f"{delta_lake_path}/block is empty."
+                f"{source_path}/block is empty."
             )
         end_block = top
         logger.info(f"Auto-detected end_block={end_block} from source delta.")
 
+    _log_pubkey_startup_banner(
+        env=env,
+        currency=currency,
+        schema_type=schema_type,
+        source_path=source_path,
+        sink_path=sink_path,
+        sink_type=sink_type,
+        pubkey_keyspace=PUBKEY_KEYSPACE,
+        pubkey_table=PUBKEY_TABLE,
+        cassandra_nodes=(env_config.cassandra_nodes if env_config else None),
+        s3_credentials=s3_credentials,
+        start_block=start_block,
+        end_block=end_block,
+        local=local,
+    )
+
     # Serialise cross-chain detection / sink write across concurrent
-    # per-chain invocations sharing the same pubkey_delta_path.
+    # per-chain invocations sharing the same sink_path.
     with create_lock(PUBKEY_KEYSPACE):
         run_pubkey(
             env=env or "local",
             currency=currency,
-            source_delta_path=delta_lake_path,
-            pubkey_delta_path=pubkey_delta_path,
+            source_path=source_path,
+            sink_path=sink_path,
             cassandra_nodes=env_config.cassandra_nodes if env_config else None,
             cassandra_username=env_config.username if env_config else None,
             cassandra_password=env_config.password if env_config else None,
@@ -552,7 +647,7 @@ def run_pubkey_update(
             s3_credentials=s3_credentials,
             spark_config=spark_config,
             pubkey_keyspace=PUBKEY_KEYSPACE,
-            sink=sink,
+            sink_type=sink_type,
         )
 
 
