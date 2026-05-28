@@ -1,0 +1,9 @@
+CREATE KEYSPACE IF NOT EXISTS 0x8BADF00D
+    WITH replication = 0x8BADF00D_REPLICATION_CONFIG;
+
+USE 0x8BADF00D;
+
+CREATE TABLE IF NOT EXISTS pubkey_by_address (
+    address text PRIMARY KEY,
+    pubkey blob
+);

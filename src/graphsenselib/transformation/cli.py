@@ -343,6 +343,219 @@ def run_transformation(
         )
 
 
+@transformation.command(
+    "pubkey-update",
+    short_help="Update cross-chain pubkey → address lookup from Delta Lake.",
+)
+@require_environment(required=False)
+@require_currency()
+@click.option(
+    "--start-block",
+    type=int,
+    default=None,
+    help=(
+        "Start block (exclusive). If omitted, resume from the per-network "
+        "last_processed_block stored in the pubkey Delta state table."
+    ),
+)
+@click.option(
+    "--end-block",
+    type=int,
+    default=None,
+    help="End block (inclusive). If omitted, auto-detected from Delta Lake.",
+)
+@click.option(
+    "--create-schema",
+    is_flag=True,
+    help="Create the Cassandra pubkey keyspace/table if it does not exist.",
+)
+@click.option(
+    "--delta-lake-path",
+    type=str,
+    default=None,
+    help="Override source Delta Lake base path for this currency (default: from config).",
+)
+@click.option(
+    "--pubkey-delta-path",
+    type=str,
+    required=True,
+    help=(
+        "Delta Lake base path for the shared cross-chain pubkey intermediate "
+        "(observed / materialised / state). Same path is used for every chain."
+    ),
+)
+@click.option(
+    "--s3-config",
+    "s3_config_name",
+    type=str,
+    default=None,
+    help=(
+        "Name of the s3_configs entry to use for S3/MinIO credentials. "
+        "Required when either Delta Lake path is on s3://."
+    ),
+)
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode with local[*].",
+)
+@click.option(
+    "--sink",
+    type=click.Choice(["cassandra", "delta"]),
+    default="cassandra",
+    show_default=True,
+    help=(
+        "Where to write the final (address, pubkey) rows. 'cassandra' "
+        "appends to pubkey.pubkey_by_address; 'delta' writes a Delta table "
+        "at <pubkey-delta-path>/pubkey_by_address (useful for local tests "
+        "without a Cassandra cluster)."
+    ),
+)
+def run_pubkey_update(
+    env,
+    currency,
+    start_block,
+    end_block,
+    create_schema,
+    delta_lake_path,
+    pubkey_delta_path,
+    s3_config_name,
+    local,
+    sink,
+):
+    """Update cross-chain pubkey → address Cassandra lookup for ``currency``.
+
+    Reads new transactions from the source Delta Lake for ``currency``,
+    extracts signing pubkeys, merges them into a shared cross-chain Delta
+    Lake intermediate at ``--pubkey-delta-path``, and writes derived
+    addresses for any pubkey newly observed on 2+ chains to the
+    Cassandra ``pubkey.pubkey_by_address`` table.
+    """
+    from graphsenselib.config import (
+        currency_to_schema_type,
+        get_config,
+    )
+    from graphsenselib.ingest.delta.sink import delta_lake_highest_block
+    from graphsenselib.pubkey.factory import run_pubkey
+    from graphsenselib.pubkey.job import (
+        ACCOUNT_CURRENCIES,
+        PUBKEY_KEYSPACE,
+        UTXO_CURRENCIES,
+    )
+    from graphsenselib.schema.schema import GraphsenseSchemas
+    from graphsenselib.utils.locking import create_lock
+
+    if currency not in UTXO_CURRENCIES and currency not in ACCOUNT_CURRENCIES:
+        raise click.UsageError(
+            f"Unsupported currency for pubkey update: {currency}. "
+            f"Supported: {sorted(UTXO_CURRENCIES | ACCOUNT_CURRENCIES)}"
+        )
+
+    # -e is only required when we actually need env-scoped config:
+    # writing to Cassandra, or resolving the source delta path from
+    # graphsense.yaml. For a fully-local --sink delta run with an
+    # explicit --delta-lake-path we can skip the lookups entirely.
+    if env is None:
+        if sink != "delta":
+            raise click.UsageError("--env is required when --sink=cassandra.")
+        if delta_lake_path is None:
+            raise click.UsageError(
+                "--delta-lake-path is required when --env is omitted "
+                "(no env config available to resolve it from)."
+            )
+
+    config = get_config()
+    env_config = config.get_environment(env) if env is not None else None
+    ks_config = config.get_keyspace_config(env, currency) if env is not None else None
+
+    # Resolve source delta path from config if not overridden — same as
+    # `transformation run`.
+    if delta_lake_path is None:
+        assert ks_config is not None  # guarded above: env must be set here
+        ingest_cfg = ks_config.ingest_config
+        if ingest_cfg and ingest_cfg.raw_keyspace_file_sinks:
+            delta_sink = ingest_cfg.raw_keyspace_file_sinks.get("delta")
+            if delta_sink:
+                delta_lake_path = delta_sink.directory
+        if delta_lake_path is None:
+            raise click.UsageError(
+                "No --delta-lake-path provided and no delta sink configured "
+                f"for {currency} in environment {env}."
+            )
+
+    is_s3 = any(
+        p.startswith("s3://") or p.startswith("s3a://")
+        for p in (delta_lake_path, pubkey_delta_path)
+    )
+    if is_s3 and s3_config_name is None:
+        available = sorted(config.s3_configs.keys())
+        if not available:
+            raise click.UsageError(
+                "An S3 Delta Lake path was given but no s3_configs are "
+                "defined in the graphsense config."
+            )
+        raise click.UsageError(
+            f"An S3 Delta Lake path was given but --s3-config was not "
+            f"provided. Available s3_configs: {', '.join(available)}."
+        )
+
+    s3_credentials = config.get_s3_credentials(s3_config_name)
+    spark_config = config.spark_config or {}
+
+    if create_schema:
+        if sink != "cassandra":
+            raise click.UsageError(
+                "--create-schema only applies when --sink=cassandra."
+            )
+        logger.info(f"Creating Cassandra keyspace '{PUBKEY_KEYSPACE}' if not exists...")
+        GraphsenseSchemas().create_pubkey_keyspace_if_not_exist(env)
+
+    schema_type = currency_to_schema_type.get(currency)
+    logger.info(
+        "Pubkey update: env=%s currency=%s schema=%s source=%s pubkey=%s "
+        "start=%s end=%s local=%s sink=%s",
+        env,
+        currency,
+        schema_type,
+        delta_lake_path,
+        pubkey_delta_path,
+        start_block,
+        end_block,
+        local,
+        sink,
+    )
+
+    if end_block is None:
+        top = delta_lake_highest_block(delta_lake_path, s3_credentials)
+        if top is None:
+            raise click.ClickException(
+                f"Cannot auto-detect end_block: block Delta table at "
+                f"{delta_lake_path}/block is empty."
+            )
+        end_block = top
+        logger.info(f"Auto-detected end_block={end_block} from source delta.")
+
+    # Serialise cross-chain detection / sink write across concurrent
+    # per-chain invocations sharing the same pubkey_delta_path.
+    with create_lock(PUBKEY_KEYSPACE):
+        run_pubkey(
+            env=env or "local",
+            currency=currency,
+            source_delta_path=delta_lake_path,
+            pubkey_delta_path=pubkey_delta_path,
+            cassandra_nodes=env_config.cassandra_nodes if env_config else None,
+            cassandra_username=env_config.username if env_config else None,
+            cassandra_password=env_config.password if env_config else None,
+            start_block=start_block,
+            end_block=end_block,
+            local=local,
+            s3_credentials=s3_credentials,
+            spark_config=spark_config,
+            pubkey_keyspace=PUBKEY_KEYSPACE,
+            sink=sink,
+        )
+
+
 @transformation.command("cluster", short_help="Run one-off UTXO address clustering.")
 @require_environment()
 @require_currency()
