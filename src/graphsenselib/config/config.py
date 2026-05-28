@@ -538,6 +538,9 @@ class AppConfig(GoodConf):
                     f"s3_config '{config_name}' not found. "
                     f"Available: {list(self.s3_configs.keys())}"
                 )
+            baseline = self.s3_configs.get("baseline")
+            if baseline and config_name != "baseline":
+                return {**baseline, **creds}
             return creds
         return self.s3_credentials
 

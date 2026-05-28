@@ -175,6 +175,70 @@ def test_environment_rejects_non_serial_serial_consistency_level():
     assert "serial_consistency_level must be one of" in str(exc_info.value)
 
 
+def test_s3_configs_inherit_from_baseline():
+    cfg_yaml = """
+s3_configs:
+  baseline:
+    AWS_ENDPOINT_URL: https://s3.example.com
+    AWS_REGION: eu-central-1
+    AWS_ACCESS_KEY_ID: baseline-key
+  prod_user:
+    AWS_ACCESS_KEY_ID: prod-key
+    AWS_SECRET_ACCESS_KEY: prod-secret
+  other_region:
+    AWS_REGION: eu-west-1
+    AWS_ACCESS_KEY_ID: other-key
+    AWS_SECRET_ACCESS_KEY: other-secret
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg_yaml)
+        fname = f.name
+
+    try:
+        cfg = AppConfig(load=True, config_file=fname)
+
+        # Named entries inherit baseline values...
+        assert cfg.get_s3_credentials("prod_user") == {
+            "AWS_ENDPOINT_URL": "https://s3.example.com",
+            "AWS_REGION": "eu-central-1",
+            "AWS_ACCESS_KEY_ID": "prod-key",
+            "AWS_SECRET_ACCESS_KEY": "prod-secret",
+        }
+
+        # ...but their own values take precedence.
+        other = cfg.get_s3_credentials("other_region")
+        assert other is not None
+        assert other["AWS_REGION"] == "eu-west-1"
+        assert other["AWS_ENDPOINT_URL"] == "https://s3.example.com"
+        assert other["AWS_ACCESS_KEY_ID"] == "other-key"
+
+        # Requesting baseline returns it as-is, not merged with itself.
+        assert cfg.get_s3_credentials("baseline") == cfg.s3_configs["baseline"]
+    finally:
+        os.unlink(fname)
+
+
+def test_s3_configs_without_baseline_unchanged():
+    cfg_yaml = """
+s3_configs:
+  prod_user:
+    AWS_ACCESS_KEY_ID: prod-key
+    AWS_SECRET_ACCESS_KEY: prod-secret
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg_yaml)
+        fname = f.name
+
+    try:
+        cfg = AppConfig(load=True, config_file=fname)
+        assert cfg.get_s3_credentials("prod_user") == {
+            "AWS_ACCESS_KEY_ID": "prod-key",
+            "AWS_SECRET_ACCESS_KEY": "prod-secret",
+        }
+    finally:
+        os.unlink(fname)
+
+
 def test_environment_consistency_level_loaded_from_yaml():
     cfg = """
 environments:
