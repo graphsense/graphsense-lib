@@ -73,6 +73,22 @@ make serve-web
 
 **Config resolution order:** explicit `config_file` param > `CONFIG_FILE` env var > `./instance/config.yaml` > `.graphsense.yaml` `web` key > env vars only.
 
+#### Environment variable substitution in YAML
+
+Any string value in a config file may reference environment variables with `${VAR}`. This works in both the CLI config (`.graphsense.yaml`) and the REST config, and applies to nested values (lists, maps) too. Useful for keeping secrets out of the file:
+
+```yaml
+gs-tagstore:
+  url: ${TAGSTORE_URL}
+database:
+  nodes:
+    - ${CASSANDRA_HOST}
+```
+
+- **Defaults:** `${VAR:-fallback}` uses `fallback` when `VAR` is unset or empty. Use `${VAR:-}` to allow an empty value.
+- **Errors:** a `${VAR}` referencing an unset variable with no default fails loudly at load time.
+- **Escaping:** write `$${VAR}` to emit a literal `${VAR}` without substitution. A bare `$VAR` (no braces) is never substituted.
+
 #### Optional REST settings (env vars)
 
 | Variable | Default | Description |

@@ -6,10 +6,11 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
-from goodconf import _load_config
+from goodconf import FileConfigSettingsSource, _load_config
 from pydantic import BaseModel, field_validator, model_validator
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-from ..utils import first_or_default, flatten
+from ..utils import first_or_default, flatten, resolve_env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -330,10 +331,41 @@ class SlackTopic(_WarnExtraModel):
     hooks: List[str] = Field(default_factory=lambda: [])
 
 
+class _EnvResolvingFileConfigSource(FileConfigSettingsSource):
+    """goodconf file source that resolves ${VAR} placeholders via the
+    environment before the values reach pydantic.
+
+    This covers the native goodconf ``load()`` path; the explicit
+    ``load_partial`` path resolves separately (both share the same helper).
+    """
+
+    def __call__(self) -> Dict[str, Any]:
+        return resolve_env_vars(super().__call__())
+
+
 class AppConfig(GoodConf):
     """Graphsenselib config file"""
 
     default_environment: Optional[str] = None
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        # Mirror goodconf's source ordering but swap in the env-resolving file
+        # source so ${VAR} placeholders are expanded on the native load() path.
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _EnvResolvingFileConfigSource(settings_cls),
+            file_secret_settings,
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -612,7 +644,7 @@ class AppConfig(GoodConf):
         config_file = filename or self.underlying_file
 
         if config_file and os.path.exists(config_file):
-            raw_config = _load_config(config_file)
+            raw_config = resolve_env_vars(_load_config(config_file))
         else:
             logger.warning(
                 f"Config file not found: {config_file}. Continuing with defaults."
