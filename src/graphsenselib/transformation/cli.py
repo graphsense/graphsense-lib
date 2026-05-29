@@ -224,6 +224,7 @@ def run_transformation(
 
     s3_credentials = config.get_s3_credentials(s3_config_name)
     spark_config = config.get_spark_config()
+    spark_packages = config.get_spark_packages()
 
     # Schema creation runs BEFORE Spark (uses cassandra-driver, no Java needed)
     if create_schema:
@@ -339,6 +340,7 @@ def run_transformation(
             local=local,
             s3_credentials=s3_credentials,
             spark_config=spark_config,
+            spark_packages=spark_packages,
             debug_write_audit=debug_write_audit,
         )
 

@@ -417,6 +417,18 @@ class AppConfig(GoodConf):
         ),
     )
 
+    spark_packages: Dict[str, str] = Field(
+        default_factory=lambda: {},
+        description=(
+            "Per-package Maven coordinate overrides for the Spark transformation "
+            "session, keyed by logical name (cassandra_connector, joda_time, "
+            "delta_spark, hadoop_aws). Merged over the built-in defaults, so only "
+            "the packages you want to change need to be listed, e.g. "
+            "{'hadoop_aws': 'org.apache.hadoop:hadoop-aws:3.3.4'}. Defaults stay "
+            "the same when this is empty."
+        ),
+    )
+
     legacy_ingest: bool = Field(
         default=False,
         description="Use the legacy ingest pipeline instead of the new IngestRunner pipeline.",
@@ -565,6 +577,13 @@ class AppConfig(GoodConf):
         if profile_name == "baseline":
             return dict(profile)
         return {**baseline, **profile}
+
+    def get_spark_packages(self) -> Dict[str, str]:
+        """Per-package Maven coordinate overrides for the Spark session.
+
+        Returned as-is; merged over the built-in defaults in create_spark_session.
+        """
+        return dict(self.spark_packages or {})
 
     def get_s3_credentials(
         self, config_name: Optional[str] = None

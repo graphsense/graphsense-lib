@@ -321,6 +321,30 @@ def test_spark_config_empty_defaults_to_empty_dict():
     assert cfg.get_spark_config() == {}
 
 
+def test_spark_packages_empty_defaults_to_empty_dict():
+    cfg = AppConfig(load=False)
+    cfg._init_with_field_defaults()
+    assert cfg.get_spark_packages() == {}
+
+
+def test_spark_packages_loaded_from_yaml():
+    cfg_yaml = """
+spark_packages:
+  hadoop_aws: org.apache.hadoop:hadoop-aws:3.3.4
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg_yaml)
+        fname = f.name
+
+    try:
+        cfg = AppConfig(load=True, config_file=fname)
+        assert cfg.get_spark_packages() == {
+            "hadoop_aws": "org.apache.hadoop:hadoop-aws:3.3.4",
+        }
+    finally:
+        os.unlink(fname)
+
+
 def test_environment_consistency_level_loaded_from_yaml():
     cfg = """
 environments:
