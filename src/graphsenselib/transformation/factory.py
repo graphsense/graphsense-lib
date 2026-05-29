@@ -21,6 +21,7 @@ def run(
     tables=None,
     s3_credentials=None,
     spark_config=None,
+    spark_packages=None,
     debug_write_audit=False,
 ):
     from graphsenselib.transformation.spark import create_spark_session
@@ -35,6 +36,7 @@ def run(
         cassandra_password=cassandra_password,
         s3_credentials=s3_credentials,
         spark_config=spark_config,
+        spark_packages=spark_packages,
     )
 
     if end_block is None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
 from goodconf import _load_config
@@ -404,12 +404,28 @@ class AppConfig(GoodConf):
 
     s3_configs: Dict[str, Dict[str, str]] = Field(default_factory=lambda: {})
 
-    spark_config: Dict[str, str] = Field(
+    spark_config: Dict[str, Any] = Field(
         default_factory=lambda: {},
         description=(
-            "Arbitrary Spark configuration properties passed to SparkSession.builder. "
-            "Use for master URL, executor memory, shuffle partitions, etc. "
-            "Example: {'spark.master': 'spark://host:7077', 'spark.executor.memory': '8g'}"
+            "Spark configuration properties passed to SparkSession.builder. "
+            "Two supported shapes: (1) flat — keys are Spark property names "
+            "and values are strings, e.g. {'spark.master': 'spark://host:7077', "
+            "'spark.executor.memory': '8g'}; (2) nested — keys are profile "
+            "names with dict values, with a reserved 'baseline' profile that "
+            "other profiles inherit from and may override. Access via "
+            "get_spark_config(profile_name)."
+        ),
+    )
+
+    spark_packages: Dict[str, str] = Field(
+        default_factory=lambda: {},
+        description=(
+            "Per-package Maven coordinate overrides for the Spark transformation "
+            "session, keyed by logical name (cassandra_connector, joda_time, "
+            "delta_spark, hadoop_aws). Merged over the built-in defaults, so only "
+            "the packages you want to change need to be listed, e.g. "
+            "{'hadoop_aws': 'org.apache.hadoop:hadoop-aws:3.3.4'}. Defaults stay "
+            "the same when this is empty."
         ),
     )
 
@@ -528,6 +544,47 @@ class AppConfig(GoodConf):
         else:
             return None
 
+    def get_spark_config(self, profile_name: Optional[str] = None) -> Dict[str, str]:
+        """Resolve the Spark properties dict to pass to SparkSession.builder.
+
+        Supports two YAML shapes (see the spark_config field docstring):
+        - flat (legacy): values are Spark property strings; returned as-is.
+        - nested: values are per-profile dicts; the reserved 'baseline' profile
+          is merged under the requested profile (profile keys win).
+        """
+        raw = self.spark_config or {}
+        nested = any(isinstance(v, dict) for v in raw.values())
+
+        if not nested:
+            if profile_name is not None:
+                raise ValueError(
+                    f"spark_config profile '{profile_name}' requested but "
+                    f"spark_config is in flat (legacy) form. Convert to the "
+                    f"nested form with a 'baseline' key and named profiles."
+                )
+            return dict(raw)
+
+        baseline = raw.get("baseline") or {}
+        if profile_name is None:
+            return dict(baseline)
+        profile = raw.get(profile_name)
+        if profile is None:
+            available = sorted(k for k in raw.keys() if k != "baseline")
+            raise ValueError(
+                f"spark_config profile '{profile_name}' not found. "
+                f"Available: {available}"
+            )
+        if profile_name == "baseline":
+            return dict(profile)
+        return {**baseline, **profile}
+
+    def get_spark_packages(self) -> Dict[str, str]:
+        """Per-package Maven coordinate overrides for the Spark session.
+
+        Returned as-is; merged over the built-in defaults in create_spark_session.
+        """
+        return dict(self.spark_packages or {})
+
     def get_s3_credentials(
         self, config_name: Optional[str] = None
     ) -> Optional[Dict[str, str]]:
@@ -538,6 +595,9 @@ class AppConfig(GoodConf):
                     f"s3_config '{config_name}' not found. "
                     f"Available: {list(self.s3_configs.keys())}"
                 )
+            baseline = self.s3_configs.get("baseline")
+            if baseline and config_name != "baseline":
+                return {**baseline, **creds}
             return creds
         return self.s3_credentials
 

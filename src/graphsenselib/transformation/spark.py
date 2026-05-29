@@ -5,13 +5,18 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Default Maven packages. On the iknaio cluster, hadoop-aws must match the
-# cluster's hadoop-common version (3.3.1). Override via spark_config
-# {"spark.jars.packages": "..."} if needed.
-SPARK_CASSANDRA_CONNECTOR = "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
-JODA_TIME = "joda-time:joda-time:2.10.10"
-DELTA_SPARK = "io.delta:delta-spark_2.12:3.2.1"
-HADOOP_AWS_DEFAULT = "org.apache.hadoop:hadoop-aws:3.3.1"
+# Default Maven packages, keyed by logical name. On the iknaio cluster,
+# hadoop-aws must match the cluster's hadoop-common version (3.3.1).
+# Override individual coordinates via the `spark_packages` config field, e.g.
+# {"hadoop_aws": "org.apache.hadoop:hadoop-aws:3.3.4"}; or replace the whole
+# list via spark_config {"spark.jars.packages": "..."} (applied last, wins).
+# hadoop_aws is only added to the package list when s3 credentials are present.
+DEFAULT_SPARK_PACKAGES = {
+    "cassandra_connector": "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
+    "joda_time": "joda-time:joda-time:2.10.10",
+    "delta_spark": "io.delta:delta-spark_2.12:3.2.1",
+    "hadoop_aws": "org.apache.hadoop:hadoop-aws:3.3.1",
+}
 
 
 def create_spark_session(
@@ -22,6 +27,7 @@ def create_spark_session(
     cassandra_password=None,
     s3_credentials=None,
     spark_config=None,
+    spark_packages=None,
 ):
     """Create and configure a SparkSession for reading Delta Lake and writing to Cassandra.
 
@@ -39,9 +45,16 @@ def create_spark_session(
             .config("spark.sql.shuffle.partitions", "8")
         )
 
-    packages = [SPARK_CASSANDRA_CONNECTOR, JODA_TIME, DELTA_SPARK]
+    # Merge per-package overrides from config over the defaults, then select
+    # the packages to load. hadoop-aws is only needed when reading from s3.
+    coords = {**DEFAULT_SPARK_PACKAGES, **(spark_packages or {})}
+    packages = [
+        coords["cassandra_connector"],
+        coords["joda_time"],
+        coords["delta_spark"],
+    ]
     if s3_credentials:
-        packages.append(HADOOP_AWS_DEFAULT)
+        packages.append(coords["hadoop_aws"])
 
     builder = (
         builder.config("spark.jars.packages", ",".join(packages))
