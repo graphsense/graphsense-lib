@@ -223,7 +223,7 @@ def run_transformation(
         )
 
     s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.spark_config or {}
+    spark_config = config.get_spark_config()
 
     # Schema creation runs BEFORE Spark (uses cassandra-driver, no Java needed)
     if create_schema:

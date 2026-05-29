@@ -239,6 +239,88 @@ s3_configs:
         os.unlink(fname)
 
 
+def test_spark_config_flat_legacy_form():
+    # Legacy shape: spark properties live directly under spark_config.
+    cfg_yaml = """
+spark_config:
+  spark.master: spark://host:7077
+  spark.executor.memory: 8g
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg_yaml)
+        fname = f.name
+
+    try:
+        cfg = AppConfig(load=True, config_file=fname)
+        assert cfg.get_spark_config() == {
+            "spark.master": "spark://host:7077",
+            "spark.executor.memory": "8g",
+        }
+        # Asking for a profile in flat form is a misconfiguration.
+        with pytest.raises(ValueError, match="flat \\(legacy\\) form"):
+            cfg.get_spark_config("anything")
+    finally:
+        os.unlink(fname)
+
+
+def test_spark_config_nested_inherits_from_baseline():
+    cfg_yaml = """
+spark_config:
+  baseline:
+    spark.master: spark://host:7077
+    spark.executor.memory: 8g
+    spark.sql.shuffle.partitions: "200"
+  big:
+    spark.executor.memory: 32g
+    spark.executor.cores: "8"
+  local:
+    spark.master: local[*]
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg_yaml)
+        fname = f.name
+
+    try:
+        cfg = AppConfig(load=True, config_file=fname)
+
+        # No profile name -> baseline only.
+        assert cfg.get_spark_config() == {
+            "spark.master": "spark://host:7077",
+            "spark.executor.memory": "8g",
+            "spark.sql.shuffle.partitions": "200",
+        }
+
+        # 'big' overrides executor memory and adds cores.
+        assert cfg.get_spark_config("big") == {
+            "spark.master": "spark://host:7077",
+            "spark.executor.memory": "32g",
+            "spark.sql.shuffle.partitions": "200",
+            "spark.executor.cores": "8",
+        }
+
+        # 'local' overrides only the master URL.
+        assert cfg.get_spark_config("local") == {
+            "spark.master": "local[*]",
+            "spark.executor.memory": "8g",
+            "spark.sql.shuffle.partitions": "200",
+        }
+
+        # baseline requested explicitly returns it as-is.
+        assert cfg.get_spark_config("baseline") == cfg.spark_config["baseline"]
+
+        # Unknown profile errors and excludes 'baseline' from suggestions.
+        with pytest.raises(ValueError, match="not found"):
+            cfg.get_spark_config("nope")
+    finally:
+        os.unlink(fname)
+
+
+def test_spark_config_empty_defaults_to_empty_dict():
+    cfg = AppConfig(load=False)
+    cfg._init_with_field_defaults()
+    assert cfg.get_spark_config() == {}
+
+
 def test_environment_consistency_level_loaded_from_yaml():
     cfg = """
 environments:
