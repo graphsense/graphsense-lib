@@ -45,6 +45,25 @@ def run_pubkey(
     # use a harmless placeholder when running with sink_type=delta and no nodes.
     spark_cassandra_nodes = cassandra_nodes or ["localhost:9042"]
 
+    # UTXO extraction reads wide `transaction` parquet row groups (full input
+    # arrays). On local[*] every core buffers a row group into the single
+    # driver heap at once, which OOMs on dense modern BTC blocks. For local
+    # runs, cap parallelism and give the JVM a generous heap; bound the Arrow
+    # batch shipped to the UDFs too. All overridable via the env spark_config.
+    import os
+
+    job_spark_config = {"spark.sql.execution.arrow.maxRecordsPerBatch": "512"}
+    if local:
+        job_spark_config.update(
+            {
+                "spark.master": f"local[{min(os.cpu_count() or 2, 2)}]",
+                "spark.driver.memory": "8g",
+                "spark.sql.parquet.columnarReaderBatchSize": "256",
+            }
+        )
+    if spark_config:
+        job_spark_config.update(spark_config)
+
     spark = create_spark_session(
         app_name=f"graphsense-pubkey-update-{currency}-{env}",
         local=local,
@@ -52,7 +71,7 @@ def run_pubkey(
         cassandra_username=cassandra_username,
         cassandra_password=cassandra_password,
         s3_credentials=s3_credentials,
-        spark_config=spark_config,
+        spark_config=job_spark_config,
     )
     try:
         PubkeyUpdate(

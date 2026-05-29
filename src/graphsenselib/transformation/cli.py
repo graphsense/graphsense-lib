@@ -469,11 +469,12 @@ def _log_pubkey_startup_banner(
 @click.option(
     "--sink-path",
     type=str,
-    required=True,
+    default=None,
     help=(
         "Delta Lake base path for the shared cross-chain pubkey store "
         "(read+write: observed / materialised / state, plus pubkey_by_address "
-        "when --sink-type=delta). Same path is used for every chain."
+        "when --sink-type=delta). Same path is used for every chain. "
+        "Defaults to environments.<env>.pubkey.sink_path from the config."
     ),
 )
 @click.option(
@@ -494,13 +495,13 @@ def _log_pubkey_startup_banner(
 @click.option(
     "--sink-type",
     type=click.Choice(["cassandra", "delta"]),
-    default="cassandra",
-    show_default=True,
+    default=None,
     help=(
         "Backend for the final (address, pubkey) rows. 'cassandra' appends "
         "to pubkey.pubkey_by_address; 'delta' writes a Delta table at "
         "<sink-path>/pubkey_by_address (useful for local tests without a "
-        "Cassandra cluster)."
+        "Cassandra cluster). Defaults to environments.<env>.pubkey.sink_type "
+        "if configured, else 'cassandra'."
     ),
 )
 def run_pubkey_update(
@@ -545,6 +546,23 @@ def run_pubkey_update(
             f"Supported: {sorted(UTXO_CURRENCIES | ACCOUNT_CURRENCIES)}"
         )
 
+    config = get_config()
+    env_config = config.get_environment(env) if env is not None else None
+    ks_config = config.get_keyspace_config(env, currency) if env is not None else None
+
+    # Resolve sink path / type: an explicit CLI flag always wins, otherwise
+    # fall back to environments.<env>.pubkey.{sink_path,sink_type}.
+    pubkey_cfg = env_config.pubkey if env_config else None
+    if sink_path is None and pubkey_cfg is not None:
+        sink_path = pubkey_cfg.sink_path
+    if sink_type is None:
+        sink_type = (pubkey_cfg.sink_type if pubkey_cfg else None) or "cassandra"
+    if sink_path is None:
+        raise click.UsageError(
+            "--sink-path is required (or set environments.<env>.pubkey.sink_path "
+            "in the config)."
+        )
+
     # -e is only required when we actually need env-scoped config:
     # writing to Cassandra, or resolving the source path from
     # graphsense.yaml. For a fully-local --sink-type delta run with an
@@ -557,10 +575,6 @@ def run_pubkey_update(
                 "--source-path is required when --env is omitted "
                 "(no env config available to resolve it from)."
             )
-
-    config = get_config()
-    env_config = config.get_environment(env) if env is not None else None
-    ks_config = config.get_keyspace_config(env, currency) if env is not None else None
 
     # Resolve source path from config if not overridden — same as
     # `transformation run`.

@@ -39,9 +39,18 @@ def create_spark_session(
     builder = SparkSession.builder.appName(app_name)
 
     if local:
+        # In client mode the driver JVM is already running by the time the
+        # builder config is read, so `spark.driver.memory` set here is a no-op
+        # (see Spark docs). The heap must be set before launch via the
+        # launcher args. Set PYSPARK_SUBMIT_ARGS unless the user already did.
+        driver_memory = (spark_config or {}).get("spark.driver.memory", "8g")
+        if "PYSPARK_SUBMIT_ARGS" not in os.environ:
+            os.environ["PYSPARK_SUBMIT_ARGS"] = (
+                f"--driver-memory {driver_memory} pyspark-shell"
+            )
         builder = (
             builder.master("local[*]")
-            .config("spark.driver.memory", "4g")
+            .config("spark.driver.memory", driver_memory)
             .config("spark.sql.shuffle.partitions", "8")
         )
 

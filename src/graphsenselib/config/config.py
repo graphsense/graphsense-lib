@@ -278,6 +278,26 @@ class KeyspaceConfig(_WarnExtraModel):
                         )
 
 
+class PubkeyConfig(_WarnExtraModel):
+    """Defaults for the cross-chain pubkey-update job for this environment.
+
+    Supplies the shared sink path and backend so ``transformation
+    pubkey-update`` need not pass ``--sink-path`` every run; explicit CLI
+    flags still override. The Cassandra-overwrite warning fires regardless
+    of where the value came from.
+    """
+
+    sink_path: str
+    sink_type: str = "cassandra"
+
+    @field_validator("sink_type")
+    @classmethod
+    def _validate_sink_type(cls, v):
+        if v not in ("cassandra", "delta"):
+            raise ValueError("sink_type must be 'cassandra' or 'delta'")
+        return v
+
+
 class Environment(_WarnExtraModel):
     cassandra_nodes: List[str]
     username: Optional[str] = Field(default_factory=lambda: None)
@@ -299,6 +319,7 @@ class Environment(_WarnExtraModel):
         ),
     )
     keyspaces: Dict[str, KeyspaceConfig]
+    pubkey: Optional[PubkeyConfig] = None
 
     @field_validator("consistency_level")
     @classmethod

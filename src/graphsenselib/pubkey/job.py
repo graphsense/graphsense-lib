@@ -230,7 +230,19 @@ class PubkeyUpdate:
 
         if self.currency in UTXO_CURRENCIES:
             udf = _extract_pubkeys_udf_utxo()
-            pubkeys = tx_df.select(F.explode(udf(F.col("inputs"))).alias("pubkey"))
+            # Ship only the two fields the extractor actually reads
+            # (script_hex, txinwitness). The raw input struct also carries
+            # spent_transaction_hash, addresses, value, type, … which would
+            # bloat the JVM->Python Arrow batch and OOM the stdout writer on
+            # consolidation txs with thousands of inputs.
+            slim_inputs = F.transform(
+                F.col("inputs"),
+                lambda i: F.struct(
+                    i["script_hex"].alias("script_hex"),
+                    i["txinwitness"].alias("txinwitness"),
+                ),
+            )
+            pubkeys = tx_df.select(F.explode(udf(slim_inputs)).alias("pubkey"))
         elif self.currency in ACCOUNT_CURRENCIES:
             sig_struct = F.struct(
                 F.col("tx_hash"),

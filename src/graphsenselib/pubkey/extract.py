@@ -240,64 +240,38 @@ def _convert_access_list(access_list: Optional[Iterable[Any]]) -> List[Dict[str,
     return out
 
 
-def _build_eth_signature_data(tx_row: Dict[str, Any], chain_id: int) -> Dict[str, Any]:
-    """Build the dict consumed by ``eth_get_msg_hash_from_signature_data``."""
-    tx_type = int(tx_row.get("transaction_type") or 0)
+def _delta_row_to_rpc_shape(tx_row: Dict[str, Any], chain_id: int) -> Dict[str, Any]:
+    """Map a delta ``transaction`` row to the RPC-JSON shape that
+    ``signature.eth_get_signature_data_from_rpc_json`` consumes.
+
+    The delta lake stores snake_case field names and big-endian binary
+    varints; the signature helpers expect RPC-JSON camelCase keys with
+    int / bytes / 0x-hex values. This adapter only bridges naming and
+    encoding — the per-transaction-type field selection and EIP-155
+    chainId rules stay defined once in ``signature.type_to_signature_fields_eth``.
+
+    All keys any tx type might need are supplied; the signature helper reads
+    only the subset its ``type`` requires, so extra keys are harmless.
+    """
     to = tx_row.get("to_address")
-    base = {
+    return {
+        "type": int(tx_row.get("transaction_type") or 0),
         "nonce": _as_int_be(tx_row.get("nonce")),
         "gas": _as_int_be(tx_row.get("gas")),
+        "gasPrice": _as_int_be(tx_row.get("gas_price")),
         "to": bytes(to) if to is not None else b"",
+        "input": bytes(tx_row.get("input") or b""),
         "value": _as_int_be(tx_row.get("value")),
-        "data": bytes(tx_row.get("input") or b""),
+        "chainId": chain_id,
+        "maxFeePerGas": _as_int_be(tx_row.get("max_fee_per_gas")),
+        "maxPriorityFeePerGas": _as_int_be(tx_row.get("max_priority_fee_per_gas")),
+        "maxFeePerBlobGas": _as_int_be(tx_row.get("max_fee_per_blob_gas")),
+        "blobVersionedHashes": [
+            bytes(h) for h in (tx_row.get("blob_versioned_hashes") or [])
+        ],
+        "accessList": _convert_access_list(tx_row.get("access_list")),
+        "v": _as_int_be(tx_row.get("v")),
     }
-    if tx_type == 0:
-        base["gasPrice"] = _as_int_be(tx_row.get("gas_price"))
-        v_int = _as_int_be(tx_row.get("v"))
-        if v_int not in (27, 28):
-            base["chainId"] = chain_id
-        return base
-    if tx_type == 1:
-        base.update(
-            {
-                "type": 1,
-                "chainId": chain_id,
-                "gasPrice": _as_int_be(tx_row.get("gas_price")),
-                "accessList": _convert_access_list(tx_row.get("access_list")),
-            }
-        )
-        return base
-    if tx_type == 2:
-        base.update(
-            {
-                "type": 2,
-                "chainId": chain_id,
-                "maxFeePerGas": _as_int_be(tx_row.get("max_fee_per_gas")),
-                "maxPriorityFeePerGas": _as_int_be(
-                    tx_row.get("max_priority_fee_per_gas")
-                ),
-                "accessList": _convert_access_list(tx_row.get("access_list")),
-            }
-        )
-        return base
-    if tx_type == 3:
-        base.update(
-            {
-                "type": 3,
-                "chainId": chain_id,
-                "maxFeePerGas": _as_int_be(tx_row.get("max_fee_per_gas")),
-                "maxPriorityFeePerGas": _as_int_be(
-                    tx_row.get("max_priority_fee_per_gas")
-                ),
-                "accessList": _convert_access_list(tx_row.get("access_list")),
-                "maxFeePerBlobGas": _as_int_be(tx_row.get("max_fee_per_blob_gas")),
-                "blobVersionedHashes": [
-                    bytes(h) for h in (tx_row.get("blob_versioned_hashes") or [])
-                ],
-            }
-        )
-        return base
-    raise ValueError(f"Unsupported ETH transaction_type: {tx_type}")
 
 
 def extract_pubkey_account(
@@ -317,6 +291,7 @@ def extract_pubkey_account(
     """
     from graphsenselib.utils.signature import (  # deferred — heavy eth-account dep
         eth_get_msg_hash_from_signature_data,
+        eth_get_signature_data_from_rpc_json,
         eth_recover_pubkey,
     )
 
@@ -342,7 +317,8 @@ def extract_pubkey_account(
             resolved_chain_id = (
                 chain_id if chain_id is not None else _DEFAULT_CHAIN_ID.get(currency, 1)
             )
-            sig_data = _build_eth_signature_data(tx_row, resolved_chain_id or 1)
+            rpc_shape = _delta_row_to_rpc_shape(tx_row, resolved_chain_id or 1)
+            sig_data = eth_get_signature_data_from_rpc_json(rpc_shape)
             msg_hash = eth_get_msg_hash_from_signature_data(sig_data)
 
         recovered = eth_recover_pubkey((v_int, r_int, s_int), msg_hash)

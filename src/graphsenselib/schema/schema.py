@@ -350,7 +350,7 @@ class GraphsenseSchemas:
         and uses a single fixed keyspace name. Replication config defaults to
         the first configured currency's raw replication for the environment.
         """
-        from ..db.cassandra import CassandraDb
+        from ..db.cassandra import CassandraScope
 
         config = get_config()
         env_config = config.get_environment(env)
@@ -373,13 +373,11 @@ class GraphsenseSchemas:
         schema = Schema(schema_text)
         schema_to_create = schema.get_schema_string(keyspace_name, replication_config)
 
-        db = CassandraDb(
+        with CassandraScope(
             db_nodes=env_config.cassandra_nodes,
             username=env_config.username,
             password=env_config.password,
-        )
-        db.connect()
-        try:
+        ) as db:
             if db.has_keyspace(keyspace_name):
                 logger.info(
                     f"Keyspace {keyspace_name} for env {env} exists, nothing to do"
@@ -390,9 +388,6 @@ class GraphsenseSchemas:
                 f"Keyspace {keyspace_name} for env {env} created with "
                 f"replication config {replication_config}."
             )
-        finally:
-            if db.cluster is not None:
-                db.cluster.shutdown()
 
     def create_keyspace_if_not_exist(
         self,
