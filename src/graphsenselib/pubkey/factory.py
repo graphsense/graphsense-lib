@@ -85,3 +85,46 @@ def run_pubkey(
     finally:
         spark.stop()
         logger.info("SparkSession stopped.")
+
+
+def run_pubkey_compact(
+    env: str,
+    sink_path: str,
+    local: bool = False,
+    s3_credentials=None,
+    spark_config=None,
+) -> None:
+    """Deduplicate and compact the ``observed`` table at ``sink_path``.
+
+    Independent of currency/source — it only rewrites the shared cross-chain
+    ``observed`` Delta table. Schedule between ``pubkey-update`` runs.
+    """
+    import os
+
+    from graphsenselib.pubkey.job import compact_observed
+    from graphsenselib.transformation.spark import create_spark_session
+
+    job_spark_config = {}
+    if local:
+        job_spark_config.update(
+            {
+                "spark.master": f"local[{min(os.cpu_count() or 2, 2)}]",
+                "spark.driver.memory": "8g",
+            }
+        )
+    if spark_config:
+        job_spark_config.update(spark_config)
+
+    spark = create_spark_session(
+        app_name=f"graphsense-pubkey-compact-{env}",
+        local=local,
+        # No Cassandra needed; placeholder host keeps the connector config happy.
+        cassandra_nodes=["localhost:9042"],
+        s3_credentials=s3_credentials,
+        spark_config=job_spark_config,
+    )
+    try:
+        compact_observed(spark, sink_path)
+    finally:
+        spark.stop()
+        logger.info("SparkSession stopped.")

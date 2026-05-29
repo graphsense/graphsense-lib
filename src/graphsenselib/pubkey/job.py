@@ -10,8 +10,10 @@ Pipeline per run, all under one ``SparkSession``:
 2. Read source delta ``transaction`` for ``(last, end_block]``, extract
    compressed pubkeys via a pandas UDF (UTXO or account variant chosen by
    currency), distinct.
-3. MERGE the ``(pubkey, network)`` pairs into ``<pubkey_delta>/observed``
-   (partitioned by network).
+3. Append the ``(pubkey, network)`` pairs to ``<pubkey_delta>/observed``
+   (partitioned by network). Append-only: duplicates from re-observed hot
+   keys are tolerated by detection and removed periodically by
+   ``compact_observed``.
 4. Find pubkeys seen on >= 2 networks and not yet in
    ``<pubkey_delta>/materialized``; derive their addresses for every chain
    that ``convert_pubkey_to_addresses`` supports via a pandas UDF; write
@@ -280,29 +282,24 @@ class PubkeyUpdate:
     # Intermediate: merge into observed (pubkey, network)
     # ------------------------------------------------------------------
 
-    def _merge_observed(self, pubkey_df) -> None:
-        from delta.tables import DeltaTable
+    def _append_observed(self, pubkey_df) -> None:
+        """Append this run's ``(pubkey, network)`` pairs to ``observed``.
+
+        Append-only by design: hot keys (exchanges, miners) re-appear across
+        runs, so an insert-only MERGE would pay a full target-partition scan
+        every run just to suppress duplicates. Detection tolerates duplicate
+        rows (``collect_set`` over network is idempotent), and
+        ``compact_observed`` periodically rewrites the table as distinct.
+        The per-run batch is already deduplicated in ``_extract_pubkeys_df``.
+        """
         from pyspark.sql import functions as F
 
         observed_df = pubkey_df.withColumn("network", F.lit(self.network))
-
-        if not DeltaTable.isDeltaTable(self.spark, self.observed_path):
-            (
-                observed_df.write.format("delta")
-                .partitionBy("network")
-                .save(self.observed_path)
-            )
-            return
-
-        target = DeltaTable.forPath(self.spark, self.observed_path)
         (
-            target.alias("t")
-            .merge(
-                observed_df.alias("s"),
-                "t.pubkey = s.pubkey AND t.network = s.network",
-            )
-            .whenNotMatchedInsertAll()
-            .execute()
+            observed_df.write.format("delta")
+            .mode("append")
+            .partitionBy("network")
+            .save(self.observed_path)
         )
 
     # ------------------------------------------------------------------
@@ -396,7 +393,49 @@ class PubkeyUpdate:
             f"({effective_start}, {end_block}]"
         )
         pubkey_df = self._extract_pubkeys_df(effective_start, end_block)
-        self._merge_observed(pubkey_df)
+        self._append_observed(pubkey_df)
         self._detect_and_materialise_cross_chain()
         self._write_state(end_block)
         logger.info(f"PubkeyUpdate[{self.currency}] complete.")
+
+
+def compact_observed(spark, sink_path: str) -> None:
+    """Rewrite the ``observed`` table as distinct ``(pubkey, network)`` and compact.
+
+    ``_append_observed`` is append-only, so re-observed hot keys accumulate
+    duplicate rows over many runs. Detection stays correct regardless
+    (``collect_set``), but this shrinks the table the detection groupBy must
+    scan and bin-packs the many small append files. Safe to schedule between
+    ``pubkey-update`` runs; serialise it against them via the same lock.
+    """
+    from delta.tables import DeltaTable
+
+    sink_path = sink_path.rstrip("/").replace("s3://", "s3a://")
+    observed_path = f"{sink_path}/observed"
+
+    if not DeltaTable.isDeltaTable(spark, observed_path):
+        logger.info(f"No observed table at {observed_path}; nothing to compact.")
+        return
+
+    df = spark.read.format("delta").load(observed_path)
+    before = df.count()
+    # Materialise the deduplicated snapshot before overwriting the same path,
+    # so the overwrite reads from cache rather than the table it truncates.
+    deduped = df.dropDuplicates(["pubkey", "network"]).persist()
+    after = deduped.count()
+    try:
+        (
+            deduped.write.format("delta")
+            .mode("overwrite")
+            .partitionBy("network")
+            .save(observed_path)
+        )
+    finally:
+        deduped.unpersist()
+    logger.info(
+        f"Compacted observed: {before} -> {after} rows "
+        f"({before - after} duplicate observations removed)."
+    )
+
+    DeltaTable.forPath(spark, observed_path).optimize().executeCompaction()
+    logger.info("OPTIMIZE complete on observed.")

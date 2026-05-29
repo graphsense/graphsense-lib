@@ -504,6 +504,17 @@ def _log_pubkey_startup_banner(
         "if configured, else 'cassandra'."
     ),
 )
+@click.option(
+    "--auto-compact",
+    type=str,
+    default=None,
+    help=(
+        "After the update, compact the 'observed' table if due. Run-spec "
+        "'<period>[;<weekday>]' controls age since last compaction and the day "
+        "to run, e.g. '7d;sunday' = compact on Sundays if the last compaction "
+        "was more than 7 days ago. Runs only after the update lock is released."
+    ),
+)
 def run_pubkey_update(
     env,
     currency,
@@ -515,6 +526,7 @@ def run_pubkey_update(
     s3_config_name,
     local,
     sink_type,
+    auto_compact,
 ):
     """Update cross-chain pubkey → address lookup for ``currency``.
 
@@ -530,7 +542,7 @@ def run_pubkey_update(
         get_config,
     )
     from graphsenselib.ingest.delta.sink import delta_lake_highest_block
-    from graphsenselib.pubkey.factory import run_pubkey
+    from graphsenselib.pubkey.factory import run_pubkey, run_pubkey_compact
     from graphsenselib.pubkey.job import (
         ACCOUNT_CURRENCIES,
         PUBKEY_KEYSPACE,
@@ -538,6 +550,7 @@ def run_pubkey_update(
         UTXO_CURRENCIES,
     )
     from graphsenselib.schema.schema import GraphsenseSchemas
+    from graphsenselib.utils.date import parse_older_than_run_spec
     from graphsenselib.utils.locking import create_lock
 
     if currency not in UTXO_CURRENCIES and currency not in ACCOUNT_CURRENCIES:
@@ -664,6 +677,144 @@ def run_pubkey_update(
             spark_config=spark_config,
             pubkey_keyspace=PUBKEY_KEYSPACE,
             sink_type=sink_type,
+        )
+
+    # Auto-compaction runs AFTER the update lock is released: run_pubkey_compact
+    # re-acquires the same (non-reentrant) pubkey lock, so it must not nest.
+    if auto_compact:
+        last_compaction = _pubkey_last_compaction_time(sink_path, s3_credentials)
+        if parse_older_than_run_spec(auto_compact, last_compaction):
+            logger.info(
+                f"Auto-compact conditions met (last compaction: {last_compaction}); "
+                "compacting observed."
+            )
+            run_pubkey_compact(
+                env=env or "local",
+                sink_path=sink_path,
+                local=local,
+                s3_credentials=s3_credentials,
+                spark_config=spark_config,
+            )
+        else:
+            logger.info(
+                f"Auto-compact conditions not met (last compaction: "
+                f"{last_compaction}); skipping."
+            )
+
+
+def _pubkey_last_compaction_time(sink_path, s3_credentials):
+    """Timestamp of the last `observed` compaction, or None.
+
+    Reads the Delta history via delta-rs (no Spark). A compaction is marked by
+    the overwrite commit written by ``compact_observed`` (always present), so
+    this is reliable even when the trailing OPTIMIZE is a no-op. Also matches
+    OPTIMIZE commits for robustness.
+    """
+    from datetime import datetime
+
+    import deltalake
+
+    observed_path = sink_path.rstrip("/") + "/observed"
+    storage_options = {}
+    if s3_credentials:
+        storage_options = {
+            "AWS_ALLOW_HTTP": "true",
+            "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
+            "AWS_CONDITIONAL_PUT": "etag",
+            **s3_credentials,
+        }
+    try:
+        history = deltalake.DeltaTable(
+            observed_path, storage_options=storage_options
+        ).history()
+    except Exception:
+        # Table does not exist yet → treat as "never compacted".
+        return None
+
+    timestamps = [
+        h["timestamp"]
+        for h in history
+        if h.get("operation") == "OPTIMIZE"
+        or (
+            h.get("operation") == "WRITE"
+            and h.get("operationParameters", {}).get("mode") == "Overwrite"
+        )
+    ]
+    if not timestamps:
+        return None
+    return datetime.fromtimestamp(max(timestamps) // 1000)
+
+
+@transformation.command(
+    "pubkey-compact",
+    short_help="Deduplicate/compact the cross-chain pubkey 'observed' table.",
+)
+@require_environment(required=False)
+@click.option(
+    "--sink-path",
+    type=str,
+    default=None,
+    help=(
+        "Delta Lake base path of the shared cross-chain pubkey store. "
+        "Defaults to environments.<env>.pubkey.sink_path from the config."
+    ),
+)
+@click.option(
+    "--s3-config",
+    "s3_config_name",
+    type=str,
+    default=None,
+    help="Name of the s3_configs entry to use when the sink path is on s3://.",
+)
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode.",
+)
+def run_pubkey_compact_command(env, sink_path, s3_config_name, local):
+    """Rewrite ``<sink-path>/observed`` as distinct (pubkey, network) and OPTIMIZE.
+
+    ``pubkey-update`` appends to ``observed`` without deduplicating, so
+    re-observed hot keys accumulate duplicate rows. Detection stays correct,
+    but this periodically shrinks the table and bin-packs small files. Safe to
+    schedule between update runs; it takes the same pubkey lock so it won't
+    race a concurrent update.
+    """
+    from graphsenselib.config import get_config
+    from graphsenselib.pubkey.factory import run_pubkey_compact
+    from graphsenselib.pubkey.job import PUBKEY_KEYSPACE
+    from graphsenselib.utils.locking import create_lock
+
+    config = get_config()
+    env_config = config.get_environment(env) if env is not None else None
+
+    pubkey_cfg = env_config.pubkey if env_config else None
+    if sink_path is None and pubkey_cfg is not None:
+        sink_path = pubkey_cfg.sink_path
+    if sink_path is None:
+        raise click.UsageError(
+            "--sink-path is required (or set environments.<env>.pubkey.sink_path "
+            "in the config)."
+        )
+
+    is_s3 = sink_path.startswith("s3://") or sink_path.startswith("s3a://")
+    if is_s3 and s3_config_name is None:
+        available = sorted(config.s3_configs.keys())
+        raise click.UsageError(
+            "An S3 sink path was given but --s3-config was not provided. "
+            f"Available s3_configs: {', '.join(available) or '(none)'}."
+        )
+
+    s3_credentials = config.get_s3_credentials(s3_config_name)
+    spark_config = config.spark_config or {}
+
+    with create_lock(PUBKEY_KEYSPACE):
+        run_pubkey_compact(
+            env=env or "local",
+            sink_path=sink_path,
+            local=local,
+            s3_credentials=s3_credentials,
+            spark_config=spark_config,
         )
 
 
