@@ -6,10 +6,11 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
-from goodconf import _load_config
+from goodconf import FileConfigSettingsSource, _load_config
 from pydantic import BaseModel, field_validator, model_validator
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-from ..utils import first_or_default, flatten
+from ..utils import first_or_default, flatten, resolve_env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -351,10 +352,113 @@ class SlackTopic(_WarnExtraModel):
     hooks: List[str] = Field(default_factory=lambda: [])
 
 
+# Maven coordinates of the graphsense-spark job's runtime dependencies. Only
+# needed for the "slim" artifact; the "fat" (assembly) jar bundles these. The
+# slim path also needs the spark-packages resolver for graphframes.
+DEFAULT_SCALA_JOB_PACKAGES = [
+    "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
+    "org.rogach:scallop_2.12:4.1.0",
+    "joda-time:joda-time:2.10.10",
+    "org.web3j:core:4.8.7",
+    "org.web3j:abi:4.8.7",
+    "graphframes:graphframes:0.8.3-spark3.5-s_2.12",
+]
+
+
+class SidecarConfig(BaseModel):
+    """Opt-in Cassandra Sidecar bulk-write path for the full transform.
+
+    When enabled the runner adds the cassandra-analytics package (needed even
+    with the fat jar, where it is not bundled), the SSTable-writer JVM module
+    flags + temp-dir redirect, and the job's --writer/--sidecar-* arguments.
+    """
+
+    enabled: bool = False
+    contact_points: List[str] = Field(default_factory=list)
+    local_dc: Optional[str] = None
+    consistency_level: str = "LOCAL_QUORUM"
+
+
+class FullTransformArgs(BaseModel):
+    """Arguments for the `transformation run-full-transform` command.
+
+    Drives the raw -> transformed ("full transform") graph computation. The
+    command itself and its neutral options (env, currency, suffix, keyspaces,
+    spark profile, dry-run) are intentionally backend-agnostic so that a future
+    native-PySpark implementation can be selected via `backend: pyspark` (or
+    --backend) without changing how the command is invoked. The remaining
+    fields (repo/version/artifact/main_class/packages/repositories/jar_args/
+    extra_submit_args) are specific to the current Scala spark-submit backend.
+    """
+
+    # Implementation backend. "scala" launches the external graphsense-spark jar
+    # via spark-submit; "pyspark" is reserved for a future native rewrite.
+    backend: str = "scala"
+
+    # spark_config profile to use per currency (falls back to baseline/flat).
+    # Shared across backends — both resolve Spark properties from spark_config.
+    spark_profile: Dict[str, str] = Field(default_factory=dict)
+
+    # --- Scala (spark-submit) backend ---------------------------------------
+    repo: str = "graphsense/graphsense-spark"
+    # Release tag, e.g. "v26.06.0". Empty or "latest" resolves the latest stable
+    # (non-prerelease) release from the GitHub API at run time.
+    version: str = ""
+    version_overrides: Dict[str, str] = Field(default_factory=dict)
+    artifact: str = "fat"  # "fat" (assembly, self-contained) | "slim" (+packages)
+    main_class: str = "org.graphsense.TransformationJob"
+    packages: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_SCALA_JOB_PACKAGES)
+    )
+    repositories: List[str] = Field(
+        default_factory=lambda: ["https://repos.spark-packages.org/"]
+    )
+    jar_args: Dict[str, List[str]] = Field(default_factory=dict)
+    sidecar: SidecarConfig = Field(default_factory=SidecarConfig)
+    extra_submit_args: List[str] = Field(default_factory=list)
+
+    def version_for(self, currency: str) -> str:
+        return self.version_overrides.get(currency, self.version)
+
+    def profile_for(self, currency: str) -> Optional[str]:
+        return self.spark_profile.get(currency)
+
+
+class _EnvResolvingFileConfigSource(FileConfigSettingsSource):
+    """goodconf file source that resolves ${VAR} placeholders via the
+    environment before the values reach pydantic.
+
+    This covers the native goodconf ``load()`` path; the explicit
+    ``load_partial`` path resolves separately (both share the same helper).
+    """
+
+    def __call__(self) -> Dict[str, Any]:
+        return resolve_env_vars(super().__call__())
+
+
 class AppConfig(GoodConf):
     """Graphsenselib config file"""
 
     default_environment: Optional[str] = None
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        # Mirror goodconf's source ordering but swap in the env-resolving file
+        # source so ${VAR} placeholders are expanded on the native load() path.
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _EnvResolvingFileConfigSource(settings_cls),
+            file_secret_settings,
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -447,6 +551,15 @@ class AppConfig(GoodConf):
             "the packages you want to change need to be listed, e.g. "
             "{'hadoop_aws': 'org.apache.hadoop:hadoop-aws:3.3.4'}. Defaults stay "
             "the same when this is empty."
+        ),
+    )
+
+    full_transform_args: Optional[FullTransformArgs] = Field(
+        default=None,
+        description=(
+            "Arguments for the raw -> transformed full-transform command "
+            "(`transformation run-full-transform`). Spark properties themselves "
+            "live in spark_config (selected per currency via spark_profile)."
         ),
     )
 
@@ -606,6 +719,14 @@ class AppConfig(GoodConf):
         """
         return dict(self.spark_packages or {})
 
+    def get_full_transform_args(self) -> FullTransformArgs:
+        """Args for the raw -> transformed full-transform command.
+
+        Returns defaults when no `full_transform_args` section is configured; a
+        missing release version then surfaces as a clear error at jar-fetch time.
+        """
+        return self.full_transform_args or FullTransformArgs()
+
     def get_s3_credentials(
         self, config_name: Optional[str] = None
     ) -> Optional[Dict[str, str]]:
@@ -633,7 +754,7 @@ class AppConfig(GoodConf):
         config_file = filename or self.underlying_file
 
         if config_file and os.path.exists(config_file):
-            raw_config = _load_config(config_file)
+            raw_config = resolve_env_vars(_load_config(config_file))
         else:
             logger.warning(
                 f"Config file not found: {config_file}. Continuing with defaults."

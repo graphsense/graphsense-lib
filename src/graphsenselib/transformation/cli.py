@@ -818,6 +818,272 @@ def run_pubkey_compact_command(env, sink_path, s3_config_name, local):
         )
 
 
+def _expected_transformed_ks(currency, suffix, no_date):
+    """Transformed keyspace name a fresh full transform would create.
+
+    Mirrors GraphsenseSchemas.create_new_transformed_ks_if_not_exist so
+    --dry-run can show the target without creating the keyspace.
+    """
+    from datetime import datetime
+
+    name = f"{currency}_transformed"
+    if not no_date:
+        name = f"{name}_{datetime.now().strftime('%Y%m%d')}"
+    if suffix is not None:
+        name = f"{name}_{suffix}"
+    return name
+
+
+@transformation.command(
+    "run-full-transform",
+    short_help="Run the raw → transformed full transform (graphsense-spark job).",
+)
+@require_environment()
+@require_currency()
+@click.option(
+    "--suffix",
+    default=None,
+    help="Suffix for the new transformed keyspace (default: today's date).",
+)
+@click.option(
+    "--no-date",
+    is_flag=True,
+    help="Omit the date in the new transformed keyspace name.",
+)
+@click.option(
+    "--raw-keyspace",
+    "raw_keyspace_override",
+    default=None,
+    help="Override the source raw keyspace (default: from config).",
+)
+@click.option(
+    "--target-keyspace",
+    "target_keyspace_override",
+    default=None,
+    help=(
+        "Write into this existing transformed keyspace instead of creating a "
+        "fresh dated one (created if missing)."
+    ),
+)
+@click.option(
+    "--version",
+    "version_override",
+    default=None,
+    help=(
+        "graphsense-spark release tag to run, or 'latest' for the newest stable "
+        "release (default: from config; resolves latest if unset)."
+    ),
+)
+@click.option(
+    "--artifact",
+    type=click.Choice(["fat", "slim"]),
+    default=None,
+    help="Which release jar to use (default: from config).",
+)
+@click.option(
+    "--backend",
+    "backend_override",
+    type=click.Choice(["scala", "pyspark"]),
+    default=None,
+    help="Implementation backend (default: from config; currently 'scala').",
+)
+@click.option(
+    "--writer",
+    type=click.Choice(["cassandra", "sidecar"]),
+    default=None,
+    help="Cassandra write path (default: from config sidecar.enabled).",
+)
+@click.option(
+    "--spark-home",
+    envvar="SPARK_HOME",
+    default=None,
+    help="Spark install dir (or set SPARK_HOME). Falls back to spark-submit on PATH.",
+)
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run Spark locally (master=local[*]) for testing.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Print the spark-submit command and exit; creates no keyspace.",
+)
+@click.argument("extra_jar_args", nargs=-1, type=click.UNPROCESSED)
+def run_full_transform(
+    env,
+    currency,
+    suffix,
+    no_date,
+    raw_keyspace_override,
+    target_keyspace_override,
+    version_override,
+    artifact,
+    backend_override,
+    writer,
+    spark_home,
+    local,
+    dry_run,
+    extra_jar_args,
+):
+    """Run the raw → transformed full transform.
+
+    Creates a fresh transformed keyspace, then runs the external graphsense-spark
+    Scala job via spark-submit (jar pulled from a public GitHub Release and
+    cached). Backend-neutral by design: a future native-PySpark implementation
+    can be selected with `backend: pyspark` without changing how this is invoked.
+
+    Extra args after `--` are passed through to the job, e.g.
+    `... run-full-transform -e prod -c btc -- --debug 1`.
+    \f
+    """
+    from graphsenselib.config import get_config
+    from graphsenselib.transformation.spark_jar import (
+        apply_sidecar,
+        build_spark_submit,
+        fetch_release_jar,
+        resolve_latest_release,
+        run_spark_submit,
+    )
+
+    config = get_config()
+    env_config = config.get_environment(env)
+    ks_config = config.get_keyspace_config(env, currency)
+    fta = config.get_full_transform_args()
+
+    backend = backend_override or fta.backend
+    if backend != "scala":
+        raise click.UsageError(
+            f"Backend '{backend}' is not implemented yet; only 'scala' "
+            f"(external graphsense-spark job) is currently available."
+        )
+
+    schemas = GraphsenseSchemas()
+
+    # 1. Resolve / create the target transformed keyspace.
+    if target_keyspace_override:
+        target_keyspace = target_keyspace_override
+        if not dry_run:
+            schemas.create_keyspace_if_not_exist(
+                env,
+                currency,
+                "transformed",
+                keyspace_name_override=target_keyspace,
+            )
+    elif dry_run:
+        target_keyspace = _expected_transformed_ks(currency, suffix, no_date)
+    else:
+        created = schemas.create_new_transformed_ks_if_not_exist(
+            env, currency, suffix, no_date
+        )
+        if created is None:
+            raise click.ClickException(
+                "Target transformed keyspace already exists. Pass a fresh "
+                "--suffix, or --target-keyspace to write into an existing one."
+            )
+        target_keyspace = created
+
+    raw_keyspace = raw_keyspace_override or ks_config.raw_keyspace_name
+
+    # 2. Spark properties from the per-currency profile + cassandra coordinates.
+    spark_props = dict(config.get_spark_config(fta.profile_for(currency)))
+    if local:
+        spark_props["spark.master"] = "local[*]"
+    if "spark.master" not in spark_props:
+        raise click.UsageError(
+            "No spark.master configured. Set it in the spark_config profile "
+            "(baseline or the per-currency profile) or pass --local."
+        )
+    spark_props.setdefault(
+        "spark.cassandra.connection.host",
+        ",".join(n.split(":")[0] for n in env_config.cassandra_nodes),
+    )
+    ports = {n.partition(":")[2] for n in env_config.cassandra_nodes if ":" in n}
+    if len(ports) == 1:
+        spark_props.setdefault("spark.cassandra.connection.port", ports.pop())
+    if env_config.username:
+        spark_props.setdefault("spark.cassandra.auth.username", env_config.username)
+    if env_config.password:
+        spark_props.setdefault("spark.cassandra.auth.password", env_config.password)
+
+    # 3. Jar + packages (fat is self-contained; slim needs the package list).
+    version = version_override or fta.version_for(currency)
+    if not version or version == "latest":
+        version = resolve_latest_release(fta.repo)
+        logger.info(f"Using latest stable graphsense-spark release: {version}")
+    artifact = artifact or fta.artifact
+    packages = [] if artifact == "fat" else list(fta.packages)
+
+    # 4. Job args: base + per-currency extras + CLI passthrough.
+    jar_args = [
+        "--network",
+        currency,
+        "--raw-keyspace",
+        raw_keyspace,
+        "--target-keyspace",
+        target_keyspace,
+        *fta.jar_args.get(currency, []),
+        *extra_jar_args,
+    ]
+
+    # 5. Optional sidecar bulk-write path (config flag or --writer sidecar).
+    use_sidecar = writer == "sidecar" or (writer is None and fta.sidecar.enabled)
+    if use_sidecar:
+        spark_props, packages, jar_args = apply_sidecar(
+            spark_props,
+            packages,
+            jar_args,
+            contact_points=fta.sidecar.contact_points,
+            local_dc=fta.sidecar.local_dc,
+            consistency_level=fta.sidecar.consistency_level,
+        )
+
+    jar_path = fetch_release_jar(fta.repo, version, artifact, config.cache_directory)
+
+    cmd = build_spark_submit(
+        spark_home=spark_home,
+        jar_path=jar_path,
+        main_class=fta.main_class,
+        spark_props=spark_props,
+        packages=packages,
+        repositories=fta.repositories,
+        jar_args=jar_args,
+        extra_submit_args=fta.extra_submit_args,
+    )
+
+    logger.info(
+        "\n".join(
+            [
+                "=" * 72,
+                "Full transform (raw -> transformed)",
+                "=" * 72,
+                f"  env             : {env}",
+                f"  currency        : {currency}",
+                f"  backend         : {backend}",
+                f"  raw keyspace    : {raw_keyspace}",
+                f"  target keyspace : {target_keyspace}",
+                f"  jar             : {fta.repo}@{version} ({artifact})",
+                f"  writer          : {'sidecar' if use_sidecar else 'cassandra'}",
+                f"  spark.master    : {spark_props.get('spark.master')}",
+                "=" * 72,
+            ]
+        )
+    )
+
+    if dry_run:
+        click.echo("# Resolved Spark configuration:")
+        for key in sorted(spark_props):
+            click.echo(f"#   {key}={spark_props[key]}")
+        click.echo("# spark-submit command:")
+        click.echo(" ".join(cmd))
+        return
+
+    rc = run_spark_submit(cmd)
+    if rc != 0:
+        raise click.ClickException(f"spark-submit exited with code {rc}")
+    logger.info(f"Full transform complete: {currency} -> {target_keyspace}")
+
+
 @transformation.command("cluster", short_help="Run one-off UTXO address clustering.")
 @require_environment()
 @require_currency()

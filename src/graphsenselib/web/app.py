@@ -36,6 +36,7 @@ from graphsenselib.tagstore.db.database import (
     ensure_database_initialized,
     get_db_engine_async,
 )
+from graphsenselib.utils import resolve_env_vars
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -395,7 +396,7 @@ def load_config(config_file: str) -> dict:
 
     with open(config_file, "r") as input_file:
         config = yaml.safe_load(input_file)
-    return config
+    return resolve_env_vars(config)
 
 
 def setup_logging(
