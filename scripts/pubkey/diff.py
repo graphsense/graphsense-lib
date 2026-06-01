@@ -4,14 +4,19 @@ Correctness oracle for the cross-chain pubkey-update backfill: the legacy
 ``pubkey.pubkey_by_address`` table (written by an older script) is compared
 row-by-row against the new ``pubkey_v2.pubkey_by_address`` table.
 
-It reports a breakdown over the full outer join on ``address``:
+It checks ONE direction — every legacy row must still exist (and match) in the
+new table (old ⊆ new). The reverse (rows only in new) is NOT a failure: the new
+job may cover a wider block range than the old script, so new-only rows are
+expected and are deliberately not enumerated. Buckets over a left join
+legacy -> new on ``address``:
 
-    only_old  - address present in legacy, MISSING in new  -> potential regression
-    only_new  - address present in new only                -> new coverage / bug
-    match     - present in both, identical pubkey blob      -> agreement
-    mismatch  - present in both, DIFFERENT pubkey blob      -> must investigate
+    match           - legacy address present in new, identical pubkey -> agreement
+    mismatch        - present in new but DIFFERENT pubkey blob         -> investigate
+    missing_in_new  - legacy address absent from new                  -> regression
 
-and prints a few example addresses per bucket for spot-checking.
+and prints a few example addresses per warning bucket for spot-checking. Pass
+``--sample-fraction`` to check a random sample of the legacy table for a faster
+first pass (default 1.0 = full table, exact counts).
 
 Reuses graphsenselib's Spark session so the Cassandra connector, auth and
 spark profile match the job exactly. Run on the Spark driver host:
@@ -37,6 +42,12 @@ def main() -> None:
     parser.add_argument("--table", default="pubkey_by_address")
     parser.add_argument(
         "--examples", type=int, default=10, help="example rows to show per bucket"
+    )
+    parser.add_argument(
+        "--sample-fraction",
+        type=float,
+        default=1.0,
+        help="sample this fraction of the LEGACY table (0<f<=1; default 1.0=full)",
     )
     args = parser.parse_args()
 
@@ -65,40 +76,57 @@ def main() -> None:
             .select("address", "pubkey")
         )
 
+    if not (0.0 < args.sample_fraction <= 1.0):
+        raise SystemExit("--sample-fraction must be in (0, 1].")
+
     try:
         old = load(args.old_keyspace).withColumnRenamed("pubkey", "pubkey_old")
+        if args.sample_fraction < 1.0:
+            old = old.sample(fraction=args.sample_fraction, seed=42)
         new = load(args.new_keyspace).withColumnRenamed("pubkey", "pubkey_new")
 
-        joined = old.join(new, "address", "full_outer").withColumn(
+        # One direction only: does every legacy row still exist (and match) in
+        # the new table? A left join keeps exactly the legacy rows; new-only
+        # rows are never enumerated (expected when new covers a wider range).
+        joined = old.join(new, "address", "left").withColumn(
             "bucket",
-            F.when(F.col("pubkey_old").isNull(), F.lit("only_new"))
-            .when(F.col("pubkey_new").isNull(), F.lit("only_old"))
+            F.when(F.col("pubkey_new").isNull(), F.lit("missing_in_new"))
             .when(F.col("pubkey_old") == F.col("pubkey_new"), F.lit("match"))
             .otherwise(F.lit("mismatch")),
         )
         joined = joined.cache()
 
-        print("\n=== pubkey_v2 vs legacy pubkey: bucket counts ===")
+        scope = (
+            "full"
+            if args.sample_fraction >= 1.0
+            else f"{args.sample_fraction:.4g} sample"
+        )
+        print(
+            f"\n=== legacy '{args.old_keyspace}' ⊆ '{args.new_keyspace}'? ({scope}) ==="
+        )
         counts = {
             r["bucket"]: r["count"] for r in joined.groupBy("bucket").count().collect()
         }
-        for bucket in ("only_old", "only_new", "match", "mismatch"):
-            print(f"  {bucket:9s}: {counts.get(bucket, 0):,}")
+        print(f"  legacy rows checked : {sum(counts.values()):,}")
+        for bucket in ("match", "mismatch", "missing_in_new"):
+            print(f"  {bucket:15s}: {counts.get(bucket, 0):,}")
 
-        only_old = counts.get("only_old", 0)
+        missing = counts.get("missing_in_new", 0)
         mismatch = counts.get("mismatch", 0)
-        if only_old:
+        if missing:
             print(
-                f"\n  WARNING: {only_old:,} addresses are in legacy but missing "
-                "from the new table (possible regression)."
+                f"\n  WARNING: {missing:,} legacy addresses are MISSING from "
+                f"'{args.new_keyspace}' (regression)."
             )
         if mismatch:
             print(
-                f"\n  WARNING: {mismatch:,} addresses map to a DIFFERENT pubkey "
-                "blob in the two tables (must investigate)."
+                f"\n  WARNING: {mismatch:,} legacy addresses map to a DIFFERENT "
+                "pubkey blob in the new table (must investigate)."
             )
+        if not missing and not mismatch:
+            print("\n  OK: every legacy row is present and matching in the new table.")
 
-        for bucket in ("only_old", "mismatch", "only_new"):
+        for bucket in ("missing_in_new", "mismatch"):
             if counts.get(bucket, 0):
                 print(f"\n--- examples: {bucket} ---")
                 (

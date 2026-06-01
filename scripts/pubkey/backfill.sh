@@ -15,11 +15,16 @@
 # from where it stopped, it does not restart. So this whole script is safe to
 # re-run; completed chains no-op and the failed chain picks up mid-way.
 #
+# Runs graphsense-cli inside the deployed Docker image (the same way we deploy),
+# so the host needs only Docker + this script — no local graphsenselib install.
+#
 # Prereqs:
-#   - GRAPHSENSE config (graphsense.yaml) reachable; the env below must define
-#     cassandra_nodes, the per-currency delta source sinks, and an s3_configs
-#     entry. Recommended: add an environments.<ENV>.pubkey section once so you
-#     don't pass --sink-path every run:
+#   - Docker, able to pull ghcr.io/graphsense/graphsense-lib.
+#   - A graphsense.yaml on the host (path in GRAPHSENSE_CONFIG); the env below
+#     must define cassandra_nodes, the per-currency delta source sinks, an
+#     s3_configs entry, and a spark_config with spark.master pointing at the
+#     standalone cluster (NOT local — this drives the real cluster). Recommended:
+#     add an environments.<ENV>.pubkey section once so you don't pass --sink-path:
 #
 #       environments:
 #         <ENV>:
@@ -28,18 +33,35 @@
 #             sink_type: cassandra
 #             keyspace:  pubkey_v2
 #
-#   - Run on the Spark driver host (spark.master comes from the spark_config
-#     profile in graphsense.yaml). Do NOT pass --local for a prod-scale run.
+#   - If the config uses ${VAR} placeholders for secrets (s3 keys, cassandra
+#     password), pass them to the container via ENV_FILE=/path/to/.env.
+#   - Run on a host the Spark workers can route back to: the container is the
+#     Spark driver (client mode), so we use --network host. If a firewall sits
+#     between driver and workers, also pin spark.driver.port /
+#     spark.blockManager.port in spark_config and open them.
+#
+# Image tag: defaults to the rolling `dev` tag (latest develop build). Pin a
+# release candidate (TAG=v2.14.0-rc.1) or an immutable short-sha for repro.
 #
 # Usage:
-#   ENV=prod S3_CONFIG=minio ./scripts/pubkey/backfill.sh
+#   ENV=prod S3_CONFIG=minio GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
+#     ./scripts/pubkey/backfill.sh
 #   # optional overrides:
-#   ENV=prod S3_CONFIG=minio PUBKEY_KEYSPACE=pubkey_v2 \
-#     SINK_PATH=s3://staging/pubkey-xchain CHAINS="eth trx ltc zec bch btc" \
+#   ENV=prod S3_CONFIG=minio GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
+#     TAG=dev ENV_FILE=/etc/graphsense/secrets.env \
+#     PUBKEY_KEYSPACE=pubkey_v2 SINK_PATH=s3://staging/pubkey-xchain \
+#     CHAINS="eth trx ltc zec bch btc" \
 #     ./scripts/pubkey/backfill.sh
 #
 set -euo pipefail
 
+# --- Docker / image ---
+IMAGE="${IMAGE:-ghcr.io/graphsense/graphsense-lib}"
+TAG="${TAG:-dev}"  # rolling latest-develop build; pin -rc.N or <short-sha> for repro
+GRAPHSENSE_CONFIG="${GRAPHSENSE_CONFIG:?set GRAPHSENSE_CONFIG=/abs/path/to/graphsense.yaml on the host}"
+ENV_FILE="${ENV_FILE:-}"  # optional file with ${VAR} secrets the config references
+
+# --- Job ---
 ENV="${ENV:?set ENV (e.g. prod)}"
 S3_CONFIG="${S3_CONFIG:?set S3_CONFIG (name of the s3_configs entry)}"
 KS="${PUBKEY_KEYSPACE:-pubkey_v2}"
@@ -52,8 +74,28 @@ read -r -a CHAINS <<< "${CHAINS:-eth trx ltc zec bch btc}"
 SINK_ARG=()
 [[ -n "${SINK_PATH:-}" ]] && SINK_ARG=(--sink-path "$SINK_PATH")
 
-echo "ENV=$ENV  keyspace=$KS  chains=${CHAINS[*]}"
+# Run graphsense-cli inside the container. --network host so the in-container
+# Spark driver (client mode) is reachable by the standalone-cluster executors,
+# and so cassandra / s3 / hdfs endpoints resolve as on the host. The config is
+# mounted read-only and located via GRAPHSENSE_CONFIG_YAML.
+ENVFILE_ARG=()
+[[ -n "$ENV_FILE" ]] && ENVFILE_ARG=(--env-file "$ENV_FILE")
+gs_cli() {
+  docker run --rm \
+    --network host \
+    -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml \
+    "${ENVFILE_ARG[@]}" \
+    -v "$GRAPHSENSE_CONFIG:/graphsense.yaml:ro" \
+    "$IMAGE:$TAG" \
+    graphsense-cli "$@"
+}
+
+echo "image=$IMAGE:$TAG  ENV=$ENV  keyspace=$KS  chains=${CHAINS[*]}"
 echo "Reader keyspace is unchanged (legacy 'pubkey'); production is untouched."
+echo
+
+# Refresh the rolling tag so we run the latest develop build.
+docker pull "$IMAGE:$TAG"
 echo
 
 first=1
@@ -64,7 +106,7 @@ for C in "${CHAINS[@]}"; do
   if [[ $first -eq 1 ]]; then CREATE=(--create-schema); first=0; fi
 
   echo ">>> [$C] pubkey-update -> ${KS}.pubkey_by_address  (resume from state)"
-  graphsense-cli transformation pubkey-update \
+  gs_cli transformation pubkey-update \
     -e "$ENV" -c "$C" \
     --sink-type cassandra --pubkey-keyspace "$KS" \
     --s3-config "$S3_CONFIG" \
@@ -75,7 +117,7 @@ for C in "${CHAINS[@]}"; do
   # If BTC shows memory pressure as a single shot, stop and re-run BTC in
   # bounded chunks instead (state makes this safe), e.g.:
   #   for EB in 200000 400000 600000 ... <top>; do
-  #     graphsense-cli transformation pubkey-update -e "$ENV" -c btc \
+  #     gs_cli transformation pubkey-update -e "$ENV" -c btc \
   #       --sink-type cassandra --pubkey-keyspace "$KS" --s3-config "$S3_CONFIG" \
   #       "${SINK_ARG[@]}" --end-block "$EB"
   #   done
@@ -84,9 +126,15 @@ done
 # Deduplicate / bin-pack the shared `observed` table after the bulk append.
 # Detection-neutral: it must not change which pubkeys are cross-chain.
 echo ">>> compacting observed"
-graphsense-cli transformation pubkey-compact \
+gs_cli transformation pubkey-compact \
   -e "$ENV" --s3-config "$S3_CONFIG" "${SINK_ARG[@]}"
 
 echo
-echo "Backfill complete. Validate with:"
-echo "  uv run python scripts/pubkey/diff.py --env $ENV --old-keyspace pubkey --new-keyspace $KS"
+echo "Backfill complete. Validate (diff.py needs Spark+Cassandra; run it in the"
+echo "same image, mounting the script and config):"
+echo "  docker run --rm --network host \\"
+echo "    -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml \\"
+echo "    -v $GRAPHSENSE_CONFIG:/graphsense.yaml:ro \\"
+echo "    -v \$PWD/scripts/pubkey/diff.py:/diff.py:ro \\"
+echo "    $IMAGE:$TAG \\"
+echo "    python /diff.py --env $ENV --old-keyspace pubkey --new-keyspace $KS"
