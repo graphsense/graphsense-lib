@@ -414,10 +414,11 @@ def run_transformation(
     type=int,
     default=None,
     help=(
-        "Spark path only: shuffle width (spark.sql.shuffle.partitions) and "
-        "coalesce target for the clustering job. Lower values avoid hundreds of "
-        "tiny tasks/stages on the distinct/join/groupBy. Defaults to the "
-        "run_clustering_spark default (64)."
+        "Spark path only: number of partitions the final edge-set DataFrame is "
+        "coalesced to before streaming to the driver (one Arrow blob each). "
+        "Raise it if a partition exceeds spark.driver.maxResultSize or executor "
+        "memory is tight on large chains. Does NOT control join parallelism "
+        "(use spark.sql.shuffle.partitions). Default 64."
     ),
 )
 def run_clustering(

@@ -341,11 +341,13 @@ def run_clustering_spark(
         to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` via the
         Spark Cassandra connector in ``write_chunk``-sized slices.
 
-    ``read_partitions`` caps the shuffle width AND sets the number of
-    per-partition Arrow blobs streamed to the driver: more partitions =>
-    smaller per-blob driver memory / result size (raise it if a partition
-    exceeds ``spark.driver.maxResultSize``); fewer => less per-partition
-    overhead.
+    ``read_partitions`` sets the number of per-partition Arrow blobs streamed
+    to the driver (the final edge-set DataFrame is coalesced to it): more
+    partitions => smaller per-blob driver memory / result size (raise it if a
+    partition exceeds ``spark.driver.maxResultSize`` or executor memory is
+    tight on big chains); fewer => less per-partition overhead. It does NOT
+    control the resolution-join parallelism (that is
+    ``spark.sql.shuffle.partitions``).
 
     Clusters the whole transaction table (full clustering); block sub-ranges are
     not applied here. ``max_address_id`` sizes the Union-Find and must come from
@@ -358,9 +360,13 @@ def run_clustering_spark(
     cass_format = "org.apache.spark.sql.cassandra"
 
     # ---- BULK READ: multi-input transactions -> input address_id sets ----
-    if read_partitions:
-        spark.conf.set("spark.sql.shuffle.partitions", str(read_partitions))
-
+    # read_partitions only coalesces the FINAL edge-set DataFrame for bounded
+    # streaming (below); it deliberately does NOT cap spark.sql.shuffle.partitions.
+    # The address-resolution join is against the full address_ids table
+    # (hundreds of millions of rows) and needs the session's full shuffle
+    # parallelism (Spark default 200 + AQE coalescing) — capping it to a small
+    # number here would create a few huge join partitions that spill. Tune join
+    # parallelism via spark_config (spark.sql.shuffle.partitions) if needed.
     tx = (
         spark.read.format(cass_format)
         .options(table="transaction", keyspace=raw_keyspace)
@@ -405,6 +411,10 @@ def run_clustering_spark(
     import pyarrow as pa
 
     def _partition_to_ipc(rows):
+        # Runs on the executor — import locally rather than relying on the
+        # closure capturing the driver's `pa` module reference.
+        import pyarrow as pa
+
         ids = [row["ids"] for row in rows]
         if not ids:
             return iter(())
@@ -427,6 +437,10 @@ def run_clustering_spark(
     )
 
     # ---- BULK WRITE: address_id -> cluster_id mapping ----
+    # Arrow makes spark.createDataFrame(pandas) fast; without it the per-chunk
+    # conversion of millions of rows falls back to a slow row-at-a-time pure-
+    # Python path on the driver.
+    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
     logger.info("Generating final cluster mapping from Rust")
     mapping_batch = c.get_mapping()
     total_rows = mapping_batch.num_rows
