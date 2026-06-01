@@ -258,7 +258,11 @@ def run_clustering_one_off_from_cassandra(
     )
 
 
-DEFAULT_FEED_BATCH_SIZE = 200_000
+# Each batched tx is a tiny list of int32 address_ids (~150-300 B in Python
+# incl. object overhead), so 2M txs is ~0.5 GB of driver memory. Larger
+# batches just mean fewer Python->Rust process_transactions() crossings; push
+# higher (e.g. 4-5M ≈ 1 GB) via --feed-batch-size if desired.
+DEFAULT_FEED_BATCH_SIZE = 2_000_000
 DEFAULT_SPARK_WRITE_CHUNK = 5_000_000
 
 

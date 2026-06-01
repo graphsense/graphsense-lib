@@ -398,6 +398,17 @@ def run_transformation(
     is_flag=True,
     help="Run Spark in local mode with local[*] (only with --spark).",
 )
+@click.option(
+    "--feed-batch-size",
+    type=int,
+    default=None,
+    help=(
+        "Spark path only: number of multi-input transactions accumulated per "
+        "Rust process_transactions() call. Rows are tiny (~150-300 B each), so "
+        "this mainly trades driver memory for fewer Python->Rust crossings; "
+        "~4-5M ≈ 1 GB. Defaults to the run_clustering_spark default (2M)."
+    ),
+)
 def run_clustering(
     env,
     currency,
@@ -408,6 +419,7 @@ def run_clustering(
     write_chunk,
     spark,
     local,
+    feed_batch_size,
 ):
     """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
 
@@ -485,11 +497,15 @@ def run_clustering(
             try:
                 # --write-chunk default (100k) is tuned for the CQL slice path;
                 # the Spark connector write uses its own larger default.
+                spark_kwargs = {}
+                if feed_batch_size is not None:
+                    spark_kwargs["feed_batch_size"] = feed_batch_size
                 run_clustering_spark(
                     spark_session,
                     raw_keyspace=raw_keyspace,
                     transformed_keyspace=transformed_keyspace,
                     max_address_id=max_address_id,
+                    **spark_kwargs,
                 )
             finally:
                 spark_session.stop()
