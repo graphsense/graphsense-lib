@@ -264,6 +264,11 @@ def run_clustering_one_off_from_cassandra(
 # higher (e.g. 4-5M ≈ 1 GB) via --feed-batch-size if desired.
 DEFAULT_FEED_BATCH_SIZE = 2_000_000
 DEFAULT_SPARK_WRITE_CHUNK = 5_000_000
+# Shuffle width for the Spark clustering job. The multi-input edge set is far
+# smaller than the full transaction table, so the default 200 shuffle
+# partitions just spawn hundreds of tiny tasks/stages across distinct/join/
+# groupBy and the Arrow collect.
+DEFAULT_READ_PARTITIONS = 64
 
 
 def multi_input_address_id_sets(tx_df, address_ids_df):
@@ -311,6 +316,7 @@ def run_clustering_spark(
     max_address_id: int,
     feed_batch_size: int = DEFAULT_FEED_BATCH_SIZE,
     write_chunk: int = DEFAULT_SPARK_WRITE_CHUNK,
+    read_partitions: int = DEFAULT_READ_PARTITIONS,
 ):
     """Full one-off UTXO clustering with PySpark bulk read and bulk write.
 
@@ -323,12 +329,25 @@ def run_clustering_spark(
         deriving, for every multi-input transaction, the set of input
         ``address_id`` s — this is the order-independent edge set the
         multi-input clustering heuristic needs;
-      * feeds those edge sets to the in-process Rust Union-Find
-        (``gs_clustering``) on the driver via ``toLocalIterator`` so driver
-        memory stays bounded by ``feed_batch_size`` transactions at a time;
+      * pulls those edge sets to the driver via **Arrow IPC**
+        (``_collect_as_arrow``, columnar/C-speed) rather than
+        ``toLocalIterator`` (py4j row-by-row, ~50k rows/s and one Spark job per
+        partition), feeding them to the in-process Rust Union-Find
+        (``gs_clustering``) in ``feed_batch_size`` slices;
       * **bulk-writes** the resulting ``address_id -> cluster_id`` mapping back
         to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` via the
         Spark Cassandra connector in ``write_chunk``-sized slices.
+
+    ``read_partitions`` caps the shuffle width (and the number of Arrow
+    batches) so the join/groupBy don't fan out into hundreds of tiny stages.
+
+    Memory note: ``_collect_as_arrow`` materializes the *entire* edge set in
+    driver memory at once (it is not streaming, unlike ``toLocalIterator``).
+    The compact Arrow ``list<int32>`` form keeps that to ~tens of bytes per tx,
+    but on very large chains it is O(result) on the driver; feeding in
+    ``feed_batch_size`` slices bounds only the larger Python-list copy. Falls
+    back to ``toLocalIterator`` if the (private, experimental) Arrow collector
+    is unavailable in the running PySpark.
 
     Clusters the whole transaction table (full clustering); block sub-ranges are
     not applied here. ``max_address_id`` sizes the Union-Find and must come from
@@ -341,6 +360,9 @@ def run_clustering_spark(
     cass_format = "org.apache.spark.sql.cassandra"
 
     # ---- BULK READ: multi-input transactions -> input address_id sets ----
+    if read_partitions:
+        spark.conf.set("spark.sql.shuffle.partitions", str(read_partitions))
+
     tx = (
         spark.read.format(cass_format)
         .options(table="transaction", keyspace=raw_keyspace)
@@ -352,6 +374,8 @@ def run_clustering_spark(
         .load()
     )
     tx_input_ids = multi_input_address_id_sets(tx, address_ids)
+    if read_partitions:
+        tx_input_ids = tx_input_ids.coalesce(read_partitions)
 
     logger.info(
         f"max_address_id={max_address_id:,}; bulk-reading multi-input "
@@ -361,17 +385,36 @@ def run_clustering_spark(
 
     feed_start = time.perf_counter()
     total_multi_input = 0
-    batch: List[List[int]] = []
-    for row in tx_input_ids.toLocalIterator():
-        batch.append(list(row.ids))
-        if len(batch) >= feed_batch_size:
-            c.process_transactions(batch)
-            total_multi_input += len(batch)
-            logger.info(f"  fed {total_multi_input:,} multi-input txs to Rust")
-            batch = []
-    if batch:
-        c.process_transactions(batch)
-        total_multi_input += len(batch)
+
+    def _flush(id_lists):
+        nonlocal total_multi_input
+        if not id_lists:
+            return
+        c.process_transactions(id_lists)
+        total_multi_input += len(id_lists)
+        logger.info(f"  fed {total_multi_input:,} multi-input txs to Rust")
+
+    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
+    if hasattr(tx_input_ids, "_collect_as_arrow"):
+        # Single Spark job, Arrow IPC. split_batches=True lets each batch's
+        # memory be freed as it is converted. Slice each batch to
+        # feed_batch_size so the Python-list copy never exceeds one batch slice.
+        for record_batch in tx_input_ids._collect_as_arrow(split_batches=True):
+            ids_col = record_batch.column("ids")
+            for off in range(0, len(ids_col), feed_batch_size):
+                _flush(ids_col.slice(off, feed_batch_size).to_pylist())
+    else:
+        logger.warning(
+            "_collect_as_arrow unavailable; falling back to toLocalIterator "
+            "(slower py4j row transfer)."
+        )
+        batch: List[List[int]] = []
+        for row in tx_input_ids.toLocalIterator():
+            batch.append(list(row.ids))
+            if len(batch) >= feed_batch_size:
+                _flush(batch)
+                batch = []
+        _flush(batch)
 
     feed_secs = time.perf_counter() - feed_start
     logger.info(

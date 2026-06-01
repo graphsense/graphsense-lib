@@ -409,6 +409,17 @@ def run_transformation(
         "~4-5M ≈ 1 GB. Defaults to the run_clustering_spark default (2M)."
     ),
 )
+@click.option(
+    "--read-partitions",
+    type=int,
+    default=None,
+    help=(
+        "Spark path only: shuffle width (spark.sql.shuffle.partitions) and "
+        "coalesce target for the clustering job. Lower values avoid hundreds of "
+        "tiny tasks/stages on the distinct/join/groupBy. Defaults to the "
+        "run_clustering_spark default (64)."
+    ),
+)
 def run_clustering(
     env,
     currency,
@@ -420,6 +431,7 @@ def run_clustering(
     spark,
     local,
     feed_batch_size,
+    read_partitions,
 ):
     """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
 
@@ -500,6 +512,8 @@ def run_clustering(
                 spark_kwargs = {}
                 if feed_batch_size is not None:
                     spark_kwargs["feed_batch_size"] = feed_batch_size
+                if read_partitions is not None:
+                    spark_kwargs["read_partitions"] = read_partitions
                 run_clustering_spark(
                     spark_session,
                     raw_keyspace=raw_keyspace,
