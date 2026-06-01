@@ -2541,19 +2541,25 @@ class Cassandra:
                 f"{currency} does not yet support transaction linking."
             )
         prefix = self.get_prefix_lengths(currency)
+        try:
+            tx_hash_bytes = bytearray.fromhex(tx_hash)
+        except ValueError:
+            raise BadUserInputException(
+                f"{tx_hash} does not look like a valid transaction hash."
+            )
         if isinstance(io_index, int):
             query = (
                 "SELECT * from transaction_spending where "
                 "spending_tx_prefix=%s and spending_tx_hash=%s "
                 "and spending_input_index=%s"
             )
-            params = [tx_hash[: prefix["tx"]], bytearray.fromhex(tx_hash), io_index]
+            params = [tx_hash[: prefix["tx"]], tx_hash_bytes, io_index]
         else:
             query = (
                 "SELECT * from transaction_spending where "
                 "spending_tx_prefix=%s and spending_tx_hash=%s"
             )
-            params = [tx_hash[: prefix["tx"]], bytearray.fromhex(tx_hash)]
+            params = [tx_hash[: prefix["tx"]], tx_hash_bytes]
 
         result = await self.execute_async(currency, "raw", query, params)
         return result
@@ -2573,19 +2579,25 @@ class Cassandra:
                 f"{currency} does not yet support transaction linking."
             )
         prefix = self.get_prefix_lengths(currency)
+        try:
+            tx_hash_bytes = bytearray.fromhex(tx_hash)
+        except ValueError:
+            raise BadUserInputException(
+                f"{tx_hash} does not look like a valid transaction hash."
+            )
         if isinstance(io_index, int):
             query = (
                 "SELECT * from transaction_spent_in where "
                 "spent_tx_prefix=%s and spent_tx_hash=%s "
                 "and spent_output_index=%s"
             )
-            params = [tx_hash[: prefix["tx"]], bytearray.fromhex(tx_hash), io_index]
+            params = [tx_hash[: prefix["tx"]], tx_hash_bytes, io_index]
         else:
             query = (
                 "SELECT * from transaction_spent_in where "
                 "spent_tx_prefix=%s and spent_tx_hash=%s"
             )
-            params = [tx_hash[: prefix["tx"]], bytearray.fromhex(tx_hash)]
+            params = [tx_hash[: prefix["tx"]], tx_hash_bytes]
 
         result = await self.execute_async(currency, "raw", query, params)
         return result
