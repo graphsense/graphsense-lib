@@ -378,9 +378,12 @@ def run_transformation(
 @click.option(
     "--write-chunk",
     type=int,
-    default=100_000,
-    show_default=True,
-    help="Number of mapping rows per Cassandra write slice.",
+    default=None,
+    help=(
+        "Mapping rows per write slice, applied to whichever path runs. When "
+        "omitted each path uses its own default: 100k for the CQL path, 5M for "
+        "the Spark path (its createDataFrame/connector write is far coarser)."
+    ),
 )
 @click.option(
     "--spark",
@@ -403,10 +406,13 @@ def run_transformation(
     type=int,
     default=None,
     help=(
-        "Spark path only: number of multi-input transactions accumulated per "
-        "Rust process_transactions() call. Rows are tiny (~150-300 B each), so "
-        "this mainly trades driver memory for fewer Python->Rust crossings; "
-        "~4-5M ≈ 1 GB. Defaults to the run_clustering_spark default (2M)."
+        "Spark path only: caps how many transactions of a partition's Arrow "
+        "blob are converted to Python lists at once before each Rust "
+        "process_transactions() call — a per-partition memory bound, not a "
+        "throughput knob. It only binds when a partition holds more rows than "
+        "this (i.e. large chains or low --read-partitions); otherwise the whole "
+        "partition is fed in one batch and this has no effect. --read-partitions "
+        "is the primary control. Default 2M."
     ),
 )
 @click.option(
@@ -508,13 +514,15 @@ def run_clustering(
                 spark_packages=config.get_spark_packages(),
             )
             try:
-                # --write-chunk default (100k) is tuned for the CQL slice path;
-                # the Spark connector write uses its own larger default.
+                # Forward only the flags the user set; each unset flag falls
+                # back to run_clustering_spark's own (Spark-tuned) default.
                 spark_kwargs = {}
                 if feed_batch_size is not None:
                     spark_kwargs["feed_batch_size"] = feed_batch_size
                 if read_partitions is not None:
                     spark_kwargs["read_partitions"] = read_partitions
+                if write_chunk is not None:
+                    spark_kwargs["write_chunk"] = write_chunk
                 run_clustering_spark(
                     spark_session,
                     raw_keyspace=raw_keyspace,
@@ -534,13 +542,16 @@ def run_clustering(
             f"concurrency={concurrency}"
         )
 
+        cql_kwargs = {}
+        if write_chunk is not None:
+            cql_kwargs["write_chunk"] = write_chunk
         run_clustering_one_off_from_cassandra(
             db,
             start_block=start_block,
             end_block=end_block,
             chunk_size=chunk_size,
             concurrency=concurrency,
-            write_chunk=write_chunk,
+            **cql_kwargs,
         )
 
     logger.info("One-off clustering complete.")
