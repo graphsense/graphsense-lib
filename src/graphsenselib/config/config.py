@@ -290,6 +290,15 @@ class PubkeyConfig(_WarnExtraModel):
 
     sink_path: str
     sink_type: str = "cassandra"
+    keyspace: Optional[str] = Field(
+        default=None,
+        description=(
+            "Cassandra keyspace the pubkey-update job WRITES to. Defaults to "
+            "the job's fresh default (pubkey_v2) when unset, so it never appends "
+            "into a legacy 'pubkey' table. The REST reader selects its source "
+            "separately via cross_chain_pubkey_mapping_keyspace."
+        ),
+    )
 
     @field_validator("sink_type")
     @classmethod

@@ -30,7 +30,15 @@ from typing import Iterable, Optional
 logger = logging.getLogger(__name__)
 
 
-PUBKEY_KEYSPACE = "pubkey"
+# Default WRITE target for the pubkey-update job. Deliberately NOT "pubkey":
+# that legacy keyspace may already hold a table written by an older, unrelated
+# script, and this job appends, so writing there would mix incompatible data.
+# A fresh keyspace keeps the new job isolated until it is validated. Readers
+# pick their source independently via
+# cassandra_async_config.cross_chain_pubkey_mapping_keyspace (which still
+# defaults to the legacy "pubkey"); point it here once testing is done.
+# Overridable per-env (PubkeyConfig.keyspace) or per-run (--pubkey-keyspace).
+PUBKEY_KEYSPACE = "pubkey_v2"
 PUBKEY_TABLE = "pubkey_by_address"
 
 SINK_CASSANDRA = "cassandra"

@@ -515,6 +515,18 @@ def _log_pubkey_startup_banner(
         "was more than 7 days ago. Runs only after the update lock is released."
     ),
 )
+@click.option(
+    "--pubkey-keyspace",
+    type=str,
+    default=None,
+    help=(
+        "Cassandra keyspace to write the (address, pubkey) rows into "
+        "(--sink-type=cassandra). Defaults to environments.<env>.pubkey.keyspace, "
+        "else a fresh 'pubkey_v2' keyspace — deliberately NOT the legacy 'pubkey' "
+        "table, which an older script may own. The REST reader chooses its source "
+        "separately via cross_chain_pubkey_mapping_keyspace."
+    ),
+)
 def run_pubkey_update(
     env,
     currency,
@@ -527,6 +539,7 @@ def run_pubkey_update(
     local,
     sink_type,
     auto_compact,
+    pubkey_keyspace,
 ):
     """Update cross-chain pubkey → address lookup for ``currency``.
 
@@ -570,6 +583,14 @@ def run_pubkey_update(
         sink_path = pubkey_cfg.sink_path
     if sink_type is None:
         sink_type = (pubkey_cfg.sink_type if pubkey_cfg else None) or "cassandra"
+
+    # Resolve the Cassandra write keyspace: CLI flag > env config > fresh
+    # default. PUBKEY_KEYSPACE is intentionally a new keyspace, not the legacy
+    # 'pubkey' table an older script may own (see pubkey.job).
+    if pubkey_keyspace is None:
+        pubkey_keyspace = (
+            pubkey_cfg.keyspace if pubkey_cfg else None
+        ) or PUBKEY_KEYSPACE
     if sink_path is None:
         raise click.UsageError(
             "--sink-path is required (or set environments.<env>.pubkey.sink_path "
@@ -628,8 +649,10 @@ def run_pubkey_update(
             raise click.UsageError(
                 "--create-schema only applies when --sink-type=cassandra."
             )
-        logger.info(f"Creating Cassandra keyspace '{PUBKEY_KEYSPACE}' if not exists...")
-        GraphsenseSchemas().create_pubkey_keyspace_if_not_exist(env)
+        logger.info(f"Creating Cassandra keyspace '{pubkey_keyspace}' if not exists...")
+        GraphsenseSchemas().create_pubkey_keyspace_if_not_exist(
+            env, keyspace_name=pubkey_keyspace
+        )
 
     schema_type = currency_to_schema_type.get(currency)
 
@@ -650,7 +673,7 @@ def run_pubkey_update(
         source_path=source_path,
         sink_path=sink_path,
         sink_type=sink_type,
-        pubkey_keyspace=PUBKEY_KEYSPACE,
+        pubkey_keyspace=pubkey_keyspace,
         pubkey_table=PUBKEY_TABLE,
         cassandra_nodes=(env_config.cassandra_nodes if env_config else None),
         s3_credentials=s3_credentials,
@@ -660,7 +683,9 @@ def run_pubkey_update(
     )
 
     # Serialise cross-chain detection / sink write across concurrent
-    # per-chain invocations sharing the same sink_path.
+    # per-chain invocations sharing the same sink_path. Locked on the stable
+    # PUBKEY_KEYSPACE name (not the overridable write keyspace) so it always
+    # matches the pubkey-compact lock, which contends on the same Delta store.
     with create_lock(PUBKEY_KEYSPACE):
         run_pubkey(
             env=env or "local",
@@ -675,7 +700,7 @@ def run_pubkey_update(
             local=local,
             s3_credentials=s3_credentials,
             spark_config=spark_config,
-            pubkey_keyspace=PUBKEY_KEYSPACE,
+            pubkey_keyspace=pubkey_keyspace,
             sink_type=sink_type,
         )
 

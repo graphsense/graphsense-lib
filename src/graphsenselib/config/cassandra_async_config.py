@@ -65,7 +65,15 @@ class CassandraConfig(BaseSettings):
     )
 
     cross_chain_pubkey_mapping_keyspace: Optional[str] = Field(
-        default="pubkey", description="Keyspace for cross-chain public key mapping"
+        default="pubkey",
+        description=(
+            "Keyspace the REST API READS cross-chain pubkey→address mappings "
+            "from. Defaults to the legacy 'pubkey' keyspace. The pubkey-update "
+            "job writes to a fresh keyspace by default (pubkey_v2); point this "
+            "there once that data is validated, or set to null to disable the "
+            "lookup. The feature auto-enables only if this keyspace contains a "
+            "'pubkey_by_address' table."
+        ),
     )
 
     ignore_traces_not_found_in_list_txs: bool = Field(
