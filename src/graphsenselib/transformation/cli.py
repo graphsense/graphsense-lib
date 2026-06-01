@@ -382,15 +382,43 @@ def run_transformation(
     show_default=True,
     help="Number of mapping rows per Cassandra write slice.",
 )
+@click.option(
+    "--spark",
+    is_flag=True,
+    help=(
+        "Use the PySpark bulk read/write path instead of the single-driver "
+        "CQL path. Bulk-reads raw.transaction and address_ids_by_address_prefix "
+        "via parallel token-range scans, feeds the Rust clustering engine, and "
+        "bulk-writes the mapping back via the Spark Cassandra connector. "
+        "Clusters the whole table (block sub-ranges are ignored)."
+    ),
+)
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode with local[*] (only with --spark).",
+)
 def run_clustering(
-    env, currency, start_block, end_block, chunk_size, concurrency, write_chunk
+    env,
+    currency,
+    start_block,
+    end_block,
+    chunk_size,
+    concurrency,
+    write_chunk,
+    spark,
+    local,
 ):
     """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
 
-    Reads transactions via point/range queries in ``--chunk-size``-block chunks,
-    feeds them to the Rust clustering engine, and streams the resulting mapping
-    back to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in the
-    transformed keyspace.  No PySpark dependency.
+    By default, reads transactions via point/range queries in ``--chunk-size``-block
+    chunks, feeds them to the Rust clustering engine, and streams the resulting
+    mapping back to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in the
+    transformed keyspace (no PySpark dependency).
+
+    With ``--spark``, bulk-reads and bulk-writes via the Spark Cassandra connector
+    instead (parallel token-range scans + connector writes), which is far faster
+    for full-chain clustering.
 
     The transformed keyspace must already be seeded by the Scala transformation
     (or a prior run) so that ``summary_statistics.no_addresses`` is populated.
@@ -401,6 +429,7 @@ def run_clustering(
     from graphsenselib.schema.schema import GraphsenseSchemas
     from graphsenselib.transformation.clustering import (
         run_clustering_one_off_from_cassandra,
+        run_clustering_spark,
     )
 
     if not is_fresh_clustering_enabled():
@@ -421,6 +450,52 @@ def run_clustering(
                     f"{currency} in environment {env} appears empty."
                 )
             logger.info(f"Auto-detected end_block={end_block} from raw keyspace.")
+
+        if spark:
+            from graphsenselib.config import get_config
+            from graphsenselib.transformation.spark import create_spark_session
+
+            config = get_config()
+            env_config = config.get_environment(env)
+            ks_config = config.get_keyspace_config(env, currency)
+            raw_keyspace = ks_config.raw_keyspace_name
+            transformed_keyspace = ks_config.transformed_keyspace_name
+
+            stats = db.transformed.get_summary_statistics()
+            if stats is None or getattr(stats, "no_addresses", None) is None:
+                raise click.ClickException(
+                    f"{transformed_keyspace}.summary_statistics.no_addresses is "
+                    "missing — seed the transformed keyspace before clustering."
+                )
+            max_address_id = int(stats.no_addresses)
+
+            logger.info(
+                f"Starting Spark clustering: env={env}, currency={currency}, "
+                f"raw={raw_keyspace}, transformed={transformed_keyspace}"
+            )
+            spark_session = create_spark_session(
+                app_name=f"graphsense-clustering-{currency}-{env}",
+                local=local,
+                cassandra_nodes=env_config.cassandra_nodes,
+                cassandra_username=env_config.username,
+                cassandra_password=env_config.password,
+                spark_config=config.get_spark_config(),
+                spark_packages=config.get_spark_packages(),
+            )
+            try:
+                # --write-chunk default (100k) is tuned for the CQL slice path;
+                # the Spark connector write uses its own larger default.
+                run_clustering_spark(
+                    spark_session,
+                    raw_keyspace=raw_keyspace,
+                    transformed_keyspace=transformed_keyspace,
+                    max_address_id=max_address_id,
+                )
+            finally:
+                spark_session.stop()
+                logger.info("SparkSession stopped.")
+            logger.info("One-off Spark clustering complete.")
+            return
 
         logger.info(
             f"Starting clustering: env={env}, currency={currency}, "

@@ -256,3 +256,172 @@ def run_clustering_one_off_from_cassandra(
         f"Wrote {total_rows:,} mappings in {write_secs:.1f}s "
         f"(total runtime {time.perf_counter() - feed_start:.1f}s)"
     )
+
+
+DEFAULT_FEED_BATCH_SIZE = 200_000
+DEFAULT_SPARK_WRITE_CHUNK = 5_000_000
+
+
+def multi_input_address_id_sets(tx_df, address_ids_df):
+    """Derive each multi-input transaction's distinct input ``address_id`` set.
+
+    Pure DataFrame transform (no Cassandra I/O) so it can be unit-tested with
+    synthetic frames. Mirrors the single-driver semantics in
+    :func:`iter_multi_input_tx_inputs`:
+
+      * ``tx_df`` has the ``raw.transaction`` shape: ``tx_id``, ``coinbase``,
+        and ``inputs`` = ``array<struct<address: array<string>, ...>>``;
+      * coinbase transactions and null addresses are dropped;
+      * input addresses are taken as a DISTINCT set per transaction, resolved
+        to ``address_id`` via ``address_ids_df`` (``address``, ``address_id``);
+      * only transactions with >= 2 distinct resolved ``address_id`` s survive.
+
+    Returns a DataFrame with a single ``ids`` column (``array<address_id>``),
+    each row an order-independent edge set for the Union-Find.
+    """
+    from pyspark.sql import functions as F
+
+    tx_address = (
+        tx_df.select("tx_id", "coinbase", "inputs")
+        .filter(~F.coalesce(F.col("coinbase"), F.lit(False)))
+        .filter(F.col("inputs").isNotNull() & (F.size("inputs") >= 1))
+        .select("tx_id", F.explode("inputs").alias("inp"))
+        .select("tx_id", F.explode("inp.address").alias("address"))
+        .filter(F.col("address").isNotNull())
+        .distinct()
+    )
+
+    return (
+        tx_address.join(address_ids_df.select("address", "address_id"), "address")
+        .groupBy("tx_id")
+        .agg(F.collect_set("address_id").alias("ids"))
+        .filter(F.size("ids") >= 2)
+        .select("ids")
+    )
+
+
+def run_clustering_spark(
+    spark,
+    raw_keyspace: str,
+    transformed_keyspace: str,
+    max_address_id: int,
+    feed_batch_size: int = DEFAULT_FEED_BATCH_SIZE,
+    write_chunk: int = DEFAULT_SPARK_WRITE_CHUNK,
+):
+    """Full one-off UTXO clustering with PySpark bulk read and bulk write.
+
+    Unlike :func:`run_clustering_one_off_from_cassandra` (single-driver,
+    block-chunked point/range reads through the CQL coordinator), this path:
+
+      * **bulk-reads** the entire ``raw.transaction`` and
+        ``transformed.address_ids_by_address_prefix`` tables via the Spark
+        Cassandra connector (parallel token-range scans across the cluster),
+        deriving, for every multi-input transaction, the set of input
+        ``address_id`` s — this is the order-independent edge set the
+        multi-input clustering heuristic needs;
+      * feeds those edge sets to the in-process Rust Union-Find
+        (``gs_clustering``) on the driver via ``toLocalIterator`` so driver
+        memory stays bounded by ``feed_batch_size`` transactions at a time;
+      * **bulk-writes** the resulting ``address_id -> cluster_id`` mapping back
+        to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` via the
+        Spark Cassandra connector in ``write_chunk``-sized slices.
+
+    Clusters the whole transaction table (full clustering); block sub-ranges are
+    not applied here. ``max_address_id`` sizes the Union-Find and must come from
+    ``transformed.summary_statistics.no_addresses`` (dense ``[1, no_addresses]``
+    invariant), exactly as the single-driver path requires.
+    """
+    from gs_clustering import Clustering
+    from pyspark.sql import functions as F
+
+    cass_format = "org.apache.spark.sql.cassandra"
+
+    # ---- BULK READ: multi-input transactions -> input address_id sets ----
+    tx = (
+        spark.read.format(cass_format)
+        .options(table="transaction", keyspace=raw_keyspace)
+        .load()
+    )
+    address_ids = (
+        spark.read.format(cass_format)
+        .options(table="address_ids_by_address_prefix", keyspace=transformed_keyspace)
+        .load()
+    )
+    tx_input_ids = multi_input_address_id_sets(tx, address_ids)
+
+    logger.info(
+        f"max_address_id={max_address_id:,}; bulk-reading multi-input "
+        f"transactions from {raw_keyspace}.transaction"
+    )
+    c = Clustering(max_address_id=max_address_id)
+
+    feed_start = time.perf_counter()
+    total_multi_input = 0
+    batch: List[List[int]] = []
+    for row in tx_input_ids.toLocalIterator():
+        batch.append(list(row.ids))
+        if len(batch) >= feed_batch_size:
+            c.process_transactions(batch)
+            total_multi_input += len(batch)
+            logger.info(f"  fed {total_multi_input:,} multi-input txs to Rust")
+            batch = []
+    if batch:
+        c.process_transactions(batch)
+        total_multi_input += len(batch)
+
+    feed_secs = time.perf_counter() - feed_start
+    logger.info(
+        f"Fed {total_multi_input:,} multi-input txs to Rust in {feed_secs:.1f}s"
+    )
+
+    # ---- BULK WRITE: address_id -> cluster_id mapping ----
+    logger.info("Generating final cluster mapping from Rust")
+    mapping_batch = c.get_mapping()
+    total_rows = mapping_batch.num_rows
+    logger.info(f"Mapping has {total_rows:,} rows — bulk-writing via Spark")
+
+    aid_col = mapping_batch.column("address_id")
+    cid_col = mapping_batch.column("cluster_id")
+
+    write_start = time.perf_counter()
+    for offset in range(0, total_rows, write_chunk):
+        length = min(write_chunk, total_rows - offset)
+        pdf = (
+            aid_col.slice(offset, length)
+            .to_pandas()
+            .to_frame("address_id")
+            .assign(cluster_id=cid_col.slice(offset, length).to_pandas())
+        )
+        # Drop the coinbase placeholder (address_id 0); fresh tables use int32.
+        pdf = pdf[pdf["address_id"] != 0]
+        sdf = (
+            spark.createDataFrame(pdf)
+            .withColumn("address_id", F.col("address_id").cast("int"))
+            .withColumn("cluster_id", F.col("cluster_id").cast("int"))
+        )
+        sdf.persist()
+        (
+            sdf.select("address_id", "cluster_id")
+            .write.format(cass_format)
+            .options(table="fresh_address_cluster", keyspace=transformed_keyspace)
+            .mode("append")
+            .save()
+        )
+        (
+            sdf.select("cluster_id", "address_id")
+            .write.format(cass_format)
+            .options(table="fresh_cluster_addresses", keyspace=transformed_keyspace)
+            .mode("append")
+            .save()
+        )
+        sdf.unpersist()
+        logger.info(
+            f"  wrote {offset + length:,}/{total_rows:,} "
+            f"({100 * (offset + length) / total_rows:.1f}%)"
+        )
+
+    write_secs = time.perf_counter() - write_start
+    logger.info(
+        f"Bulk-wrote {total_rows:,} mappings in {write_secs:.1f}s "
+        f"(total runtime {time.perf_counter() - feed_start:.1f}s)"
+    )
