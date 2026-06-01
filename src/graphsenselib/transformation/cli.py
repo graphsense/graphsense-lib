@@ -10,6 +10,16 @@ from graphsenselib.schema import GraphsenseSchemas
 
 logger = logging.getLogger(__name__)
 
+ALPHA_WARNING = (
+    "ALPHA command — the interface and behaviour may change and it is not yet "
+    "validated in production. Run against isolated keyspaces/paths only."
+)
+
+
+def _warn_alpha(command: str) -> None:
+    """Emit a visible alpha warning to stderr when an alpha command is invoked."""
+    click.secho(f"⚠  {command}: {ALPHA_WARNING}", fg="yellow", err=True)
+
 
 @click.group()
 def transformation_cli():
@@ -433,7 +443,7 @@ def _log_pubkey_startup_banner(
 
 @transformation.command(
     "pubkey-update",
-    short_help="Update cross-chain pubkey → address lookup from Delta Lake.",
+    short_help="[ALPHA] Update cross-chain pubkey → address lookup from Delta Lake.",
 )
 @require_environment(required=False)
 @require_currency()
@@ -549,7 +559,10 @@ def run_pubkey_update(
     pubkey newly observed on 2+ chains to the configured ``--sink-type``
     backend (Cassandra ``pubkey.pubkey_by_address`` table, or a Delta
     table under ``--sink-path``).
+
+    ALPHA: not yet validated in production; the interface may change.
     """
+    _warn_alpha("transformation pubkey-update")
     from graphsenselib.config import (
         currency_to_schema_type,
         get_config,
@@ -772,7 +785,7 @@ def _pubkey_last_compaction_time(sink_path, s3_credentials):
 
 @transformation.command(
     "pubkey-compact",
-    short_help="Deduplicate/compact the cross-chain pubkey 'observed' table.",
+    short_help="[ALPHA] Deduplicate/compact the cross-chain pubkey 'observed' table.",
 )
 @require_environment(required=False)
 @click.option(
@@ -804,7 +817,10 @@ def run_pubkey_compact_command(env, sink_path, s3_config_name, local):
     but this periodically shrinks the table and bin-packs small files. Safe to
     schedule between update runs; it takes the same pubkey lock so it won't
     race a concurrent update.
+
+    ALPHA: not yet validated in production; the interface may change.
     """
+    _warn_alpha("transformation pubkey-compact")
     from graphsenselib.config import get_config
     from graphsenselib.pubkey.factory import run_pubkey_compact
     from graphsenselib.pubkey.job import PUBKEY_KEYSPACE
@@ -861,7 +877,7 @@ def _expected_transformed_ks(currency, suffix, no_date):
 
 @transformation.command(
     "run-full-transform",
-    short_help="Run the raw → transformed full transform (graphsense-spark job).",
+    short_help="[ALPHA] Run the raw → transformed full transform (graphsense-spark job).",
 )
 @require_environment()
 @require_currency()
@@ -960,8 +976,11 @@ def run_full_transform(
 
     Extra args after `--` are passed through to the job, e.g.
     `... run-full-transform -e prod -c btc -- --debug 1`.
+
+    ALPHA: not yet validated in production; the interface may change.
     \f
     """
+    _warn_alpha("transformation run-full-transform")
     from graphsenselib.config import get_config
     from graphsenselib.transformation.spark_jar import (
         apply_sidecar,
