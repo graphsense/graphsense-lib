@@ -396,7 +396,10 @@ def _expected_transformed_ks(currency, suffix, no_date):
     "--version",
     "version_override",
     default=None,
-    help="graphsense-spark release tag to run (default: from config).",
+    help=(
+        "graphsense-spark release tag to run, or 'latest' for the newest stable "
+        "release (default: from config; resolves latest if unset)."
+    ),
 )
 @click.option(
     "--artifact",
@@ -466,6 +469,7 @@ def run_full_transform(
         apply_sidecar,
         build_spark_submit,
         fetch_release_jar,
+        resolve_latest_release,
         run_spark_submit,
     )
 
@@ -531,6 +535,9 @@ def run_full_transform(
 
     # 3. Jar + packages (fat is self-contained; slim needs the package list).
     version = version_override or fta.version_for(currency)
+    if not version or version == "latest":
+        version = resolve_latest_release(fta.repo)
+        logger.info(f"Using latest stable graphsense-spark release: {version}")
     artifact = artifact or fta.artifact
     packages = [] if artifact == "fat" else list(fta.packages)
 
@@ -591,6 +598,10 @@ def run_full_transform(
     )
 
     if dry_run:
+        click.echo("# Resolved Spark configuration:")
+        for key in sorted(spark_props):
+            click.echo(f"#   {key}={spark_props[key]}")
+        click.echo("# spark-submit command:")
         click.echo(" ".join(cmd))
         return
 

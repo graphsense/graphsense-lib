@@ -5,11 +5,12 @@ This drives the external Scala graphsense-spark job for the raw -> transformed
 (token-free) and cached; the job is then launched via spark-submit.
 """
 
+import json
 import logging
 import os
 import subprocess
 from typing import Dict, List, Optional, Tuple
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,26 @@ def asset_name(artifact: str, version: str) -> str:
     if artifact == "slim":
         return f"graphsense-spark_2.12-{v}.jar"
     raise ValueError(f"Unknown artifact '{artifact}' (expected 'fat' or 'slim')")
+
+
+def resolve_latest_release(repo: str) -> str:
+    """Resolve the latest stable release tag for ``repo`` via the GitHub API.
+
+    Uses the token-free ``/releases/latest`` endpoint, which GitHub defines as
+    the most recent non-draft, non-prerelease release — i.e. latest *stable*.
+    Returns the tag (e.g. ``v26.06.0``).
+    """
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    logger.info(f"Resolving latest stable graphsense-spark release from {url}")
+    req = Request(url, headers={"Accept": "application/vnd.github+json"})
+    with urlopen(req, timeout=30) as resp:  # noqa: S310
+        data = json.load(resp)
+    tag = data.get("tag_name")
+    if not tag:
+        raise ValueError(
+            f"GitHub API returned no tag_name for the latest release of {repo}"
+        )
+    return tag
 
 
 def release_jar_url(repo: str, version: str, artifact: str) -> str:

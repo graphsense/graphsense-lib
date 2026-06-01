@@ -380,7 +380,9 @@ class FullTransformArgs(BaseModel):
 
     # --- Scala (spark-submit) backend ---------------------------------------
     repo: str = "graphsense/graphsense-spark"
-    version: str = ""  # release tag, e.g. "v26.06.0"
+    # Release tag, e.g. "v26.06.0". Empty or "latest" resolves the latest stable
+    # (non-prerelease) release from the GitHub API at run time.
+    version: str = ""
     version_overrides: Dict[str, str] = Field(default_factory=dict)
     artifact: str = "fat"  # "fat" (assembly, self-contained) | "slim" (+packages)
     main_class: str = "org.graphsense.TransformationJob"

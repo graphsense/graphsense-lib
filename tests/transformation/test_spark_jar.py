@@ -1,12 +1,41 @@
 import pytest
 
+from graphsenselib.transformation import spark_jar
 from graphsenselib.transformation.spark_jar import (
     SIDECAR_PACKAGE,
     apply_sidecar,
     asset_name,
     build_spark_submit,
     release_jar_url,
+    resolve_latest_release,
 )
+
+
+class _FakeResp:
+    def __init__(self, payload: bytes):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, *args):
+        return self._payload
+
+
+def test_resolve_latest_release(monkeypatch):
+    monkeypatch.setattr(
+        spark_jar, "urlopen", lambda *a, **k: _FakeResp(b'{"tag_name": "v26.06.0"}')
+    )
+    assert resolve_latest_release("graphsense/graphsense-spark") == "v26.06.0"
+
+
+def test_resolve_latest_release_missing_tag(monkeypatch):
+    monkeypatch.setattr(spark_jar, "urlopen", lambda *a, **k: _FakeResp(b"{}"))
+    with pytest.raises(ValueError, match="tag_name"):
+        resolve_latest_release("graphsense/graphsense-spark")
 
 
 def test_asset_name_fat_strips_leading_v():
