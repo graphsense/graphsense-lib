@@ -10,9 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.13.6] - Unreleased
+## [2.14.0] - Unreleased
 
-### Library (v2.13.6)
+### Library (v2.14.0)
 
 #### Added
 - **`transformation run-full-transform` — drive the external graphsense-spark Scala job from graphsenselib.** ⚠️ **ALPHA** — not yet validated in production; the command interface and behaviour may change, and invoking it prints an alpha warning. New CLI command that replaces the standalone bash `spark-submit` driver: it creates a fresh transformed keyspace, downloads a graphsense-spark release jar from a public GitHub Release asset (token-free, cached under `cache_directory/spark-jars`), and launches the job via `spark-submit`. Configured by a new `full_transform_args` section (`FullTransformArgs`): release `version` (+per-currency `version_overrides`) — when unset or set to `latest` the newest stable (non-prerelease) release is resolved at run time via the GitHub API (`resolve_latest_release`), so pinning is optional — `artifact` (`fat` self-contained assembly, default, or `slim` + Maven `packages`), `main_class`, per-currency `spark_profile` (selects a `spark_config` profile) and `jar_args`, plus an opt-in `sidecar` block (Cassandra Sidecar bulk-write path: adds the analytics package even on the fat jar, the SSTable-writer JVM module flags + temp-dir redirect, and the `--writer/--sidecar-*` args). Spark properties (incl. `spark.master`) come from `spark_config` profiles; Cassandra coordinates from the environment config. The command is backend-neutral (`backend: scala` today, `pyspark` reserved) so a future native-PySpark rewrite can be selected without changing how it is invoked. New module `transformation/spark_jar.py` holds the jar fetch + spark-submit builder. `--dry-run` prints the resolved Spark configuration and the full `spark-submit` command without side effects; `--local`, `--version`, `--artifact`, `--writer`, `--suffix`/`--no-date`, `--raw-keyspace`/`--target-keyspace` override config; extra args after `--` pass through to the job.
