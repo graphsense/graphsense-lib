@@ -329,25 +329,23 @@ def run_clustering_spark(
         deriving, for every multi-input transaction, the set of input
         ``address_id`` s — this is the order-independent edge set the
         multi-input clustering heuristic needs;
-      * pulls those edge sets to the driver via **Arrow IPC**
-        (``_collect_as_arrow``, columnar/C-speed) rather than
-        ``toLocalIterator`` (py4j row-by-row, ~50k rows/s and one Spark job per
-        partition), feeding them to the in-process Rust Union-Find
+      * streams those edge sets to the driver **one Spark partition at a time**
+        as **Arrow IPC** blobs (each executor serializes its partition with
+        pyarrow; ``rdd.toLocalIterator()`` pulls one blob per partition), so
+        each transfer is bounded (~total/read_partitions) and never trips
+        ``spark.driver.maxResultSize`` — far faster than
+        ``DataFrame.toLocalIterator`` (py4j row-by-row, ~50k rows/s) and using
+        only public APIs. The edge sets feed the in-process Rust Union-Find
         (``gs_clustering``) in ``feed_batch_size`` slices;
       * **bulk-writes** the resulting ``address_id -> cluster_id`` mapping back
         to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` via the
         Spark Cassandra connector in ``write_chunk``-sized slices.
 
-    ``read_partitions`` caps the shuffle width (and the number of Arrow
-    batches) so the join/groupBy don't fan out into hundreds of tiny stages.
-
-    Memory note: ``_collect_as_arrow`` materializes the *entire* edge set in
-    driver memory at once (it is not streaming, unlike ``toLocalIterator``).
-    The compact Arrow ``list<int32>`` form keeps that to ~tens of bytes per tx,
-    but on very large chains it is O(result) on the driver; feeding in
-    ``feed_batch_size`` slices bounds only the larger Python-list copy. Falls
-    back to ``toLocalIterator`` if the (private, experimental) Arrow collector
-    is unavailable in the running PySpark.
+    ``read_partitions`` caps the shuffle width AND sets the number of
+    per-partition Arrow blobs streamed to the driver: more partitions =>
+    smaller per-blob driver memory / result size (raise it if a partition
+    exceeds ``spark.driver.maxResultSize``); fewer => less per-partition
+    overhead.
 
     Clusters the whole transaction table (full clustering); block sub-ranges are
     not applied here. ``max_address_id`` sizes the Union-Find and must come from
@@ -394,27 +392,34 @@ def run_clustering_spark(
         total_multi_input += len(id_lists)
         logger.info(f"  fed {total_multi_input:,} multi-input txs to Rust")
 
-    spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
-    if hasattr(tx_input_ids, "_collect_as_arrow"):
-        # Single Spark job, Arrow IPC. split_batches=True lets each batch's
-        # memory be freed as it is converted. Slice each batch to
-        # feed_batch_size so the Python-list copy never exceeds one batch slice.
-        for record_batch in tx_input_ids._collect_as_arrow(split_batches=True):
-            ids_col = record_batch.column("ids")
+    # Stream the edge set to the driver ONE Spark partition at a time. Each
+    # executor serializes its own partition to an Arrow IPC blob (columnar, C
+    # speed, in parallel); rdd.toLocalIterator() then pulls one blob per
+    # partition, so this is a single bounded job per partition: driver memory
+    # and per-job result size stay ~total/read_partitions and never trip
+    # spark.driver.maxResultSize — unlike a single _collect_as_arrow() over the
+    # whole frame, which pulls every partition at once (the LTC edge set alone
+    # is >1 GiB). It also avoids DataFrame.toLocalIterator's py4j row-by-row
+    # transfer (~50k rows/s) and uses only public APIs. If a single partition
+    # still exceeds maxResultSize, raise --read-partitions.
+    import pyarrow as pa
+
+    def _partition_to_ipc(rows):
+        ids = [row["ids"] for row in rows]
+        if not ids:
+            return iter(())
+        batch = pa.record_batch({"ids": pa.array(ids)})
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(sink, batch.schema) as writer:
+            writer.write_batch(batch)
+        return iter([sink.getvalue().to_pybytes()])
+
+    for blob in tx_input_ids.rdd.mapPartitions(_partition_to_ipc).toLocalIterator():
+        reader = pa.ipc.open_stream(pa.py_buffer(blob))
+        for record_batch in reader:
+            ids_col = record_batch.column(0)
             for off in range(0, len(ids_col), feed_batch_size):
                 _flush(ids_col.slice(off, feed_batch_size).to_pylist())
-    else:
-        logger.warning(
-            "_collect_as_arrow unavailable; falling back to toLocalIterator "
-            "(slower py4j row transfer)."
-        )
-        batch: List[List[int]] = []
-        for row in tx_input_ids.toLocalIterator():
-            batch.append(list(row.ids))
-            if len(batch) >= feed_batch_size:
-                _flush(batch)
-                batch = []
-        _flush(batch)
 
     feed_secs = time.perf_counter() - feed_start
     logger.info(
