@@ -104,6 +104,32 @@ RUN uv pip install --no-cache --system /tmp/wheels/graphsense_clustering-*.whl \
     && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')" \
     && find /usr/local/lib/python3.13/site-packages -depth -type d -name "__pycache__" -exec rm -rf {} +
 
+# Baked Spark-executor environment for Python-UDF jobs (e.g. pubkey-update).
+# On a standalone cluster the executors are remote and lack graphsenselib + its
+# native deps (coincurve, ...), so UDFs fail with ModuleNotFoundError. We ship a
+# relocatable env via spark.archives. It is MINIMAL on purpose: only the crypto
+# stack the UDFs import (graphsenselib's utils import path was made pandas-free),
+# so this is ~10-20 MB rather than the ~250 MB full [all,transformation] env.
+# The interpreter is copied (--copies) for relocatability; executors still need a
+# compatible Python 3.13 present (venv does not bundle the stdlib). The import
+# smoke test fails the build if the pack can't run the UDF entrypoints.
+# Reference it from spark_config:
+#   spark.archives: "/opt/graphsense/spark-env.tar.gz#environment"
+#   spark.pyspark.python: "./environment/bin/python"
+#   spark.pyspark.driver.python: "/usr/local/bin/python3"
+COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/pkwheel/
+RUN python3 -m venv --copies /opt/spark-env-venv \
+    && uv pip install --no-cache --python /opt/spark-env-venv/bin/python --no-deps \
+        /tmp/pkwheel/graphsense_lib-*.whl \
+    && uv pip install --no-cache --python /opt/spark-env-venv/bin/python \
+        eth-account coincurve base58 bech32 ecdsa \
+    && /opt/spark-env-venv/bin/python -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; print('spark-env import smoke test OK')" \
+    && uv pip install --no-cache --system venv-pack \
+    && mkdir -p /opt/graphsense \
+    && python -m venv_pack -p /opt/spark-env-venv -o /opt/graphsense/spark-env.tar.gz \
+    && rm -rf /opt/spark-env-venv /tmp/pkwheel \
+    && du -h /opt/graphsense/spark-env.tar.gz
+
 # Inline gunicorn config for REST API
 COPY <<EOF /opt/gunicorn-conf.py
 import multiprocessing
