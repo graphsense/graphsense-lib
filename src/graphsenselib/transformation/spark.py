@@ -28,6 +28,8 @@ def create_spark_session(
     s3_credentials=None,
     spark_config=None,
     spark_packages=None,
+    writer="cassandra",
+    sidecar_cassandra_version=None,
 ):
     """Create and configure a SparkSession for reading Delta Lake and writing to Cassandra.
 
@@ -61,6 +63,10 @@ def create_spark_session(
     ]
     if s3_credentials:
         packages.append(coords["hadoop_aws"])
+    if writer == "sidecar":
+        from graphsenselib.transformation.sidecar import CASSANDRA_ANALYTICS_PACKAGE
+
+        packages.append(CASSANDRA_ANALYTICS_PACKAGE)
 
     builder = (
         builder.config("spark.jars.packages", ",".join(packages))
@@ -137,6 +143,20 @@ def create_spark_session(
             builder = builder.config(
                 "spark.hadoop.fs.s3a.connection.ssl.enabled", "false"
             )
+
+    # Cassandra Sidecar bulk-write (cassandra-analytics) needs Kryo + specific
+    # JVM options applied at session-build time. PySpark cannot run
+    # cassandra-analytics' BulkSparkConf.setupSparkConf / KryoRegister.setup
+    # before the JVM/classpath exist, so apply their effect as builder configs.
+    # Applied before user overrides so spark_config can still tune them; note
+    # that overriding extraJavaOptions then drops the required --add-opens.
+    if writer == "sidecar":
+        from graphsenselib.transformation.sidecar import sidecar_spark_config
+
+        for key, value in sidecar_spark_config(
+            sidecar_cassandra_version or "4.0.0"
+        ).items():
+            builder = builder.config(key, value)
 
     # Apply user-provided Spark config overrides last (highest priority).
     # This allows overriding spark.jars.packages, spark.master, etc.

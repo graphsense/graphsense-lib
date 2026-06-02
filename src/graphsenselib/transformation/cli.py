@@ -407,12 +407,12 @@ def run_transformation(
     default=None,
     help=(
         "Spark path only: caps how many transactions of a partition's Arrow "
-        "blob are converted to Python lists at once before each Rust "
-        "process_transactions() call — a per-partition memory bound, not a "
-        "throughput knob. It only binds when a partition holds more rows than "
-        "this (i.e. large chains or low --read-partitions); otherwise the whole "
-        "partition is fed in one batch and this has no effect. --read-partitions "
-        "is the primary control. Default 2M."
+        "column are handed to Rust per process_transactions_arrow() call (a "
+        "zero-copy Arrow slice, not a throughput knob). It only binds when a "
+        "partition holds more rows than this (i.e. large chains or low "
+        "--read-partitions); otherwise the whole partition is fed in one batch "
+        "and this has no effect. --read-partitions is the primary control. "
+        "Default 2M."
     ),
 )
 @click.option(
@@ -448,6 +448,48 @@ def run_transformation(
         "chains. Cluster roots are always kept either way."
     ),
 )
+@click.option(
+    "--writer",
+    type=click.Choice(["cassandra", "sidecar"]),
+    default="cassandra",
+    show_default=True,
+    help=(
+        "Spark path only: write path for the cluster mapping. 'cassandra' uses "
+        "the spark-cassandra-connector (CQL upserts). 'sidecar' uses the "
+        "cassandra-analytics SSTable bulk loader via the Cassandra Sidecar "
+        "(requires --sidecar-contact-points and --sidecar-local-dc)."
+    ),
+)
+@click.option(
+    "--sidecar-contact-points",
+    type=str,
+    default=None,
+    help="Comma-separated Cassandra Sidecar hosts; required when --writer=sidecar.",
+)
+@click.option(
+    "--sidecar-local-dc",
+    type=str,
+    default=None,
+    help="Cassandra local datacenter; required when --writer=sidecar.",
+)
+@click.option(
+    "--sidecar-consistency-level",
+    type=str,
+    default="LOCAL_QUORUM",
+    show_default=True,
+    help="Consistency level for the sidecar bulk write.",
+)
+@click.option(
+    "--sidecar-cassandra-version",
+    type=str,
+    default="4.1.11",
+    show_default=True,
+    help=(
+        "Target cluster's Cassandra version; selects the cassandra-analytics "
+        "Kryo registrator and the SSTable format the writer generates. Must "
+        "match the cluster (supported major.minor: 4.0, 4.1, 5.0)."
+    ),
+)
 def run_clustering(
     env,
     currency,
@@ -462,6 +504,11 @@ def run_clustering(
     read_partitions,
     materialize,
     keep_singletons,
+    writer,
+    sidecar_contact_points,
+    sidecar_local_dc,
+    sidecar_consistency_level,
+    sidecar_cassandra_version,
 ):
     """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
 
@@ -492,6 +539,9 @@ def run_clustering(
             "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
         )
 
+    if writer == "sidecar" and not spark:
+        raise click.ClickException("--writer sidecar requires --spark.")
+
     # Ensure transformed keyspace schema is up to date
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
 
@@ -508,6 +558,14 @@ def run_clustering(
         if spark:
             from graphsenselib.config import get_config
             from graphsenselib.transformation.spark import create_spark_session
+
+            if writer == "sidecar" and (
+                not sidecar_contact_points or not sidecar_local_dc
+            ):
+                raise click.ClickException(
+                    "--writer sidecar requires --sidecar-contact-points and "
+                    "--sidecar-local-dc."
+                )
 
             config = get_config()
             env_config = config.get_environment(env)
@@ -535,6 +593,8 @@ def run_clustering(
                 cassandra_password=env_config.password,
                 spark_config=config.get_spark_config(),
                 spark_packages=config.get_spark_packages(),
+                writer=writer,
+                sidecar_cassandra_version=sidecar_cassandra_version,
             )
             try:
                 # Forward only the flags the user set; each unset flag falls
@@ -550,6 +610,13 @@ def run_clustering(
                     spark_kwargs["materialize"] = True
                 if keep_singletons:
                     spark_kwargs["skip_singletons"] = False
+                if writer == "sidecar":
+                    spark_kwargs["writer"] = "sidecar"
+                    spark_kwargs["sidecar_contact_points"] = sidecar_contact_points
+                    spark_kwargs["sidecar_local_dc"] = sidecar_local_dc
+                    spark_kwargs["sidecar_consistency_level"] = (
+                        sidecar_consistency_level
+                    )
                 run_clustering_spark(
                     spark_session,
                     raw_keyspace=raw_keyspace,

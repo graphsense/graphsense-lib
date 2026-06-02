@@ -258,10 +258,11 @@ def run_clustering_one_off_from_cassandra(
     )
 
 
-# Each batched tx is a tiny list of int32 address_ids (~150-300 B in Python
-# incl. object overhead), so 2M txs is ~0.5 GB of driver memory. Larger
-# batches just mean fewer Python->Rust process_transactions() crossings; push
-# higher (e.g. 4-5M ≈ 1 GB) via --feed-batch-size if desired.
+# Caps how many transactions of a partition's Arrow column are handed to Rust
+# per process_transactions_arrow() call. The slice is a zero-copy Arrow view
+# (no Python materialization), so this just bounds per-call work, not driver
+# memory; --read-partitions is the primary control. Only binds when a partition
+# holds more rows than this.
 DEFAULT_FEED_BATCH_SIZE = 2_000_000
 DEFAULT_SPARK_WRITE_CHUNK = 5_000_000
 # Shuffle width for the Spark clustering job. The multi-input edge set is far
@@ -319,6 +320,10 @@ def run_clustering_spark(
     read_partitions: int = DEFAULT_READ_PARTITIONS,
     materialize: bool = False,
     skip_singletons: bool = True,
+    writer: str = "cassandra",
+    sidecar_contact_points: str | None = None,
+    sidecar_local_dc: str | None = None,
+    sidecar_consistency_level: str = "LOCAL_QUORUM",
 ):
     """Full one-off UTXO clustering with PySpark bulk read and bulk write.
 
@@ -338,10 +343,14 @@ def run_clustering_spark(
         ``spark.driver.maxResultSize`` — far faster than
         ``DataFrame.toLocalIterator`` (py4j row-by-row, ~50k rows/s) and using
         only public APIs. The edge sets feed the in-process Rust Union-Find
-        (``gs_clustering``) in ``feed_batch_size`` slices;
+        (``gs_clustering``) as zero-copy Arrow buffers
+        (``process_transactions_arrow``, no Python materialization) in
+        ``feed_batch_size`` slices;
       * **bulk-writes** the resulting ``address_id -> cluster_id`` mapping back
-        to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` via the
-        Spark Cassandra connector in ``write_chunk``-sized slices.
+        to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in
+        ``write_chunk``-sized slices — via the Spark Cassandra connector (CQL,
+        ``writer="cassandra"``) or the Cassandra Sidecar SSTable bulk loader
+        (``writer="sidecar"``).
 
     ``read_partitions`` sets the number of per-partition Arrow blobs streamed
     to the driver (the final edge-set DataFrame is coalesced to it): more
@@ -366,9 +375,14 @@ def run_clustering_spark(
     is kept). Set False to write the full per-address mapping like the
     single-driver path.
 
+    ``writer`` selects the write path: ``"cassandra"`` (default,
+    spark-cassandra-connector CQL upserts) or ``"sidecar"`` (cassandra-analytics
+    SSTable bulk loader via the Cassandra Sidecar; requires
+    ``sidecar_contact_points`` and ``sidecar_local_dc``).
+
     The whole timed region emits an extensive per-phase / per-partition /
     per-write-slice breakdown at INFO so a real run states exactly where the
-    wall-clock goes (Spark read+join+ship vs Arrow->pylist vs Rust union-find
+    wall-clock goes (Spark read+join+ship vs Rust Arrow ingest+union-find
     vs each Cassandra write), rather than us inferring it from a laptop.
 
     The write feeds ``createDataFrame`` int64 numpy (the Arrow fast path); Rust's
@@ -418,7 +432,7 @@ def run_clustering_spark(
     # Every phase below is wall-clock instrumented at INFO so a real run reports
     # exactly where time goes. The crucial split is per partition: `wait(spark)`
     # = time blocked in toLocalIterator (Spark compute + executor->driver ship)
-    # vs `feed` = driver-side Arrow->pylist + Rust union-find. That split is the
+    # vs `feed` = driver-side Arrow→Rust ingest + union-find. That split is the
     # one thing local benchmarks can't settle, and it answers "what is slow?".
     overall_start = time.perf_counter()
 
@@ -432,7 +446,9 @@ def run_clustering_spark(
         ids = [row["ids"] for row in rows]
         if not ids:
             return iter(())
-        batch = pa.record_batch({"ids": pa.array(ids)})
+        # uint32 so the driver can hand the Arrow buffer straight to Rust's
+        # process_transactions_arrow (it reads a UInt32Array in place).
+        batch = pa.record_batch({"ids": pa.array(ids, type=pa.list_(pa.uint32()))})
         sink = pa.BufferOutputStream()
         with pa.ipc.new_stream(sink, batch.schema) as writer:
             writer.write_batch(batch)
@@ -471,8 +487,7 @@ def run_clustering_spark(
     total_multi_input = 0
     t_wait = 0.0  # blocked in toLocalIterator: Spark compute + executor->driver ship
     t_deser = 0.0  # Arrow IPC parse on the driver
-    t_pylist = 0.0  # Arrow -> Python list-of-lists
-    t_rust = 0.0  # Rust union-find process_transactions
+    t_rust = 0.0  # Rust Arrow ingest + union-find (process_transactions_arrow)
     first_wait = 0.0  # partition 1 carries the one-time scan+join+groupBy (no persist)
     stream_wait = 0.0
 
@@ -502,30 +517,27 @@ def run_clustering_spark(
         t_deser += deser_s
 
         part_rows = 0
-        part_pylist = 0.0
         part_rust = 0.0
         for record_batch in batches:
             ids_col = record_batch.column(0)
             for off in range(0, len(ids_col), feed_batch_size):
-                p0 = time.perf_counter()
-                id_lists = ids_col.slice(off, feed_batch_size).to_pylist()
-                p1 = time.perf_counter()
-                part_pylist += p1 - p0
-                if not id_lists:
+                chunk = ids_col.slice(off, feed_batch_size)
+                n = len(chunk)
+                if n == 0:
                     continue
-                c.process_transactions(id_lists)
-                p2 = time.perf_counter()
-                part_rust += p2 - p1
-                part_rows += len(id_lists)
-                logger.debug(
-                    f"    flushed {len(id_lists):,} txs | "
-                    f"pylist={p1 - p0:.2f}s rust={p2 - p1:.2f}s"
-                )
+                # Hand the Arrow list<uint32> buffer straight to Rust: it reads
+                # the offsets+values in place (zero Python objects), replacing
+                # the to_pylist() that dominated the feed at scale.
+                r0 = time.perf_counter()
+                c.process_transactions_arrow(chunk)
+                dt = time.perf_counter() - r0
+                part_rust += dt
+                part_rows += n
+                logger.debug(f"    flushed {n:,} txs | rust(arrow)={dt:.2f}s")
 
-        t_pylist += part_pylist
         t_rust += part_rust
         total_multi_input += part_rows
-        feed_s = deser_s + part_pylist + part_rust
+        feed_s = deser_s + part_rust
 
         # ETA from steady-state partitions only — partition 1 carries the
         # one-time read+join when not materialized and would skew the estimate.
@@ -542,7 +554,7 @@ def run_clustering_spark(
         logger.info(
             f"  [read] partition {done}/{num_parts}: {part_rows:,} rows{note} | "
             f"wait(spark)={wait_s:.1f}s feed={feed_s:.1f}s "
-            f"(deser={deser_s:.2f} pylist={part_pylist:.2f} rust={part_rust:.2f}) | "
+            f"(deser={deser_s:.2f} rust(arrow)={part_rust:.2f}) | "
             f"cum {total_multi_input:,}{eta}"
         )
         part_idx += 1
@@ -551,7 +563,7 @@ def run_clustering_spark(
         tx_input_ids.unpersist()
 
     read_secs = time.perf_counter() - read_start
-    feed_total = t_deser + t_pylist + t_rust
+    feed_total = t_deser + t_rust
     spark_side = t_wait + mat_secs  # all Spark-attributable read cost
     denom = read_secs + mat_secs
 
@@ -574,8 +586,7 @@ def run_clustering_spark(
     )
     logger.info(
         f"  [read]   Driver feed: {feed_total:.1f}s ({_pct(feed_total):.1f}%) — "
-        f"deser {t_deser:.1f}s | Arrow→pylist {t_pylist:.1f}s | "
-        f"Rust union-find {t_rust:.1f}s"
+        f"deser {t_deser:.1f}s | Rust Arrow ingest+union-find {t_rust:.1f}s"
     )
     if spark_side >= feed_total:
         logger.info(
@@ -586,9 +597,8 @@ def run_clustering_spark(
         )
     else:
         worst = max(
-            ("Arrow→pylist", t_pylist),
-            ("Rust", t_rust),
-            ("deser", t_deser),
+            ("Rust Arrow ingest+union-find", t_rust),
+            ("Arrow IPC deser", t_deser),
             key=lambda kv: kv[1],
         )[0]
         logger.info(
@@ -639,10 +649,36 @@ def run_clustering_spark(
     # driver path (measured: 5M rows 2.6s int64 vs 45s uint32, and observed at
     # 94s/slice on BTC). Spark casts down to the tables' int32 columns below.
     logger.info(
-        f"── PHASE 3/3: bulk write {write_rows:,} mappings to Cassandra "
-        f"(slices of {write_chunk:,}; skipped {skipped:,} "
+        f"── PHASE 3/3: bulk write {write_rows:,} mappings to Cassandra via "
+        f"{writer} (slices of {write_chunk:,}; skipped {skipped:,} "
         f"{'singletons + placeholder' if skip_singletons else 'placeholder'}) ──"
     )
+
+    # Per-table write: Sidecar SSTable bulk loader (cassandra-analytics) or the
+    # default spark-cassandra-connector CQL write. Both take the same int32 sdf;
+    # cassandra-analytics matches DataFrame columns to table columns by name.
+    from graphsenselib.transformation.sidecar import bulk_write
+
+    def _write_slice(slice_df, table, cols):
+        if writer == "sidecar":
+            bulk_write(
+                slice_df,
+                transformed_keyspace,
+                table,
+                cols,
+                contact_points=sidecar_contact_points,
+                local_dc=sidecar_local_dc,
+                consistency_level=sidecar_consistency_level,
+            )
+        else:
+            (
+                slice_df.select(*cols)
+                .write.format(cass_format)
+                .options(table=table, keyspace=transformed_keyspace)
+                .mode("append")
+                .save()
+            )
+
     t_build = 0.0
     t_fa = 0.0
     t_fc = 0.0
@@ -671,24 +707,12 @@ def run_clustering_spark(
         t_build += build_s
 
         f0 = time.perf_counter()
-        (
-            sdf.select("address_id", "cluster_id")
-            .write.format(cass_format)
-            .options(table="fresh_address_cluster", keyspace=transformed_keyspace)
-            .mode("append")
-            .save()
-        )
+        _write_slice(sdf, "fresh_address_cluster", ["address_id", "cluster_id"])
         fa_s = time.perf_counter() - f0
         t_fa += fa_s
 
         g0 = time.perf_counter()
-        (
-            sdf.select("cluster_id", "address_id")
-            .write.format(cass_format)
-            .options(table="fresh_cluster_addresses", keyspace=transformed_keyspace)
-            .mode("append")
-            .save()
-        )
+        _write_slice(sdf, "fresh_cluster_addresses", ["cluster_id", "address_id"])
         fc_s = time.perf_counter() - g0
         t_fc += fc_s
 
