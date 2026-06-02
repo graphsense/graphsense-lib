@@ -427,6 +427,16 @@ def run_transformation(
         "(use spark.sql.shuffle.partitions). Default 64."
     ),
 )
+@click.option(
+    "--materialize",
+    is_flag=True,
+    help=(
+        "Spark path only: persist()+count() the edge sets so the read+join+"
+        "groupBy computes ONCE with full cluster parallelism before streaming, "
+        "instead of toLocalIterator driving the final reduce one partition at a "
+        "time. A/B knob — the per-phase timing logs report whether it wins."
+    ),
+)
 def run_clustering(
     env,
     currency,
@@ -439,6 +449,7 @@ def run_clustering(
     local,
     feed_batch_size,
     read_partitions,
+    materialize,
 ):
     """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
 
@@ -523,6 +534,8 @@ def run_clustering(
                     spark_kwargs["read_partitions"] = read_partitions
                 if write_chunk is not None:
                     spark_kwargs["write_chunk"] = write_chunk
+                if materialize:
+                    spark_kwargs["materialize"] = True
                 run_clustering_spark(
                     spark_session,
                     raw_keyspace=raw_keyspace,
