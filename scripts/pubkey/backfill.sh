@@ -53,7 +53,29 @@
 #     CHAINS="eth trx ltc zec bch btc" \
 #     ./scripts/pubkey/backfill.sh
 #
+# Rehearsals (there is no native --dry-run):
+#   DRY_RUN=1   echo every docker/graphsense-cli command without executing it
+#               (validates tag/config/env/keyspace/arg wiring; no compute, no
+#               writes, no docker pull). Combine with the env above.
+#   END_BLOCK=N bound EVERY chain to block N for a small real run. Pair with
+#               SINK_TYPE=delta to write nothing to Cassandra:
+#                 DRY_RUN=1 ENV=prod S3_CONFIG=minio \
+#                   GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
+#                   ./scripts/pubkey/backfill.sh
+#                 END_BLOCK=200000 SINK_TYPE=delta ENV=prod S3_CONFIG=minio \
+#                   SINK_PATH=s3://staging/pubkey-rehearsal \
+#                   GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
+#                   ./scripts/pubkey/backfill.sh
+#
 set -euo pipefail
+
+DRY_RUN="${DRY_RUN:-0}"          # 1 => echo commands, do not execute
+END_BLOCK="${END_BLOCK:-}"       # bound every chain to this block (rehearsals)
+SINK_TYPE="${SINK_TYPE:-cassandra}"  # 'delta' writes no Cassandra rows
+# graphsense-cli global verbosity (counted: -v=warning, -vv=info, -vvv=debug).
+# Default -vv so the resolved run parameters / startup banner are logged. The
+# flag is global, so it goes BEFORE the subcommand. Set VERBOSITY= to silence.
+VERBOSITY="${VERBOSITY:--vv}"
 
 # --- Docker / image ---
 IMAGE="${IMAGE:-ghcr.io/graphsense/graphsense-lib}"
@@ -81,36 +103,59 @@ SINK_ARG=()
 ENVFILE_ARG=()
 [[ -n "$ENV_FILE" ]] && ENVFILE_ARG=(--env-file "$ENV_FILE")
 gs_cli() {
-  docker run --rm \
-    --network host \
-    -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml \
-    "${ENVFILE_ARG[@]}" \
-    -v "$GRAPHSENSE_CONFIG:/graphsense.yaml:ro" \
-    "$IMAGE:$TAG" \
-    graphsense-cli "$@"
+  # Global verbosity flag goes BEFORE the subcommand (it's on the root group).
+  local verbosity_arg=()
+  [[ -n "$VERBOSITY" ]] && verbosity_arg=("$VERBOSITY")
+  local cmd=(docker run --rm
+    --network host
+    -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml
+    "${ENVFILE_ARG[@]}"
+    -v "$GRAPHSENSE_CONFIG:/graphsense.yaml:ro"
+    "$IMAGE:$TAG"
+    graphsense-cli "${verbosity_arg[@]}" "$@")
+  if [[ "$DRY_RUN" != "0" ]]; then
+    printf '[dry-run] '
+    printf '%q ' "${cmd[@]}"
+    printf '\n'
+    return 0
+  fi
+  "${cmd[@]}"
 }
 
-echo "image=$IMAGE:$TAG  ENV=$ENV  keyspace=$KS  chains=${CHAINS[*]}"
+echo "image=$IMAGE:$TAG  ENV=$ENV  keyspace=$KS  sink=$SINK_TYPE  chains=${CHAINS[*]}"
 echo "Reader keyspace is unchanged (legacy 'pubkey'); production is untouched."
+[[ "$DRY_RUN" != "0" ]] && echo "DRY RUN: commands are printed, not executed."
+[[ -n "$END_BLOCK" ]] && echo "REHEARSAL: every chain bounded to end-block=$END_BLOCK."
 echo
 
 # Refresh the rolling tag so we run the latest develop build.
-docker pull "$IMAGE:$TAG"
+if [[ "$DRY_RUN" == "0" ]]; then
+  docker pull "$IMAGE:$TAG"
+else
+  echo "[dry-run] docker pull $IMAGE:$TAG"
+fi
 echo
+
+# Optional per-chain block bound (rehearsals).
+END_ARG=()
+[[ -n "$END_BLOCK" ]] && END_ARG=(--end-block "$END_BLOCK")
 
 first=1
 for C in "${CHAINS[@]}"; do
   CREATE=()
   # Create the keyspace/table once, on the first chain. IF NOT EXISTS, so it is
-  # idempotent and harmless to leave on if you re-run.
-  if [[ $first -eq 1 ]]; then CREATE=(--create-schema); first=0; fi
+  # idempotent and harmless to leave on if you re-run. Skipped for delta sink.
+  if [[ $first -eq 1 && "$SINK_TYPE" == "cassandra" ]]; then
+    CREATE=(--create-schema)
+  fi
+  first=0
 
-  echo ">>> [$C] pubkey-update -> ${KS}.pubkey_by_address  (resume from state)"
+  echo ">>> [$C] pubkey-update  (sink=$SINK_TYPE${END_BLOCK:+, end-block=$END_BLOCK}, resume from state)"
   gs_cli transformation pubkey-update \
     -e "$ENV" -c "$C" \
-    --sink-type cassandra --pubkey-keyspace "$KS" \
+    --sink-type "$SINK_TYPE" --pubkey-keyspace "$KS" \
     --s3-config "$S3_CONFIG" \
-    "${SINK_ARG[@]}" "${CREATE[@]}"
+    "${SINK_ARG[@]}" "${CREATE[@]}" "${END_ARG[@]}"
   echo ">>> [$C] done"
   echo
 
