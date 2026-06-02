@@ -437,6 +437,17 @@ def run_transformation(
         "time. A/B knob — the per-phase timing logs report whether it wins."
     ),
 )
+@click.option(
+    "--keep-singletons",
+    is_flag=True,
+    help=(
+        "Spark path only: write the full per-address mapping including singleton "
+        "clusters (size 1), matching the single-driver path. By default the Spark "
+        "path skips singletons — an address absent from fresh_address_cluster has "
+        "no multi-address cluster — which drops the majority of rows on most "
+        "chains. Cluster roots are always kept either way."
+    ),
+)
 def run_clustering(
     env,
     currency,
@@ -450,6 +461,7 @@ def run_clustering(
     feed_batch_size,
     read_partitions,
     materialize,
+    keep_singletons,
 ):
     """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
 
@@ -536,6 +548,8 @@ def run_clustering(
                     spark_kwargs["write_chunk"] = write_chunk
                 if materialize:
                     spark_kwargs["materialize"] = True
+                if keep_singletons:
+                    spark_kwargs["skip_singletons"] = False
                 run_clustering_spark(
                     spark_session,
                     raw_keyspace=raw_keyspace,

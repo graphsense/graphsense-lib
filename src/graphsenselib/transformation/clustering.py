@@ -318,6 +318,7 @@ def run_clustering_spark(
     write_chunk: int = DEFAULT_SPARK_WRITE_CHUNK,
     read_partitions: int = DEFAULT_READ_PARTITIONS,
     materialize: bool = False,
+    skip_singletons: bool = True,
 ):
     """Full one-off UTXO clustering with PySpark bulk read and bulk write.
 
@@ -357,10 +358,23 @@ def run_clustering_spark(
     dependent — it is a toggle to A/B against real data, and the per-phase
     timing logs below report which way is faster.
 
+    ``skip_singletons`` (default True) writes only addresses that belong to a
+    multi-address cluster; an address absent from ``fresh_address_cluster`` is
+    taken to have no cluster (it is its own). This drops the majority of rows on
+    most chains. A singleton is a cluster of SIZE 1 — not merely
+    ``cluster_id == address_id`` (a real cluster's root also satisfies that and
+    is kept). Set False to write the full per-address mapping like the
+    single-driver path.
+
     The whole timed region emits an extensive per-phase / per-partition /
     per-write-slice breakdown at INFO so a real run states exactly where the
     wall-clock goes (Spark read+join+ship vs Arrow->pylist vs Rust union-find
     vs each Cassandra write), rather than us inferring it from a laptop.
+
+    The write feeds ``createDataFrame`` int64 numpy (the Arrow fast path); Rust's
+    native uint32 is rejected by Spark Arrow and falls back to a row-at-a-time
+    driver path that is ~17x slower AND pickles every row into oversized task
+    buffers (driver-heap OOM on large chains).
 
     Clusters the whole transaction table (full clustering); block sub-ranges are
     not applied here. ``max_address_id`` sizes the Union-Find and must come from
@@ -591,18 +605,44 @@ def run_clustering_spark(
     map_secs = time.perf_counter() - map_start
     logger.info(f"  [map] get_mapping() → {total_rows:,} rows in {map_secs:.1f}s")
 
-    aid_col = mapping_batch.column("address_id")
-    cid_col = mapping_batch.column("cluster_id")
+    # numpy views over the Arrow mapping (zero-copy; the mapping has no nulls).
+    import numpy as np
+    import pandas as pd
+
+    aid_all = mapping_batch.column("address_id").to_numpy()
+    cid_all = mapping_batch.column("cluster_id").to_numpy()
+
+    # Decide which rows to write. Always drop the coinbase placeholder
+    # (address_id 0). With skip_singletons (default), drop size-1 clusters too:
+    # an address absent from fresh_address_cluster simply has no multi-address
+    # cluster. NB a singleton is a cluster of SIZE 1 — NOT merely
+    # cluster_id == address_id, because the ROOT of a real cluster also has
+    # cluster_id == address_id and must be kept. A cluster is non-trivial iff it
+    # has >=1 non-root member (a row with address_id != cluster_id); keep every
+    # address whose cluster_id is such a root. Verified to keep roots and drop
+    # only true singletons.
+    keep = aid_all != 0
+    if skip_singletons:
+        non_root = aid_all != cid_all
+        nontrivial = np.zeros(max_address_id + 1, dtype=bool)
+        nontrivial[cid_all[non_root]] = True
+        keep &= nontrivial[cid_all]
+    aid_w = aid_all[keep]
+    cid_w = cid_all[keep]
+    write_rows = int(aid_w.shape[0])
+    skipped = int(aid_all.shape[0] - write_rows)
 
     # ---- PHASE 3: bulk write to Cassandra ----
-    # Arrow makes spark.createDataFrame(pandas) fast; without it the per-chunk
-    # conversion of millions of rows falls back to a slow row-at-a-time pure-
-    # Python path on the driver.
+    # createDataFrame is fed int64 numpy so it takes the Arrow fast path. uint32
+    # (Rust's native type) is rejected by Spark Arrow (no unsigned types) and
+    # int32 also misses it — both fall back to the ~17x slower row-at-a-time
+    # driver path (measured: 5M rows 2.6s int64 vs 45s uint32, and observed at
+    # 94s/slice on BTC). Spark casts down to the tables' int32 columns below.
     logger.info(
-        f"── PHASE 3/3: bulk write {total_rows:,} mappings to Cassandra "
-        f"(slices of {write_chunk:,}) ──"
+        f"── PHASE 3/3: bulk write {write_rows:,} mappings to Cassandra "
+        f"(slices of {write_chunk:,}; skipped {skipped:,} "
+        f"{'singletons + placeholder' if skip_singletons else 'placeholder'}) ──"
     )
-    t_pandas = 0.0
     t_build = 0.0
     t_fa = 0.0
     t_fc = 0.0
@@ -610,22 +650,16 @@ def run_clustering_spark(
 
     write_start = time.perf_counter()
     slice_idx = 0
-    for offset in range(0, total_rows, write_chunk):
-        length = min(write_chunk, total_rows - offset)
-
-        b0 = time.perf_counter()
-        pdf = (
-            aid_col.slice(offset, length)
-            .to_pandas()
-            .to_frame("address_id")
-            .assign(cluster_id=cid_col.slice(offset, length).to_pandas())
-        )
-        # Drop the coinbase placeholder (address_id 0); fresh tables use int32.
-        pdf = pdf[pdf["address_id"] != 0]
-        pandas_s = time.perf_counter() - b0
-        t_pandas += pandas_s
+    for offset in range(0, write_rows, write_chunk):
+        length = min(write_chunk, write_rows - offset)
 
         bld0 = time.perf_counter()
+        pdf = pd.DataFrame(
+            {
+                "address_id": aid_w[offset : offset + length].astype(np.int64),
+                "cluster_id": cid_w[offset : offset + length].astype(np.int64),
+            }
+        )
         sdf = (
             spark.createDataFrame(pdf)
             .withColumn("address_id", F.col("address_id").cast("int"))
@@ -662,16 +696,16 @@ def run_clustering_spark(
         rows_written += slice_rows
         slice_idx += 1
         logger.info(
-            f"  [write] slice {slice_idx}: {offset + length:,}/{total_rows:,} "
-            f"({100 * (offset + length) / total_rows:.1f}%) | "
-            f"pandas={pandas_s:.1f}s build+count={build_s:.1f}s "
+            f"  [write] slice {slice_idx}: {offset + length:,}/{write_rows:,} "
+            f"({100 * (offset + length) / write_rows:.1f}%) | "
+            f"build+count={build_s:.1f}s "
             f"fresh_address_cluster={fa_s:.1f}s fresh_cluster_addresses={fc_s:.1f}s"
         )
 
     write_secs = time.perf_counter() - write_start
     logger.info(
         f"  [write] DONE: {rows_written:,} rows in {write_secs:.1f}s — "
-        f"pandas {t_pandas:.1f}s | build+count {t_build:.1f}s | "
+        f"build+count {t_build:.1f}s | "
         f"fresh_address_cluster {t_fa:.1f}s | fresh_cluster_addresses {t_fc:.1f}s"
     )
 
