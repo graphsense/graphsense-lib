@@ -28,7 +28,9 @@ def _load_dataset():
         return json.load(f, object_hook=custom_json_decoder)
 
 
-def _sdata_to_delta_row(sdata: Dict[str, Any], vrs, tx_type: int) -> Dict[str, Any]:
+def _sdata_to_delta_row(
+    sdata: Dict[str, Any], vrs, tx_type: int, from_address=None
+) -> Dict[str, Any]:
     """Translate a signature_data dict into a delta-style tx_row.
 
     ``signature_data`` uses eth_account's serializable-tx field names
@@ -62,6 +64,8 @@ def _sdata_to_delta_row(sdata: Dict[str, Any], vrs, tx_type: int) -> Dict[str, A
         "r": _be(r),
         "s": _be(s),
     }
+    if from_address is not None:
+        row["from_address"] = from_address
     return row
 
 
@@ -75,19 +79,41 @@ def _walk_dataset():
             continue
         for record in rows:
             _, _from, _, vrs, _msg_hash, pubkey_hex, sdata = record
-            yield tx_type, vrs, pubkey_hex, sdata
+            yield tx_type, _from, vrs, pubkey_hex, sdata
 
 
 @pytest.mark.parametrize(
-    "tx_type,vrs,expected_pubkey_hex,sdata",
+    "tx_type,from_addr,vrs,expected_pubkey_hex,sdata",
     list(_walk_dataset()),
 )
 def test_extract_pubkey_account_recovers_known_pubkey(
-    tx_type, vrs, expected_pubkey_hex, sdata
+    tx_type, from_addr, vrs, expected_pubkey_hex, sdata
 ):
-    row = _sdata_to_delta_row(sdata, vrs, tx_type)
+    # Thread the real from_address through so the recovery AND the ETH
+    # from-address self-check are both exercised on every canonical vector.
+    row = _sdata_to_delta_row(sdata, vrs, tx_type, from_address=from_addr)
     recovered = extract_pubkey_account(row, currency="eth")
     assert recovered is not None, "Pubkey recovery returned None"
+    assert recovered.hex() == expected_pubkey_hex
+
+
+def test_eth_from_address_mismatch_is_dropped():
+    tx_type, from_addr, vrs, _pubkey_hex, sdata = next(_walk_dataset())
+    # Corrupt the from_address: a correctly recovered ETH key whose address
+    # does not match `from` can only mean a bad recovery -> must be dropped.
+    row = _sdata_to_delta_row(sdata, vrs, tx_type, from_address="0x" + "00" * 20)
+    assert extract_pubkey_account(row, currency="eth") is None
+
+
+def test_eth_from_address_match_accepts_bytes_form():
+    tx_type, from_addr, vrs, expected_pubkey_hex, sdata = next(_walk_dataset())
+    # Production stores from_address as a 20-byte blob, not a 0x string.
+    from_bytes = bytes.fromhex(
+        from_addr[2:] if from_addr.startswith("0x") else from_addr
+    )
+    row = _sdata_to_delta_row(sdata, vrs, tx_type, from_address=from_bytes)
+    recovered = extract_pubkey_account(row, currency="eth")
+    assert recovered is not None
     assert recovered.hex() == expected_pubkey_hex
 
 

@@ -113,56 +113,119 @@ def _parse_script_pushes(script: bytes) -> List[bytes]:
     return pushes
 
 
-def _pubkey_from_input(input_row: Dict[str, Any]) -> Optional[bytes]:
-    """Extract a single compressed pubkey from one UTXO input.
+_OP_CHECKMULTISIG = 0xAE
+_OP_0 = 0x00
+_OP_1 = 0x51
+_OP_16 = 0x60
 
-    Looks at the segwit witness first (P2WPKH and the nested P2SH-P2WPKH
-    case both put ``[sig, pubkey]`` in the witness), then falls back to
-    parsing scriptSig pushes for legacy P2PKH. Returns None when no
-    plausible secp256k1 pubkey can be recovered (P2PK, P2SH multisig
-    without a single signing key, taproot key-path, coinbase, …).
+
+def _script_to_bytes(script_hex: Any) -> Optional[bytes]:
+    """Coerce a Spark binary / hex-string scriptSig into bytes (or None)."""
+    if not script_hex:
+        return None
+    if isinstance(script_hex, (bytes, bytearray)):
+        return bytes(script_hex)
+    try:
+        return bytes.fromhex(
+            script_hex[2:] if script_hex.startswith("0x") else script_hex
+        )
+    except (ValueError, AttributeError):
+        return None
+
+
+def _pubkeys_from_multisig_script(script: bytes) -> List[bytes]:
+    """Extract every compressed pubkey from a multisig redeem/witness script.
+
+    Mirrors the legacy ``parse_sh_ms``: a bare/redeem/witness multisig script
+    is ``OP_M <pk1> … <pkN> OP_N OP_CHECKMULTISIG`` — it starts with an OP_M
+    opcode (OP_0 or OP_1..OP_16) and ends with OP_CHECKMULTISIG (0xAE). The
+    OP_M/OP_N numeric opcodes are skipped by ``_parse_script_pushes`` (non-push),
+    leaving the 33/65-byte key pushes, which we curve-validate and normalise.
+    The start/end opcode gate rejects bare keys (start 0x02/0x03/0x04) and DER
+    sigs (start 0x30) without any length heuristic.
     """
+    if not script or script[-1] != _OP_CHECKMULTISIG:
+        return []
+    if not (script[0] == _OP_0 or _OP_1 <= script[0] <= _OP_16):
+        return []
+    out: List[bytes] = []
+    for push in _parse_script_pushes(script):
+        if len(push) in (33, 65):
+            compressed = _to_compressed(push)
+            if compressed is not None:
+                out.append(compressed)
+    return out
+
+
+def _pubkeys_from_input(input_row: Dict[str, Any]) -> List[bytes]:
+    """Extract all signing pubkeys revealed by one UTXO input.
+
+    Covers the same input-side cases the legacy extractor did:
+
+    * P2PKH       — scriptSig ``<sig> <pubkey>`` (last key push).
+    * P2WPKH / P2SH-P2WPKH — ``[sig, pubkey]`` in the witness.
+    * P2SH-P2PKH  — scriptSig ``<sig> <pubkey> <redeemScript>`` (key push).
+    * P2SH multisig — redeem script (last scriptSig push) holds N keys.
+    * P2WSH multisig — witness script (last witness element) holds N keys.
+
+    P2PK and bare P2MS reveal their keys in the *output* script, not the
+    spending input, so they are handled separately by the output-side
+    extractor. Returns ``[]`` when no key is recoverable (coinbase, taproot
+    key-path, …). Deduplicated within the input; callers dedupe across the tx.
+    """
+    out: List[bytes] = []
+    seen: set[bytes] = set()
+
+    def _add(pk: Optional[bytes]) -> None:
+        if pk is not None and pk not in seen:
+            seen.add(pk)
+            out.append(pk)
+
     witness = input_row.get("txinwitness")
     if witness:
-        for elem in witness:
-            if elem is None:
-                continue
-            elem_b = bytes(elem)
-            compressed = _to_compressed(elem_b)
-            if compressed is not None:
-                return compressed
+        elems = [bytes(e) for e in witness if e is not None]
+        # P2WPKH / nested P2SH-P2WPKH: a standalone pubkey witness element.
+        for elem in elems:
+            _add(_to_compressed(elem))
+        # P2WSH multisig: the last witness element is the witnessScript.
+        if elems:
+            for pk in _pubkeys_from_multisig_script(elems[-1]):
+                _add(pk)
 
-    script_hex = input_row.get("script_hex")
-    if script_hex:
-        if isinstance(script_hex, (bytes, bytearray)):
-            script_bytes = bytes(script_hex)
-        else:
-            # Spark passes binary as bytes; handle hex string defensively
-            # for unit-test calls and dict fixtures.
-            try:
-                script_bytes = bytes.fromhex(
-                    script_hex[2:] if script_hex.startswith("0x") else script_hex
-                )
-            except (ValueError, AttributeError):
-                return None
+    script_bytes = _script_to_bytes(input_row.get("script_hex"))
+    if script_bytes:
         pushes = _parse_script_pushes(script_bytes)
-        # Canonical P2PKH scriptSig is exactly <sig> <pubkey>; the pubkey
-        # is the last push. Iterate from the end so we still find it in
-        # the unusual case of trailing OP_RETURN-style noise.
+        # P2PKH / P2SH-P2PKH: the signing key is the last key-shaped push.
+        # Iterate from the end so trailing redeem-script pushes are skipped.
         for push in reversed(pushes):
             compressed = _to_compressed(push)
             if compressed is not None:
-                return compressed
-    return None
+                _add(compressed)
+                break
+        # P2SH multisig: the redeem script is the last scriptSig push.
+        if pushes:
+            for pk in _pubkeys_from_multisig_script(pushes[-1]):
+                _add(pk)
+    return out
+
+
+def _pubkey_from_input(input_row: Dict[str, Any]) -> Optional[bytes]:
+    """Back-compat single-key view of :func:`_pubkeys_from_input`.
+
+    Returns the first recovered signing pubkey (the canonical single signer
+    for P2PKH/P2WPKH), or None. Prefer :func:`_pubkeys_from_input`.
+    """
+    keys = _pubkeys_from_input(input_row)
+    return keys[0] if keys else None
 
 
 def extract_pubkeys_utxo(inputs: Iterable[Dict[str, Any]]) -> List[bytes]:
     """Extract compressed pubkeys from all inputs of a single UTXO tx.
 
-    Drops inputs whose witness/scriptSig does not encode a recoverable
-    secp256k1 pubkey (coinbase, P2PK, P2WSH, taproot key-path, …). The
-    returned list may contain duplicates if the same pubkey signs several
-    inputs in one tx; callers should dedupe.
+    Covers P2PKH, P2WPKH, nested P2SH-P2WPKH, P2SH-P2PKH and P2SH/P2WSH
+    multisig (one input can yield several keys). Drops inputs with no
+    recoverable secp256k1 key (coinbase, taproot key-path, …). The returned
+    list may contain duplicates (a key signing several inputs); callers dedupe.
     """
     if not inputs:
         return []
@@ -170,9 +233,62 @@ def extract_pubkeys_utxo(inputs: Iterable[Dict[str, Any]]) -> List[bytes]:
     for inp in inputs:
         if inp is None:
             continue
-        pk = _pubkey_from_input(inp)
-        if pk is not None:
+        out.extend(_pubkeys_from_input(inp))
+    return out
+
+
+_OP_CHECKSIG = 0xAC
+
+
+def _pubkeys_from_output(output_row: Dict[str, Any]) -> List[bytes]:
+    """Extract pubkeys revealed directly in one UTXO *output* script.
+
+    These keys never need the output to be spent (the legacy extractor read
+    them from outputs):
+
+    * P2PK — ``<pubkey> OP_CHECKSIG`` (script ends 0xAC, one key push).
+    * bare P2MS — ``OP_M <pk1>…<pkN> OP_N OP_CHECKMULTISIG`` (ends 0xAE).
+
+    A P2PKH output (``…OP_EQUALVERIFY OP_CHECKSIG``) also ends in 0xAC but its
+    only push is the 20-byte hash, which fails the 33/65 key-length filter, so
+    no false key is produced. Returns ``[]`` for all hash-style outputs
+    (P2PKH/P2SH/P2WPKH/P2WSH/taproot).
+    """
+    script = _script_to_bytes(output_row.get("script_hex"))
+    if not script:
+        return []
+    out: List[bytes] = []
+    seen: set[bytes] = set()
+
+    def _add(pk: Optional[bytes]) -> None:
+        if pk is not None and pk not in seen:
+            seen.add(pk)
             out.append(pk)
+
+    # P2PK: a single key push followed by OP_CHECKSIG.
+    if script[-1] == _OP_CHECKSIG:
+        for push in _parse_script_pushes(script):
+            if len(push) in (33, 65):
+                _add(_to_compressed(push))
+    # bare P2MS: OP_CHECKMULTISIG-terminated multi-key script.
+    for pk in _pubkeys_from_multisig_script(script):
+        _add(pk)
+    return out
+
+
+def extract_pubkeys_utxo_outputs(outputs: Iterable[Dict[str, Any]]) -> List[bytes]:
+    """Extract compressed pubkeys from all outputs of a single UTXO tx.
+
+    Covers P2PK and bare P2MS, whose keys live in the output script. All other
+    output types yield nothing. May contain duplicates; callers dedupe.
+    """
+    if not outputs:
+        return []
+    out: List[bytes] = []
+    for outp in outputs:
+        if outp is None:
+            continue
+        out.extend(_pubkeys_from_output(outp))
     return out
 
 
@@ -274,6 +390,18 @@ def _delta_row_to_rpc_shape(tx_row: Dict[str, Any], chain_id: int) -> Dict[str, 
     }
 
 
+def _normalize_evm_addr(value: Any) -> Optional[str]:
+    """Lower-case 40-hex-char EVM address (no 0x) from bytes / hex string."""
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).hex().lower()
+    if isinstance(value, str):
+        v = value[2:] if value.startswith("0x") else value
+        return v.lower()
+    return None
+
+
 def extract_pubkey_account(
     tx_row: Dict[str, Any],
     currency: str,
@@ -286,8 +414,16 @@ def extract_pubkey_account(
     ECDSA with (v, r, s). TRX: the tx_hash *is* the signed message digest
     (sha256 of the protobuf raw_data) — no reconstruction needed.
 
+    Self-check (the legacy extractor had it, the first port dropped it): for
+    ETH the signer's address IS ``keccak(pubkey)[12:]`` by definition, so when
+    ``from_address`` is present the recovered key's address MUST equal it — a
+    mismatch can only mean a bad hash reconstruction or wrong ``v``, so we drop
+    the row. TRX is NOT dropped on mismatch: ``from_address`` there is the
+    contract ``owner_address``, which legitimately differs from the signer for
+    multisig / permission accounts, so the check would discard valid keys.
+
     Returns ``None`` if recovery fails (missing signature, type mismatch,
-    off-curve key).
+    off-curve key) or the ETH from-address self-check fails.
     """
     from graphsenselib.utils.signature import (  # deferred — heavy eth-account dep
         eth_get_msg_hash_from_signature_data,
@@ -322,6 +458,15 @@ def extract_pubkey_account(
             msg_hash = eth_get_msg_hash_from_signature_data(sig_data)
 
         recovered = eth_recover_pubkey((v_int, r_int, s_int), msg_hash)
+
+        # ETH-strict from-address self-check (skip for TRX — see docstring).
+        if currency != "trx":
+            expected = _normalize_evm_addr(tx_row.get("from_address"))
+            if expected is not None:
+                derived = recovered.to_address()  # '0x' + 40 lowercase hex
+                if derived[2:] != expected:
+                    return None
+
         # PublicKey.to_bytes() returns 64-byte uncompressed-without-prefix.
         uncompressed = b"\x04" + recovered.to_bytes()
         return secp256k1_compress(uncompressed)

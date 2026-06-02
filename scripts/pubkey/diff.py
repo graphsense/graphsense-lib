@@ -12,7 +12,16 @@ legacy -> new on ``address``:
 
     match           - legacy address present in new, identical pubkey -> agreement
     mismatch        - present in new but DIFFERENT pubkey blob         -> investigate
-    missing_in_new  - legacy address absent from new                  -> regression
+    missing_in_new  - legacy address absent from new                  -> see split
+
+``missing_in_new`` is further split by how many distinct chains the legacy
+pubkey spans (over the legacy table):
+
+    missing_single_network - pubkey seen on one chain  -> EXPECTED (the new job
+                             is cross-chain-only, so single-network pubkeys are
+                             intentionally not reproduced)
+    missing_multi_network  - pubkey seen on >=2 chains -> REAL regression (e.g. a
+                             pubkey legacy only saw inside a multisig/P2PK script)
 
 and prints a few example addresses per warning bucket for spot-checking. Pass
 ``--sample-fraction`` to check a random sample of the legacy table for a faster
@@ -32,6 +41,35 @@ Read-only: it never writes to Cassandra.
 
 import argparse
 import logging
+
+
+def classify_chain(address: str) -> str:
+    """Coarse source chain of a legacy address, for splitting missing_in_new.
+
+    Used only to decide whether a missing legacy pubkey was single-network
+    (expected: the new job is cross-chain-only) or multi-network (a real
+    regression). BTC and BCH legacy base58 ('1'/'3') are indistinguishable by
+    address, so they fold into one 'btc/bch' chain — a pubkey seen only on
+    btc+bch reads as single-chain here, which is acceptable for a diagnostic.
+    """
+    if not address:
+        return "unknown"
+    a = address
+    if a.startswith("0x"):
+        return "evm"
+    if a.startswith("T"):
+        return "trx"
+    if a.startswith("ltc1") or a[0] in ("L", "M"):
+        return "ltc"
+    if a.startswith("bitcoincash:"):
+        return "bch"
+    if a.startswith("t1") or a.startswith("t3"):
+        return "zec"
+    if a[0] in ("D", "A", "9"):
+        return "doge"
+    if a.startswith("bc1") or a[0] in ("1", "3"):
+        return "btc/bch"
+    return "unknown"
 
 
 def main() -> None:
@@ -125,6 +163,58 @@ def main() -> None:
             )
         if not missing and not mismatch:
             print("\n  OK: every legacy row is present and matching in the new table.")
+
+        # Split missing_in_new by how many distinct chains the legacy pubkey
+        # spans: single-network misses are EXPECTED (the new job is
+        # cross-chain-only); multi-network misses are real regressions (e.g. a
+        # pubkey legacy only ever saw inside a multisig/P2PK script).
+        if missing:
+            from pyspark.sql.types import StringType
+
+            chain_udf = F.udf(classify_chain, StringType())
+            # Per-pubkey network span over the (possibly sampled) legacy table.
+            pk_networks = (
+                old.withColumn("chain", chain_udf(F.col("address")))
+                .groupBy("pubkey_old")
+                .agg(F.countDistinct("chain").alias("n_networks"))
+            )
+            missing_bucketed = (
+                joined.filter(F.col("bucket") == "missing_in_new")
+                .select("address", "pubkey_old")
+                .join(pk_networks, "pubkey_old", "left")
+                .withColumn(
+                    "miss_bucket",
+                    F.when(
+                        F.col("n_networks") >= 2, F.lit("missing_multi_network")
+                    ).otherwise(F.lit("missing_single_network")),
+                )
+                .cache()
+            )
+            mb = {
+                r["miss_bucket"]: r["count"]
+                for r in missing_bucketed.groupBy("miss_bucket").count().collect()
+            }
+            single = mb.get("missing_single_network", 0)
+            multi = mb.get("missing_multi_network", 0)
+            print("\n  missing_in_new split:")
+            print(f"    single-network (EXPECTED, cross-chain-only): {single:,}")
+            print(f"    multi-network  (REGRESSION, investigate)   : {multi:,}")
+            if args.sample_fraction < 1.0:
+                print(
+                    "    NOTE: sampled run — n_networks is a lower bound, so the "
+                    "multi-network (regression) count is reliable but the "
+                    "single-network count may be inflated."
+                )
+            if multi:
+                print("\n--- examples: missing_in_new / multi-network (regression) ---")
+                (
+                    missing_bucketed.filter(
+                        F.col("miss_bucket") == "missing_multi_network"
+                    )
+                    .select("address", "pubkey_old", "n_networks")
+                    .limit(args.examples)
+                    .show(truncate=80, vertical=False)
+                )
 
         for bucket in ("missing_in_new", "mismatch"):
             if counts.get(bucket, 0):

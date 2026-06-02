@@ -89,6 +89,29 @@ def _extract_pubkeys_udf_utxo():
     return _udf
 
 
+def _extract_pubkeys_udf_utxo_outputs():
+    """Pandas UDF: array<output-struct> -> array<binary>.
+
+    P2PK / bare-P2MS reveal their keys in the output script, so those are
+    extracted from outputs in addition to the input-side keys.
+    """
+    from pyspark.sql import functions as F
+    from pyspark.sql.types import ArrayType, BinaryType
+
+    from graphsenselib.pubkey.extract import extract_pubkeys_utxo_outputs
+
+    @F.udf(returnType=ArrayType(BinaryType()))
+    def _udf(outputs):
+        if outputs is None:
+            return []
+        as_dicts = [
+            o.asDict(recursive=True) if hasattr(o, "asDict") else o for o in outputs
+        ]
+        return list(extract_pubkeys_utxo_outputs(as_dicts))
+
+    return _udf
+
+
 def _extract_pubkey_udf_account(currency: str):
     """Row-wise UDF: account tx struct -> compressed pubkey (or null).
 
@@ -239,12 +262,13 @@ class PubkeyUpdate:
         tx_df = self._read_source_transactions(start_block, end_block)
 
         if self.currency in UTXO_CURRENCIES:
-            udf = _extract_pubkeys_udf_utxo()
-            # Ship only the two fields the extractor actually reads
-            # (script_hex, txinwitness). The raw input struct also carries
+            in_udf = _extract_pubkeys_udf_utxo()
+            out_udf = _extract_pubkeys_udf_utxo_outputs()
+            # Ship only the fields each extractor reads (inputs: script_hex +
+            # txinwitness; outputs: script_hex). The raw structs also carry
             # spent_transaction_hash, addresses, value, type, … which would
             # bloat the JVM->Python Arrow batch and OOM the stdout writer on
-            # consolidation txs with thousands of inputs.
+            # consolidation txs with thousands of inputs/outputs.
             slim_inputs = F.transform(
                 F.col("inputs"),
                 lambda i: F.struct(
@@ -252,7 +276,15 @@ class PubkeyUpdate:
                     i["txinwitness"].alias("txinwitness"),
                 ),
             )
-            pubkeys = tx_df.select(F.explode(udf(slim_inputs)).alias("pubkey"))
+            slim_outputs = F.transform(
+                F.col("outputs"),
+                lambda o: F.struct(o["script_hex"].alias("script_hex")),
+            )
+            in_keys = tx_df.select(F.explode(in_udf(slim_inputs)).alias("pubkey"))
+            out_keys = tx_df.select(F.explode(out_udf(slim_outputs)).alias("pubkey"))
+            # Union input- and output-side keys; the trailing dropDuplicates
+            # collapses keys that appear in both (e.g. a P2PK output later spent).
+            pubkeys = in_keys.unionByName(out_keys)
         elif self.currency in ACCOUNT_CURRENCIES:
             sig_struct = F.struct(
                 F.col("tx_hash"),
