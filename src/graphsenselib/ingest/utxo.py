@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -5,14 +6,6 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from operator import itemgetter
 from typing import Dict, List, Optional, Tuple
-
-try:
-    from btcpy.structs.address import P2pkhAddress
-    from btcpy.structs.script import ScriptBuilder
-except ImportError:
-    _has_btcpy = False
-else:
-    _has_btcpy = True
 
 from methodtools import lru_cache as mlru_cache
 
@@ -25,6 +18,12 @@ from ..utils.bch import bch_address_to_legacy
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
 from .rpc_utxo import BtcBlockExporter
+
+# btcpy is an optional ingest dependency used only by the (legacy) btcpy
+# script-parser path. Detect it without importing (the parser imports it
+# locally when invoked); during the shadow window parse_script cross-checks the
+# native parser against it.
+_has_btcpy = importlib.util.find_spec("btcpy") is not None
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
@@ -296,23 +295,48 @@ def tx_stats(tx):
     )
 
 
-def parse_script(s: str) -> Tuple[Optional[List[str]], str]:
-    """Parses the output addresses from a bitcoin-like locking script
+# Output-script opcodes / BTC-mainnet address params for the native parser.
+_OP_RETURN = 0x6A
+_OP_DUP = 0x76
+_OP_HASH160 = 0xA9
+_OP_EQUAL = 0x87
+_OP_EQUALVERIFY = 0x88
+_OP_CHECKSIG = 0xAC
+_OP_CHECKMULTISIG = 0xAE
+_BTC_P2PKH_VERSION = b"\x00"
+_BTC_P2SH_VERSION = b"\x05"
+_BTC_BECH32_HRP = "bc"
 
-    Args:
-        s (str): script in binary hex format
 
-    Returns:
-        Tuple[List[str], str]: address list and script type
+def _looks_like_pubkey(b: bytes) -> bool:
+    """SEC1 format check (length + prefix) — matches btcpy's pubkey acceptance."""
+    return (len(b) == 33 and b[0] in (0x02, 0x03)) or (len(b) == 65 and b[0] == 0x04)
 
-    Raises:
-        P2pkParserException: if P2PK script can't be parsed
-        UnknownScriptType: On unknown script type
+
+def _is_single_complete_push(b: bytes) -> bool:
+    """True iff ``b`` is exactly one well-formed data push covering all its bytes.
+
+    Used for OP_RETURN: btcpy treats a bare OP_RETURN or a malformed pushdata as
+    an unknown script, not nulldata — nulldata is OP_RETURN + one complete push.
     """
-    if not _has_btcpy:
-        raise ImportError(
-            "parse_script requires btcpy. Please install gslib with ingest dependencies."
-        )
+    if not b:
+        return False
+    op = b[0]
+    if 0x01 <= op <= 0x4B:  # OP_PUSHBYTES_n
+        return len(b) == 1 + op
+    if op == 0x4C:  # OP_PUSHDATA1
+        return len(b) >= 2 and len(b) == 2 + b[1]
+    if op == 0x4D:  # OP_PUSHDATA2
+        return len(b) >= 3 and len(b) == 3 + int.from_bytes(b[1:3], "little")
+    if op == 0x4E:  # OP_PUSHDATA4
+        return len(b) >= 5 and len(b) == 5 + int.from_bytes(b[1:5], "little")
+    return False
+
+
+def _parse_script_btcpy(s: str) -> Tuple[Optional[List[str]], str]:
+    """Legacy btcpy-based output-script parser (authoritative during shadow)."""
+    from btcpy.structs.address import P2pkhAddress
+    from btcpy.structs.script import ScriptBuilder
 
     script = ScriptBuilder.identify(s)
 
@@ -324,26 +348,163 @@ def parse_script(s: str) -> Tuple[Optional[List[str]], str]:
                 f"ScriptParseError: cannot parse pubkey from {s}"
                 f" (of type {script.type}) --- {e}"
             )
-
     if script.type == "p2pkh":
         return [str(P2pkhAddress(script.pubkeyhash, mainnet=True))], script.type
-
     if script.type == "multisig":
         return [
             str(P2pkhAddress(k.hash(), mainnet=True))
             for k in script.pubkeys
             if hasattr(k, "hash")
         ], script.type
-
     if script.type in ["p2sh", "p2wpkhv0", "p2wshv0"]:
         return [str(script.address(mainnet=True))], script.type
-
     if script.type == "nulldata":
         return None, script.type
-
     raise UnknownScriptType(
         f"ScriptParseError: not handling script type {script.type} at the moment."
     )
+
+
+def _parse_script_native(s: str) -> Tuple[Optional[List[str]], str]:
+    """btcpy-free reimplementation of :func:`_parse_script_btcpy`.
+
+    Recognises the standard output-script shapes and encodes addresses in
+    BTC-mainnet format (the legacy code hardcodes ``mainnet=True``), emitting the
+    same ``type`` strings the downstream ``_address_types`` map expects. Anything
+    else raises ``UnknownScriptType`` — matching btcpy for the nonstandard
+    outputs this fallback actually sees.
+    """
+    from graphsenselib.pubkey.extract import _parse_script_pushes
+    from graphsenselib.utils.pubkey_to_address import (
+        base58check_encode,
+        bech32_segwit_encode,
+        hash160,
+    )
+
+    script = bytes.fromhex(s[2:] if s.startswith("0x") else s)
+    n = len(script)
+
+    # P2PKH: OP_DUP OP_HASH160 PUSH20 <20> OP_EQUALVERIFY OP_CHECKSIG
+    if (
+        n == 25
+        and script[0] == _OP_DUP
+        and script[1] == _OP_HASH160
+        and script[2] == 0x14
+        and script[23] == _OP_EQUALVERIFY
+        and script[24] == _OP_CHECKSIG
+    ):
+        return [base58check_encode(_BTC_P2PKH_VERSION, script[3:23])], "p2pkh"
+
+    # P2SH: OP_HASH160 PUSH20 <20> OP_EQUAL
+    if (
+        n == 23
+        and script[0] == _OP_HASH160
+        and script[1] == 0x14
+        and script[22] == _OP_EQUAL
+    ):
+        return [base58check_encode(_BTC_P2SH_VERSION, script[2:22])], "p2sh"
+
+    # P2WPKH v0: OP_0 PUSH20 <20>
+    if n == 22 and script[0] == 0x00 and script[1] == 0x14:
+        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, script[2:22])], "p2wpkhv0"
+
+    # P2WSH v0: OP_0 PUSH32 <32>
+    if n == 34 and script[0] == 0x00 and script[1] == 0x20:
+        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, script[2:34])], "p2wshv0"
+
+    # nulldata: OP_RETURN + exactly one complete data push (btcpy rejects a bare
+    # OP_RETURN or malformed pushdata as unknown, not nulldata).
+    if n >= 2 and script[0] == _OP_RETURN and _is_single_complete_push(script[1:]):
+        return None, "nulldata"
+
+    # P2PK: <pubkey-push> OP_CHECKSIG
+    if n >= 2 and script[-1] == _OP_CHECKSIG:
+        pushes = _parse_script_pushes(script[:-1])
+        if len(pushes) == 1 and len(pushes[0]) in (33, 65):
+            if not _looks_like_pubkey(pushes[0]):
+                raise P2pkParserException(
+                    f"ScriptParseError: cannot parse pubkey from {s} (of type p2pk)"
+                )
+            return [base58check_encode(_BTC_P2PKH_VERSION, hash160(pushes[0]))], "p2pk"
+
+    # bare multisig: OP_M <pubkeys> OP_N OP_CHECKMULTISIG
+    if (
+        n >= 1
+        and script[-1] == _OP_CHECKMULTISIG
+        and (script[0] == 0x00 or 0x51 <= script[0] <= 0x60)
+    ):
+        keys = [p for p in _parse_script_pushes(script) if _looks_like_pubkey(p)]
+        if keys:
+            return (
+                [base58check_encode(_BTC_P2PKH_VERSION, hash160(k)) for k in keys],
+                "multisig",
+            )
+
+    raise UnknownScriptType(
+        f"ScriptParseError: not handling script type for {s} at the moment."
+    )
+
+
+def parse_script(s: str) -> Tuple[Optional[List[str]], str]:
+    """Parse output addresses + script type from a bitcoin-like locking script.
+
+    SHADOW VALIDATION (temporary): runs both the legacy btcpy parser and the
+    native reimplementation and asserts they agree (btcpy authoritative). A
+    divergence raises ``AssertionError`` (logged first) — deliberately loud, so
+    any mismatch surfaces during the production validation window. Once this has
+    run without tripping for long enough, delete ``_parse_script_btcpy`` + the
+    btcpy dependency and rename ``_parse_script_native`` to ``parse_script``.
+    When btcpy is not installed, the native parser is used directly.
+
+    Args:
+        s (str): script in binary hex format
+
+    Returns:
+        Tuple[List[str], str]: address list and script type
+
+    Raises:
+        P2pkParserException: if a P2PK script can't be parsed
+        UnknownScriptType: on unknown script type
+        AssertionError: if the native and btcpy results diverge
+    """
+
+    def _run(fn):
+        try:
+            return ("ok", fn(s), None)
+        except Exception as e:  # noqa: BLE001 — capture to compare both paths
+            return ("err", None, e)
+
+    n_kind, n_val, n_exc = _run(_parse_script_native)
+
+    if not _has_btcpy:
+        if n_kind == "ok":
+            return n_val
+        raise n_exc
+
+    b_kind, b_val, b_exc = _run(_parse_script_btcpy)
+
+    matches = n_kind == b_kind and (
+        n_val == b_val if n_kind == "ok" else type(n_exc) is type(b_exc)
+    )
+    if not matches:
+        n_repr = n_val if n_kind == "ok" else f"{type(n_exc).__name__}: {n_exc}"
+        b_repr = b_val if b_kind == "ok" else f"{type(b_exc).__name__}: {b_exc}"
+        logger.error(
+            "parse_script divergence (btcpy vs native) for script %s: "
+            "btcpy=%r native=%r",
+            s,
+            b_repr,
+            n_repr,
+        )
+        raise AssertionError(
+            f"parse_script divergence for script {s!r}: btcpy={b_repr!r} "
+            f"native={n_repr!r}"
+        )
+
+    # btcpy authoritative during the shadow window.
+    if b_kind == "ok":
+        return b_val
+    raise b_exc
 
 
 def enrich_txs(
