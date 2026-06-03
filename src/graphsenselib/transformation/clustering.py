@@ -310,6 +310,43 @@ def multi_input_address_id_sets(tx_df, address_ids_df):
     )
 
 
+def backfill_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
+    """(Re)compute ``fresh_cluster_stats`` from ``fresh_cluster_addresses``.
+
+    Aggregates the membership reverse-index ``(cluster_id, address_id)`` into one
+    ``(cluster_id, size, min_address_id)`` row per cluster via the Spark
+    Cassandra connector (a distributed count+min, so no driver-side
+    materialization of the full mapping). Used both as the one-time backfill for
+    keyspaces clustered before the stats table existed and as the final step of
+    :func:`run_clustering_spark`, so a fresh one-off is born with stats. The
+    incremental delta clustering requires these rows to pick the larger survivor
+    on a merge. Returns the number of cluster rows written.
+    """
+    from pyspark.sql import functions as F
+
+    cass_format = "org.apache.spark.sql.cassandra"
+    members = (
+        spark.read.format(cass_format)
+        .options(table="fresh_cluster_addresses", keyspace=transformed_keyspace)
+        .load()
+    )
+    stats = members.groupBy("cluster_id").agg(
+        F.count(F.lit(1)).cast("bigint").alias("size"),
+        F.min("address_id").alias("min_address_id"),
+    )
+    stats.persist()
+    n_clusters = stats.count()
+    (
+        stats.select("cluster_id", "size", "min_address_id")
+        .write.format(cass_format)
+        .options(table="fresh_cluster_stats", keyspace=transformed_keyspace)
+        .mode("append")
+        .save()
+    )
+    stats.unpersist()
+    return n_clusters
+
+
 def run_clustering_spark(
     spark,
     raw_keyspace: str,
@@ -731,6 +768,17 @@ def run_clustering_spark(
         f"  [write] DONE: {rows_written:,} rows in {write_secs:.1f}s — "
         f"build+count {t_build:.1f}s | "
         f"fresh_address_cluster {t_fa:.1f}s | fresh_cluster_addresses {t_fc:.1f}s"
+    )
+
+    # ---- PHASE 4: cluster stats (size + min_address_id per cluster) ----
+    # Needed by the incremental delta clustering to pick the larger survivor on a
+    # merge. Aggregated from the just-written fresh_cluster_addresses (distributed
+    # count+min) rather than the driver-side mapping, to keep driver memory bound.
+    stats_start = time.perf_counter()
+    n_stats = backfill_fresh_cluster_stats(spark, transformed_keyspace)
+    stats_secs = time.perf_counter() - stats_start
+    logger.info(
+        f"  [stats] fresh_cluster_stats: {n_stats:,} clusters in {stats_secs:.1f}s"
     )
 
     total_secs = time.perf_counter() - overall_start

@@ -649,3 +649,63 @@ def run_clustering(
         )
 
     logger.info("One-off clustering complete.")
+
+
+@transformation.command(
+    "cluster-stats-backfill",
+    short_help="Backfill fresh_cluster_stats from fresh_cluster_addresses.",
+)
+@require_environment()
+@require_currency()
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode with local[*].",
+)
+def cluster_stats_backfill(env, currency, local):
+    """Backfill fresh_cluster_stats (size + min_address_id per cluster) from
+    fresh_cluster_addresses via Spark.
+
+    One-time migration for a keyspace that was clustered before the
+    fresh_cluster_stats table existed; the incremental delta clustering requires
+    these rows to pick the larger survivor on a merge. Safe to re-run (writes
+    are upserts keyed by cluster_id).
+    \f
+    """
+    from graphsenselib.config import get_config, is_fresh_clustering_enabled
+    from graphsenselib.schema.schema import GraphsenseSchemas
+    from graphsenselib.transformation.clustering import backfill_fresh_cluster_stats
+    from graphsenselib.transformation.spark import create_spark_session
+
+    if not is_fresh_clustering_enabled():
+        raise click.ClickException(
+            "Fresh clustering is disabled. Set "
+            "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
+        )
+
+    # Ensure fresh_cluster_stats exists (transformed_utxo_1_to_2 migration).
+    GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
+
+    config = get_config()
+    env_config = config.get_environment(env)
+    ks_config = config.get_keyspace_config(env, currency)
+    transformed_keyspace = ks_config.transformed_keyspace_name
+
+    spark_session = create_spark_session(
+        app_name=f"graphsense-cluster-stats-backfill-{currency}-{env}",
+        local=local,
+        cassandra_nodes=env_config.cassandra_nodes,
+        cassandra_username=env_config.username,
+        cassandra_password=env_config.password,
+        spark_config=config.get_spark_config(),
+        spark_packages=config.get_spark_packages(),
+    )
+    try:
+        logger.info(f"Backfilling fresh_cluster_stats for {transformed_keyspace} ...")
+        n_clusters = backfill_fresh_cluster_stats(spark_session, transformed_keyspace)
+        logger.info(
+            f"fresh_cluster_stats backfill complete: {n_clusters:,} clusters written."
+        )
+    finally:
+        spark_session.stop()
+        logger.info("SparkSession stopped.")
