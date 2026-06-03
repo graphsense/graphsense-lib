@@ -398,12 +398,21 @@ def write_fresh_clustering_to_cassandra(
     transformed_keyspace: str,
     mapping: dict[int, int],
 ) -> None:
-    """Write address_id -> cluster_id mapping to fresh_address_cluster and
-    fresh_cluster_addresses tables in Cassandra.
+    """Write address_id -> cluster_id mapping to fresh_address_cluster,
+    fresh_cluster_addresses and fresh_cluster_stats tables in Cassandra.
 
-    This seeds the state that run_incremental_clustering reads from.
+    This seeds the state that run_incremental_clustering reads from. The stats
+    rows (size, min_address_id per cluster) are required by the v2 incremental
+    clustering, which picks the larger survivor on a merge from them.
     """
     from cassandra.cluster import Cluster
+
+    sizes: dict[int, int] = {}
+    mins: dict[int, int] = {}
+    for address_id, cluster_id in mapping.items():
+        sizes[cluster_id] = sizes.get(cluster_id, 0) + 1
+        prev = mins.get(cluster_id)
+        mins[cluster_id] = address_id if prev is None else min(prev, address_id)
 
     with Cluster([cassandra_host], port=cassandra_port) as cluster:
         session = cluster.connect()
@@ -415,9 +424,15 @@ def write_fresh_clustering_to_cassandra(
             f"INSERT INTO {transformed_keyspace}.fresh_cluster_addresses "
             f"(cluster_id, address_id) VALUES (?, ?)"
         )
+        prep_cs = session.prepare(
+            f"INSERT INTO {transformed_keyspace}.fresh_cluster_stats "
+            f"(cluster_id, size, min_address_id) VALUES (?, ?, ?)"
+        )
         for address_id, cluster_id in mapping.items():
             session.execute(prep_ac, (address_id, cluster_id))
             session.execute(prep_ca, (cluster_id, address_id))
+        for cluster_id, size in sizes.items():
+            session.execute(prep_cs, (cluster_id, size, mins[cluster_id]))
 
 
 # Helper script that runs inside current_venv (which has graphsenselib installed

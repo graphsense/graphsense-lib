@@ -2,14 +2,14 @@ mod clustering;
 
 use std::sync::Mutex;
 
-use arrow::array::{ArrayRef, UInt32Array};
-use arrow::pyarrow::ToPyArrow;
+use arrow::array::{make_array, Array, ArrayData, ArrayRef, ListArray, UInt32Array};
+use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use uf_rush::UFRush;
 
-use crate::clustering::execute_union_operations;
+use crate::clustering::{execute_union_operations, execute_union_operations_arrow};
 
 #[pyclass]
 struct Clustering {
@@ -34,6 +34,29 @@ impl Clustering {
     /// address IDs of one transaction. Can be called multiple times (accumulates).
     fn process_transactions(&self, tx_inputs: Vec<Vec<u32>>) {
         execute_union_operations(&self.uf, &tx_inputs);
+    }
+
+    /// Process a batch of transactions supplied as a pyarrow `ListArray` whose
+    /// inner values are uint32 input address ids (one inner list per
+    /// transaction). Unlike `process_transactions`, the Arrow offsets+values
+    /// buffers are read directly with zero Python-object materialization, so
+    /// the driver-side Arrow→Python (`to_pylist`) conversion that dominates the
+    /// feed at scale disappears. Accumulates like `process_transactions`.
+    fn process_transactions_arrow(&self, array: &Bound<'_, PyAny>) -> PyResult<()> {
+        let data = ArrayData::from_pyarrow_bound(array)?;
+        let array_ref = make_array(data);
+        let list = array_ref
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "process_transactions_arrow expects a pyarrow ListArray",
+                )
+            })?;
+        array
+            .py()
+            .allow_threads(|| execute_union_operations_arrow(&self.uf, list))
+            .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Return the full (address_id, cluster_id) mapping as an Arrow RecordBatch.

@@ -349,59 +349,39 @@ def run_transformation(
 @require_environment()
 @require_currency()
 @click.option(
-    "--start-block",
-    type=int,
-    default=0,
-    show_default=True,
-    help="Start block (inclusive).",
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode (local[*]) instead of submitting to the cluster.",
 )
 @click.option(
-    "--end-block",
+    "--read-partitions",
     type=int,
     default=None,
-    help="End block (inclusive). If omitted, auto-detected from the raw keyspace.",
+    help=(
+        "Partitions the edge-set DataFrame is coalesced to before streaming to the "
+        "driver (one Arrow blob each). Raise it if a partition exceeds "
+        "spark.driver.maxResultSize or executor memory is tight on large chains "
+        "(default 64). Does NOT control join parallelism."
+    ),
 )
-@click.option(
-    "--chunk-size",
-    type=int,
-    default=1000,
-    show_default=True,
-    help="Block-range chunk size for the Cassandra read/feed loop.",
-)
-@click.option(
-    "--concurrency",
-    type=int,
-    default=100,
-    show_default=True,
-    help="Max in-flight Cassandra statements per chunk.",
-)
-@click.option(
-    "--write-chunk",
-    type=int,
-    default=100_000,
-    show_default=True,
-    help="Number of mapping rows per Cassandra write slice.",
-)
-def run_clustering(
-    env, currency, start_block, end_block, chunk_size, concurrency, write_chunk
-):
-    """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
+def run_clustering(env, currency, local, read_partitions):
+    """Run one-off UTXO address clustering with PySpark.
 
-    Reads transactions via point/range queries in ``--chunk-size``-block chunks,
-    feeds them to the Rust clustering engine, and streams the resulting mapping
-    back to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in the
-    transformed keyspace.  No PySpark dependency.
+    Bulk-reads raw.transaction and address_ids_by_address_prefix via parallel
+    token-range scans, clusters multi-input transactions with the Rust Union-Find,
+    and bulk-writes fresh_address_cluster / fresh_cluster_addresses /
+    fresh_cluster_stats via the Spark Cassandra connector. Clusters the whole
+    transaction table.
 
-    The transformed keyspace must already be seeded by the Scala transformation
-    (or a prior run) so that ``summary_statistics.no_addresses`` is populated.
+    The transformed keyspace must already be seeded (Scala transformation or a
+    prior run) so summary_statistics.no_addresses is populated.
     \f
     """
-    from graphsenselib.config import is_fresh_clustering_enabled
+    from graphsenselib.config import get_config, is_fresh_clustering_enabled
     from graphsenselib.db.factory import DbFactory
     from graphsenselib.schema.schema import GraphsenseSchemas
-    from graphsenselib.transformation.clustering import (
-        run_clustering_one_off_from_cassandra,
-    )
+    from graphsenselib.transformation.clustering import run_clustering_spark
+    from graphsenselib.transformation.spark import create_spark_session
 
     if not is_fresh_clustering_enabled():
         raise click.ClickException(
@@ -409,32 +389,48 @@ def run_clustering(
             "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
         )
 
-    # Ensure transformed keyspace schema is up to date
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
 
     with DbFactory().from_config(env, currency) as db:
-        if end_block is None:
-            end_block = db.raw.get_highest_block()
-            if end_block is None:
-                raise click.ClickException(
-                    f"Cannot auto-detect end_block: raw keyspace for "
-                    f"{currency} in environment {env} appears empty."
-                )
-            logger.info(f"Auto-detected end_block={end_block} from raw keyspace.")
+        config = get_config()
+        env_config = config.get_environment(env)
+        ks_config = config.get_keyspace_config(env, currency)
+        raw_keyspace = ks_config.raw_keyspace_name
+        transformed_keyspace = ks_config.transformed_keyspace_name
+
+        stats = db.transformed.get_summary_statistics()
+        if stats is None or getattr(stats, "no_addresses", None) is None:
+            raise click.ClickException(
+                f"{transformed_keyspace}.summary_statistics.no_addresses is "
+                "missing — seed the transformed keyspace before clustering."
+            )
+        max_address_id = int(stats.no_addresses)
 
         logger.info(
-            f"Starting clustering: env={env}, currency={currency}, "
-            f"blocks={start_block}-{end_block}, chunk_size={chunk_size}, "
-            f"concurrency={concurrency}"
+            f"Starting Spark clustering: env={env}, currency={currency}, "
+            f"raw={raw_keyspace}, transformed={transformed_keyspace}"
         )
-
-        run_clustering_one_off_from_cassandra(
-            db,
-            start_block=start_block,
-            end_block=end_block,
-            chunk_size=chunk_size,
-            concurrency=concurrency,
-            write_chunk=write_chunk,
+        spark_session = create_spark_session(
+            app_name=f"graphsense-clustering-{currency}-{env}",
+            local=local,
+            cassandra_nodes=env_config.cassandra_nodes,
+            cassandra_username=env_config.username,
+            cassandra_password=env_config.password,
+            spark_config=config.get_spark_config(),
+            spark_packages=config.get_spark_packages(),
         )
-
-    logger.info("One-off clustering complete.")
+        try:
+            spark_kwargs = {}
+            if read_partitions is not None:
+                spark_kwargs["read_partitions"] = read_partitions
+            run_clustering_spark(
+                spark_session,
+                raw_keyspace=raw_keyspace,
+                transformed_keyspace=transformed_keyspace,
+                max_address_id=max_address_id,
+                **spark_kwargs,
+            )
+        finally:
+            spark_session.stop()
+            logger.info("SparkSession stopped.")
+        logger.info("One-off clustering complete.")

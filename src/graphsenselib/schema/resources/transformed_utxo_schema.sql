@@ -125,6 +125,12 @@ CREATE TABLE fresh_cluster_addresses (
     PRIMARY KEY (cluster_id, address_id)
 );
 
+CREATE TABLE fresh_cluster_stats (
+    cluster_id int PRIMARY KEY,
+    size bigint,
+    min_address_id int
+);
+
 CREATE TABLE summary_statistics (
     id int PRIMARY KEY,
     timestamp int,

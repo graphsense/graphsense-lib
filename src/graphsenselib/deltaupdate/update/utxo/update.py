@@ -1,5 +1,6 @@
 import logging
 import time
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
@@ -58,113 +59,231 @@ def _check_gs_clustering():
 LARGE_MERGE_WARNING_THRESHOLD = 100_000
 
 
-def run_incremental_clustering(
-    db: AnalyticsDb, new_tx_inputs: List[List[int]]
-) -> List[Tuple[int, int]]:
-    """Read only affected clusters, rebuild a small union-find, process new txs,
-    and return changed (address_id, cluster_id) pairs.
+class ClusteringChanges(NamedTuple):
+    """Planned writes for one incremental fresh-clustering step.
 
-    Instead of reading the entire fresh_address_cluster table, this:
-    1. Looks up cluster_ids for addresses in new transactions
-    2. Reads all members of those clusters from fresh_cluster_addresses
-    3. Builds a dense-remapped union-find with only affected addresses
-    4. Processes new transactions and returns the diff
+    address_assignments: (address_id, cluster_id) to (over)write in
+        ``fresh_address_cluster`` and insert into ``fresh_cluster_addresses``.
+    stats_upserts: (cluster_id, size, min_address_id) for ``fresh_cluster_stats``
+        of new / joined / surviving clusters.
+    member_deletes: (cluster_id, address_id) reverse-index rows to delete from
+        ``fresh_cluster_addresses`` for the absorbed side of a merge.
+    stats_deletes: cluster_ids whose ``fresh_cluster_stats`` row to delete.
+    """
 
-    Args:
-        db: AnalyticsDb instance
-        new_tx_inputs: List of lists of input address IDs per transaction
+    address_assignments: List[Tuple[int, int]]
+    stats_upserts: List[Tuple[int, int, int]]
+    member_deletes: List[Tuple[int, int]]
+    stats_deletes: List[int]
 
-    Returns:
-        List of (address_id, cluster_id) tuples that changed.
+    @property
+    def is_empty(self) -> bool:
+        return not (
+            self.address_assignments
+            or self.stats_upserts
+            or self.member_deletes
+            or self.stats_deletes
+        )
+
+
+def _components_via_rust(
+    new_tx_inputs: List[List[int]], addr_to_cluster: Dict[int, int]
+) -> List[List[int]]:
+    """Group the touched addresses into connected components with the Rust
+    union-find (``gs_clustering``).
+
+    Two kinds of unions are fed in:
+
+    * each new multi-input transaction (its inputs share a cluster), and
+    * one synthetic union per existing cluster over its touched members, so all
+      components that reference the same existing cluster collapse into one.
+      Without it the same cluster could be "joined to" in one component and
+      "absorbed" in another, producing inconsistent cluster_ids.
+
+    Returns components as lists of original address_ids.
     """
     from gs_clustering import Clustering
 
+    all_ids = sorted({a for tx in new_tx_inputs for a in tx})
+    to_dense = {orig: i for i, orig in enumerate(all_ids)}
+
+    dense_txs = [[to_dense[a] for a in tx] for tx in new_tx_inputs]
+
+    touched_by_cluster: Dict[int, List[int]] = defaultdict(list)
+    for addr, cid in addr_to_cluster.items():
+        touched_by_cluster[cid].append(addr)
+    for addrs in touched_by_cluster.values():
+        if len(addrs) >= 2:
+            dense_txs.append([to_dense[a] for a in addrs])
+
+    dense_txs = [tx for tx in dense_txs if len(tx) >= 2]
+
+    c = Clustering(max_address_id=len(all_ids) - 1)
+    c.process_transactions(dense_txs)
+    mapping = c.get_mapping()
+
+    components: Dict[int, List[int]] = defaultdict(list)
+    for dense_a, dense_root in zip(
+        mapping.column("address_id").to_pylist(),
+        mapping.column("cluster_id").to_pylist(),
+    ):
+        components[dense_root].append(all_ids[dense_a])
+    return list(components.values())
+
+
+def _plan_clustering_changes(
+    components: List[List[int]],
+    addr_to_cluster: Dict[int, int],
+    stats: Dict[int, Tuple[int, int]],
+    get_members: Callable[[List[int]], List[Tuple[int, int]]],
+) -> ClusteringChanges:
+    """Classify each component as new / join / merge and plan the writes.
+
+    Pure function (no DB or Rust). ``stats`` maps cluster_id -> (size,
+    min_address_id) for every existing cluster referenced by ``components``;
+    ``get_members(cluster_ids)`` returns (cluster_id, address_id) rows and is
+    called only for the absorbed (non-survivor) side of a merge.
+    """
+    address_assignments: List[Tuple[int, int]] = []
+    stats_upserts: List[Tuple[int, int, int]] = []
+    member_deletes: List[Tuple[int, int]] = []
+    stats_deletes: List[int] = []
+
+    for members in components:
+        existing = {addr_to_cluster[a] for a in members if a in addr_to_cluster}
+        new_addrs = [a for a in members if a not in addr_to_cluster]
+
+        if not existing:
+            # NEW cluster — skip singletons (the one-off does not persist
+            # size-1 clusters); cluster_id = min address (canonical).
+            if len(members) < 2:
+                continue
+            cid = min(members)
+            for a in members:
+                address_assignments.append((a, cid))
+            stats_upserts.append((cid, len(members), cid))
+
+        elif len(existing) == 1:
+            # JOIN — only the new addresses change; existing members keep their id.
+            cid = next(iter(existing))
+            if not new_addrs:
+                continue  # no-op (idempotent re-run)
+            for a in new_addrs:
+                address_assignments.append((a, cid))
+            old_size, old_min = stats[cid]
+            stats_upserts.append(
+                (cid, old_size + len(new_addrs), min(old_min, min(new_addrs)))
+            )
+
+        else:
+            # MERGE — keep the largest cluster's id (tie: smallest cluster_id) so
+            # the survivor (e.g. an exchange) is never rewritten; read and
+            # re-point only the smaller absorbed side(s).
+            survivor = max(existing, key=lambda c: (stats[c][0], -c))
+            absorbed = sorted(existing - {survivor})
+            new_size, new_min = stats[survivor]
+            for cid, address_id in get_members(absorbed):
+                address_assignments.append((address_id, survivor))
+                member_deletes.append((cid, address_id))
+            for ac in absorbed:
+                ac_size, ac_min = stats[ac]
+                if ac_size > LARGE_MERGE_WARNING_THRESHOLD:
+                    logger.warning(
+                        f"Merging large cluster {ac} ({ac_size:,} members) into "
+                        f"survivor {survivor}; reading its full membership."
+                    )
+                new_size += ac_size
+                new_min = min(new_min, ac_min)
+                stats_deletes.append(ac)
+            for a in new_addrs:
+                address_assignments.append((a, survivor))
+            if new_addrs:
+                new_size += len(new_addrs)
+                new_min = min(new_min, min(new_addrs))
+            stats_upserts.append((survivor, new_size, new_min))
+
+    return ClusteringChanges(
+        address_assignments, stats_upserts, member_deletes, stats_deletes
+    )
+
+
+def run_incremental_clustering(
+    db: AnalyticsDb, new_tx_inputs: List[List[int]]
+) -> ClusteringChanges:
+    """Plan fresh-clustering writes for a batch of new multi-input txs.
+
+    Reads only ``address -> cluster`` for the touched addresses and
+    ``fresh_cluster_stats`` for the clusters they belong to; the full membership
+    (``fresh_cluster_addresses``) is read only for the absorbed side of an actual
+    merge.  See :func:`_plan_clustering_changes`.
+    """
     tdb = db.transformed
 
-    # Collect all address IDs mentioned in new transactions
-    new_address_ids = set()
-    for tx in new_tx_inputs:
-        new_address_ids.update(tx)
-
+    new_address_ids = {a for tx in new_tx_inputs for a in tx}
     if not new_address_ids:
-        return []
+        return ClusteringChanges([], [], [], [])
 
-    # Step 1: Look up existing cluster_ids for these addresses
-    rows = tdb.get_fresh_clusters_for_addresses(list(new_address_ids))
+    addr_to_cluster = dict(tdb.get_fresh_clusters_for_addresses(list(new_address_ids)))
 
-    first_run = len(rows) == 0 and tdb.is_fresh_clustering_empty()
+    components = _components_via_rust(new_tx_inputs, addr_to_cluster)
 
-    if first_run or not rows:
-        # No existing state (first run or all-new addresses).
-        # Process new transactions directly.
-        all_ids = sorted(new_address_ids)
-        original_to_dense = {orig: i for i, orig in enumerate(all_ids)}
-        dense_to_original = all_ids
-
-        dense_tx_inputs = [[original_to_dense[a] for a in tx] for tx in new_tx_inputs]
-
-        c = Clustering(max_address_id=len(all_ids) - 1)
-        c.process_transactions(dense_tx_inputs)
-        batch = c.get_mapping()
-
-        result = []
-        for dense_a, dense_c in zip(
-            batch.column("address_id").to_pylist(),
-            batch.column("cluster_id").to_pylist(),
-        ):
-            result.append((dense_to_original[dense_a], dense_to_original[dense_c]))
-        return result
-
-    # Step 2: Find all affected cluster_ids and read their members
-    affected_cluster_ids = {cluster_id for _, cluster_id in rows}
-    member_rows = tdb.get_fresh_cluster_members(affected_cluster_ids)
-
-    # Build existing mapping for affected addresses only
-    existing_mapping: Dict[int, int] = {}  # address_id -> cluster_id
-    for cluster_id, address_id in member_rows:
-        existing_mapping[address_id] = cluster_id
-
-    total_affected = len(existing_mapping) + len(new_address_ids)
-    if total_affected > LARGE_MERGE_WARNING_THRESHOLD:
-        logger.warning(
-            f"Large clustering operation: {total_affected} addresses affected "
-            f"({len(existing_mapping)} existing + {len(new_address_ids)} from new txs, "
-            f"{len(affected_cluster_ids)} clusters involved)"
+    existing_cluster_ids = set(addr_to_cluster.values())
+    stats = tdb.get_fresh_cluster_stats(existing_cluster_ids)
+    missing = existing_cluster_ids - stats.keys()
+    if missing:
+        raise RuntimeError(
+            f"fresh_cluster_stats missing {len(missing)} cluster rows "
+            f"(e.g. {sorted(missing)[:5]}); run the fresh_cluster_stats backfill "
+            "before incremental clustering."
         )
 
-    # Step 4: Dense remapping — map sparse original IDs to compact range
-    all_ids = sorted(set(existing_mapping.keys()) | new_address_ids)
-    original_to_dense = {orig: i for i, orig in enumerate(all_ids)}
-    dense_to_original = all_ids  # index -> original (since all_ids is sorted list)
+    return _plan_clustering_changes(
+        components, addr_to_cluster, stats, tdb.get_fresh_cluster_members
+    )
 
-    dense_existing_addr = [original_to_dense[a] for a in existing_mapping]
-    dense_existing_clus = [
-        original_to_dense[existing_mapping[a]] for a in existing_mapping
-    ]
 
-    dense_tx_inputs = [
-        [original_to_dense[a] for a in tx if a in original_to_dense]
-        for tx in new_tx_inputs
-    ]
-    dense_tx_inputs = [tx for tx in dense_tx_inputs if len(tx) >= 2]
-
-    # Step 5: Run Rust clustering on dense range
-    c = Clustering(max_address_id=len(all_ids) - 1)
-    c.rebuild_from_mapping(dense_existing_addr, dense_existing_clus)
-    c.process_transactions(dense_tx_inputs)
-    diff_batch = c.get_diff()
-
-    # Step 6: Map back to original IDs
-    result = []
-    for dense_a, dense_c in zip(
-        diff_batch.column("address_id").to_pylist(),
-        diff_batch.column("cluster_id").to_pylist(),
-    ):
-        orig_a = dense_to_original[dense_a]
-        orig_c = dense_to_original[dense_c]
-        result.append((orig_a, orig_c))
-
-    return result
+def _clustering_changes_to_db(cc: ClusteringChanges) -> List[DbChange]:
+    """Translate planned :class:`ClusteringChanges` into DbChange writes."""
+    changes: List[DbChange] = []
+    for address_id, cluster_id in cc.address_assignments:
+        changes.append(
+            DbChange.new(
+                table="fresh_address_cluster",
+                data={"address_id": address_id, "cluster_id": cluster_id},
+            )
+        )
+        changes.append(
+            DbChange.new(
+                table="fresh_cluster_addresses",
+                data={"cluster_id": cluster_id, "address_id": address_id},
+            )
+        )
+    for cluster_id, size, min_address_id in cc.stats_upserts:
+        changes.append(
+            DbChange.new(
+                table="fresh_cluster_stats",
+                data={
+                    "cluster_id": cluster_id,
+                    "size": size,
+                    "min_address_id": min_address_id,
+                },
+            )
+        )
+    for cluster_id, address_id in cc.member_deletes:
+        changes.append(
+            DbChange.delete(
+                table="fresh_cluster_addresses",
+                data={"cluster_id": cluster_id, "address_id": address_id},
+            )
+        )
+    for cluster_id in cc.stats_deletes:
+        changes.append(
+            DbChange.delete(
+                table="fresh_cluster_stats",
+                data={"cluster_id": cluster_id},
+            )
+        )
+    return changes
 
 
 COINBASE_PSEUDO_ADDRESS = "coinbase"
@@ -1386,42 +1505,37 @@ class UpdateStrategyUtxo(UpdateStrategy):
         with LoggerScope.debug(
             logger, f"Fresh clustering for blocks {start_block}-{end_block}"
         ) as lg:
-            new_tx_inputs: List[List[int]] = []
+            total_txs = 0
+            total_assignments = 0
+            total_writes = 0
             for chunk in iter_multi_input_tx_inputs(self._db, start_block, end_block):
-                new_tx_inputs.extend(chunk)
+                if not chunk:
+                    continue
+                total_txs += len(chunk)
+                cc = run_incremental_clustering(self._db, chunk)
+                if cc.is_empty:
+                    continue
+                changes = _clustering_changes_to_db(cc)
+                # Apply per chunk so a merge in an earlier chunk is visible to
+                # later chunks (single writer under the keyspace lock), and so
+                # driver memory stays bounded to one block-chunk of activity.
+                apply_changes(
+                    self._db, changes, self._pedantic, try_atomic_writes=False
+                )
+                total_assignments += len(cc.address_assignments)
+                total_writes += len(changes)
 
-            if not new_tx_inputs:
+            if total_txs == 0:
                 lg.debug(
                     f"No resolvable multi-input transactions in blocks "
                     f"{start_block}-{end_block}"
                 )
                 return
-
-            changed = run_incremental_clustering(self._db, new_tx_inputs)
             lg.debug(
-                f"Clustering {len(new_tx_inputs)} multi-input txs produced "
-                f"{len(changed)} changed mappings"
+                f"Fresh clustering: {total_txs} multi-input txs over blocks "
+                f"{start_block}-{end_block} -> {total_assignments} address "
+                f"assignments, {total_writes} db changes written"
             )
-
-            if not changed:
-                return
-
-            changes = []
-            for address_id, cluster_id in changed:
-                changes.append(
-                    DbChange.new(
-                        table="fresh_address_cluster",
-                        data={"address_id": address_id, "cluster_id": cluster_id},
-                    )
-                )
-                changes.append(
-                    DbChange.new(
-                        table="fresh_cluster_addresses",
-                        data={"cluster_id": cluster_id, "address_id": address_id},
-                    )
-                )
-            apply_changes(self._db, changes, self._pedantic, try_atomic_writes=False)
-            lg.debug(f"Wrote {len(changes)} clustering changes to Cassandra")
 
     def process_batch_impl_hook(self, batch) -> Tuple[Action, Optional[int]]:
         rates = {}

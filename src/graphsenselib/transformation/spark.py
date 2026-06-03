@@ -36,6 +36,12 @@ def create_spark_session(
     """
     from pyspark.sql import SparkSession
 
+    # py4j's clientserver logs every Python<->JVM command/answer at DEBUG, which
+    # floods -vvv output for every Spark job (it is a PySpark-wide concern, not
+    # specific to any one job). Mute it to WARNING so our own DEBUG lines remain
+    # readable.
+    logging.getLogger("py4j").setLevel(logging.WARNING)
+
     builder = SparkSession.builder.appName(app_name)
 
     if local:

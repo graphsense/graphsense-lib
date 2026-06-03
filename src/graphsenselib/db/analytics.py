@@ -738,11 +738,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         """Look up (address_id, cluster_id) from fresh_address_cluster for given IDs."""
         if not address_ids:
             return []
-        id_list = ",".join(str(a) for a in address_ids)
-        rows = self.execute_raw_cql(
-            f"SELECT address_id, cluster_id FROM "
-            f"{self._keyspace}.fresh_address_cluster "
-            f"WHERE address_id IN ({id_list})"
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "fresh_address_cluster",
+            "address_id",
+            "address_id, cluster_id",
+            list(address_ids),
         )
         return [(r.address_id, r.cluster_id) for r in rows]
 
@@ -750,13 +751,33 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         """Read (cluster_id, address_id) from fresh_cluster_addresses for given clusters."""
         if not cluster_ids:
             return []
-        id_list = ",".join(str(c) for c in cluster_ids)
-        rows = self.execute_raw_cql(
-            f"SELECT cluster_id, address_id FROM "
-            f"{self._keyspace}.fresh_cluster_addresses "
-            f"WHERE cluster_id IN ({id_list})"
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "fresh_cluster_addresses",
+            "cluster_id",
+            "cluster_id, address_id",
+            list(cluster_ids),
         )
         return [(r.cluster_id, r.address_id) for r in rows]
+
+    def get_fresh_cluster_stats(self, cluster_ids) -> Dict[int, Tuple[int, int]]:
+        """Read (size, min_address_id) per cluster from fresh_cluster_stats.
+
+        Single-row partitions read per-key concurrently — cheap relative to
+        get_fresh_cluster_members (which reads full membership partitions). Used
+        to pick the larger survivor on a merge without reading either side's
+        membership.
+        """
+        if not cluster_ids:
+            return {}
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "fresh_cluster_stats",
+            "cluster_id",
+            "cluster_id, size, min_address_id",
+            list(cluster_ids),
+        )
+        return {r.cluster_id: (r.size, r.min_address_id) for r in rows}
 
     def is_fresh_clustering_empty(self) -> bool:
         """Check if the fresh_address_cluster table has any rows."""
