@@ -27,6 +27,8 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Optional
 
+from graphsenselib.config import chain_forks
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +49,11 @@ VALID_SINKS = (SINK_CASSANDRA, SINK_DELTA)
 
 UTXO_CURRENCIES = {"btc", "bch", "ltc", "zec"}
 ACCOUNT_CURRENCIES = {"eth", "trx"}
+
+# A fork currency's extraction defaults to starting at its fork block (see
+# config.chain_forks) so the shared pre-fork history isn't re-extracted into
+# trivial cross-chain collisions. Back-compat alias for the BTC/BCH fork height.
+BCH_FORK_BLOCK = chain_forks["bch"]["fork_block"]
 
 # All chains supported by convert_pubkey_to_addresses. We materialise
 # addresses for every one of them whenever a pubkey becomes cross-chain,
@@ -415,6 +422,20 @@ class PubkeyUpdate:
     # ------------------------------------------------------------------
 
     def run(self, start_block: Optional[int], end_block: int) -> None:
+        fork = chain_forks.get(self.currency)
+        if fork is not None and start_block is None:
+            start_block = fork["fork_block"]
+            logger.warning(
+                "%s shares %s history before the fork at block %d; defaulting "
+                "start_block to %d to skip the shared pre-fork blocks (extracting "
+                "them would trivially collide with %s and defeat the cross-chain "
+                "gate). Pass --start-block explicitly to override.",
+                self.currency,
+                fork["base"],
+                fork["fork_block"],
+                fork["fork_block"],
+                fork["base"],
+            )
         last_done = self._read_state()
         effective_start = (
             start_block
@@ -479,3 +500,44 @@ def compact_observed(spark, sink_path: str) -> None:
 
     DeltaTable.forPath(spark, observed_path).optimize().executeCompaction()
     logger.info("OPTIMIZE complete on observed.")
+
+
+def load_pubkey_to_cassandra(
+    spark,
+    sink_path: str,
+    cassandra_keyspace: str,
+    table: str = PUBKEY_TABLE,
+) -> None:
+    """Load the Delta ``pubkey_by_address`` table into Cassandra.
+
+    Decouples the heavy extraction + cross-chain detection (run with
+    ``sink_type=delta`` so it never touches production Cassandra) from the
+    throttled Cassandra write: produce the dataset to Delta, inspect it, then
+    load it here once it looks good. Reads a consistent Delta snapshot, so it is
+    safe to run independently. Idempotent — the Cassandra table is keyed by
+    ``address``, so a re-load upserts the same rows.
+    """
+    from delta.tables import DeltaTable
+
+    sink_path = sink_path.rstrip("/").replace("s3://", "s3a://")
+    delta_path = f"{sink_path}/{table}"
+    if not DeltaTable.isDeltaTable(spark, delta_path):
+        raise ValueError(
+            f"No Delta {table!r} table at {delta_path}. Run a sink_type=delta "
+            "pubkey-update first to produce it."
+        )
+
+    df = (
+        spark.read.format("delta")
+        .load(delta_path)
+        .select("address", "pubkey")
+        .dropDuplicates(["address", "pubkey"])
+    )
+    logger.info(f"Loading {delta_path} -> Cassandra {cassandra_keyspace}.{table}")
+    (
+        df.write.format("org.apache.spark.sql.cassandra")
+        .options(table=table, keyspace=cassandra_keyspace)
+        .mode("append")
+        .save()
+    )
+    logger.info(f"Loaded {table} into {cassandra_keyspace}.")

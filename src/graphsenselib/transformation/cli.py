@@ -740,6 +740,109 @@ def run_pubkey_update(
             )
 
 
+@transformation.command(
+    "pubkey-load",
+    short_help="[ALPHA] Load the Delta pubkey_by_address dataset into Cassandra.",
+)
+@require_environment(required=True)
+@click.option(
+    "--sink-path",
+    type=str,
+    default=None,
+    help=(
+        "Delta Lake base path of the cross-chain pubkey store written by a "
+        "sink_type=delta pubkey-update run (reads <sink-path>/pubkey_by_address). "
+        "Defaults to environments.<env>.pubkey.sink_path."
+    ),
+)
+@click.option(
+    "--s3-config",
+    "s3_config_name",
+    type=str,
+    default=None,
+    help="Name of the s3_configs entry for S3/MinIO creds. Required if sink-path is s3://.",
+)
+@click.option("--local", is_flag=True, help="Run Spark in local mode with local[*].")
+@click.option(
+    "--pubkey-keyspace",
+    type=str,
+    default=None,
+    help=(
+        "Cassandra keyspace to load into. Defaults to "
+        "environments.<env>.pubkey.keyspace, else 'pubkey_v2'."
+    ),
+)
+@click.option(
+    "--create-schema",
+    is_flag=True,
+    help="Create the Cassandra pubkey keyspace/table if it does not exist.",
+)
+def run_pubkey_load_cmd(
+    env, sink_path, s3_config_name, local, pubkey_keyspace, create_schema
+):
+    """Load the cross-chain ``pubkey_by_address`` Delta table into Cassandra.
+
+    The Cassandra-write half of the decoupled flow: run ``pubkey-update`` with
+    ``--sink-type delta`` for every chain (heavy compute, never touches
+    production Cassandra), inspect the resulting Delta dataset, then load it
+    here into the isolated keyspace when it looks good.
+
+    ALPHA: not yet validated in production; the interface may change.
+    """
+    _warn_alpha("transformation pubkey-load")
+    from graphsenselib.config import get_config
+    from graphsenselib.pubkey.factory import run_pubkey_load
+    from graphsenselib.pubkey.job import PUBKEY_KEYSPACE, PUBKEY_TABLE
+    from graphsenselib.schema.schema import GraphsenseSchemas
+
+    config = get_config()
+    env_config = config.get_environment(env)
+    pubkey_cfg = env_config.pubkey
+
+    if sink_path is None and pubkey_cfg is not None:
+        sink_path = pubkey_cfg.sink_path
+    if sink_path is None:
+        raise click.UsageError(
+            "--sink-path is required (or set environments.<env>.pubkey.sink_path)."
+        )
+    if pubkey_keyspace is None:
+        pubkey_keyspace = (
+            pubkey_cfg.keyspace if pubkey_cfg else None
+        ) or PUBKEY_KEYSPACE
+
+    is_s3 = sink_path.startswith("s3://") or sink_path.startswith("s3a://")
+    if is_s3 and s3_config_name is None:
+        available = sorted(config.s3_configs.keys())
+        raise click.UsageError(
+            "sink-path is on S3 but --s3-config was not provided. "
+            f"Available s3_configs: {', '.join(available) or 'none'}."
+        )
+    s3_credentials = config.get_s3_credentials(s3_config_name)
+    spark_config = config.spark_config or {}
+
+    if create_schema:
+        logger.info(f"Creating Cassandra keyspace '{pubkey_keyspace}' if not exists...")
+        GraphsenseSchemas().create_pubkey_keyspace_if_not_exist(
+            env, keyspace_name=pubkey_keyspace
+        )
+
+    logger.info(
+        f"Loading {PUBKEY_TABLE} from {sink_path} into "
+        f"{pubkey_keyspace}.{PUBKEY_TABLE} (env={env})"
+    )
+    run_pubkey_load(
+        env=env,
+        sink_path=sink_path,
+        cassandra_nodes=env_config.cassandra_nodes,
+        cassandra_username=env_config.username,
+        cassandra_password=env_config.password,
+        pubkey_keyspace=pubkey_keyspace,
+        local=local,
+        s3_credentials=s3_credentials,
+        spark_config=spark_config,
+    )
+
+
 def _pubkey_last_compaction_time(sink_path, s3_credentials):
     """Timestamp of the last `observed` compaction, or None.
 

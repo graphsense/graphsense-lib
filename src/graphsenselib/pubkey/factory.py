@@ -128,3 +128,55 @@ def run_pubkey_compact(
     finally:
         spark.stop()
         logger.info("SparkSession stopped.")
+
+
+def run_pubkey_load(
+    env: str,
+    sink_path: str,
+    cassandra_nodes=None,
+    cassandra_username: Optional[str] = None,
+    cassandra_password: Optional[str] = None,
+    pubkey_keyspace: str = "pubkey_v2",
+    local: bool = False,
+    s3_credentials=None,
+    spark_config=None,
+) -> None:
+    """Load the Delta ``pubkey_by_address`` table at ``sink_path`` into Cassandra.
+
+    The throttled Cassandra-write half of the decoupled flow: run the heavy
+    extraction with ``sink_type=delta`` first, then call this to load the
+    resulting Delta table into the (isolated) Cassandra keyspace.
+    """
+    from graphsenselib.pubkey.job import load_pubkey_to_cassandra
+    from graphsenselib.transformation.spark import create_spark_session
+
+    if not cassandra_nodes:
+        raise ValueError("cassandra_nodes is required to load into Cassandra.")
+
+    import os
+
+    job_spark_config = {}
+    if local:
+        job_spark_config.update(
+            {
+                "spark.master": f"local[{min(os.cpu_count() or 2, 2)}]",
+                "spark.driver.memory": "8g",
+            }
+        )
+    if spark_config:
+        job_spark_config.update(spark_config)
+
+    spark = create_spark_session(
+        app_name=f"graphsense-pubkey-load-{env}",
+        local=local,
+        cassandra_nodes=cassandra_nodes,
+        cassandra_username=cassandra_username,
+        cassandra_password=cassandra_password,
+        s3_credentials=s3_credentials,
+        spark_config=job_spark_config,
+    )
+    try:
+        load_pubkey_to_cassandra(spark, sink_path, pubkey_keyspace)
+    finally:
+        spark.stop()
+        logger.info("SparkSession stopped.")

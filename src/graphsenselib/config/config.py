@@ -45,6 +45,19 @@ reorg_backoff_blocks = {
     "ltc": 12,
 }
 
+# Chains that forked off another chain and therefore share the base chain's
+# entire history up to the fork block (e.g. BCH split from BTC at block 478558 —
+# blocks 0..478558 are byte-identical on both). Keyed by the fork chain ->
+# {"base": <parent chain>, "fork_block": <last shared block height>}.
+# Single source of truth for fork-awareness: the REST fork-overlap handler uses
+# the (base, fork) pair, and the pubkey job uses fork_block to skip re-extracting
+# the shared pre-fork history. These are immutable protocol facts — keep them
+# here in code, NOT in graphsense.yaml (a per-env typo would silently corrupt
+# cross-chain handling).
+chain_forks: Dict[str, Dict[str, Any]] = {
+    "bch": {"base": "btc", "fork_block": 478558},
+}
+
 
 GRAPHSENSE_DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GRAPHSENSE_VERBOSE_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
