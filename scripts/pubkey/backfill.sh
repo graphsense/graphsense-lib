@@ -36,19 +36,20 @@
 #   - Python UDFs run on the EXECUTORS, so the Spark workers need graphsenselib
 #     + its native deps (coincurve, ...) in their Python. Otherwise the run dies
 #     with `ModuleNotFoundError: No module named 'graphsenselib'` from the worker.
-#     This image BAKES a minimal env at /opt/graphsense/spark-env.tar.gz — just
-#     reference it in spark_config. The file:// scheme makes the driver's HTTP
-#     file server distribute it to executors, so NO S3/HDFS is needed:
+#     This image BAKES a minimal site-packages archive at
+#     /opt/graphsense/spark-env.tar.gz — reference it in spark_config. The file://
+#     scheme makes the driver's HTTP file server distribute it (NO S3/HDFS), and
+#     PYTHONPATH makes the executors' OWN python import it. Do NOT override
+#     spark.pyspark.python — keep the cluster's executor python:
 #
 #       spark_config:
 #         spark.archives: "file:///opt/graphsense/spark-env.tar.gz#environment"
-#         spark.pyspark.python: "./environment/bin/python"
-#         spark.pyspark.driver.python: "/usr/local/bin/python3"
+#         spark.executorEnv.PYTHONPATH: "./environment"
 #
-#     REQUIREMENT: the baked env is venv-pack'd, so it does NOT bundle the
-#     stdlib/libpython — the executor hosts must have a compatible Python 3.13
-#     installed (you confirmed they do). If that ever stops holding, repack with
-#     conda-pack (fully self-contained) — see scripts/pack_spark_env.sh.
+#     REQUIREMENT: the archive carries NO interpreter, only packages with native
+#     wheels built for CPython 3.13 — the executors must run Python 3.13.x (you
+#     confirmed 3.13.12). A different minor would fail to load the native .so;
+#     then rebuild the archive for that version.
 #
 #   - If the config uses ${VAR} placeholders for secrets (s3 keys, cassandra
 #     password), pass them to the container via ENV_FILE=/path/to/.env.

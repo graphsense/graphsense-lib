@@ -104,32 +104,31 @@ RUN uv pip install --no-cache --system /tmp/wheels/graphsense_clustering-*.whl \
     && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')" \
     && find /usr/local/lib/python3.13/site-packages -depth -type d -name "__pycache__" -exec rm -rf {} +
 
-# Baked Spark-executor environment for Python-UDF jobs (e.g. pubkey-update).
-# On a standalone cluster the executors are remote and lack graphsenselib + its
-# native deps (coincurve, ...), so UDFs fail with ModuleNotFoundError. We ship a
-# relocatable env via spark.archives. It is MINIMAL on purpose: only the crypto
-# stack the UDFs import (graphsenselib's utils import path was made pandas-free),
-# so this is ~10-20 MB rather than the ~250 MB full [all,transformation] env.
-# The interpreter is copied (--copies) for relocatability; executors still need a
-# compatible Python 3.13 present (venv does not bundle the stdlib). The import
-# smoke test fails the build if the pack can't run the UDF entrypoints.
-# Reference it from spark_config (file:// forces the driver's HTTP file server
-# to distribute it to executors — no S3/HDFS needed; executors must have a
-# compatible Python 3.13):
+# Baked Spark-executor packages for Python-UDF jobs (e.g. pubkey-update).
+# On a standalone cluster the executors lack graphsenselib + its native deps
+# (coincurve, ...), so UDFs fail with ModuleNotFoundError. We ship a FLAT
+# site-packages dir (pip --target) via spark.archives and add it to the
+# executors' PYTHONPATH. We deliberately do NOT ship a Python interpreter: the
+# executors use their OWN python (the cluster venv), so there is no
+# libpython/stdlib relocation problem — the native wheels just need a matching
+# CPython ABI (built here on 3.13 => executors must run Python 3.13.x).
+# It is MINIMAL (only the crypto stack the UDFs import; graphsenselib's utils
+# import path was made pandas-free), so ~13 MB rather than the ~250 MB full env.
+# The import smoke test fails the build if a UDF entrypoint can't be imported.
+# Reference it from spark_config (file:// => the driver's HTTP file server
+# distributes it; no S3/HDFS needed). Do NOT override spark.pyspark.python —
+# keep the executors' own python; just put the shipped packages on PYTHONPATH:
 #   spark.archives: "file:///opt/graphsense/spark-env.tar.gz#environment"
-#   spark.pyspark.python: "./environment/bin/python"
-#   spark.pyspark.driver.python: "/usr/local/bin/python3"
+#   spark.executorEnv.PYTHONPATH: "./environment"
 COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/pkwheel/
-RUN python3 -m venv --copies /opt/spark-env-venv \
-    && uv pip install --no-cache --python /opt/spark-env-venv/bin/python --no-deps \
-        /tmp/pkwheel/graphsense_lib-*.whl \
-    && uv pip install --no-cache --python /opt/spark-env-venv/bin/python \
-        eth-account coincurve base58 bech32 ecdsa \
-    && /opt/spark-env-venv/bin/python -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; print('spark-env import smoke test OK')" \
-    && uv pip install --no-cache --system venv-pack \
-    && mkdir -p /opt/graphsense \
-    && python -m venv_pack -p /opt/spark-env-venv -o /opt/graphsense/spark-env.tar.gz \
-    && rm -rf /opt/spark-env-venv /tmp/pkwheel \
+RUN mkdir -p /opt/graphsense/spark-env \
+    && uv pip install --no-cache --python /usr/local/bin/python3 \
+        --target /opt/graphsense/spark-env --no-deps /tmp/pkwheel/graphsense_lib-*.whl \
+    && uv pip install --no-cache --python /usr/local/bin/python3 \
+        --target /opt/graphsense/spark-env eth-account coincurve base58 bech32 ecdsa \
+    && PYTHONPATH=/opt/graphsense/spark-env /usr/local/bin/python3 -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; import graphsenselib; assert graphsenselib.__file__.startswith('/opt/graphsense/spark-env'), graphsenselib.__file__; print('spark-env site-packages smoke test OK')" \
+    && tar -C /opt/graphsense/spark-env -czf /opt/graphsense/spark-env.tar.gz . \
+    && rm -rf /opt/graphsense/spark-env /tmp/pkwheel \
     && du -h /opt/graphsense/spark-env.tar.gz
 
 # Inline gunicorn config for REST API
