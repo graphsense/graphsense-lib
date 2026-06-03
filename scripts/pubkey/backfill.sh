@@ -37,17 +37,18 @@
 #     + its native deps (coincurve, ...) in their Python. Otherwise the run dies
 #     with `ModuleNotFoundError: No module named 'graphsenselib'` from the worker.
 #     This image BAKES a minimal env at /opt/graphsense/spark-env.tar.gz — just
-#     reference it in spark_config:
+#     reference it in spark_config. The file:// scheme makes the driver's HTTP
+#     file server distribute it to executors, so NO S3/HDFS is needed:
 #
 #       spark_config:
-#         spark.archives: "/opt/graphsense/spark-env.tar.gz#environment"
+#         spark.archives: "file:///opt/graphsense/spark-env.tar.gz#environment"
 #         spark.pyspark.python: "./environment/bin/python"
 #         spark.pyspark.driver.python: "/usr/local/bin/python3"
 #
 #     REQUIREMENT: the baked env is venv-pack'd, so it does NOT bundle the
 #     stdlib/libpython — the executor hosts must have a compatible Python 3.13
-#     installed. If they don't (or run a different minor), repack with conda-pack
-#     (fully self-contained) — see scripts/pack_spark_env.sh.
+#     installed (you confirmed they do). If that ever stops holding, repack with
+#     conda-pack (fully self-contained) — see scripts/pack_spark_env.sh.
 #
 #   - If the config uses ${VAR} placeholders for secrets (s3 keys, cassandra
 #     password), pass them to the container via ENV_FILE=/path/to/.env.

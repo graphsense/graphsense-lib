@@ -113,8 +113,10 @@ RUN uv pip install --no-cache --system /tmp/wheels/graphsense_clustering-*.whl \
 # The interpreter is copied (--copies) for relocatability; executors still need a
 # compatible Python 3.13 present (venv does not bundle the stdlib). The import
 # smoke test fails the build if the pack can't run the UDF entrypoints.
-# Reference it from spark_config:
-#   spark.archives: "/opt/graphsense/spark-env.tar.gz#environment"
+# Reference it from spark_config (file:// forces the driver's HTTP file server
+# to distribute it to executors — no S3/HDFS needed; executors must have a
+# compatible Python 3.13):
+#   spark.archives: "file:///opt/graphsense/spark-env.tar.gz#environment"
 #   spark.pyspark.python: "./environment/bin/python"
 #   spark.pyspark.driver.python: "/usr/local/bin/python3"
 COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/pkwheel/
@@ -181,6 +183,10 @@ EOF
 
 RUN adduser --system --uid 1000 --home /home/graphsense graphsense
 RUN chown -R graphsense /opt/duckdb/extensions
+# The baked spark-env archive is read (and a Hadoop .crc sidecar written next to
+# it) by the non-root runtime user when Spark serves it via spark.archives. Make
+# the dir writable by that user, else: java.nio.file.AccessDeniedException.
+RUN chown -R graphsense /opt/graphsense
 RUN mkdir -p /srv/graphsense-rest/instance
 RUN mkdir -p /srv/graphsense-rest/docs/static
 ADD ./docs/static/ /srv/graphsense-rest/docs/static/
