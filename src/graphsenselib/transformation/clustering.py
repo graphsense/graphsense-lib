@@ -316,9 +316,9 @@ def backfill_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
     Aggregates the membership reverse-index ``(cluster_id, address_id)`` into one
     ``(cluster_id, size, min_address_id)`` row per cluster via the Spark
     Cassandra connector (a distributed count+min, so no driver-side
-    materialization of the full mapping). Used both as the one-time backfill for
-    keyspaces clustered before the stats table existed and as the final step of
-    :func:`run_clustering_spark`, so a fresh one-off is born with stats. The
+    materialization of the full mapping). Called as the final step of
+    :func:`run_clustering_spark`, so a one-off run — including a re-run to
+    (re)populate stats for an already-clustered keyspace — writes them. The
     incremental delta clustering requires these rows to pick the larger survivor
     on a merge. Returns the number of cluster rows written.
     """
