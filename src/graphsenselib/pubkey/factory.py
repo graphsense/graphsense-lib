@@ -21,6 +21,7 @@ def run_pubkey(
     spark_config=None,
     pubkey_keyspace: str = "pubkey",
     sink_type: str = "cassandra",
+    skip_detect: bool = False,
 ) -> None:
     from graphsenselib.pubkey.job import (
         ACCOUNT_CURRENCIES,
@@ -81,7 +82,7 @@ def run_pubkey(
             sink_path=sink_path,
             cassandra_keyspace=pubkey_keyspace,
             sink_type=sink_type,
-        ).run(start_block=start_block, end_block=end_block)
+        ).run(start_block=start_block, end_block=end_block, skip_detect=skip_detect)
     finally:
         spark.stop()
         logger.info("SparkSession stopped.")
@@ -125,6 +126,73 @@ def run_pubkey_compact(
     )
     try:
         compact_observed(spark, sink_path)
+    finally:
+        spark.stop()
+        logger.info("SparkSession stopped.")
+
+
+def run_pubkey_detect(
+    env: str,
+    sink_path: str,
+    cassandra_nodes=None,
+    cassandra_username: Optional[str] = None,
+    cassandra_password: Optional[str] = None,
+    pubkey_keyspace: str = "pubkey_v2",
+    sink_type: str = "cassandra",
+    local: bool = False,
+    s3_credentials=None,
+    spark_config=None,
+) -> None:
+    """Run cross-chain detection + materialisation once over the shared store.
+
+    The deferred half of ``pubkey-update --skip-detect``: append every chain to
+    ``observed`` with detection skipped, then call this once so the full-table
+    ``groupBy`` runs a single time instead of once per chain. Currency-agnostic;
+    reads only ``observed`` / ``materialised`` under ``sink_path``.
+    """
+    import os
+
+    from graphsenselib.pubkey.job import (
+        SINK_CASSANDRA,
+        VALID_SINKS,
+        detect_and_materialise_cross_chain,
+    )
+    from graphsenselib.transformation.spark import create_spark_session
+
+    if sink_type not in VALID_SINKS:
+        raise ValueError(f"sink_type must be one of {VALID_SINKS}, got {sink_type!r}")
+    if sink_type == SINK_CASSANDRA and not cassandra_nodes:
+        raise ValueError("cassandra_nodes is required when sink_type='cassandra'.")
+    # Cassandra connector wants a host even when sink_type=delta never writes.
+    spark_cassandra_nodes = cassandra_nodes or ["localhost:9042"]
+
+    job_spark_config = {}
+    if local:
+        job_spark_config.update(
+            {
+                "spark.master": f"local[{min(os.cpu_count() or 2, 2)}]",
+                "spark.driver.memory": "8g",
+            }
+        )
+    if spark_config:
+        job_spark_config.update(spark_config)
+
+    spark = create_spark_session(
+        app_name=f"graphsense-pubkey-detect-{env}",
+        local=local,
+        cassandra_nodes=spark_cassandra_nodes,
+        cassandra_username=cassandra_username,
+        cassandra_password=cassandra_password,
+        s3_credentials=s3_credentials,
+        spark_config=job_spark_config,
+    )
+    try:
+        detect_and_materialise_cross_chain(
+            spark,
+            sink_path,
+            sink_type=sink_type,
+            cassandra_keyspace=pubkey_keyspace,
+        )
     finally:
         spark.stop()
         logger.info("SparkSession stopped.")

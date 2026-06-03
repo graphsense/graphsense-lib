@@ -537,6 +537,17 @@ def _log_pubkey_startup_banner(
         "separately via cross_chain_pubkey_mapping_keyspace."
     ),
 )
+@click.option(
+    "--skip-detect",
+    is_flag=True,
+    help=(
+        "Extract pubkeys and append them to 'observed' (and bump state), but "
+        "skip the cross-chain detection/materialisation step. Use on every "
+        "invocation of a multi-chain backfill EXCEPT the last, so the full-table "
+        "detection groupBy runs once at the end (via the final non-skipped run "
+        "or a standalone 'pubkey-detect') instead of once per chain."
+    ),
+)
 def run_pubkey_update(
     env,
     currency,
@@ -550,6 +561,7 @@ def run_pubkey_update(
     sink_type,
     auto_compact,
     pubkey_keyspace,
+    skip_detect,
 ):
     """Update cross-chain pubkey → address lookup for ``currency``.
 
@@ -715,6 +727,7 @@ def run_pubkey_update(
             spark_config=spark_config,
             pubkey_keyspace=pubkey_keyspace,
             sink_type=sink_type,
+            skip_detect=skip_detect,
         )
 
     # Auto-compaction runs AFTER the update lock is released: run_pubkey_compact
@@ -956,6 +969,131 @@ def run_pubkey_compact_command(env, sink_path, s3_config_name, local):
         run_pubkey_compact(
             env=env or "local",
             sink_path=sink_path,
+            local=local,
+            s3_credentials=s3_credentials,
+            spark_config=spark_config,
+        )
+
+
+@transformation.command(
+    "pubkey-detect",
+    short_help="[ALPHA] Run cross-chain pubkey detection/materialisation once.",
+)
+@require_environment(required=False)
+@click.option(
+    "--sink-path",
+    type=str,
+    default=None,
+    help=(
+        "Delta Lake base path of the shared cross-chain pubkey store. "
+        "Defaults to environments.<env>.pubkey.sink_path from the config."
+    ),
+)
+@click.option(
+    "--s3-config",
+    "s3_config_name",
+    type=str,
+    default=None,
+    help="Name of the s3_configs entry to use when the sink path is on s3://.",
+)
+@click.option("--local", is_flag=True, help="Run Spark in local mode.")
+@click.option(
+    "--sink-type",
+    type=click.Choice(["cassandra", "delta"]),
+    default=None,
+    help=(
+        "Backend for the derived (address, pubkey) rows; must match the "
+        "pubkey-update runs that fed 'observed'. Defaults to "
+        "environments.<env>.pubkey.sink_type, else 'cassandra'."
+    ),
+)
+@click.option(
+    "--pubkey-keyspace",
+    type=str,
+    default=None,
+    help=(
+        "Cassandra keyspace to write into (--sink-type=cassandra). Defaults to "
+        "environments.<env>.pubkey.keyspace, else 'pubkey_v2'."
+    ),
+)
+@click.option(
+    "--create-schema",
+    is_flag=True,
+    help="Create the Cassandra pubkey keyspace/table if it does not exist.",
+)
+def run_pubkey_detect_command(
+    env, sink_path, s3_config_name, local, sink_type, pubkey_keyspace, create_schema
+):
+    """Run cross-chain detection + materialisation once over ``<sink-path>``.
+
+    The deferred half of ``pubkey-update --skip-detect``: append every chain to
+    ``observed`` with detection skipped, then run this once so the full-table
+    detection ``groupBy`` executes a single time instead of once per chain.
+    Currency-agnostic; idempotent (anti-joins the ``materialised`` set). Takes
+    the same pubkey lock as update/compact so it won't race them.
+
+    ALPHA: not yet validated in production; the interface may change.
+    """
+    _warn_alpha("transformation pubkey-detect")
+    from graphsenselib.config import get_config
+    from graphsenselib.pubkey.factory import run_pubkey_detect
+    from graphsenselib.pubkey.job import PUBKEY_KEYSPACE
+    from graphsenselib.schema.schema import GraphsenseSchemas
+    from graphsenselib.utils.locking import create_lock
+
+    config = get_config()
+    env_config = config.get_environment(env) if env is not None else None
+    pubkey_cfg = env_config.pubkey if env_config else None
+
+    if sink_path is None and pubkey_cfg is not None:
+        sink_path = pubkey_cfg.sink_path
+    if sink_type is None:
+        sink_type = (pubkey_cfg.sink_type if pubkey_cfg else None) or "cassandra"
+    if pubkey_keyspace is None:
+        pubkey_keyspace = (
+            pubkey_cfg.keyspace if pubkey_cfg else None
+        ) or PUBKEY_KEYSPACE
+    if sink_path is None:
+        raise click.UsageError(
+            "--sink-path is required (or set environments.<env>.pubkey.sink_path "
+            "in the config)."
+        )
+
+    # -e is only needed to resolve Cassandra coordinates; a delta-sink detect
+    # can run with just an explicit --sink-path.
+    if env is None and sink_type != "delta":
+        raise click.UsageError("--env is required when --sink-type=cassandra.")
+
+    is_s3 = sink_path.startswith("s3://") or sink_path.startswith("s3a://")
+    if is_s3 and s3_config_name is None:
+        available = sorted(config.s3_configs.keys())
+        raise click.UsageError(
+            "An S3 sink path was given but --s3-config was not provided. "
+            f"Available s3_configs: {', '.join(available) or '(none)'}."
+        )
+
+    s3_credentials = config.get_s3_credentials(s3_config_name)
+    spark_config = config.spark_config or {}
+
+    if create_schema:
+        if sink_type != "cassandra":
+            raise click.UsageError(
+                "--create-schema only applies when --sink-type=cassandra."
+            )
+        logger.info(f"Creating Cassandra keyspace '{pubkey_keyspace}' if not exists...")
+        GraphsenseSchemas().create_pubkey_keyspace_if_not_exist(
+            env, keyspace_name=pubkey_keyspace
+        )
+
+    with create_lock(PUBKEY_KEYSPACE):
+        run_pubkey_detect(
+            env=env or "local",
+            sink_path=sink_path,
+            cassandra_nodes=env_config.cassandra_nodes if env_config else None,
+            cassandra_username=env_config.username if env_config else None,
+            cassandra_password=env_config.password if env_config else None,
+            pubkey_keyspace=pubkey_keyspace,
+            sink_type=sink_type,
             local=local,
             s3_credentials=s3_credentials,
             spark_config=spark_config,

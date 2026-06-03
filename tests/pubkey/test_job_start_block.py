@@ -27,8 +27,14 @@ def _make_job(currency, monkeypatch):
         lambda start, end: captured.update(start=start, end=end) or MagicMock(),
     )
     monkeypatch.setattr(job, "_append_observed", lambda df: None)
-    monkeypatch.setattr(job, "_detect_and_materialise_cross_chain", lambda: None)
-    monkeypatch.setattr(job, "_write_state", lambda end: None)
+    monkeypatch.setattr(
+        job,
+        "_detect_and_materialise_cross_chain",
+        lambda: captured.update(detected=True),
+    )
+    monkeypatch.setattr(
+        job, "_write_state", lambda end: captured.update(state_written=end)
+    )
     return job, captured
 
 
@@ -50,3 +56,19 @@ def test_btc_has_no_fork_default(monkeypatch):
     job, captured = _make_job("btc", monkeypatch)
     job.run(start_block=None, end_block=500000)
     assert captured["start"] == -1  # no default; resumes from state (last_done)
+
+
+def test_detect_runs_by_default(monkeypatch):
+    job, captured = _make_job("btc", monkeypatch)
+    job.run(start_block=None, end_block=500000)
+    assert captured.get("detected") is True
+    assert captured["state_written"] == 500000
+
+
+def test_skip_detect_defers_detection_but_bumps_state(monkeypatch):
+    job, captured = _make_job("btc", monkeypatch)
+    job.run(start_block=None, end_block=500000, skip_detect=True)
+    # detection is deferred (run a standalone pubkey-detect later) ...
+    assert "detected" not in captured
+    # ... but the blocks are still recorded as processed.
+    assert captured["state_written"] == 500000

@@ -85,11 +85,31 @@
 #                   GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
 #                   ./scripts/pubkey/backfill.sh
 #
+# Limited, delta-only run over a subset of chains (e.g. bch/ltc/zec only):
+#   set CHAINS to the subset and SINK_TYPE=delta. The single deferred
+#   pubkey-detect pass then only finds pubkeys reused across THOSE chains (plus
+#   whatever already sits in `observed` at SINK_PATH) — use a FRESH SINK_PATH if
+#   you want results confined to exactly these three. bch defaults to starting
+#   at its fork block; ltc/zec run full history unless you bound them:
+#     CHAINS="ltc zec bch" SINK_TYPE=delta ENV=prod S3_CONFIG=minio \
+#       SINK_PATH=s3://staging/pubkey-bch-ltc-zec \
+#       GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
+#       ./scripts/pubkey/backfill.sh
+#   Add END_BLOCK=N to also cap the block range for a quick smoke test.
+#
 set -euo pipefail
 
 DRY_RUN="${DRY_RUN:-0}"          # 1 => echo commands, do not execute
 END_BLOCK="${END_BLOCK:-}"       # bound every chain to this block (rehearsals)
 SINK_TYPE="${SINK_TYPE:-cassandra}"  # 'delta' writes no Cassandra rows
+# 1 (default) => pass --skip-detect to EVERY pubkey-update so each chain only
+# appends to 'observed', then run cross-chain detection ONCE via a final
+# 'pubkey-detect' pass. Avoids re-running the full-table detection groupBy once
+# per chain. A standalone final pass (not detection on the last chain) is used
+# deliberately: a resumed run whose last chain is already up to date returns
+# before its detection step, which would silently skip detection entirely.
+# Set SKIP_DETECT=0 to detect inline after every chain (old behaviour).
+SKIP_DETECT="${SKIP_DETECT:-1}"
 # graphsense-cli global verbosity (counted: -v=warning, -vv=info, -vvv=debug).
 # Default -vv so the resolved run parameters / startup banner are logged. The
 # flag is global, so it goes BEFORE the subcommand. Set VERBOSITY= to silence.
@@ -141,6 +161,9 @@ gs_cli() {
 }
 
 echo "image=$IMAGE:$TAG  ENV=$ENV  keyspace=$KS  sink=$SINK_TYPE  chains=${CHAINS[*]}"
+[[ "$SKIP_DETECT" == "1" ]] \
+  && echo "Detection DEFERRED: appending all chains, then one pubkey-detect pass." \
+  || echo "Detection INLINE: cross-chain detection runs after every chain."
 echo "Reader keyspace is unchanged (legacy 'pubkey'); production is untouched."
 [[ "$DRY_RUN" != "0" ]] && echo "DRY RUN: commands are printed, not executed."
 [[ -n "$END_BLOCK" ]] && echo "REHEARSAL: every chain bounded to end-block=$END_BLOCK."
@@ -158,6 +181,10 @@ echo
 END_ARG=()
 [[ -n "$END_BLOCK" ]] && END_ARG=(--end-block "$END_BLOCK")
 
+# Defer cross-chain detection to a single final pass (see SKIP_DETECT above).
+SKIP_ARG=()
+[[ "$SKIP_DETECT" == "1" ]] && SKIP_ARG=(--skip-detect)
+
 first=1
 for C in "${CHAINS[@]}"; do
   CREATE=()
@@ -168,12 +195,12 @@ for C in "${CHAINS[@]}"; do
   fi
   first=0
 
-  echo ">>> [$C] pubkey-update  (sink=$SINK_TYPE${END_BLOCK:+, end-block=$END_BLOCK}, resume from state)"
+  echo ">>> [$C] pubkey-update  (sink=$SINK_TYPE${END_BLOCK:+, end-block=$END_BLOCK}${SKIP_DETECT:+, skip-detect=$SKIP_DETECT}, resume from state)"
   gs_cli transformation pubkey-update \
     -e "$ENV" -c "$C" \
     --sink-type "$SINK_TYPE" --pubkey-keyspace "$KS" \
     --s3-config "$S3_CONFIG" \
-    "${SINK_ARG[@]}" "${CREATE[@]}" "${END_ARG[@]}"
+    "${SINK_ARG[@]}" "${CREATE[@]}" "${END_ARG[@]}" "${SKIP_ARG[@]}"
   echo ">>> [$C] done"
   echo
 
@@ -185,6 +212,17 @@ for C in "${CHAINS[@]}"; do
   #       "${SINK_ARG[@]}" --end-block "$EB"
   #   done
 done
+
+# Detection was deferred per chain (--skip-detect): run it ONCE now over the
+# fully-appended `observed`. Idempotent (anti-joins the materialised set), so a
+# re-run after a failure here re-derives only what is still missing.
+if [[ "$SKIP_DETECT" == "1" ]]; then
+  echo ">>> cross-chain detection (single deferred pass)"
+  gs_cli transformation pubkey-detect \
+    -e "$ENV" --sink-type "$SINK_TYPE" --pubkey-keyspace "$KS" \
+    --s3-config "$S3_CONFIG" "${SINK_ARG[@]}"
+  echo
+fi
 
 # Deduplicate / bin-pack the shared `observed` table after the bulk append.
 # Detection-neutral: it must not change which pubkeys are cross-chain.

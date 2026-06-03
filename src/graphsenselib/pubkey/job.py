@@ -354,74 +354,26 @@ class PubkeyUpdate:
     # ------------------------------------------------------------------
 
     def _detect_and_materialise_cross_chain(self) -> None:
-        from delta.tables import DeltaTable
-        from pyspark.sql import functions as F
-
-        observed = self.spark.read.format("delta").load(self.observed_path)
-        cross_chain = (
-            observed.groupBy("pubkey")
-            .agg(F.collect_set("network").alias("networks"))
-            .filter(F.size("networks") >= 2)
-            .select("pubkey")
+        # Delegate to the currency-agnostic module-level function so the same
+        # detection can also be run standalone (pubkey-detect) after a batch of
+        # --skip-detect appends.
+        detect_and_materialise_cross_chain(
+            self.spark,
+            self.sink_path,
+            sink_type=self.sink_type,
+            cassandra_keyspace=self.cassandra_keyspace,
         )
-
-        if DeltaTable.isDeltaTable(self.spark, self.materialised_path):
-            already = self.spark.read.format("delta").load(self.materialised_path)
-            to_write = cross_chain.join(already, "pubkey", "left_anti")
-        else:
-            to_write = cross_chain
-
-        # Persist once: we both materialise addresses to Cassandra and
-        # append to the local "materialised" set, and both need the same
-        # row set without recomputing the join.
-        to_write = to_write.cache()
-        count = to_write.count()
-        if count == 0:
-            logger.info("No newly cross-chain pubkeys to materialise.")
-            to_write.unpersist()
-            return
-        logger.info(f"Materialising {count} newly cross-chain pubkey(s).")
-
-        derive_udf = _derive_addresses_udf(DERIVATION_CHAINS)
-        derived = to_write.select(
-            F.col("pubkey"),
-            F.explode(derive_udf(F.col("pubkey"))).alias("addr_struct"),
-        )
-        out_rows = derived.select(
-            F.col("addr_struct.address").alias("address"),
-            F.col("pubkey").alias("pubkey"),
-        )
-        if self.sink_type == SINK_CASSANDRA:
-            (
-                out_rows.write.format("org.apache.spark.sql.cassandra")
-                .options(table=PUBKEY_TABLE, keyspace=self.cassandra_keyspace)
-                .mode("append")
-                .save()
-            )
-            logger.info(
-                f"Wrote derived addresses to {self.cassandra_keyspace}.{PUBKEY_TABLE}"
-            )
-        else:
-            out_rows.write.format("delta").mode("append").save(
-                self.pubkey_by_address_path
-            )
-            logger.info(
-                f"Wrote derived addresses to delta path {self.pubkey_by_address_path}"
-            )
-
-        # Append to the materialised set so later runs anti-join correctly.
-        if DeltaTable.isDeltaTable(self.spark, self.materialised_path):
-            to_write.write.format("delta").mode("append").save(self.materialised_path)
-        else:
-            to_write.write.format("delta").save(self.materialised_path)
-
-        to_write.unpersist()
 
     # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
-    def run(self, start_block: Optional[int], end_block: int) -> None:
+    def run(
+        self,
+        start_block: Optional[int],
+        end_block: int,
+        skip_detect: bool = False,
+    ) -> None:
         fork = chain_forks.get(self.currency)
         if fork is not None and start_block is None:
             start_block = fork["fork_block"]
@@ -455,9 +407,103 @@ class PubkeyUpdate:
         )
         pubkey_df = self._extract_pubkeys_df(effective_start, end_block)
         self._append_observed(pubkey_df)
-        self._detect_and_materialise_cross_chain()
+        if skip_detect:
+            logger.info(
+                "skip_detect=True: appended to observed but skipping cross-chain "
+                "detection/materialisation. Run a detection pass (pubkey-detect, "
+                "or a final invocation without --skip-detect) once after the batch."
+            )
+        else:
+            self._detect_and_materialise_cross_chain()
         self._write_state(end_block)
         logger.info(f"PubkeyUpdate[{self.currency}] complete.")
+
+
+def detect_and_materialise_cross_chain(
+    spark,
+    sink_path: str,
+    sink_type: str = SINK_CASSANDRA,
+    cassandra_keyspace: str = PUBKEY_KEYSPACE,
+) -> None:
+    """Detect pubkeys observed on >= 2 networks and not yet materialised, derive
+    their addresses for every ``DERIVATION_CHAINS`` chain, and write them.
+
+    Currency-agnostic: reads only the shared ``observed`` / ``materialised``
+    Delta tables under ``sink_path``. ``PubkeyUpdate.run(skip_detect=True)``
+    defers this step so a multi-chain backfill can run the full-table
+    ``groupBy`` ONCE here (``pubkey-detect``) instead of once per chain. The
+    anti-join against ``materialised`` keeps writes idempotent, so a standalone
+    run after a batch of appends produces exactly the same result set as running
+    detection inside the last update would.
+    """
+    from delta.tables import DeltaTable
+    from pyspark.sql import functions as F
+
+    if sink_type not in VALID_SINKS:
+        raise ValueError(f"sink_type must be one of {VALID_SINKS}, got {sink_type!r}")
+
+    sink_path = sink_path.rstrip("/").replace("s3://", "s3a://")
+    observed_path = f"{sink_path}/observed"
+    materialised_path = f"{sink_path}/materialised"
+    pubkey_by_address_path = f"{sink_path}/{PUBKEY_TABLE}"
+
+    if not DeltaTable.isDeltaTable(spark, observed_path):
+        logger.info(f"No observed table at {observed_path}; nothing to materialise.")
+        return
+
+    observed = spark.read.format("delta").load(observed_path)
+    cross_chain = (
+        observed.groupBy("pubkey")
+        .agg(F.collect_set("network").alias("networks"))
+        .filter(F.size("networks") >= 2)
+        .select("pubkey")
+    )
+
+    if DeltaTable.isDeltaTable(spark, materialised_path):
+        already = spark.read.format("delta").load(materialised_path)
+        to_write = cross_chain.join(already, "pubkey", "left_anti")
+    else:
+        to_write = cross_chain
+
+    # Persist once: we both materialise addresses to the sink and append to the
+    # local "materialised" set, and both need the same row set without
+    # recomputing the join.
+    to_write = to_write.cache()
+    count = to_write.count()
+    if count == 0:
+        logger.info("No newly cross-chain pubkeys to materialise.")
+        to_write.unpersist()
+        return
+    logger.info(f"Materialising {count} newly cross-chain pubkey(s).")
+
+    derive_udf = _derive_addresses_udf(DERIVATION_CHAINS)
+    derived = to_write.select(
+        F.col("pubkey"),
+        F.explode(derive_udf(F.col("pubkey"))).alias("addr_struct"),
+    )
+    out_rows = derived.select(
+        F.col("addr_struct.address").alias("address"),
+        F.col("pubkey").alias("pubkey"),
+    )
+    if sink_type == SINK_CASSANDRA:
+        (
+            out_rows.write.format("org.apache.spark.sql.cassandra")
+            .options(table=PUBKEY_TABLE, keyspace=cassandra_keyspace)
+            .mode("append")
+            .save()
+        )
+        logger.info(f"Wrote derived addresses to {cassandra_keyspace}.{PUBKEY_TABLE}")
+    else:
+        out_rows.write.format("delta").mode("append").save(pubkey_by_address_path)
+        logger.info(f"Wrote derived addresses to delta path {pubkey_by_address_path}")
+
+    # Append to the materialised set so later runs anti-join correctly.
+    if DeltaTable.isDeltaTable(spark, materialised_path):
+        to_write.write.format("delta").mode("append").save(materialised_path)
+    else:
+        to_write.write.format("delta").save(materialised_path)
+
+    to_write.unpersist()
 
 
 def compact_observed(spark, sink_path: str) -> None:
