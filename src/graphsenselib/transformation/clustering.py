@@ -246,6 +246,219 @@ def backfill_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
     return n_clusters
 
 
+# --------------------------------------------------------------------------- #
+# Weekly cluster-stat recompute (pure DataFrame transforms + Cassandra I/O)
+# --------------------------------------------------------------------------- #
+# These reproduce the per-cluster stats the legacy `cluster` table carried, by
+# aggregating the address-level tables up through the fresh address->cluster
+# membership.  They are pure (no Cassandra I/O) so they unit-test with synthetic
+# frames.  ``total_received_adj`` / ``total_spent_adj`` are intentionally NOT
+# computed: the delta updater never maintained them (only the Scala
+# full-transform did) so there is no reference definition to reproduce — they are
+# left unset until a formula is decided.
+
+
+def _currency_sum_by(df, group_col: str, struct_col: str, out_name: str):
+    """Group-wise element-wise sum of a ``currency`` struct (value + fiat_values).
+
+    ``struct_col`` is ``struct<value: bigint, fiat_values: array<float>>``. The
+    value is summed; the fiat array is summed element-wise (positionally, so all
+    members must share the keyspace's fiat-currency order, which they do — it is
+    fixed per keyspace).  Returns ``group_col`` + an ``out_name`` currency struct.
+    """
+    from pyspark.sql import functions as F
+
+    value_sum = df.groupBy(group_col).agg(
+        F.sum(F.col(f"{struct_col}.value")).cast("bigint").alias("_v")
+    )
+    fiat = (
+        df.select(
+            group_col,
+            F.posexplode(F.col(f"{struct_col}.fiat_values")).alias("_pos", "_fv"),
+        )
+        .groupBy(group_col, "_pos")
+        .agg(F.sum("_fv").alias("_s"))
+        .groupBy(group_col)
+        .agg(F.sort_array(F.collect_list(F.struct("_pos", "_s"))).alias("_arr"))
+        .select(
+            group_col,
+            F.transform("_arr", lambda x: x["_s"].cast("float")).alias("_fiat"),
+        )
+    )
+    return value_sum.join(fiat, group_col, "left").select(
+        group_col,
+        F.struct(
+            F.col("_v").alias("value"),
+            F.coalesce(F.col("_fiat"), F.array().cast("array<float>")).alias(
+                "fiat_values"
+            ),
+        ).alias(out_name),
+    )
+
+
+def cluster_additive_stats(members_df, address_df):
+    """Per-cluster stats that are pure aggregates of member addresses.
+
+    ``members_df`` = ``fresh_address_cluster`` (``address_id``, ``cluster_id``);
+    ``address_df`` = ``address`` (``address_id``, ``total_received``,
+    ``total_spent``, ``first_tx_id``, ``last_tx_id``).  Returns one row per
+    ``cluster_id`` with ``size``, ``min_address_id`` (the canonical id),
+    ``first_tx_id`` (min), ``last_tx_id`` (max), ``total_received`` /
+    ``total_spent`` (element-wise currency sums).
+    """
+    from pyspark.sql import functions as F
+
+    joined = members_df.join(address_df, "address_id")
+    base = joined.groupBy("cluster_id").agg(
+        F.count(F.lit(1)).cast("bigint").alias("size"),
+        F.min("address_id").cast("int").alias("min_address_id"),
+        F.min("first_tx_id").cast("bigint").alias("first_tx_id"),
+        F.max("last_tx_id").cast("bigint").alias("last_tx_id"),
+    )
+    tr = _currency_sum_by(joined, "cluster_id", "total_received", "total_received")
+    ts = _currency_sum_by(joined, "cluster_id", "total_spent", "total_spent")
+    return base.join(tr, "cluster_id", "left").join(ts, "cluster_id", "left")
+
+
+def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
+    """Per-cluster degrees + tx-counts from address relations mapped to clusters.
+
+    Maps each address relation's endpoints through ``members_df`` (an address
+    absent from membership is a singleton cluster = its own id), drops
+    intra-cluster (self) edges, then per cluster:
+      * ``in_degree`` / ``out_degree`` = distinct neighbouring clusters;
+      * ``no_incoming_txs`` / ``no_outgoing_txs`` = summed ``no_transactions``
+        over the external edges.
+
+    This mirrors the legacy delta aggregation (``to_cluster_delta`` +
+    ``compress``): address relations summed up to cluster level. Self-edges are
+    excluded so a cluster is not its own neighbour. (Exact parity with the old
+    `cluster` table on self-edge / multi-member-per-tx counting must be validated
+    against a real keyspace before REST reads these — see migration notes.)
+    """
+    from pyspark.sql import functions as F
+
+    def to_cluster(rel_df, addr_col, cl_col):
+        m = members_df.select(
+            F.col("address_id").alias(addr_col),
+            F.col("cluster_id").alias(cl_col),
+        )
+        return rel_df.join(m, addr_col, "left").withColumn(
+            cl_col, F.coalesce(F.col(cl_col), F.col(addr_col))
+        )
+
+    out_mapped = to_cluster(
+        to_cluster(out_rel_df, "src_address_id", "src_cluster"),
+        "dst_address_id",
+        "dst_cluster",
+    ).filter(F.col("src_cluster") != F.col("dst_cluster"))
+    out_stats = (
+        out_mapped.groupBy("src_cluster")
+        .agg(
+            F.countDistinct("dst_cluster").cast("int").alias("out_degree"),
+            F.sum("no_transactions").cast("int").alias("no_outgoing_txs"),
+        )
+        .select(
+            F.col("src_cluster").alias("cluster_id"), "out_degree", "no_outgoing_txs"
+        )
+    )
+
+    in_mapped = to_cluster(
+        to_cluster(in_rel_df, "dst_address_id", "dst_cluster"),
+        "src_address_id",
+        "src_cluster",
+    ).filter(F.col("src_cluster") != F.col("dst_cluster"))
+    in_stats = (
+        in_mapped.groupBy("dst_cluster")
+        .agg(
+            F.countDistinct("src_cluster").cast("int").alias("in_degree"),
+            F.sum("no_transactions").cast("int").alias("no_incoming_txs"),
+        )
+        .select(
+            F.col("dst_cluster").alias("cluster_id"), "in_degree", "no_incoming_txs"
+        )
+    )
+
+    return in_stats.join(out_stats, "cluster_id", "outer")
+
+
+def compute_fresh_cluster_stats(members_df, address_df, in_rel_df, out_rel_df):
+    """Full per-cluster stat frame: additive stats + relation-derived degrees.
+
+    Left-joins :func:`cluster_relation_stats` onto :func:`cluster_additive_stats`
+    (additive carries every cluster; degree/tx-counts default to 0 for clusters
+    with no external edges).  ``total_*_adj`` are not produced (left unset).
+    """
+
+    base = cluster_additive_stats(members_df, address_df)
+    rels = cluster_relation_stats(members_df, in_rel_df, out_rel_df)
+    return base.join(rels, "cluster_id", "left").fillna(
+        0,
+        subset=["in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs"],
+    )
+
+
+def recompute_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
+    """Recompute the full ``fresh_cluster_stats`` from the address-level tables.
+
+    Reads ``fresh_address_cluster`` (membership), ``address`` (per-address stats),
+    and ``address_incoming/outgoing_relations`` via the Spark Cassandra connector,
+    aggregates with :func:`compute_fresh_cluster_stats`, and writes every well-
+    defined column back to ``fresh_cluster_stats`` (append/upsert; the caller
+    truncates first under the keyspace lock for a clean rebuild). ``size`` and
+    ``min_address_id`` are recomputed here too so the row is whole. Returns the
+    number of cluster rows written.
+
+    Does NOT relabel ``fresh_address_cluster`` to ``min(address_id)`` — membership
+    is left untouched (the canonical id is carried as ``min_address_id``).
+    """
+
+    cass_format = "org.apache.spark.sql.cassandra"
+
+    def read(table):
+        return (
+            spark.read.format(cass_format)
+            .options(table=table, keyspace=transformed_keyspace)
+            .load()
+        )
+
+    members = read("fresh_address_cluster").select("address_id", "cluster_id")
+    address = read("address").select(
+        "address_id", "total_received", "total_spent", "first_tx_id", "last_tx_id"
+    )
+    in_rel = read("address_incoming_relations").select(
+        "dst_address_id", "src_address_id", "no_transactions"
+    )
+    out_rel = read("address_outgoing_relations").select(
+        "src_address_id", "dst_address_id", "no_transactions"
+    )
+
+    stats = compute_fresh_cluster_stats(members, address, in_rel, out_rel).select(
+        "cluster_id",
+        "size",
+        "min_address_id",
+        "no_incoming_txs",
+        "no_outgoing_txs",
+        "in_degree",
+        "out_degree",
+        "first_tx_id",
+        "last_tx_id",
+        "total_received",
+        "total_spent",
+    )
+    stats.persist()
+    n_clusters = stats.count()
+    logger.info(f"Recomputed fresh_cluster_stats for {n_clusters:,} clusters; writing")
+    (
+        stats.write.format(cass_format)
+        .options(table="fresh_cluster_stats", keyspace=transformed_keyspace)
+        .mode("append")
+        .save()
+    )
+    stats.unpersist()
+    return n_clusters
+
+
 def run_clustering_spark(
     spark,
     raw_keyspace: str,

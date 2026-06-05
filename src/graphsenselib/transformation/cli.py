@@ -445,3 +445,74 @@ def run_clustering(env, currency, local, read_partitions, end_block):
             spark_session.stop()
             logger.info("SparkSession stopped.")
         logger.info("One-off clustering complete.")
+
+
+@transformation.command(
+    "recompute-cluster-stats",
+    short_help="Recompute fresh_cluster_stats from address-level tables.",
+)
+@require_environment()
+@require_currency()
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode (local[*]) instead of submitting to the cluster.",
+)
+def recompute_cluster_stats(env, currency, local):
+    """Recompute the full ``fresh_cluster_stats`` from the address-level tables.
+
+    Aggregates ``address`` + ``address_incoming/outgoing_relations`` through the
+    fresh ``address -> cluster`` membership into per-cluster size, totals,
+    first/last tx, degrees and tx-counts, and rewrites ``fresh_cluster_stats``.
+    Membership (``fresh_address_cluster`` / ``fresh_cluster_addresses``) is NOT
+    touched. Intended as a weekly job: cluster-level stats lag the delta loop
+    (which keeps only size + root live), so they are refreshed periodically.
+
+    Holds the transformed-keyspace lock (the same lock the delta updater takes) so
+    it never races a delta merge, and truncates ``fresh_cluster_stats`` first for a
+    clean, self-healing rebuild (clears rows of clusters merged away since the last
+    run). ``total_received_adj`` / ``total_spent_adj`` are left unset (no
+    delta-updater reference definition exists).
+    \f
+    """
+    from graphsenselib.config import get_config, is_fresh_clustering_enabled
+    from graphsenselib.db.factory import DbFactory
+    from graphsenselib.schema.schema import GraphsenseSchemas
+    from graphsenselib.transformation.clustering import recompute_fresh_cluster_stats
+    from graphsenselib.transformation.spark import create_spark_session
+    from graphsenselib.utils.locking import create_lock
+
+    if not is_fresh_clustering_enabled():
+        raise click.ClickException(
+            "Fresh clustering is disabled. Set "
+            "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
+        )
+
+    GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
+
+    with DbFactory().from_config(env, currency) as db:
+        config = get_config()
+        env_config = config.get_environment(env)
+        transformed_keyspace = db.transformed.get_keyspace()
+
+        logger.info(
+            f"Recomputing cluster stats: env={env}, currency={currency}, "
+            f"transformed={transformed_keyspace} (acquiring keyspace lock)"
+        )
+        with create_lock(transformed_keyspace):
+            db.transformed.execute_raw_cql("TRUNCATE fresh_cluster_stats")
+            spark_session = create_spark_session(
+                app_name=f"graphsense-cluster-stats-{currency}-{env}",
+                local=local,
+                cassandra_nodes=env_config.cassandra_nodes,
+                cassandra_username=env_config.username,
+                cassandra_password=env_config.password,
+                spark_config=config.get_spark_config(),
+                spark_packages=config.get_spark_packages(),
+            )
+            try:
+                n = recompute_fresh_cluster_stats(spark_session, transformed_keyspace)
+            finally:
+                spark_session.stop()
+                logger.info("SparkSession stopped.")
+        logger.info(f"Cluster-stat recompute complete: {n} clusters.")
