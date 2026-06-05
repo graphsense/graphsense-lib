@@ -11,7 +11,7 @@ harvests the same id sets from the txs it already holds.
 
 import logging
 import time
-from typing import Dict, Iterator, List, Set
+from typing import Dict, Iterator, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -165,15 +165,18 @@ DEFAULT_SPARK_WRITE_CHUNK = 5_000_000
 DEFAULT_READ_PARTITIONS = 64
 
 
-def multi_input_address_id_sets(tx_df, address_ids_df):
+def multi_input_address_id_sets(tx_df, address_ids_df, end_block: Optional[int] = None):
     """Derive each multi-input transaction's distinct input ``address_id`` set.
 
     Pure DataFrame transform (no Cassandra I/O) so it can be unit-tested with
     synthetic frames. Mirrors the single-driver semantics in
     :func:`iter_multi_input_tx_inputs`:
 
-      * ``tx_df`` has the ``raw.transaction`` shape: ``tx_id``, ``coinbase``,
-        and ``inputs`` = ``array<struct<address: array<string>, ...>>``;
+      * ``tx_df`` has the ``raw.transaction`` shape: ``tx_id``, ``block_id``,
+        ``coinbase``, and ``inputs`` = ``array<struct<address: array<string>,
+        ...>>``;
+      * if ``end_block`` is given, only transactions with ``block_id <=
+        end_block`` are considered (cluster the chain as of that height);
       * coinbase transactions and null addresses are dropped;
       * input addresses are taken as a DISTINCT set per transaction, resolved
         to ``address_id`` via ``address_ids_df`` (``address``, ``address_id``);
@@ -183,6 +186,9 @@ def multi_input_address_id_sets(tx_df, address_ids_df):
     each row an order-independent edge set for the Union-Find.
     """
     from pyspark.sql import functions as F
+
+    if end_block is not None:
+        tx_df = tx_df.filter(F.col("block_id") <= end_block)
 
     tx_address = (
         tx_df.select("tx_id", "coinbase", "inputs")
@@ -249,6 +255,7 @@ def run_clustering_spark(
     write_chunk: int = DEFAULT_SPARK_WRITE_CHUNK,
     read_partitions: int = DEFAULT_READ_PARTITIONS,
     skip_singletons: bool = True,
+    end_block: Optional[int] = None,
 ):
     """Full one-off UTXO clustering with PySpark bulk read and bulk write.
 
@@ -306,10 +313,14 @@ def run_clustering_spark(
     driver path that is ~17x slower AND pickles every row into oversized task
     buffers (driver-heap OOM on large chains).
 
-    Clusters the whole transaction table (full clustering); block sub-ranges are
-    not applied here. ``max_address_id`` sizes the Union-Find and must come from
-    ``transformed.summary_statistics.no_addresses`` (dense ``[1, no_addresses]``
-    invariant).
+    By default clusters the whole transaction table (full clustering).
+    ``end_block`` caps the read to transactions with ``block_id <= end_block``,
+    clustering the chain as of that height (genesis-to-``end_block``); there is no
+    start bound because clustering is transitive over the full history, so a
+    sub-range start would not yield meaningful clusters. ``max_address_id`` sizes
+    the Union-Find and must come from ``transformed.summary_statistics.no_addresses``
+    (dense ``[1, no_addresses]`` invariant) — addresses first seen after
+    ``end_block`` simply remain singletons.
     """
     from gs_clustering import Clustering
     from pyspark.sql import functions as F
@@ -334,13 +345,14 @@ def run_clustering_spark(
         .options(table="address_ids_by_address_prefix", keyspace=transformed_keyspace)
         .load()
     )
-    tx_input_ids = multi_input_address_id_sets(tx, address_ids)
+    tx_input_ids = multi_input_address_id_sets(tx, address_ids, end_block=end_block)
     if read_partitions:
         tx_input_ids = tx_input_ids.coalesce(read_partitions)
 
     logger.info(
         f"max_address_id={max_address_id:,}; bulk-reading multi-input "
         f"transactions from {raw_keyspace}.transaction"
+        + (f" up to block {end_block:,}" if end_block is not None else "")
     )
     c = Clustering(max_address_id=max_address_id)
 

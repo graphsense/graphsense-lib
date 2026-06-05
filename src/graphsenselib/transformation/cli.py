@@ -364,14 +364,24 @@ def run_transformation(
         "(default 64). Does NOT control join parallelism."
     ),
 )
-def run_clustering(env, currency, local, read_partitions):
+@click.option(
+    "--end-block",
+    type=int,
+    default=None,
+    help=(
+        "Cluster the chain only up to this block (inclusive); transactions in "
+        "later blocks are ignored. Omit to cluster the whole transaction table. "
+        "There is no start bound — clustering is transitive over full history."
+    ),
+)
+def run_clustering(env, currency, local, read_partitions, end_block):
     """Run one-off UTXO address clustering with PySpark.
 
     Bulk-reads raw.transaction and address_ids_by_address_prefix via parallel
     token-range scans, clusters multi-input transactions with the Rust Union-Find,
     and bulk-writes fresh_address_cluster / fresh_cluster_addresses /
     fresh_cluster_stats via the Spark Cassandra connector. Clusters the whole
-    transaction table.
+    transaction table, or only blocks up to --end-block when given.
 
     The transformed keyspace must already be seeded (Scala transformation or a
     prior run) so summary_statistics.no_addresses is populated.
@@ -428,6 +438,7 @@ def run_clustering(env, currency, local, read_partitions):
                 raw_keyspace=raw_keyspace,
                 transformed_keyspace=transformed_keyspace,
                 max_address_id=max_address_id,
+                end_block=end_block,
                 **spark_kwargs,
             )
         finally:

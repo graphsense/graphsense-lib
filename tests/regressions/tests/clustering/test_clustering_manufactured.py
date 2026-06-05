@@ -186,6 +186,7 @@ try:
         raw_keyspace=a["raw_keyspace"],
         transformed_keyspace=a["transformed_keyspace"],
         max_address_id=a["max_address_id"],
+        end_block=a.get("end_block"),
     )
 finally:
     spark.stop()
@@ -324,5 +325,81 @@ class TestClusteringManufactured:
         )
         assert is_equivalent, (
             "PySpark one-off vs incremental partition mismatch:\n"
+            + "\n".join(f"  - {m}" for m in mismatches[:50])
+        )
+
+    def test_oneoff_endblock_vs_incremental(
+        self, cassandra_coords, current_venv, monkeypatch
+    ):
+        """A one-off capped at --end-block N must equal incremental over [0, N].
+
+        Caps at block 2: ``{A,B,C}`` and ``{D,E}`` exist but the block-3 merge
+        (C-D) and the block-5 ``{G,H}`` cluster are excluded — so this fails if
+        ``end_block`` does not actually restrict the one-off's read.
+        """
+        monkeypatch.setenv("GRAPHSENSE_FRESH_CLUSTERING_ENABLED", "true")
+        host, port = cassandra_coords
+        raw_ks = "clust_manu_eb_raw"
+        tks = "clust_manu_eb_transformed"
+        end_block = 2
+
+        _create_raw_keyspace(host, port, raw_ks)
+        _create_transformed_keyspace(host, port, tks)
+
+        _run_in_venv(
+            current_venv,
+            _SEED_HELPER,
+            dict(
+                cassandra_host=host,
+                cassandra_port=port,
+                raw_keyspace=raw_ks,
+                transformed_keyspace=tks,
+                currency=CURRENCY,
+                block_bucket_size=BLOCK_BUCKET_SIZE,
+                tx_bucket_size=TX_BUCKET_SIZE,
+                address_prefix_length=ADDRESS_PREFIX_LENGTH,
+                addr_to_id=ADDR_TO_ID,
+                txs=MANUFACTURED_TXS,
+            ),
+        )
+
+        # --- PySpark one-off capped at end_block ---
+        _run_in_venv(
+            current_venv,
+            _SPARK_ONEOFF_HELPER,
+            dict(
+                cassandra_host=host,
+                cassandra_port=port,
+                raw_keyspace=raw_ks,
+                transformed_keyspace=tks,
+                max_address_id=max(ADDR_TO_ID.values()),
+                end_block=end_block,
+            ),
+        )
+        oneoff_mapping = _read_fresh_address_cluster(host, port, tks)
+        assert oneoff_mapping, "capped PySpark one-off wrote no fresh_address_cluster rows"
+
+        # --- incremental from empty, only over [0, end_block] ---
+        _truncate_fresh(host, port, tks)
+        for b_start, b_end in [(0, 1), (2, end_block)]:
+            run_incremental_clustering_via_production(
+                host, port, raw_ks, tks, CURRENCY,
+                initial_mapping={},
+                min_block_id=b_start,
+                max_block_id=b_end,
+                current_venv=current_venv,
+            )
+        incr_mapping = _read_fresh_address_cluster(host, port, tks)
+        assert incr_mapping, "incremental clustering wrote no fresh_address_cluster rows"
+
+        oneoff_clusters: dict[int, set[int]] = {}
+        for addr_id, cluster_id in oneoff_mapping.items():
+            oneoff_clusters.setdefault(cluster_id, set()).add(addr_id)
+
+        is_equivalent, mismatches = compare_cluster_partitions(
+            oneoff_clusters, incr_mapping
+        )
+        assert is_equivalent, (
+            f"capped one-off (end_block={end_block}) vs incremental mismatch:\n"
             + "\n".join(f"  - {m}" for m in mismatches[:50])
         )
