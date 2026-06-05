@@ -168,3 +168,34 @@ fn gs_clustering(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // The v2 delta path (`_components_via_rust`) drives the Clustering struct
+    // via process_transactions + get_mapping; this pins that path's behaviour
+    // at the struct level (get_mapping itself returns pyarrow, so we read the
+    // same data through parallel_find_all).
+    #[test]
+    fn test_clustering_struct_accumulates_and_maps() {
+        let c = Clustering::new(5); // ids 0..=5
+        c.process_transactions(vec![vec![1, 2, 3]]);
+        c.process_transactions(vec![vec![3, 4]]); // accumulates: 4 joins {1,2,3}
+        let (ids, clusters) = c.parallel_find_all();
+
+        // the mapping covers every id in 0..=max_id exactly once
+        assert_eq!(ids, vec![0, 1, 2, 3, 4, 5]);
+        let root: HashMap<u32, u32> = ids.into_iter().zip(clusters).collect();
+
+        // {1,2,3,4} share a root across the two process_transactions calls
+        assert_eq!(root[&1], root[&2]);
+        assert_eq!(root[&2], root[&3]);
+        assert_eq!(root[&3], root[&4]);
+        // untouched ids are their own singleton cluster
+        assert_eq!(root[&0], 0);
+        assert_eq!(root[&5], 5);
+        assert_ne!(root[&1], root[&0]);
+    }
+}

@@ -15,8 +15,11 @@ from graphsenselib.deltaupdate.update.utxo.update import (
     ClusteringChanges,
     _clustering_changes_to_db,
     _components_via_rust,
+    _extract_input_address_sets,
     _plan_clustering_changes,
+    _resolve_input_id_sets,
 )
+from graphsenselib.utils import DataObject as MutableNamedTuple
 
 
 class _FakeMembers:
@@ -259,3 +262,191 @@ def test_run_incremental_clustering_guards_on_missing_stats():
     )
     with pytest.raises(RuntimeError, match="fresh_cluster_stats missing"):
         run_incremental_clustering(_FakeDb(tdb), [[5, 6]])
+
+
+# --------------------------------------------------------------------------- #
+# In-loop harvest: _extract_input_address_sets / _resolve_input_id_sets.
+# These produce the same Union-Find edges as the one-off's
+# multi_input_address_id_sets, but from the txs the delta loop already holds
+# (no raw re-read).  The semantics are "multi-address" (>= 2 distinct input
+# addresses), matching the canonical one-off path.
+# --------------------------------------------------------------------------- #
+def _inp(addresses):
+    """A raw-tx input whose `address` is a list (multisig => more than one)."""
+    return MutableNamedTuple(address=addresses)
+
+
+def _tx(coinbase=False, inputs=None):
+    return MutableNamedTuple(coinbase=coinbase, inputs=inputs)
+
+
+def test_extract_multi_input():
+    txs = [_tx(inputs=[_inp(["A"]), _inp(["B"]), _inp(["C"])])]
+    assert _extract_input_address_sets(txs) == [{"A", "B", "C"}]
+
+
+def test_extract_coinbase_excluded():
+    txs = [_tx(coinbase=True, inputs=[_inp(["coinbase"]), _inp(["B"])])]
+    assert _extract_input_address_sets(txs) == []
+
+
+def test_extract_single_address_excluded():
+    txs = [_tx(inputs=[_inp(["A"])])]
+    assert _extract_input_address_sets(txs) == []
+
+
+def test_extract_duplicate_addresses_dedup_to_one():
+    # same address across inputs collapses to one => < 2 distinct => dropped
+    txs = [_tx(inputs=[_inp(["A"]), _inp(["A"])])]
+    assert _extract_input_address_sets(txs) == []
+
+
+def test_extract_multisig_single_input_unions_addresses():
+    # one input listing two addresses (multisig) is itself a 2-address edge
+    txs = [_tx(inputs=[_inp(["A", "B"])])]
+    assert _extract_input_address_sets(txs) == [{"A", "B"}]
+
+
+def test_extract_skips_none_and_empty_addresses():
+    txs = [_tx(inputs=[_inp(["A"]), _inp(None), _inp([]), _inp(["B"])])]
+    assert _extract_input_address_sets(txs) == [{"A", "B"}]
+
+
+def test_extract_inputs_none_skipped():
+    txs = [_tx(coinbase=False, inputs=None)]
+    assert _extract_input_address_sets(txs) == []
+
+
+def test_resolve_keeps_two_distinct_ids():
+    a2i = {"A": 1, "B": 2}
+    out = _resolve_input_id_sets([{"A", "B"}], a2i.__getitem__)
+    assert [sorted(s) for s in out] == [[1, 2]]
+
+
+def test_resolve_drops_when_addresses_collapse_to_one_id():
+    # two distinct addresses resolving to the same id => < 2 distinct => dropped
+    a2i = {"A": 1, "C": 1}
+    assert _resolve_input_id_sets([{"A", "C"}], a2i.__getitem__) == []
+
+
+def test_resolve_empty_input():
+    assert _resolve_input_id_sets([], lambda a: 0) == []
+
+
+def test_harvest_end_to_end():
+    # coinbase + singleton + a 2-id edge + a 3-id multisig edge + a same-id pair
+    a2i = {"A": 10, "B": 20, "C": 30, "D": 40, "E": 10}  # E shares id 10 with A
+    txs = [
+        _tx(coinbase=True, inputs=[_inp(["A"]), _inp(["B"])]),  # coinbase -> drop
+        _tx(inputs=[_inp(["A"])]),  # singleton -> drop
+        _tx(inputs=[_inp(["A"]), _inp(["B"])]),  # {10, 20}
+        _tx(inputs=[_inp(["B", "C", "D"])]),  # multisig {20, 30, 40}
+        _tx(inputs=[_inp(["A"]), _inp(["E"])]),  # both id 10 -> drop
+    ]
+    edges = _resolve_input_id_sets(_extract_input_address_sets(txs), a2i.__getitem__)
+    assert sorted(sorted(e) for e in edges) == [[10, 20], [20, 30, 40]]
+
+
+# --------------------------------------------------------------------------- #
+# One-off (all-at-once) vs incremental (batched) partition equivalence on a
+# manufactured edge set.  The one-off side uses the same Rust clustering the
+# PySpark one-off drives (process_transactions + get_mapping); the incremental
+# side runs the production run_incremental_clustering planner across batches,
+# with an in-memory model of the fresh_* tables standing in for Cassandra.  The
+# address-set partition must be identical for any batch size (cluster_id labels
+# may differ — that is why we compare memberships).
+# --------------------------------------------------------------------------- #
+def _full_partition(edges, max_id):
+    from gs_clustering import Clustering
+
+    c = Clustering(max_address_id=max_id)
+    c.process_transactions(edges)
+    mapping = c.get_mapping()
+    clusters: dict = {}
+    for addr, root in zip(
+        mapping.column("address_id").to_pylist(),
+        mapping.column("cluster_id").to_pylist(),
+    ):
+        clusters.setdefault(root, set()).add(addr)
+    # the one-off skips singletons; keep only real (>= 2) clusters
+    return {frozenset(m) for m in clusters.values() if len(m) >= 2}
+
+
+class _FreshStore:
+    """In-memory model of the fresh_* tables: serves the reads
+    run_incremental_clustering needs and applies the planned ClusteringChanges,
+    so we can drive the production planner across batches without Cassandra."""
+
+    def __init__(self):
+        self.addr_to_cluster: dict = {}
+        self.stats: dict = {}
+        self.members: dict = {}
+
+    # reads used by run_incremental_clustering
+    def get_fresh_clusters_for_addresses(self, address_ids):
+        return [
+            (a, self.addr_to_cluster[a])
+            for a in address_ids
+            if a in self.addr_to_cluster
+        ]
+
+    def get_fresh_cluster_stats(self, cluster_ids):
+        return {c: self.stats[c] for c in cluster_ids if c in self.stats}
+
+    def get_fresh_cluster_members(self, cluster_ids):
+        return [(c, a) for c in cluster_ids for a in self.members.get(c, ())]
+
+    # apply the planned diff (mirrors the effect of _clustering_changes_to_db)
+    def apply(self, cc):
+        for address_id, cluster_id in cc.address_assignments:
+            old = self.addr_to_cluster.get(address_id)
+            if old is not None and old != cluster_id:
+                self.members.get(old, set()).discard(address_id)
+            self.addr_to_cluster[address_id] = cluster_id
+            self.members.setdefault(cluster_id, set()).add(address_id)
+        for cluster_id, address_id in cc.member_deletes:
+            self.members.get(cluster_id, set()).discard(address_id)
+        for cluster_id, size, min_aid in cc.stats_upserts:
+            self.stats[cluster_id] = (size, min_aid)
+        for cluster_id in cc.stats_deletes:
+            self.stats.pop(cluster_id, None)
+            self.members.pop(cluster_id, None)
+
+    def partition(self):
+        clusters: dict = {}
+        for addr, cid in self.addr_to_cluster.items():
+            clusters.setdefault(cid, set()).add(addr)
+        return {frozenset(m) for m in clusters.values()}
+
+
+class _FreshStoreDb:
+    def __init__(self, store):
+        self.transformed = store
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3, 100])
+def test_oneoff_vs_incremental_partition_equivalence(batch_size):
+    pytest.importorskip("gs_clustering")
+    from graphsenselib.deltaupdate.update.utxo.update import run_incremental_clustering
+
+    # manufactured edges exercising new / join / cross-batch merge
+    edges = [
+        [1, 2],  # new {1,2}
+        [2, 3],  # join 3
+        [10, 11],  # new {10,11}
+        [3, 10],  # merge {1,2,3} + {10,11}
+        [20, 21, 22],  # new {20,21,22}
+        [5, 6],  # new {5,6}
+        [6, 20],  # merge {5,6} + {20,21,22}
+        [99, 1],  # join 99 into the big cluster
+    ]
+    max_id = max(a for e in edges for a in e)
+
+    full = _full_partition(edges, max_id)
+
+    store = _FreshStore()
+    for i in range(0, len(edges), batch_size):
+        cc = run_incremental_clustering(_FreshStoreDb(store), edges[i : i + batch_size])
+        store.apply(cc)
+
+    assert store.partition() == full

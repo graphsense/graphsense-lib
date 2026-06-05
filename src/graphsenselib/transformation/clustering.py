@@ -1,9 +1,12 @@
 """UTXO clustering I/O helpers and one-off batch clustering entrypoint.
 
-The generator :func:`iter_multi_input_tx_inputs` streams the address-id lists
-of multi-input transactions for a block range, and is shared by both the
-one-off batch path (this module) and the delta-update incremental path
-(``deltaupdate/update/utxo/update.py``).
+The PySpark one-off (:func:`run_clustering_spark`) bulk-reads the raw tables and
+derives multi-input edges with :func:`multi_input_address_id_sets`.
+:func:`iter_multi_input_tx_inputs` is the single-driver equivalent that streams
+those edges for a block range by reading the raw txs back; it feeds the
+stand-alone range re-cluster (``UpdateStrategyUtxo.run_fresh_clustering``, used
+for backfill / recovery).  The continuous delta path does not read back — it
+harvests the same id sets from the txs it already holds.
 """
 
 import logging

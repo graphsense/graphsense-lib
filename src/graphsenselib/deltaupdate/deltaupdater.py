@@ -2,7 +2,7 @@ import logging
 import sys
 from typing import Optional
 
-from ..config import get_config, is_fresh_clustering_enabled
+from ..config import get_config
 from ..db import DbFactory
 from ..utils import batch, get_cassandra_result_as_dateframe
 from ..utils.console import console
@@ -174,10 +174,6 @@ def update_transformed(
             if shutdown_initialized():
                 logger.info(f"Got shutdown signal stopping at block {b[-1]}")
                 return b[-1]
-
-    # Run fresh clustering once for the entire block range
-    if is_fresh_clustering_enabled() and hasattr(updater, "run_fresh_clustering"):
-        updater.run_fresh_clustering(start_block, end_block)
 
     return end_block
 

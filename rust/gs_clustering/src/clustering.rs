@@ -185,4 +185,48 @@ mod tests {
         ])]);
         assert!(execute_union_operations_arrow(&uf, &list).is_err());
     }
+
+    #[test]
+    fn test_arrow_null_list_skipped() {
+        use arrow::datatypes::UInt32Type;
+        let uf = UFRush::new(10);
+        // a null list between two real ones must be skipped, not united
+        let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![
+            Some(vec![Some(1u32), Some(2)]),
+            None,
+            Some(vec![Some(4u32), Some(5)]),
+        ]);
+        execute_union_operations_arrow(&uf, &list).unwrap();
+        assert_eq!(uf.find(1), uf.find(2));
+        assert_eq!(uf.find(4), uf.find(5));
+        assert_ne!(uf.find(1), uf.find(4));
+    }
+
+    #[test]
+    fn test_arrow_empty_inner_list() {
+        use arrow::datatypes::UInt32Type;
+        let uf = UFRush::new(10);
+        // a zero-length input set is a no-op (does not panic on offsets)
+        let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![
+            Some(Vec::<Option<u32>>::new()),
+            Some(vec![Some(1u32), Some(2)]),
+        ]);
+        execute_union_operations_arrow(&uf, &list).unwrap();
+        assert_eq!(uf.find(1), uf.find(2));
+        assert_eq!(uf.find(3), 3);
+    }
+
+    #[test]
+    fn test_arrow_accumulates_across_calls() {
+        use arrow::datatypes::UInt32Type;
+        let uf = UFRush::new(10);
+        let a =
+            ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![Some(1u32), Some(2)])]);
+        let b =
+            ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![Some(2u32), Some(3)])]);
+        execute_union_operations_arrow(&uf, &a).unwrap();
+        execute_union_operations_arrow(&uf, &b).unwrap();
+        // 1-2 then 2-3 across separate arrays => {1,2,3}
+        assert_eq!(uf.find(1), uf.find(3));
+    }
 }
