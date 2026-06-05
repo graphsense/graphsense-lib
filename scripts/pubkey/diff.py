@@ -14,14 +14,22 @@ legacy -> new on ``address``:
     mismatch        - present in new but DIFFERENT pubkey blob         -> investigate
     missing_in_new  - legacy address absent from new                  -> see split
 
-``missing_in_new`` is further split by how many distinct chains the legacy
-pubkey spans (over the legacy table):
+``missing_in_new`` is further split by each legacy pubkey's REAL source-network
+count, read from the ``observed`` Delta table -- the same criterion the job
+materialises on (``size(collect_set(network)) >= 2``). Requires ``--sink-path``:
 
-    missing_single_network - pubkey seen on one chain  -> EXPECTED (the new job
-                             is cross-chain-only, so single-network pubkeys are
-                             intentionally not reproduced)
-    missing_multi_network  - pubkey seen on >=2 chains -> REAL regression (e.g. a
-                             pubkey legacy only saw inside a multisig/P2PK script)
+    missing_single_source - pubkey seen on one source network -> EXPECTED (the
+                            new job is cross-chain-only, so single-source pubkeys
+                            are intentionally not reproduced)
+    missing_absent        - pubkey never extracted on any chain -> extraction gap
+    missing_cross_source  - pubkey seen on >=2 networks but not materialised ->
+                            REAL regression (a detection bug)
+
+NB: an earlier version inferred the network count from the address *prefix*, but
+both legacy and the new job derive every pubkey to all chains, so a single-source
+pubkey's multi-chain derived addresses made it look "multi-network". The observed
+join uses the true source networks, so it stays exact even with
+``--sample-fraction``.
 
 and prints a few example addresses per warning bucket for spot-checking. Pass
 ``--sample-fraction`` to check a random sample of the legacy table for a faster
@@ -30,8 +38,9 @@ first pass (default 1.0 = full table, exact counts).
 Reuses graphsenselib's Spark session so the Cassandra connector, auth and
 spark profile match the job exactly. Run on the Spark driver host:
 
-    uv run python scripts/pubkey/diff.py --env prod \
-        --old-keyspace pubkey --new-keyspace pubkey_v2
+    uv run python scripts/pubkey/diff.py --env <env> \
+        --old-keyspace pubkey --new-keyspace pubkey_v2 \
+        --sink-path s3://<pubkey-sink> --s3-config <s3-config>
 
 Read-only: it never writes to Cassandra.
 """
@@ -41,35 +50,6 @@ Read-only: it never writes to Cassandra.
 
 import argparse
 import logging
-
-
-def classify_chain(address: str) -> str:
-    """Coarse source chain of a legacy address, for splitting missing_in_new.
-
-    Used only to decide whether a missing legacy pubkey was single-network
-    (expected: the new job is cross-chain-only) or multi-network (a real
-    regression). BTC and BCH legacy base58 ('1'/'3') are indistinguishable by
-    address, so they fold into one 'btc/bch' chain — a pubkey seen only on
-    btc+bch reads as single-chain here, which is acceptable for a diagnostic.
-    """
-    if not address:
-        return "unknown"
-    a = address
-    if a.startswith("0x"):
-        return "evm"
-    if a.startswith("T"):
-        return "trx"
-    if a.startswith("ltc1") or a[0] in ("L", "M"):
-        return "ltc"
-    if a.startswith("bitcoincash:"):
-        return "bch"
-    if a.startswith("t1") or a.startswith("t3"):
-        return "zec"
-    if a[0] in ("D", "A", "9"):
-        return "doge"
-    if a.startswith("bc1") or a[0] in ("1", "3"):
-        return "btc/bch"
-    return "unknown"
 
 
 def main() -> None:
@@ -87,6 +67,20 @@ def main() -> None:
         default=1.0,
         help="sample this fraction of the LEGACY table (0<f<=1; default 1.0=full)",
     )
+    parser.add_argument(
+        "--sink-path",
+        default=None,
+        help=(
+            "Delta base path of the pubkey sink; enables the real "
+            "source-network split of missing_in_new (reads <sink-path>/observed)."
+        ),
+    )
+    parser.add_argument(
+        "--s3-config",
+        dest="s3_config",
+        default=None,
+        help="s3_configs entry for S3/MinIO creds (required if sink-path is s3://).",
+    )
     args = parser.parse_args()
 
     from pyspark.sql import functions as F
@@ -96,6 +90,9 @@ def main() -> None:
 
     config = get_config()
     env_config = config.get_environment(args.env)
+    s3_credentials = (
+        config.get_s3_credentials(args.s3_config) if args.s3_config else None
+    )
 
     spark = create_spark_session(
         app_name=f"pubkey-v2-diff-{args.env}",
@@ -103,6 +100,7 @@ def main() -> None:
         cassandra_nodes=env_config.cassandra_nodes,
         cassandra_username=env_config.username,
         cassandra_password=env_config.password,
+        s3_credentials=s3_credentials,
         spark_config=config.spark_config or {},
     )
 
@@ -164,29 +162,28 @@ def main() -> None:
         if not missing and not mismatch:
             print("\n  OK: every legacy row is present and matching in the new table.")
 
-        # Split missing_in_new by how many distinct chains the legacy pubkey
-        # spans: single-network misses are EXPECTED (the new job is
-        # cross-chain-only); multi-network misses are real regressions (e.g. a
-        # pubkey legacy only ever saw inside a multisig/P2PK script).
-        if missing:
-            from pyspark.sql.types import StringType
-
-            chain_udf = F.udf(classify_chain, StringType())
-            # Per-pubkey network span over the (possibly sampled) legacy table.
-            pk_networks = (
-                old.withColumn("chain", chain_udf(F.col("address")))
-                .groupBy("pubkey_old")
-                .agg(F.countDistinct("chain").alias("n_networks"))
+        # Split missing_in_new by each legacy pubkey's REAL source-network count,
+        # read from the observed Delta table (size(collect_set(network)) is the
+        # exact criterion the job materialises on). Inferring it from the address
+        # prefix overcounts, because every pubkey is derived to all chains.
+        # NB: a legacy pubkey stored in a different encoding than observed (e.g.
+        # the uncompressed form behind the `mismatch` bucket) won't join and so
+        # lands in `missing_absent` — a small expected residue, not a real gap.
+        if missing and args.sink_path:
+            base = args.sink_path.rstrip("/").replace("s3://", "s3a://")
+            observed = spark.read.format("delta").load(f"{base}/observed")
+            spans = observed.groupBy("pubkey").agg(
+                F.size(F.collect_set("network")).alias("n_networks")
             )
             missing_bucketed = (
                 joined.filter(F.col("bucket") == "missing_in_new")
-                .select("address", "pubkey_old")
-                .join(pk_networks, "pubkey_old", "left")
+                .select("address", F.col("pubkey_old").alias("pubkey"))
+                .join(spans, "pubkey", "left")
                 .withColumn(
                     "miss_bucket",
-                    F.when(
-                        F.col("n_networks") >= 2, F.lit("missing_multi_network")
-                    ).otherwise(F.lit("missing_single_network")),
+                    F.when(F.col("n_networks").isNull(), F.lit("missing_absent"))
+                    .when(F.col("n_networks") >= 2, F.lit("missing_cross_source"))
+                    .otherwise(F.lit("missing_single_source")),
                 )
                 .cache()
             )
@@ -194,27 +191,37 @@ def main() -> None:
                 r["miss_bucket"]: r["count"]
                 for r in missing_bucketed.groupBy("miss_bucket").count().collect()
             }
-            single = mb.get("missing_single_network", 0)
-            multi = mb.get("missing_multi_network", 0)
-            print("\n  missing_in_new split:")
-            print(f"    single-network (EXPECTED, cross-chain-only): {single:,}")
-            print(f"    multi-network  (REGRESSION, investigate)   : {multi:,}")
-            if args.sample_fraction < 1.0:
-                print(
-                    "    NOTE: sampled run — n_networks is a lower bound, so the "
-                    "multi-network (regression) count is reliable but the "
-                    "single-network count may be inflated."
-                )
-            if multi:
-                print("\n--- examples: missing_in_new / multi-network (regression) ---")
-                (
-                    missing_bucketed.filter(
-                        F.col("miss_bucket") == "missing_multi_network"
+            print("\n  missing_in_new split (by real observed source networks):")
+            print(
+                "    single-source (EXPECTED, cross-chain-only): "
+                f"{mb.get('missing_single_source', 0):,}"
+            )
+            print(
+                "    absent_from_observed (extraction gap)     : "
+                f"{mb.get('missing_absent', 0):,}"
+            )
+            print(
+                "    cross-source  (REGRESSION, investigate)   : "
+                f"{mb.get('missing_cross_source', 0):,}"
+            )
+            for bucket, title in (
+                ("missing_cross_source", "cross-source (REAL regression)"),
+                ("missing_absent", "absent from observed (extraction gap)"),
+            ):
+                if mb.get(bucket, 0):
+                    print(f"\n--- examples: missing_in_new / {title} ---")
+                    (
+                        missing_bucketed.filter(F.col("miss_bucket") == bucket)
+                        .select("address", "n_networks", "pubkey")
+                        .limit(args.examples)
+                        .show(truncate=80, vertical=False)
                     )
-                    .select("address", "pubkey_old", "n_networks")
-                    .limit(args.examples)
-                    .show(truncate=80, vertical=False)
-                )
+        elif missing:
+            print(
+                "\n  missing_in_new split skipped: pass --sink-path <delta sink> "
+                "(and --s3-config if on S3) to classify the missing rows by real "
+                "observed source-network count."
+            )
 
         for bucket in ("missing_in_new", "mismatch"):
             if counts.get(bucket, 0):

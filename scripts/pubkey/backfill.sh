@@ -29,7 +29,7 @@
 #       environments:
 #         <ENV>:
 #           pubkey:
-#             sink_path: s3://<staging-bucket>/pubkey-xchain   # FRESH, not a prod path
+#             sink_path: s3://<staging-bucket>/<pubkey-sink>   # FRESH, not a prod path
 #             sink_type: cassandra
 #             keyspace:  pubkey_v2
 #
@@ -67,7 +67,7 @@
 #   # optional overrides:
 #   ENV=prod S3_CONFIG=minio GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
 #     TAG=dev ENV_FILE=/etc/graphsense/secrets.env \
-#     PUBKEY_KEYSPACE=pubkey_v2 SINK_PATH=s3://staging/pubkey-xchain \
+#     PUBKEY_KEYSPACE=pubkey_v2 SINK_PATH=s3://staging/pubkey-sink \
 #     CHAINS="eth trx ltc zec bch btc" \
 #     ./scripts/pubkey/backfill.sh
 #
@@ -91,8 +91,8 @@
 #   whatever already sits in `observed` at SINK_PATH) — use a FRESH SINK_PATH if
 #   you want results confined to exactly these three. bch defaults to starting
 #   at its fork block; ltc/zec run full history unless you bound them:
-#     CHAINS="ltc zec bch" SINK_TYPE=delta ENV=prod S3_CONFIG=minio \
-#       SINK_PATH=s3://staging/pubkey-bch-ltc-zec \
+#     CHAINS="ltc zec bch" SINK_TYPE=delta ENV=<env> S3_CONFIG=minio \
+#       SINK_PATH=s3://staging/<pubkey-sink-subset> \
 #       GRAPHSENSE_CONFIG=/etc/graphsense/graphsense.yaml \
 #       ./scripts/pubkey/backfill.sh
 #   Add END_BLOCK=N to also cap the block range for a quick smoke test.

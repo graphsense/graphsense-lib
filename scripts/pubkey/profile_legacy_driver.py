@@ -23,7 +23,7 @@ Tests:
 Run on a host with cluster access (you run it, not me):
 
     uv run python scripts/pubkey/profile_legacy_driver.py \
-        --cassandra-host ikn-vie02-spark01-db0 \
+        --cassandra-host <cassandra-host> \
         --username <user> --password <pass> \
         --sample-size 20000 --segments 40 --check-crosschain
 

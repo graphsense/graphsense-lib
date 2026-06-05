@@ -17,7 +17,7 @@ diff.py), so run it deliberately, off-peak, on a host with cluster access.
 Run on the Spark driver host:
 
     uv run python scripts/pubkey/profile_legacy.py \
-        --cassandra-host ikn-vie02-spark01-db0 \
+        --cassandra-host <cassandra-host> \
         --username <user> --password <pass> \
         --keyspace pubkey --table pubkey_by_address \
         --check-derivable 2000
