@@ -1074,11 +1074,12 @@ async def compare_txs(
     include_characteristics: bool,
     include_signals: bool,
     tagstore_groups: list[str],
-    include_analysis: bool = True,
+    include_lineage: bool = True,
+    include_verdict: bool = True,
 ) -> TransactionComparisonInternal:
     # Dedup hashes (order-preserving) up front: a repeated hash would otherwise
-    # be fetched twice, double-counted in the summary, and trivially compare as
-    # linked to itself. Need 2+ distinct txs to have anything to compare.
+    # be fetched twice and trivially compare as linked to itself. Need 2+
+    # distinct txs to have anything to compare.
     tx_hashes = list(dict.fromkeys(tx_hashes))
     if len(tx_hashes) < 2:
         raise BadUserInputException(
@@ -1087,87 +1088,29 @@ async def compare_txs(
 
     # The fingerprinting analysis (signals, lineage, verdict) is BTC-only:
     # several signals (coinjoin variants, exchange overlap, change heuristics)
-    # are tuned to BTC. Other UTXO chains (BCH/LTC/ZEC) and account chains
-    # (ETH/TRX) are supported in summary-only mode (include_analysis=False),
-    # where we just aggregate tx headers. Characteristics are UTXO-only --
-    # they read inputs/outputs/scripts that account txs don't have.
-    account_like = is_eth_like(currency)
-    if include_analysis and currency.lower() != "btc":
+    # are tuned to BTC. Other chains use POST /{currency}/subgraph/summary for
+    # chain-agnostic aggregate stats over a set of transactions.
+    if currency.lower() != "btc":
         raise BadUserInputException(
-            f"/txs/compare fingerprinting analysis is BTC-only; '{currency}' "
-            "is not supported. Set include_analysis=false for a summary."
+            f"/txs/compare is BTC-only; '{currency}' is not supported. "
+            "Use /{currency}/subgraph/summary for aggregate stats."
         )
-    want_characteristics = include_characteristics and not account_like
 
-    # IO + heuristics are only needed to build characteristics or run the
-    # analysis; a pure summary-only request fetches tx headers alone. Account
-    # txs have no IO decomposition or heuristics, so they stay header-only.
-    need_io = (include_analysis or want_characteristics) and not account_like
     fetched: list[Union[TxUtxo, TxAccount]] = await asyncio.gather(
         *[
             txs_service.get_tx(
                 currency,
                 h,
                 None,
-                include_io=need_io,
+                include_io=True,
                 include_nonstandard_io=False,
                 include_io_index=False,
-                include_heuristics=["all_coinjoin", "all_change"] if need_io else [],
+                include_heuristics=["all_coinjoin", "all_change"],
                 tagstore_groups=tagstore_groups,
             )
             for h in tx_hashes
         ]
     )
-
-    # Summary-only mode: skip the expensive orchestration (cluster lookups,
-    # spending-tx fetches, exchange-tag lookups), the signals, and the
-    # verdict. Characteristics are still built when requested (they only
-    # need the per-tx data already fetched), but their orchestration-derived
-    # fields (cluster ids, parents, canon addresses) stay empty.
-    if not include_analysis:
-        chars_only = (
-            [extract_characteristics(tx) for tx in fetched]
-            if want_characteristics
-            else None
-        )
-        items = [
-            TxComparedItemInternal(
-                tx_hash=tx_hashes[i],
-                characteristics=chars_only[i] if chars_only is not None else None,
-                details=fetched[i] if include_details else None,
-            )
-            for i in range(len(fetched))
-        ]
-        # The summary must reflect all asset movements. For account chains
-        # ``get_tx`` returns only the base/native transaction (no token legs),
-        # so its token transfers would be invisible to ``build_summary`` and
-        # their USD never folded into ``total_value_usd``. Fetch the full
-        # asset-flow set per hash (base tx + token transfers) instead, so
-        # ``build_summary`` can sum token USD and flag the excluded token
-        # transfers. UTXO txs carry their full IO already, so reuse ``fetched``.
-        if account_like:
-            flow_lists = await asyncio.gather(
-                *[
-                    txs_service.get_asset_flows_within_tx(
-                        currency,
-                        h,
-                        include_internal_txs=False,
-                        include_token_txs=True,
-                        include_base_transaction=True,
-                    )
-                    for h in tx_hashes
-                ]
-            )
-            summary_txs = [leg for fl in flow_lists for leg in fl.txs]
-        else:
-            summary_txs = fetched
-        return TransactionComparisonInternal(
-            txs=items,
-            signals=[],
-            lineage=[],
-            summary=build_summary(currency, summary_txs),
-            verdict=None,
-        )
 
     # Exchange-flag lookup now needs the address→cluster map, so it can't run
     # in parallel with cluster resolution like the old digest-based path did.
@@ -1219,7 +1162,6 @@ async def compare_txs(
         signal_common_ancestor(chars),
         signal_utxo_linkage(chars),
     ]
-    summary = build_summary(currency, fetched)
     verdict = aggregate_verdict(signals, chars, cluster_verdict)
 
     items = [
@@ -1231,10 +1173,11 @@ async def compare_txs(
         for i in range(len(fetched))
     ]
 
+    # Signals/lineage/verdict are always computed (the verdict depends on the
+    # signals); the include flags only control what is returned.
     return TransactionComparisonInternal(
         txs=items,
         signals=signals if include_signals else [],
-        lineage=lineage,
-        summary=summary,
-        verdict=verdict,
+        lineage=lineage if include_lineage else [],
+        verdict=verdict if include_verdict else None,
     )

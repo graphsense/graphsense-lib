@@ -10,7 +10,6 @@ from typing import Optional
 
 from graphsenselib.db.asynchronous.services.models import (
     ComparisonSignalInternal,
-    ComparisonSummaryInternal,
     ComparisonVerdictInternal,
     LineageEdgeInternal,
     TransactionComparisonInternal,
@@ -77,23 +76,6 @@ def _make_characteristics(
         input_cluster_ids=[42],
         coinjoin_detected=False,
         coinjoin_protocol=None,
-    )
-
-
-def _make_summary() -> ComparisonSummaryInternal:
-    return ComparisonSummaryInternal(
-        tx_count=2,
-        currency="btc",
-        total_value=2000,
-        total_value_usd=42.5,
-        total_fee=150,
-        total_inputs=2,
-        total_outputs=2,
-        block_min=100,
-        block_max=101,
-        timestamp_min=1_700_000_000,
-        timestamp_max=1_700_000_500,
-        notes=["total_value_usd is partial: 1 of 2 txs had no USD rate"],
     )
 
 
@@ -173,7 +155,6 @@ def _make_full_internal(
         txs=items,
         signals=signals,
         lineage=lineage,
-        summary=_make_summary(),
         verdict=verdict or _make_verdict(),
     )
 
@@ -363,29 +344,10 @@ def test_to_api_transaction_comparison_signals_and_lineage_length_preserved():
 
 
 def test_to_api_transaction_comparison_verdict_none_omitted():
-    # Summary-only mode (include_analysis=False) produces verdict=None; the
+    # Excluding the verdict from the include list produces verdict=None; the
     # translator must pass that through as None so the API drops it.
     internal = _make_full_internal().model_copy(update={"verdict": None})
 
     api = to_api_transaction_comparison(internal)
 
     assert api.verdict is None
-
-
-def test_to_api_transaction_comparison_summary_round_trip():
-    internal = _make_full_internal()
-
-    api = to_api_transaction_comparison(internal)
-
-    assert api.summary.tx_count == internal.summary.tx_count
-    assert api.summary.currency == internal.summary.currency
-    assert api.summary.total_value == internal.summary.total_value
-    assert api.summary.total_value_usd == internal.summary.total_value_usd
-    assert api.summary.total_fee == internal.summary.total_fee
-    assert api.summary.notes == internal.summary.notes
-    assert api.summary.total_inputs == internal.summary.total_inputs
-    assert api.summary.total_outputs == internal.summary.total_outputs
-    assert api.summary.block_min == internal.summary.block_min
-    assert api.summary.block_max == internal.summary.block_max
-    assert api.summary.timestamp_min == internal.summary.timestamp_min
-    assert api.summary.timestamp_max == internal.summary.timestamp_max

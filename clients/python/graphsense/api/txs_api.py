@@ -136,10 +136,7 @@ class TxsApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[List[StrictStr], Field(min_length=2, max_length=100, description="Two or more transaction hashes to compare.")],
-        include_details: Annotated[Optional[StrictBool], Field(description="Embed full per-tx details in the response.")] = None,
-        include_characteristics: Annotated[Optional[StrictBool], Field(description="Embed per-tx extracted characteristics in the response.")] = None,
-        include_signals: Annotated[Optional[StrictBool], Field(description="Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.")] = None,
-        include_analysis: Annotated[Optional[StrictBool], Field(description="Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.")] = None,
+        include: Annotated[Optional[List[StrictStr]], Field(description="Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use 'all' for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -155,20 +152,14 @@ class TxsApi:
     ) -> TransactionComparison:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: Two or more transaction hashes to compare. (required)
         :type tx_hash: List[str]
-        :param include_details: Embed full per-tx details in the response.
-        :type include_details: bool
-        :param include_characteristics: Embed per-tx extracted characteristics in the response.
-        :type include_characteristics: bool
-        :param include_signals: Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.
-        :type include_signals: bool
-        :param include_analysis: Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.
-        :type include_analysis: bool
+        :param include: Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use 'all' for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned.
+        :type include: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -194,10 +185,7 @@ class TxsApi:
         _param = self._compare_txs_serialize(
             currency=currency,
             tx_hash=tx_hash,
-            include_details=include_details,
-            include_characteristics=include_characteristics,
-            include_signals=include_signals,
-            include_analysis=include_analysis,
+            include=include,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -226,10 +214,7 @@ class TxsApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[List[StrictStr], Field(min_length=2, max_length=100, description="Two or more transaction hashes to compare.")],
-        include_details: Annotated[Optional[StrictBool], Field(description="Embed full per-tx details in the response.")] = None,
-        include_characteristics: Annotated[Optional[StrictBool], Field(description="Embed per-tx extracted characteristics in the response.")] = None,
-        include_signals: Annotated[Optional[StrictBool], Field(description="Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.")] = None,
-        include_analysis: Annotated[Optional[StrictBool], Field(description="Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.")] = None,
+        include: Annotated[Optional[List[StrictStr]], Field(description="Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use 'all' for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -245,20 +230,14 @@ class TxsApi:
     ) -> ApiResponse[TransactionComparison]:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: Two or more transaction hashes to compare. (required)
         :type tx_hash: List[str]
-        :param include_details: Embed full per-tx details in the response.
-        :type include_details: bool
-        :param include_characteristics: Embed per-tx extracted characteristics in the response.
-        :type include_characteristics: bool
-        :param include_signals: Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.
-        :type include_signals: bool
-        :param include_analysis: Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.
-        :type include_analysis: bool
+        :param include: Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use 'all' for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned.
+        :type include: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -284,10 +263,7 @@ class TxsApi:
         _param = self._compare_txs_serialize(
             currency=currency,
             tx_hash=tx_hash,
-            include_details=include_details,
-            include_characteristics=include_characteristics,
-            include_signals=include_signals,
-            include_analysis=include_analysis,
+            include=include,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -316,10 +292,7 @@ class TxsApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         tx_hash: Annotated[List[StrictStr], Field(min_length=2, max_length=100, description="Two or more transaction hashes to compare.")],
-        include_details: Annotated[Optional[StrictBool], Field(description="Embed full per-tx details in the response.")] = None,
-        include_characteristics: Annotated[Optional[StrictBool], Field(description="Embed per-tx extracted characteristics in the response.")] = None,
-        include_signals: Annotated[Optional[StrictBool], Field(description="Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.")] = None,
-        include_analysis: Annotated[Optional[StrictBool], Field(description="Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.")] = None,
+        include: Annotated[Optional[List[StrictStr]], Field(description="Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use 'all' for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -335,20 +308,14 @@ class TxsApi:
     ) -> RESTResponseType:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
         :param tx_hash: Two or more transaction hashes to compare. (required)
         :type tx_hash: List[str]
-        :param include_details: Embed full per-tx details in the response.
-        :type include_details: bool
-        :param include_characteristics: Embed per-tx extracted characteristics in the response.
-        :type include_characteristics: bool
-        :param include_signals: Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false.
-        :type include_signals: bool
-        :param include_analysis: Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true.
-        :type include_analysis: bool
+        :param include: Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use 'all' for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned.
+        :type include: List[str]
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -374,10 +341,7 @@ class TxsApi:
         _param = self._compare_txs_serialize(
             currency=currency,
             tx_hash=tx_hash,
-            include_details=include_details,
-            include_characteristics=include_characteristics,
-            include_signals=include_signals,
-            include_analysis=include_analysis,
+            include=include,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -401,10 +365,7 @@ class TxsApi:
         self,
         currency,
         tx_hash,
-        include_details,
-        include_characteristics,
-        include_signals,
-        include_analysis,
+        include,
         _request_auth,
         _content_type,
         _headers,
@@ -415,6 +376,7 @@ class TxsApi:
 
         _collection_formats: Dict[str, str] = {
             'tx_hash': 'multi',
+            'include': 'multi',
         }
 
         _path_params: Dict[str, str] = {}
@@ -434,21 +396,9 @@ class TxsApi:
             
             _query_params.append(('tx_hash', tx_hash))
             
-        if include_details is not None:
+        if include is not None:
             
-            _query_params.append(('include_details', include_details))
-            
-        if include_characteristics is not None:
-            
-            _query_params.append(('include_characteristics', include_characteristics))
-            
-        if include_signals is not None:
-            
-            _query_params.append(('include_signals', include_signals))
-            
-        if include_analysis is not None:
-            
-            _query_params.append(('include_analysis', include_analysis))
+            _query_params.append(('include', include))
             
         # process the header parameters
         # process the form parameters

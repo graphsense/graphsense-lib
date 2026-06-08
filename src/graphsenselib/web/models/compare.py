@@ -141,7 +141,6 @@ class TransactionComparison(APIModel):
     txs: list[TxComparedItem]
     signals: list[ComparisonSignal]
     lineage: list[LineageEdge] = Field(default_factory=list)
-    summary: ComparisonSummary
-    # Omitted (via response_model_exclude_none) in summary-only mode
-    # (include_analysis=False); the fingerprinting verdict is not computed.
+    # Omitted (via response_model_exclude_none) when excluded from the
+    # include list.
     verdict: Optional[ComparisonVerdict] = None

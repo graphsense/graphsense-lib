@@ -203,7 +203,6 @@ Class | Method | HTTP request | Description
  - [CoinJoinConsensus](docs/CoinJoinConsensus.md)
  - [CoinJoinHeuristics](docs/CoinJoinHeuristics.md)
  - [ComparisonSignal](docs/ComparisonSignal.md)
- - [ComparisonSummary](docs/ComparisonSummary.md)
  - [ComparisonVerdict](docs/ComparisonVerdict.md)
  - [Concept](docs/Concept.md)
  - [ConsensusEntry](docs/ConsensusEntry.md)

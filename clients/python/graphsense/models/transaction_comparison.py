@@ -18,7 +18,6 @@ import json
 from pydantic import BaseModel, ConfigDict
 from typing import Any, ClassVar, Dict, List, Optional
 from graphsense.models.comparison_signal import ComparisonSignal
-from graphsense.models.comparison_summary import ComparisonSummary
 from graphsense.models.comparison_verdict import ComparisonVerdict
 from graphsense.models.lineage_edge import LineageEdge
 from graphsense.models.tx_compared_item import TxComparedItem
@@ -32,9 +31,8 @@ class TransactionComparison(BaseModel):
     txs: List[TxComparedItem]
     signals: List[ComparisonSignal]
     lineage: Optional[List[LineageEdge]] = None
-    summary: ComparisonSummary
     verdict: Optional[ComparisonVerdict] = None
-    __properties: ClassVar[List[str]] = ["txs", "signals", "lineage", "summary", "verdict"]
+    __properties: ClassVar[List[str]] = ["txs", "signals", "lineage", "verdict"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -96,9 +94,6 @@ class TransactionComparison(BaseModel):
                 if _item_lineage:
                     _items.append(_item_lineage.to_dict())
             _dict['lineage'] = _items
-        # override the default output from pydantic by calling `to_dict()` of summary
-        if self.summary:
-            _dict['summary'] = self.summary.to_dict()
         # override the default output from pydantic by calling `to_dict()` of verdict
         if self.verdict:
             _dict['verdict'] = self.verdict.to_dict()
@@ -118,7 +113,6 @@ class TransactionComparison(BaseModel):
             "txs": [TxComparedItem.from_dict(_item) for _item in obj["txs"]] if obj.get("txs") is not None else None,
             "signals": [ComparisonSignal.from_dict(_item) for _item in obj["signals"]] if obj.get("signals") is not None else None,
             "lineage": [LineageEdge.from_dict(_item) for _item in obj["lineage"]] if obj.get("lineage") is not None else None,
-            "summary": ComparisonSummary.from_dict(obj["summary"]) if obj.get("summary") is not None else None,
             "verdict": ComparisonVerdict.from_dict(obj["verdict"]) if obj.get("verdict") is not None else None
         })
         return _obj

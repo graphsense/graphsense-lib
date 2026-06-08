@@ -554,9 +554,7 @@ class TransactionComparisonInternal(BaseModel):
     txs: List[TxComparedItemInternal] = Field(default_factory=list)
     signals: List[ComparisonSignalInternal] = Field(default_factory=list)
     lineage: List[LineageEdgeInternal] = Field(default_factory=list)
-    summary: ComparisonSummaryInternal
-    # None in summary-only mode (include_analysis=False). The fingerprinting
-    # verdict is not computed when the analysis is skipped.
+    # None when the verdict is excluded from the include list.
     verdict: Optional[ComparisonVerdictInternal] = None
 
 

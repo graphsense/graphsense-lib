@@ -9,7 +9,6 @@ Name | Type | Description | Notes
 **txs** | [**List[TxComparedItem]**](TxComparedItem.md) |  | 
 **signals** | [**List[ComparisonSignal]**](ComparisonSignal.md) |  | 
 **lineage** | [**List[LineageEdge]**](LineageEdge.md) |  | [optional] 
-**summary** | [**ComparisonSummary**](ComparisonSummary.md) |  | 
 **verdict** | [**ComparisonVerdict**](ComparisonVerdict.md) |  | [optional] 
 
 ## Example

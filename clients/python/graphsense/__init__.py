@@ -52,7 +52,6 @@ __all__ = [
     "CoinJoinConsensus",
     "CoinJoinHeuristics",
     "ComparisonSignal",
-    "ComparisonSummary",
     "ComparisonVerdict",
     "Concept",
     "ConsensusEntry",
@@ -161,7 +160,6 @@ from graphsense.models.cluster_addresses import ClusterAddresses as ClusterAddre
 from graphsense.models.coin_join_consensus import CoinJoinConsensus as CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics as CoinJoinHeuristics
 from graphsense.models.comparison_signal import ComparisonSignal as ComparisonSignal
-from graphsense.models.comparison_summary import ComparisonSummary as ComparisonSummary
 from graphsense.models.comparison_verdict import ComparisonVerdict as ComparisonVerdict
 from graphsense.models.concept import Concept as Concept
 from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry

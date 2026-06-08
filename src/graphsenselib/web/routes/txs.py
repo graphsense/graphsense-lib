@@ -30,6 +30,20 @@ import graphsenselib.web.service.txs_service as service
 router = APIRouter(route_class=PluginRoute)
 
 
+# Response components selectable via the /txs/compare ``include`` list.
+_COMPARE_COMPONENTS = ("characteristics", "details", "signals", "lineage", "verdict")
+
+
+def _expand_compare_include(include: List[str]) -> set[str]:
+    """Resolve the ``include`` list to a set of component names. ``all`` expands
+    to every component; unknown entries are ignored (the Literal type already
+    rejects them at the request boundary)."""
+    components = set(include)
+    if "all" in components:
+        return set(_COMPARE_COMPONENTS)
+    return components & set(_COMPARE_COMPONENTS)
+
+
 @router.get(
     "/token_txs/{tx_hash}",
     summary="List token transfers in a transaction",
@@ -64,18 +78,15 @@ async def list_token_txs(
         "Returns per-tx characteristics, pairwise similarity signals, and a "
         "rollup verdict on whether the supplied transactions are likely "
         "linked to the same actor. The fingerprinting analysis is BTC-only; "
-        "other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are "
-        "supported in summary-only mode (include_analysis=false)."
+        "for chain-agnostic aggregate stats over a set of transactions use "
+        "POST /{currency}/subgraph/summary instead."
     ),
     operation_id="compare_txs",
     response_model=TransactionComparison,
     response_model_exclude_none=True,
     responses={
         400: {
-            "description": (
-                "Invalid request (need 2+ tx hashes, or non-BTC currency "
-                "requested with include_analysis=true)."
-            )
+            "description": ("Invalid request (need 2+ tx hashes, or non-BTC currency).")
         },
         404: {"description": "One of the transactions was not found."},
     },
@@ -89,46 +100,32 @@ async def compare_txs(
         max_length=100,
         description="Two or more transaction hashes to compare.",
     ),
-    include_details: bool = Query(
-        False,
-        description="Embed full per-tx details in the response.",
-    ),
-    include_characteristics: bool = Query(
-        True,
-        description="Embed per-tx extracted characteristics in the response.",
-    ),
-    include_signals: bool = Query(
-        True,
+    include: List[
+        Literal["all", "characteristics", "details", "signals", "lineage", "verdict"]
+    ] = Query(
+        default=["characteristics", "signals", "lineage", "verdict"],
         description=(
-            "Embed the signals table in the response. When include_analysis "
-            "is true, signals are always computed internally (the verdict "
-            "depends on them) and this flag only controls whether they are "
-            "returned. No-op when include_analysis is false."
-        ),
-    ),
-    include_analysis: bool = Query(
-        True,
-        description=(
-            "Run the fingerprinting analysis (signals, lineage, verdict). "
-            "When false, only the summary is computed and returned; the "
-            "expensive cluster/spending/exchange lookups are skipped, and "
-            "signals, lineage and verdict are omitted. Characteristics are "
-            "still returned if include_characteristics is true."
+            "Response components to include. Defaults to characteristics, "
+            "signals, lineage and verdict (details excluded). Use 'all' for "
+            "everything including details. Signals, lineage and verdict are "
+            "always computed internally (the verdict depends on the signals); "
+            "this list only controls what is returned."
         ),
     ),
     ctx: ServiceContext = Depends(get_ctx),
 ):
-    """Compare two or more transactions. Full fingerprinting analysis is
-    BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains
-    (ETH/TRX) are summary-only."""
+    """Compare two or more transactions. BTC-only fingerprinting analysis;
+    other chains use POST /{currency}/subgraph/summary for aggregate stats."""
+    components = _expand_compare_include(include)
     result = await service.compare_txs(
         ctx,
         currency=currency.lower(),
         tx_hashes=tx_hash,
-        include_details=include_details,
-        include_characteristics=include_characteristics,
-        include_signals=include_signals,
-        include_analysis=include_analysis,
+        include_characteristics="characteristics" in components,
+        include_details="details" in components,
+        include_signals="signals" in components,
+        include_lineage="lineage" in components,
+        include_verdict="verdict" in components,
     )
     return result
 

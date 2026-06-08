@@ -84,10 +84,11 @@ async def compare_txs(
     ctx,
     currency: str,
     tx_hashes: list[str],
-    include_details: bool,
     include_characteristics: bool,
+    include_details: bool,
     include_signals: bool,
-    include_analysis: bool,
+    include_lineage: bool,
+    include_verdict: bool,
 ):
     result = await _db_compare_txs(
         ctx.services.txs_service,
@@ -96,7 +97,8 @@ async def compare_txs(
         include_details=include_details,
         include_characteristics=include_characteristics,
         include_signals=include_signals,
-        include_analysis=include_analysis,
+        include_lineage=include_lineage,
+        include_verdict=include_verdict,
         tagstore_groups=ctx.tagstore_groups,
     )
     return to_api_transaction_comparison(result)

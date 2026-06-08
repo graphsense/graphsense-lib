@@ -1775,8 +1775,6 @@ class TestCompareTxsOrchestration:
             tagstore_groups=[],
         )
         assert len(result.txs) == 2
-        assert result.summary.tx_count == 2
-        assert result.summary.currency == CURRENCY
         # Signals always computed.
         names = {s.name for s in result.signals}
         assert names == {
@@ -1828,61 +1826,6 @@ class TestCompareTxsOrchestration:
         assert edge.out_index == 0
         assert edge.in_index == 0
 
-    async def test_summary_only_skips_orchestration(self):
-        # include_analysis=False + no characteristics → leanest path: header
-        # only, no cluster/spending fetches, summary only, verdict omitted.
-        svc, hashes = self._make_two_linked_txs()
-        result = await compare_txs(
-            svc,
-            CURRENCY,
-            hashes,
-            include_details=False,
-            include_characteristics=False,
-            include_signals=True,  # no-op when analysis is off
-            include_analysis=False,
-            tagstore_groups=[],
-        )
-        assert result.summary.tx_count == 2
-        assert result.signals == []
-        assert result.lineage == []
-        assert result.verdict is None
-        for item in result.txs:
-            assert item.characteristics is None
-        # Expensive orchestration must be skipped entirely.
-        assert svc.spending_calls == 0
-        svc.db.get_addresses_light.assert_not_called()
-        # Header-only fetch: no IO, no heuristics.
-        assert svc.get_tx_calls[0]["include_io"] is False
-        assert svc.get_tx_calls[0]["include_heuristics"] == []
-
-    async def test_summary_only_with_characteristics_keeps_chars(self):
-        # include_analysis=False + characteristics → build per-tx facts (needs
-        # IO+heuristics) but still skip orchestration and the verdict.
-        svc, hashes = self._make_two_linked_txs()
-        result = await compare_txs(
-            svc,
-            CURRENCY,
-            hashes,
-            include_details=False,
-            include_characteristics=True,
-            include_signals=True,
-            include_analysis=False,
-            tagstore_groups=[],
-        )
-        assert result.verdict is None
-        assert result.signals == []
-        assert result.lineage == []
-        for item in result.txs:
-            assert item.characteristics is not None
-            # Per-tx facts are present...
-            assert item.characteristics.inputs_script_types
-            # ...but orchestration-derived fields stay empty (not computed).
-            assert item.characteristics.input_cluster_ids == []
-        assert svc.spending_calls == 0
-        svc.db.get_addresses_light.assert_not_called()
-        # Full IO is fetched so characteristics can be built.
-        assert svc.get_tx_calls[0]["include_io"] is True
-
     async def test_include_signals_false_suppresses(self):
         svc, hashes = self._make_two_linked_txs()
         result = await compare_txs(
@@ -1926,6 +1869,39 @@ class TestCompareTxsOrchestration:
         for item in result.txs:
             assert item.details is not None
 
+    async def test_include_lineage_false_suppresses(self):
+        # Lineage is still computed (the verdict can use it) but not returned.
+        svc, hashes = self._make_two_linked_txs()
+        result = await compare_txs(
+            svc,
+            CURRENCY,
+            hashes,
+            include_details=False,
+            include_characteristics=False,
+            include_signals=True,
+            include_lineage=False,
+            tagstore_groups=[],
+        )
+        assert result.lineage == []
+        # Verdict still computed.
+        assert result.verdict is not None
+
+    async def test_include_verdict_false_suppresses(self):
+        svc, hashes = self._make_two_linked_txs()
+        result = await compare_txs(
+            svc,
+            CURRENCY,
+            hashes,
+            include_details=False,
+            include_characteristics=False,
+            include_signals=True,
+            include_verdict=False,
+            tagstore_groups=[],
+        )
+        assert result.verdict is None
+        # Signals still returned.
+        assert len(result.signals) > 0
+
     async def test_three_tx_orchestration(self):
         h0, h1, h2 = "aa" * 32, "bb" * 32, "cc" * 32
         ins = [
@@ -1958,9 +1934,6 @@ class TestCompareTxsOrchestration:
             tagstore_groups=[],
         )
         assert len(result.txs) == 3
-        assert result.summary.tx_count == 3
-        assert result.summary.total_inputs == 3
-        assert result.summary.total_outputs == 3
         # No edges → utxo_linkage signal must say mismatch.
         link_sig = next(s for s in result.signals if s.name == "utxo_linkage")
         assert link_sig.verdict == "mismatch"
@@ -1980,7 +1953,6 @@ class TestCompareTxsOrchestration:
                 include_details=False,
                 include_characteristics=False,
                 include_signals=True,
-                include_analysis=False,
                 tagstore_groups=[],
             )
 
@@ -1995,7 +1967,6 @@ class TestCompareTxsOrchestration:
                 include_details=False,
                 include_characteristics=True,
                 include_signals=True,
-                include_analysis=True,
                 tagstore_groups=[],
             )
 
@@ -2011,7 +1982,6 @@ class TestCompareTxsOrchestration:
                 include_details=False,
                 include_characteristics=True,
                 include_signals=True,
-                include_analysis=True,
                 tagstore_groups=[],
             )
 
@@ -2029,7 +1999,6 @@ class TestCompareTxsOrchestration:
             include_signals=True,
             tagstore_groups=[],
         )
-        assert result.summary.tx_count == 2
         assert len(result.txs) == 2
         # Each distinct hash fetched exactly once (no duplicate DB work).
         assert len(svc.get_tx_calls) == 2
@@ -2037,89 +2006,16 @@ class TestCompareTxsOrchestration:
     @pytest.mark.parametrize(
         "currency", ["eth", "trx", "ETH", "TRX", "bch", "ltc", "zec"]
     )
-    async def test_non_btc_analysis_rejected(self, currency):
-        # Fingerprinting analysis is BTC-only.
+    async def test_non_btc_rejected(self, currency):
+        # /txs/compare is BTC-only; other chains use /subgraph/summary.
         svc = FakeTxsService(tx_map={})
         with pytest.raises(BadUserInputException):
             await compare_txs(
                 svc,
                 currency,
-                ["aa" * 32],
+                ["aa" * 32, "bb" * 32],
                 include_details=False,
                 include_characteristics=True,
                 include_signals=True,
-                include_analysis=True,
                 tagstore_groups=[],
             )
-
-    @pytest.mark.parametrize("currency", ["eth", "trx", "ETH", "TRX"])
-    async def test_account_summary_only_allowed(self, currency):
-        # Summary-only mode works for account currencies: header aggregation
-        # only, no fingerprinting. Characteristics are UTXO-only and stay off.
-        h0, h1 = "aa" * 32, "bb" * 32
-        tx_map = {
-            h0: make_account_tx(
-                tx_hash=h0, value=1_000, fee=21, height=10, timestamp=100
-            ),
-            h1: make_account_tx(
-                tx_hash=h1, value=2_000, fee=42, height=20, timestamp=200
-            ),
-        }
-        svc = FakeTxsService(tx_map=tx_map)
-        result = await compare_txs(
-            svc,
-            currency,
-            [h0, h1],
-            include_details=False,
-            include_characteristics=True,  # ignored for account currencies
-            include_signals=True,
-            include_analysis=False,
-            tagstore_groups=[],
-        )
-        assert result.summary.tx_count == 2
-        assert result.summary.currency == currency
-        assert result.summary.total_value == 3_000
-        assert result.summary.total_fee == 63
-        assert result.summary.total_inputs is None
-        assert result.summary.total_outputs is None
-        assert result.signals == []
-        assert result.lineage == []
-        assert result.verdict is None
-        # Characteristics are UTXO-only; not built for account txs.
-        for item in result.txs:
-            assert item.characteristics is None
-        # Expensive orchestration must be skipped entirely.
-        assert svc.spending_calls == 0
-
-    async def test_account_summary_includes_token_usd_and_note(self):
-        # An account summary must fold token-transfer USD into total_value_usd
-        # and flag it, not just sum the base native tx. h1 is a USDT transfer:
-        # its base tx moves 0 native ETH; the value lives in the token leg.
-        h0, h1 = "aa" * 32, "bb" * 32
-        base0 = make_account_tx(tx_hash=h0, value=10**18, value_usd=3000.0)
-        base1 = make_account_tx(tx_hash=h1, value=0, value_usd=0.0)
-        token1 = make_account_tx(
-            tx_hash=h1, value=5_000_000, value_usd=1000.0, token_tx_id=0, asset="usdt"
-        )
-        svc = FakeTxsService(
-            tx_map={h0: base0, h1: base1},
-            flows_map={h0: [base0], h1: [base1, token1]},
-        )
-        result = await compare_txs(
-            svc,
-            "eth",
-            [h0, h1],
-            include_details=False,
-            include_characteristics=False,
-            include_signals=False,
-            include_analysis=False,
-            tagstore_groups=[],
-        )
-        s = result.summary
-        assert s.total_value == 10**18  # native only; token leg excluded
-        assert s.total_value_usd == 4000.0  # 3000 native + 1000 token
-        assert any("token" in n.lower() for n in s.notes)
-        svc.db.get_addresses_light.assert_not_called()
-        # Header-only fetch: no IO, no heuristics.
-        assert svc.get_tx_calls[0]["include_io"] is False
-        assert svc.get_tx_calls[0]["include_heuristics"] == []

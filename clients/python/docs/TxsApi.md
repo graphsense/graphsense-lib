@@ -15,11 +15,11 @@ Method | HTTP request | Description
 
 
 # **compare_txs**
-> TransactionComparison compare_txs(currency, tx_hash, include_details=include_details, include_characteristics=include_characteristics, include_signals=include_signals, include_analysis=include_analysis)
+> TransactionComparison compare_txs(currency, tx_hash, include=include)
 
 Compare multiple transactions
 
-Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; other UTXO chains (BCH/LTC/ZEC) and account chains (ETH/TRX) are supported in summary-only mode (include_analysis=false).
+Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
 
 ### Example
 
@@ -54,14 +54,11 @@ with graphsense.ApiClient(configuration) as api_client:
     api_instance = graphsense.TxsApi(api_client)
     currency = 'btc' # str | The cryptocurrency code (e.g., btc)
     tx_hash = ['tx_hash_example'] # List[str] | Two or more transaction hashes to compare.
-    include_details = None # bool | Embed full per-tx details in the response. (optional) (default to False)
-    include_characteristics = None # bool | Embed per-tx extracted characteristics in the response. (optional) (default to True)
-    include_signals = None # bool | Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false. (optional) (default to True)
-    include_analysis = None # bool | Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true. (optional) (default to True)
+    include = None # List[str] | Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use 'all' for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned. (optional) (default to ["characteristics","signals","lineage","verdict"])
 
     try:
         # Compare multiple transactions
-        api_response = api_instance.compare_txs(currency, tx_hash, include_details=include_details, include_characteristics=include_characteristics, include_signals=include_signals, include_analysis=include_analysis)
+        api_response = api_instance.compare_txs(currency, tx_hash, include=include)
         print("The response of TxsApi->compare_txs:\n")
         pprint(api_response)
     except Exception as e:
@@ -77,10 +74,7 @@ Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **currency** | **str**| The cryptocurrency code (e.g., btc) | 
  **tx_hash** | [**List[str]**](str.md)| Two or more transaction hashes to compare. | 
- **include_details** | **bool**| Embed full per-tx details in the response. | [optional] [default to False]
- **include_characteristics** | **bool**| Embed per-tx extracted characteristics in the response. | [optional] [default to True]
- **include_signals** | **bool**| Embed the signals table in the response. When include_analysis is true, signals are always computed internally (the verdict depends on them) and this flag only controls whether they are returned. No-op when include_analysis is false. | [optional] [default to True]
- **include_analysis** | **bool**| Run the fingerprinting analysis (signals, lineage, verdict). When false, only the summary is computed and returned; the expensive cluster/spending/exchange lookups are skipped, and signals, lineage and verdict are omitted. Characteristics are still returned if include_characteristics is true. | [optional] [default to True]
+ **include** | [**List[str]**](str.md)| Response components to include. Defaults to characteristics, signals, lineage and verdict (details excluded). Use &#39;all&#39; for everything including details. Signals, lineage and verdict are always computed internally (the verdict depends on the signals); this list only controls what is returned. | [optional] [default to [&quot;characteristics&quot;,&quot;signals&quot;,&quot;lineage&quot;,&quot;verdict&quot;]]
 
 ### Return type
 
@@ -100,7 +94,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (need 2+ tx hashes, or non-BTC currency requested with include_analysis&#x3D;true). |  -  |
+**400** | Invalid request (need 2+ tx hashes, or non-BTC currency). |  -  |
 **404** | One of the transactions was not found. |  -  |
 **422** | Validation Error |  -  |
 

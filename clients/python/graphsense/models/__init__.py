@@ -28,7 +28,6 @@ from graphsense.models.cluster_addresses import ClusterAddresses
 from graphsense.models.coin_join_consensus import CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics
 from graphsense.models.comparison_signal import ComparisonSignal
-from graphsense.models.comparison_summary import ComparisonSummary
 from graphsense.models.comparison_verdict import ComparisonVerdict
 from graphsense.models.concept import Concept
 from graphsense.models.consensus_entry import ConsensusEntry

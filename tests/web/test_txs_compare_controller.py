@@ -14,7 +14,6 @@ import pytest
 from graphsenselib.errors import BadUserInputException
 from graphsenselib.web.models import (
     ComparisonSignal,
-    ComparisonSummary,
     ComparisonVerdict,
     TransactionComparison,
     TxCharacteristics,
@@ -40,10 +39,11 @@ HASH_B = "ab188013"
 
 
 def _build_api_response(
-    include_signals: bool,
     include_characteristics: bool,
     include_details: bool,
-    include_analysis: bool = True,
+    include_signals: bool,
+    include_lineage: bool,
+    include_verdict: bool,
 ) -> TransactionComparison:
     """Return a hand-built API response that mirrors what the translator
     would emit. Numeric values are arbitrary placeholders, tests must
@@ -91,7 +91,7 @@ def _build_api_response(
     ]
 
     signals = []
-    if include_signals and include_analysis:
+    if include_signals:
         signals = [
             ComparisonSignal(
                 name="script_type",
@@ -109,18 +109,6 @@ def _build_api_response(
             ),
         ]
 
-    summary = ComparisonSummary(
-        tx_count=2,
-        currency="btc",
-        total_value=3500,
-        total_fee=200,
-        total_inputs=3,
-        total_outputs=2,
-        block_min=100,
-        block_max=101,
-        timestamp_min=1_700_000_000,
-        timestamp_max=1_700_000_500,
-    )
     verdict = (
         ComparisonVerdict(
             relation="likely_linked",
@@ -130,21 +118,14 @@ def _build_api_response(
             score_total=1.25,
             notes=[],
         )
-        if include_analysis
+        if include_verdict
         else None
     )
-
-    # Suppress details if not requested (they would be None anyway,
-    # but keep parity with translator output).
-    if not include_details:
-        for it in items:
-            it.details = None
 
     return TransactionComparison(
         txs=items,
         signals=signals,
         lineage=[],
-        summary=summary,
         verdict=verdict,
     )
 
@@ -164,31 +145,33 @@ def patch_compare(monkeypatch):
         ctx,
         currency,
         tx_hashes,
-        include_details,
         include_characteristics,
+        include_details,
         include_signals,
-        include_analysis,
+        include_lineage,
+        include_verdict,
     ):
         state["calls"].append(
             {
                 "currency": currency,
                 "tx_hashes": list(tx_hashes),
-                "include_details": include_details,
                 "include_characteristics": include_characteristics,
+                "include_details": include_details,
                 "include_signals": include_signals,
-                "include_analysis": include_analysis,
+                "include_lineage": include_lineage,
+                "include_verdict": include_verdict,
             }
         )
-        if include_analysis and currency != "btc":
+        if currency != "btc":
             raise BadUserInputException(
-                f"/txs/compare fingerprinting analysis is BTC-only; "
-                f"'{currency}' is not supported."
+                f"/txs/compare is BTC-only; '{currency}' is not supported."
             )
         return _build_api_response(
-            include_signals=include_signals,
             include_characteristics=include_characteristics,
             include_details=include_details,
-            include_analysis=include_analysis,
+            include_signals=include_signals,
+            include_lineage=include_lineage,
+            include_verdict=include_verdict,
         )
 
     monkeypatch.setattr(
@@ -204,8 +187,9 @@ def test_compare_txs_happy_path(client, patch_compare):
 
     assert "txs" in result
     assert "signals" in result
-    assert "summary" in result
     assert "verdict" in result
+    # summary moved to /{currency}/subgraph/summary
+    assert "summary" not in result
 
     assert len(result["txs"]) == 2
     assert result["txs"][0]["tx_hash"] == HASH_A
@@ -225,6 +209,63 @@ def test_compare_txs_happy_path(client, patch_compare):
     assert call["tx_hashes"] == [HASH_A, HASH_B]
 
 
+def test_compare_txs_default_include_set(client, patch_compare):
+    """Omitting ``include`` yields the default set: characteristics, signals,
+    lineage, verdict; details excluded."""
+    get_json(client, f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}")
+    call = patch_compare["calls"][0]
+    assert call["include_characteristics"] is True
+    assert call["include_signals"] is True
+    assert call["include_lineage"] is True
+    assert call["include_verdict"] is True
+    assert call["include_details"] is False
+
+
+def test_compare_txs_include_all_adds_details(client, patch_compare):
+    get_json(client, f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}&include=all")
+    call = patch_compare["calls"][0]
+    assert call["include_characteristics"] is True
+    assert call["include_details"] is True
+    assert call["include_signals"] is True
+    assert call["include_lineage"] is True
+    assert call["include_verdict"] is True
+
+
+def test_compare_txs_include_subset_only(client, patch_compare):
+    """An explicit subset turns everything else off."""
+    path = (
+        f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
+        "&include=signals&include=verdict"
+    )
+    result = get_json(client, path)
+    call = patch_compare["calls"][0]
+    assert call["include_signals"] is True
+    assert call["include_verdict"] is True
+    assert call["include_characteristics"] is False
+    assert call["include_details"] is False
+    assert call["include_lineage"] is False
+
+    # per-tx characteristics absent (response_model_exclude_none); verdict present
+    for item in result["txs"]:
+        assert item.get("characteristics") is None
+        assert item.get("details") is None
+    assert "verdict" in result
+    assert len(result["signals"]) > 0
+
+
+def test_compare_txs_include_verdict_only_omits_signals(client, patch_compare):
+    path = f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}&include=verdict"
+    result = get_json(client, path)
+    assert result["signals"] == []
+    assert "verdict" in result
+
+
+def test_compare_txs_rejects_unknown_include_value(client, patch_compare):
+    path = f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}&include=bogus"
+    status, _ = raw_request(client, path)
+    assert status == 422
+
+
 def test_compare_txs_zero_hashes_returns_422(client, patch_compare):
     status, _ = raw_request(client, "/btc/txs/compare")
     assert status == 422
@@ -242,71 +283,22 @@ def test_compare_txs_too_many_hashes_returns_422(client, patch_compare):
 
 
 @pytest.mark.parametrize("currency", ["eth", "trx", "bch", "ltc", "zec"])
-def test_compare_txs_non_btc_analysis_returns_400(
-    client, patch_compare, currency
-):
+def test_compare_txs_non_btc_returns_400(client, patch_compare, currency):
     path = f"/{currency}/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
     status, body = raw_request(client, path)
     assert status == 400
     assert "BTC-only" in body
 
 
-def test_compare_txs_minimal_payload_excludes_optionals(client, patch_compare):
-    path = (
-        f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
-        "&include_details=false"
-        "&include_characteristics=false"
-        "&include_signals=false"
-    )
-    result = get_json(client, path)
-
-    # signals empty
-    assert result["signals"] == []
-
-    # per-tx characteristics and details are absent (response_model_exclude_none)
-    for item in result["txs"]:
-        assert item.get("characteristics") is None
-        assert item.get("details") is None
-
-    # summary + verdict still present
-    assert "summary" in result
-    assert "verdict" in result
-    assert result["verdict"]["relation"] in RELATIONS
-    assert result["verdict"]["cluster_verdict"] in CLUSTER_VERDICTS
-
-
-def test_compare_txs_summary_only_omits_verdict(client, patch_compare):
-    path = (
-        f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
-        "&include_analysis=false"
-    )
-    result = get_json(client, path)
-
-    # verdict and signals are absent in summary-only mode
-    assert "verdict" not in result
-    assert result["signals"] == []
-    # summary still present
-    assert "summary" in result
-    assert result["summary"]["tx_count"] == 2
-
-    # service received include_analysis=False; default elsewhere is True
-    call = patch_compare["calls"][0]
-    assert call["include_analysis"] is False
-
-
-def test_compare_txs_include_analysis_defaults_true(client, patch_compare):
-    path = f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
-    get_json(client, path)
-    assert patch_compare["calls"][0]["include_analysis"] is True
-
-
 def test_compare_txs_include_signals_does_not_change_verdict(client, patch_compare):
-    """include_signals only controls serialization, the verdict must
-    be identical regardless of whether signals are returned."""
+    """Dropping signals from the include list only controls serialization, the
+    verdict must be identical regardless of whether signals are returned."""
     base = f"/btc/txs/compare?tx_hash={HASH_A}&tx_hash={HASH_B}"
 
-    with_signals = get_json(client, base + "&include_signals=true")
-    without_signals = get_json(client, base + "&include_signals=false")
+    with_signals = get_json(
+        client, base + "&include=signals&include=verdict"
+    )
+    without_signals = get_json(client, base + "&include=verdict")
 
     # Non-empty vs. empty signal list
     assert len(with_signals["signals"]) > 0
@@ -323,12 +315,3 @@ def test_compare_txs_include_signals_does_not_change_verdict(client, patch_compa
         == without_signals["verdict"]["discriminator_hits"]
     )
     assert with_signals["verdict"]["notes"] == without_signals["verdict"]["notes"]
-    # Identity of the numeric values across the two flag settings (not pinned to specific values)
-    assert (
-        with_signals["verdict"]["confidence"]
-        == without_signals["verdict"]["confidence"]
-    )
-    assert (
-        with_signals["verdict"]["score_total"]
-        == without_signals["verdict"]["score_total"]
-    )

@@ -143,7 +143,6 @@ from graphsenselib.web.models import (
 )
 from graphsenselib.web.models.compare import (
     ComparisonSignal,
-    ComparisonSummary,
     ComparisonVerdict,
     LineageEdge,
     TransactionComparison,
@@ -758,7 +757,6 @@ def to_api_transaction_comparison(
         lineage=[
             LineageEdge.model_validate(e.model_dump()) for e in pydantic_cmp.lineage
         ],
-        summary=ComparisonSummary.model_validate(pydantic_cmp.summary.model_dump()),
         verdict=(
             ComparisonVerdict.model_validate(pydantic_cmp.verdict.model_dump())
             if pydantic_cmp.verdict is not None
