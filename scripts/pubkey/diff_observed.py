@@ -10,10 +10,15 @@ chain* still has multi-chain derived addresses and gets mislabelled
 seen signing on -- the same criterion the materialisation uses
 (``size(collect_set(network)) >= 2``).
 
+The legacy key is normalised to compressed (``_to_compressed``) before the join,
+because ``observed`` is compressed-only while legacy stores a mix of compressed
+and uncompressed blobs (joining raw would mislabel every uncompressed key absent).
+
 Buckets of missing_in_new:
-    absent_from_observed - pubkey never extracted on any chain (true gap)
-    single_source        - seen on exactly 1 network (EXPECTED: cross-chain-only)
-    cross_source (>=2)   - seen on >=2 networks but NOT materialised (REGRESSION)
+    single_source             - seen on exactly 1 network (EXPECTED: cross-chain-only)
+    absent_from_observed      - compressed key never extracted on any chain (true gap)
+    uncompressible_legacy_key - legacy blob can't be compressed (malformed/off-curve)
+    cross_source (>=2)        - seen on >=2 networks but NOT materialised (REGRESSION)
 
 Example (same image/mounts as diff.py):
 
@@ -83,23 +88,49 @@ def main() -> None:
             .select("address", "pubkey")
         )
 
+    # `observed` stores COMPRESSED keys only, but legacy `pubkey_by_address`
+    # stores a mix of compressed and uncompressed blobs. Joining on the raw blob
+    # would mislabel every uncompressed legacy key as absent. Normalise the
+    # legacy key to compressed first so the join compares like-for-like.
+    from pyspark.sql.types import BinaryType
+
+    from graphsenselib.pubkey.extract import _to_compressed
+
+    @F.udf(returnType=BinaryType())
+    def compress(pk):
+        if pk is None:
+            return None
+        return _to_compressed(bytes(pk))
+
     try:
         old = load(args.old_keyspace)
         new = load(args.new_keyspace).select("address")
-        # Legacy addresses absent from the new table, with their legacy pubkey.
-        missing = old.join(new, "address", "left_anti")
+        # Legacy addresses absent from the new table, with their legacy pubkey
+        # normalised to compressed form for the observed join.
+        missing = old.join(new, "address", "left_anti").withColumn(
+            "pubkey_c", compress(F.col("pubkey"))
+        )
 
-        # Real per-pubkey source-network span from observed.
+        # Real per-pubkey source-network span from observed (compressed keys).
         observed = spark.read.format("delta").load(f"{base}/observed")
         spans = observed.groupBy("pubkey").agg(
             F.size(F.collect_set("network")).alias("n_networks")
         )
 
+        joined = missing.join(spans, missing["pubkey_c"] == spans["pubkey"], "left")
         bucketed = (
-            missing.join(spans, "pubkey", "left")
+            joined.select(
+                missing["address"].alias("address"),
+                missing["pubkey"].alias("pubkey"),
+                F.col("pubkey_c"),
+                F.col("n_networks"),
+            )
             .withColumn(
                 "miss_bucket",
-                F.when(F.col("n_networks").isNull(), F.lit("absent_from_observed"))
+                # legacy blob that can't be compressed at all (malformed/off-curve)
+                # could never be in observed; report it apart from real gaps.
+                F.when(F.col("pubkey_c").isNull(), F.lit("uncompressible_legacy_key"))
+                .when(F.col("n_networks").isNull(), F.lit("absent_from_observed"))
                 .when(F.col("n_networks") >= 2, F.lit("cross_source_REGRESSION"))
                 .otherwise(F.lit("single_source_expected")),
             )
@@ -107,6 +138,7 @@ def main() -> None:
         )
 
         print("\n=== missing_in_new by REAL observed source-network count ===")
+        print("    (legacy key normalised to compressed before the observed join)")
         counts = {
             r["miss_bucket"]: r["count"]
             for r in bucketed.groupBy("miss_bucket").count().collect()
@@ -116,9 +148,25 @@ def main() -> None:
         for b in (
             "single_source_expected",
             "absent_from_observed",
+            "uncompressible_legacy_key",
             "cross_source_REGRESSION",
         ):
             print(f"  {b:28s}: {counts.get(b, 0):,}")
+
+        # The buckets above count ADDRESSES, but legacy derives one pubkey to an
+        # address on every chain, so a single absent pubkey inflates the address
+        # count ~10x. Report the DISTINCT absent pubkeys to size the real gap.
+        if counts.get("absent_from_observed", 0):
+            distinct_absent = (
+                bucketed.filter(F.col("miss_bucket") == "absent_from_observed")
+                .select("pubkey_c")
+                .distinct()
+                .count()
+            )
+            print(
+                f"\n  absent_from_observed = {distinct_absent:,} DISTINCT pubkeys "
+                f"(across {counts['absent_from_observed']:,} derived addresses)"
+            )
 
         if counts.get("cross_source_REGRESSION", 0):
             print("\n--- examples: cross_source (>=2 networks, REAL regression) ---")
@@ -129,10 +177,12 @@ def main() -> None:
                 .show(truncate=80, vertical=False)
             )
         if counts.get("absent_from_observed", 0):
-            print("\n--- examples: absent_from_observed (never extracted) ---")
+            print(
+                "\n--- examples: absent_from_observed (compressed key never extracted) ---"
+            )
             (
                 bucketed.filter(F.col("miss_bucket") == "absent_from_observed")
-                .select("address", "pubkey")
+                .select("address", "pubkey", "pubkey_c")
                 .limit(args.examples)
                 .show(truncate=80, vertical=False)
             )

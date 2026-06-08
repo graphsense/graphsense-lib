@@ -465,9 +465,9 @@ def detect_and_materialise_cross_chain(
     else:
         to_write = cross_chain
 
-    # Persist once: we both materialise addresses to the sink and append to the
-    # local "materialised" set, and both need the same row set without
-    # recomputing the join.
+    # Persist once: the derived rows feed both the address sink and the set of
+    # pubkeys we mark materialised, and both need the same row set without
+    # recomputing the (expensive) derivation UDF.
     to_write = to_write.cache()
     count = to_write.count()
     if count == 0:
@@ -477,14 +477,32 @@ def detect_and_materialise_cross_chain(
     logger.info(f"Materialising {count} newly cross-chain pubkey(s).")
 
     derive_udf = _derive_addresses_udf(DERIVATION_CHAINS)
-    derived = to_write.select(
-        F.col("pubkey"),
-        F.explode(derive_udf(F.col("pubkey"))).alias("addr_struct"),
+    out_rows = (
+        to_write.select(
+            F.col("pubkey"),
+            F.explode(derive_udf(F.col("pubkey"))).alias("addr_struct"),
+        )
+        .select(
+            F.col("addr_struct.address").alias("address"),
+            F.col("pubkey").alias("pubkey"),
+        )
+        .cache()
     )
-    out_rows = derived.select(
-        F.col("addr_struct.address").alias("address"),
-        F.col("pubkey").alias("pubkey"),
-    )
+
+    # Only pubkeys that produced >=1 address count as "materialised". explode()
+    # already dropped keys whose derivation yields nothing (off-curve/special,
+    # e.g. the secp256k1 generator point), so they are absent from out_rows.
+    # Marking only the derived keys means an undrivable key is neither silently
+    # recorded as done nor lost: it surfaces in the warning below and is retried
+    # on the next detection pass.
+    materialised_pubkeys = out_rows.select("pubkey").distinct().cache()
+    derived_count = materialised_pubkeys.count()
+    if derived_count < count:
+        logger.warning(
+            f"{count - derived_count} of {count} cross-chain pubkey(s) produced no "
+            "derivable address (off-curve/special key); not marking them materialised."
+        )
+
     if sink_type == SINK_CASSANDRA:
         (
             out_rows.write.format("org.apache.spark.sql.cassandra")
@@ -497,12 +515,17 @@ def detect_and_materialise_cross_chain(
         out_rows.write.format("delta").mode("append").save(pubkey_by_address_path)
         logger.info(f"Wrote derived addresses to delta path {pubkey_by_address_path}")
 
-    # Append to the materialised set so later runs anti-join correctly.
+    # Append only successfully-derived pubkeys to the materialised set so later
+    # runs anti-join correctly (and keep retrying the undrivable ones).
     if DeltaTable.isDeltaTable(spark, materialised_path):
-        to_write.write.format("delta").mode("append").save(materialised_path)
+        materialised_pubkeys.write.format("delta").mode("append").save(
+            materialised_path
+        )
     else:
-        to_write.write.format("delta").save(materialised_path)
+        materialised_pubkeys.write.format("delta").save(materialised_path)
 
+    out_rows.unpersist()
+    materialised_pubkeys.unpersist()
     to_write.unpersist()
 
 

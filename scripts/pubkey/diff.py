@@ -166,22 +166,32 @@ def main() -> None:
         # read from the observed Delta table (size(collect_set(network)) is the
         # exact criterion the job materialises on). Inferring it from the address
         # prefix overcounts, because every pubkey is derived to all chains.
-        # NB: a legacy pubkey stored in a different encoding than observed (e.g.
-        # the uncompressed form behind the `mismatch` bucket) won't join and so
-        # lands in `missing_absent` — a small expected residue, not a real gap.
+        # `observed` is compressed-only but legacy stores a mix of compressed and
+        # uncompressed blobs, so normalise the legacy key to compressed before the
+        # join (else every uncompressed legacy key falsely lands in missing_absent).
         if missing and args.sink_path:
+            from pyspark.sql.types import BinaryType
+
+            from graphsenselib.pubkey.extract import _to_compressed
+
+            @F.udf(returnType=BinaryType())
+            def _compress(pk):
+                return _to_compressed(bytes(pk)) if pk is not None else None
+
             base = args.sink_path.rstrip("/").replace("s3://", "s3a://")
             observed = spark.read.format("delta").load(f"{base}/observed")
             spans = observed.groupBy("pubkey").agg(
                 F.size(F.collect_set("network")).alias("n_networks")
             )
+            miss = joined.filter(F.col("bucket") == "missing_in_new").select(
+                "address", _compress(F.col("pubkey_old")).alias("pubkey")
+            )
             missing_bucketed = (
-                joined.filter(F.col("bucket") == "missing_in_new")
-                .select("address", F.col("pubkey_old").alias("pubkey"))
-                .join(spans, "pubkey", "left")
+                miss.join(spans, "pubkey", "left")
                 .withColumn(
                     "miss_bucket",
-                    F.when(F.col("n_networks").isNull(), F.lit("missing_absent"))
+                    F.when(F.col("pubkey").isNull(), F.lit("missing_uncompressible"))
+                    .when(F.col("n_networks").isNull(), F.lit("missing_absent"))
                     .when(F.col("n_networks") >= 2, F.lit("missing_cross_source"))
                     .otherwise(F.lit("missing_single_source")),
                 )
@@ -199,6 +209,10 @@ def main() -> None:
             print(
                 "    absent_from_observed (extraction gap)     : "
                 f"{mb.get('missing_absent', 0):,}"
+            )
+            print(
+                "    uncompressible legacy key (malformed)     : "
+                f"{mb.get('missing_uncompressible', 0):,}"
             )
             print(
                 "    cross-source  (REGRESSION, investigate)   : "
