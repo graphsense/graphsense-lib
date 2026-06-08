@@ -94,6 +94,7 @@ __all__ = [
     "Stats",
     "SubgraphSummary",
     "SubgraphSummaryRequest",
+    "SubgraphTxSummary",
     "Tag",
     "TagCloudEntry",
     "TagSummary",
@@ -205,6 +206,7 @@ from graphsense.models.search_result_level6 import SearchResultLevel6 as SearchR
 from graphsense.models.stats import Stats as Stats
 from graphsense.models.subgraph_summary import SubgraphSummary as SubgraphSummary
 from graphsense.models.subgraph_summary_request import SubgraphSummaryRequest as SubgraphSummaryRequest
+from graphsense.models.subgraph_tx_summary import SubgraphTxSummary as SubgraphTxSummary
 from graphsense.models.tag import Tag as Tag
 from graphsense.models.tag_cloud_entry import TagCloudEntry as TagCloudEntry
 from graphsense.models.tag_summary import TagSummary as TagSummary

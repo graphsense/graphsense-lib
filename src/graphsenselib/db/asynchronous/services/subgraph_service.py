@@ -14,6 +14,7 @@ from typing import Optional, Union
 from graphsenselib.errors import BadUserInputException
 from graphsenselib.db.asynchronous.services.models import (
     SubgraphSummaryInternal,
+    SubgraphTxSummaryInternal,
     TxAccount,
     TxUtxo,
 )
@@ -33,7 +34,7 @@ def build_summary(
     currency: str,
     txs: list[Union[TxUtxo, TxAccount]],
     fiat_currency: str = "usd",
-) -> SubgraphSummaryInternal:
+) -> SubgraphTxSummaryInternal:
     """Aggregate stats over a set of txs, derived straight from the tx headers
     (value, fee, counts, height, timestamp). Needs nothing beyond the headers,
     so it can be built without fetching IO or running any analysis.
@@ -86,9 +87,8 @@ def build_summary(
                 f"txs had no {fiat_label} rate"
             )
 
-    return SubgraphSummaryInternal(
+    return SubgraphTxSummaryInternal(
         tx_count=len(txs),
-        currency=currency,
         total_value=total_value,
         total_value_fiat=total_value_fiat,
         fiat_currency=fiat,
@@ -183,4 +183,8 @@ async def summary(
             ]
         )
 
-    return build_summary(currency, summary_txs, fiat_currency)
+    return SubgraphSummaryInternal(
+        currency=currency,
+        txs=build_summary(currency, summary_txs, fiat_currency),
+        addresses=None,
+    )

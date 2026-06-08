@@ -47,6 +47,7 @@ from graphsenselib.web.models.compare import (
 from graphsenselib.web.models.subgraph import (
     SubgraphSummary,
     SubgraphSummaryRequest,
+    SubgraphTxSummary,
 )
 from graphsenselib.web.models.heuristics import (
     AddressOutput,
@@ -191,5 +192,6 @@ __all__ = [
     "TransactionComparison",
     # Subgraph
     "SubgraphSummary",
+    "SubgraphTxSummary",
     "SubgraphSummaryRequest",
 ]

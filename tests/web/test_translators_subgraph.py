@@ -1,13 +1,15 @@
 """Tests for the ``to_api_subgraph_summary`` translator."""
 
-from graphsenselib.db.asynchronous.services.models import SubgraphSummaryInternal
+from graphsenselib.db.asynchronous.services.models import (
+    SubgraphSummaryInternal,
+    SubgraphTxSummaryInternal,
+)
 from graphsenselib.web.translators import to_api_subgraph_summary
 
 
-def _make_internal() -> SubgraphSummaryInternal:
-    return SubgraphSummaryInternal(
+def _make_tx_summary(**overrides) -> SubgraphTxSummaryInternal:
+    fields = dict(
         tx_count=2,
-        currency="btc",
         total_value=2000,
         total_value_fiat=42.5,
         fiat_currency="usd",
@@ -20,31 +22,41 @@ def _make_internal() -> SubgraphSummaryInternal:
         timestamp_max=1_700_000_500,
         notes=["total_value_fiat is partial: 1 of 2 txs had no USD rate"],
     )
+    fields.update(overrides)
+    return SubgraphTxSummaryInternal(**fields)
+
+
+def _make_internal(**tx_overrides) -> SubgraphSummaryInternal:
+    return SubgraphSummaryInternal(
+        currency="btc",
+        txs=_make_tx_summary(**tx_overrides),
+        addresses=None,
+    )
 
 
 def test_to_api_subgraph_summary_round_trip():
     internal = _make_internal()
     api = to_api_subgraph_summary(internal)
 
-    assert api.tx_count == internal.tx_count
     assert api.currency == internal.currency
-    assert api.total_value == internal.total_value
-    assert api.total_value_fiat == internal.total_value_fiat
-    assert api.fiat_currency == internal.fiat_currency
-    assert api.total_fee == internal.total_fee
-    assert api.total_inputs == internal.total_inputs
-    assert api.total_outputs == internal.total_outputs
-    assert api.block_min == internal.block_min
-    assert api.block_max == internal.block_max
-    assert api.timestamp_min == internal.timestamp_min
-    assert api.timestamp_max == internal.timestamp_max
-    assert api.notes == internal.notes
+    assert api.addresses is None
+    t, it = api.txs, internal.txs
+    assert t.tx_count == it.tx_count
+    assert t.total_value == it.total_value
+    assert t.total_value_fiat == it.total_value_fiat
+    assert t.fiat_currency == it.fiat_currency
+    assert t.total_fee == it.total_fee
+    assert t.total_inputs == it.total_inputs
+    assert t.total_outputs == it.total_outputs
+    assert t.block_min == it.block_min
+    assert t.block_max == it.block_max
+    assert t.timestamp_min == it.timestamp_min
+    assert t.timestamp_max == it.timestamp_max
+    assert t.notes == it.notes
 
 
 def test_to_api_subgraph_summary_account_omits_io_counts():
-    internal = _make_internal().model_copy(
-        update={"total_inputs": None, "total_outputs": None}
-    )
+    internal = _make_internal(total_inputs=None, total_outputs=None)
     api = to_api_subgraph_summary(internal)
-    assert api.total_inputs is None
-    assert api.total_outputs is None
+    assert api.txs.total_inputs is None
+    assert api.txs.total_outputs is None

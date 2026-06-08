@@ -15,20 +15,28 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.subgraph_tx_summary import SubgraphTxSummary
+from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing import Optional, Set
 from typing_extensions import Self
 
-class SubgraphSummary(BaseModel):
+class SubgraphTxSummary(BaseModel):
     """
-    Aggregate stats over a subgraph, split by node type.  ``txs`` summarizes the transactions in the subgraph. ``addresses`` is reserved for a future per-address summary block and is omitted until address inputs are supported.
+    Aggregate stats over the transactions in a subgraph.  ``total_value`` and ``total_fee`` are in the chain's base unit (satoshi for UTXO, wei/sun for account chains); ``total_value`` sums native transfers only (token transfers carry no native-unit amount). ``total_value_fiat`` sums the fiat value (in ``fiat_currency``) across all transfers, including tokens, so it is comparable across assets. ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for account-model (ETH/TRX) summaries. ``notes`` flags caveats (e.g. a partial fiat total when some txs had no rate, or token transfers excluded from ``total_value``).
     """ # noqa: E501
-    currency: StrictStr
-    txs: SubgraphTxSummary
-    addresses: Optional[Any] = None
-    __properties: ClassVar[List[str]] = ["currency", "txs", "addresses"]
+    tx_count: StrictInt
+    total_value: StrictInt
+    total_value_fiat: Optional[Union[StrictFloat, StrictInt]] = None
+    fiat_currency: Optional[StrictStr] = 'usd'
+    total_fee: Optional[StrictInt] = None
+    total_inputs: Optional[StrictInt] = None
+    total_outputs: Optional[StrictInt] = None
+    block_min: StrictInt
+    block_max: StrictInt
+    timestamp_min: StrictInt
+    timestamp_max: StrictInt
+    notes: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["tx_count", "total_value", "total_value_fiat", "fiat_currency", "total_fee", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max", "notes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -48,7 +56,7 @@ class SubgraphSummary(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of SubgraphSummary from a JSON string"""
+        """Create an instance of SubgraphTxSummary from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -69,15 +77,12 @@ class SubgraphSummary(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of txs
-        if self.txs:
-            _dict['txs'] = self.txs.to_dict()
 
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of SubgraphSummary from a dict"""
+        """Create an instance of SubgraphTxSummary from a dict"""
         if obj is None:
             return None
 
@@ -85,9 +90,18 @@ class SubgraphSummary(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "currency": obj.get("currency"),
-            "txs": SubgraphTxSummary.from_dict(obj["txs"]) if obj.get("txs") is not None else None,
-            "addresses": obj.get("addresses")
+            "tx_count": obj.get("tx_count"),
+            "total_value": obj.get("total_value"),
+            "total_value_fiat": obj.get("total_value_fiat"),
+            "fiat_currency": obj.get("fiat_currency") if obj.get("fiat_currency") is not None else 'usd',
+            "total_fee": obj.get("total_fee"),
+            "total_inputs": obj.get("total_inputs"),
+            "total_outputs": obj.get("total_outputs"),
+            "block_min": obj.get("block_min"),
+            "block_max": obj.get("block_max"),
+            "timestamp_min": obj.get("timestamp_min"),
+            "timestamp_max": obj.get("timestamp_max"),
+            "notes": obj.get("notes")
         })
         return _obj
 

@@ -51,7 +51,6 @@ class TestBuildSummary:
         ]
         s = build_summary(CURRENCY, txs)
         assert s.tx_count == 2
-        assert s.currency == CURRENCY
         assert s.total_value == 1_380  # sum of total_output
         assert s.total_fee == 120  # (1000-900) + (500-480)
         assert s.total_inputs == 3
@@ -85,7 +84,6 @@ class TestBuildSummary:
         ]
         s = build_summary("eth", txs)
         assert s.tx_count == 2
-        assert s.currency == "eth"
         assert s.total_value == 3_000
         assert s.total_fee == 63
         assert s.total_inputs is None
@@ -235,11 +233,12 @@ class TestSubgraphSummary:
     async def test_utxo_header_only_fetch(self):
         svc, hashes = self._utxo_svc()
         s = await summary(svc, CURRENCY, hashes, [], tagstore_groups=[])
-        assert s.tx_count == 2
         assert s.currency == CURRENCY
-        assert s.total_value == 1_380
-        assert s.total_inputs == 3
-        assert s.total_outputs == 2
+        assert s.addresses is None  # reserved, not yet populated
+        assert s.txs.tx_count == 2
+        assert s.txs.total_value == 1_380
+        assert s.txs.total_inputs == 3
+        assert s.txs.total_outputs == 2
         # UTXO summary fetches headers only: no IO, no heuristics.
         assert svc.get_tx_calls[0]["include_io"] is False
         assert svc.get_tx_calls[0]["include_heuristics"] == []
@@ -249,8 +248,8 @@ class TestSubgraphSummary:
     async def test_other_utxo_chains_allowed(self, currency):
         svc, hashes = self._utxo_svc()
         s = await summary(svc, currency, hashes, [], tagstore_groups=[])
-        assert s.tx_count == 2
         assert s.currency == currency
+        assert s.txs.tx_count == 2
 
     @pytest.mark.parametrize("currency", ["eth", "trx"])
     async def test_account_folds_token_fiat(self, currency):
@@ -268,10 +267,10 @@ class TestSubgraphSummary:
             flows_map={h0: [base0], h1: [base1, token1]},
         )
         s = await summary(svc, currency, [h0, h1], [], tagstore_groups=[])
-        assert s.total_value == 10**18  # native only; token leg excluded
-        assert s.total_value_fiat == 4000.0  # 3000 native + 1000 token
-        assert s.fiat_currency == "usd"  # default
-        assert any("token" in n.lower() for n in s.notes)
+        assert s.txs.total_value == 10**18  # native only; token leg excluded
+        assert s.txs.total_value_fiat == 4000.0  # 3000 native + 1000 token
+        assert s.txs.fiat_currency == "usd"  # default
+        assert any("token" in n.lower() for n in s.txs.notes)
         # Account path uses asset flows, not get_tx headers.
         assert svc.flows_calls == [h0, h1]
         assert svc.get_tx_calls == []
@@ -288,8 +287,8 @@ class TestSubgraphSummary:
         s = await summary(
             svc, "eth", [h0, h1], [], tagstore_groups=[], fiat_currency="eur"
         )
-        assert s.total_value_fiat == 6.0  # EUR, not the 9.0 USD sum
-        assert s.fiat_currency == "eur"
+        assert s.txs.total_value_fiat == 6.0  # EUR, not the 9.0 USD sum
+        assert s.txs.fiat_currency == "eur"
 
     async def test_addresses_rejected_for_now(self):
         svc, hashes = self._utxo_svc()
@@ -318,7 +317,7 @@ class TestSubgraphSummary:
         s = await summary(
             svc, CURRENCY, [hashes[0], hashes[1], hashes[0]], [], tagstore_groups=[]
         )
-        assert s.tx_count == 2
+        assert s.txs.tx_count == 2
         # Each distinct hash fetched once.
         assert len(svc.get_tx_calls) == 2
 

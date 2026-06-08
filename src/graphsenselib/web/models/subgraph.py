@@ -5,7 +5,7 @@ Internal counterparts live in db/asynchronous/services/models/__init__.py
 (``to_api_subgraph_summary``) maps internal -> API.
 """
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import Field
 
@@ -27,7 +27,7 @@ class SubgraphSummaryRequest(APIModel):
     fiat_currency: Literal["usd", "eur"] = "usd"
 
 
-class SubgraphSummary(APIModel):
+class SubgraphTxSummary(APIModel):
     """Aggregate stats over the transactions in a subgraph.
 
     ``total_value`` and ``total_fee`` are in the chain's base unit (satoshi
@@ -42,7 +42,6 @@ class SubgraphSummary(APIModel):
     """
 
     tx_count: int
-    currency: str
     total_value: int
     total_value_fiat: Optional[float] = None
     fiat_currency: str = "usd"
@@ -54,3 +53,16 @@ class SubgraphSummary(APIModel):
     timestamp_min: int
     timestamp_max: int
     notes: list[str] = Field(default_factory=list)
+
+
+class SubgraphSummary(APIModel):
+    """Aggregate stats over a subgraph, split by node type.
+
+    ``txs`` summarizes the transactions in the subgraph. ``addresses`` is
+    reserved for a future per-address summary block and is omitted until
+    address inputs are supported.
+    """
+
+    currency: str
+    txs: SubgraphTxSummary
+    addresses: Optional[Any] = None

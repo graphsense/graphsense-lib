@@ -245,6 +245,7 @@ Class | Method | HTTP request | Description
  - [Stats](docs/Stats.md)
  - [SubgraphSummary](docs/SubgraphSummary.md)
  - [SubgraphSummaryRequest](docs/SubgraphSummaryRequest.md)
+ - [SubgraphTxSummary](docs/SubgraphTxSummary.md)
  - [Tag](docs/Tag.md)
  - [TagCloudEntry](docs/TagCloudEntry.md)
  - [TagSummary](docs/TagSummary.md)

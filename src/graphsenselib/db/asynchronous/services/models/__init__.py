@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -514,9 +514,8 @@ class LineageEdgeInternal(BaseModel):
     in_index: Optional[int] = None
 
 
-class SubgraphSummaryInternal(BaseModel):
+class SubgraphTxSummaryInternal(BaseModel):
     tx_count: int
-    currency: str
     # total_value is in the queried currency's native base unit (satoshi for
     # UTXO, wei/sun for account chains) and sums native transfers only;
     # total_value_fiat sums the fiat value (in fiat_currency) across all
@@ -535,6 +534,14 @@ class SubgraphSummaryInternal(BaseModel):
     timestamp_min: int
     timestamp_max: int
     notes: List[str] = Field(default_factory=list)
+
+
+class SubgraphSummaryInternal(BaseModel):
+    currency: str
+    txs: SubgraphTxSummaryInternal
+    # Reserved for the future per-address summary block; None until address
+    # inputs are supported by /subgraph/summary.
+    addresses: Optional[Any] = None
 
 
 class ComparisonVerdictInternal(BaseModel):
