@@ -369,7 +369,12 @@ class Actor(object):
         # normal yaml syntax which is now converted to a json string
         # of directly as json string.
         if isinstance(self.contents.get("context", None), dict):
-            apply_to_dict_field(self.contents, "context", json.dumps, fail=True)
+            apply_to_dict_field(
+                self.contents,
+                "context",
+                lambda c: json.dumps(c, default=str),
+                fail=True,
+            )
 
     @staticmethod
     def from_contents(contents, actorpack):

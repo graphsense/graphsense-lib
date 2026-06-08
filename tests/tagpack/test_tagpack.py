@@ -162,6 +162,31 @@ def tagpack_context_obj(schema, taxonomies):
 
 
 @pytest.fixture
+def tagpack_context_date_obj(schema, taxonomies):
+    # A bare date scalar inside a YAML context block is parsed by PyYAML into a
+    # datetime.date, which json.dumps cannot serialize without a default handler.
+    return TagPack(
+        "http://example.com",
+        {
+            "title": "Test TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/my_addresses",
+            "currency": "BTC",
+            "lastmod": "2021-04-21",
+            "tags": [
+                {
+                    "label": "a",
+                    "address": "b",
+                    "context": {"valid_from": date(2022, 9, 23)},
+                }
+            ],
+        },
+        schema,
+        taxonomies,
+    )
+
+
+@pytest.fixture
 def tagpack_conf(schema, taxonomies):
     return TagPack(
         "http://example.com",
@@ -348,6 +373,14 @@ def test_validate_str_date(tagpack_str_date):
 
 def test_validate_context_obj(tagpack_context_obj):
     assert tagpack_context_obj.validate()
+
+
+def test_context_obj_with_date_is_serialized(tagpack_context_date_obj):
+    # Regression: a date inside a context dict used to raise
+    # "Object of type date is not JSON serializable" during Tag construction.
+    tag = tagpack_context_date_obj.tags[0]
+    context = json.loads(tag.contents["context"])
+    assert context["valid_from"] == "2022-09-23"
 
 
 def test_verify_addresses(tagpack):
