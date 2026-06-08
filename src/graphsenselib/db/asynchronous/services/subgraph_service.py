@@ -20,10 +20,11 @@ from graphsenselib.db.asynchronous.services.models import (
 from graphsenselib.utils.rest_utils import is_eth_like
 
 
-def _usd_fiat(values) -> Optional[float]:
-    """Pull the USD fiat amount off a Values object, or None if absent."""
+def _fiat(values, code: str) -> Optional[float]:
+    """Pull the fiat amount for ``code`` (e.g. "usd") off a Values object, or
+    None if that currency has no rate. ``code`` must be lower-case."""
     for fv in values.fiat_values:
-        if fv.code.lower() == "usd":
+        if fv.code.lower() == code:
             return fv.value
     return None
 
@@ -31,6 +32,7 @@ def _usd_fiat(values) -> Optional[float]:
 def build_summary(
     currency: str,
     txs: list[Union[TxUtxo, TxAccount]],
+    fiat_currency: str = "usd",
 ) -> SubgraphSummaryInternal:
     """Aggregate stats over a set of txs, derived straight from the tx headers
     (value, fee, counts, height, timestamp). Needs nothing beyond the headers,
@@ -40,10 +42,14 @@ def build_summary(
     unit (UTXO: summed outputs; account: summed native transfers). Account
     token transfers (``token_tx_id`` set) carry no native-unit amount, so
     they are excluded from ``total_value`` and that exclusion is recorded in
-    ``notes``. ``total_value_usd`` sums the USD fiat across every tx (native
-    and token) and so is comparable across assets; if some txs lack a USD
-    rate the available ones are summed and a note flags the partial total.
-    ``total_fee`` stays in the native unit (gas is always native)."""
+    ``notes``. ``total_value_fiat`` sums the ``fiat_currency`` value across
+    every tx (native and token) and so is comparable across assets; if some
+    txs lack a rate for that currency the available ones are summed and a note
+    flags the partial total. ``fiat_currency`` echoes which currency the fiat
+    total is in. ``total_fee`` stays in the native unit (gas is always
+    native)."""
+    fiat = fiat_currency.lower()
+    fiat_label = fiat.upper()
     notes: list[str] = []
     if is_eth_like(currency):
         native_txs = [t for t in txs if t.token_tx_id is None]
@@ -51,12 +57,12 @@ def build_summary(
         fees = [t.fee.value for t in txs if t.fee is not None]
         total_inputs = None
         total_outputs = None
-        usd_values = [_usd_fiat(t.value) for t in txs]
+        fiat_values = [_fiat(t.value, fiat) for t in txs]
         n_token = len(txs) - len(native_txs)
         if n_token:
             notes.append(
                 f"total_value covers native transfers only; {n_token} token "
-                "transfer(s) excluded (their value is in total_value_usd)"
+                "transfer(s) excluded (their value is in total_value_fiat)"
             )
     else:
         total_value = sum(t.total_output.value for t in txs)
@@ -65,26 +71,27 @@ def build_summary(
         ]
         total_inputs = sum(t.no_inputs for t in txs)
         total_outputs = sum(t.no_outputs for t in txs)
-        usd_values = [_usd_fiat(t.total_output) for t in txs]
+        fiat_values = [_fiat(t.total_output, fiat) for t in txs]
 
-    present = [v for v in usd_values if v is not None]
-    n_missing = len(usd_values) - len(present)
+    present = [v for v in fiat_values if v is not None]
+    n_missing = len(fiat_values) - len(present)
     if not present:
-        total_value_usd = None
-        notes.append("total_value_usd unavailable: no USD rate for any tx")
+        total_value_fiat = None
+        notes.append(f"total_value_fiat unavailable: no {fiat_label} rate for any tx")
     else:
-        total_value_usd = sum(present)
+        total_value_fiat = sum(present)
         if n_missing:
             notes.append(
-                f"total_value_usd is partial: {n_missing} of {len(usd_values)} "
-                "txs had no USD rate"
+                f"total_value_fiat is partial: {n_missing} of {len(fiat_values)} "
+                f"txs had no {fiat_label} rate"
             )
 
     return SubgraphSummaryInternal(
         tx_count=len(txs),
         currency=currency,
         total_value=total_value,
-        total_value_usd=total_value_usd,
+        total_value_fiat=total_value_fiat,
+        fiat_currency=fiat,
         total_fee=sum(fees) if fees else None,
         total_inputs=total_inputs,
         total_outputs=total_outputs,
@@ -107,13 +114,15 @@ async def summary(
     txs: list[str],
     addresses: list[str],
     tagstore_groups: list[str],
+    fiat_currency: str = "usd",
 ) -> SubgraphSummaryInternal:
     """Aggregate stats over the set of transactions ``txs``.
 
     ``addresses`` is reserved for a future extension; a non-empty list is
     rejected for now rather than silently ignored, so the field name is
     locked in the API contract. The node set (txs + addresses) must hold at
-    least 2 and at most 100 distinct nodes.
+    least 2 and at most 100 distinct nodes. ``fiat_currency`` selects the
+    currency for ``total_value_fiat`` (default USD).
     """
     if addresses:
         raise BadUserInputException(
@@ -136,9 +145,9 @@ async def summary(
 
     if is_eth_like(currency):
         # Account chains: ``get_tx`` returns only the base/native transaction,
-        # so its token-transfer legs (and their USD) would be invisible to
+        # so its token-transfer legs (and their fiat) would be invisible to
         # ``build_summary``. Fetch the full asset-flow set per hash (base tx +
-        # token transfers) so token USD is folded into ``total_value_usd``.
+        # token transfers) so token fiat is folded into ``total_value_fiat``.
         flow_lists = await asyncio.gather(
             *[
                 txs_service.get_asset_flows_within_tx(
@@ -174,4 +183,4 @@ async def summary(
             ]
         )
 
-    return build_summary(currency, summary_txs)
+    return build_summary(currency, summary_txs, fiat_currency)

@@ -9,7 +9,8 @@ def _make_internal() -> SubgraphSummaryInternal:
         tx_count=2,
         currency="btc",
         total_value=2000,
-        total_value_usd=42.5,
+        total_value_fiat=42.5,
+        fiat_currency="usd",
         total_fee=150,
         total_inputs=2,
         total_outputs=2,
@@ -17,7 +18,7 @@ def _make_internal() -> SubgraphSummaryInternal:
         block_max=101,
         timestamp_min=1_700_000_000,
         timestamp_max=1_700_000_500,
-        notes=["total_value_usd is partial: 1 of 2 txs had no USD rate"],
+        notes=["total_value_fiat is partial: 1 of 2 txs had no USD rate"],
     )
 
 
@@ -28,7 +29,8 @@ def test_to_api_subgraph_summary_round_trip():
     assert api.tx_count == internal.tx_count
     assert api.currency == internal.currency
     assert api.total_value == internal.total_value
-    assert api.total_value_usd == internal.total_value_usd
+    assert api.total_value_fiat == internal.total_value_fiat
+    assert api.fiat_currency == internal.fiat_currency
     assert api.total_fee == internal.total_fee
     assert api.total_inputs == internal.total_inputs
     assert api.total_outputs == internal.total_outputs

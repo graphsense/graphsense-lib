@@ -15,18 +15,29 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
 class SubgraphSummaryRequest(BaseModel):
     """
-    Request body for ``POST /{currency}/subgraph/summary``.  The subgraph is defined by ``txs`` (transaction hashes). ``addresses`` is reserved for a future extension and must be empty for now; the node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes.
+    Request body for ``POST /{currency}/subgraph/summary``.  The subgraph is defined by ``txs`` (transaction hashes). ``addresses`` is reserved for a future extension and must be empty for now; the node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes. ``fiat_currency`` selects the currency for ``total_value_fiat`` (only the rates GraphSense stores, usd and eur, are available; default usd).
     """ # noqa: E501
     txs: Optional[List[StrictStr]] = None
     addresses: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["txs", "addresses"]
+    fiat_currency: Optional[StrictStr] = 'usd'
+    __properties: ClassVar[List[str]] = ["txs", "addresses", "fiat_currency"]
+
+    @field_validator('fiat_currency')
+    def fiat_currency_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        if value not in set(['usd', 'eur']):
+            raise ValueError("must be one of enum values ('usd', 'eur')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,7 +91,8 @@ class SubgraphSummaryRequest(BaseModel):
 
         _obj = cls.model_validate({
             "txs": obj.get("txs"),
-            "addresses": obj.get("addresses")
+            "addresses": obj.get("addresses"),
+            "fiat_currency": obj.get("fiat_currency") if obj.get("fiat_currency") is not None else 'usd'
         })
         return _obj
 

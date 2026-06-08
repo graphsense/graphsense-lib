@@ -19,8 +19,14 @@ from graphsenselib.db.asynchronous.services.models import (
 CURRENCY = "btc"
 
 
-def make_value(value: int, usd: float | None = None) -> Values:
-    fiat = [FiatValue(code="usd", value=usd)] if usd is not None else []
+def make_value(
+    value: int, usd: float | None = None, eur: float | None = None
+) -> Values:
+    fiat = []
+    if usd is not None:
+        fiat.append(FiatValue(code="usd", value=usd))
+    if eur is not None:
+        fiat.append(FiatValue(code="eur", value=eur))
     return Values(value=value, fiat_values=fiat)
 
 
@@ -82,6 +88,7 @@ def make_account_tx(
     tx_hash: str = "aa" * 32,
     value: int = 0,
     value_usd: float | None = None,
+    value_eur: float | None = None,
     fee: int | None = None,
     height: int = 100,
     timestamp: int = 1_700_000_000,
@@ -99,7 +106,7 @@ def make_account_tx(
         height=height,
         from_address="0xfrom",
         to_address="0xto",
-        value=make_value(value, usd=value_usd),
+        value=make_value(value, usd=value_usd, eur=value_eur),
         fee=make_value(fee) if fee is not None else None,
         token_tx_id=token_tx_id,
     )

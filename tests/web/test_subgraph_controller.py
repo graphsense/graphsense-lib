@@ -16,12 +16,13 @@ HASH_A = "aa11"
 HASH_B = "bb22"
 
 
-def _build_summary(currency: str) -> SubgraphSummary:
+def _build_summary(currency: str, fiat_currency: str = "usd") -> SubgraphSummary:
     return SubgraphSummary(
         tx_count=2,
         currency=currency,
         total_value=3500,
-        total_value_usd=42.5,
+        total_value_fiat=42.5,
+        fiat_currency=fiat_currency,
         total_fee=200,
         total_inputs=3,
         total_outputs=2,
@@ -37,9 +38,14 @@ def _build_summary(currency: str) -> SubgraphSummary:
 def patch_summary(monkeypatch):
     state = {"calls": []}
 
-    async def _fake_summary(ctx, currency, txs, addresses):
+    async def _fake_summary(ctx, currency, txs, addresses, fiat_currency="usd"):
         state["calls"].append(
-            {"currency": currency, "txs": list(txs), "addresses": list(addresses)}
+            {
+                "currency": currency,
+                "txs": list(txs),
+                "addresses": list(addresses),
+                "fiat_currency": fiat_currency,
+            }
         )
         if addresses:
             raise BadUserInputException(
@@ -49,7 +55,7 @@ def patch_summary(monkeypatch):
             raise BadUserInputException(
                 "/subgraph/summary needs at least 2 distinct nodes."
             )
-        return _build_summary(currency)
+        return _build_summary(currency, fiat_currency)
 
     monkeypatch.setattr(
         "graphsenselib.web.service.subgraph_service.summary",
@@ -66,11 +72,35 @@ def test_subgraph_summary_happy_path(client, patch_summary):
     assert result["currency"] == "btc"
     assert result["total_value"] == 3500
     assert result["total_inputs"] == 3
+    assert result["total_value_fiat"] == 42.5
+    # fiat_currency defaults to usd when omitted
+    assert result["fiat_currency"] == "usd"
 
     call = patch_summary["calls"][0]
     assert call["currency"] == "btc"
     assert call["txs"] == [HASH_A, HASH_B]
     assert call["addresses"] == []
+    assert call["fiat_currency"] == "usd"
+
+
+def test_subgraph_summary_fiat_currency_passed_through(client, patch_summary):
+    result = request_with_status(
+        client,
+        "/btc/subgraph/summary",
+        200,
+        body={"txs": [HASH_A, HASH_B], "fiat_currency": "eur"},
+    )
+    assert result["fiat_currency"] == "eur"
+    assert patch_summary["calls"][0]["fiat_currency"] == "eur"
+
+
+def test_subgraph_summary_invalid_fiat_currency_returns_422(client, patch_summary):
+    status, _ = raw_request(
+        client,
+        "/btc/subgraph/summary",
+        body={"txs": [HASH_A, HASH_B], "fiat_currency": "gbp"},
+    )
+    assert status == 422
 
 
 @pytest.mark.parametrize("currency", ["btc", "eth", "trx", "bch", "ltc", "zec"])

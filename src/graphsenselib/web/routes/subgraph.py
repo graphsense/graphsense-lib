@@ -52,5 +52,6 @@ async def subgraph_summary(
         currency=currency.lower(),
         txs=body.txs,
         addresses=body.addresses,
+        fiat_currency=body.fiat_currency,
     )
     return result

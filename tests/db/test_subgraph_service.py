@@ -104,9 +104,9 @@ class TestBuildSummary:
         assert s.total_value == 3_000
         assert s.total_fee is None
 
-    def test_total_value_usd_summed_across_native_and_token(self):
+    def test_total_value_fiat_summed_across_native_and_token(self):
         # Native ETH transfer + a USDT token transfer. total_value is the
-        # native-unit (wei) sum and excludes the token; total_value_usd sums
+        # native-unit (wei) sum and excludes the token; total_value_fiat sums
         # USD across both; a note records the excluded token transfer.
         txs = [
             make_account_tx(value=1_000, value_usd=2.5, height=10, timestamp=100),
@@ -121,37 +121,62 @@ class TestBuildSummary:
         ]
         s = build_summary("eth", txs)
         assert s.total_value == 1_000  # native transfer only
-        assert s.total_value_usd == 7.5  # both, in USD
+        assert s.total_value_fiat == 7.5  # both, in USD
+        assert s.fiat_currency == "usd"  # default
         assert s.tx_count == 2
         assert any("token transfer" in n for n in s.notes)
 
-    def test_total_value_usd_partial_is_summed_and_flagged(self):
+    def test_total_value_fiat_partial_is_summed_and_flagged(self):
         txs = [
             make_account_tx(value=1_000, value_usd=2.5),
             make_account_tx(value=2_000, value_usd=None),  # no rate at height
         ]
         s = build_summary("eth", txs)
-        assert s.total_value_usd == 2.5  # only the tx with a rate
+        assert s.total_value_fiat == 2.5  # only the tx with a rate
         assert any("partial" in n for n in s.notes)
 
-    def test_total_value_usd_none_when_no_rates(self):
+    def test_total_value_fiat_none_when_no_rates(self):
         txs = [
             make_account_tx(value=1_000, value_usd=None),
             make_account_tx(value=2_000, value_usd=None),
         ]
         s = build_summary("eth", txs)
-        assert s.total_value_usd is None
+        assert s.total_value_fiat is None
         assert any("USD" in n for n in s.notes)
 
-    def test_utxo_total_value_usd_from_outputs(self):
+    def test_utxo_total_value_fiat_from_outputs(self):
         txs = [
             make_tx(total_input=1_000, total_output=900, total_output_usd=10.0),
             make_tx(total_input=500, total_output=480, total_output_usd=5.0),
         ]
         s = build_summary(CURRENCY, txs)
         assert s.total_value == 1_380
-        assert s.total_value_usd == 15.0
+        assert s.total_value_fiat == 15.0
+        assert s.fiat_currency == "usd"
         assert s.notes == []  # all rates present, no tokens to exclude
+
+    def test_fiat_currency_eur_selected(self):
+        # With fiat_currency="eur" the EUR rates are summed (not USD) and the
+        # echoed fiat_currency reflects the choice.
+        txs = [
+            make_account_tx(value=1_000, value_usd=2.5, value_eur=2.0),
+            make_account_tx(value=2_000, value_usd=5.0, value_eur=4.0),
+        ]
+        s = build_summary("eth", txs, "eur")
+        assert s.total_value_fiat == 6.0  # EUR sum, not the 7.5 USD sum
+        assert s.fiat_currency == "eur"
+
+    def test_fiat_currency_missing_rate_for_requested_currency(self):
+        # Txs carry only USD; requesting EUR yields no fiat total and an
+        # EUR-worded note.
+        txs = [
+            make_account_tx(value=1_000, value_usd=2.5),
+            make_account_tx(value=2_000, value_usd=5.0),
+        ]
+        s = build_summary("eth", txs, "eur")
+        assert s.total_value_fiat is None
+        assert s.fiat_currency == "eur"
+        assert any("EUR" in n for n in s.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +253,8 @@ class TestSubgraphSummary:
         assert s.currency == currency
 
     @pytest.mark.parametrize("currency", ["eth", "trx"])
-    async def test_account_folds_token_usd(self, currency):
-        # Account summary folds token-transfer USD into total_value_usd, not
+    async def test_account_folds_token_fiat(self, currency):
+        # Account summary folds token-transfer fiat into total_value_fiat, not
         # just the base native tx. h1 is a USDT transfer: its base tx moves 0
         # native, the value lives in the token leg.
         h0, h1 = "aa" * 32, "bb" * 32
@@ -244,11 +269,27 @@ class TestSubgraphSummary:
         )
         s = await summary(svc, currency, [h0, h1], [], tagstore_groups=[])
         assert s.total_value == 10**18  # native only; token leg excluded
-        assert s.total_value_usd == 4000.0  # 3000 native + 1000 token
+        assert s.total_value_fiat == 4000.0  # 3000 native + 1000 token
+        assert s.fiat_currency == "usd"  # default
         assert any("token" in n.lower() for n in s.notes)
         # Account path uses asset flows, not get_tx headers.
         assert svc.flows_calls == [h0, h1]
         assert svc.get_tx_calls == []
+
+    async def test_fiat_currency_threaded_through(self):
+        # The fiat_currency argument reaches build_summary: EUR rates are
+        # summed and echoed instead of USD.
+        h0, h1 = "aa" * 32, "bb" * 32
+        tx_map = {
+            h0: make_account_tx(tx_hash=h0, value=1_000, value_usd=3.0, value_eur=2.0),
+            h1: make_account_tx(tx_hash=h1, value=2_000, value_usd=6.0, value_eur=4.0),
+        }
+        svc = FakeTxsService(tx_map=tx_map)
+        s = await summary(
+            svc, "eth", [h0, h1], [], tagstore_groups=[], fiat_currency="eur"
+        )
+        assert s.total_value_fiat == 6.0  # EUR, not the 9.0 USD sum
+        assert s.fiat_currency == "eur"
 
     async def test_addresses_rejected_for_now(self):
         svc, hashes = self._utxo_svc()

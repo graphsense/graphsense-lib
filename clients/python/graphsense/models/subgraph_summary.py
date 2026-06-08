@@ -22,12 +22,13 @@ from typing_extensions import Self
 
 class SubgraphSummary(BaseModel):
     """
-    Aggregate stats over the transactions in a subgraph.  ``total_value`` and ``total_fee`` are in the chain's base unit (satoshi for UTXO, wei/sun for account chains); ``total_value`` sums native transfers only (token transfers carry no native-unit amount). ``total_value_usd`` sums the USD fiat value across all transfers, including tokens, so it is comparable across assets. ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for account-model (ETH/TRX) summaries. ``notes`` flags caveats (e.g. a partial USD total when some txs had no rate, or token transfers excluded from ``total_value``).
+    Aggregate stats over the transactions in a subgraph.  ``total_value`` and ``total_fee`` are in the chain's base unit (satoshi for UTXO, wei/sun for account chains); ``total_value`` sums native transfers only (token transfers carry no native-unit amount). ``total_value_fiat`` sums the fiat value (in ``fiat_currency``) across all transfers, including tokens, so it is comparable across assets. ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for account-model (ETH/TRX) summaries. ``notes`` flags caveats (e.g. a partial fiat total when some txs had no rate, or token transfers excluded from ``total_value``).
     """ # noqa: E501
     tx_count: StrictInt
     currency: StrictStr
     total_value: StrictInt
-    total_value_usd: Optional[Union[StrictFloat, StrictInt]] = None
+    total_value_fiat: Optional[Union[StrictFloat, StrictInt]] = None
+    fiat_currency: Optional[StrictStr] = 'usd'
     total_fee: Optional[StrictInt] = None
     total_inputs: Optional[StrictInt] = None
     total_outputs: Optional[StrictInt] = None
@@ -36,7 +37,7 @@ class SubgraphSummary(BaseModel):
     timestamp_min: StrictInt
     timestamp_max: StrictInt
     notes: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["tx_count", "currency", "total_value", "total_value_usd", "total_fee", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max", "notes"]
+    __properties: ClassVar[List[str]] = ["tx_count", "currency", "total_value", "total_value_fiat", "fiat_currency", "total_fee", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max", "notes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -93,7 +94,8 @@ class SubgraphSummary(BaseModel):
             "tx_count": obj.get("tx_count"),
             "currency": obj.get("currency"),
             "total_value": obj.get("total_value"),
-            "total_value_usd": obj.get("total_value_usd"),
+            "total_value_fiat": obj.get("total_value_fiat"),
+            "fiat_currency": obj.get("fiat_currency") if obj.get("fiat_currency") is not None else 'usd',
             "total_fee": obj.get("total_fee"),
             "total_inputs": obj.get("total_inputs"),
             "total_outputs": obj.get("total_outputs"),

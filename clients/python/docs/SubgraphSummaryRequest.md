@@ -1,6 +1,6 @@
 # SubgraphSummaryRequest
 
-Request body for ``POST /{currency}/subgraph/summary``.  The subgraph is defined by ``txs`` (transaction hashes). ``addresses`` is reserved for a future extension and must be empty for now; the node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes.
+Request body for ``POST /{currency}/subgraph/summary``.  The subgraph is defined by ``txs`` (transaction hashes). ``addresses`` is reserved for a future extension and must be empty for now; the node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes. ``fiat_currency`` selects the currency for ``total_value_fiat`` (only the rates GraphSense stores, usd and eur, are available; default usd).
 
 ## Properties
 
@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **txs** | **List[str]** |  | [optional] 
 **addresses** | **List[str]** |  | [optional] 
+**fiat_currency** | **str** |  | [optional] [default to 'usd']
 
 ## Example
 

@@ -519,11 +519,13 @@ class SubgraphSummaryInternal(BaseModel):
     currency: str
     # total_value is in the queried currency's native base unit (satoshi for
     # UTXO, wei/sun for account chains) and sums native transfers only;
-    # total_value_usd sums the USD fiat value across all transfers (incl.
-    # tokens). total_fee stays in the native unit. notes flags caveats
-    # (partial USD totals, excluded token transfers).
+    # total_value_fiat sums the fiat value (in fiat_currency) across all
+    # transfers (incl. tokens). total_fee stays in the native unit. notes
+    # flags caveats (partial fiat totals, excluded token transfers).
     total_value: int
-    total_value_usd: Optional[float] = None
+    total_value_fiat: Optional[float] = None
+    # Which fiat currency total_value_fiat is denominated in (e.g. "usd").
+    fiat_currency: str = "usd"
     total_fee: Optional[int] = None
     # io counts are UTXO-only; None for account-model (ETH/TRX) summaries.
     total_inputs: Optional[int] = None
