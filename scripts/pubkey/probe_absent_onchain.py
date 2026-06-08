@@ -165,31 +165,66 @@ def main() -> None:
         print(f"    chains scanned: {', '.join(args.chains)}")
         needles_bc = spark.sparkContext.broadcast(needles)
 
-        from pyspark.sql.types import ArrayType, StringType
+        from pyspark.sql.types import (
+            ArrayType,
+            StringType,
+            StructField,
+            StructType,
+        )
 
-        @F.udf(returnType=ArrayType(StringType()))
-        def matched_xcoords(input_scripts, witnesses, output_scripts):
-            """Return the X-coord hexes from the needle set found in this tx."""
-            found = []
+        hit_type = ArrayType(
+            StructType(
+                [
+                    StructField("xcoord", StringType()),
+                    StructField("field", StringType()),
+                    StructField("snippet", StringType()),
+                ]
+            )
+        )
+
+        @F.udf(returnType=hit_type)
+        def matched_hits(input_scripts, witnesses, output_scripts):
+            """Return (xcoord, field, snippet) for each needle found in this tx.
+
+            ``field`` is input/witness/output; ``snippet`` is the containing
+            blob windowed around the match so the script type is recognisable.
+            Blobs are binary; normalise each to lowercase hex before search.
+            """
             ndl = needles_bc.value
-            blobs = []
+            hits = []
+
+            def as_hex(b):
+                if b is None:
+                    return ""
+                if isinstance(b, (bytes, bytearray)):
+                    return bytes(b).hex()
+                return str(b).lower()
+
+            def scan(blob_hex, field):
+                if not blob_hex:
+                    return
+                for x in ndl:
+                    idx = blob_hex.find(x)
+                    if idx >= 0:
+                        # window: 8 bytes (16 hex) of context each side
+                        start = max(0, idx - 16)
+                        end = min(len(blob_hex), idx + len(x) + 16)
+                        snippet = (
+                            f"len={len(blob_hex) // 2}B ...{blob_hex[start:end]}..."
+                        )
+                        hits.append((x, field, snippet))
+
             for s in input_scripts or []:
-                if s:
-                    blobs.append(s)
+                scan(as_hex(s), "input")
             for w in witnesses or []:
                 for elem in w or []:
-                    if elem:
-                        blobs.append(elem)
+                    scan(as_hex(elem), "witness")
             for s in output_scripts or []:
-                if s:
-                    blobs.append(s)
-            joined = " ".join(blobs).lower()
-            for x in ndl:
-                if x in joined:
-                    found.append(x)
-            return found
+                scan(as_hex(s), "output")
+            return hits
 
         all_found: set[str] = set()
+        context_rows: list = []
         for chain in args.chains:
             path = source_dir(chain)
             tx = spark.read.format("delta").load(f"{path}/transaction")
@@ -197,27 +232,34 @@ def main() -> None:
             in_wit = F.transform(F.col("inputs"), lambda i: i["txinwitness"])
             out_scripts = F.transform(F.col("outputs"), lambda o: o["script_hex"])
             hits = (
-                tx.select(
-                    matched_xcoords(in_scripts, in_wit, out_scripts).alias("found")
-                )
-                .select(F.explode("found").alias("xcoord"))
-                .distinct()
+                tx.select(matched_hits(in_scripts, in_wit, out_scripts).alias("h"))
+                .select(F.explode("h").alias("hit"))
+                .select("hit.xcoord", "hit.field", "hit.snippet")
             )
-            chain_found = {r["xcoord"] for r in hits.collect()}
+            # One example context row per (xcoord, field) keeps the collect tiny.
+            examples = (
+                hits.groupBy("xcoord", "field")
+                .agg(F.first("snippet").alias("snippet"))
+                .collect()
+            )
+            chain_found = {r["xcoord"] for r in examples}
             print(
                 f"  {chain:5s}: {len(chain_found):,} of {len(needles):,} found on-chain"
             )
             all_found |= chain_found
+            for r in examples:
+                context_rows.append((chain, r["xcoord"], r["field"], r["snippet"]))
 
         on_chain = len(all_found)
         not_found = len(needles) - on_chain
         print("\n=== verdict ===")
         print(f"  on_chain_FOUND (PARSER GAP) : {on_chain:,}")
         print(f"  not_in_utxo (source gap)    : {not_found:,}")
-        if on_chain:
-            print("\n--- example X-coords found on-chain but never extracted ---")
-            for x in sorted(all_found)[: args.examples]:
-                print(f"    {x}")
+        if context_rows:
+            print("\n--- where found-on-chain keys appear (script context) ---")
+            for chain, x, field, snippet in context_rows:
+                print(f"  [{chain} {field:7s}] {x}")
+                print(f"      {snippet}")
     finally:
         spark.stop()
 
