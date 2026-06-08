@@ -38,12 +38,15 @@ from graphsenselib.web.models.general import (
 )
 from graphsenselib.web.models.compare import (
     ComparisonSignal,
-    ComparisonSummary,
     ComparisonVerdict,
     LineageEdge,
     TransactionComparison,
     TxCharacteristics,
     TxComparedItem,
+)
+from graphsenselib.web.models.subgraph import (
+    SubgraphSummary,
+    SubgraphSummaryRequest,
 )
 from graphsenselib.web.models.heuristics import (
     AddressOutput,
@@ -184,7 +187,9 @@ __all__ = [
     "TxComparedItem",
     "ComparisonSignal",
     "LineageEdge",
-    "ComparisonSummary",
     "ComparisonVerdict",
     "TransactionComparison",
+    # Subgraph
+    "SubgraphSummary",
+    "SubgraphSummaryRequest",
 ]

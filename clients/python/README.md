@@ -167,6 +167,7 @@ Class | Method | HTTP request | Description
 *GeneralApi* | [**get_statistics**](docs/GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
 *GeneralApi* | [**search**](docs/GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
 *RatesApi* | [**get_exchange_rates**](docs/RatesApi.md#get_exchange_rates) | **GET** /{currency}/rates/{height} | Get fiat exchange rates at a block height
+*SubgraphApi* | [**subgraph_summary**](docs/SubgraphApi.md#subgraph_summary) | **POST** /{currency}/subgraph/summary | Summarize a set of transactions
 *TagsApi* | [**get_actor**](docs/TagsApi.md#get_actor) | **GET** /tags/actors/{actor} | Get actor details by ID
 *TagsApi* | [**get_actor_tags**](docs/TagsApi.md#get_actor_tags) | **GET** /tags/actors/{actor}/tags | List tags associated with an actor
 *TagsApi* | [**list_address_tags**](docs/TagsApi.md#list_address_tags) | **GET** /tags | List address tags by label
@@ -242,6 +243,8 @@ Class | Method | HTTP request | Description
  - [SearchResultLevel5](docs/SearchResultLevel5.md)
  - [SearchResultLevel6](docs/SearchResultLevel6.md)
  - [Stats](docs/Stats.md)
+ - [SubgraphSummary](docs/SubgraphSummary.md)
+ - [SubgraphSummaryRequest](docs/SubgraphSummaryRequest.md)
  - [Tag](docs/Tag.md)
  - [TagCloudEntry](docs/TagCloudEntry.md)
  - [TagSummary](docs/TagSummary.md)

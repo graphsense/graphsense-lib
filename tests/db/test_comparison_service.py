@@ -29,7 +29,6 @@ from graphsenselib.db.asynchronous.services.comparison_service import (
     _unique_script_types,
     _utxo_parent_indexes_from_hashes,
     aggregate_verdict,
-    build_summary,
     compare_txs,
     compute_cluster_verdict,
     extract_characteristics,
@@ -57,9 +56,7 @@ from graphsenselib.db.asynchronous.services.heuristics import (
 )
 from graphsenselib.db.asynchronous.services.models import (
     ComparisonSignalInternal,
-    FiatValue,
     LineageEdgeInternal,
-    TxAccount,
     TxCharacteristicsInternal,
     TxRef,
     Txs,
@@ -72,100 +69,12 @@ from graphsenselib.errors import (
     BadUserInputException,
     TransactionNotFoundException,
 )
-
-
-CURRENCY = "btc"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def make_value(value: int, usd: float | None = None) -> Values:
-    fiat = [FiatValue(code="usd", value=usd)] if usd is not None else []
-    return Values(value=value, fiat_values=fiat)
-
-
-def make_txvalue(
-    address: str,
-    value: int,
-    has_witness: bool | None = None,
-    sequence: int | None = None,
-) -> TxValue:
-    return TxValue(
-        address=[address] if address else [],
-        value=make_value(value),
-        has_witness=has_witness,
-        sequence=sequence,
-    )
-
-
-def make_tx(
-    *,
-    tx_hash: str = "aa" * 32,
-    inputs: list[TxValue] | None = None,
-    outputs: list[TxValue] | None = None,
-    coinbase: bool = False,
-    height: int = 100,
-    timestamp: int = 1_700_000_000,
-    total_input: int | None = None,
-    total_output: int | None = None,
-    total_output_usd: float | None = None,
-    heuristics: UtxoHeuristics | None = None,
-    version: int | None = None,
-    lock_time: int | None = None,
-) -> TxUtxo:
-    inputs = inputs if inputs is not None else []
-    outputs = outputs if outputs is not None else []
-    if total_input is None:
-        total_input = sum(i.value.value for i in inputs)
-    if total_output is None:
-        total_output = sum(o.value.value for o in outputs)
-    return TxUtxo(
-        currency=CURRENCY,
-        tx_hash=tx_hash,
-        coinbase=coinbase,
-        height=height,
-        no_inputs=len(inputs),
-        no_outputs=len(outputs),
-        inputs=inputs,
-        outputs=outputs,
-        timestamp=timestamp,
-        total_input=make_value(total_input),
-        total_output=make_value(total_output, usd=total_output_usd),
-        heuristics=heuristics,
-        version=version,
-        lock_time=lock_time,
-    )
-
-
-def make_account_tx(
-    *,
-    tx_hash: str = "aa" * 32,
-    value: int = 0,
-    value_usd: float | None = None,
-    fee: int | None = None,
-    height: int = 100,
-    timestamp: int = 1_700_000_000,
-    token_tx_id: int | None = None,
-    asset: str = "eth",
-) -> TxAccount:
-    # asset is the TxAccount.currency: the network ticker for native transfers,
-    # the token ticker (e.g. "usdt") for ERC20 transfers (token_tx_id set).
-    return TxAccount(
-        currency=asset,
-        network="eth",
-        identifier=tx_hash,
-        tx_hash=tx_hash,
-        timestamp=timestamp,
-        height=height,
-        from_address="0xfrom",
-        to_address="0xto",
-        value=make_value(value, usd=value_usd),
-        fee=make_value(fee) if fee is not None else None,
-        token_tx_id=token_tx_id,
-    )
+from tests.db.helpers import (
+    CURRENCY,
+    make_tx,
+    make_txvalue,
+    make_value,
+)
 
 
 def make_chars(
@@ -1107,138 +1016,6 @@ class TestComputeClusterVerdict:
             make_chars(input_cluster_ids=[]),
         ]
         assert compute_cluster_verdict(chars) == "unknown"
-
-
-# ---------------------------------------------------------------------------
-# build_summary
-# ---------------------------------------------------------------------------
-
-
-class TestBuildSummary:
-    def test_utxo_aggregates_value_fee_inputs_outputs_block_timestamp(self):
-        # Summary is derived straight from the txs (no characteristics needed),
-        # so the summary-only path can build it from header data alone.
-        txs = [
-            make_tx(
-                inputs=[make_txvalue("a", 1)] * 2,
-                outputs=[make_txvalue("b", 1)] * 3,
-                total_input=1_000,
-                total_output=900,
-                height=100,
-                timestamp=1000,
-            ),
-            make_tx(
-                inputs=[make_txvalue("a", 1)] * 1,
-                outputs=[make_txvalue("b", 1)] * 1,
-                total_input=500,
-                total_output=480,
-                height=200,
-                timestamp=2000,
-            ),
-        ]
-        summary = build_summary(CURRENCY, txs)
-        assert summary.tx_count == 2
-        assert summary.currency == CURRENCY
-        assert summary.total_value == 1_380  # sum of total_output
-        assert summary.total_fee == 120  # (1000-900) + (500-480)
-        assert summary.total_inputs == 3
-        assert summary.total_outputs == 4
-        assert summary.block_min == 100
-        assert summary.block_max == 200
-        assert summary.timestamp_min == 1000
-        assert summary.timestamp_max == 2000
-
-    def test_utxo_coinbase_contributes_no_fee(self):
-        # A coinbase tx has no fee; with only coinbase txs total_fee is None.
-        txs = [
-            make_tx(
-                inputs=[make_txvalue("coinbase", 0)],
-                outputs=[make_txvalue("b", 1)],
-                coinbase=True,
-                total_input=0,
-                total_output=50_000,
-            ),
-        ]
-        summary = build_summary(CURRENCY, txs)
-        assert summary.total_value == 50_000
-        assert summary.total_fee is None
-
-    def test_account_aggregates_value_fee_without_io_counts(self):
-        # Account txs are flat from->to value transfers; there is no
-        # input/output decomposition, so io counts are None.
-        txs = [
-            make_account_tx(value=1_000, fee=21, height=10, timestamp=100),
-            make_account_tx(value=2_000, fee=42, height=20, timestamp=200),
-        ]
-        summary = build_summary("eth", txs)
-        assert summary.tx_count == 2
-        assert summary.currency == "eth"
-        assert summary.total_value == 3_000
-        assert summary.total_fee == 63
-        assert summary.total_inputs is None
-        assert summary.total_outputs is None
-        assert summary.block_min == 10
-        assert summary.block_max == 20
-        assert summary.timestamp_min == 100
-        assert summary.timestamp_max == 200
-
-    def test_account_fee_none_when_unavailable(self):
-        txs = [
-            make_account_tx(value=1_000, fee=None),
-            make_account_tx(value=2_000, fee=None),
-        ]
-        summary = build_summary("eth", txs)
-        assert summary.total_value == 3_000
-        assert summary.total_fee is None
-
-    def test_total_value_usd_summed_across_native_and_token(self):
-        # Native ETH transfer + a USDT token transfer. total_value is the
-        # native-unit (wei) sum and excludes the token; total_value_usd sums
-        # USD across both; a note records the excluded token transfer.
-        txs = [
-            make_account_tx(value=1_000, value_usd=2.5, height=10, timestamp=100),
-            make_account_tx(
-                value=5_000_000,
-                value_usd=5.0,
-                token_tx_id=0,
-                asset="usdt",
-                height=11,
-                timestamp=110,
-            ),
-        ]
-        summary = build_summary("eth", txs)
-        assert summary.total_value == 1_000  # native transfer only
-        assert summary.total_value_usd == 7.5  # both, in USD
-        assert summary.tx_count == 2
-        assert any("token transfer" in n for n in summary.notes)
-
-    def test_total_value_usd_partial_is_summed_and_flagged(self):
-        txs = [
-            make_account_tx(value=1_000, value_usd=2.5),
-            make_account_tx(value=2_000, value_usd=None),  # no rate at height
-        ]
-        summary = build_summary("eth", txs)
-        assert summary.total_value_usd == 2.5  # only the tx with a rate
-        assert any("partial" in n for n in summary.notes)
-
-    def test_total_value_usd_none_when_no_rates(self):
-        txs = [
-            make_account_tx(value=1_000, value_usd=None),
-            make_account_tx(value=2_000, value_usd=None),
-        ]
-        summary = build_summary("eth", txs)
-        assert summary.total_value_usd is None
-        assert any("USD" in n for n in summary.notes)
-
-    def test_utxo_total_value_usd_from_outputs(self):
-        txs = [
-            make_tx(total_input=1_000, total_output=900, total_output_usd=10.0),
-            make_tx(total_input=500, total_output=480, total_output_usd=5.0),
-        ]
-        summary = build_summary(CURRENCY, txs)
-        assert summary.total_value == 1_380
-        assert summary.total_value_usd == 15.0
-        assert summary.notes == []  # all rates present, no tokens to exclude
 
 
 # ---------------------------------------------------------------------------

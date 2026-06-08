@@ -55,6 +55,7 @@ from graphsenselib.web.routes import (
     entities,
     general,
     rates,
+    subgraph,
     tags,
     tokens,
     txs,
@@ -860,6 +861,7 @@ def _register_routers(app: FastAPI):
         tags=["entities"],
     )
     app.include_router(txs.router, prefix="/{currency}", tags=["txs"])
+    app.include_router(subgraph.router, prefix="/{currency}", tags=["subgraph"])
     app.include_router(rates.router, prefix="/{currency}", tags=["rates"])
     app.include_router(tokens.router, prefix="/{currency}", tags=["tokens"])
     app.include_router(bulk.router, prefix="/{currency}", tags=["bulk"])

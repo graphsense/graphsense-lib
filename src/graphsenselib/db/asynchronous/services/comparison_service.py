@@ -9,7 +9,6 @@ from graphsenselib.errors import BadUserInputException
 from graphsenselib.db.asynchronous.services.common import cannonicalize_address
 from graphsenselib.db.asynchronous.services.models import (
     ComparisonSignalInternal,
-    ComparisonSummaryInternal,
     ComparisonVerdictInternal,
     LineageEdgeInternal,
     TransactionComparisonInternal,
@@ -20,7 +19,6 @@ from graphsenselib.db.asynchronous.services.models import (
     TxUtxo,
 )
 from graphsenselib.utils.bitcoin import is_rbf_signaled
-from graphsenselib.utils.rest_utils import is_eth_like
 
 
 # ---------------------------------------------------------------------------
@@ -629,83 +627,6 @@ def signal_shared_cluster(
 # ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
-
-
-def _usd_fiat(values) -> Optional[float]:
-    """Pull the USD fiat amount off a Values object, or None if absent."""
-    for fv in values.fiat_values:
-        if fv.code.lower() == "usd":
-            return fv.value
-    return None
-
-
-def build_summary(
-    currency: str,
-    txs: list[Union[TxUtxo, TxAccount]],
-) -> ComparisonSummaryInternal:
-    """Aggregate stats over the compared txs, derived straight from the tx
-    headers (value, fee, counts, height, timestamp). Needs nothing from the
-    characteristics, so the summary-only path can build it without fetching
-    IO or running the analysis.
-
-    Currency-aware. ``total_value`` is the queried currency's native base
-    unit (UTXO: summed outputs; account: summed native transfers). Account
-    token transfers (``token_tx_id`` set) carry no native-unit amount, so
-    they are excluded from ``total_value`` and that exclusion is recorded in
-    ``notes``. ``total_value_usd`` sums the USD fiat across every tx (native
-    and token) and so is comparable across assets; if some txs lack a USD
-    rate the available ones are summed and a note flags the partial total.
-    ``total_fee`` stays in the native unit (gas is always native)."""
-    notes: list[str] = []
-    if is_eth_like(currency):
-        native_txs = [t for t in txs if t.token_tx_id is None]
-        total_value = sum(t.value.value for t in native_txs)
-        fees = [t.fee.value for t in txs if t.fee is not None]
-        total_inputs = None
-        total_outputs = None
-        usd_values = [_usd_fiat(t.value) for t in txs]
-        n_token = len(txs) - len(native_txs)
-        if n_token:
-            notes.append(
-                f"total_value covers native transfers only; {n_token} token "
-                "transfer(s) excluded (their value is in total_value_usd)"
-            )
-    else:
-        total_value = sum(t.total_output.value for t in txs)
-        fees = [
-            t.total_input.value - t.total_output.value for t in txs if not t.coinbase
-        ]
-        total_inputs = sum(t.no_inputs for t in txs)
-        total_outputs = sum(t.no_outputs for t in txs)
-        usd_values = [_usd_fiat(t.total_output) for t in txs]
-
-    present = [v for v in usd_values if v is not None]
-    n_missing = len(usd_values) - len(present)
-    if not present:
-        total_value_usd = None
-        notes.append("total_value_usd unavailable: no USD rate for any tx")
-    else:
-        total_value_usd = sum(present)
-        if n_missing:
-            notes.append(
-                f"total_value_usd is partial: {n_missing} of {len(usd_values)} "
-                "txs had no USD rate"
-            )
-
-    return ComparisonSummaryInternal(
-        tx_count=len(txs),
-        currency=currency,
-        total_value=total_value,
-        total_value_usd=total_value_usd,
-        total_fee=sum(fees) if fees else None,
-        total_inputs=total_inputs,
-        total_outputs=total_outputs,
-        block_min=min(t.height for t in txs),
-        block_max=max(t.height for t in txs),
-        timestamp_min=min(t.timestamp for t in txs),
-        timestamp_max=max(t.timestamp for t in txs),
-        notes=notes,
-    )
 
 
 def compute_cluster_verdict(chars: list[TxCharacteristicsInternal]) -> str:

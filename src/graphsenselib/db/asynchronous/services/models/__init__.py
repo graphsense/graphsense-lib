@@ -514,7 +514,7 @@ class LineageEdgeInternal(BaseModel):
     in_index: Optional[int] = None
 
 
-class ComparisonSummaryInternal(BaseModel):
+class SubgraphSummaryInternal(BaseModel):
     tx_count: int
     currency: str
     # total_value is in the queried currency's native base unit (satoshi for

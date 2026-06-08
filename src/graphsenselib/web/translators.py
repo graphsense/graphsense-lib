@@ -100,6 +100,9 @@ from graphsenselib.db.asynchronous.services.models import Values as PydanticValu
 from graphsenselib.db.asynchronous.services.models import (
     TransactionComparisonInternal as PydanticTransactionComparison,
 )
+from graphsenselib.db.asynchronous.services.models import (
+    SubgraphSummaryInternal as PydanticSubgraphSummary,
+)
 
 from graphsenselib.web.models import (
     Actor,
@@ -149,6 +152,7 @@ from graphsenselib.web.models.compare import (
     TxCharacteristics,
     TxComparedItem,
 )
+from graphsenselib.web.models.subgraph import SubgraphSummary
 from graphsenselib.web.models.heuristics import (
     AddressOutput as ApiHeuristicAddressOutput,
 )
@@ -763,3 +767,11 @@ def to_api_transaction_comparison(
             else None
         ),
     )
+
+
+def to_api_subgraph_summary(
+    pydantic_summary: PydanticSubgraphSummary,
+) -> SubgraphSummary:
+    """Convert service-layer SubgraphSummaryInternal to API SubgraphSummary.
+    The two models share field names, so a flat round-trip is enough."""
+    return SubgraphSummary.model_validate(pydantic_summary.model_dump())
