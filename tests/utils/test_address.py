@@ -357,6 +357,9 @@ class TestAddressValidation:
             "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
             "36TcL12bmahTRrd3dDLRRLQBHYp64xUdng",
             "3GCsjdaiebDCBFAoiVv4odtP1dmruRBJCy",
+            # Taproot / P2TR (witness v1, bech32m) — must validate (BIP-350).
+            "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0",
+            "bc1sw50qgdz25j",  # witness v16, bech32m
         ]
 
         for addr in valid_btc:
@@ -374,6 +377,10 @@ class TestAddressValidation:
             "1InvalidAddress",
             "bc1invalid",
             "0x1234567890abcdef1234567890abcdef12345678",
+            # Taproot with a corrupted final symbol — bech32m checksum must fail.
+            "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj1",
+            # Witness v0 encoded with bech32m instead of bech32 (BIP-350 invalid).
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kemeawh",
         ]
 
         for addr in invalid_btc:
