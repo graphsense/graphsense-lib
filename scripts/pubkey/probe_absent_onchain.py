@@ -7,16 +7,22 @@ For each absent compressed pubkey we take its 32-byte X-coordinate
 (``pubkey_c[1:33]``) -- shared by the compressed (``02/03||X``) and uncompressed
 (``04||X||Y``) on-chain encodings -- and substring-search it (hex) against the
 raw ``transaction`` Delta of each UTXO chain: every input ``script_hex``, every
-``txinwitness`` element, and every output ``script_hex``. This bypasses the
-extractor's script parsing entirely, so it distinguishes two very different
-causes:
+``txinwitness`` element, and every (non-``OP_RETURN``) output ``script_hex``.
+This bypasses the extractor's script parsing entirely, so it distinguishes two
+very different causes:
 
-    on_chain_FOUND  - the X-coord appears in a script we ingested but the
-                      extractor never produced the key  -> PARSER GAP (a bug)
+    on_chain_FOUND  - the X-coord appears in a SIGNING-context script we ingested
+                      but the extractor never produced the key -> PARSER GAP (bug)
     not_in_utxo     - the X-coord appears in NO extracted UTXO script         ->
                       the key came from a source we don't extract (doge is a
                       DERIVATION_CHAIN but NOT an extraction source; or an
                       account-only key; or legacy had a wider source)
+
+``OP_RETURN`` outputs (``script_hex`` starting ``0x6a``) are deliberately
+EXCLUDED: they are a data carrier, not a signing context, so a key's bytes can
+sit there as application metadata (e.g. Babylon staking OP_RETURNs embed the
+staker's x-only pubkey) with no extractor ever able to derive it from a script.
+Matching those would spuriously inflate the PARSER-GAP count.
 
 Sampled (``--sample``) because it is a full scan of the raw transaction tables.
 Scope it to one chain with ``--chains`` to keep a single run cheap.
@@ -220,7 +226,16 @@ def main() -> None:
                 for elem in w or []:
                     scan(as_hex(elem), "witness")
             for s in output_scripts or []:
-                scan(as_hex(s), "output")
+                h = as_hex(s)
+                # OP_RETURN (0x6a) is a data carrier, not a signing context: a
+                # key's bytes can be embedded there as application metadata
+                # (e.g. Babylon staking OP_RETURNs carry the staker's x-only
+                # pubkey) without any extractor ever being able to derive it
+                # from a script. Counting those as a "parser gap" is spurious,
+                # so skip OP_RETURN outputs entirely.
+                if h.startswith("6a"):
+                    continue
+                scan(h, "output")
             return hits
 
         all_found: set[str] = set()
