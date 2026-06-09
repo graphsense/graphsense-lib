@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -64,17 +64,30 @@ class CassandraConfig(BaseSettings):
         default=False, description="Use legacy address transaction ordering"
     )
 
-    cross_chain_pubkey_mapping_keyspace: Optional[str] = Field(
+    cross_chain_pubkey_mapping_keyspace: Optional[Union[str, List[str]]] = Field(
         default="pubkey",
         description=(
-            "Keyspace the REST API READS cross-chain pubkey→address mappings "
+            "Keyspace(s) the REST API READS cross-chain pubkey→address mappings "
             "from. Defaults to the legacy 'pubkey' keyspace. The pubkey-update "
             "job writes to a fresh keyspace by default (pubkey_v2); point this "
             "there once that data is validated, or set to null to disable the "
-            "lookup. The feature auto-enables only if this keyspace contains a "
-            "'pubkey_by_address' table."
+            "lookup. May also be a LIST of keyspaces (e.g. [pubkey_v2, pubkey]) "
+            "— the reader looks the address up in each and merges the derived "
+            "addresses, so the legacy keyspace can still contribute keys the new "
+            "pipeline cannot reproduce (e.g. doge-sourced). Only keyspaces that "
+            "actually contain a 'pubkey_by_address' table are used; the feature "
+            "auto-enables if at least one does."
         ),
     )
+
+    def get_cross_chain_pubkey_keyspaces(self) -> List[str]:
+        """Normalise cross_chain_pubkey_mapping_keyspace to a list of keyspaces."""
+        ks = self.cross_chain_pubkey_mapping_keyspace
+        if ks is None:
+            return []
+        if isinstance(ks, str):
+            return [ks]
+        return list(ks)
 
     ignore_traces_not_found_in_list_txs: bool = Field(
         default=True,

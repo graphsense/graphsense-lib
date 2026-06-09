@@ -616,6 +616,7 @@ class Cassandra:
         self.connect()
         self.parameters = NetworkParameters()
         self.get_cross_chain_pubkey_related_addresses_available = False
+        self.cross_chain_pubkey_keyspaces: List[str] = []
 
         for currency in config["currencies"]:
             if config["currencies"][currency] is None:
@@ -882,19 +883,19 @@ class Cassandra:
             x["table_name"] for x in result
         ]
 
-        pubkeyks = self.tconfig.cross_chain_pubkey_mapping_keyspace
-
-        if pubkeyks is None:
-            self.get_cross_chain_pubkey_related_addresses_available = False
-        else:
-            query = (
-                "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s ;"
-            )
+        # Keep only the configured pubkey keyspace(s) that actually hold a
+        # 'pubkey_by_address' table, so a missing/typo'd keyspace is skipped
+        # rather than failing every lookup. The reader merges across all of them.
+        self.cross_chain_pubkey_keyspaces = []
+        query = "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s ;"
+        for pubkeyks in self.tconfig.get_cross_chain_pubkey_keyspaces():
             result = self.session.execute(query, (pubkeyks,))
             tblnames = [x["table_name"] for x in result]
-            self.get_cross_chain_pubkey_related_addresses_available = (
-                "pubkey_by_address" in tblnames
-            )
+            if "pubkey_by_address" in tblnames:
+                self.cross_chain_pubkey_keyspaces.append(pubkeyks)
+        self.get_cross_chain_pubkey_related_addresses_available = (
+            len(self.cross_chain_pubkey_keyspaces) > 0
+        )
 
     def get_prefix_lengths(self, currency):
         if currency not in self.parameters:
@@ -3891,68 +3892,84 @@ class Cassandra:
     async def get_cross_chain_pubkey_related_addresses(
         self, address: str, currency: Optional[str] = None, only_existing: bool = True
     ) -> List[Any]:
-        keyspace = self.tconfig.cross_chain_pubkey_mapping_keyspace
-
         if currency is not None and currency not in self.parameters:
             raise NetworkNotFoundException(currency)
 
         active_networks = self.parameters.keys()
 
-        if (
-            keyspace is not None
-            and self.get_cross_chain_pubkey_related_addresses_available
-        ):
-            pubkey = one(
+        if not self.get_cross_chain_pubkey_related_addresses_available:
+            return []
+
+        # The queried address may be present in more than one configured pubkey
+        # keyspace (e.g. the new pubkey_v2 plus the legacy pubkey, which still
+        # holds keys the new pipeline cannot reproduce such as doge-sourced ones).
+        # Look it up in each and collect the distinct pubkey blobs.
+        keys = []
+        seen_keys = set()
+        for keyspace in self.cross_chain_pubkey_keyspaces:
+            row = one(
                 await self.execute_async_core(
                     f"SELECT pubkey FROM {keyspace}.pubkey_by_address WHERE address = ?",
                     {"address": address},
                 )
             )
+            if row is None or row["pubkey"] is None:
+                continue
+            key = row["pubkey"]
+            kb = bytes(key)
+            if kb in seen_keys:
+                continue
+            seen_keys.add(kb)
+            keys.append(key)
 
-            if pubkey is not None:
-                key = pubkey["pubkey"]
+        if not keys:
+            return []
 
-                addresses = convert_pubkey_to_addresses(
-                    key.hex(), currencies=active_networks
+        # Derive every pubkey to addresses and union the rows. Different
+        # encodings of the same key (legacy uncompressed vs new compressed)
+        # resolve to the same addresses, so dedupe on (currency, type, address).
+        result = []
+        seen_rows = set()
+        for key in keys:
+            addresses = convert_pubkey_to_addresses(
+                key.hex(), currencies=active_networks
+            )
+            for cur, addressesInC in addresses.items():
+                for addr_type, addr in addressesInC.items():
+                    dedup = (cur, addr_type, addr)
+                    if dedup in seen_rows:
+                        continue
+                    seen_rows.add(dedup)
+                    result.append(
+                        {
+                            "address": addr,
+                            "type": addr_type,
+                            "currency": cur,
+                            "pubkey": key,
+                        }
+                    )
+
+        async def try_get_address(currency, address):
+            try:
+                return await self.get_address(currency, address)
+            except AddressNotFoundException:
+                return None
+
+        if only_existing:
+            requests = [
+                try_get_address(
+                    x["currency"],
+                    cannonicalize_address(x["currency"], x["address"]),
                 )
+                for x in result
+            ]
+            addresses = await asyncio.gather(*requests)
 
-                result = []
-                for currency, addressesInC in addresses.items():
-                    for type, address in addressesInC.items():
-                        result.append(
-                            {
-                                "address": address,
-                                "type": type,
-                                "currency": currency,
-                                "pubkey": key,
-                            }
-                        )
-
-                async def try_get_address(currency, address):
-                    try:
-                        return await self.get_address(currency, address)
-                    except AddressNotFoundException:
-                        return None
-
-                if only_existing:
-                    requests = [
-                        try_get_address(
-                            x["currency"],
-                            cannonicalize_address(x["currency"], x["address"]),
-                        )
-                        for x in result
-                    ]
-                    addresses = await asyncio.gather(*requests)
-
-                    return [
-                        address
-                        for address, req in zip(result, addresses)
-                        if req is not None
-                    ]
-                else:
-                    return result
-
-        return []
+            return [
+                address for address, req in zip(result, addresses) if req is not None
+            ]
+        else:
+            return result
 
     def markup_values(self, currency, fiat_values):
         values = []

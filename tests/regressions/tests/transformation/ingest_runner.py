@@ -153,7 +153,7 @@ def run_transformation(
         "-v", f"{config_path}:/config.yaml:ro",
         "-e", "GRAPHSENSE_CONFIG_YAML=/config.yaml",
         image_name,
-        "graphsense-cli", "transformation", "run",
+        "graphsense-cli", "transformation", "delta-to-raw",
         "--local",
         "--create-schema",
         "-e", "test",

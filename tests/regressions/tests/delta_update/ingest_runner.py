@@ -157,7 +157,7 @@ def run_spark_transformation_to_raw(
     minio_access_key: str,
     minio_secret_key: str,
 ) -> None:
-    """Run ``graphsense-cli transformation run`` (Delta Lake -> Cassandra raw).
+    """Run ``graphsense-cli transformation delta-to-raw`` (Delta Lake -> Cassandra raw).
 
     Mirrors tests/transformation/ingest_runner.run_transformation but kept here
     so the delta_update suite is self-contained and can evolve independently.
@@ -190,7 +190,7 @@ def run_spark_transformation_to_raw(
         "-v", f"{config_path}:/config.yaml:ro",
         "-e", "GRAPHSENSE_CONFIG_YAML=/config.yaml",
         image_name,
-        "graphsense-cli", "transformation", "run",
+        "graphsense-cli", "transformation", "delta-to-raw",
         "--local",
         "--create-schema",
         "-e", "test",

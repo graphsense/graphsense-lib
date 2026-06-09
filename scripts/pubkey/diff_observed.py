@@ -77,7 +77,7 @@ def main() -> None:
         cassandra_username=env_config.username,
         cassandra_password=env_config.password,
         s3_credentials=s3_credentials,
-        spark_config=config.spark_config or {},
+        spark_config=config.get_spark_config(),
     )
 
     def load(keyspace: str):

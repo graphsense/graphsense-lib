@@ -402,7 +402,7 @@ class SidecarConfig(BaseModel):
 
 
 class FullTransformArgs(BaseModel):
-    """Arguments for the `transformation run-full-transform` command.
+    """Arguments for the `transformation raw-to-transformed` command.
 
     Drives the raw -> transformed ("full transform") graph computation. The
     command itself and its neutral options (env, currency, suffix, keyspaces,
@@ -580,7 +580,7 @@ class AppConfig(GoodConf):
         default=None,
         description=(
             "Arguments for the raw -> transformed full-transform command "
-            "(`transformation run-full-transform`). Spark properties themselves "
+            "(`transformation raw-to-transformed`). Spark properties themselves "
             "live in spark_config (selected per currency via spark_profile)."
         ),
     )

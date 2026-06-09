@@ -147,7 +147,7 @@ def main() -> None:
         cassandra_nodes=cassandra_nodes,
         cassandra_username=username,
         cassandra_password=password,
-        spark_config=config.spark_config or {},
+        spark_config=config.get_spark_config(),
     )
 
     classify_schema = StructType(

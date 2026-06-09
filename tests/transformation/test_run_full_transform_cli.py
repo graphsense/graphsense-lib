@@ -1,4 +1,4 @@
-"""Dry-run wiring test for `transformation run-full-transform`.
+"""Dry-run wiring test for `transformation raw-to-transformed`.
 
 Exercises the command end-to-end with the jar download stubbed out and no
 Cassandra/Spark contact (--dry-run prints the spark-submit command and creates
@@ -32,7 +32,7 @@ def test_run_full_transform_dry_run(monkeypatch):
         transformation_cli,
         [
             "transformation",
-            "run-full-transform",
+            "raw-to-transformed",
             "-e",
             "pytest",
             "-c",
@@ -74,7 +74,7 @@ def test_run_full_transform_resolves_latest_by_default(monkeypatch):
         transformation_cli,
         [
             "transformation",
-            "run-full-transform",
+            "raw-to-transformed",
             "-e",
             "pytest",
             "-c",
@@ -105,7 +105,7 @@ def test_run_full_transform_version_latest_keyword(monkeypatch):
         transformation_cli,
         [
             "transformation",
-            "run-full-transform",
+            "raw-to-transformed",
             "-e",
             "pytest",
             "-c",
@@ -130,7 +130,7 @@ def test_run_full_transform_requires_master(monkeypatch):
         transformation_cli,
         [
             "transformation",
-            "run-full-transform",
+            "raw-to-transformed",
             "-e",
             "pytest",
             "-c",
@@ -153,7 +153,7 @@ def test_run_full_transform_local_flag_sets_master(monkeypatch):
         transformation_cli,
         [
             "transformation",
-            "run-full-transform",
+            "raw-to-transformed",
             "-e",
             "pytest",
             "-c",

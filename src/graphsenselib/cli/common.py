@@ -57,6 +57,25 @@ def require_currency(required=True):
     return inner
 
 
+def spark_profile_option(function):
+    """Add --spark-profile to a command that resolves a Spark config.
+
+    Selects a named profile when spark_config is in the nested baseline+profiles
+    form; defaults to None, which resolves to the baseline profile (nested) or
+    the flat config as-is (legacy).
+    """
+    function = click.option(
+        "--spark-profile",
+        "spark_profile",
+        default=None,
+        help=(
+            "Named spark_config profile to use (nested baseline+profiles form). "
+            "Defaults to the baseline profile."
+        ),
+    )(function)
+    return function
+
+
 def out_file(required=True, append=False):
     def inner(function):
         function = click.option(

@@ -5,7 +5,7 @@ Cassandra raw keyspace data as direct Cassandra ingest.
 
 Two paths per currency:
 1. Path A (direct):  ``ingest from-node --sinks cassandra``
-2. Path B (via Delta): ``ingest from-node --sinks delta`` → ``transformation run``
+2. Path B (via Delta): ``ingest from-node --sinks delta`` → ``transformation delta-to-raw``
 
 Requires:
 - Docker (for MinIO, Cassandra testcontainers, and PySpark container)

@@ -345,26 +345,26 @@ a fresh dated transformed keyspace, resolves Spark properties from a
 
 ```bash
 # Show options
-graphsense-cli transformation run-full-transform --help
+graphsense-cli transformation raw-to-transformed --help
 
 # Run against a pinned release, creating a fresh dated transformed keyspace
-graphsense-cli transformation run-full-transform -e prod -c btc --version v26.06.0
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version v26.06.0
 
 # Use the latest stable release (also the default when no version is configured)
-graphsense-cli transformation run-full-transform -e prod -c btc --version latest
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version latest
 
 # Preview only: print the resolved Spark config + spark-submit command, no side effects
-graphsense-cli transformation run-full-transform -e prod -c btc --dry-run
+graphsense-cli transformation raw-to-transformed -e prod -c btc --dry-run
 
 # Run Spark locally for testing
-graphsense-cli transformation run-full-transform -e dev -c btc --local
+graphsense-cli transformation raw-to-transformed -e dev -c btc --local
 
 # Write into an existing transformed keyspace instead of a fresh dated one
-graphsense-cli transformation run-full-transform -e prod -c btc \
+graphsense-cli transformation raw-to-transformed -e prod -c btc \
     --target-keyspace btc_transformed
 
 # Pass extra args through to the graphsense-spark job after `--`
-graphsense-cli transformation run-full-transform -e prod -c btc -- --debug 1
+graphsense-cli transformation raw-to-transformed -e prod -c btc -- --debug 1
 ```
 
 Configured via a `full_transform_args` section in the config file:

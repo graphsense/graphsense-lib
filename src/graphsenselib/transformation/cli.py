@@ -5,7 +5,11 @@ import logging
 import click
 import pyspark  # noqa: F401 — trigger ImportError early if pyspark not installed
 
-from graphsenselib.cli.common import require_currency, require_environment
+from graphsenselib.cli.common import (
+    require_currency,
+    require_environment,
+    spark_profile_option,
+)
 from graphsenselib.schema import GraphsenseSchemas
 
 logger = logging.getLogger(__name__)
@@ -89,7 +93,10 @@ def _log_startup_banner(
     logger.info("\n" + "\n".join(lines))
 
 
-@transformation.command("run", short_help="Run Delta Lake → Cassandra transformation.")
+@transformation.command(
+    "delta-to-raw",
+    short_help="Load the Cassandra raw keyspace from Delta Lake (delta → raw).",
+)
 @require_environment()
 @require_currency()
 @click.option(
@@ -162,6 +169,7 @@ def _log_startup_banner(
         "window-local."
     ),
 )
+@spark_profile_option
 def run_transformation(
     env,
     currency,
@@ -174,6 +182,7 @@ def run_transformation(
     local,
     debug_write_audit,
     patch,
+    spark_profile,
 ):
     """Run PySpark transformation from Delta Lake to Cassandra raw keyspace.
 
@@ -182,6 +191,14 @@ def run_transformation(
     spark.pyspark.python in spark_config.
     \f
     """
+    # `run` is a deprecated alias for `delta-to-raw`; warn only on that name.
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.info_name == "run":
+        logger.warning(
+            "`transformation run` is deprecated and will be removed; "
+            "use `transformation delta-to-raw` instead."
+        )
+
     from graphsenselib.config import currency_to_schema_type, get_config
 
     config = get_config()
@@ -233,7 +250,7 @@ def run_transformation(
         )
 
     s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.get_spark_config()
+    spark_config = config.get_spark_config(spark_profile)
     spark_packages = config.get_spark_packages()
 
     # Schema creation runs BEFORE Spark (uses cassandra-driver, no Java needed)
@@ -548,6 +565,7 @@ def _log_pubkey_startup_banner(
         "or a standalone 'pubkey-detect') instead of once per chain."
     ),
 )
+@spark_profile_option
 def run_pubkey_update(
     env,
     currency,
@@ -562,6 +580,7 @@ def run_pubkey_update(
     auto_compact,
     pubkey_keyspace,
     skip_detect,
+    spark_profile,
 ):
     """Update cross-chain pubkey → address lookup for ``currency``.
 
@@ -636,7 +655,7 @@ def run_pubkey_update(
             )
 
     # Resolve source path from config if not overridden — same as
-    # `transformation run`.
+    # `transformation delta-to-raw`.
     if source_path is None:
         assert ks_config is not None  # guarded above: env must be set here
         ingest_cfg = ks_config.ingest_config
@@ -667,7 +686,7 @@ def run_pubkey_update(
         )
 
     s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.spark_config or {}
+    spark_config = config.get_spark_config(spark_profile)
 
     if create_schema:
         if sink_type != "cassandra":
@@ -790,8 +809,9 @@ def run_pubkey_update(
     is_flag=True,
     help="Create the Cassandra pubkey keyspace/table if it does not exist.",
 )
+@spark_profile_option
 def run_pubkey_load_cmd(
-    env, sink_path, s3_config_name, local, pubkey_keyspace, create_schema
+    env, sink_path, s3_config_name, local, pubkey_keyspace, create_schema, spark_profile
 ):
     """Load the cross-chain ``pubkey_by_address`` Delta table into Cassandra.
 
@@ -831,7 +851,7 @@ def run_pubkey_load_cmd(
             f"Available s3_configs: {', '.join(available) or 'none'}."
         )
     s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.spark_config or {}
+    spark_config = config.get_spark_config(spark_profile)
 
     if create_schema:
         logger.info(f"Creating Cassandra keyspace '{pubkey_keyspace}' if not exists...")
@@ -925,7 +945,8 @@ def _pubkey_last_compaction_time(sink_path, s3_credentials):
     is_flag=True,
     help="Run Spark in local mode.",
 )
-def run_pubkey_compact_command(env, sink_path, s3_config_name, local):
+@spark_profile_option
+def run_pubkey_compact_command(env, sink_path, s3_config_name, local, spark_profile):
     """Rewrite ``<sink-path>/observed`` as distinct (pubkey, network) and OPTIMIZE.
 
     ``pubkey-update`` appends to ``observed`` without deduplicating, so
@@ -963,7 +984,7 @@ def run_pubkey_compact_command(env, sink_path, s3_config_name, local):
         )
 
     s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.spark_config or {}
+    spark_config = config.get_spark_config(spark_profile)
 
     with create_lock(PUBKEY_KEYSPACE):
         run_pubkey_compact(
@@ -1021,8 +1042,16 @@ def run_pubkey_compact_command(env, sink_path, s3_config_name, local):
     is_flag=True,
     help="Create the Cassandra pubkey keyspace/table if it does not exist.",
 )
+@spark_profile_option
 def run_pubkey_detect_command(
-    env, sink_path, s3_config_name, local, sink_type, pubkey_keyspace, create_schema
+    env,
+    sink_path,
+    s3_config_name,
+    local,
+    sink_type,
+    pubkey_keyspace,
+    create_schema,
+    spark_profile,
 ):
     """Run cross-chain detection + materialisation once over ``<sink-path>``.
 
@@ -1073,7 +1102,7 @@ def run_pubkey_detect_command(
         )
 
     s3_credentials = config.get_s3_credentials(s3_config_name)
-    spark_config = config.spark_config or {}
+    spark_config = config.get_spark_config(spark_profile)
 
     if create_schema:
         if sink_type != "cassandra":
@@ -1117,8 +1146,8 @@ def _expected_transformed_ks(currency, suffix, no_date):
 
 
 @transformation.command(
-    "run-full-transform",
-    short_help="[ALPHA] Run the raw → transformed full transform (graphsense-spark job).",
+    "raw-to-transformed",
+    short_help="[ALPHA] Transform the Cassandra raw keyspace into a transformed keyspace (raw → transformed, graphsense-spark job).",
 )
 @require_environment()
 @require_currency()
@@ -1192,6 +1221,7 @@ def _expected_transformed_ks(currency, suffix, no_date):
     help="Print the spark-submit command and exit; creates no keyspace.",
 )
 @click.argument("extra_jar_args", nargs=-1, type=click.UNPROCESSED)
+@spark_profile_option
 def run_full_transform(
     env,
     currency,
@@ -1207,6 +1237,7 @@ def run_full_transform(
     local,
     dry_run,
     extra_jar_args,
+    spark_profile,
 ):
     """Run the raw → transformed full transform.
 
@@ -1216,12 +1247,12 @@ def run_full_transform(
     can be selected with `backend: pyspark` without changing how this is invoked.
 
     Extra args after `--` are passed through to the job, e.g.
-    `... run-full-transform -e prod -c btc -- --debug 1`.
+    `... raw-to-transformed -e prod -c btc -- --debug 1`.
 
     ALPHA: not yet validated in production; the interface may change.
     \f
     """
-    _warn_alpha("transformation run-full-transform")
+    _warn_alpha("transformation raw-to-transformed")
     from graphsenselib.config import get_config
     from graphsenselib.transformation.spark_jar import (
         apply_sidecar,
@@ -1271,7 +1302,10 @@ def run_full_transform(
     raw_keyspace = raw_keyspace_override or ks_config.raw_keyspace_name
 
     # 2. Spark properties from the per-currency profile + cassandra coordinates.
-    spark_props = dict(config.get_spark_config(fta.profile_for(currency)))
+    #    An explicit --spark-profile overrides the per-currency config default.
+    spark_props = dict(
+        config.get_spark_config(spark_profile or fta.profile_for(currency))
+    )
     if local:
         spark_props["spark.master"] = "local[*]"
     if "spark.master" not in spark_props:
@@ -1462,3 +1496,8 @@ def run_clustering(
         )
 
     logger.info("One-off clustering complete.")
+
+
+# Backwards-compatible deprecated alias: `delta-to-raw` was previously named
+# `run`. Keep the old name working (it is referenced by existing CI / scripts).
+transformation.add_command(run_transformation, name="run")
