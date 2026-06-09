@@ -191,14 +191,6 @@ def run_transformation(
     spark.pyspark.python in spark_config.
     \f
     """
-    # `run` is a deprecated alias for `delta-to-raw`; warn only on that name.
-    ctx = click.get_current_context(silent=True)
-    if ctx is not None and ctx.info_name == "run":
-        logger.warning(
-            "`transformation run` is deprecated and will be removed; "
-            "use `transformation delta-to-raw` instead."
-        )
-
     from graphsenselib.config import currency_to_schema_type, get_config
 
     config = get_config()
@@ -1496,8 +1488,3 @@ def run_clustering(
         )
 
     logger.info("One-off clustering complete.")
-
-
-# Backwards-compatible deprecated alias: `delta-to-raw` was previously named
-# `run`. Keep the old name working (it is referenced by existing CI / scripts).
-transformation.add_command(run_transformation, name="run")
