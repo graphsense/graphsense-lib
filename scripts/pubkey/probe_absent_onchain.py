@@ -82,6 +82,15 @@ def main() -> None:
         help="number of distinct absent pubkeys to probe (full-scan per chain)",
     )
     parser.add_argument("--examples", type=int, default=20)
+    parser.add_argument(
+        "--spark-profile",
+        default="pubkey",
+        help=(
+            "spark_config profile to use (nested baseline+profiles form); "
+            "defaults to 'pubkey'. Falls back to the default config if the "
+            "profile is absent or spark_config is flat. Pass '' for the default."
+        ),
+    )
     args = parser.parse_args()
 
     from pyspark.sql import functions as F
@@ -119,6 +128,20 @@ def main() -> None:
             path = sink_cfg.directory
         return path.rstrip("/").replace("s3://", "s3a://")
 
+    # Spark profile (default 'pubkey'); fall back to the default/baseline config
+    # when the profile is absent or spark_config is in flat (legacy) form.
+    if args.spark_profile:
+        try:
+            spark_config = config.get_spark_config(args.spark_profile)
+        except ValueError as exc:
+            print(
+                f"NOTE: spark profile {args.spark_profile!r} unavailable "
+                f"({exc}); using the default spark config."
+            )
+            spark_config = config.get_spark_config()
+    else:
+        spark_config = config.get_spark_config()
+
     spark = create_spark_session(
         app_name=f"pubkey-probe-absent-{args.env}",
         local=False,
@@ -126,7 +149,7 @@ def main() -> None:
         cassandra_username=env_config.username,
         cassandra_password=env_config.password,
         s3_credentials=s3_credentials,
-        spark_config=config.get_spark_config(),
+        spark_config=spark_config,
     )
 
     @F.udf(returnType=BinaryType())

@@ -119,6 +119,15 @@ def main() -> None:
         help="sample N pubkeys and report how many stored addresses are NOT "
         "reproducible by the new derivation (observed-script signal). 0=skip.",
     )
+    parser.add_argument(
+        "--spark-profile",
+        default="pubkey",
+        help=(
+            "spark_config profile to use (nested baseline+profiles form); "
+            "defaults to 'pubkey'. Falls back to the default config if the "
+            "profile is absent or spark_config is flat. Pass '' for the default."
+        ),
+    )
     args = parser.parse_args()
 
     from pyspark.sql import functions as F
@@ -141,13 +150,27 @@ def main() -> None:
     if not cassandra_nodes:
         raise SystemExit("Provide --cassandra-host or --env with a configured cluster.")
 
+    # Spark profile (default 'pubkey'); fall back to the default/baseline config
+    # when the profile is absent or spark_config is in flat (legacy) form.
+    if args.spark_profile:
+        try:
+            spark_config = config.get_spark_config(args.spark_profile)
+        except ValueError as exc:
+            print(
+                f"NOTE: spark profile {args.spark_profile!r} unavailable "
+                f"({exc}); using the default spark config."
+            )
+            spark_config = config.get_spark_config()
+    else:
+        spark_config = config.get_spark_config()
+
     spark = create_spark_session(
         app_name=f"pubkey-legacy-profile-{args.keyspace}",
         local=False,
         cassandra_nodes=cassandra_nodes,
         cassandra_username=username,
         cassandra_password=password,
-        spark_config=config.get_spark_config(),
+        spark_config=spark_config,
     )
 
     classify_schema = StructType(
