@@ -897,6 +897,22 @@ class Cassandra:
             len(self.cross_chain_pubkey_keyspaces) > 0
         )
 
+        # Log the resolved set once (this block runs per currency) so it is
+        # visible on a running service which pubkey keyspaces are actually used.
+        if self.logger and not getattr(self, "_cross_chain_pubkey_logged", False):
+            if self.cross_chain_pubkey_keyspaces:
+                self.logger.info(
+                    "cross-chain pubkey lookup active on keyspaces: %s",
+                    self.cross_chain_pubkey_keyspaces,
+                )
+            else:
+                self.logger.info(
+                    "cross-chain pubkey lookup disabled (no configured keyspace "
+                    "has a pubkey_by_address table; configured: %s)",
+                    self.tconfig.get_cross_chain_pubkey_keyspaces() or None,
+                )
+            self._cross_chain_pubkey_logged = True
+
     def get_prefix_lengths(self, currency):
         if currency not in self.parameters:
             raise NetworkNotFoundException(currency)
