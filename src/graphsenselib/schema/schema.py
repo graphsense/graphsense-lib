@@ -316,7 +316,17 @@ class GraphsenseSchemas:
                             try:
                                 db_ks.execute_raw_cql(change)
                             except InvalidRequest as e:
-                                if "already exists" in str(e):
+                                # Re-runnable migrations: skip a change that is
+                                # already applied. Cassandra has no idempotent
+                                # ``ADD IF NOT EXISTS`` for columns, so a re-run of
+                                # an ``ALTER TABLE ... ADD`` raises a column-
+                                # conflict (not "already exists") — treat both as
+                                # already-applied.
+                                msg = str(e)
+                                if (
+                                    "already exists" in msg
+                                    or "conflicts with an existing column" in msg
+                                ):
                                     logger.warning(
                                         f"Skipping already applied change : '{change}'"
                                     )
