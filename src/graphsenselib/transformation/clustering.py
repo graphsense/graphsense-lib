@@ -204,13 +204,15 @@ def multi_input_address_id_sets(tx_df, address_ids_df, end_block: Optional[int] 
     )
 
 
-def backfill_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
+def backfill_fresh_cluster_stats(
+    spark, transformed_keyspace: str, bucket_size: int
+) -> int:
     """(Re)compute ``fresh_cluster_stats`` from ``fresh_cluster_addresses``.
 
     Aggregates the membership reverse-index ``(cluster_id, address_id)`` into one
-    ``(cluster_id, size, min_address_id)`` row per cluster via the Spark
-    Cassandra connector (a distributed count+min, so no driver-side
-    materialization of the full mapping). Called as the final step of
+    ``(cluster_id_group, cluster_id, no_addresses, min_address_id)`` row per
+    cluster via the Spark Cassandra connector (a distributed count+min, so no
+    driver-side materialization of the full mapping). Called as the final step of
     :func:`run_clustering_spark`, so a one-off run — including a re-run to
     (re)populate stats for an already-clustered keyspace — writes them. The
     incremental delta clustering requires these rows to pick the larger survivor
@@ -224,14 +226,20 @@ def backfill_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
         .options(table="fresh_cluster_addresses", keyspace=transformed_keyspace)
         .load()
     )
-    stats = members.groupBy("cluster_id").agg(
-        F.count(F.lit(1)).cast("bigint").alias("size"),
-        F.min("address_id").alias("min_address_id"),
+    stats = (
+        members.groupBy("cluster_id")
+        .agg(
+            F.count(F.lit(1)).cast("bigint").alias("no_addresses"),
+            F.min("address_id").alias("min_address_id"),
+        )
+        .withColumn(
+            "cluster_id_group", F.floor(F.col("cluster_id") / bucket_size).cast("int")
+        )
     )
     stats.persist()
     n_clusters = stats.count()
     (
-        stats.select("cluster_id", "size", "min_address_id")
+        stats.select("cluster_id_group", "cluster_id", "no_addresses", "min_address_id")
         .write.format(cass_format)
         .options(table="fresh_cluster_stats", keyspace=transformed_keyspace)
         .mode("append")
@@ -298,11 +306,12 @@ def cluster_additive_stats(members_df, address_df):
     ``members_df`` = ``fresh_address_cluster`` (``address_id``, ``cluster_id``);
     ``address_df`` = ``address`` (``address_id``, ``total_received``,
     ``total_spent``, ``first_tx_id``, ``last_tx_id``).  Returns one row per
-    ``cluster_id`` with ``size``, ``min_address_id`` (the canonical id),
+    ``cluster_id`` with ``no_addresses``, ``min_address_id`` (the canonical id),
     ``first_tx_id`` (min), ``last_tx_id`` (max), ``total_received`` /
     ``total_spent`` (element-wise currency sums).
 
-    Left-joins ``address`` onto membership so ``size`` counts every member even
+    Left-joins ``address`` onto membership so ``no_addresses`` counts every member
+    even
     if its ``address`` row is missing (an orphan membership row), matching the
     membership-only count of :func:`backfill_fresh_cluster_stats`; such a member
     contributes nothing to the value/tx aggregates (its columns are null).
@@ -311,7 +320,7 @@ def cluster_additive_stats(members_df, address_df):
 
     joined = members_df.join(address_df, "address_id", "left")
     base = joined.groupBy("cluster_id").agg(
-        F.count(F.lit(1)).cast("bigint").alias("size"),
+        F.count(F.lit(1)).cast("bigint").alias("no_addresses"),
         F.min("address_id").cast("int").alias("min_address_id"),
         F.min("first_tx_id").cast("bigint").alias("first_tx_id"),
         F.max("last_tx_id").cast("bigint").alias("last_tx_id"),
@@ -427,15 +436,17 @@ def compute_fresh_cluster_stats(members_df, address_df, in_rel_df, out_rel_df):
     )
 
 
-def recompute_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
+def recompute_fresh_cluster_stats(
+    spark, transformed_keyspace: str, bucket_size: int
+) -> int:
     """Recompute the full ``fresh_cluster_stats`` from the address-level tables.
 
     Reads ``fresh_address_cluster`` (membership), ``address`` (per-address stats),
     and ``address_incoming/outgoing_relations`` via the Spark Cassandra connector,
     aggregates with :func:`compute_fresh_cluster_stats`, and writes every well-
     defined column back to ``fresh_cluster_stats`` (append/upsert; the caller
-    truncates first under the keyspace lock for a clean rebuild). ``size`` and
-    ``min_address_id`` are recomputed here too so the row is whole. Returns the
+    truncates first under the keyspace lock for a clean rebuild). ``no_addresses``
+    and ``min_address_id`` are recomputed here too so the row is whole. Returns the
     number of cluster rows written.
 
     Does NOT relabel ``fresh_address_cluster`` — membership is already written
@@ -443,6 +454,8 @@ def recompute_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
     stored ``cluster_id`` equals ``min_address_id``; this only refreshes the stat
     columns.
     """
+
+    from pyspark.sql import functions as F
 
     cass_format = "org.apache.spark.sql.cassandra"
 
@@ -464,20 +477,26 @@ def recompute_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
         "src_address_id", "dst_address_id", "no_transactions", "estimated_value"
     )
 
-    stats = compute_fresh_cluster_stats(members, address, in_rel, out_rel).select(
-        "cluster_id",
-        "size",
-        "min_address_id",
-        "no_incoming_txs",
-        "no_outgoing_txs",
-        "in_degree",
-        "out_degree",
-        "first_tx_id",
-        "last_tx_id",
-        "total_received",
-        "total_spent",
-        "total_received_adj",
-        "total_spent_adj",
+    stats = (
+        compute_fresh_cluster_stats(members, address, in_rel, out_rel)
+        .select(
+            "cluster_id",
+            "no_addresses",
+            "min_address_id",
+            "no_incoming_txs",
+            "no_outgoing_txs",
+            "in_degree",
+            "out_degree",
+            "first_tx_id",
+            "last_tx_id",
+            "total_received",
+            "total_spent",
+            "total_received_adj",
+            "total_spent_adj",
+        )
+        .withColumn(
+            "cluster_id_group", F.floor(F.col("cluster_id") / bucket_size).cast("int")
+        )
     )
     stats.persist()
     n_clusters = stats.count()
@@ -744,10 +763,16 @@ def _write_mapping_to_cassandra(
     skipped: int,
     write_chunk: int,
     skip_singletons: bool,
+    bucket_size: int,
 ):
     """PHASE 3: bulk-write the address→cluster mapping to
     ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in ``write_chunk``
     slices. Returns ``(write_secs, t_fa, t_fc, rows_written)``.
+
+    Both tables are partition-bucketed: ``fresh_address_cluster`` on
+    ``address_id_group`` and ``fresh_cluster_addresses`` on ``cluster_id_group``
+    (``floor(id / bucket_size)``), matching the legacy ``address`` / ``cluster``
+    tables.
 
     ``createDataFrame`` is fed int64 numpy for the Arrow fast path; uint32/int32
     miss it and fall back to a ~17x slower row-at-a-time path that OOMs the driver.
@@ -793,6 +818,14 @@ def _write_mapping_to_cassandra(
             spark.createDataFrame(pdf)
             .withColumn("address_id", F.col("address_id").cast("int"))
             .withColumn("cluster_id", F.col("cluster_id").cast("int"))
+            .withColumn(
+                "address_id_group",
+                F.floor(F.col("address_id") / bucket_size).cast("int"),
+            )
+            .withColumn(
+                "cluster_id_group",
+                F.floor(F.col("cluster_id") / bucket_size).cast("int"),
+            )
         )
         sdf.persist()
         slice_rows = sdf.count()  # build once so both writes read cache; timed here
@@ -800,12 +833,20 @@ def _write_mapping_to_cassandra(
         t_build += build_s
 
         f0 = time.perf_counter()
-        _write_slice(sdf, "fresh_address_cluster", ["address_id", "cluster_id"])
+        _write_slice(
+            sdf,
+            "fresh_address_cluster",
+            ["address_id_group", "address_id", "cluster_id"],
+        )
         fa_s = time.perf_counter() - f0
         t_fa += fa_s
 
         g0 = time.perf_counter()
-        _write_slice(sdf, "fresh_cluster_addresses", ["cluster_id", "address_id"])
+        _write_slice(
+            sdf,
+            "fresh_cluster_addresses",
+            ["cluster_id_group", "cluster_id", "address_id"],
+        )
         fc_s = time.perf_counter() - g0
         t_fc += fc_s
 
@@ -833,6 +874,7 @@ def run_clustering_spark(
     raw_keyspace: str,
     transformed_keyspace: str,
     max_address_id: int,
+    bucket_size: int,
     feed_batch_size: int = DEFAULT_FEED_BATCH_SIZE,
     write_chunk: int = DEFAULT_SPARK_WRITE_CHUNK,
     read_partitions: int = DEFAULT_READ_PARTITIONS,
@@ -862,7 +904,7 @@ def run_clustering_spark(
       * **bulk-writes** the resulting ``address_id -> cluster_id`` mapping back
         to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in
         ``write_chunk``-sized slices via the Spark Cassandra connector, then
-        aggregates ``fresh_cluster_stats`` (size + min_address_id per cluster)
+        aggregates ``fresh_cluster_stats`` (no_addresses + min_address_id per cluster)
         that the incremental delta clustering needs to elect a merge survivor.
 
     ``read_partitions`` sets the number of per-partition Arrow blobs streamed
@@ -942,14 +984,15 @@ def run_clustering_spark(
         skipped,
         write_chunk,
         skip_singletons,
+        bucket_size,
     )
 
-    # PHASE 4: cluster stats (size + min_address_id per cluster), aggregated from
-    # the just-written fresh_cluster_addresses (distributed count+min) rather than
-    # the driver-side mapping, to keep driver memory bound. Needed by the
+    # PHASE 4: cluster stats (no_addresses + min_address_id per cluster), aggregated
+    # from the just-written fresh_cluster_addresses (distributed count+min) rather
+    # than the driver-side mapping, to keep driver memory bound. Needed by the
     # incremental delta clustering to pick the larger survivor on a merge.
     stats_start = time.perf_counter()
-    n_stats = backfill_fresh_cluster_stats(spark, transformed_keyspace)
+    n_stats = backfill_fresh_cluster_stats(spark, transformed_keyspace, bucket_size)
     stats_secs = time.perf_counter() - stats_start
     logger.info(
         f"  [stats] fresh_cluster_stats: {n_stats:,} clusters in {stats_secs:.1f}s"

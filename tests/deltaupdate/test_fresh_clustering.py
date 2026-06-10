@@ -166,26 +166,35 @@ def test_changes_to_db_inserts_and_deletes():
         member_deletes=[(200, 7)],
         stats_deletes=[200],
     )
-    changes = _clustering_changes_to_db(cc)
+    # bucket_size 10 -> id_group = id // 10, so groups differ per id (0, 10, 20)
+    changes = _clustering_changes_to_db(cc, 10)
 
     def of(table, action):
         return [c.data for c in changes if c.table == table and c.action == action]
 
     assert isinstance(changes[0], DbChange)
-    # one assignment -> insert into both forward and reverse tables
+    # one assignment -> insert into both forward and reverse tables, each carrying
+    # its partition-bucket group as part of the primary key
     assert of("fresh_address_cluster", DbChangeType.NEW) == [
-        {"address_id": 7, "cluster_id": 100}
+        {"address_id_group": 0, "address_id": 7, "cluster_id": 100}
     ]
     assert of("fresh_cluster_addresses", DbChangeType.NEW) == [
-        {"cluster_id": 100, "address_id": 7}
+        {"cluster_id_group": 10, "cluster_id": 100, "address_id": 7}
     ]
     assert of("fresh_cluster_stats", DbChangeType.NEW) == [
-        {"cluster_id": 100, "size": 5, "min_address_id": 3}
+        {
+            "cluster_id_group": 10,
+            "cluster_id": 100,
+            "no_addresses": 5,
+            "min_address_id": 3,
+        }
     ]
     assert of("fresh_cluster_addresses", DbChangeType.DELETE) == [
-        {"cluster_id": 200, "address_id": 7}
+        {"cluster_id_group": 20, "cluster_id": 200, "address_id": 7}
     ]
-    assert of("fresh_cluster_stats", DbChangeType.DELETE) == [{"cluster_id": 200}]
+    assert of("fresh_cluster_stats", DbChangeType.DELETE) == [
+        {"cluster_id_group": 20, "cluster_id": 200}
+    ]
 
 
 # --------------------------------------------------------------------------- #

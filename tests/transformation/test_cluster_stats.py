@@ -109,7 +109,7 @@ def test_additive_stats(spark):
     members, address, _, _ = _frames(spark)
     out = _by_cluster(cluster_additive_stats(members, address).collect())
 
-    assert out[1]["size"] == 3
+    assert out[1]["no_addresses"] == 3
     assert out[1]["min_address_id"] == 1
     assert out[1]["first_tx_id"] == 5
     assert out[1]["last_tx_id"] == 60
@@ -118,7 +118,7 @@ def test_additive_stats(spark):
     assert out[1]["total_spent"]["value"] == 60
     assert out[1]["total_spent"]["fiat_values"] == pytest.approx([6.0, 6.0])
 
-    assert out[4]["size"] == 2
+    assert out[4]["no_addresses"] == 2
     assert out[4]["min_address_id"] == 4
     assert out[4]["first_tx_id"] == 15
     assert out[4]["last_tx_id"] == 55
@@ -169,7 +169,7 @@ def test_compute_full_stats_left_joins_and_zero_fills(spark):
     assert out[1]["no_incoming_txs"] == 0
     assert out[1]["out_degree"] == 1
     assert out[1]["no_outgoing_txs"] == 5
-    assert out[1]["size"] == 3
+    assert out[1]["no_addresses"] == 3
     assert out[1]["total_received"]["value"] == 600
     # total_spent_adj summed; total_received_adj zero-filled (no external in).
     assert out[1]["total_spent_adj"]["value"] == 300

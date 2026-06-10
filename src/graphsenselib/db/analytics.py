@@ -744,6 +744,8 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             "address_id",
             "address_id, cluster_id",
             list(address_ids),
+            group_column="address_id_group",
+            bucket_size=self.get_address_id_bucket_size(),
         )
         return [(r.address_id, r.cluster_id) for r in rows]
 
@@ -757,16 +759,18 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             "cluster_id",
             "cluster_id, address_id",
             list(cluster_ids),
+            group_column="cluster_id_group",
+            bucket_size=self.get_cluster_id_bucket_size(),
         )
         return [(r.cluster_id, r.address_id) for r in rows]
 
     def get_fresh_cluster_stats(self, cluster_ids) -> Dict[int, Tuple[int, int]]:
-        """Read (size, min_address_id) per cluster from fresh_cluster_stats.
+        """Read (no_addresses, min_address_id) per cluster from fresh_cluster_stats.
 
-        Single-row partitions read per-key concurrently — cheap relative to
-        get_fresh_cluster_members (which reads full membership partitions). Used
-        to pick the larger survivor on a merge without reading either side's
-        membership.
+        One stat row per (cluster_id_group, cluster_id) read per-key concurrently
+        — cheap relative to get_fresh_cluster_members (which reads full membership
+        partitions). Used to pick the larger survivor on a merge without reading
+        either side's membership.
         """
         if not cluster_ids:
             return {}
@@ -774,10 +778,12 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             self._keyspace,
             "fresh_cluster_stats",
             "cluster_id",
-            "cluster_id, size, min_address_id",
+            "cluster_id, no_addresses, min_address_id",
             list(cluster_ids),
+            group_column="cluster_id_group",
+            bucket_size=self.get_cluster_id_bucket_size(),
         )
-        return {r.cluster_id: (r.size, r.min_address_id) for r in rows}
+        return {r.cluster_id: (r.no_addresses, r.min_address_id) for r in rows}
 
     def is_fresh_clustering_empty(self) -> bool:
         """Check if the fresh_address_cluster table has any rows."""

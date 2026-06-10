@@ -66,8 +66,8 @@ class ClusteringChanges(NamedTuple):
 
     address_assignments: (address_id, cluster_id) to (over)write in
         ``fresh_address_cluster`` and insert into ``fresh_cluster_addresses``.
-    stats_upserts: (cluster_id, size, min_address_id) for ``fresh_cluster_stats``
-        of new / joined / surviving clusters.
+    stats_upserts: (cluster_id, no_addresses, min_address_id) for
+        ``fresh_cluster_stats`` of new / joined / surviving clusters.
     member_deletes: (cluster_id, address_id) reverse-index rows to delete from
         ``fresh_cluster_addresses`` for the absorbed side of a merge.
     stats_deletes: cluster_ids whose ``fresh_cluster_stats`` row to delete.
@@ -251,29 +251,45 @@ def run_incremental_clustering(
     )
 
 
-def _clustering_changes_to_db(cc: ClusteringChanges) -> List[DbChange]:
-    """Translate planned :class:`ClusteringChanges` into DbChange writes."""
+def _clustering_changes_to_db(
+    cc: ClusteringChanges, bucket_size: int
+) -> List[DbChange]:
+    """Translate planned :class:`ClusteringChanges` into DbChange writes.
+
+    The fresh tables are partition-bucketed (``address_id_group`` /
+    ``cluster_id_group`` = ``id // bucket_size``), so every write and delete
+    carries the group as part of the primary key.
+    """
     changes: List[DbChange] = []
     for address_id, cluster_id in cc.address_assignments:
         changes.append(
             DbChange.new(
                 table="fresh_address_cluster",
-                data={"address_id": address_id, "cluster_id": cluster_id},
+                data={
+                    "address_id_group": address_id // bucket_size,
+                    "address_id": address_id,
+                    "cluster_id": cluster_id,
+                },
             )
         )
         changes.append(
             DbChange.new(
                 table="fresh_cluster_addresses",
-                data={"cluster_id": cluster_id, "address_id": address_id},
+                data={
+                    "cluster_id_group": cluster_id // bucket_size,
+                    "cluster_id": cluster_id,
+                    "address_id": address_id,
+                },
             )
         )
-    for cluster_id, size, min_address_id in cc.stats_upserts:
+    for cluster_id, no_addresses, min_address_id in cc.stats_upserts:
         changes.append(
             DbChange.new(
                 table="fresh_cluster_stats",
                 data={
+                    "cluster_id_group": cluster_id // bucket_size,
                     "cluster_id": cluster_id,
-                    "size": size,
+                    "no_addresses": no_addresses,
                     "min_address_id": min_address_id,
                 },
             )
@@ -282,14 +298,21 @@ def _clustering_changes_to_db(cc: ClusteringChanges) -> List[DbChange]:
         changes.append(
             DbChange.delete(
                 table="fresh_cluster_addresses",
-                data={"cluster_id": cluster_id, "address_id": address_id},
+                data={
+                    "cluster_id_group": cluster_id // bucket_size,
+                    "cluster_id": cluster_id,
+                    "address_id": address_id,
+                },
             )
         )
     for cluster_id in cc.stats_deletes:
         changes.append(
             DbChange.delete(
                 table="fresh_cluster_stats",
-                data={"cluster_id": cluster_id},
+                data={
+                    "cluster_id_group": cluster_id // bucket_size,
+                    "cluster_id": cluster_id,
+                },
             )
         )
     return changes
@@ -1518,7 +1541,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
         cc = run_incremental_clustering(self._db, cluster_inputs)
         if cc.is_empty:
             return []
-        return _clustering_changes_to_db(cc)
+        return _clustering_changes_to_db(
+            cc, self._db.transformed.get_cluster_id_bucket_size()
+        )
 
     def _apply_clustering_inputs(self, cluster_inputs: List[List[int]]) -> int:
         """Run incremental fresh clustering for the given multi-input id sets and

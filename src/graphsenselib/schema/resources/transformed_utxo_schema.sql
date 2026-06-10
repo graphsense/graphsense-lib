@@ -115,19 +115,23 @@ CREATE TABLE cluster_outgoing_relations (
 );
 
 CREATE TABLE fresh_address_cluster (
-    address_id int PRIMARY KEY,
-    cluster_id int
+    address_id_group int,
+    address_id int,
+    cluster_id int,
+    PRIMARY KEY (address_id_group, address_id)
 );
 
 CREATE TABLE fresh_cluster_addresses (
+    cluster_id_group int,
     cluster_id int,
     address_id int,
-    PRIMARY KEY (cluster_id, address_id)
+    PRIMARY KEY (cluster_id_group, cluster_id, address_id)
 );
 
 CREATE TABLE fresh_cluster_stats (
-    cluster_id int PRIMARY KEY,
-    size bigint,
+    cluster_id_group int,
+    cluster_id int,
+    no_addresses bigint,
     min_address_id int,
     no_incoming_txs int,
     no_outgoing_txs int,
@@ -138,7 +142,8 @@ CREATE TABLE fresh_cluster_stats (
     total_received FROZEN<currency>,
     total_spent FROZEN<currency>,
     total_received_adj FROZEN<currency>,
-    total_spent_adj FROZEN<currency>
+    total_spent_adj FROZEN<currency>,
+    PRIMARY KEY (cluster_id_group, cluster_id)
 );
 
 CREATE TABLE summary_statistics (

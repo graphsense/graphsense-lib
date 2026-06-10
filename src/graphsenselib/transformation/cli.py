@@ -438,6 +438,7 @@ def run_clustering(env, currency, local, read_partitions, end_block):
                 raw_keyspace=raw_keyspace,
                 transformed_keyspace=transformed_keyspace,
                 max_address_id=max_address_id,
+                bucket_size=db.transformed.get_cluster_id_bucket_size(),
                 end_block=end_block,
                 **spark_kwargs,
             )
@@ -512,7 +513,11 @@ def recompute_cluster_stats(env, currency, local):
                 spark_packages=config.get_spark_packages(),
             )
             try:
-                n = recompute_fresh_cluster_stats(spark_session, transformed_keyspace)
+                n = recompute_fresh_cluster_stats(
+                    spark_session,
+                    transformed_keyspace,
+                    db.transformed.get_cluster_id_bucket_size(),
+                )
             finally:
                 spark_session.stop()
                 logger.info("SparkSession stopped.")

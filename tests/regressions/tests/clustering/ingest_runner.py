@@ -412,8 +412,11 @@ def write_fresh_clustering_to_cassandra(
     fresh_cluster_addresses and fresh_cluster_stats tables in Cassandra.
 
     This seeds the state that run_incremental_clustering reads from. The stats
-    rows (size, min_address_id per cluster) are required by the v2 incremental
-    clustering, which picks the larger survivor on a merge from them.
+    rows (no_addresses, min_address_id per cluster) are required by the v2
+    incremental clustering, which picks the larger survivor on a merge from them.
+    All three tables are partition-bucketed (``id_group = id // bucket_size``);
+    the bucket size is read from the keyspace's ``configuration`` so the seed
+    matches what the production reads compute.
     """
     from cassandra.cluster import Cluster
 
@@ -426,23 +429,34 @@ def write_fresh_clustering_to_cassandra(
 
     with Cluster([cassandra_host], port=cassandra_port) as cluster:
         session = cluster.connect()
+        bucket_size = session.execute(
+            f"SELECT bucket_size FROM {transformed_keyspace}.configuration"  # noqa: S608
+        ).one().bucket_size
         prep_ac = session.prepare(
             f"INSERT INTO {transformed_keyspace}.fresh_address_cluster "
-            f"(address_id, cluster_id) VALUES (?, ?)"
+            f"(address_id_group, address_id, cluster_id) VALUES (?, ?, ?)"
         )
         prep_ca = session.prepare(
             f"INSERT INTO {transformed_keyspace}.fresh_cluster_addresses "
-            f"(cluster_id, address_id) VALUES (?, ?)"
+            f"(cluster_id_group, cluster_id, address_id) VALUES (?, ?, ?)"
         )
         prep_cs = session.prepare(
             f"INSERT INTO {transformed_keyspace}.fresh_cluster_stats "
-            f"(cluster_id, size, min_address_id) VALUES (?, ?, ?)"
+            f"(cluster_id_group, cluster_id, no_addresses, min_address_id) "
+            f"VALUES (?, ?, ?, ?)"
         )
         for address_id, cluster_id in mapping.items():
-            session.execute(prep_ac, (address_id, cluster_id))
-            session.execute(prep_ca, (cluster_id, address_id))
+            session.execute(
+                prep_ac, (address_id // bucket_size, address_id, cluster_id)
+            )
+            session.execute(
+                prep_ca, (cluster_id // bucket_size, cluster_id, address_id)
+            )
         for cluster_id, size in sizes.items():
-            session.execute(prep_cs, (cluster_id, size, mins[cluster_id]))
+            session.execute(
+                prep_cs,
+                (cluster_id // bucket_size, cluster_id, size, mins[cluster_id]),
+            )
 
 
 # Helper script that runs inside current_venv (which has graphsenselib installed

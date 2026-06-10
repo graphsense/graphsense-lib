@@ -564,6 +564,8 @@ class CassandraDb:
         keys: Sequence,
         fetch_size: int = 5000,
         concurrency: int = 32,
+        group_column: Optional[str] = None,
+        bucket_size: Optional[int] = None,
     ) -> List:
         """Read full partitions for many partition-key values, one query per key.
 
@@ -574,17 +576,29 @@ class CassandraDb:
         independently via ``fetch_size`` so no single request exceeds the read
         timeout, and ``execute_concurrent_with_args`` keeps throughput up with
         bounded concurrency. Returns the flattened list of rows across all keys.
+
+        When ``group_column``/``bucket_size`` are given the table is bucketed on a
+        composite key ``(group_column, key_column)``; the query restricts both and
+        the bucket ``floor(key / bucket_size)`` is derived per key.
         """
         if not keys:
             return []
-        stmt = self.session.prepare(
-            f"SELECT {select_columns} FROM {keyspace}.{table} WHERE {key_column} = ?"
-        )
+        if group_column is not None:
+            stmt = self.session.prepare(
+                f"SELECT {select_columns} FROM {keyspace}.{table} "
+                f"WHERE {group_column} = ? AND {key_column} = ?"
+            )
+            args = [(k // bucket_size, k) for k in keys]
+        else:
+            stmt = self.session.prepare(
+                f"SELECT {select_columns} FROM {keyspace}.{table} WHERE {key_column} = ?"
+            )
+            args = [(k,) for k in keys]
         stmt.fetch_size = fetch_size
         results = execute_concurrent_with_args(
             self.session,
             stmt,
-            [(k,) for k in keys],
+            args,
             concurrency=concurrency,
             raise_on_first_error=True,
         )

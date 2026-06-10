@@ -54,6 +54,10 @@ CURRENCY = "btc"
 BLOCK_BUCKET_SIZE = 100
 TX_BUCKET_SIZE = 100
 ADDRESS_PREFIX_LENGTH = 5
+# Deliberately tiny so the dense address_ids [1, 8] land in several distinct
+# partition buckets (id // 3 -> 0,0,1,1,1,2,2,2), making the one-off vs
+# incremental parity check actually exercise the fresh-table id_group columns.
+ADDRESS_BUCKET_SIZE = 3
 
 # Identity-encoded (legacy base58) BTC addresses -> dense address_ids [1, N].
 A = "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"
@@ -98,6 +102,7 @@ a = json.load(sys.stdin)
 host, port = a["cassandra_host"], a["cassandra_port"]
 raw_ks, tks = a["raw_keyspace"], a["transformed_keyspace"]
 bbs, tbs, apl = a["block_bucket_size"], a["tx_bucket_size"], a["address_prefix_length"]
+abks = a["address_bucket_size"]
 addr_to_id = a["addr_to_id"]
 txs = a["txs"]
 
@@ -113,7 +118,7 @@ with Cluster([host], port=port) as cluster:
         f"INSERT INTO {tks}.configuration "
         f"(keyspace_name, bucket_size, address_prefix_length, bech_32_prefix, "
         f"coinjoin_filtering, fiat_currencies) "
-        f"VALUES ('{tks}', 1000000, {apl}, '', false, ['USD','EUR'])"
+        f"VALUES ('{tks}', {abks}, {apl}, '', false, ['USD','EUR'])"
     )
 
 db = DbFactory().from_name(
@@ -189,6 +194,7 @@ try:
         raw_keyspace=a["raw_keyspace"],
         transformed_keyspace=a["transformed_keyspace"],
         max_address_id=a["max_address_id"],
+        bucket_size=a["bucket_size"],
         end_block=a.get("end_block"),
     )
 finally:
@@ -294,6 +300,7 @@ class TestClusteringManufactured:
             block_bucket_size=BLOCK_BUCKET_SIZE,
             tx_bucket_size=TX_BUCKET_SIZE,
             address_prefix_length=ADDRESS_PREFIX_LENGTH,
+            address_bucket_size=ADDRESS_BUCKET_SIZE,
             addr_to_id=ADDR_TO_ID,
             txs=MANUFACTURED_TXS,
         )
@@ -309,6 +316,7 @@ class TestClusteringManufactured:
                 raw_keyspace=raw_ks,
                 transformed_keyspace=tks,
                 max_address_id=max(ADDR_TO_ID.values()),
+                bucket_size=ADDRESS_BUCKET_SIZE,
             ),
         )
         oneoff_mapping = _read_fresh_address_cluster(host, port, tks)
@@ -398,6 +406,7 @@ class TestClusteringManufactured:
                 block_bucket_size=BLOCK_BUCKET_SIZE,
                 tx_bucket_size=TX_BUCKET_SIZE,
                 address_prefix_length=ADDRESS_PREFIX_LENGTH,
+                address_bucket_size=ADDRESS_BUCKET_SIZE,
                 addr_to_id=ADDR_TO_ID,
                 txs=MANUFACTURED_TXS,
             ),
@@ -413,6 +422,7 @@ class TestClusteringManufactured:
                 raw_keyspace=raw_ks,
                 transformed_keyspace=tks,
                 max_address_id=max(ADDR_TO_ID.values()),
+                bucket_size=ADDRESS_BUCKET_SIZE,
                 end_block=end_block,
             ),
         )
