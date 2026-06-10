@@ -73,6 +73,20 @@ def is_fresh_clustering_enabled() -> bool:
     )
 
 
+def is_tagstore_fresh_clusters_enabled() -> bool:
+    """Read-side switch: serve cluster tags from the fresh-clustering ``*_v2``
+    tagstore views/mapping instead of the legacy ones. Independent of
+    ``is_fresh_clustering_enabled`` (the write side) so v2 can be populated and
+    validated while reads still go to the legacy relations. Flip on only after
+    ``address_cluster_mapping_v2`` is populated, else cluster-tag reads come back
+    empty."""
+    return os.environ.get("GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 )

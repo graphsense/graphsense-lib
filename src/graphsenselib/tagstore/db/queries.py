@@ -14,18 +14,23 @@ from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from graphsenselib.config import is_tagstore_fresh_clusters_enabled
+
 from .database import get_db_engine_async
 from .errors import TagAlreadyExistsException
 from .models import (
     Actor,
     AddressClusterMapping,
+    AddressClusterMappingV2,
     BestClusterTagView,
+    BestClusterTagViewV2,
     Concept,
     Confidence,
     Country,
     Tag,
     TagConcept,
     TagCountByClusterView,
+    TagCountByClusterViewV2,
     TagPack,
     TagSubject,
     TagType,
@@ -340,17 +345,34 @@ def _get_tag_by_id_stmt(tag_id: int, groups: List[str]):
     )
 
 
+def _cluster_models():
+    """Active (mapping, best-tag view, count view) trio for cluster reads.
+
+    Resolved per-call so ``GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS`` can flip the read
+    path between the legacy relations and the fresh-clustering ``*_v2`` ones at
+    runtime, no restart needed.
+    """
+    if is_tagstore_fresh_clusters_enabled():
+        return (
+            AddressClusterMappingV2,
+            BestClusterTagViewV2,
+            TagCountByClusterViewV2,
+        )
+    return (AddressClusterMapping, BestClusterTagView, TagCountByClusterView)
+
+
 def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str]):
+    _, BestClusterTag, _ = _cluster_models()
     return (
         select(Tag, TagPack, Confidence)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(BestClusterTagView.cluster_id == cluster_id)
-        .where(BestClusterTagView.network == network)
+        .where(BestClusterTag.cluster_id == cluster_id)
+        .where(BestClusterTag.network == network)
         .where(Tag.tagpack_id == TagPack.id)
-        .where(BestClusterTagView.tag_id == Tag.id)
+        .where(BestClusterTag.tag_id == Tag.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
         .order_by(Confidence.level.desc())
@@ -368,16 +390,17 @@ def _get_best_cluster_tag_winners_stmt(
     # cluster's tagset would be shipped back through the joinedloaded
     # relationships and Cartesian'd by Tag.concepts, observed at >5min on
     # a single cluster before this rewrite.
+    _, BestClusterTag, _ = _cluster_models()
     return (
-        select(BestClusterTagView.cluster_id, Tag.id)
-        .distinct(BestClusterTagView.cluster_id)
-        .where(BestClusterTagView.cluster_id.in_(cluster_ids))
-        .where(BestClusterTagView.network == network)
-        .where(BestClusterTagView.tag_id == Tag.id)
+        select(BestClusterTag.cluster_id, Tag.id)
+        .distinct(BestClusterTag.cluster_id)
+        .where(BestClusterTag.cluster_id.in_(cluster_ids))
+        .where(BestClusterTag.network == network)
+        .where(BestClusterTag.tag_id == Tag.id)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(BestClusterTagView.cluster_id, Confidence.level.desc())
+        .order_by(BestClusterTag.cluster_id, Confidence.level.desc())
     )
 
 
@@ -428,15 +451,16 @@ def _get_tags_by_clusterid_stmt(
     groups: List[str],
     exclude_identifiers: Optional[List[str]],
 ):
+    AddressClusterMap, _, _ = _cluster_models()
     q = (
-        select(Tag, TagPack, AddressClusterMapping, Confidence)
+        select(Tag, TagPack, AddressClusterMap, Confidence)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(AddressClusterMapping.gs_cluster_id == cluster_id)
-        .where(AddressClusterMapping.address == Tag.identifier)
-        .where(AddressClusterMapping.network == Tag.network)
+        .where(AddressClusterMap.gs_cluster_id == cluster_id)
+        .where(AddressClusterMap.address == Tag.identifier)
+        .where(AddressClusterMap.network == Tag.network)
         .where(Tag.network == network)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
@@ -497,26 +521,28 @@ def _get_per_network_statistics_cached_stmt():
 
 
 def _get_count_by_cluster_stmt(cluster_id: int, network: str, groups: List[str]):
+    _, _, TagCountByCluster = _cluster_models()
     return (
-        select(TagCountByClusterView)
-        .where(TagCountByClusterView.network == network)
-        .where(TagCountByClusterView.gs_cluster_id == cluster_id)
-        .where(TagCountByClusterView.acl_group.in_(groups))
+        select(TagCountByCluster)
+        .where(TagCountByCluster.network == network)
+        .where(TagCountByCluster.gs_cluster_id == cluster_id)
+        .where(TagCountByCluster.acl_group.in_(groups))
     )
 
 
 def _get_count_by_clusters_batch_stmt(
     cluster_ids: List[int], network: str, groups: List[str]
 ):
+    _, _, TagCountByCluster = _cluster_models()
     return (
         select(
-            TagCountByClusterView.gs_cluster_id,
-            func.sum(TagCountByClusterView.count).label("total"),
+            TagCountByCluster.gs_cluster_id,
+            func.sum(TagCountByCluster.count).label("total"),
         )
-        .where(TagCountByClusterView.network == network)
-        .where(TagCountByClusterView.gs_cluster_id.in_(cluster_ids))
-        .where(TagCountByClusterView.acl_group.in_(groups))
-        .group_by(TagCountByClusterView.gs_cluster_id)
+        .where(TagCountByCluster.network == network)
+        .where(TagCountByCluster.gs_cluster_id.in_(cluster_ids))
+        .where(TagCountByCluster.acl_group.in_(groups))
+        .group_by(TagCountByCluster.gs_cluster_id)
     )
 
 
@@ -560,11 +586,12 @@ def _get_actors_for_subject_stmt(subject_id: str, groups: List[str]):
 
 
 def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[str]):
+    AddressClusterMap, _, _ = _cluster_models()
     return (
         select(Actor.id, Actor.label)
-        .where(AddressClusterMapping.gs_cluster_id == cluster_id)
-        .where(AddressClusterMapping.address == Tag.identifier)
-        .where(AddressClusterMapping.network == network)
+        .where(AddressClusterMap.gs_cluster_id == cluster_id)
+        .where(AddressClusterMap.address == Tag.identifier)
+        .where(AddressClusterMap.network == network)
         .where(Actor.id.isnot(None))
         .where(Actor.id == Tag.actor_id)
         .where(Tag.tagpack_id == TagPack.id)
@@ -577,16 +604,17 @@ def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[s
 def _get_actors_for_clusterids_batch_stmt(
     cluster_ids: List[int], network: str, groups: List[str]
 ):
+    AddressClusterMap, _, _ = _cluster_models()
     return (
-        select(AddressClusterMapping.gs_cluster_id, Actor.id, Actor.label)
-        .where(AddressClusterMapping.gs_cluster_id.in_(cluster_ids))
-        .where(AddressClusterMapping.address == Tag.identifier)
-        .where(AddressClusterMapping.network == network)
+        select(AddressClusterMap.gs_cluster_id, Actor.id, Actor.label)
+        .where(AddressClusterMap.gs_cluster_id.in_(cluster_ids))
+        .where(AddressClusterMap.address == Tag.identifier)
+        .where(AddressClusterMap.network == network)
         .where(Actor.id.isnot(None))
         .where(Actor.id == Tag.actor_id)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
-        .order_by(AddressClusterMapping.gs_cluster_id, Actor.label)
+        .order_by(AddressClusterMap.gs_cluster_id, Actor.label)
         .distinct()
     )
 
@@ -623,10 +651,11 @@ def _get_acl_groups_statement():
 
 
 def _get_labels_by_clusterid_stmt(cluster_id: str, groups: List[str]):
+    AddressClusterMap, _, _ = _cluster_models()
     return (
         select(Tag.label)
-        .where(AddressClusterMapping.gs_cluster_id == cluster_id)
-        .where(AddressClusterMapping.address == Tag.identifier)
+        .where(AddressClusterMap.gs_cluster_id == cluster_id)
+        .where(AddressClusterMap.address == Tag.identifier)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .order_by(asc(Tag.label))
