@@ -15,6 +15,7 @@ from .models import (
     ActorPack,
     Address,
     AddressClusterMapping,
+    AddressClusterMappingV2,
     Concept,
     ConceptRelationAnnotation,
     Confidence,
@@ -43,6 +44,7 @@ _MAIN_TABLES = [
     ActorJurisdiction.__table__,
     Address.__table__,
     AddressClusterMapping.__table__,
+    AddressClusterMappingV2.__table__,
     ConceptRelationAnnotation.__table__,
 ]
 
@@ -50,6 +52,8 @@ _REQUIRED_MATERIALIZED_VIEWS = (
     "statistics",
     "tag_count_by_cluster",
     "best_cluster_tag",
+    "tag_count_by_cluster_v2",
+    "best_cluster_tag_v2",
 )
 
 _QUALITY_MEASURES_MARKER = "-- Quality measures"
