@@ -532,6 +532,12 @@ environments:
           # block is checked against this threshold and a notification is sent
           # if the data is older (same check as `monitoring monitor-raw-ingest`).
           # raw_ingest_staleness_threshold: 10
+          # Optional: ingest the latest exchange rates from this provider
+          # before every `ingest from-node` run (same as `exchange-rates
+          # <provider> ingest --abort-on-gaps`). Supported: coingecko,
+          # coinmarketcap (both need their API key below), cryptocompare
+          # (no key needed).
+          # exchange_rates_provider: "coingecko"
 
         # Keyspace setup for schema creation
         keyspace_setup_config:

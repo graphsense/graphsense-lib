@@ -116,6 +116,7 @@ environments:
         ingest_config:
           node_reference: http://localhost:8332
           raw_ingest_staleness_threshold: 10
+          exchange_rates_provider: coingecko
       eth:
         raw_keyspace_name: eth_raw_dev
         transformed_keyspace_name: eth_transformed_dev
@@ -134,8 +135,27 @@ environments:
         assert btc_ic is not None and eth_ic is not None
         assert btc_ic.raw_ingest_staleness_threshold == 10
         assert eth_ic.raw_ingest_staleness_threshold is None
+        assert btc_ic.exchange_rates_provider == "coingecko"
+        assert eth_ic.exchange_rates_provider is None
     finally:
         os.unlink(fname)
+
+
+def test_exchange_rates_provider_rejects_unknown_value():
+    from graphsenselib.config.config import IngestConfig
+
+    for valid in ["coingecko", "coinmarketcap", "cryptocompare"]:
+        ic = IngestConfig(
+            node_reference="http://localhost:8332",
+            exchange_rates_provider=valid,
+        )
+        assert ic.exchange_rates_provider == valid
+
+    with pytest.raises(ValidationError, match="exchange_rates_provider"):
+        IngestConfig(
+            node_reference="http://localhost:8332",
+            exchange_rates_provider="coinbase",
+        )
 
 
 def test_load_partial_parses_slack_topics_from_env(monkeypatch):

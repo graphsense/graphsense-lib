@@ -27,6 +27,7 @@ currency_to_public_schema_type = {
     for cur in supported_base_currencies
 }
 supported_fiat_currencies = ["USD", "EUR"]
+EXCHANGE_RATES_PROVIDERS = ["coingecko", "coinmarketcap", "cryptocompare"]
 avg_blocktimes_by_currencies = {
     "trx": 7,
     "eth": 15,
@@ -216,6 +217,25 @@ class IngestConfig(_WarnExtraModel):
             "monitor-raw-ingest`). Unset disables the automatic check."
         ),
     )
+    exchange_rates_provider: Optional[str] = Field(
+        default=None,
+        description=(
+            "When set, `ingest from-node` ingests the latest exchange rates "
+            "from this provider into the raw keyspace before ingesting blocks "
+            "(same as `exchange-rates <provider> ingest --abort-on-gaps`). "
+            "Supported: coingecko, coinmarketcap (both need their API key in "
+            "the config), cryptocompare (no key). Unset disables the step."
+        ),
+    )
+
+    @field_validator("exchange_rates_provider")
+    @classmethod
+    def _validate_exchange_rates_provider(cls, v):
+        if v is not None and v not in EXCHANGE_RATES_PROVIDERS:
+            raise ValueError(
+                f"exchange_rates_provider must be one of {EXCHANGE_RATES_PROVIDERS}"
+            )
+        return v
 
     @property
     def all_node_references(self) -> List[str]:
