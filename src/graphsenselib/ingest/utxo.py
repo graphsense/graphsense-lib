@@ -296,12 +296,6 @@ def tx_stats(tx):
 
 
 # Output-script opcodes / BTC-mainnet address params for the native parser.
-_OP_RETURN = 0x6A
-_OP_DUP = 0x76
-_OP_HASH160 = 0xA9
-_OP_EQUAL = 0x87
-_OP_EQUALVERIFY = 0x88
-_OP_CHECKSIG = 0xAC
 _OP_CHECKMULTISIG = 0xAE
 _BTC_P2PKH_VERSION = b"\x00"
 _BTC_P2SH_VERSION = b"\x05"
@@ -309,28 +303,139 @@ _BTC_BECH32_HRP = "bc"
 
 
 def _looks_like_pubkey(b: bytes) -> bool:
-    """SEC1 format check (length + prefix) — matches btcpy's pubkey acceptance."""
-    return (len(b) == 33 and b[0] in (0x02, 0x03)) or (len(b) == 65 and b[0] == 0x04)
-
-
-def _is_single_complete_push(b: bytes) -> bool:
-    """True iff ``b`` is exactly one well-formed data push covering all its bytes.
-
-    Used for OP_RETURN: btcpy treats a bare OP_RETURN or a malformed pushdata as
-    an unknown script, not nulldata — nulldata is OP_RETURN + one complete push.
+    """SEC1 format check (length + prefix) — matches btcpy's PublicKey parser
+    (compressed 0x02/0x03, uncompressed 0x04, hybrid 0x06/0x07; no curve check).
     """
-    if not b:
-        return False
-    op = b[0]
+    return (len(b) == 33 and b[0] in (0x02, 0x03)) or (
+        len(b) == 65 and b[0] in (0x04, 0x06, 0x07)
+    )
+
+
+# The native parser below mirrors btcpy's ScriptParser token scan + templates
+# exactly (the shadow comparator demands bit-identical behaviour, quirks
+# included). Push tokens are (op, data) pairs modelled on btcpy's StackData:
+# OP_0 and OP_1NEGATE/OP_1..OP_16 are pushes with empty payload; OP_RESERVED
+# (0x50) and everything above 0x60 are not pushes.
+
+# _scan_push outcomes
+_PUSH_OK = 0  # well-formed push: returns (op, data, next_offset)
+_PUSH_NOT = 1  # not a push opcode (scan position unchanged)
+_PUSH_TRUNCATED = 2  # pushdata runs past the end: returns offset after header
+
+
+def _scan_push(script: bytes, i: int) -> Tuple[int, int, bytes, int]:
+    """Parse one btcpy push token at offset ``i``; returns (kind, op, data, j).
+
+    For _PUSH_TRUNCATED, ``j`` is the offset after the consumed push header —
+    btcpy's parser consumes the opcode (and any complete length bytes) before
+    noticing the payload is missing, and leaves the pointer there.
+    """
+    n = len(script)
+    op = script[i]
+    j = i + 1
+    if op == 0x00 or (0x4F <= op <= 0x60 and op != 0x50):
+        return _PUSH_OK, op, b"", j
     if 0x01 <= op <= 0x4B:  # OP_PUSHBYTES_n
-        return len(b) == 1 + op
-    if op == 0x4C:  # OP_PUSHDATA1
-        return len(b) >= 2 and len(b) == 2 + b[1]
-    if op == 0x4D:  # OP_PUSHDATA2
-        return len(b) >= 3 and len(b) == 3 + int.from_bytes(b[1:3], "little")
-    if op == 0x4E:  # OP_PUSHDATA4
-        return len(b) >= 5 and len(b) == 5 + int.from_bytes(b[1:5], "little")
-    return False
+        if j + op > n:
+            return _PUSH_TRUNCATED, op, b"", j
+        return _PUSH_OK, op, bytes(script[j : j + op]), j + op
+    if 0x4C <= op <= 0x4E:  # OP_PUSHDATA1/2/4
+        size_len = 2 ** (op - 0x4C)
+        if j + size_len > n:
+            return _PUSH_TRUNCATED, op, b"", j
+        length = int.from_bytes(script[j : j + size_len], "little")
+        j += size_len
+        if j + length > n:
+            return _PUSH_TRUNCATED, op, b"", j
+        return _PUSH_OK, op, bytes(script[j : j + length]), j + length
+    return _PUSH_NOT, op, b"", i
+
+
+def _token_len(op: int, data: bytes) -> int:
+    """btcpy StackData.__len__: OP_0/OP_1..OP_16 count as 1, OP_1NEGATE as 0."""
+    if op == 0x00 or 0x51 <= op <= 0x60:
+        return 1
+    return len(data)
+
+
+def _token_int(op: int, data: bytes) -> int:
+    """btcpy StackData.__int__ (sign-magnitude little-endian).
+
+    Raises IndexError for a data push with empty payload — btcpy does too, and
+    the shadow comparator matches exception types.
+    """
+    if op == 0x00:
+        return 0
+    if 0x4F <= op <= 0x60:
+        return op - 0x50
+    sign = bool(data[-1] & 0x80)
+    absolute = int.from_bytes(data[:-1] + bytes([data[-1] & 0x7F]), "little")
+    return -absolute if sign else absolute
+
+
+def _match_single_push(script: bytes, pre: bytes, post: bytes, lens) -> Optional[bytes]:
+    """Match a btcpy template ``<pre ops> <one push, len in lens> <post ops>``
+    against the whole script; returns the push payload or None.
+
+    btcpy templates are token-based, so any push encoding is accepted (e.g.
+    OP_PUSHDATA1-encoded p2pkh hashes are valid p2pkh to btcpy).
+    """
+    i = 0
+    n = len(script)
+    for b in pre:
+        if i >= n or script[i] != b:
+            return None
+        i += 1
+    if i >= n:
+        return None
+    kind, op, data, i = _scan_push(script, i)
+    if kind != _PUSH_OK or _token_len(op, data) not in lens:
+        return None
+    for b in post:
+        if i >= n or script[i] != b:
+            return None
+        i += 1
+    return data if i == n else None
+
+
+def _match_multisig(script: bytes) -> Optional[List[bytes]]:
+    """Match btcpy's multisig template ``<>+ OP_CHECKMULTISIG``; returns the
+    raw key payloads (valid-format keys only, possibly empty) or None.
+
+    Mirrors btcpy quirks: the M slot is any push (value unchecked), N is the
+    *numeric* value of the last push (not necessarily OP_N), and a truncated
+    trailing push is consumed up to its header so that a lone final byte can
+    still match OP_CHECKMULTISIG (an accidental ``return`` in a ``finally``
+    in btcpy swallows the parse error). May raise IndexError exactly where
+    btcpy does: ``int()`` of an empty-payload data push for N or M.
+    """
+    tokens: List[Tuple[int, bytes]] = []
+    i = 0
+    n = len(script)
+    stop = n
+    while i < n:
+        kind, op, data, j = _scan_push(script, i)
+        if kind == _PUSH_NOT:
+            stop = i
+            break
+        if kind == _PUSH_TRUNCATED:
+            stop = j
+            break
+        tokens.append((op, data))
+        i = j
+    else:
+        stop = n
+    if stop >= n or script[stop] != _OP_CHECKMULTISIG or stop + 1 != n:
+        return None
+    if len(tokens) <= 2:
+        return None
+    m_tok, keys, n_tok = tokens[0], tokens[1:-1], tokens[-1]
+    if len(keys) != _token_int(*n_tok):
+        return None
+    if any(_token_len(op, d) not in (33, 65) for op, d in keys):
+        return None
+    _token_int(*m_tok)  # btcpy evaluates int(m) on success — IndexError parity
+    return [d for _, d in keys if _looks_like_pubkey(d)]
 
 
 def _parse_script_btcpy(s: str) -> Tuple[Optional[List[str]], str]:
@@ -368,13 +473,14 @@ def _parse_script_btcpy(s: str) -> Tuple[Optional[List[str]], str]:
 def _parse_script_native(s: str) -> Tuple[Optional[List[str]], str]:
     """btcpy-free reimplementation of :func:`_parse_script_btcpy`.
 
-    Recognises the standard output-script shapes and encodes addresses in
-    BTC-mainnet format (the legacy code hardcodes ``mainnet=True``), emitting the
-    same ``type`` strings the downstream ``_address_types`` map expects. Anything
-    else raises ``UnknownScriptType`` — matching btcpy for the nonstandard
-    outputs this fallback actually sees.
+    Tries the same templates in the same order as btcpy's ScriptBuilder and
+    encodes addresses in BTC-mainnet format (the legacy code hardcodes
+    ``mainnet=True``), emitting the same ``type`` strings the downstream
+    ``_address_types`` map expects. Anything else raises ``UnknownScriptType``
+    — including scripts btcpy classifies as if/else, timelock, or hashlock
+    (the legacy wrapper rejects those types too, and they cannot shadow any
+    template handled here).
     """
-    from graphsenselib.pubkey.extract import _parse_script_pushes
     from graphsenselib.utils.pubkey_to_address import (
         base58check_encode,
         bech32_segwit_encode,
@@ -382,63 +488,46 @@ def _parse_script_native(s: str) -> Tuple[Optional[List[str]], str]:
     )
 
     script = bytes.fromhex(s[2:] if s.startswith("0x") else s)
-    n = len(script)
 
-    # P2PKH: OP_DUP OP_HASH160 PUSH20 <20> OP_EQUALVERIFY OP_CHECKSIG
-    if (
-        n == 25
-        and script[0] == _OP_DUP
-        and script[1] == _OP_HASH160
-        and script[2] == 0x14
-        and script[23] == _OP_EQUALVERIFY
-        and script[24] == _OP_CHECKSIG
-    ):
-        return [base58check_encode(_BTC_P2PKH_VERSION, script[3:23])], "p2pkh"
+    # P2PKH: OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG
+    data = _match_single_push(script, b"\x76\xa9", b"\x88\xac", (20,))
+    if data is not None:
+        return [base58check_encode(_BTC_P2PKH_VERSION, data)], "p2pkh"
 
-    # P2SH: OP_HASH160 PUSH20 <20> OP_EQUAL
-    if (
-        n == 23
-        and script[0] == _OP_HASH160
-        and script[1] == 0x14
-        and script[22] == _OP_EQUAL
-    ):
-        return [base58check_encode(_BTC_P2SH_VERSION, script[2:22])], "p2sh"
+    # P2SH: OP_HASH160 <20> OP_EQUAL
+    data = _match_single_push(script, b"\xa9", b"\x87", (20,))
+    if data is not None:
+        return [base58check_encode(_BTC_P2SH_VERSION, data)], "p2sh"
 
-    # P2WPKH v0: OP_0 PUSH20 <20>
-    if n == 22 and script[0] == 0x00 and script[1] == 0x14:
-        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, script[2:22])], "p2wpkhv0"
-
-    # P2WSH v0: OP_0 PUSH32 <32>
-    if n == 34 and script[0] == 0x00 and script[1] == 0x20:
-        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, script[2:34])], "p2wshv0"
-
-    # nulldata: OP_RETURN + exactly one complete data push (btcpy rejects a bare
-    # OP_RETURN or malformed pushdata as unknown, not nulldata).
-    if n >= 2 and script[0] == _OP_RETURN and _is_single_complete_push(script[1:]):
+    # nulldata: OP_RETURN <1-83> (OP_0/OP_1..OP_16 count as length-1 pushes)
+    if _match_single_push(script, b"\x6a", b"", range(1, 84)) is not None:
         return None, "nulldata"
 
-    # P2PK: <pubkey-push> OP_CHECKSIG
-    if n >= 2 and script[-1] == _OP_CHECKSIG:
-        pushes = _parse_script_pushes(script[:-1])
-        if len(pushes) == 1 and len(pushes[0]) in (33, 65):
-            if not _looks_like_pubkey(pushes[0]):
-                raise P2pkParserException(
-                    f"ScriptParseError: cannot parse pubkey from {s} (of type p2pk)"
-                )
-            return [base58check_encode(_BTC_P2PKH_VERSION, hash160(pushes[0]))], "p2pk"
-
-    # bare multisig: OP_M <pubkeys> OP_N OP_CHECKMULTISIG
-    if (
-        n >= 1
-        and script[-1] == _OP_CHECKMULTISIG
-        and (script[0] == 0x00 or 0x51 <= script[0] <= 0x60)
-    ):
-        keys = [p for p in _parse_script_pushes(script) if _looks_like_pubkey(p)]
-        if keys:
-            return (
-                [base58check_encode(_BTC_P2PKH_VERSION, hash160(k)) for k in keys],
-                "multisig",
+    # P2PK: <33|65> OP_CHECKSIG — template matches on push length alone;
+    # a malformed pubkey is then a parse error, not an unknown script.
+    data = _match_single_push(script, b"", b"\xac", (33, 65))
+    if data is not None:
+        if not _looks_like_pubkey(data):
+            raise P2pkParserException(
+                f"ScriptParseError: cannot parse pubkey from {s} (of type p2pk)"
             )
+        return [base58check_encode(_BTC_P2PKH_VERSION, hash160(data))], "p2pk"
+
+    # bare multisig: <>+ OP_CHECKMULTISIG
+    keys = _match_multisig(script)
+    if keys is not None:
+        return (
+            [base58check_encode(_BTC_P2PKH_VERSION, hash160(k)) for k in keys],
+            "multisig",
+        )
+
+    # P2WPKH v0: OP_0 <20> / P2WSH v0: OP_0 <32>
+    data = _match_single_push(script, b"\x00", b"", (20,))
+    if data is not None:
+        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, data)], "p2wpkhv0"
+    data = _match_single_push(script, b"\x00", b"", (32,))
+    if data is not None:
+        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, data)], "p2wshv0"
 
     raise UnknownScriptType(
         f"ScriptParseError: not handling script type for {s} at the moment."

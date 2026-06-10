@@ -66,6 +66,43 @@ _HANDLED = [
     ),
 ]
 
+# Test pubkeys for the template-quirk vectors below.
+_PK = "02bd518511a74ae03011ecd13d0282c91efe26e124fea565695cc866397daae1e6"
+_PK_ADDR = "18318B2aEkBjpZmJMnAf8N4ax2251RntbM"
+_BADPK = "05" + _PK[2:]  # 33 bytes, invalid SEC1 prefix
+
+# btcpy matches templates token-wise, with several quirks the native parser
+# replicates exactly (vectors verified against btcpy; see 2.14.1 changelog).
+_HANDLED += [
+    # non-minimal pushes are accepted everywhere
+    ("76a94c14" + "00" * 20 + "88ac", ["1111111111111111111114oLvT2"], "p2pkh"),
+    ("a94c14" + "00" * 20 + "87", ["31h1vYVSYuKP6AhS86fbRdMw9XHieotbST"], "p2sh"),
+    (
+        "004c14" + "00" * 20,
+        ["bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9e75rs"],
+        "p2wpkhv0",
+    ),
+    ("4c21" + _PK + "ac", [_PK_ADDR], "p2pk"),
+    # hybrid (0x06/0x07) uncompressed pubkeys are accepted
+    ("41" + "06" + "00" * 64 + "ac", ["1KfGd4BLUo2WkVPP8ANf2GveoNnrgsgrcC"], "p2pk"),
+    # nulldata payload may be a small-int opcode (OP_0/OP_1..OP_16)
+    ("6a53", None, "nulldata"),
+    ("6a00", None, "nulldata"),
+    # multisig: N is the numeric value of the last push, not necessarily OP_N
+    ("51" + "21" + _PK + "21" + _PK + "0102ae", [_PK_ADDR, _PK_ADDR], "multisig"),
+    # multisig: the M slot may be any push, value unchecked
+    (
+        "21" + _BADPK + "21" + _PK + "21" + _PK + "52ae",
+        [_PK_ADDR, _PK_ADDR],
+        "multisig",
+    ),
+    # multisig: invalid-format keys are dropped, not rejected
+    ("51" + "21" + _BADPK + "51ae", [], "multisig"),
+    # multisig: btcpy swallows a truncated trailing push (header consumed,
+    # last byte still matches OP_CHECKMULTISIG)
+    ("51" + "21" + _PK + "5113ae", [_PK_ADDR], "multisig"),
+]
+
 # Scripts btcpy rejects as unknown (from unknownscripts.json + the typed
 # timelock scripts in scripts.json the project does not handle).
 _UNKNOWN = [
@@ -86,6 +123,19 @@ _UNKNOWN = [
     "2103eb27fa93667e4f48e36071eb21c7229e5416ff0abd2886d59c8f314fb3cbee4052ae"
     "67037b9710b175210384478d41e71dc6c3f9edde0f928a47d1b724c05984ebfb4e7d0422"
     "e80abe95ffac68",
+    # 2026-06-10 LTC incident: OP_5 OP_5 OP_ADD OP_DROP <pk> OP_CHECKSIG — the
+    # old native parser skipped the prefix opcodes and misclassified it p2pk
+    "55559375" + "21" + _PK + "ac",
+    # extra opcodes anywhere inside the multisig template are nonstandard
+    "5175" + "21" + _PK + "51ae",
+    "55559375" + "51" + "21" + _PK + "51ae",
+    # key-push count must equal the numeric value of N
+    "51" + "21" + _PK + "52ae",
+    "0000ae",  # OP_0 is not a valid N
+    "5120" + "00" * 32,  # taproot (witness v1) is not handled by btcpy
+    "6a4f",  # OP_1NEGATE has StackData length 0, outside nulldata's <1-83>
+    "6a4c00",  # empty push, same
+    "6a4c54" + "00" * 84,  # 84-byte payload, above nulldata's limit
 ]
 
 # P2PK-shaped script whose pushed "key" is not a valid pubkey (lifted from the
@@ -112,9 +162,24 @@ def test_native_unparseable_p2pk_raises():
         _parse_script_native(_UNPARSEABLE_P2PK)
 
 
+# Multisig-shaped scripts whose N (or M) slot is a data push with an empty
+# payload: btcpy crashes with IndexError in StackData.__int__, and the shadow
+# comparator demands matching exception types.
+_INT_OF_EMPTY_PUSH = [
+    "21" + _PK + "21" + _PK + "4c00ae",  # N is an empty push
+    "4c00" + "21" + _PK + "51ae",  # M is an empty push
+]
+
+
+@pytest.mark.parametrize("script_hex", _INT_OF_EMPTY_PUSH)
+def test_native_replicates_btcpy_indexerror(script_hex):
+    with pytest.raises(IndexError):
+        _parse_script_native(script_hex)
+
+
 @pytest.mark.parametrize(
     "script_hex",
-    [h for h, _, _ in _HANDLED] + _UNKNOWN + [_UNPARSEABLE_P2PK],
+    [h for h, _, _ in _HANDLED] + _UNKNOWN + [_UNPARSEABLE_P2PK] + _INT_OF_EMPTY_PUSH,
 )
 def test_native_matches_btcpy(script_hex):
     """Equivalence to btcpy while it is still installed (skips after removal)."""

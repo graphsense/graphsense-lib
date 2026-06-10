@@ -10,13 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
+## [2.14.0] - 2026-06-10
 
 ### Library
+
+#### Fixed
+- **`parse_script` shadow-validation divergence on nonstandard scripts (LTC prod ingest crash).** The btcpy-free native output-script parser classified any script ending in `<pubkey-push> OP_CHECKSIG` as p2pk, silently skipping prefix opcodes (e.g. `OP_5 OP_5 OP_ADD OP_DROP <pk> OP_CHECKSIG` seen on LTC), while btcpy correctly treats such scripts as nonstandard — tripping the deliberately-loud shadow `AssertionError` and aborting `ingest from-node`. The native parser is now a faithful reimplementation of btcpy's token-based template matching, byte-identical on every probed and fuzzed input (0 divergences over 200k adversarial scripts plus exhaustive single-byte probes): exact single-push p2pk; token-template p2pkh/p2sh/segwit-v0 (non-minimal pushes accepted, as btcpy does); nulldata's `<1-83>` payload constraint incl. small-int payloads; hybrid (0x06/0x07) uncompressed pubkeys; and btcpy's full multisig quirks (numeric N from any push, unvalidated M slot, invalid-format keys dropped rather than rejected, truncated-trailing-push tolerance, and `IndexError` parity on empty-payload N/M pushes).
 
 #### Added
 - **Built-in pre-ingest exchange-rates update for `ingest from-node`.** When `ingest_config.exchange_rates_provider` is set in `graphsense.yaml` (`coingecko`, `coinmarketcap`, or `cryptocompare` — the first two need their API key in the config, cryptocompare needs none), the command ingests the latest exchange rates from that provider into the raw keyspace before ingesting blocks — equivalent to running `exchange-rates <provider> ingest --abort-on-gaps` first, which it replaces. Unfillable rate gaps abort the run with the same exit codes as the standalone command, so blocks are never ingested ahead of their rates. `--exchange-rates-provider` overrides the configured provider per run; `--no-exchange-rates` skips the step. Requires the cassandra sink (skipped with a warning otherwise); with no provider configured the behaviour is unchanged.
 - **Built-in post-ingest staleness check for `ingest from-node`.** After a successful ingest run the command now performs the same check as `monitoring monitor-raw-ingest`: if the timestamp of the highest ingested raw block is older than a configured tolerance, a warning is logged and sent to a notification topic. This replaces the separate `monitoring monitor-raw-ingest` invocation after every ingest run. The tolerance is configured per network in `graphsense.yaml` (`ingest_config.raw_ingest_staleness_threshold`, in hours, e.g. `btc: 10`, `trx: 72`) and can be overridden per run with `--staleness-threshold`; `--no-staleness-check` skips the check, `--staleness-topic` selects the notification topic (default: `exceptions`). With no tolerance configured the behaviour is unchanged. The check requires the cassandra sink (it reads the raw keyspace) and is skipped with a warning otherwise. `monitoring monitor-raw-ingest` still works for standalone/cron use.
+
+### Web API + Python client (webapi-2.13.5)
+
+No changes.
 
 ## [2.14.0] - 2026-06-09
 
