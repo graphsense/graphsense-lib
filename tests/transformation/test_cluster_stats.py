@@ -1,4 +1,4 @@
-"""Unit tests for the weekly fresh_cluster_stats recompute transforms.
+"""Unit tests for the fresh_cluster_stats recompute transforms.
 
 Pure DataFrame transforms (no Cassandra), driven with synthetic frames on the
 local ``spark`` fixture, mirroring the multi_input_address_id_sets test style.

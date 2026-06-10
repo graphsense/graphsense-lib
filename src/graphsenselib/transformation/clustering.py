@@ -242,7 +242,7 @@ def backfill_fresh_cluster_stats(spark, transformed_keyspace: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Weekly cluster-stat recompute (pure DataFrame transforms + Cassandra I/O)
+# Cluster-stat recompute (pure DataFrame transforms + Cassandra I/O)
 # --------------------------------------------------------------------------- #
 # These reproduce the per-cluster stats the legacy `cluster` table carried, by
 # aggregating the address-level tables up through the fresh address->cluster

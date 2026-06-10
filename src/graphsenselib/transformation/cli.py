@@ -465,8 +465,8 @@ def recompute_cluster_stats(env, currency, local):
     fresh ``address -> cluster`` membership into per-cluster size, totals,
     first/last tx, degrees and tx-counts, and rewrites ``fresh_cluster_stats``.
     Membership (``fresh_address_cluster`` / ``fresh_cluster_addresses``) is NOT
-    touched. Intended as a weekly job: cluster-level stats lag the delta loop
-    (which keeps only size + root live), so they are refreshed periodically.
+    touched. The delta loop keeps only size + root live, so the full
+    cluster-level stats lag behind and this job refreshes them in one pass.
 
     Holds the transformed-keyspace lock (the same lock the delta updater takes) so
     it never races a delta merge, and truncates ``fresh_cluster_stats`` first for a

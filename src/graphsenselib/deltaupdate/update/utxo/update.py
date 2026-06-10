@@ -186,8 +186,8 @@ def _plan_clustering_changes(
             # lowers a root), and the one-off bootstrap relabels every cluster to
             # min(address_id) too — so existing ids loaded from it already satisfy
             # it. Trade-off vs. survivor-by-size: a large cluster can be the
-            # absorbed side here (hence the large-merge warning below); the weekly
-            # recompute self-heals any stat drift.
+            # absorbed side here (hence the large-merge warning below); the
+            # cluster-stat recompute self-heals any stat drift.
             survivor = min(existing)
             absorbed = sorted(existing - {survivor})
             new_size, new_min = stats[survivor]
