@@ -527,6 +527,11 @@ environments:
           # Optional authentication for node
           # username: "rpcuser"
           # password: "rpcpassword"
+          # Optional: staleness tolerance in hours. After every
+          # `ingest from-node` run the timestamp of the highest ingested raw
+          # block is checked against this threshold and a notification is sent
+          # if the data is older (same check as `monitoring monitor-raw-ingest`).
+          # raw_ingest_staleness_threshold: 10
 
         # Keyspace setup for schema creation
         keyspace_setup_config:

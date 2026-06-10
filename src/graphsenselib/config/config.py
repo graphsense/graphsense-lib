@@ -206,6 +206,16 @@ class IngestConfig(_WarnExtraModel):
     secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
     source_max_workers: int = 5
+    raw_ingest_staleness_threshold: Optional[int] = Field(
+        default=None,
+        description=(
+            "Staleness tolerance in hours for the post-ingest check. When set, "
+            "`ingest from-node` verifies after every run that the timestamp of "
+            "the highest ingested raw block is not older than this many hours "
+            "and sends a notification otherwise (same check as `monitoring "
+            "monitor-raw-ingest`). Unset disables the automatic check."
+        ),
+    )
 
     @property
     def all_node_references(self) -> List[str]:

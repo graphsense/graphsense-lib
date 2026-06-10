@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Added
+- **Built-in post-ingest staleness check for `ingest from-node`.** After a successful ingest run the command now performs the same check as `monitoring monitor-raw-ingest`: if the timestamp of the highest ingested raw block is older than a configured tolerance, a warning is logged and sent to a notification topic. This replaces the separate `monitoring monitor-raw-ingest` invocation after every ingest run. The tolerance is configured per network in `graphsense.yaml` (`ingest_config.raw_ingest_staleness_threshold`, in hours, e.g. `btc: 10`, `trx: 72`) and can be overridden per run with `--staleness-threshold`; `--no-staleness-check` skips the check, `--staleness-topic` selects the notification topic (default: `exceptions`). With no tolerance configured the behaviour is unchanged. The check requires the cassandra sink (it reads the raw keyspace) and is skipped with a warning otherwise. `monitoring monitor-raw-ingest` still works for standalone/cron use.
+
 ## [2.14.0] - 2026-06-09
 
 ### Library (v2.14.0)

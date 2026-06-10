@@ -3,6 +3,7 @@ import logging
 import sys
 import time
 from contextlib import ExitStack
+from typing import Optional
 
 import click
 
@@ -14,6 +15,7 @@ from ..cli.common import require_currency, require_environment
 from ..config import get_config
 from ..config.config import KeyspaceConfig
 from ..db import DbFactory
+from ..monitoring.monitoring import check_raw_ingest_staleness
 from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
 from .common import INGEST_SINKS
@@ -188,6 +190,26 @@ def ingesting():
     help="Which version of the ingest to use, 1: legacy (sequential), 2:parallel"
     "(default: 1). Note: version 1 has been removed for account chains (ETH/TRX).",
 )
+@click.option(
+    "--staleness-threshold",
+    type=int,
+    default=None,
+    help="Threshold in hours for the post-ingest staleness check. Overrides "
+    "ingest_config.raw_ingest_staleness_threshold from graphsense.yaml. "
+    "The check is skipped if neither is set.",
+)
+@click.option(
+    "--no-staleness-check",
+    is_flag=True,
+    help="Skip the post-ingest staleness check even if a threshold is configured.",
+)
+@click.option(
+    "--staleness-topic",
+    type=str,
+    default="exceptions",
+    show_default=True,
+    help="Notification topic the staleness warning is sent to.",
+)
 def ingest(
     env,
     currency,
@@ -207,6 +229,9 @@ def ingest(
     auto_compact_last_n,
     mode,
     version,
+    staleness_threshold,
+    no_staleness_check,
+    staleness_topic,
 ):
     """Ingests cryptocurrency data form the client/node to the graphsense db
     \f
@@ -341,6 +366,16 @@ def ingest(
         logger.warning(str(e))
         sys.exit(911)
 
+    if not info and not no_staleness_check:
+        _run_staleness_check(
+            env=env,
+            currency=currency,
+            ingest_cfg=ingest_cfg,
+            use_cassandra=use_cassandra,
+            staleness_threshold=staleness_threshold,
+            staleness_topic=staleness_topic,
+        )
+
 
 def _run_new_ingest(
     config,
@@ -442,6 +477,35 @@ def _run_auto_compact(
                 f"Auto-compaction conditions not met, last compaction was "
                 f"{last_vaccum_time}, skipping compaction"
             )
+
+
+def _run_staleness_check(
+    env: str,
+    currency: str,
+    ingest_cfg,
+    use_cassandra: bool,
+    staleness_threshold: Optional[int],
+    staleness_topic: str,
+):
+    """Post-ingest staleness check, replaces a separate `monitoring
+    monitor-raw-ingest` run after every ingest."""
+    threshold = (
+        staleness_threshold
+        if staleness_threshold is not None
+        else ingest_cfg.raw_ingest_staleness_threshold
+    )
+    if threshold is None:
+        return
+    if not use_cassandra:
+        logger.warning(
+            "Skipping post-ingest staleness check: it reads the Cassandra raw "
+            "keyspace, but the cassandra sink is not enabled."
+        )
+        return
+    logger.info(
+        f"Checking raw keyspace staleness for {currency} (threshold {threshold}h)"
+    )
+    check_raw_ingest_staleness(env, currency, threshold, topic=staleness_topic)
 
 
 @ingesting.group("delta-lake")
