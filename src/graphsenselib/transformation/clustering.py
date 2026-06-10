@@ -204,51 +204,6 @@ def multi_input_address_id_sets(tx_df, address_ids_df, end_block: Optional[int] 
     )
 
 
-def backfill_fresh_cluster_stats(
-    spark, transformed_keyspace: str, bucket_size: int
-) -> int:
-    """(Re)compute ``fresh_cluster_stats`` from ``fresh_cluster_addresses``.
-
-    Aggregates the membership reverse-index ``(cluster_id, address_id)`` into one
-    ``(cluster_id_group, cluster_id, no_addresses, min_address_id)`` row per
-    cluster via the Spark Cassandra connector (a distributed count+min, so no
-    driver-side materialization of the full mapping). Called as the final step of
-    :func:`run_clustering_spark`, so a one-off run — including a re-run to
-    (re)populate stats for an already-clustered keyspace — writes them. The
-    incremental delta clustering requires these rows to pick the larger survivor
-    on a merge. Returns the number of cluster rows written.
-    """
-    from pyspark.sql import functions as F
-
-    cass_format = "org.apache.spark.sql.cassandra"
-    members = (
-        spark.read.format(cass_format)
-        .options(table="fresh_cluster_addresses", keyspace=transformed_keyspace)
-        .load()
-    )
-    stats = (
-        members.groupBy("cluster_id")
-        .agg(
-            F.count(F.lit(1)).cast("bigint").alias("no_addresses"),
-            F.min("address_id").alias("min_address_id"),
-        )
-        .withColumn(
-            "cluster_id_group", F.floor(F.col("cluster_id") / bucket_size).cast("int")
-        )
-    )
-    stats.persist()
-    n_clusters = stats.count()
-    (
-        stats.select("cluster_id_group", "cluster_id", "no_addresses", "min_address_id")
-        .write.format(cass_format)
-        .options(table="fresh_cluster_stats", keyspace=transformed_keyspace)
-        .mode("append")
-        .save()
-    )
-    stats.unpersist()
-    return n_clusters
-
-
 # --------------------------------------------------------------------------- #
 # Cluster-stat recompute (pure DataFrame transforms + Cassandra I/O)
 # --------------------------------------------------------------------------- #
@@ -311,9 +266,8 @@ def cluster_additive_stats(members_df, address_df):
     ``total_spent`` (element-wise currency sums).
 
     Left-joins ``address`` onto membership so ``no_addresses`` counts every member
-    even
-    if its ``address`` row is missing (an orphan membership row), matching the
-    membership-only count of :func:`backfill_fresh_cluster_stats`; such a member
+    even if its ``address`` row is missing (an orphan membership row) — a pure
+    membership count, independent of address-table coverage; such a member
     contributes nothing to the value/tx aggregates (its columns are null).
     """
     from pyspark.sql import functions as F
@@ -904,8 +858,10 @@ def run_clustering_spark(
       * **bulk-writes** the resulting ``address_id -> cluster_id`` mapping back
         to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in
         ``write_chunk``-sized slices via the Spark Cassandra connector, then
-        aggregates ``fresh_cluster_stats`` (no_addresses + min_address_id per cluster)
-        that the incremental delta clustering needs to elect a merge survivor.
+        recomputes the full ``fresh_cluster_stats`` (size, root, totals, first/last
+        tx, degrees, tx-counts, adjusted totals) from the membership + address-level
+        tables via :func:`recompute_fresh_cluster_stats`, so a bootstrap leaves the
+        stats table complete (not just the size+root the delta loop maintains live).
 
     ``read_partitions`` sets the number of per-partition Arrow blobs streamed
     to the driver (the final edge-set DataFrame is coalesced to it): more
@@ -987,12 +943,16 @@ def run_clustering_spark(
         bucket_size,
     )
 
-    # PHASE 4: cluster stats (no_addresses + min_address_id per cluster), aggregated
-    # from the just-written fresh_cluster_addresses (distributed count+min) rather
-    # than the driver-side mapping, to keep driver memory bound. Needed by the
-    # incremental delta clustering to pick the larger survivor on a merge.
+    # PHASE 4: full cluster stats — the same recompute the standalone
+    # recompute-cluster-stats job runs, aggregating the just-written membership
+    # (fresh_address_cluster) with the address + address_incoming/outgoing_relations
+    # tables into per-cluster size, root, totals, first/last tx, degrees, tx-counts
+    # and adjusted totals. So a one-off bootstrap leaves fresh_cluster_stats
+    # complete, not just the size+root the incremental delta loop maintains live to
+    # elect a merge survivor (the rich columns then stay fresh via the periodic
+    # recompute job).
     stats_start = time.perf_counter()
-    n_stats = backfill_fresh_cluster_stats(spark, transformed_keyspace, bucket_size)
+    n_stats = recompute_fresh_cluster_stats(spark, transformed_keyspace, bucket_size)
     stats_secs = time.perf_counter() - stats_start
     logger.info(
         f"  [stats] fresh_cluster_stats: {n_stats:,} clusters in {stats_secs:.1f}s"

@@ -6,7 +6,7 @@ dataset directly into Cassandra and compares our *own* two production clustering
 paths for partition equivalence:
 
   * the PySpark one-off ``run_clustering_spark`` (bulk read + Arrow feed +
-    ``process_transactions_arrow`` + bulk write + ``backfill_fresh_cluster_stats``),
+    ``process_transactions_arrow`` + bulk write + ``recompute_fresh_cluster_stats``),
     run over the whole range at once; and
   * the incremental ``UpdateStrategyUtxo.run_fresh_clustering`` (point/range reads
     + ``run_incremental_clustering`` per batch), run from an empty state across
