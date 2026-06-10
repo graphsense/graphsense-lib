@@ -39,7 +39,9 @@ from graphsenselib.utils.utxo import (
     get_unique_addresses_from_transactions,
     get_unique_ordered_input_addresses_from_transactions,
     get_unique_ordered_output_addresses_from_transactions,
+    multi_input_address_sets,
     regularize_inoutputs,
+    resolve_address_id_sets,
 )
 
 logger = logging.getLogger(__name__)
@@ -176,10 +178,17 @@ def _plan_clustering_changes(
             )
 
         else:
-            # MERGE — keep the largest cluster's id (tie: smallest cluster_id) so
-            # the survivor (e.g. an exchange) is never rewritten; read and
-            # re-point only the smaller absorbed side(s).
-            survivor = max(existing, key=lambda c: (stats[c][0], -c))
+            # MERGE — cluster_id == root == min(address_id) by invariant, so the
+            # cluster with the smallest root survives and keeps its id; every
+            # higher-root side is re-pointed to it. The invariant holds across
+            # both producers: new clusters start at min(members), new addresses
+            # always get higher ids than any existing address (so a join never
+            # lowers a root), and the one-off bootstrap relabels every cluster to
+            # min(address_id) too — so existing ids loaded from it already satisfy
+            # it. Trade-off vs. survivor-by-size: a large cluster can be the
+            # absorbed side here (hence the large-merge warning below); the weekly
+            # recompute self-heals any stat drift.
+            survivor = min(existing)
             absorbed = sorted(existing - {survivor})
             new_size, new_min = stats[survivor]
             for cid, address_id in get_members(absorbed):
@@ -411,42 +420,6 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
     )
 
 
-def _extract_input_address_sets(txs) -> List[Set[str]]:
-    """Distinct input-address set per non-coinbase, multi-address transaction.
-
-    Mirrors the clustering edge semantics of
-    ``transformation.clustering.multi_input_address_id_sets``: union the address
-    lists of all inputs, drop coinbase / empty, keep sets with >= 2 addresses.
-    """
-    sets: List[Set[str]] = []
-    for tx in txs:
-        if tx.coinbase or not tx.inputs:
-            continue
-        addrs: Set[str] = set()
-        for inp in tx.inputs:
-            if inp.address:
-                addrs.update(inp.address)
-        if len(addrs) >= 2:
-            sets.append(addrs)
-    return sets
-
-
-def _resolve_input_id_sets(
-    address_sets: List[Set[str]], address_to_id: Callable[[str], int]
-) -> List[List[int]]:
-    """Resolve harvested input-address sets to distinct ``address_id`` lists.
-
-    Keeps only sets with >= 2 distinct ids — the Union-Find edges fed to
-    incremental clustering.
-    """
-    id_sets: List[List[int]] = []
-    for addrs in address_sets:
-        ids = {address_to_id(a) for a in addrs}
-        if len(ids) >= 2:
-            id_sets.append(list(ids))
-    return id_sets
-
-
 def get_transaction_changes(
     db: AnalyticsDb,
     txs: List,
@@ -505,9 +478,7 @@ def get_transaction_changes(
     # Harvest each multi-input tx's input-address set now, while txs are alive
     # (they are freed below, before the new address_ids are assigned); these are
     # resolved to address_ids just before return.
-    input_address_sets = (
-        _extract_input_address_sets(txs) if collect_cluster_inputs else []
-    )
+    input_address_sets = multi_input_address_sets(txs) if collect_cluster_inputs else []
 
     """
         Build dict of unique addresses in the batch.
@@ -854,7 +825,13 @@ def get_transaction_changes(
             nr_new_entities_created[mode] = nr_new_entities
             del nr_new_entities
 
-    cluster_inputs = _resolve_input_id_sets(input_address_sets, address_to_address_id)
+    # Resolve via a None-returning lookup (not address_to_address_id, which raises):
+    # multisig / multi-address inputs are dropped by filter_inoutputs upstream and
+    # so have no address_id — resolve_address_id_sets drops those addresses.
+    cluster_inputs = resolve_address_id_sets(
+        input_address_sets,
+        lambda a: addresses_with_cluster[a][0] if a in addresses_with_cluster else None,
+    )
 
     return (
         changes,
@@ -1526,22 +1503,36 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 truncate=False,
             )
 
-    def _apply_clustering_inputs(
+    def _clustering_changes_for(
         self, cluster_inputs: List[List[int]]
-    ) -> Tuple[int, int]:
+    ) -> List[DbChange]:
+        """Plan the fresh-clustering ``DbChange`` writes for the given multi-input
+        id sets (reads only the affected clusters; no write).  Empty list when
+        nothing changes.  Used both to apply clustering on its own (BATCH /
+        run_fresh_clustering) and to fold it into the same atomic per-tx write as
+        the tx's bookkeeping (TX mode), so clustering can never lag
+        ``last_synced_block``.
+        """
+        if not cluster_inputs:
+            return []
+        cc = run_incremental_clustering(self._db, cluster_inputs)
+        if cc.is_empty:
+            return []
+        return _clustering_changes_to_db(cc)
+
+    def _apply_clustering_inputs(self, cluster_inputs: List[List[int]]) -> int:
         """Run incremental fresh clustering for the given multi-input id sets and
         write the resulting diff to the ``fresh_*`` tables.
 
-        Shared by the in-loop delta path (fed from harvested ids) and
-        :meth:`run_fresh_clustering` (fed from a raw re-read).  Returns
-        ``(n_address_assignments, n_db_changes)``.
+        Shared by the in-loop BATCH delta path (fed from harvested ids) and
+        :meth:`run_fresh_clustering` (fed from a raw re-read).  Returns the number
+        of db changes written.
         """
-        cc = run_incremental_clustering(self._db, cluster_inputs)
-        if cc.is_empty:
-            return 0, 0
-        changes = _clustering_changes_to_db(cc)
+        changes = self._clustering_changes_for(cluster_inputs)
+        if not changes:
+            return 0
         apply_changes(self._db, changes, self._pedantic, try_atomic_writes=False)
-        return len(cc.address_assignments), len(changes)
+        return len(changes)
 
     def run_fresh_clustering(self, start_block: int, end_block: int):
         """Stand-alone (re)clustering of a block range, reading the raw txs back.
@@ -1570,7 +1561,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
             logger, f"Fresh clustering for blocks {start_block}-{end_block}"
         ) as lg:
             total_txs = 0
-            total_assignments = 0
             total_writes = 0
             for chunk in iter_multi_input_tx_inputs(self._db, start_block, end_block):
                 if not chunk:
@@ -1579,9 +1569,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 # Apply per chunk so a merge in an earlier chunk is visible to
                 # later chunks (single writer under the keyspace lock), and so
                 # driver memory stays bounded to one block-chunk of activity.
-                n_assign, n_writes = self._apply_clustering_inputs(chunk)
-                total_assignments += n_assign
-                total_writes += n_writes
+                total_writes += self._apply_clustering_inputs(chunk)
 
             if total_txs == 0:
                 lg.debug(
@@ -1591,8 +1579,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 return
             lg.debug(
                 f"Fresh clustering: {total_txs} multi-input txs over blocks "
-                f"{start_block}-{end_block} -> {total_assignments} address "
-                f"assignments, {total_writes} db changes written"
+                f"{start_block}-{end_block} -> {total_writes} db changes written"
             )
 
     def process_batch_impl_hook(self, batch) -> Tuple[Action, Optional[int]]:
@@ -1751,7 +1738,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 lambda: self.consume_cluster_id(),
                                 collect_cluster_inputs=collect_cluster_inputs,
                             )
-                            cluster_inputs.extend(tx_cluster_inputs)
                             last_block_processed = tx.block_id
                             nr_new_tx += 1
                             nr_new_address_relations += nr_new_address_relations_tx
@@ -1771,9 +1757,21 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 bts,
                                 patch_mode=self._patch_mode,
                             )
+                            # Fold this tx's fresh-clustering writes into the SAME
+                            # atomic commit as its bookkeeping (which carries
+                            # last_synced_block). Each tx commits before the next,
+                            # so the per-tx clustering reads the prior txs' committed
+                            # state — sequentially equivalent to batch clustering —
+                            # and clustering can never lag the persisted height. (In
+                            # BATCH mode clustering is applied once after the loop.)
+                            clustering_changes = self._clustering_changes_for(
+                                tx_cluster_inputs
+                            )
                             apply_changes(
                                 self._db,
-                                delta_changes_tx + bookkeepin_changes,
+                                delta_changes_tx
+                                + bookkeepin_changes
+                                + clustering_changes,
                                 self._pedantic,
                                 try_atomic_writes=True,
                             )
@@ -1792,15 +1790,17 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 f"Unknown application strategy {self.application_strategy}"
             )
 
-        # Apply clustering before persist (BATCH) / after this batch's per-tx
-        # writes (TX recovery).  In BATCH the persisted height then also marks
-        # clustering progress, so a crash redoes the batch and re-clusters
-        # idempotently (address_ids are reassigned deterministically).
+        # BATCH mode only: the whole batch's harvested edges are clustered once
+        # here, before persist_updater_progress applies self.changes and advances
+        # last_synced_block — so a crash redoes the batch and re-clusters
+        # idempotently (address_ids are reassigned deterministically). TX mode does
+        # NOT reach here with edges: it folds each tx's clustering into that tx's
+        # own atomic commit above (cluster_inputs stays empty in TX mode).
         if cluster_inputs:
-            n_assign, n_changes = self._apply_clustering_inputs(cluster_inputs)
+            n_changes = self._apply_clustering_inputs(cluster_inputs)
             logger.debug(
                 f"Fresh clustering: {len(cluster_inputs)} multi-input txs -> "
-                f"{n_assign} assignments, {n_changes} db changes"
+                f"{n_changes} db changes"
             )
 
         return Action.CONTINUE, batch[-1]

@@ -53,6 +53,7 @@ _REL_SCHEMA = StructType(
         StructField("src_address_id", IntegerType()),
         StructField("dst_address_id", IntegerType()),
         StructField("no_transactions", IntegerType()),
+        StructField("estimated_value", _CURRENCY),
     ]
 )
 _IN_REL_SCHEMA = StructType(
@@ -60,6 +61,7 @@ _IN_REL_SCHEMA = StructType(
         StructField("dst_address_id", IntegerType()),
         StructField("src_address_id", IntegerType()),
         StructField("no_transactions", IntegerType()),
+        StructField("estimated_value", _CURRENCY),
     ]
 )
 
@@ -73,18 +75,20 @@ _ADDRESSES = [
     (4, (40, [4.0, 8.0]), (4, [4.0, 4.0]), 15, 55),
     (5, (50, [5.0, 10.0]), (5, [5.0, 5.0]), 25, 35),
 ]
-# external edges + one intra-cluster (self) edge that must be dropped.
+# external edges + one intra-cluster (self) edge that must be dropped. The
+# estimated_value of external edges feeds total_*_adj; the self edge's value
+# (999) must never appear in any adjusted total.
 _OUT_REL = [
-    (1, 4, 2),  # c1 -> c4
-    (2, 4, 3),  # c1 -> c4 (same neighbour, sums)
-    (3, 1, 1),  # c1 -> c1 self, dropped
-    (4, 99, 5),  # c4 -> singleton 99
+    (1, 4, 2, (100, [1.0, 2.0])),  # c1 -> c4
+    (2, 4, 3, (200, [2.0, 4.0])),  # c1 -> c4 (same neighbour, sums)
+    (3, 1, 1, (999, [9.0, 9.0])),  # c1 -> c1 self, dropped
+    (4, 99, 5, (70, [7.0, 14.0])),  # c4 -> singleton 99
 ]
 _IN_REL = [
-    (4, 1, 2),  # c4 <- c1
-    (4, 2, 3),  # c4 <- c1
-    (1, 3, 1),  # c1 <- c1 self, dropped
-    (99, 4, 5),  # singleton 99 <- c4
+    (4, 1, 2, (100, [1.0, 2.0])),  # c4 <- c1
+    (4, 2, 3, (200, [2.0, 4.0])),  # c4 <- c1
+    (1, 3, 1, (999, [9.0, 9.0])),  # c1 <- c1 self, dropped
+    (99, 4, 5, (70, [7.0, 14.0])),  # singleton 99 <- c4
 ]
 
 
@@ -130,12 +134,21 @@ def test_relation_stats_excludes_self_and_maps_singletons(spark):
     assert out[1]["out_degree"] == 1
     assert out[1]["no_outgoing_txs"] == 5  # 2 + 3
     assert out[1].get("in_degree") in (None, 0)
+    # total_spent_adj = external out value (100 + 200); self-edge 999 excluded.
+    assert out[1]["total_spent_adj"]["value"] == 300
+    assert out[1]["total_spent_adj"]["fiat_values"] == pytest.approx([3.0, 6.0])
+    assert out[1].get("total_received_adj") is None  # no external incoming
 
     # c4 receives from c1 and sends to singleton 99.
     assert out[4]["in_degree"] == 1
     assert out[4]["no_incoming_txs"] == 5  # 2 + 3
     assert out[4]["out_degree"] == 1
     assert out[4]["no_outgoing_txs"] == 5
+    # total_received_adj = external in value (100 + 200); total_spent_adj = 70.
+    assert out[4]["total_received_adj"]["value"] == 300
+    assert out[4]["total_received_adj"]["fiat_values"] == pytest.approx([3.0, 6.0])
+    assert out[4]["total_spent_adj"]["value"] == 70
+    assert out[4]["total_spent_adj"]["fiat_values"] == pytest.approx([7.0, 14.0])
 
     # singleton 99 appears as a neighbour-derived row (filtered out later by the
     # additive base, which only has real clusters).
@@ -158,8 +171,14 @@ def test_compute_full_stats_left_joins_and_zero_fills(spark):
     assert out[1]["no_outgoing_txs"] == 5
     assert out[1]["size"] == 3
     assert out[1]["total_received"]["value"] == 600
+    # total_spent_adj summed; total_received_adj zero-filled (no external in).
+    assert out[1]["total_spent_adj"]["value"] == 300
+    assert out[1]["total_received_adj"]["value"] == 0
+    assert out[1]["total_received_adj"]["fiat_values"] == []
 
     assert out[4]["in_degree"] == 1
     assert out[4]["out_degree"] == 1
     assert out[4]["no_incoming_txs"] == 5
     assert out[4]["no_outgoing_txs"] == 5
+    assert out[4]["total_received_adj"]["value"] == 300
+    assert out[4]["total_spent_adj"]["value"] == 70

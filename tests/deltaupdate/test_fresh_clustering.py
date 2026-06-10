@@ -15,11 +15,13 @@ from graphsenselib.deltaupdate.update.utxo.update import (
     ClusteringChanges,
     _clustering_changes_to_db,
     _components_via_rust,
-    _extract_input_address_sets,
     _plan_clustering_changes,
-    _resolve_input_id_sets,
 )
 from graphsenselib.utils import DataObject as MutableNamedTuple
+from graphsenselib.utils.utxo import (
+    multi_input_address_sets,
+    resolve_address_id_sets,
+)
 
 
 class _FakeMembers:
@@ -96,56 +98,62 @@ def test_join_noop_when_no_new_addresses():
 # --------------------------------------------------------------------------- #
 # MERGE
 # --------------------------------------------------------------------------- #
-def test_merge_keeps_larger_reads_only_smaller():
-    members = _FakeMembers({200: [6, 7]})  # cluster 200 has members 6, 7
+def test_merge_smaller_root_survives_reads_only_absorbed():
+    # Invariant: cluster_id == root == min(address_id). C3 (root 3) and C6
+    # (root 6) merge -> the smaller root (3) survives and keeps its id; the
+    # higher-root side is read and re-pointed.
+    members = _FakeMembers({6: [6, 7]})  # cluster 6 has members 6, 7
     cc = _plan_clustering_changes(
-        components=[[5, 6, 99]],  # 5->C100, 6->C200, 99 new
-        addr_to_cluster={5: 100, 6: 200},
-        stats={100: (10, 3), 200: (2, 6)},  # 100 is larger -> survives
+        components=[[3, 6, 99]],  # 3->C3, 6->C6, 99 new
+        addr_to_cluster={3: 3, 6: 6},
+        stats={3: (10, 3), 6: (2, 6)},
         get_members=members,
     )
-    # only the absorbed (smaller) cluster's membership is read
-    assert members.calls == [[200]]
-    # absorbed members + the new address are re-pointed to survivor 100
-    assert sorted(cc.address_assignments) == [(6, 100), (7, 100), (99, 100)]
+    # only the absorbed (higher-root) cluster's membership is read
+    assert members.calls == [[6]]
+    # absorbed members + the new address are re-pointed to survivor 3
+    assert sorted(cc.address_assignments) == [(6, 3), (7, 3), (99, 3)]
     # the old reverse-index rows of the absorbed cluster are deleted (FM3)
-    assert sorted(cc.member_deletes) == [(200, 6), (200, 7)]
-    assert cc.stats_deletes == [200]
-    # survivor stats: size 10 + 2 + 1(new) = 13, min(3, 6, 99) = 3
-    assert cc.stats_upserts == [(100, 13, 3)]
+    assert sorted(cc.member_deletes) == [(6, 6), (6, 7)]
+    assert cc.stats_deletes == [6]
+    # survivor stats: size 10 + 2 + 1(new) = 13, root stays 3
+    assert cc.stats_upserts == [(3, 13, 3)]
 
 
-def test_merge_tie_breaks_to_smallest_cluster_id():
-    members = _FakeMembers({100: [5]})
+def test_merge_larger_cluster_absorbed_when_root_is_higher():
+    # The accepted cost of cluster_id == root: a big cluster (C6, size 100) with
+    # a higher root is the side that gets rewritten, because tiny C3 has the
+    # smaller root.
+    members = _FakeMembers({6: [6, 7]})
     cc = _plan_clustering_changes(
-        components=[[5, 6]],  # 5->C100, 6->C50, equal size
-        addr_to_cluster={5: 100, 6: 50},
-        stats={100: (5, 5), 50: (5, 6)},
+        components=[[3, 6]],  # 3->C3 (small), 6->C6 (large)
+        addr_to_cluster={3: 3, 6: 6},
+        stats={3: (2, 3), 6: (100, 6)},
         get_members=members,
     )
-    # equal size -> smaller cluster_id (50) survives, 100 absorbed
-    assert members.calls == [[100]]
-    assert cc.stats_deletes == [100]
-    assert cc.stats_upserts == [(50, 10, 5)]  # 5+5, min(6,5)=5
-    assert sorted(cc.address_assignments) == [(5, 50)]
-    assert cc.member_deletes == [(100, 5)]
+    assert members.calls == [[6]]  # the large cluster is read & re-pointed
+    assert cc.stats_deletes == [6]
+    assert sorted(cc.address_assignments) == [(6, 3), (7, 3)]
+    assert sorted(cc.member_deletes) == [(6, 6), (6, 7)]
+    assert cc.stats_upserts == [(3, 102, 3)]  # 2 + 100, root 3
 
 
 def test_merge_three_clusters_absorbs_all_but_survivor():
-    members = _FakeMembers({10: [1], 30: [3]})
+    # Smallest root (5) survives even though C15 is the largest by size.
+    members = _FakeMembers({15: [15], 25: [25]})
     cc = _plan_clustering_changes(
-        components=[[1, 2, 3]],  # C10, C20(survivor), C30
-        addr_to_cluster={1: 10, 2: 20, 3: 30},
-        stats={10: (2, 1), 20: (50, 2), 30: (4, 3)},
+        components=[[5, 15, 25]],  # 5->C5, 15->C15, 25->C25
+        addr_to_cluster={5: 5, 15: 15, 25: 25},
+        stats={5: (2, 5), 15: (50, 15), 25: (4, 25)},
         get_members=members,
     )
-    # survivor is the largest (C20); both others absorbed in one read call
-    assert members.calls == [[10, 30]]
-    assert cc.stats_deletes == [10, 30]
-    assert sorted(cc.address_assignments) == [(1, 20), (3, 20)]
-    assert sorted(cc.member_deletes) == [(10, 1), (30, 3)]
-    # 50 + 2 + 4 = 56, min(2,1,3)=1
-    assert cc.stats_upserts == [(20, 56, 1)]
+    # both higher-root clusters absorbed in one read call
+    assert members.calls == [[15, 25]]
+    assert cc.stats_deletes == [15, 25]
+    assert sorted(cc.address_assignments) == [(15, 5), (25, 5)]
+    assert sorted(cc.member_deletes) == [(15, 15), (25, 25)]
+    # 2 + 50 + 4 = 56, root 5
+    assert cc.stats_upserts == [(5, 56, 5)]
 
 
 # --------------------------------------------------------------------------- #
@@ -265,11 +273,10 @@ def test_run_incremental_clustering_guards_on_missing_stats():
 
 
 # --------------------------------------------------------------------------- #
-# In-loop harvest: _extract_input_address_sets / _resolve_input_id_sets.
-# These produce the same Union-Find edges as the one-off's
-# multi_input_address_id_sets, but from the txs the delta loop already holds
-# (no raw re-read).  The semantics are "multi-address" (>= 2 distinct input
-# addresses), matching the canonical one-off path.
+# In-loop harvest: multi_input_address_sets / resolve_address_id_sets
+# (utils.utxo, shared with the driver path and mirrored by the Spark one-off's
+# multi_input_address_id_sets). Same Union-Find edges, harvested from the txs the
+# delta loop already holds. Semantics: >= 2 distinct input addresses.
 # --------------------------------------------------------------------------- #
 def _inp(addresses):
     """A raw-tx input whose `address` is a list (multisig => more than one)."""
@@ -282,55 +289,68 @@ def _tx(coinbase=False, inputs=None):
 
 def test_extract_multi_input():
     txs = [_tx(inputs=[_inp(["A"]), _inp(["B"]), _inp(["C"])])]
-    assert _extract_input_address_sets(txs) == [{"A", "B", "C"}]
+    assert multi_input_address_sets(txs) == [{"A", "B", "C"}]
 
 
 def test_extract_coinbase_excluded():
     txs = [_tx(coinbase=True, inputs=[_inp(["coinbase"]), _inp(["B"])])]
-    assert _extract_input_address_sets(txs) == []
+    assert multi_input_address_sets(txs) == []
 
 
 def test_extract_single_address_excluded():
     txs = [_tx(inputs=[_inp(["A"])])]
-    assert _extract_input_address_sets(txs) == []
+    assert multi_input_address_sets(txs) == []
 
 
 def test_extract_duplicate_addresses_dedup_to_one():
     # same address across inputs collapses to one => < 2 distinct => dropped
     txs = [_tx(inputs=[_inp(["A"]), _inp(["A"])])]
-    assert _extract_input_address_sets(txs) == []
+    assert multi_input_address_sets(txs) == []
 
 
 def test_extract_multisig_single_input_unions_addresses():
     # one input listing two addresses (multisig) is itself a 2-address edge
     txs = [_tx(inputs=[_inp(["A", "B"])])]
-    assert _extract_input_address_sets(txs) == [{"A", "B"}]
+    assert multi_input_address_sets(txs) == [{"A", "B"}]
 
 
 def test_extract_skips_none_and_empty_addresses():
     txs = [_tx(inputs=[_inp(["A"]), _inp(None), _inp([]), _inp(["B"])])]
-    assert _extract_input_address_sets(txs) == [{"A", "B"}]
+    assert multi_input_address_sets(txs) == [{"A", "B"}]
 
 
 def test_extract_inputs_none_skipped():
     txs = [_tx(coinbase=False, inputs=None)]
-    assert _extract_input_address_sets(txs) == []
+    assert multi_input_address_sets(txs) == []
 
 
 def test_resolve_keeps_two_distinct_ids():
     a2i = {"A": 1, "B": 2}
-    out = _resolve_input_id_sets([{"A", "B"}], a2i.__getitem__)
+    out = resolve_address_id_sets([{"A", "B"}], a2i.get)
     assert [sorted(s) for s in out] == [[1, 2]]
 
 
 def test_resolve_drops_when_addresses_collapse_to_one_id():
     # two distinct addresses resolving to the same id => < 2 distinct => dropped
     a2i = {"A": 1, "C": 1}
-    assert _resolve_input_id_sets([{"A", "C"}], a2i.__getitem__) == []
+    assert resolve_address_id_sets([{"A", "C"}], a2i.get) == []
+
+
+def test_resolve_drops_unresolvable_addresses():
+    # Regression: a multisig / multi-address input contributes addresses that the
+    # rest of the pipeline never assigns an address_id (filter_inoutputs drops
+    # them upstream). resolve() returns None for those; they must be dropped, not
+    # raise KeyError. Here B has no id, so {A, B} collapses to a single id -> drop.
+    a2i = {"A": 1}  # B unresolvable
+    assert resolve_address_id_sets([{"A", "B"}], a2i.get) == []
+    # and a set that still has >= 2 resolvable ids survives, minus the unresolved
+    a2i2 = {"A": 1, "C": 3}  # B unresolvable, A and C resolve
+    out = resolve_address_id_sets([{"A", "B", "C"}], a2i2.get)
+    assert [sorted(s) for s in out] == [[1, 3]]
 
 
 def test_resolve_empty_input():
-    assert _resolve_input_id_sets([], lambda a: 0) == []
+    assert resolve_address_id_sets([], lambda a: 0) == []
 
 
 def test_harvest_end_to_end():
@@ -343,7 +363,7 @@ def test_harvest_end_to_end():
         _tx(inputs=[_inp(["B", "C", "D"])]),  # multisig {20, 30, 40}
         _tx(inputs=[_inp(["A"]), _inp(["E"])]),  # both id 10 -> drop
     ]
-    edges = _resolve_input_id_sets(_extract_input_address_sets(txs), a2i.__getitem__)
+    edges = resolve_address_id_sets(multi_input_address_sets(txs), a2i.get)
     assert sorted(sorted(e) for e in edges) == [[10, 20], [20, 30, 40]]
 
 

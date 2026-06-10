@@ -471,8 +471,9 @@ def recompute_cluster_stats(env, currency, local):
     Holds the transformed-keyspace lock (the same lock the delta updater takes) so
     it never races a delta merge, and truncates ``fresh_cluster_stats`` first for a
     clean, self-healing rebuild (clears rows of clusters merged away since the last
-    run). ``total_received_adj`` / ``total_spent_adj`` are left unset (no
-    delta-updater reference definition exists).
+    run). ``total_received_adj`` / ``total_spent_adj`` are the cluster totals
+    minus intra-cluster flows (summed external-relation ``estimated_value``);
+    validate against a real keyspace before REST reads them.
     \f
     """
     from graphsenselib.config import get_config, is_fresh_clustering_enabled
