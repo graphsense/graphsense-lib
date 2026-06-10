@@ -377,3 +377,25 @@ async def test_rest_adapter_round_trips_through_fastapi_route() -> None:
         backend = RestBackend(client)
         addrs = await backend.tx_addresses("btc", "tx1")
     assert addrs == frozenset({"addrA", "addrB"})
+
+
+async def test_checksummed_endpoint_matches_lowercase_participants() -> None:
+    """The backend returns EVM addresses lowercase; a spec endpoint in
+    EIP-55 checksum casing is the SAME address and must not trip the
+    mediation check."""
+    checksummed = "0x4e1773615dFc62A5dDc901b36223F1eAedB8F6Df"
+    other = "0x" + "ab" * 20
+    tx = "0x" + "cd" * 32
+    backend = _FakeBackend(
+        addresses={("eth", checksummed): True, ("eth", other): True},
+        txs={("eth", tx): frozenset({checksummed.lower(), other})},
+    )
+    spec = {
+        "addresses": [{"id": checksummed}, {"id": other}],
+        "txs": [{"id": tx}],
+        "agg_edges": [{"a": checksummed, "b": other, "tx_ids": [tx]}],
+    }
+    warnings = await verify_against_backend(
+        spec, default_network="eth", backend=backend
+    )
+    assert not any("don't actually mediate" in w for w in warnings), warnings

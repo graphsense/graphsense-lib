@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import struct
 from collections import deque
 from dataclasses import dataclass, field
@@ -43,6 +44,41 @@ from typing import Iterable, Optional, Union
 from .parser import lzw_pack
 
 Color = tuple[float, float, float, float]
+
+
+# ---------------------------------------------------------------------------
+# Identifier canonicalization
+# ---------------------------------------------------------------------------
+#
+# GraphSense stores EVM-style hex identifiers lowercase; EIP-55 checksum
+# casing is display-only. A .gs file carrying a checksummed id creates a
+# node the pathfinder UI cannot reconcile with the canonical lowercase
+# node for the same address — the same address renders twice. Hex is
+# case-insensitive, so lowercasing is always safe; base58 ids (BTC
+# legacy, TRX) never match these patterns and pass through untouched.
+
+_HEX_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+_HEX_TX_RE = re.compile(r"^(0x)?[0-9a-fA-F]{64}$")
+# Account-model sub-payment identifiers: `<hash>_T<n>` (token transfer)
+# or `<hash>_I<n>` (internal trace). The suffix marker is uppercase by
+# convention and must survive normalization.
+_SUB_TX_RE = re.compile(r"^((?:0x)?[0-9a-fA-F]{64})(_[IT]\d+)$")
+
+
+def normalize_address_id(addr: str) -> str:
+    """Lowercase EVM-style hex addresses; leave anything else verbatim."""
+    return addr.lower() if _HEX_ADDRESS_RE.match(addr) else addr
+
+
+def normalize_tx_id(tx_id: str) -> str:
+    """Lowercase hex tx hashes (including the hash part of account-model
+    sub-payment identifiers); leave anything else verbatim."""
+    if _HEX_TX_RE.match(tx_id):
+        return tx_id.lower()
+    m = _SUB_TX_RE.match(tx_id)
+    if m:
+        return m.group(1).lower() + m.group(2)
+    return tx_id
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +158,22 @@ class _AggEdge:
     tx_ids: list[tuple[str, str]] = field(default_factory=list)
 
 
+def _merge_duplicate(
+    item: _Item,
+    label: Optional[str],
+    color: Optional[Color],
+    starting_point: bool,
+) -> None:
+    """Fold a duplicate add into the first occurrence: the node keeps its
+    original placement, gains a label/color it didn't have, and stays a
+    starting point if either occurrence said so."""
+    if item.label is None and label is not None:
+        item.label = label
+    if item.color is None and color is not None:
+        item.color = color
+    item.is_starting_point = item.is_starting_point or starting_point
+
+
 # ---------------------------------------------------------------------------
 # High-level builder
 # ---------------------------------------------------------------------------
@@ -154,6 +206,13 @@ class GsBuilder:
         # _apply_columnar_layout once every label is known, so each column
         # gets one uniform row step sized to its tallest label.
         self._auto: list[tuple[_Item, str]] = []
+        # Dedup indexes over normalized (network, id) — adding the same
+        # node twice (e.g. an EVM address once checksummed, once
+        # lowercase) merges into the first occurrence instead of putting
+        # two nodes for the same thing into the file.
+        self._addr_index: dict[tuple[str, str], _Item] = {}
+        self._tx_index: dict[tuple[str, str], _Tx] = {}
+        self._edge_index: dict[tuple[str, str, str, str], _AggEdge] = {}
 
     def _addr_column(self, side: Optional[str]) -> tuple[str, float]:
         """Map an address ``side`` to its (column name, column x)."""
@@ -193,6 +252,11 @@ class GsBuilder:
         side: Optional[str] = None,
     ) -> "GsBuilder":
         net = network or self.default_network
+        addr = normalize_address_id(addr)
+        existing = self._addr_index.get((net, addr))
+        if existing is not None:
+            _merge_duplicate(existing, label, color, starting_point)
+            return self
         column, col_x = self._addr_column(side)
         item = _Item(
             net,
@@ -204,6 +268,7 @@ class GsBuilder:
             color,
         )
         self._addresses.append(item)
+        self._addr_index[(net, addr)] = item
         if y is None:
             # Defer y: assigned by _apply_columnar_layout once all labels
             # are known, so the column shares one uniform row step.
@@ -223,6 +288,11 @@ class GsBuilder:
         y: Optional[float] = None,
     ) -> "GsBuilder":
         net = network or self.default_network
+        tx_hash = normalize_tx_id(tx_hash)
+        existing = self._tx_index.get((net, tx_hash))
+        if existing is not None:
+            _merge_duplicate(existing, label, color, starting_point)
+            return self
         item = _Tx(
             net,
             tx_hash,
@@ -234,6 +304,7 @@ class GsBuilder:
             index=index,
         )
         self._txs.append(item)
+        self._tx_index[(net, tx_hash)] = item
         if y is None:
             self._auto.append((item, "tx"))
         return self
@@ -249,10 +320,20 @@ class GsBuilder:
         b_network: Optional[str] = None,
     ) -> "GsBuilder":
         net = network or self.default_network
-        edge = _AggEdge(a_network or net, addr_a, b_network or net, addr_b)
-        if tx_ids:
-            edge.tx_ids = [(net, t) for t in tx_ids]
-        self._agg_edges.append(edge)
+        a_net = a_network or net
+        b_net = b_network or net
+        addr_a = normalize_address_id(addr_a)
+        addr_b = normalize_address_id(addr_b)
+        key = (a_net, addr_a, b_net, addr_b)
+        edge = self._edge_index.get(key)
+        if edge is None:
+            edge = _AggEdge(a_net, addr_a, b_net, addr_b)
+            self._agg_edges.append(edge)
+            self._edge_index[key] = edge
+        for t in tx_ids or []:
+            pair = (net, normalize_tx_id(t))
+            if pair not in edge.tx_ids:
+                edge.tx_ids.append(pair)
         return self
 
     def to_payload(self) -> list:
@@ -458,13 +539,16 @@ def apply_hierarchical_layout(spec: dict) -> dict:
             adj[key] = set()
             nodes.append(key)
 
+    # Keys are built over normalized ids so two case variants of the same
+    # EVM address (or tx hash) resolve to one graph node — matching the
+    # dedup `GsBuilder` applies when the laid-out spec is encoded.
     for a in addresses:
-        _register(("addr", a["id"]))
+        _register(("addr", normalize_address_id(a["id"])))
     for t in txs:
-        _register(("tx", t["id"]))
+        _register(("tx", normalize_tx_id(t["id"])))
     for e in edges:
-        a_key = ("addr", e["a"])
-        b_key = ("addr", e["b"])
+        a_key = ("addr", normalize_address_id(e["a"]))
+        b_key = ("addr", normalize_address_id(e["b"]))
         _register(a_key)
         _register(b_key)
         tx_ids = list(e.get("tx_ids") or [])
@@ -474,7 +558,7 @@ def apply_hierarchical_layout(spec: dict) -> dict:
             # a↔b edge here would shortcut the layout and collapse the
             # tx onto the same column as one of its endpoints.
             for tid in tx_ids:
-                t_key = ("tx", tid)
+                t_key = ("tx", normalize_tx_id(tid))
                 _register(t_key)
                 adj[a_key].add(t_key)
                 adj[t_key].add(a_key)
@@ -494,10 +578,13 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     starts: list[tuple[str, str]] = []
     for a in addresses:
         if a.get("starting_point"):
-            starts.append(("addr", a["id"]))
+            starts.append(("addr", normalize_address_id(a["id"])))
     for t in txs:
         if t.get("starting_point"):
-            starts.append(("tx", t["id"]))
+            starts.append(("tx", normalize_tx_id(t["id"])))
+    # Normalization can collapse two spec entries onto one key; the
+    # tidy-tree walk below must visit each start once.
+    starts = list(dict.fromkeys(starts))
 
     level: dict[tuple[str, str], int] = {s: 0 for s in starts}
     parent: dict[tuple[str, str], Optional[tuple[str, str]]] = {s: None for s in starts}
@@ -547,9 +634,15 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     # the widening is applied uniformly to the whole layout.
     label_lines: dict[tuple[str, str], int] = {}
     for a in addresses:
-        label_lines[("addr", a["id"])] = _label_line_count(a.get("label"))
+        key = ("addr", normalize_address_id(a["id"]))
+        label_lines[key] = max(
+            label_lines.get(key, 1), _label_line_count(a.get("label"))
+        )
     for t in txs:
-        label_lines[("tx", t["id"])] = _label_line_count(t.get("label"))
+        key = ("tx", normalize_tx_id(t["id"]))
+        label_lines[key] = max(
+            label_lines.get(key, 1), _label_line_count(t.get("label"))
+        )
     max_lines = max(label_lines.values(), default=1)
     y_step = _HIER_Y_STEP + (max_lines - 1) * _LABEL_LINE_HEIGHT
 
@@ -577,10 +670,12 @@ def apply_hierarchical_layout(spec: dict) -> dict:
     # row would leave them.
     tx_endpoints: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for e in edges:
-        a_key = ("addr", e["a"])
-        b_key = ("addr", e["b"])
+        a_key = ("addr", normalize_address_id(e["a"]))
+        b_key = ("addr", normalize_address_id(e["b"]))
         for tid in e.get("tx_ids") or []:
-            tx_endpoints.setdefault(("tx", tid), []).extend([a_key, b_key])
+            tx_endpoints.setdefault(("tx", normalize_tx_id(tid)), []).extend(
+                [a_key, b_key]
+            )
     snapped: dict[tuple[str, str], tuple[float, float]] = {}
     for tx_key, addr_keys in tx_endpoints.items():
         if tx_key not in coords:
@@ -640,9 +735,10 @@ def apply_hierarchical_layout(spec: dict) -> dict:
             break
 
     def _apply(items: list[dict], kind: str) -> list[dict]:
+        normalize = normalize_address_id if kind == "addr" else normalize_tx_id
         out: list[dict] = []
         for item in items:
-            laid = coords.get((kind, item["id"]), (0.0, 0.0))
+            laid = coords.get((kind, normalize(item["id"])), (0.0, 0.0))
             new = dict(item)
             if new.get("x") is None:
                 new["x"] = laid[0]

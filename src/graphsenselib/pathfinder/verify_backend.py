@@ -27,6 +27,8 @@ from typing import Any, Iterable, Optional, Protocol, runtime_checkable
 
 import httpx
 
+from graphsenselib.convert.gs_files import normalize_address_id
+
 logger = logging.getLogger(__name__)
 
 # Cap the per-warning identifier list so a pathological spec can't bloat
@@ -166,7 +168,16 @@ async def verify_against_backend(
                 # Either way we don't know what addresses it mediated, so
                 # skip mediation check for it.
                 continue
-            offenders = [e for e in (a, b) if e not in participants]
+            # Compare in canonical form: the backend returns EVM addresses
+            # lowercase, while the spec may carry EIP-55 checksum casing —
+            # the same address must not be flagged as a mediation miss.
+            canonical = {normalize_address_id(p) for p in participants}
+            offenders = [
+                e
+                for e in (a, b)
+                if (normalize_address_id(e) if isinstance(e, str) else e)
+                not in canonical
+            ]
             if offenders:
                 mediation_misses.append(
                     f"{tid}: claims {a}↔{b} but tx involves "

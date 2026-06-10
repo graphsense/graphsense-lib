@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Fixed
+- **`.gs` files could carry the same EVM address twice with different casing.** A pathfinder spec listing an ETH address both EIP-55-checksummed and lowercase produced two nodes for the same address (and a single checksummed entry collided with the canonical lowercase node in the pathfinder UI). `GsBuilder` now canonicalizes EVM-style hex identifiers — addresses (`0x` + 40 hex) and tx hashes (64 hex, optional `0x`, account-model `_T<n>`/`_I<n>` sub-payment suffixes preserved) — to lowercase, and merges duplicate addresses, txs, and agg edges on their normalized `(network, id)` (labels/colors are folded into the first occurrence, `starting_point` is OR-ed, edge `tx_ids` are unioned). The hierarchical layout and both pathfinder verifiers compare ids in the same canonical form; `verify_structural` additionally warns when a spec lists the same address or tx more than once, so agents building files via `build_pathfinder_file` get told to fix their spec.
+
+### Web API + Python client
+
+No changes.
+
 ## [2.14.1] - 2026-06-10
 
 ### Library
