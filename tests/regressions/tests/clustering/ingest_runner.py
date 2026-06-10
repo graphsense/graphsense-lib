@@ -1,5 +1,6 @@
 """Run ingest, Scala transformation, and Rust clustering for regression tests."""
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -12,6 +13,18 @@ from tests.lib.ingest import (
     run_cli_ingest,
 )
 from tests.clustering.config import ClusteringConfig
+
+_CREATE_RE = re.compile(r"CREATE (TABLE|TYPE)( IF NOT EXISTS)? ")
+
+
+def _qualify_create(stmt: str, keyspace: str) -> str:
+    """Prefix the keyspace onto a CREATE TABLE/TYPE identifier.
+
+    Handles the optional ``IF NOT EXISTS`` clause, which a naive
+    ``str.replace("CREATE TYPE ", ...)`` would split mid-statement into the
+    invalid ``CREATE TYPE <ks>.IF NOT EXISTS ...``.
+    """
+    return _CREATE_RE.sub(rf"CREATE \1\2 {keyspace}.", stmt, count=1)
 
 
 def _block_bucket_size(currency: str) -> int:
@@ -127,10 +140,7 @@ def _create_transformed_keyspace(cassandra_host: str, cassandra_port: int, keysp
             if not stmt or stmt.upper().startswith("CREATE KEYSPACE") or stmt.upper().startswith("USE "):
                 continue
             # Prepend keyspace to CREATE TABLE/TYPE statements
-            stmt = stmt.replace("CREATE TABLE ", f"CREATE TABLE {keyspace}.")
-            stmt = stmt.replace("CREATE TYPE ", f"CREATE TYPE {keyspace}.")
-            stmt = stmt.replace("CREATE TABLE IF NOT EXISTS ", f"CREATE TABLE IF NOT EXISTS {keyspace}.")
-            stmt = stmt.replace("CREATE TYPE IF NOT EXISTS ", f"CREATE TYPE IF NOT EXISTS {keyspace}.")
+            stmt = _qualify_create(stmt, keyspace)
             session.execute(stmt)
 
 

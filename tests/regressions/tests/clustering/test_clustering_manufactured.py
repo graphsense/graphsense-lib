@@ -34,6 +34,7 @@ Design notes / assumptions (validate on first live run):
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -41,6 +42,7 @@ import pytest
 
 from tests.clustering.ingest_runner import (
     _create_transformed_keyspace,
+    _qualify_create,
     _read_fresh_address_cluster,
     run_incremental_clustering_via_production,
 )
@@ -66,7 +68,8 @@ ADDR_TO_ID = {A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8}
 
 # Manufactured transactions in tx_id order (tx_id assigned in block order).
 # Exercises: chain (A-B then B-C), a separate cluster (D-E), a cross-block merge
-# (C-D joins the two), a coinbase (skipped), a singleton (skipped), and a fresh
+# of two already-committed clusters (C-D merges {A,B,C} and {D,E} — see the batch
+# split below), a coinbase (skipped), a singleton (skipped), and a fresh
 # multi-input cluster (G-H) late in the range.
 MANUFACTURED_TXS = [
     {"block_id": 0, "tx_id": 0, "coinbase": True, "inputs": None},
@@ -197,12 +200,25 @@ print("OK")
 
 def _run_in_venv(current_venv: Path, helper: str, args: dict) -> None:
     python_bin = str(current_venv / "bin" / "python")
+    # The dev shell exports SPARK_SUBMIT_OPTS with a wait-for-attach JDWP agent
+    # (server=y,suspend=y) and points SPARK_HOME at an older system Spark. Both
+    # would make the helper's Spark JVM hang on the debugger socket / mismatch
+    # the venv's bundled pyspark, so strip them for the subprocess.
+    env = os.environ.copy()
+    for var in ("SPARK_SUBMIT_OPTS", "SPARK_HOME", "PYSPARK_SUBMIT_ARGS"):
+        env.pop(var, None)
+    # Pin both driver and worker Python to the venv interpreter; otherwise Spark
+    # workers default to the system python3 (a different minor version) and fail
+    # with PYTHON_VERSION_MISMATCH against the 3.11 driver.
+    env["PYSPARK_PYTHON"] = python_bin
+    env["PYSPARK_DRIVER_PYTHON"] = python_bin
     result = subprocess.run(
         [python_bin, "-c", helper],
         input=json.dumps(args),
         capture_output=True,
         text=True,
         timeout=600,
+        env=env,
     )
     if result.returncode != 0 or "OK" not in result.stdout:
         raise RuntimeError(
@@ -217,7 +233,11 @@ def _create_raw_keyspace(cassandra_host: str, cassandra_port: int, keyspace: str
 
     schema_path = (
         Path(__file__).resolve().parents[4]
-        / "src" / "graphsenselib" / "schema" / "resources" / "raw_utxo_schema.sql"
+        / "src"
+        / "graphsenselib"
+        / "schema"
+        / "resources"
+        / "raw_utxo_schema.sql"
     )
     schema_sql = schema_path.read_text()
     with Cluster([cassandra_host], port=cassandra_port) as cluster:
@@ -234,14 +254,7 @@ def _create_raw_keyspace(cassandra_host: str, cassandra_port: int, keyspace: str
                 or stmt.upper().startswith("USE ")
             ):
                 continue
-            stmt = stmt.replace("CREATE TABLE ", f"CREATE TABLE {keyspace}.")
-            stmt = stmt.replace("CREATE TYPE ", f"CREATE TYPE {keyspace}.")
-            stmt = stmt.replace(
-                "CREATE TABLE IF NOT EXISTS ", f"CREATE TABLE IF NOT EXISTS {keyspace}."
-            )
-            stmt = stmt.replace(
-                "CREATE TYPE IF NOT EXISTS ", f"CREATE TYPE IF NOT EXISTS {keyspace}."
-            )
+            stmt = _qualify_create(stmt, keyspace)
             session.execute(stmt)
 
 
@@ -301,24 +314,51 @@ class TestClusteringManufactured:
         oneoff_mapping = _read_fresh_address_cluster(host, port, tks)
         assert oneoff_mapping, "PySpark one-off wrote no fresh_address_cluster rows"
 
-        # --- incremental from empty, in batches, exercising cross-batch merge ---
+        # --- incremental from empty, in batches, exercising a real two-cluster
+        # merge: {D,E} is committed alone in batch (2,2) before the C-D edge in
+        # batch (3,5) merges it with the existing {A,B,C}. (If C-D arrived in the
+        # same batch as D-E it would be only a JOIN and never hit the merge
+        # branch — survivor election, member_deletes, stats_deletes.)
         _truncate_fresh(host, port, tks)
-        batches = [(0, 1), (2, 3), (4, LAST_BLOCK)]
+        batches = [(0, 1), (2, 2), (3, LAST_BLOCK)]
         for b_start, b_end in batches:
             run_incremental_clustering_via_production(
-                host, port, raw_ks, tks, CURRENCY,
+                host,
+                port,
+                raw_ks,
+                tks,
+                CURRENCY,
                 initial_mapping={},
                 min_block_id=b_start,
                 max_block_id=b_end,
                 current_venv=current_venv,
             )
         incr_mapping = _read_fresh_address_cluster(host, port, tks)
-        assert incr_mapping, "incremental clustering wrote no fresh_address_cluster rows"
+        assert incr_mapping, (
+            "incremental clustering wrote no fresh_address_cluster rows"
+        )
 
-        # --- partition equivalence (cluster_id labels may differ) ---
+        # --- partition equivalence + canonical-label invariant ---
         oneoff_clusters: dict[int, set[int]] = {}
         for addr_id, cluster_id in oneoff_mapping.items():
             oneoff_clusters.setdefault(cluster_id, set()).add(addr_id)
+        incr_clusters: dict[int, set[int]] = {}
+        for addr_id, cluster_id in incr_mapping.items():
+            incr_clusters.setdefault(cluster_id, set()).add(addr_id)
+
+        # cluster_id must be the canonical root == min(member address_id) on BOTH
+        # paths (the one-off relabels its rank-roots, the incremental elects the
+        # min survivor). A wrong-survivor / wrong-label regression fails here even
+        # though the partition comparison below intentionally discards labels.
+        for source, clusters in (
+            ("one-off", oneoff_clusters),
+            ("incremental", incr_clusters),
+        ):
+            for cid, members in clusters.items():
+                assert cid == min(members), (
+                    f"{source} cluster_id {cid} != min(member address_id) "
+                    f"{min(members)} (members={sorted(members)})"
+                )
 
         is_equivalent, mismatches = compare_cluster_partitions(
             oneoff_clusters, incr_mapping
@@ -377,20 +417,28 @@ class TestClusteringManufactured:
             ),
         )
         oneoff_mapping = _read_fresh_address_cluster(host, port, tks)
-        assert oneoff_mapping, "capped PySpark one-off wrote no fresh_address_cluster rows"
+        assert oneoff_mapping, (
+            "capped PySpark one-off wrote no fresh_address_cluster rows"
+        )
 
         # --- incremental from empty, only over [0, end_block] ---
         _truncate_fresh(host, port, tks)
         for b_start, b_end in [(0, 1), (2, end_block)]:
             run_incremental_clustering_via_production(
-                host, port, raw_ks, tks, CURRENCY,
+                host,
+                port,
+                raw_ks,
+                tks,
+                CURRENCY,
                 initial_mapping={},
                 min_block_id=b_start,
                 max_block_id=b_end,
                 current_venv=current_venv,
             )
         incr_mapping = _read_fresh_address_cluster(host, port, tks)
-        assert incr_mapping, "incremental clustering wrote no fresh_address_cluster rows"
+        assert incr_mapping, (
+            "incremental clustering wrote no fresh_address_cluster rows"
+        )
 
         oneoff_clusters: dict[int, set[int]] = {}
         for addr_id, cluster_id in oneoff_mapping.items():
