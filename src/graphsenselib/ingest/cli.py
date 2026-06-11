@@ -21,7 +21,7 @@ from ..schema import GraphsenseSchemas
 from ..utils import subkey_get
 from .common import INGEST_SINKS
 from .delta.sink import optimize_table, optimize_tables
-from .dump import export_delta
+from .dump import NothingToIngestError, export_delta
 from .factory import IngestFactory
 
 logger = logging.getLogger(__name__)
@@ -324,6 +324,7 @@ def ingest(
         )
 
     lock_disabled = no_lock or no_file_lock
+    nothing_to_ingest = False
     try:
         with ExitStack() as stack:
             db = None
@@ -391,6 +392,11 @@ def ingest(
     except LockAcquisitionError as e:
         logger.warning(str(e))
         sys.exit(911)
+    except NothingToIngestError:
+        # Still run the staleness check below: a node that stopped syncing
+        # produces "no new blocks" forever, which is exactly the condition
+        # the check must alert on. Exit code 12 is preserved for wrappers.
+        nothing_to_ingest = True
 
     if not info and not no_staleness_check:
         _run_staleness_check(
@@ -401,6 +407,9 @@ def ingest(
             staleness_threshold=staleness_threshold,
             staleness_topic=staleness_topic,
         )
+
+    if nothing_to_ingest:
+        sys.exit(12)
 
 
 def _run_new_ingest(

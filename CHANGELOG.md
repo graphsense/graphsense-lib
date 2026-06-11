@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Fixed
+- **Post-ingest staleness check was skipped when no new blocks were available.** In append mode without an explicit `--start-block`, `ingest from-node` exits with code 12 when the raw keyspace is already at the node's highest block — and that early exit also skipped the built-in staleness check, which is exactly the scenario it must alert on (a node that stopped syncing produces "no new blocks" forever while the raw keyspace goes stale). The no-new-blocks path now raises `NothingToIngestError` (a `SystemExit` subclass with code 12, so `ingest dump-rawdata` and wrapper scripts keying on exit 12 are unaffected) and `ingest from-node` runs the staleness check before exiting with the unchanged exit code 12.
+
+### Web API + Python client (webapi-2.13.5)
+
+No changes.
+
 ## [2.14.2] - 2026-06-11
 
 ### Library
