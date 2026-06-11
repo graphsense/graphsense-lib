@@ -146,8 +146,8 @@ def prepare_relations_for_ingest(
         if rel_key in relations_with_new_addr:
             inr = None  # Guaranteed new - no query needed
         else:
-            # Query result from database
-            inr = inrelations[rel_key].result_or_exc.one()
+            # Queried row (or None) - plain data, may come from a worker process
+            inr = inrelations[rel_key]
 
         id_src = hash_to_id[relations_update.src_identifier]
         id_dst = hash_to_id[relations_update.dst_identifier]

@@ -79,6 +79,35 @@ def split_even(items: list, n: int) -> list:
     return chunks
 
 
+_worker_db = None
+
+
+def init_worker(env: str, currency: str):
+    """Open this worker process's own database session.
+
+    Runs once per worker via the pool initializer; the driver is not
+    fork-safe, so every worker must build its own Cluster after spawn.
+    """
+    global _worker_db
+    from graphsenselib.db import DbFactory
+
+    _worker_db = DbFactory().from_config(env, currency)
+    _worker_db.open()
+
+
+def get_worker_db():
+    return _worker_db
+
+
+def worker_apply_changes(chunk: list) -> list:
+    """Apply a shard of DbChange upserts from a worker process.
+
+    Returns a single-element list (one ApplyChangesResult per chunk) so it
+    composes with ParallelDbPool.map_chunked's list-in/list-out contract.
+    """
+    return [get_worker_db().transformed.apply_changes(chunk, atomic=False)]
+
+
 class ParallelDbPool:
     """Pool of worker processes for client-CPU-bound Cassandra work.
 

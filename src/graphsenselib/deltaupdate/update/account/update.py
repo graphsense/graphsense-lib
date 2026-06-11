@@ -52,6 +52,7 @@ from graphsenselib.deltaupdate.update.account.modelsraw import (
     TrxTraceAdapter,
     TrxTransactionAdapter,
 )
+from graphsenselib.deltaupdate.update.account import parallelio
 from graphsenselib.deltaupdate.update.account.tokens import ERC20Decoder
 from graphsenselib.deltaupdate.update.generic import Action, ApplicationStrategy, Tx
 from graphsenselib.deltaupdate.update.utxo.update import apply_changes
@@ -99,6 +100,7 @@ class UpdateStrategyAccount(UpdateStrategy):
         application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
+        parallel_pool=None,
     ):
         super().__init__(db, du_config.currency, forward_fill_rates=forward_fill_rates)
         self.du_config = du_config
@@ -118,6 +120,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         self._pedantic = pedantic
         self._patch_mode = patch_mode
         self.changes = None
+        self.bookkeeping_changes = None
+        self._parallel_pool = parallel_pool
         self.application_strategy = application_strategy
         logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
@@ -129,10 +133,31 @@ class UpdateStrategyAccount(UpdateStrategy):
         if self.changes is not None:
             t_start = time.time()
             atomic = ApplicationStrategy.TX == self.application_strategy
-            apply_changes(
-                self._db, self.changes, self._pedantic, try_atomic_writes=atomic
-            )
+            bookkeeping = self.bookkeeping_changes or []
+            if self._parallel_pool is not None and not atomic:
+                # Shard the data writes across the worker pool; only write
+                # the bookkeeping rows (summary statistics, delta history)
+                # after every data shard has been acked, so a torn batch can
+                # never look completed.
+                apply_changes(
+                    self._db,
+                    self.changes,
+                    self._pedantic,
+                    try_atomic_writes=False,
+                    pool=self._parallel_pool,
+                )
+                apply_changes(
+                    self._db, bookkeeping, self._pedantic, try_atomic_writes=False
+                )
+            else:
+                apply_changes(
+                    self._db,
+                    self.changes + bookkeeping,
+                    self._pedantic,
+                    try_atomic_writes=atomic,
+                )
             self.changes = None
+            self.bookkeeping_changes = None
             self._timing_persist += time.time() - t_start
         self._time_last_batch = time.time() - self._batch_start_time
 
@@ -367,12 +392,12 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
             logger.debug("Bookkeeping changes done")
 
-            changes.extend(bookkeeping_changes)
-
             # Store changes to be written
             # They are applied at the end of the batch in
-            # persist_updater_progress
+            # persist_updater_progress; bookkeeping is kept separate so the
+            # parallel persist can write it strictly after the data changes.
             self.changes = changes
+            self.bookkeeping_changes = bookkeeping_changes
             return Action.CONTINUE, final_block
 
         else:
@@ -528,54 +553,42 @@ class UpdateStrategyAccount(UpdateStrategy):
         with LoggerScope.debug(
             logger, f"Checking existence for {len_addr} addresses"
         ) as _:
-            addr_ids = dict(tdb.get_address_id_async_batch(list(addresses)))
+            address_to_id = parallelio.fetch_address_ids(
+                tdb, self._parallel_pool, list(addresses)
+            )
         elapsed = time.time() - t_db_start
         self._timing_cassandra_check_existence += elapsed
         self._timing_cassandra_read += elapsed
         qps = len_addr / elapsed if elapsed > 0 else 0
         logger.debug(
-            f"  DB: get_address_id_async_batch: {len_addr} queries "
+            f"  DB: fetch_address_ids: {len_addr} queries "
             f"in {elapsed:.2f}s ({qps:.0f} q/s)"
         )
 
         t_db_start = time.time()
         with LoggerScope.debug(logger, "Reading addresses to be updated"):
-            existing_addr_ids = no_nones(
-                [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
-            )
-            n_existing = len(existing_addr_ids)
+            existing_ids = no_nones(address_to_id.values())
+            n_existing = len(existing_ids)
 
-            global addresses_resolved
             t_addr_batch_start = time.time()
-            addresses_resolved = dict(
-                tdb.get_address_async_batch(
-                    [adr.address_id for adr in existing_addr_ids]
-                )
+            id_to_address_row = parallelio.fetch_address_rows(
+                tdb, self._parallel_pool, existing_ids
             )
             t_addr_batch_elapsed = time.time() - t_addr_batch_start
             qps = n_existing / t_addr_batch_elapsed if t_addr_batch_elapsed > 0 else 0
             logger.debug(
-                f"  DB: get_address_async_batch: {n_existing} queries "
+                f"  DB: fetch_address_rows: {n_existing} queries "
                 f"in {t_addr_batch_elapsed:.2f}s ({qps:.0f} q/s)"
             )
 
-            def get_resolved_address(addr_id_exc):
-                addr_id = addr_id_exc.result_or_exc.one()
-                return (
-                    (None, None)
-                    if addr_id is None
-                    else (
-                        addr_id.address_id,
-                        addresses_resolved[addr_id.address_id].result_or_exc.one(),  # noqa
-                    )
-                )
-
             addresses_to_id__rows = {
-                adr: get_resolved_address(address_id)
-                for adr, address_id in addr_ids.items()
+                adr: (
+                    (addr_id, id_to_address_row.get(addr_id))
+                    if addr_id is not None
+                    else (None, None)
+                )
+                for adr, addr_id in address_to_id.items()
             }
-
-            del addresses_resolved
 
             bytes_to_row_address = {
                 address: row[1] for address, row in addresses_to_id__rows.items()
@@ -769,10 +782,8 @@ class UpdateStrategyAccount(UpdateStrategy):
             )
 
             # Execute inrelation and balance queries (outgoing skipped - same data)
-            in_results, bal_results, query_timing = (
-                tdb.execute_combined_queries_account_delta_updates(
-                    rel_to_query_in, address_ids_to_query
-                )
+            in_rows, bal_rows, query_timing = parallelio.fetch_relations_and_balances(
+                tdb, self._parallel_pool, rel_to_query_in, address_ids_to_query
             )
             n_in = int(query_timing["n_in"])
             n_bal = int(query_timing["n_bal"])
@@ -788,22 +799,18 @@ class UpdateStrategyAccount(UpdateStrategy):
             # Build result dictionaries (only inrelations - outgoing derived from it)
             # Only includes relations that were actually queried
             addr_inrelations = {
-                key: qr for key, qr in zip(relations_to_query_keys, in_results)
+                key: row for key, row in zip(relations_to_query_keys, in_rows)
             }
             # Only includes balances for existing addresses that were queried
             # New addresses get empty BalanceDelta via .get() default in prepare_balances
             addr_balances = {
-                addr_id: BalanceDelta.from_db(addr_id, qr.result_or_exc.all())
-                for addr_id, qr in zip(address_ids_to_query, bal_results)
+                addr_id: BalanceDelta.from_db(addr_id, rows)
+                for addr_id, rows in zip(address_ids_to_query, bal_rows)
             }
 
             # Count existing vs new (for diagnostics)
-            n_existing_in = sum(
-                1 for qr in in_results if qr.result_or_exc.one() is not None
-            )
-            n_existing_bal = sum(
-                1 for qr in bal_results if len(qr.result_or_exc.all()) > 0
-            )
+            n_existing_in = sum(1 for row in in_rows if row is not None)
+            n_existing_bal = sum(1 for rows in bal_rows if len(rows) > 0)
             n_total_rel = n_rel_skipped + n_rel_queried
             n_total_bal = n_bal_skipped + n_bal_queried
             logger.debug(
