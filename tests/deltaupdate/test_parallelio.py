@@ -146,3 +146,13 @@ def test_apply_changes_dispatches_data_changes_to_pool():
     fn, items = pool.dispatched[0]
     assert fn is worker_apply_changes
     assert items == changes
+
+
+def test_delta_update_cli_exposes_parallel_workers_option():
+    from click.testing import CliRunner
+
+    from graphsenselib.deltaupdate.cli import deltaupdate_cli
+
+    result = CliRunner().invoke(deltaupdate_cli, ["delta-update", "update", "--help"])
+    assert result.exit_code == 0
+    assert "--parallel-workers" in result.output

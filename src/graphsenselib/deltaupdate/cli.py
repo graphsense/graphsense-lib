@@ -71,6 +71,16 @@ def delta():
     is_flag=True,
     help="Disables safety checks for the delta update.",
 )
+@click.option(
+    "--parallel-workers",
+    type=int,
+    show_default=True,
+    default=1,
+    help="Nr. of worker processes for the batch reads and writes "
+    "(account model only). The driver work is client-CPU-bound, so "
+    "values above 1 parallelize it across processes; 1 keeps the "
+    "single-process behavior.",
+)
 def deltaupdate(
     env,
     currency,
@@ -84,6 +94,7 @@ def deltaupdate(
     create_schema,
     forward_fill_rates,
     disable_safety_checks,
+    parallel_workers,
 ):
     """Updates the transformend keyspace for new data in raw, if possible.
     \f
@@ -114,6 +125,7 @@ def deltaupdate(
         pedantic,
         forward_fill_rates,
         disable_safety_checks,
+        parallel_workers=parallel_workers,
     )
 
 

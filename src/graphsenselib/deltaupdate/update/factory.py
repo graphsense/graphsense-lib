@@ -1,3 +1,5 @@
+import logging
+
 from graphsenselib.deltaupdate.update.account.accountlegacy import (
     UpdateStrategyAccountLegacy,
 )
@@ -10,6 +12,8 @@ from ...db import AnalyticsDb
 from .abstractupdater import AbstractUpdateStrategy
 from .account import UpdateStrategyAccount
 from .utxo import UpdateStrategyUtxo
+
+logger = logging.getLogger(__name__)
 
 
 class UpdaterFactory:
@@ -24,9 +28,19 @@ class UpdaterFactory:
         write_batch: int,
         patch_mode: bool,
         forward_fill_rates: bool = False,
+        parallel_pool=None,
     ) -> AbstractUpdateStrategy:
         currency = du_config.currency
         schema_type = currency_to_schema_type[currency]
+        is_account_v2 = (
+            schema_type == "account" or schema_type == "account_trx"
+        ) and version == 2
+        if parallel_pool is not None and not is_account_v2:
+            logger.warning(
+                "--parallel-workers is only supported for the account "
+                f"updater v2; ignoring it for {schema_type} v{version}."
+            )
+            parallel_pool = None
         if schema_type == "utxo" and version == 1:
             return UpdateStrategyUtxoLegacy(db, currency, write_new, write_dirty)
         if schema_type == "utxo" and version == 2:
@@ -49,7 +63,7 @@ class UpdaterFactory:
                 write_dirty,
                 forward_fill_rates=forward_fill_rates,
             )
-        if (schema_type == "account" or schema_type == "account_trx") and version == 2:
+        if is_account_v2:
             app_strat = ApplicationStrategy.BATCH
             return UpdateStrategyAccount(
                 db,
@@ -58,6 +72,7 @@ class UpdaterFactory:
                 app_strat,
                 patch_mode,
                 forward_fill_rates=forward_fill_rates,
+                parallel_pool=parallel_pool,
             )
         else:
             raise Exception(f"Unsupported schema type {schema_type} or {version}")

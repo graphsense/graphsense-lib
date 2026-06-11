@@ -1,6 +1,9 @@
 import logging
 import sys
+from contextlib import nullcontext
 from typing import Optional
+
+from graphsenselib.db.parallel import ParallelDbPool, init_worker
 
 from ..config import get_config, is_fresh_clustering_enabled
 from ..db import DbFactory
@@ -220,6 +223,7 @@ def update(
     pedantic: bool,
     forward_fill_rates: bool,
     disable_safety_checks: bool = False,
+    parallel_workers: int = 1,
 ):
     with DbFactory().from_config(env, currency) as db:
         config = get_config()
@@ -313,22 +317,29 @@ def update(
                             "Cannot run delta update."
                         )
                         sys.exit(11)
-                    update_transformed(
-                        start_block,
-                        end_block,
-                        UpdaterFactory().get_updater(
-                            du_config,
-                            db,
-                            updater_version,
-                            write_new,
-                            write_dirty,
-                            pedantic,
-                            write_batch_size,
-                            patch_mode=patch_mode,
-                            forward_fill_rates=forward_fill_rates,
-                        ),
-                        batch_size=write_batch_size,
+                    pool_ctx = (
+                        ParallelDbPool(parallel_workers, init_worker, (env, currency))
+                        if parallel_workers > 1
+                        else nullcontext(None)
                     )
+                    with pool_ctx as parallel_pool:
+                        update_transformed(
+                            start_block,
+                            end_block,
+                            UpdaterFactory().get_updater(
+                                du_config,
+                                db,
+                                updater_version,
+                                write_new,
+                                write_dirty,
+                                pedantic,
+                                write_batch_size,
+                                patch_mode=patch_mode,
+                                forward_fill_rates=forward_fill_rates,
+                                parallel_pool=parallel_pool,
+                            ),
+                            batch_size=write_batch_size,
+                        )
 
                 elif end_block == start_block or start_block - 1 == end_block:
                     logger.info("Nothing to do. Data is up to date.")
