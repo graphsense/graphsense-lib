@@ -15,21 +15,30 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.subgraph_address_summary import SubgraphAddressSummary
-from graphsense.models.subgraph_tx_summary import SubgraphTxSummary
+from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional, Union
+from graphsense.models.labeled_item_ref import LabeledItemRef
 from typing import Optional, Set
 from typing_extensions import Self
 
-class SubgraphSummary(BaseModel):
+class SubgraphAddressSummary(BaseModel):
     """
-    Aggregate stats over a subgraph, split by node type.  Each block is present iff the request carried that node type: ``txs`` summarizes the transactions, ``addresses`` the addresses.
+    Aggregate stats over the addresses in a subgraph.  Value totals are in the chain's base unit; the ``*_fiat`` fields sum the ``fiat_currency`` value across the set. ``first_usage`` / ``last_usage`` span the set's on-chain activity and are omitted when no selected address has any. ``tagged_address_count`` counts addresses with at least one visible tag; ``actors`` lists the distinct actors across all tags on the set. ``notes`` flags caveats (partial fiat totals, token holdings excluded from native totals).
     """ # noqa: E501
-    currency: StrictStr
-    txs: Optional[SubgraphTxSummary] = None
-    addresses: Optional[SubgraphAddressSummary] = None
-    __properties: ClassVar[List[str]] = ["currency", "txs", "addresses"]
+    address_count: StrictInt
+    total_received: StrictInt
+    total_received_fiat: Optional[Union[StrictFloat, StrictInt]] = None
+    total_spent: StrictInt
+    total_spent_fiat: Optional[Union[StrictFloat, StrictInt]] = None
+    balance: StrictInt
+    balance_fiat: Optional[Union[StrictFloat, StrictInt]] = None
+    fiat_currency: Optional[StrictStr] = 'usd'
+    first_usage: Optional[StrictInt] = None
+    last_usage: Optional[StrictInt] = None
+    tagged_address_count: Optional[StrictInt] = 0
+    actors: Optional[List[LabeledItemRef]] = None
+    notes: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["address_count", "total_received", "total_received_fiat", "total_spent", "total_spent_fiat", "balance", "balance_fiat", "fiat_currency", "first_usage", "last_usage", "tagged_address_count", "actors", "notes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -49,7 +58,7 @@ class SubgraphSummary(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of SubgraphSummary from a JSON string"""
+        """Create an instance of SubgraphAddressSummary from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -70,18 +79,19 @@ class SubgraphSummary(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of txs
-        if self.txs:
-            _dict['txs'] = self.txs.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of addresses
-        if self.addresses:
-            _dict['addresses'] = self.addresses.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of each item in actors (list)
+        _items = []
+        if self.actors:
+            for _item_actors in self.actors:
+                if _item_actors:
+                    _items.append(_item_actors.to_dict())
+            _dict['actors'] = _items
 
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of SubgraphSummary from a dict"""
+        """Create an instance of SubgraphAddressSummary from a dict"""
         if obj is None:
             return None
 
@@ -89,9 +99,19 @@ class SubgraphSummary(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "currency": obj.get("currency"),
-            "txs": SubgraphTxSummary.from_dict(obj["txs"]) if obj.get("txs") is not None else None,
-            "addresses": SubgraphAddressSummary.from_dict(obj["addresses"]) if obj.get("addresses") is not None else None
+            "address_count": obj.get("address_count"),
+            "total_received": obj.get("total_received"),
+            "total_received_fiat": obj.get("total_received_fiat"),
+            "total_spent": obj.get("total_spent"),
+            "total_spent_fiat": obj.get("total_spent_fiat"),
+            "balance": obj.get("balance"),
+            "balance_fiat": obj.get("balance_fiat"),
+            "fiat_currency": obj.get("fiat_currency") if obj.get("fiat_currency") is not None else 'usd',
+            "first_usage": obj.get("first_usage"),
+            "last_usage": obj.get("last_usage"),
+            "tagged_address_count": obj.get("tagged_address_count") if obj.get("tagged_address_count") is not None else 0,
+            "actors": [LabeledItemRef.from_dict(_item) for _item in obj["actors"]] if obj.get("actors") is not None else None,
+            "notes": obj.get("notes")
         })
         return _obj
 

@@ -7,8 +7,10 @@ module itself (pytest only collects test_*.py).
 from __future__ import annotations
 
 from graphsenselib.db.asynchronous.services.models import (
+    Address,
     FiatValue,
     TxAccount,
+    TxSummary,
     TxUtxo,
     TxValue,
     UtxoHeuristics,
@@ -80,6 +82,32 @@ def make_tx(
         heuristics=heuristics,
         version=version,
         lock_time=lock_time,
+    )
+
+
+def make_address(
+    address: str = "addr",
+    total_received: Values | None = None,
+    total_spent: Values | None = None,
+    balance: Values | None = None,
+    first_ts: int | None = 1000,
+    last_ts: int | None = 2000,
+    token_balances: dict | None = None,
+) -> Address:
+    def _tx(ts: int | None) -> TxSummary | None:
+        if ts is None:
+            return None
+        return TxSummary(height=1, timestamp=ts, tx_hash="ff" * 32)
+
+    return Address(
+        address=address,
+        currency=CURRENCY,
+        total_received=total_received or make_value(0),
+        total_spent=total_spent or make_value(0),
+        balance=balance or make_value(0),
+        first_tx=_tx(first_ts),
+        last_tx=_tx(last_ts),
+        token_balances=token_balances,
     )
 
 

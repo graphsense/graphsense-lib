@@ -1,5 +1,11 @@
+import pytest
+
 from graphsenselib.db.asynchronous.services.common import function_call_from_row
 from graphsenselib.db.asynchronous.services.common import FunctionCall
+from graphsenselib.db.asynchronous.services.common import (
+    get_address as get_address_common,
+)
+from graphsenselib.errors import AddressNotFoundException
 
 
 def test_function_call_from_row_none():
@@ -92,3 +98,24 @@ def test_real_function_call_from_row():
     assert result.function_definition.name == "swapEthForTokens"
     assert result.function_definition.selector == "0xff190b9f"
     assert result.function_definition.tags == ["swap", "weth"]
+
+
+async def test_get_address_without_fallback_propagates_not_found():
+    class FakeDb:
+        async def get_address(self, currency, address):
+            raise AddressNotFoundException(currency, address)
+
+        async def new_address(self, currency, address):
+            raise AssertionError("new_address fallback must not be used")
+
+    with pytest.raises(AddressNotFoundException):
+        await get_address_common(
+            FakeDb(),
+            None,  # tagstore unused: include_actors=False
+            None,  # rates_service unused: raises before conversion
+            "btc",
+            "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+            [],
+            include_actors=False,
+            new_address_fallback=False,
+        )

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -536,12 +536,35 @@ class SubgraphTxSummaryInternal(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class SubgraphAddressSummaryInternal(BaseModel):
+    address_count: int
+    # Native base-unit sums (satoshi / wei / sun) over the selected
+    # addresses. Account-chain token holdings are not folded in; notes
+    # flags them. The *_fiat fields sum the fiat_currency value across
+    # the set, partial when some addresses lack a rate (noted).
+    total_received: int
+    total_received_fiat: Optional[float] = None
+    total_spent: int
+    total_spent_fiat: Optional[float] = None
+    balance: int
+    balance_fiat: Optional[float] = None
+    fiat_currency: str = "usd"
+    # min/max activity timestamps over the set; None when no selected
+    # address has any on-chain activity.
+    first_usage: Optional[int] = None
+    last_usage: Optional[int] = None
+    # Addresses with at least one tag visible to the caller's groups.
+    tagged_address_count: int = 0
+    # Distinct actors across all tags on the set, deduped by id.
+    actors: List[LabeledItemRef] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
 class SubgraphSummaryInternal(BaseModel):
     currency: str
-    txs: SubgraphTxSummaryInternal
-    # Reserved for the future per-address summary block; None until address
-    # inputs are supported by /subgraph/summary.
-    addresses: Optional[Any] = None
+    # Each block is present iff the request carried that node type.
+    txs: Optional[SubgraphTxSummaryInternal] = None
+    addresses: Optional[SubgraphAddressSummaryInternal] = None
 
 
 class ComparisonVerdictInternal(BaseModel):

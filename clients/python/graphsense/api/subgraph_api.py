@@ -144,9 +144,9 @@ class SubgraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> SubgraphSummary:
-        """Summarize a set of transactions
+        """Summarize a set of transactions and/or addresses
 
-        Returns aggregate stats (value, fee, input/output counts, block and timestamp ranges) over the transactions in the request body. The summary is derived from tx headers only, so it works for every supported chain. The node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes; addresses are reserved for a future extension and must be empty for now.
+        Returns aggregate stats over the transactions and/or addresses in the request body, split into a txs block (value, fee, input/output counts, block and timestamp ranges) and an addresses block (value totals, balance, usage span, tag overview). Each block is derived from header fields only, so it works for every supported chain and is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -218,9 +218,9 @@ class SubgraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[SubgraphSummary]:
-        """Summarize a set of transactions
+        """Summarize a set of transactions and/or addresses
 
-        Returns aggregate stats (value, fee, input/output counts, block and timestamp ranges) over the transactions in the request body. The summary is derived from tx headers only, so it works for every supported chain. The node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes; addresses are reserved for a future extension and must be empty for now.
+        Returns aggregate stats over the transactions and/or addresses in the request body, split into a txs block (value, fee, input/output counts, block and timestamp ranges) and an addresses block (value totals, balance, usage span, tag overview). Each block is derived from header fields only, so it works for every supported chain and is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -292,9 +292,9 @@ class SubgraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Summarize a set of transactions
+        """Summarize a set of transactions and/or addresses
 
-        Returns aggregate stats (value, fee, input/output counts, block and timestamp ranges) over the transactions in the request body. The summary is derived from tx headers only, so it works for every supported chain. The node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes; addresses are reserved for a future extension and must be empty for now.
+        Returns aggregate stats over the transactions and/or addresses in the request body, split into a txs block (value, fee, input/output counts, block and timestamp ranges) and an addresses block (value totals, balance, usage span, tag overview). Each block is derived from header fields only, so it works for every supported chain and is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str

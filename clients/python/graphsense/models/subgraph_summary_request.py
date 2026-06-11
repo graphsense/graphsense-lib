@@ -22,7 +22,7 @@ from typing_extensions import Self
 
 class SubgraphSummaryRequest(BaseModel):
     """
-    Request body for ``POST /{currency}/subgraph/summary``.  The subgraph is defined by ``txs`` (transaction hashes). ``addresses`` is reserved for a future extension and must be empty for now; the node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes. ``fiat_currency`` selects the currency for ``total_value_fiat`` (only the rates GraphSense stores, usd and eur, are available; default usd).
+    Request body for ``POST /{currency}/subgraph/summary``.  The subgraph is defined by ``txs`` (transaction hashes) and/or ``addresses``. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100. ``fiat_currency`` selects the currency for the fiat totals (only the rates GraphSense stores, usd and eur, are available; default usd).
     """ # noqa: E501
     txs: Optional[List[StrictStr]] = None
     addresses: Optional[List[StrictStr]] = None

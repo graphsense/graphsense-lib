@@ -466,6 +466,7 @@ async def get_address(
     address: str,
     tagstore_groups: List[str],
     include_actors: bool = True,
+    new_address_fallback: bool = True,
 ) -> Address:
     address_canonical = cannonicalize_address(currency, address)
 
@@ -477,6 +478,8 @@ async def get_address(
     try:
         result = await db.get_address(currency, address_canonical)
     except AddressNotFoundException:
+        if not new_address_fallback:
+            raise
         result = await db.new_address(currency, address_canonical)
 
     actors = None

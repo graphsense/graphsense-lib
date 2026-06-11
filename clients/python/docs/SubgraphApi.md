@@ -4,15 +4,15 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**subgraph_summary**](SubgraphApi.md#subgraph_summary) | **POST** /{currency}/subgraph/summary | Summarize a set of transactions
+[**subgraph_summary**](SubgraphApi.md#subgraph_summary) | **POST** /{currency}/subgraph/summary | Summarize a set of transactions and/or addresses
 
 
 # **subgraph_summary**
 > SubgraphSummary subgraph_summary(currency, subgraph_summary_request)
 
-Summarize a set of transactions
+Summarize a set of transactions and/or addresses
 
-Returns aggregate stats (value, fee, input/output counts, block and timestamp ranges) over the transactions in the request body. The summary is derived from tx headers only, so it works for every supported chain. The node set (txs + addresses) must hold at least 2 and at most 100 distinct nodes; addresses are reserved for a future extension and must be empty for now.
+Returns aggregate stats over the transactions and/or addresses in the request body, split into a txs block (value, fee, input/output counts, block and timestamp ranges) and an addresses block (value totals, balance, usage span, tag overview). Each block is derived from header fields only, so it works for every supported chain and is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
 
 ### Example
 
@@ -50,7 +50,7 @@ with graphsense.ApiClient(configuration) as api_client:
     subgraph_summary_request = graphsense.SubgraphSummaryRequest() # SubgraphSummaryRequest | 
 
     try:
-        # Summarize a set of transactions
+        # Summarize a set of transactions and/or addresses
         api_response = api_instance.subgraph_summary(currency, subgraph_summary_request)
         print("The response of SubgraphApi->subgraph_summary:\n")
         pprint(api_response)
@@ -86,8 +86,8 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (need 2-100 nodes, or addresses supplied which are not yet supported). |  -  |
-**404** | One of the transactions was not found. |  -  |
+**400** | Invalid request (each non-empty list needs at least 2 distinct entries, at most 100 nodes combined). |  -  |
+**404** | One of the transactions or addresses was not found. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

@@ -13,6 +13,8 @@ async def summary(
 ):
     result = await _db_summary(
         ctx.services.txs_service,
+        ctx.services.addresses_service,
+        ctx.services.tags_service,
         currency,
         txs,
         addresses,

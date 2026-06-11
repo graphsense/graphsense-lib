@@ -1,14 +1,14 @@
 # SubgraphSummary
 
-Aggregate stats over a subgraph, split by node type.  ``txs`` summarizes the transactions in the subgraph. ``addresses`` is reserved for a future per-address summary block and is omitted until address inputs are supported.
+Aggregate stats over a subgraph, split by node type.  Each block is present iff the request carried that node type: ``txs`` summarizes the transactions, ``addresses`` the addresses.
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **currency** | **str** |  | 
-**txs** | [**SubgraphTxSummary**](SubgraphTxSummary.md) |  | 
-**addresses** | **object** |  | [optional] 
+**txs** | [**SubgraphTxSummary**](SubgraphTxSummary.md) |  | [optional] 
+**addresses** | [**SubgraphAddressSummary**](SubgraphAddressSummary.md) |  | [optional] 
 
 ## Example
 

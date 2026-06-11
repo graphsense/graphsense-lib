@@ -1,6 +1,8 @@
 """Tests for the ``to_api_subgraph_summary`` translator."""
 
 from graphsenselib.db.asynchronous.services.models import (
+    LabeledItemRef as LabeledItemRefInternal,
+    SubgraphAddressSummaryInternal,
     SubgraphSummaryInternal,
     SubgraphTxSummaryInternal,
 )
@@ -60,3 +62,41 @@ def test_to_api_subgraph_summary_account_omits_io_counts():
     api = to_api_subgraph_summary(internal)
     assert api.txs.total_inputs is None
     assert api.txs.total_outputs is None
+
+
+def test_translates_address_block_and_optional_txs():
+    internal = SubgraphSummaryInternal(
+        currency="btc",
+        txs=None,
+        addresses=SubgraphAddressSummaryInternal(
+            address_count=2,
+            total_received=1500,
+            total_received_fiat=15.0,
+            total_spent=500,
+            total_spent_fiat=5.0,
+            balance=1000,
+            balance_fiat=10.0,
+            fiat_currency="usd",
+            first_usage=1000,
+            last_usage=3000,
+            tagged_address_count=1,
+            actors=[LabeledItemRefInternal(id="binance", label="Binance")],
+            notes=["a note"],
+        ),
+    )
+    api = to_api_subgraph_summary(internal)
+    assert api.txs is None
+    assert api.addresses.address_count == 2
+    assert api.addresses.total_received == 1500
+    assert api.addresses.total_received_fiat == 15.0
+    assert api.addresses.total_spent == 500
+    assert api.addresses.total_spent_fiat == 5.0
+    assert api.addresses.balance == 1000
+    assert api.addresses.balance_fiat == 10.0
+    assert api.addresses.fiat_currency == "usd"
+    assert api.addresses.first_usage == 1000
+    assert api.addresses.last_usage == 3000
+    assert api.addresses.tagged_address_count == 1
+    assert api.addresses.actors[0].id == "binance"
+    assert api.addresses.actors[0].label == "Binance"
+    assert api.addresses.notes == ["a note"]
