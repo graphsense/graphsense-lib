@@ -433,6 +433,10 @@ graphsense-cli exchange-rates coindesk -e dev -c btc
 
 # Fetch from CoinMarketCap (requires API key in config)
 graphsense-cli exchange-rates coinmarketcap -e dev -c btc
+
+# Ingest from CryptoCompare (requires cryptocompare_api_key in config,
+# see https://developers.coindesk.com/)
+graphsense-cli exchange-rates cryptocompare ingest -e dev -c btc --abort-on-gaps
 ```
 
 ### Monitoring
@@ -535,8 +539,7 @@ environments:
           # Optional: ingest the latest exchange rates from this provider
           # before every `ingest from-node` run (same as `exchange-rates
           # <provider> ingest --abort-on-gaps`). Supported: coingecko,
-          # coinmarketcap (both need their API key below), cryptocompare
-          # (no key needed).
+          # coinmarketcap, cryptocompare (each needs its API key below).
           # exchange_rates_provider: "coingecko"
 
         # Keyspace setup for schema creation
@@ -591,6 +594,9 @@ slack_topics:
 # Optional: API keys for external services
 coingecko_api_key: ""
 coinmarketcap_api_key: "YOUR_CMC_API_KEY"
+# Required for the cryptocompare exchange-rates provider since June 2026
+# (https://developers.coindesk.com/)
+cryptocompare_api_key: ""
 
 # Optional: cache directory for temporary files
 cache_directory: "~/.graphsense/cache"

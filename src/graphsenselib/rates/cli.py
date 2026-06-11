@@ -270,6 +270,7 @@ def fetch_cryptocompare_dump(
         end_date (str): -
         out_file (str): -
     """
+    api_key = get_api_key("cryptocompare")
     df = dumpCC(
         None,
         currency,
@@ -280,8 +281,9 @@ def fetch_cryptocompare_dump(
         True,
         True,
         False,
+        api_key,
     )
-    console.rule("Rates Coingecko")
+    console.rule("Rates cryptocompare")
     console.print(df)
     console.rule(f"Writing to {out_file}")
     df.to_csv(out_file)
@@ -368,7 +370,8 @@ def fetch_cc(
         start_date (str): -
         end_date (str): -
     """
-    df = fetchCC(env, currency, list(fiat_currencies), start_date, end_date)
+    api_key = get_api_key("cryptocompare")
+    df = fetchCC(env, currency, list(fiat_currencies), start_date, end_date, api_key)
     console.rule("Rates cryptocompare")
     console.print(df)
 
@@ -532,6 +535,7 @@ def ingest_cc(
         dry_run (bool): -
         abort_on_gaps (bool): -
     """
+    api_key = get_api_key("cryptocompare")
     ingestCC(
         env,
         currency,
@@ -542,4 +546,5 @@ def ingest_cc(
         force,
         dry_run,
         abort_on_gaps,
+        api_key,
     )

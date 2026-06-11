@@ -546,9 +546,9 @@ def _run_exchange_rates_ingest(
         from ..rates.cryptocompare import MIN_START
         from ..rates.cryptocompare import ingest as ingest_rates
 
-        # cryptocompare works on offset-aware datetimes, no API key needed
+        # cryptocompare works on offset-aware datetimes
         prev_date = prev_day.strftime("%Y-%m-%dT00:00:00.000000+00:00")
-        api_key_args = []
+        api_key_args = [get_api_key(provider)]
     else:
         logger.error(
             f"Unknown exchange rates provider '{provider}'. "
