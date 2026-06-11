@@ -97,6 +97,12 @@ from graphsenselib.db.asynchronous.services.models import TxAccount as PydanticT
 from graphsenselib.db.asynchronous.services.models import Txs as PydanticTxs
 from graphsenselib.db.asynchronous.services.models import TxUtxo as PydanticTxUtxo
 from graphsenselib.db.asynchronous.services.models import Values as PydanticValues
+from graphsenselib.db.asynchronous.services.models import (
+    TransactionComparisonInternal as PydanticTransactionComparison,
+)
+from graphsenselib.db.asynchronous.services.models import (
+    SubgraphSummaryInternal as PydanticSubgraphSummary,
+)
 
 from graphsenselib.web.models import (
     Actor,
@@ -138,6 +144,15 @@ from graphsenselib.web.models import (
     TxValue,
     Values,
 )
+from graphsenselib.web.models.compare import (
+    ComparisonSignal,
+    ComparisonVerdict,
+    LineageEdge,
+    TransactionComparison,
+    TxCharacteristics,
+    TxComparedItem,
+)
+from graphsenselib.web.models.subgraph import SubgraphSummary
 from graphsenselib.web.models.heuristics import (
     AddressOutput as ApiHeuristicAddressOutput,
 )
@@ -697,3 +712,66 @@ def pydantic_to_openapi(pydantic_obj: Any) -> Any:
         return converters[type_name](pydantic_obj)
 
     raise NotImplementedError(f"No converter found for type: {type_name}")
+
+
+def to_api_transaction_comparison(
+    pydantic_cmp: PydanticTransactionComparison,
+):
+    """Convert service-layer TransactionComparisonInternal to API TransactionComparison.
+
+    ``TxCharacteristics`` is built explicitly (script-type lists are sorted
+    for stable output); other sub-models map field-for-field.
+    """
+    items: list = []
+    for item in pydantic_cmp.txs:
+        details = None
+        if item.details is not None:
+            details = to_api_tx(item.details)
+        characteristics = None
+        if item.characteristics is not None:
+            c = item.characteristics
+            characteristics = TxCharacteristics(
+                input_script_types=sorted(c.inputs_script_types),
+                output_script_types=sorted(c.outputs_script_types),
+                n_inputs=c.n_inputs,
+                n_outputs=c.n_outputs,
+                total_input_sat=c.total_input_sat,
+                total_output_sat=c.total_output_sat,
+                fee_sat=c.fee_sat,
+                tx_version=c.tx_version,
+                locktime=c.locktime,
+                input_cluster_ids=c.input_cluster_ids,
+                coinjoin_detected=c.coinjoin_detected,
+                coinjoin_protocol=c.coinjoin_protocol,
+            )
+        items.append(
+            TxComparedItem(
+                tx_hash=item.tx_hash,
+                characteristics=characteristics,
+                details=details,
+            )
+        )
+
+    return TransactionComparison(
+        txs=items,
+        signals=[
+            ComparisonSignal.model_validate(s.model_dump())
+            for s in pydantic_cmp.signals
+        ],
+        lineage=[
+            LineageEdge.model_validate(e.model_dump()) for e in pydantic_cmp.lineage
+        ],
+        verdict=(
+            ComparisonVerdict.model_validate(pydantic_cmp.verdict.model_dump())
+            if pydantic_cmp.verdict is not None
+            else None
+        ),
+    )
+
+
+def to_api_subgraph_summary(
+    pydantic_summary: PydanticSubgraphSummary,
+) -> SubgraphSummary:
+    """Convert service-layer SubgraphSummaryInternal to API SubgraphSummary.
+    The two models share field names, so a flat round-trip is enough."""
+    return SubgraphSummary.model_validate(pydantic_summary.model_dump())

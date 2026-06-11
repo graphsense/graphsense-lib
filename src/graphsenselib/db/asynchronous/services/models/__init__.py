@@ -192,6 +192,8 @@ class TxValue(BaseModel):
     value: Values
     index: Optional[int] = None
     script_hex: Optional[str] = None  # Raw script hex for OP_RETURN outputs
+    has_witness: Optional[bool] = None  # True if input carries witness data
+    sequence: Optional[int] = None  # Per-input nSequence (BIP125 RBF signaling)
 
 
 class TxRef(BaseModel):
@@ -259,6 +261,8 @@ class TxUtxo(BaseModel):
     total_input: Values
     total_output: Values
     heuristics: Optional[UtxoHeuristics] = None
+    version: Optional[int] = None
+    lock_time: Optional[int] = None
 
 
 class Block(BaseModel):
@@ -438,6 +442,152 @@ class CrossChainPubkeyRelatedAddresses(BaseModel):
 class Txs(BaseModel):
     txs: List[Union[TxAccount, TxUtxo]] = Field(default_factory=list)
     next_page: Optional[int] = None
+
+
+# Comparison internal models. API counterparts live in web/models/compare.py;
+# the translator at web/translators.py:to_api_transaction_comparison maps
+# between the two. To add a field that should reach the API, update all three.
+
+
+class TxCharacteristicsInternal(BaseModel):
+    inputs_script_types: List[str] = Field(default_factory=list)
+    outputs_script_types: List[str] = Field(default_factory=list)
+    # True/False if every input agrees, None if mixed or unresolvable.
+    # Prefers row-level TxValue.has_witness; falls back to script-type
+    # inference (which leaves P2SH ambiguous).
+    inputs_have_witness: Optional[bool] = None
+    n_inputs: int
+    n_outputs: int
+    total_input_sat: int
+    total_output_sat: int
+    fee_sat: Optional[int] = None
+    tx_version: Optional[int] = None
+    locktime: Optional[int] = None
+    # True if any input signals BIP125 opt-in RBF (sequence < 0xfffffffe);
+    # None when no inputs are available or all sequences are missing.
+    inputs_signal_rbf: Optional[bool] = None
+    # Block height the tx was mined in. Anchor for height-relative signals
+    # like locktime anti-fee-sniping classification.
+    block_height: Optional[int] = None
+    # True if outputs are strictly ascending by amount (BIP69-compatible).
+    # None when fewer than two outputs exist or amount ties prevent a
+    # definitive call (the schema only stores script_hex for OP_RETURNs,
+    # so amount-tie tiebreaking by script is unavailable).
+    bip69_outputs_sorted: Optional[bool] = None
+    # True if any input address is tagged as an exchange (broad_category ==
+    # "exchange"). When tags are unavailable (no tag service or no
+    # resolvable address), this is None.
+    inputs_have_exchange: Optional[bool] = None
+    # Canonicalized input addresses across all inputs of this tx. Populated
+    # during compare_txs orchestration (canonicalization needs ``currency``)
+    # and used by signal_direct_input_overlap / signal_change_chain.
+    input_addresses_canon: List[str] = Field(default_factory=list)
+    # Canonicalized change-output addresses for this tx, taken from the
+    # consensus entries of the change heuristics. Empty when no consensus
+    # change was detected. Populated during compare_txs orchestration.
+    change_addresses_canon: List[str] = Field(default_factory=list)
+    # Tx hashes whose outputs this tx spends (i.e., one-hop ancestors).
+    # Populated during compare_txs orchestration via get_spending_txs.
+    parent_tx_hashes: List[str] = Field(default_factory=list)
+    input_cluster_ids: List[int] = Field(default_factory=list)
+    coinjoin_detected: bool = False
+    coinjoin_protocol: Optional[str] = None
+    # Internal-only: indexes of *compared* txs whose outputs this tx directly
+    # spends. Populated during compare_txs orchestration; not surfaced on the
+    # API characteristics model.
+    utxo_parent_indexes: List[int] = Field(default_factory=list)
+
+
+class ComparisonSignalInternal(BaseModel):
+    name: str
+    kind: str  # "discriminator" | "score" | "linkage"
+    per_tx: List[Optional[str]]
+    verdict: str  # "match" | "mismatch" | "inconclusive"
+    weight: int = 0
+
+
+class LineageEdgeInternal(BaseModel):
+    from_idx: int
+    to_idx: int
+    kind: str
+    out_index: Optional[int] = None
+    in_index: Optional[int] = None
+
+
+class SubgraphTxSummaryInternal(BaseModel):
+    tx_count: int
+    # total_value is in the queried currency's native base unit (satoshi for
+    # UTXO, wei/sun for account chains) and sums native transfers only;
+    # total_value_fiat sums the fiat value (in fiat_currency) across all
+    # transfers (incl. tokens). total_fee stays in the native unit. notes
+    # flags caveats (partial fiat totals, excluded token transfers).
+    total_value: int
+    total_value_fiat: Optional[float] = None
+    # Which fiat currency total_value_fiat is denominated in (e.g. "usd").
+    fiat_currency: str = "usd"
+    total_fee: Optional[int] = None
+    # io counts are UTXO-only; None for account-model (ETH/TRX) summaries.
+    total_inputs: Optional[int] = None
+    total_outputs: Optional[int] = None
+    block_min: int
+    block_max: int
+    timestamp_min: int
+    timestamp_max: int
+    notes: List[str] = Field(default_factory=list)
+
+
+class SubgraphAddressSummaryInternal(BaseModel):
+    address_count: int
+    # Native base-unit sums (satoshi / wei / sun) over the selected
+    # addresses. Account-chain token holdings are not folded in; notes
+    # flags them. The *_fiat fields sum the fiat_currency value across
+    # the set, partial when some addresses lack a rate (noted).
+    total_received: int
+    total_received_fiat: Optional[float] = None
+    total_spent: int
+    total_spent_fiat: Optional[float] = None
+    balance: int
+    balance_fiat: Optional[float] = None
+    fiat_currency: str = "usd"
+    # min/max activity timestamps over the set; None when no selected
+    # address has any on-chain activity.
+    first_usage: Optional[int] = None
+    last_usage: Optional[int] = None
+    # Addresses with at least one tag visible to the caller's groups.
+    tagged_address_count: int = 0
+    # Distinct actors across all tags on the set, deduped by id.
+    actors: List[LabeledItemRef] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
+class SubgraphSummaryInternal(BaseModel):
+    currency: str
+    # Each block is present iff the request carried that node type.
+    txs: Optional[SubgraphTxSummaryInternal] = None
+    addresses: Optional[SubgraphAddressSummaryInternal] = None
+
+
+class ComparisonVerdictInternal(BaseModel):
+    relation: str
+    confidence: int
+    cluster_verdict: str
+    discriminator_hits: List[str] = Field(default_factory=list)
+    score_total: float = 0.0
+    notes: List[str] = Field(default_factory=list)
+
+
+class TxComparedItemInternal(BaseModel):
+    tx_hash: str
+    characteristics: Optional[TxCharacteristicsInternal] = None
+    details: Optional[Union[TxUtxo, TxAccount]] = None
+
+
+class TransactionComparisonInternal(BaseModel):
+    txs: List[TxComparedItemInternal] = Field(default_factory=list)
+    signals: List[ComparisonSignalInternal] = Field(default_factory=list)
+    lineage: List[LineageEdgeInternal] = Field(default_factory=list)
+    # None when the verdict is excluded from the include list.
+    verdict: Optional[ComparisonVerdictInternal] = None
 
 
 # Update forward references

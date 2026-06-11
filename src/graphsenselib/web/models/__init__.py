@@ -36,6 +36,20 @@ from graphsenselib.web.models.general import (
     TokenConfig,
     TokenConfigs,
 )
+from graphsenselib.web.models.compare import (
+    ComparisonSignal,
+    ComparisonVerdict,
+    LineageEdge,
+    TransactionComparison,
+    TxCharacteristics,
+    TxComparedItem,
+)
+from graphsenselib.web.models.subgraph import (
+    SubgraphAddressSummary,
+    SubgraphSummary,
+    SubgraphSummaryRequest,
+    SubgraphTxSummary,
+)
 from graphsenselib.web.models.heuristics import (
     AddressOutput,
     ChangeHeuristics,
@@ -170,4 +184,16 @@ __all__ = [
     "RelatedAddress",
     "RelatedAddresses",
     "ExternalConversion",
+    # Comparison
+    "TxCharacteristics",
+    "TxComparedItem",
+    "ComparisonSignal",
+    "LineageEdge",
+    "ComparisonVerdict",
+    "TransactionComparison",
+    # Subgraph
+    "SubgraphAddressSummary",
+    "SubgraphSummary",
+    "SubgraphTxSummary",
+    "SubgraphSummaryRequest",
 ]

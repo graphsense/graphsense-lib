@@ -20,6 +20,7 @@ from graphsenselib.utils.transactions import (
     SubTransactionType,
 )
 from graphsenselib.utils.rest_utils import is_eth_like
+from graphsenselib.config import currency_to_schema_type
 
 from .common import std_tx_from_row
 from .heuristics_service import CoinJoinDbCallbacks, calculate_heuristics
@@ -198,7 +199,7 @@ class TxsService:
         else:
             result = await self.db.get_tx(currency, tx_hash)
             rates = await self.rates_service.get_rates(currency, result["block_id"])
-            if currency == "eth":
+            if currency_to_schema_type.get(currency) == "account":
                 return await self._get_trace_txs(
                     currency, result, None, get_first_trace=True
                 )
@@ -289,9 +290,7 @@ class TxsService:
 
                 results_list.extend(traces_converted)
             else:
-                results_list.append(
-                    await self._get_trace_txs(network, tx, None, get_first_trace=True)
-                )
+                results_list.append(await self.get_tx(network, tx_hash))
 
             if include_token_txs:
                 tokens = await self.db.list_token_txs(network, tx_hash)

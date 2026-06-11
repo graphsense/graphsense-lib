@@ -466,6 +466,7 @@ async def get_address(
     address: str,
     tagstore_groups: List[str],
     include_actors: bool = True,
+    new_address_fallback: bool = True,
 ) -> Address:
     address_canonical = cannonicalize_address(currency, address)
 
@@ -477,6 +478,8 @@ async def get_address(
     try:
         result = await db.get_address(currency, address_canonical)
     except AddressNotFoundException:
+        if not new_address_fallback:
+            raise
         result = await db.new_address(currency, address_canonical)
 
     actors = None
@@ -633,6 +636,10 @@ def io_from_rows(
         if include_nonstandard_io and hasattr(i, "script_hex") and i.script_hex:
             script_hex = i.script_hex.hex()  # Convert blob to hex string
 
+        witness = getattr(i, "txinwitness", None)
+        has_witness = bool(witness) if witness is not None else None
+        sequence = getattr(i, "sequence", None)
+
         if i.address is not None:
             results.append(
                 TxValue(
@@ -640,6 +647,8 @@ def io_from_rows(
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
+                    has_witness=has_witness,
+                    sequence=sequence,
                 )
             )
         elif include_nonstandard_io:
@@ -649,6 +658,8 @@ def io_from_rows(
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
+                    has_witness=has_witness,
+                    sequence=sequence,
                 )
             )
     return results
@@ -717,4 +728,6 @@ async def std_tx_from_row(
         total_input=total_input,
         total_output=total_output,
         heuristics=heuristics,
+        version=row.get("version"),
+        lock_time=row.get("lock_time"),
     )

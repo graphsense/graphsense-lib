@@ -8,7 +8,8 @@ from json import JSONDecodeError
 from typing import Dict, List, Optional, Set
 
 from pydantic import BaseModel, computed_field
-from sqlalchemy import asc, desc, distinct, func
+from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
@@ -378,6 +379,41 @@ def _get_best_cluster_tag_winners_stmt(
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
         .order_by(BestClusterTagView.cluster_id, Confidence.level.desc())
+    )
+
+
+def _get_clusters_with_concept_stmt(
+    cluster_ids: List[int], network: str, groups: List[str], concept_id: str
+):
+    # Existence-only check using a correlated EXISTS so Postgres can short-
+    # circuit at the first matching tag per cluster. A naive
+    # ``SELECT DISTINCT cluster_id ... WHERE concept_id = :concept_id``
+    # materializes the full join product (every matching tag in every input
+    # cluster) before deduplicating — for an exchange cluster carrying
+    # thousands of exchange-tagged cluster-definer tags, that was still
+    # ~1.6 s per request. Driving from ``unnest(cluster_ids)`` with EXISTS
+    # bounds the work to ``len(cluster_ids)`` per call.
+    return text(
+        """
+        SELECT t.cluster_id
+        FROM unnest(:cluster_ids) AS t(cluster_id)
+        WHERE EXISTS (
+            SELECT 1
+            FROM best_cluster_tag bct
+            JOIN tag tg ON bct.tag_id = tg.id
+            JOIN tag_concept tc ON tc.tag_id = tg.id
+            JOIN tagpack tp ON tg.tagpack = tp.id
+            WHERE bct.cluster_id = t.cluster_id
+              AND bct.network = :network
+              AND tc.concept_id = :concept_id
+              AND tp.acl_group = ANY(:groups)
+        )
+        """
+    ).bindparams(
+        bindparam("cluster_ids", value=cluster_ids, type_=ARRAY(BigInteger)),
+        bindparam("network", value=network),
+        bindparam("concept_id", value=concept_id),
+        bindparam("groups", value=groups, type_=ARRAY(String)),
     )
 
 
@@ -927,6 +963,26 @@ class TagstoreDbAsync:
             t, tp = pair
             result[cid] = TagPublic.fromDB(t, tp, inherited_from=InheritedFrom.CLUSTER)
         return result
+
+    @_inject_session
+    async def get_clusters_with_concept(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        concept_id: str,
+        session=None,
+    ) -> Set[int]:
+        """Return the subset of ``cluster_ids`` that have at least one
+        cluster-definer tag with ``concept_id``. Single batched query,
+        cliff-free (cost is independent of per-cluster tag count)."""
+        if not cluster_ids:
+            return set()
+        rows = await session.exec(
+            _get_clusters_with_concept_stmt(cluster_ids, network, groups, concept_id)
+        )
+        # Raw text() result rows are Row tuples even for a single column.
+        return {cid for (cid,) in rows}
 
     @_inject_session
     async def get_nr_tags_for_clusters(

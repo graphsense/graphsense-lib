@@ -23,6 +23,7 @@ __all__ = [
     "EntitiesApi",
     "GeneralApi",
     "RatesApi",
+    "SubgraphApi",
     "TagsApi",
     "TokensApi",
     "TxsApi",
@@ -51,6 +52,8 @@ __all__ = [
     "ClusterAddresses",
     "CoinJoinConsensus",
     "CoinJoinHeuristics",
+    "ComparisonSignal",
+    "ComparisonVerdict",
     "Concept",
     "ConsensusEntry",
     "CurrencyStats",
@@ -62,6 +65,7 @@ __all__ = [
     "JoinMarketHeuristic",
     "LabelSummary",
     "LabeledItemRef",
+    "LineageEdge",
     "Link",
     "LinkUtxo",
     "Links",
@@ -88,14 +92,21 @@ __all__ = [
     "SearchResultLevel5",
     "SearchResultLevel6",
     "Stats",
+    "SubgraphAddressSummary",
+    "SubgraphSummary",
+    "SubgraphSummaryRequest",
+    "SubgraphTxSummary",
     "Tag",
     "TagCloudEntry",
     "TagSummary",
     "Taxonomy",
     "TokenConfig",
     "TokenConfigs",
+    "TransactionComparison",
     "Tx",
     "TxAccount",
+    "TxCharacteristics",
+    "TxComparedItem",
     "TxRef",
     "TxSummary",
     "TxUtxo",
@@ -121,6 +132,7 @@ from graphsense.api.clusters_api import ClustersApi as ClustersApi
 from graphsense.api.entities_api import EntitiesApi as EntitiesApi
 from graphsense.api.general_api import GeneralApi as GeneralApi
 from graphsense.api.rates_api import RatesApi as RatesApi
+from graphsense.api.subgraph_api import SubgraphApi as SubgraphApi
 from graphsense.api.tags_api import TagsApi as TagsApi
 from graphsense.api.tokens_api import TokensApi as TokensApi
 from graphsense.api.txs_api import TxsApi as TxsApi
@@ -153,6 +165,8 @@ from graphsense.models.cluster import Cluster as Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses as ClusterAddresses
 from graphsense.models.coin_join_consensus import CoinJoinConsensus as CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics as CoinJoinHeuristics
+from graphsense.models.comparison_signal import ComparisonSignal as ComparisonSignal
+from graphsense.models.comparison_verdict import ComparisonVerdict as ComparisonVerdict
 from graphsense.models.concept import Concept as Concept
 from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats as CurrencyStats
@@ -164,6 +178,7 @@ from graphsense.models.http_validation_error import HTTPValidationError as HTTPV
 from graphsense.models.join_market_heuristic import JoinMarketHeuristic as JoinMarketHeuristic
 from graphsense.models.label_summary import LabelSummary as LabelSummary
 from graphsense.models.labeled_item_ref import LabeledItemRef as LabeledItemRef
+from graphsense.models.lineage_edge import LineageEdge as LineageEdge
 from graphsense.models.link import Link as Link
 from graphsense.models.link_utxo import LinkUtxo as LinkUtxo
 from graphsense.models.links import Links as Links
@@ -190,14 +205,21 @@ from graphsense.models.search_result_level4 import SearchResultLevel4 as SearchR
 from graphsense.models.search_result_level5 import SearchResultLevel5 as SearchResultLevel5
 from graphsense.models.search_result_level6 import SearchResultLevel6 as SearchResultLevel6
 from graphsense.models.stats import Stats as Stats
+from graphsense.models.subgraph_address_summary import SubgraphAddressSummary as SubgraphAddressSummary
+from graphsense.models.subgraph_summary import SubgraphSummary as SubgraphSummary
+from graphsense.models.subgraph_summary_request import SubgraphSummaryRequest as SubgraphSummaryRequest
+from graphsense.models.subgraph_tx_summary import SubgraphTxSummary as SubgraphTxSummary
 from graphsense.models.tag import Tag as Tag
 from graphsense.models.tag_cloud_entry import TagCloudEntry as TagCloudEntry
 from graphsense.models.tag_summary import TagSummary as TagSummary
 from graphsense.models.taxonomy import Taxonomy as Taxonomy
 from graphsense.models.token_config import TokenConfig as TokenConfig
 from graphsense.models.token_configs import TokenConfigs as TokenConfigs
+from graphsense.models.transaction_comparison import TransactionComparison as TransactionComparison
 from graphsense.models.tx import Tx as Tx
 from graphsense.models.tx_account import TxAccount as TxAccount
+from graphsense.models.tx_characteristics import TxCharacteristics as TxCharacteristics
+from graphsense.models.tx_compared_item import TxComparedItem as TxComparedItem
 from graphsense.models.tx_ref import TxRef as TxRef
 from graphsense.models.tx_summary import TxSummary as TxSummary
 from graphsense.models.tx_utxo import TxUtxo as TxUtxo

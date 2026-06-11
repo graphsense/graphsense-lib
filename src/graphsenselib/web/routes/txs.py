@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
     ExternalConversion,
+    TransactionComparison,
     TxAccount,
     TxRef,
     TxUtxo,
@@ -27,6 +28,20 @@ from graphsenselib.web.routes.params import (
 import graphsenselib.web.service.txs_service as service
 
 router = APIRouter(route_class=PluginRoute)
+
+
+# Response components selectable via the /txs/compare ``include`` list.
+_COMPARE_COMPONENTS = ("characteristics", "details", "signals", "lineage", "verdict")
+
+
+def _expand_compare_include(include: List[str]) -> set[str]:
+    """Resolve the ``include`` list to a set of component names. ``all`` expands
+    to every component; unknown entries are ignored (the Literal type already
+    rejects them at the request boundary)."""
+    components = set(include)
+    if "all" in components:
+        return set(_COMPARE_COMPONENTS)
+    return components & set(_COMPARE_COMPONENTS)
 
 
 @router.get(
@@ -52,6 +67,65 @@ async def list_token_txs(
         ctx,
         currency=currency.lower(),
         tx_hash=tx_hash,
+    )
+    return result
+
+
+@router.get(
+    "/txs/compare",
+    summary="Compare multiple transactions",
+    description=(
+        "Returns per-tx characteristics, pairwise similarity signals, and a "
+        "rollup verdict on whether the supplied transactions are likely "
+        "linked to the same actor. The fingerprinting analysis is BTC-only; "
+        "for chain-agnostic aggregate stats over a set of transactions use "
+        "POST /{currency}/subgraph/summary instead."
+    ),
+    operation_id="compare_txs",
+    response_model=TransactionComparison,
+    response_model_exclude_none=True,
+    responses={
+        400: {
+            "description": ("Invalid request (need 2+ tx hashes, or non-BTC currency).")
+        },
+        404: {"description": "One of the transactions was not found."},
+    },
+)
+async def compare_txs(
+    request: Request,
+    currency: CurrencyPath,
+    tx_hash: List[str] = Query(
+        ...,
+        min_length=2,
+        max_length=100,
+        description="Two or more transaction hashes to compare.",
+    ),
+    include: List[
+        Literal["all", "characteristics", "details", "signals", "lineage", "verdict"]
+    ] = Query(
+        default=["characteristics", "signals", "lineage", "verdict"],
+        description=(
+            "Response components to include. Defaults to characteristics, "
+            "signals, lineage and verdict (details excluded). Use 'all' for "
+            "everything including details. Signals, lineage and verdict are "
+            "always computed internally (the verdict depends on the signals); "
+            "this list only controls what is returned."
+        ),
+    ),
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Compare two or more transactions. BTC-only fingerprinting analysis;
+    other chains use POST /{currency}/subgraph/summary for aggregate stats."""
+    components = _expand_compare_include(include)
+    result = await service.compare_txs(
+        ctx,
+        currency=currency.lower(),
+        tx_hashes=tx_hash,
+        include_characteristics="characteristics" in components,
+        include_details="details" in components,
+        include_signals="signals" in components,
+        include_lineage="lineage" in components,
+        include_verdict="verdict" in components,
     )
     return result
 
