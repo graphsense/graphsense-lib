@@ -175,3 +175,20 @@ def test_pool_splits_work_into_num_workers_chunks():
     assert len(sizes) == 3
     # near-even split: no chunk more than one item larger than another
     assert max(sizes) - min(sizes) <= 1
+
+
+def test_plainrow_serializes_identically_to_driver_udt_value():
+    # Characterization test against the real driver serializer: a flattened
+    # UDT value must produce the same wire bytes as the driver's own
+    # namedtuple-based UDT value when bound for a write.
+    from cassandra.cqltypes import FloatType, ListType, LongType, UserType
+
+    udt_class = UserType.make_udt_class(
+        keyspace="ks",
+        udt_name="currency",
+        field_names=("value", "fiat_values"),
+        field_types=(LongType, ListType.apply_parameters([FloatType])),
+    )
+    native = CurrencyUdt(value=12345, fiat_values=[1.5, 2.5])
+    flattened = flatten_value(native)
+    assert udt_class.serialize_safe(flattened, 4) == udt_class.serialize_safe(native, 4)
