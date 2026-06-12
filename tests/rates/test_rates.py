@@ -39,6 +39,7 @@ def test_rates_fetching():
         False,
         False,
         False,
+        "",  # no api_key so the request matches the recorded cassette
     )
 
     assert len(df.dropna()) == 303
@@ -47,11 +48,12 @@ def test_rates_fetching():
 def test_rates_fetching_normalizes_naive_db_dates(monkeypatch):
     seen = {}
 
-    def fake_fetch_cryptocompare_rates(start, end, symbol, fiat):
+    def fake_fetch_cryptocompare_rates(start, end, symbol, fiat, api_key):
         seen["start"] = start
         seen["end"] = end
         seen["symbol"] = symbol
         seen["fiat"] = fiat
+        seen["api_key"] = api_key
         return pd.DataFrame({"date": ["2026-03-17"], "USD": [100.0]})
 
     def fake_fetch_ecb_rates(symbol_list):
@@ -73,6 +75,7 @@ def test_rates_fetching_normalizes_naive_db_dates(monkeypatch):
         False,
         False,
         True,
+        "api-key",
     )
 
     assert seen == {
@@ -80,6 +83,7 @@ def test_rates_fetching_normalizes_naive_db_dates(monkeypatch):
         "end": "2026-03-17T00:00:00+00:00",
         "symbol": "BTC",
         "fiat": "USD",
+        "api_key": "api-key",
     }
     assert df.to_dict("records") == [{"date": "2026-03-17", "USD": 100.0, "EUR": 90.0}]
 

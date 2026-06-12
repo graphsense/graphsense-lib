@@ -206,6 +206,52 @@ def test_unsupported_mode_rejected():
         assert result.exit_code == 11
 
 
+def test_staleness_check_runs_when_nothing_to_ingest():
+    """No-new-blocks (exit 12) must still run the staleness check before exiting.
+
+    A node that stopped syncing produces "no new blocks" on every run while
+    the raw keyspace goes stale — the early exit must not skip the check.
+    """
+    from graphsenselib.ingest.cli import ingest
+    from graphsenselib.ingest.dump import NothingToIngestError
+
+    ingest_cfg = MagicMock(
+        exchange_rates_provider=None,
+        raw_ingest_staleness_threshold=10,
+        source_max_workers=None,
+    )
+    mock_config = MagicMock()
+    mock_config.legacy_ingest = False
+    mock_config.get_keyspace_config.return_value = MagicMock(ingest_config=ingest_cfg)
+
+    with (
+        patch("graphsenselib.ingest.cli.get_config", return_value=mock_config),
+        patch("graphsenselib.ingest.cli.GraphsenseSchemas"),
+        patch("graphsenselib.ingest.cli.DbFactory"),
+        patch(
+            "graphsenselib.ingest.cli.export_delta",
+            side_effect=NothingToIngestError(),
+        ),
+        patch("graphsenselib.ingest.cli.check_raw_ingest_staleness") as mock_check,
+    ):
+        result = CliRunner().invoke(
+            ingest,
+            [
+                "--env",
+                "test",
+                "--currency",
+                "btc",
+                "--sinks",
+                "cassandra",
+                "--sinks",
+                "delta",
+            ],
+        )
+
+    assert result.exit_code == 12
+    mock_check.assert_called_once_with("test", "btc", 10, topic="exceptions")
+
+
 def test_sigint_after_first_partition_returns_partial():
     """Simulated SIGINT after the first partition must return partial progress.
 

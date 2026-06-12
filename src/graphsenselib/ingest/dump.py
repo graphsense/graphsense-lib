@@ -35,6 +35,18 @@ from ..config.config import get_config
 _DEFAULT_VERBOSITY = {"btc": 3, "bch": 3, "ltc": 2, "zec": 2}
 
 
+class NothingToIngestError(SystemExit):
+    """Append-mode ingest found no new blocks at the node.
+
+    Subclasses SystemExit with code 12, so uncaught it behaves exactly like
+    the previous ``sys.exit(12)``. Callers may catch it to run follow-up
+    steps (e.g. the post-ingest staleness check) before exiting.
+    """
+
+    def __init__(self):
+        super().__init__(12)
+
+
 def _create_trx(
     provider_uri,
     grpc_provider_uri,
@@ -377,7 +389,7 @@ def export_delta(
                             f"Data already present up to highest block "
                             f"{agreed_height:,}, no need to append."
                         )
-                        sys.exit(12)
+                        raise NothingToIngestError()
                     start_block = agreed_height + 1
                 elif has_monotonic_sink:
                     # Only enforce monotonicity when a sink that cannot

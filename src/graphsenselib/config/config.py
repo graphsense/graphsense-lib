@@ -223,8 +223,8 @@ class IngestConfig(_WarnExtraModel):
             "When set, `ingest from-node` ingests the latest exchange rates "
             "from this provider into the raw keyspace before ingesting blocks "
             "(same as `exchange-rates <provider> ingest --abort-on-gaps`). "
-            "Supported: coingecko, coinmarketcap (both need their API key in "
-            "the config), cryptocompare (no key). Unset disables the step."
+            "Supported: coingecko, coinmarketcap, cryptocompare (each needs "
+            "its API key in the config). Unset disables the step."
         ),
     )
 
@@ -575,6 +575,14 @@ class AppConfig(GoodConf):
     coinmarketcap_api_key: str = Field(
         # initial=lambda: "",
         default_factory=lambda: "",
+    )
+
+    cryptocompare_api_key: str = Field(
+        default_factory=lambda: "",
+        description=(
+            "API key for min-api.cryptocompare.com (required since June 2026, "
+            "see https://developers.coindesk.com/)."
+        ),
     )
 
     s3_credentials: Optional[Dict[str, str]] = Field(default_factory=lambda: None)

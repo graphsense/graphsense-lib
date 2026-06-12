@@ -15,9 +15,21 @@ Use one changelog file, but separate entries by track in each release window.
 ### Library
 
 #### Fixed
+- **Post-ingest staleness check was skipped when no new blocks were available.** In append mode without an explicit `--start-block`, `ingest from-node` exits with code 12 when the raw keyspace is already at the node's highest block — and that early exit also skipped the built-in staleness check, which is exactly the scenario it must alert on (a node that stopped syncing produces "no new blocks" forever while the raw keyspace goes stale). The no-new-blocks path now raises `NothingToIngestError` (a `SystemExit` subclass with code 12, so `ingest dump-rawdata` and wrapper scripts keying on exit 12 are unaffected) and `ingest from-node` runs the staleness check before exiting with the unchanged exit code 12.
+
+### Web API + Python client (webapi-2.13.5)
+
+No changes.
+
+## [2.14.2] - 2026-06-11
+
+### Library
+
+#### Fixed
+- **`exchange-rates cryptocompare` (fetch/ingest/dump) crashed with `KeyError: 'Data'`.** CoinDesk switched off anonymous access to `min-api.cryptocompare.com` around 2026-06-08 (archived responses still carry data on June 5, first `401 "API key required"` on June 9); the API now returns `{"Data": {}, "Err": ...}` and the unguarded `["Data"]["Data"]` access turned that into a bare KeyError. Affects every graphsense-lib version, independent of any code change. The provider now sends an API key from the new `cryptocompare_api_key` config field (`Authorization: Apikey` header; key is required, like the other providers) — this also covers the pre-ingest exchange-rates step of `ingest from-node` — and API error responses abort with the API's error message plus a hint where to get a key, instead of a KeyError. The regression ingest runners pick the key up from the `CRYPTOCOMPARE_API_KEY` environment variable.
 - **`.gs` files could carry the same EVM address twice with different casing.** A pathfinder spec listing an ETH address both EIP-55-checksummed and lowercase produced two nodes for the same address (and a single checksummed entry collided with the canonical lowercase node in the pathfinder UI). `GsBuilder` now canonicalizes EVM-style hex identifiers — addresses (`0x` + 40 hex) and tx hashes (64 hex, optional `0x`, account-model `_T<n>`/`_I<n>` sub-payment suffixes preserved) — to lowercase, and merges duplicate addresses, txs, and agg edges on their normalized `(network, id)` (labels/colors are folded into the first occurrence, `starting_point` is OR-ed, edge `tx_ids` are unioned). The hierarchical layout and both pathfinder verifiers compare ids in the same canonical form; `verify_structural` additionally warns when a spec lists the same address or tx more than once, so agents building files via `build_pathfinder_file` get told to fix their spec.
 
-### Web API + Python client
+### Web API + Python client (webapi-2.13.5)
 
 No changes.
 
