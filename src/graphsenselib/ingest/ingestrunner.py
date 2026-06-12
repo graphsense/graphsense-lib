@@ -108,6 +108,7 @@ class IngestRunner:
         last_block_date = None
 
         with graceful_ctlc_shutdown() as check_shutdown_initialized:
+            stop_requested = False
             for partition in partitions:
                 file_chunks = list(split_blockrange(partition, self.file_batch_size))
 
@@ -165,7 +166,22 @@ class IngestRunner:
                             f"network_s/s) "
                         )
 
-                if check_shutdown_initialized():
+                        # Poll the shutdown flag per file-chunk, not just per
+                        # partition. Each chunk above is already durably
+                        # committed to the sinks, so breaking here is safe and
+                        # stays responsive even for large partitions (trx's are
+                        # 100k blocks = 100 chunks).
+                        if check_shutdown_initialized():
+                            logger.info(
+                                f"Got shutdown signal, stopping after block "
+                                f"{last_block_id:,}"
+                            )
+                            if prefetch_future is not None:
+                                prefetch_future.cancel()
+                            stop_requested = True
+                            break
+
+                if stop_requested:
                     break
 
                 partition_start = (
