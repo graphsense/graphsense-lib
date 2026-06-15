@@ -40,11 +40,16 @@ logger = logging.getLogger(__name__)
 # taken from https://github.com/apache/cassandra-dtest/blob/0085d21bc687995478e338302e619e82ad4a4644/dtest.py#L88C5-L88C5 # noqa
 class GraphsenseRetryPolicy(RetryPolicy):
     """
-    A retry policy that retries 10 times by default, but can be configured to
+    A retry policy that retries 20 times by default, but can be configured to
     retry more times.
+
+    The defaults give a multi-minute ride-out window so a transient cluster-wide
+    stall (e.g. nodes starved of CPU by a concurrent Spark run, which here recurs
+    on the hour) is waited out instead of surfacing as a read timeout. 20 retries
+    with backoff capped at 30s ≈ up to ~5 min total before giving up.
     """
 
-    def __init__(self, max_retries=10, base_delay=0.5, max_delay=10):
+    def __init__(self, max_retries=20, base_delay=0.5, max_delay=30):
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.max_delay = max_delay
@@ -487,7 +492,9 @@ class CassandraDb:
             port=self.db_port,
             execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
             connect_timeout=15,
-            idle_heartbeat_timeout=30,
+            # Tolerate longer server-side stalls (e.g. a node starved of CPU by a
+            # concurrent Spark run) before declaring a connection defunct.
+            idle_heartbeat_timeout=60,
             # protocol_version=6,
             compression="lz4",
             auth_provider=auth_provider,
