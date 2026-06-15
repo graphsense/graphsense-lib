@@ -14,7 +14,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Added
+- **`deltaupdate --parallel-workers` — process-parallel batch reads/writes for the account model.** The Cassandra delta-update batch reads and persists are client-CPU-bound on the driver, so they can be spread across worker processes. The new `--parallel-workers N` flag (account model only; default `1` keeps the existing single-process behavior) runs them on a `ParallelDbPool` of `N` processes, each building its own Cassandra `Cluster` after spawn (the driver is not fork-safe). Rows are flattened to a picklable form before crossing the process boundary and rebound byte-identically through the driver UDT serializer on the other side. The parent owns graceful shutdown: workers ignore `SIGINT`/`SIGTERM` so a Ctrl-C or group `SIGTERM` cannot tear a worker down mid-chunk — the parent finishes the in-flight batch, breaks at the next batch boundary, and drains the pool via its sentinel queue; each worker closes its session on exit via `atexit`.
+
 #### Fixed
+- **`ingest from-node` graceful stop now breaks at the next file-chunk boundary instead of the next partition (TRX).** The shutdown flag was only polled per partition, so a stop request could wait up to a whole partition (≈100k blocks on TRX) before taking effect. Each file-chunk is already a durable append commit, so breaking mid-partition is safe and resumes from the last ingested block; the flag is now polled per file-chunk, cutting graceful-stop latency from up to 100k blocks to ≤1k.
 - **Post-ingest staleness check was skipped when no new blocks were available.** In append mode without an explicit `--start-block`, `ingest from-node` exits with code 12 when the raw keyspace is already at the node's highest block — and that early exit also skipped the built-in staleness check, which is exactly the scenario it must alert on (a node that stopped syncing produces "no new blocks" forever while the raw keyspace goes stale). The no-new-blocks path now raises `NothingToIngestError` (a `SystemExit` subclass with code 12, so `ingest dump-rawdata` and wrapper scripts keying on exit 12 are unaffected) and `ingest from-node` runs the staleness check before exiting with the unchanged exit code 12.
 
 ### Web API + Python client (webapi-2.13.5)
