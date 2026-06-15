@@ -67,9 +67,10 @@ class BitcoinEtlFlowProvider(FlowProvider):
     def __init__(
         self, currency: str, node_url: str, output_resolver: OutputResolverBase
     ):
+        self.currency = currency
         self.node_url = node_url
         self.exporter = BtcBlockExporter(
-            provider_uri=node_url, max_workers=1, timeout=60
+            provider_uri=node_url, max_workers=1, timeout=60, network=currency
         )
         self.output_resolver = output_resolver
 
@@ -85,7 +86,12 @@ class BitcoinEtlFlowProvider(FlowProvider):
     ) -> Optional[List[Tuple[FlowEvent, object]]]:
         with suppress_log_level(logging.INFO):
             _, txs = self.exporter.export_blocks_and_transactions(block, block)
-            enrich_txs(txs, self.output_resolver, ignore_missing_outputs=True)
+            enrich_txs(
+                txs,
+                self.output_resolver,
+                ignore_missing_outputs=True,
+                network=self.currency,
+            )
 
         events = []
         for tx in txs:

@@ -295,11 +295,20 @@ def tx_stats(tx):
     )
 
 
-# Output-script opcodes / BTC-mainnet address params for the native parser.
+# Output-script opcode for the native parser.
 _OP_CHECKMULTISIG = 0xAE
-_BTC_P2PKH_VERSION = b"\x00"
-_BTC_P2SH_VERSION = b"\x05"
-_BTC_BECH32_HRP = "bc"
+
+# Per-network address params for the native script parser: ``p2pkh``/``p2sh``
+# are base58 version-byte prefixes, ``bech32_hrp`` is the native-segwit
+# human-readable part (``None`` for chains without segwit, e.g. ZEC — a
+# segwit-shaped script there is non-standard). BCH legacy addresses share BTC's
+# version bytes. Unknown networks fall back to BTC.
+_NETWORK_SCRIPT_PARAMS = {
+    "btc": {"p2pkh": b"\x00", "p2sh": b"\x05", "bech32_hrp": "bc"},
+    "bch": {"p2pkh": b"\x00", "p2sh": b"\x05", "bech32_hrp": "bc"},
+    "ltc": {"p2pkh": b"\x30", "p2sh": b"\x32", "bech32_hrp": "ltc"},
+    "zec": {"p2pkh": b"\x1c\xb8", "p2sh": b"\x1c\xbd", "bech32_hrp": None},
+}
 
 
 def _looks_like_pubkey(b: bytes) -> bool:
@@ -470,16 +479,20 @@ def _parse_script_btcpy(s: str) -> Tuple[Optional[List[str]], str]:
     )
 
 
-def _parse_script_native(s: str) -> Tuple[Optional[List[str]], str]:
+def _parse_script_native(
+    s: str, network: str = "btc"
+) -> Tuple[Optional[List[str]], str]:
     """btcpy-free reimplementation of :func:`_parse_script_btcpy`.
 
-    Tries the same templates in the same order as btcpy's ScriptBuilder and
-    encodes addresses in BTC-mainnet format (the legacy code hardcodes
-    ``mainnet=True``), emitting the same ``type`` strings the downstream
-    ``_address_types`` map expects. Anything else raises ``UnknownScriptType``
-    — including scripts btcpy classifies as if/else, timelock, or hashlock
-    (the legacy wrapper rejects those types too, and they cannot shadow any
-    template handled here).
+    Tries the same templates in the same order as btcpy's ScriptBuilder,
+    emitting the same ``type`` strings the downstream ``_address_types`` map
+    expects. Addresses are encoded with ``network``'s version bytes (BTC
+    mainnet by default, matching btcpy's hardcoded ``mainnet=True``; ``zec``
+    yields t-addresses, etc.). Chains without segwit (``bech32_hrp`` None, e.g.
+    ZEC) treat segwit-shaped scripts as unknown. Anything else raises
+    ``UnknownScriptType`` — including scripts btcpy classifies as if/else,
+    timelock, or hashlock (the legacy wrapper rejects those types too, and they
+    cannot shadow any template handled here).
     """
     from graphsenselib.utils.pubkey_to_address import (
         base58check_encode,
@@ -487,17 +500,22 @@ def _parse_script_native(s: str) -> Tuple[Optional[List[str]], str]:
         hash160,
     )
 
+    params = _NETWORK_SCRIPT_PARAMS.get(network, _NETWORK_SCRIPT_PARAMS["btc"])
+    p2pkh_version = params["p2pkh"]
+    p2sh_version = params["p2sh"]
+    bech32_hrp = params["bech32_hrp"]
+
     script = bytes.fromhex(s[2:] if s.startswith("0x") else s)
 
     # P2PKH: OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG
     data = _match_single_push(script, b"\x76\xa9", b"\x88\xac", (20,))
     if data is not None:
-        return [base58check_encode(_BTC_P2PKH_VERSION, data)], "p2pkh"
+        return [base58check_encode(p2pkh_version, data)], "p2pkh"
 
     # P2SH: OP_HASH160 <20> OP_EQUAL
     data = _match_single_push(script, b"\xa9", b"\x87", (20,))
     if data is not None:
-        return [base58check_encode(_BTC_P2SH_VERSION, data)], "p2sh"
+        return [base58check_encode(p2sh_version, data)], "p2sh"
 
     # nulldata: OP_RETURN <1-83> (OP_0/OP_1..OP_16 count as length-1 pushes)
     if _match_single_push(script, b"\x6a", b"", range(1, 84)) is not None:
@@ -511,31 +529,35 @@ def _parse_script_native(s: str) -> Tuple[Optional[List[str]], str]:
             raise P2pkParserException(
                 f"ScriptParseError: cannot parse pubkey from {s} (of type p2pk)"
             )
-        return [base58check_encode(_BTC_P2PKH_VERSION, hash160(data))], "p2pk"
+        return [base58check_encode(p2pkh_version, hash160(data))], "p2pk"
 
     # bare multisig: <>+ OP_CHECKMULTISIG
     keys = _match_multisig(script)
     if keys is not None:
         return (
-            [base58check_encode(_BTC_P2PKH_VERSION, hash160(k)) for k in keys],
+            [base58check_encode(p2pkh_version, hash160(k)) for k in keys],
             "multisig",
         )
 
-    # P2WPKH v0: OP_0 <20> / P2WSH v0: OP_0 <32>
-    data = _match_single_push(script, b"\x00", b"", (20,))
-    if data is not None:
-        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, data)], "p2wpkhv0"
-    data = _match_single_push(script, b"\x00", b"", (32,))
-    if data is not None:
-        return [bech32_segwit_encode(_BTC_BECH32_HRP, 0, data)], "p2wshv0"
+    # P2WPKH v0: OP_0 <20> / P2WSH v0: OP_0 <32> — segwit chains only.
+    if bech32_hrp is not None:
+        data = _match_single_push(script, b"\x00", b"", (20,))
+        if data is not None:
+            return [bech32_segwit_encode(bech32_hrp, 0, data)], "p2wpkhv0"
+        data = _match_single_push(script, b"\x00", b"", (32,))
+        if data is not None:
+            return [bech32_segwit_encode(bech32_hrp, 0, data)], "p2wshv0"
 
     raise UnknownScriptType(
         f"ScriptParseError: not handling script type for {s} at the moment."
     )
 
 
-def parse_script(s: str) -> Tuple[Optional[List[str]], str]:
+def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str]:
     """Parse output addresses + script type from a bitcoin-like locking script.
+
+    Addresses are encoded for ``network`` (default ``btc``; ``zec`` yields
+    t-addresses, etc.).
 
     SHADOW VALIDATION (temporary): runs both the legacy btcpy parser and the
     native reimplementation and asserts they agree (btcpy authoritative). A
@@ -543,10 +565,13 @@ def parse_script(s: str) -> Tuple[Optional[List[str]], str]:
     any mismatch surfaces during the production validation window. Once this has
     run without tripping for long enough, delete ``_parse_script_btcpy`` + the
     btcpy dependency and rename ``_parse_script_native`` to ``parse_script``.
-    When btcpy is not installed, the native parser is used directly.
+    btcpy only encodes BTC-mainnet addresses, so the shadow runs only for
+    ``network == "btc"``; other networks (and a missing btcpy) use the native
+    parser directly.
 
     Args:
         s (str): script in binary hex format
+        network (str): chain code selecting the address version bytes
 
     Returns:
         Tuple[List[str], str]: address list and script type
@@ -557,20 +582,20 @@ def parse_script(s: str) -> Tuple[Optional[List[str]], str]:
         AssertionError: if the native and btcpy results diverge
     """
 
-    def _run(fn):
+    def _run(fn, *args):
         try:
-            return ("ok", fn(s), None)
+            return ("ok", fn(*args), None)
         except Exception as e:  # noqa: BLE001 — capture to compare both paths
             return ("err", None, e)
 
-    n_kind, n_val, n_exc = _run(_parse_script_native)
+    n_kind, n_val, n_exc = _run(_parse_script_native, s, network)
 
-    if not _has_btcpy:
+    if not _has_btcpy or network != "btc":
         if n_kind == "ok":
             return n_val
         raise n_exc
 
-    b_kind, b_val, b_exc = _run(_parse_script_btcpy)
+    b_kind, b_val, b_exc = _run(_parse_script_btcpy, s)
 
     matches = n_kind == b_kind and (
         n_val == b_val if n_kind == "ok" else type(n_exc) is type(b_exc)
@@ -601,6 +626,7 @@ def enrich_txs(
     resolver: Optional[OutputResolverBase],
     ignore_missing_outputs: bool,
     input_reference_only=False,
+    network: str = "btc",
 ) -> None:
     """Resolves transaction input links to the spent transactions.
 
@@ -632,7 +658,9 @@ def enrich_txs(
 
                 if o["addresses"][0] and o["addresses"][0].startswith("nonstandard"):
                     try:
-                        address_list, scripttype = parse_script(o["script_hex"])
+                        address_list, scripttype = parse_script(
+                            o["script_hex"], network
+                        )
                         o["addresses"] = (
                             address_list if address_list else o["addresses"]
                         )
@@ -668,7 +696,7 @@ def enrich_txs(
             # Nonstandard (P2PK etc.) → parse via prevout scriptPubKey
             if prevout_hex and i.get("type") == "nonstandard":
                 try:
-                    address_list, scripttype = parse_script(prevout_hex)
+                    address_list, scripttype = parse_script(prevout_hex, network)
                     i["addresses"] = address_list if address_list else i["addresses"]
                     i["type"] = scripttype
                 except (
@@ -1075,7 +1103,9 @@ def ingest(
             prepare_blocks_inplace(blocks, BLOCK_BUCKET_SIZE)
 
             if import_base_data:
-                enrich_txs(txs, resolver, ignore_missing_outputs=False)
+                enrich_txs(
+                    txs, resolver, ignore_missing_outputs=False, network=currency
+                )
 
                 latest_tx_id = db.raw.get_latest_tx_id_before_block(block_id)  # ty: ignore[unresolved-attribute]
 

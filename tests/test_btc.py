@@ -145,8 +145,9 @@ class TestParseInput:
         assert result["addresses"] == ["1Address1", "1Address2"]
         assert result["type"] == "pubkeyhash"
 
-    def test_input_with_prevout_p2pk_no_address(self):
-        """Verbosity 3: P2PK prevout has no address → derive nonstandard."""
+    def test_input_with_prevout_p2pk_malformed_script(self):
+        """Verbosity 3: prevout typed 'pubkey' but the script is not a parseable
+        P2PK (truncated) → fall back to the synthetic nonstandard id."""
         vin = {
             "txid": "abc123",
             "vout": 0,
@@ -166,6 +167,28 @@ class TestParseInput:
         assert result["type"] == "nonstandard"
         assert len(result["addresses"]) == 1
         assert result["addresses"][0].startswith("nonstandard")
+
+    def test_input_with_prevout_p2pk_derives_address(self):
+        """Verbosity 3: a well-formed P2PK prevout without an address gets the
+        address derived (keeping the node's 'pubkey' type)."""
+        p2pk_hex = (
+            "4104ea0d6650c8305f1213a89c65fc8f4343a5dac8e985c869e51d3aa02879b57c60"
+            "cff49fcb99314d02dfc612d654e4333150ef61fa569c1c66415602cae387baf7ac"
+        )
+        vin = {
+            "txid": "abc123",
+            "vout": 0,
+            "scriptSig": {"asm": "sig", "hex": "00"},
+            "sequence": 0,
+            "prevout": {
+                "value": 50.0,
+                "scriptPubKey": {"type": "pubkey", "hex": p2pk_hex},
+            },
+        }
+        result = _parse_input(vin, 0, network="btc")
+        assert result["type"] == "pubkey"
+        assert result["addresses"] == ["1BDvQZjaAJH4ecZ8aL3fYgTi7rnn3o2thE"]
+        assert "prevout_script_hex" not in result
 
     def test_input_without_prevout(self):
         """Verbosity 2: no prevout → value=None, addresses=[], type=None."""
@@ -246,6 +269,58 @@ class TestParseOutput:
         assert result["type"] == "nonstandard"
         assert len(result["addresses"]) == 1
         assert result["addresses"][0].startswith("nonstandard")
+
+    # Uncompressed-pubkey P2PK script (real Zcash height-0 coinbase output);
+    # zcashd reports the t-address + reqSigs, Zebra omits both.
+    _P2PK_HEX = (
+        "4104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb6"
+        "49f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"
+    )
+
+    def test_p2pk_output_address_present_unchanged(self):
+        """If the node already gives the address (zcashd), use it verbatim."""
+        vout = {
+            "value": 50.0,
+            "n": 0,
+            "scriptPubKey": {
+                "type": "pubkey",
+                "hex": self._P2PK_HEX,
+                "reqSigs": 1,
+                "addresses": ["t1StbPM4X3j4FGM57HpGnb9BMbS7C1nFW1r"],
+            },
+        }
+        result = _parse_output(vout, network="zec")
+        assert result["type"] == "pubkey"
+        assert result["addresses"] == ["t1StbPM4X3j4FGM57HpGnb9BMbS7C1nFW1r"]
+        assert result["required_signatures"] == 1
+
+    def test_p2pk_output_derived_when_address_omitted(self):
+        """If the node omits the address (Zebra), derive the same t-address and
+        reqSigs=1 so parsing matches zcashd byte-for-byte."""
+        vout = {
+            "value": 50.0,
+            "n": 0,
+            "scriptPubKey": {"type": "pubkey", "hex": self._P2PK_HEX},
+        }
+        result = _parse_output(vout, network="zec")
+        assert result["type"] == "pubkey"
+        assert result["addresses"] == ["t1StbPM4X3j4FGM57HpGnb9BMbS7C1nFW1r"]
+        assert result["required_signatures"] == 1
+
+    def test_p2pk_output_network_aware(self):
+        """The derived address uses the network's version byte (BTC vs ZEC)."""
+        btc_hex = (
+            "4104ea0d6650c8305f1213a89c65fc8f4343a5dac8e985c869e51d3aa02879b57c60"
+            "cff49fcb99314d02dfc612d654e4333150ef61fa569c1c66415602cae387baf7ac"
+        )
+        vout = {
+            "value": 1.0,
+            "n": 0,
+            "scriptPubKey": {"type": "pubkey", "hex": btc_hex},
+        }
+        assert _parse_output(vout, network="btc")["addresses"] == [
+            "1BDvQZjaAJH4ecZ8aL3fYgTi7rnn3o2thE"
+        ]
 
 
 class TestParseBlockAndTxs:
@@ -577,7 +652,12 @@ class TestResolveUnresolvedInputs:
                 "is_coinbase": False,
                 "inputs": [],
                 "outputs": [
-                    {"index": 0, "value": 50_000_000, "addresses": ["addr1"], "type": "p2pkh"},
+                    {
+                        "index": 0,
+                        "value": 50_000_000,
+                        "addresses": ["addr1"],
+                        "type": "p2pkh",
+                    },
                 ],
                 "input_value": 0,
                 "output_value": 50_000_000,
@@ -596,7 +676,12 @@ class TestResolveUnresolvedInputs:
                     },
                 ],
                 "outputs": [
-                    {"index": 0, "value": 49_000_000, "addresses": ["addr2"], "type": "p2pkh"},
+                    {
+                        "index": 0,
+                        "value": 49_000_000,
+                        "addresses": ["addr2"],
+                        "type": "p2pkh",
+                    },
                 ],
                 "input_value": 0,
                 "output_value": 49_000_000,
@@ -631,7 +716,12 @@ class TestResolveUnresolvedInputs:
                     },
                 ],
                 "outputs": [
-                    {"index": 0, "value": 30_000_000, "addresses": ["addr3"], "type": "p2pkh"},
+                    {
+                        "index": 0,
+                        "value": 30_000_000,
+                        "addresses": ["addr3"],
+                        "type": "p2pkh",
+                    },
                 ],
                 "input_value": 0,
                 "output_value": 30_000_000,
@@ -645,7 +735,9 @@ class TestResolveUnresolvedInputs:
                 1: _make_cache_entry(31_000_000, ["addr_ext"], "p2sh", None),
             }
         }
-        with patch.object(exp, "_batch_getrawtransaction", return_value=fake_rpc_result):
+        with patch.object(
+            exp, "_batch_getrawtransaction", return_value=fake_rpc_result
+        ):
             exp._resolve_unresolved_inputs(transactions)
 
         inp = transactions[0]["inputs"][0]
@@ -665,7 +757,12 @@ class TestResolveUnresolvedInputs:
                 "is_coinbase": True,
                 "inputs": [],
                 "outputs": [
-                    {"index": 0, "value": 625_000_000, "addresses": ["miner"], "type": "p2pkh"},
+                    {
+                        "index": 0,
+                        "value": 625_000_000,
+                        "addresses": ["miner"],
+                        "type": "p2pkh",
+                    },
                 ],
                 "input_value": 0,
                 "output_value": 625_000_000,

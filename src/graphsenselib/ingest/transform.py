@@ -130,6 +130,7 @@ class TransformerUTXO(Transformer):
             resolver=None,
             ignore_missing_outputs=True,
             input_reference_only=True,
+            network=self.network,
         )
         if self._fill_unresolved:
             self._fill_unresolved_inputs(txs)
@@ -202,6 +203,7 @@ class TransformerUTXO(Transformer):
                 self._resolver,
                 ignore_missing_outputs=False,
                 input_reference_only=False,
+                network=self.network,
             )
         else:
             enrich_txs(
@@ -209,6 +211,7 @@ class TransformerUTXO(Transformer):
                 resolver=None,
                 ignore_missing_outputs=True,
                 input_reference_only=True,
+                network=self.network,
             )
             if self._fill_unresolved:
                 self._fill_unresolved_inputs(txs)
