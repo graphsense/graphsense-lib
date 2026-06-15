@@ -101,8 +101,10 @@ class UpdateStrategyAccount(UpdateStrategy):
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
         parallel_pool=None,
+        wal_enabled: bool = False,
     ):
         super().__init__(db, du_config.currency, forward_fill_rates=forward_fill_rates)
+        self._wal_enabled = wal_enabled
         self.du_config = du_config
         crash_file = (
             "/tmp/account_deltaupdate_"
@@ -134,6 +136,11 @@ class UpdateStrategyAccount(UpdateStrategy):
             t_start = time.time()
             atomic = ApplicationStrategy.TX == self.application_strategy
             bookkeeping = self.bookkeeping_changes or []
+            # Stage the full resolved change set durably before applying any of
+            # it; on a crash the next run replays this verbatim (never
+            # recomputes) so read-modify-write aggregates are not double-counted.
+            # No-op when the WAL is disabled.
+            self._stage_wal(self.changes, bookkeeping)
             if self._parallel_pool is not None and not atomic:
                 # Shard the data writes across the worker pool; only write
                 # the bookkeeping rows (summary statistics, delta history)
@@ -156,6 +163,9 @@ class UpdateStrategyAccount(UpdateStrategy):
                     self._pedantic,
                     try_atomic_writes=atomic,
                 )
+            if self._wal_enabled:
+                # Whole set acked -> discard the WAL (the commit point).
+                self.wal.clear()
             self.changes = None
             self.bookkeeping_changes = None
             self._timing_persist += time.time() - t_start

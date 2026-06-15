@@ -16,6 +16,27 @@ from .update import AbstractUpdateStrategy, Action, UpdaterFactory
 logger = logging.getLogger(__name__)
 
 
+def _recover_pending_writes(db, pedantic: bool) -> None:
+    """Replay any pending delta-update WAL record to completion before the run.
+
+    Idempotent: replays the exact resolved (absolute-value) changes the crashed
+    run staged, then clears the record. A torn (headerless) stage leaves nothing
+    applied and is swept. Raises on a version-mismatched record so stale writes
+    are never applied automatically.
+    """
+    from graphsenselib import __version__
+
+    from .update.abstractupdater import make_run_id
+    from .update.utxo.update import apply_changes
+    from .wal import DeltaWal
+
+    wal = DeltaWal(db.transformed, make_run_id(), __version__)
+    wal.ensure_schema()
+    wal.recover(
+        lambda changes: apply_changes(db, changes, pedantic, try_atomic_writes=False)
+    )
+
+
 def adjust_start_block(db, start_block) -> int:
     last_er = None
     for i in [start_block - i for i in range(1, 4)]:
@@ -224,9 +245,14 @@ def update(
     forward_fill_rates: bool,
     disable_safety_checks: bool = False,
     parallel_workers: int = 1,
+    enable_wal: Optional[bool] = None,
 ):
     with DbFactory().from_config(env, currency) as db:
         config = get_config()
+        # Flag overrides config; config (default False) decides when unset.
+        wal_enabled = (
+            enable_wal if enable_wal is not None else config.delta_updater_wal_enabled
+        )
         if config.get_keyspace_config(env, currency).disable_delta_updates:
             logger.error(
                 f"Delta updates are disabled for {env} - {currency} in the "
@@ -244,6 +270,16 @@ def update(
         try:
             # Acquisition order: raw -> transformed (matches transformation/cli.py).
             with create_lock(raw_ks), create_lock(transformed_ks):
+                # Crash recovery: replay a torn batch's resolved writes (if any)
+                # BEFORE reading any state. The next batch computes aggregate
+                # deltas read-modify-write against the keyspace, so a
+                # partially-applied batch must be completed first. Replaying the
+                # stored absolute-value changes is idempotent; recomputing the
+                # block would double-count. Only when the WAL is enabled — when
+                # off, nothing is ever staged and the table is not created.
+                if wal_enabled:
+                    _recover_pending_writes(db, pedantic)
+
                 start_block, end_block, patch_mode = find_import_range(
                     db,
                     start_block,
@@ -337,6 +373,7 @@ def update(
                                 patch_mode=patch_mode,
                                 forward_fill_rates=forward_fill_rates,
                                 parallel_pool=parallel_pool,
+                                wal_enabled=wal_enabled,
                             ),
                             batch_size=write_batch_size,
                         )

@@ -29,6 +29,7 @@ class UpdaterFactory:
         patch_mode: bool,
         forward_fill_rates: bool = False,
         parallel_pool=None,
+        wal_enabled: bool = False,
     ) -> AbstractUpdateStrategy:
         currency = du_config.currency
         schema_type = currency_to_schema_type[currency]
@@ -54,6 +55,7 @@ class UpdaterFactory:
                 app_strat,
                 patch_mode,
                 forward_fill_rates=forward_fill_rates,
+                wal_enabled=wal_enabled,
             )
         if (schema_type == "account" or schema_type == "account_trx") and version == 1:
             return UpdateStrategyAccountLegacy(
@@ -73,6 +75,7 @@ class UpdaterFactory:
                 patch_mode,
                 forward_fill_rates=forward_fill_rates,
                 parallel_pool=parallel_pool,
+                wal_enabled=wal_enabled,
             )
         else:
             raise Exception(f"Unsupported schema type {schema_type} or {version}")

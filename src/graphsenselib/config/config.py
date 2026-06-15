@@ -655,6 +655,17 @@ class AppConfig(GoodConf):
         description="Redis URL for distributed locking (e.g. redis://localhost:6379).",
     )
 
+    delta_updater_wal_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the crash-safe write-ahead log for delta updates. When on, "
+            "each batch's resolved writes are staged durably (delta_updater_wal "
+            "table in the transformed keyspace) before being applied and replayed "
+            "on the next run if a crash left them partially applied. Off by "
+            "default; the --enable-wal/--no-enable-wal CLI flag overrides this."
+        ),
+    )
+
     web: Optional[Dict] = Field(
         default=None,
         description="Optional REST API (gsrest) configuration. Read by the web app.",

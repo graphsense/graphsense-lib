@@ -43,6 +43,7 @@ dependencies = [
     "orjson>=3.10",
     "ecdsa>=0.13",
     "eth-account>=0.13.7",
+    "msgpack>=1.2.0",
 ]
 dynamic = ["version"]
 keywords=["graphsense"]

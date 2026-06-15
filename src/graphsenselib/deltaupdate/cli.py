@@ -81,6 +81,15 @@ def delta():
     "values above 1 parallelize it across processes; 1 keeps the "
     "single-process behavior.",
 )
+@click.option(
+    "--enable-wal/--no-enable-wal",
+    "enable_wal",
+    default=None,
+    help="Enable the crash-safe write-ahead log (stage batch writes durably "
+    "and replay a torn batch on the next run). Overrides the "
+    "delta_updater_wal_enabled config value; default follows the config "
+    "(off if unset).",
+)
 def deltaupdate(
     env,
     currency,
@@ -95,6 +104,7 @@ def deltaupdate(
     forward_fill_rates,
     disable_safety_checks,
     parallel_workers,
+    enable_wal,
 ):
     """Updates the transformend keyspace for new data in raw, if possible.
     \f
@@ -126,6 +136,7 @@ def deltaupdate(
         forward_fill_rates,
         disable_safety_checks,
         parallel_workers=parallel_workers,
+        enable_wal=enable_wal,
     )
 
 

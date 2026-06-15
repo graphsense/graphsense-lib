@@ -1313,8 +1313,10 @@ class UpdateStrategyUtxo(UpdateStrategy):
         application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
+        wal_enabled: bool = False,
     ):
         super().__init__(db, currency, forward_fill_rates=forward_fill_rates)
+        self._wal_enabled = wal_enabled
         crash_file = (
             "/tmp/utxo_deltaupdate_"
             f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
@@ -1337,9 +1339,17 @@ class UpdateStrategyUtxo(UpdateStrategy):
     def persist_updater_progress(self):
         if self.changes is not None:
             atomic = ApplicationStrategy.TX == self.application_strategy
+            # In BATCH mode self.changes carries data + bookkeeping; stage it
+            # durably before applying so a torn batch is replayed, not
+            # recomputed, on the next run. (TX mode applies per-tx atomically
+            # inside process_batch and reaches here with self.changes == None.)
+            # No-op when the WAL is disabled.
+            self._stage_wal(self.changes, [])
             apply_changes(
                 self._db, self.changes, self._pedantic, try_atomic_writes=atomic
             )
+            if self._wal_enabled:
+                self.wal.clear()
             self.changes = None
         self._time_last_batch = time.time() - self._batch_start_time
 
