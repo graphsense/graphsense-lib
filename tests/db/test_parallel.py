@@ -177,6 +177,37 @@ def test_pool_splits_work_into_num_workers_chunks():
     assert max(sizes) - min(sizes) <= 1
 
 
+def _ignore_signals_init():
+    # Mirrors the signal handling that init_worker installs in real workers:
+    # ignore SIGINT/SIGTERM so a signal to the process group cannot tear a
+    # worker down mid-chunk. (The DB session part of init_worker needs a real
+    # cluster, so it is exercised separately by integration tests.)
+    import signal as _signal
+
+    _signal.signal(_signal.SIGINT, _signal.SIG_IGN)
+    _signal.signal(_signal.SIGTERM, _signal.SIG_IGN)
+
+
+def _signal_self_then_return_chunk(chunk):
+    import os
+    import signal as _signal
+
+    # Without SIG_IGN this terminates the worker and breaks the pool; with the
+    # init handler it is a no-op and the chunk completes normally.
+    os.kill(os.getpid(), _signal.SIGTERM)
+    return [x + 1 for x in chunk]
+
+
+def test_worker_survives_signal_when_init_ignores_it():
+    from graphsenselib.db.parallel import ParallelDbPool
+
+    with ParallelDbPool(
+        num_workers=2, initializer=_ignore_signals_init, initargs=()
+    ) as pool:
+        result = pool.map_chunked(_signal_self_then_return_chunk, list(range(20)))
+    assert result == [x + 1 for x in range(20)]
+
+
 def test_plainrow_serializes_identically_to_driver_udt_value():
     # Characterization test against the real driver serializer: a flattened
     # UDT value must produce the same wire bytes as the driver's own

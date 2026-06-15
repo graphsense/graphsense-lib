@@ -9,7 +9,9 @@ used as multiprocessing's own parent<->child transport, never for
 untrusted data).
 """
 
+import atexit
 import multiprocessing
+import signal
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
 
@@ -87,12 +89,28 @@ def init_worker(env: str, currency: str):
 
     Runs once per worker via the pool initializer; the driver is not
     fork-safe, so every worker must build its own Cluster after spawn.
+
+    Workers ignore SIGINT/SIGTERM so a Ctrl-C or SIGTERM delivered to the
+    whole process group cannot tear a worker down mid-chunk. The parent
+    owns the graceful stop: it keeps the flag-setting signal handler,
+    finishes the in-flight batch (every submitted chunk runs to completion
+    under shutdown(wait=True)), and breaks at the next batch boundary.
+    Shutdown then drains the pool via its sentinel queue, not a signal, so
+    ignoring the signals here does not block teardown.
+
+    The session is closed on normal worker exit via atexit, so the
+    cassandra Cluster is shut down explicitly instead of relying on the
+    interpreter reclaiming sockets.
     """
     global _worker_db
     from graphsenselib.db import DbFactory
 
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     _worker_db = DbFactory().from_config(env, currency)
     _worker_db.open()
+    atexit.register(_worker_db.close)
 
 
 def get_worker_db():
