@@ -54,6 +54,11 @@ _HEADER_IDX = -1
 #         the process-parallel reader returns current DB values as PlainRow
 #         (db/parallel.py), and these enter DbChange.data on the account path.
 #   - datetime    (bookkeeping timestamps)
+#   - big int     (Python ints outside msgpack's signed/unsigned 64-bit range):
+#         Cassandra varint columns hold arbitrary precision — e.g. high-decimal
+#         token balances — and msgpack routes such ints here rather than packing
+#         them natively. Encoded as a decimal string so the value is preserved
+#         exactly and rebinds to varint identically on replay.
 # numpy scalars (pandas-derived) collapse to their Python scalar via .item().
 # An unrecognized type raises at encode time (loud, before any write) rather
 # than being silently dropped — add a new ext code here if a new domain type
@@ -62,6 +67,7 @@ _EXT_DATETIME = 1
 _EXT_DELTAVALUE = 2
 _EXT_TXREFERENCE = 3
 _EXT_PLAINROW = 4
+_EXT_BIGINT = 5
 
 
 def _packb(obj) -> bytes:
@@ -85,6 +91,8 @@ def _default(obj):
         return msgpack.ExtType(_EXT_PLAINROW, _packb(obj._data))
     if hasattr(obj, "item"):  # numpy scalar
         return obj.item()
+    if isinstance(obj, int):  # int wider than msgpack's native 64-bit range
+        return msgpack.ExtType(_EXT_BIGINT, str(obj).encode("ascii"))
     raise TypeError(
         f"Cannot serialize {type(obj)!r} into the WAL payload; add a msgpack "
         "ext handler in wal.py for this type."
@@ -102,6 +110,8 @@ def _ext_hook(code, data):
         return TxReference(trace_index=trace_index, log_index=log_index)
     if code == _EXT_PLAINROW:
         return PlainRow(_unpackb(data))
+    if code == _EXT_BIGINT:
+        return int(data.decode("ascii"))
     return msgpack.ExtType(code, data)
 
 

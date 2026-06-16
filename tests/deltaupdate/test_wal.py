@@ -233,6 +233,31 @@ def test_codec_handles_numpy_scalars():
     assert back[0].data == {"a": 7, "b": 1.5}
 
 
+def test_codec_roundtrip_big_ints():
+    # Cassandra varint columns hold arbitrary precision (e.g. high-decimal token
+    # balances); such ints exceed msgpack's native 64-bit range and must still
+    # round-trip exactly — top-level and nested inside DeltaValue / PlainRow.
+    big_pos = 2**63 + 1  # just past signed-64 max
+    big_neg = -3533128827657550912722770  # the value from the field report
+    huge = 10**40
+    changes = [
+        DbChange.new(
+            table="address",
+            data={
+                "balance": big_neg,
+                "delta": DeltaValue(value=big_pos, fiat_values=[1, 2]),
+                "row": PlainRow({"value": huge, "fiat_values": [3, 4]}),
+            },
+        )
+    ]
+    back = decode_changes(encode_changes(changes))
+    assert back == changes
+    assert back[0].data["balance"] == big_neg
+    assert isinstance(back[0].data["balance"], int)
+    assert back[0].data["delta"].value == big_pos
+    assert back[0].data["row"].value == huge
+
+
 def test_codec_rejects_unknown_type():
     class Weird:
         pass
