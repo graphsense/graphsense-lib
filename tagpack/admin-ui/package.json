@@ -2,7 +2,7 @@
   "dependencies": {
     "elm": "^0.19.1-6",
     "elm-land": "^0.19.5",
-    "vite": ">=7.1.11"
+    "vite": ">=8.0.16"
   },
   "overrides": {
     "elm-land": {
