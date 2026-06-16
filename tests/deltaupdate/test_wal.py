@@ -314,6 +314,33 @@ def test_version_mismatch_refuses_replay():
         newer.recover(lambda ch: None)
 
 
+def test_force_replay_overrides_version_mismatch():
+    wal = _make_wal(version="1.0.0")
+    wal.stage(_record(version="1.0.0"))
+
+    newer = DeltaWal(wal._tdb, "host:3:cccc", "2.0.0")
+    # The override bypasses the version fence and replays the staged changes.
+    loaded = newer.load(allow_version_mismatch=True)
+    assert loaded.block_lo == 100 and loaded.block_hi == 109
+
+    applied = []
+    assert newer.recover(lambda ch: applied.extend(ch), allow_version_mismatch=True)
+    assert applied  # staged changes were replayed
+    assert wal.has_pending() is False  # cleared after replay
+
+
+def test_force_replay_still_rejects_corrupt_payload():
+    # The override skips only the version check; checksum verification stays on.
+    wal = _make_wal(version="1.0.0")
+    wal.stage(_record(version="1.0.0"))
+    ks = wal._tdb.get_keyspace()
+    wal._tdb._db.rows[(ks, 0)]["payload"] = b"corrupted"
+
+    newer = DeltaWal(wal._tdb, "host:3:cccc", "2.0.0")
+    with pytest.raises(ValueError):
+        newer.load(allow_version_mismatch=True)
+
+
 def test_clear_fenced_by_run_id():
     wal = _make_wal(run_id="owner:1:aaaa")
     wal.stage(_record(run_id="owner:1:aaaa"))

@@ -251,17 +251,33 @@ class DeltaWal:
             ],
         )
 
-    def load(self) -> WalRecord:
+    def load(self, allow_version_mismatch: bool = False) -> WalRecord:
         """Load and verify the committed record. Raises on version mismatch or
-        a corrupt/torn payload."""
+        a corrupt/torn payload.
+
+        ``allow_version_mismatch`` bypasses *only* the code-version check (the
+        chunk-count and checksum verification still run, so a torn/corrupt
+        payload is always rejected). The caller is then responsible for having
+        confirmed that the staged absolute values are correct under the current
+        code, since replay writes them verbatim without recomputing.
+        """
         header = self._read_header()
         if header is None:
             raise ValueError("No committed WAL record to load.")
         if header["code_version"] != self._code_version:
-            raise WalVersionMismatch(
-                f"Pending WAL was written by version {header['code_version']!r} "
-                f"but this binary is {self._code_version!r}. Refusing to replay "
-                "stale writes; manual recovery required."
+            if not allow_version_mismatch:
+                raise WalVersionMismatch(
+                    f"Pending WAL was written by version "
+                    f"{header['code_version']!r} but this binary is "
+                    f"{self._code_version!r}. Refusing to replay stale writes; "
+                    "manual recovery required."
+                )
+            logger.warning(
+                "Forcing WAL replay across a code-version change: record "
+                "written by %r, this binary is %r. The staged absolute values "
+                "will be replayed verbatim.",
+                header["code_version"],
+                self._code_version,
             )
 
         n_data = header["n_data_chunks"]
@@ -308,17 +324,23 @@ class DeltaWal:
             return
         self._delete_partition()
 
-    def recover(self, apply_fn: Callable[[List[DbChange]], None]) -> bool:
+    def recover(
+        self,
+        apply_fn: Callable[[List[DbChange]], None],
+        allow_version_mismatch: bool = False,
+    ) -> bool:
         """Replay a pending record to completion, then clear it.
 
         ``apply_fn`` applies a list of resolved changes idempotently. Returns
         True if a record was replayed, False if there was nothing pending.
+        ``allow_version_mismatch`` is forwarded to :meth:`load` to override the
+        code-version fence (see its docstring for the caveat).
         """
         if not self.has_pending():
             # Sweep any torn/headerless chunks from an interrupted stage().
             self._delete_partition()
             return False
-        record = self.load()
+        record = self.load(allow_version_mismatch=allow_version_mismatch)
         logger.warning(
             "Replaying pending WAL for blocks %s-%s (run %s) before resuming.",
             record.block_lo,

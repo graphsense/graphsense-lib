@@ -656,13 +656,15 @@ class AppConfig(GoodConf):
     )
 
     delta_updater_wal_enabled: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Enable the crash-safe write-ahead log for delta updates. When on, "
             "each batch's resolved writes are staged durably (delta_updater_wal "
             "table in the transformed keyspace) before being applied and replayed "
-            "on the next run if a crash left them partially applied. Off by "
-            "default; the --enable-wal/--no-enable-wal CLI flag overrides this."
+            "on the next run if a crash left them partially applied. On by "
+            "default as a mandatory safety net; set to false (or pass "
+            "--no-enable-wal) to opt out. The --enable-wal/--no-enable-wal CLI "
+            "flag overrides this."
         ),
     )
 
