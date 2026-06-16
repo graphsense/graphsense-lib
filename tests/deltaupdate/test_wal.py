@@ -13,6 +13,7 @@ import pytest
 
 from graphsenselib.datatypes import DbChangeType
 from graphsenselib.db.analytics import DbChange
+from graphsenselib.db.parallel import PlainRow
 from graphsenselib.deltaupdate.update.account.createdeltas import TxReference
 from graphsenselib.deltaupdate.update.generic import DeltaValue
 from graphsenselib.deltaupdate.wal import (
@@ -196,6 +197,32 @@ def test_codec_roundtrip_domain_objects():
     assert isinstance(back[0].data["token_values"]["USDT"], DeltaValue)
     assert isinstance(back[1].data["tx_reference"], TxReference)
     assert back[1].data["tx_reference"].trace_index == 4
+
+
+def test_codec_roundtrip_plainrow():
+    # The account-model delta updater reads current DB values through the
+    # process-parallel reader, which returns UDT values as PlainRow (see
+    # db/parallel.py). These enter DbChange.data and must round-trip with type
+    # fidelity so the driver rebinds them to their UDT columns identically.
+    change = DbChange.update(
+        table="address",
+        data={
+            "balance": PlainRow(
+                {"value": 16127357, "fiat_values": [13.712573, 16.127357]}
+            ),
+            # nested PlainRow inside a map exercises recursion through _default.
+            "token_balances": {
+                "USDT": PlainRow({"value": 5, "fiat_values": [3, 4]}),
+            },
+        },
+    )
+    back = decode_changes(encode_changes([change]))
+    assert back == [change]
+    assert isinstance(back[0].data["balance"], PlainRow)
+    assert back[0].data["balance"].value == 16127357
+    assert back[0].data["balance"].fiat_values == [13.712573, 16.127357]
+    assert isinstance(back[0].data["token_balances"]["USDT"], PlainRow)
+    assert back[0].data["token_balances"]["USDT"].value == 5
 
 
 def test_codec_handles_numpy_scalars():

@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Fixed
+- **WAL serialization failed for the account model (TRX), aborting delta updates.** The account-model delta updater reads current DB values through the process-parallel reader, which hands UDT values back as `PlainRow` (an attribute-access view that rebinds to UDT columns on write). Those `PlainRow` objects enter `DbChange.data`, but `wal.py` had no msgpack ext handler for the type, so staging the redo log raised `TypeError: Cannot serialize ...PlainRow into the WAL payload`. The UTXO path was unaffected because its values are `DeltaValue` dataclasses. Added a generic `PlainRow` ext handler (encodes its dict recursively, decodes back to `PlainRow`) so the value tree rebinds byte-identically on replay regardless of UDT shape.
+
 ## [2.14.3] - 2026-06-16
 
 ### Library

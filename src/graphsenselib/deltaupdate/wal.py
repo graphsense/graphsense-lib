@@ -29,6 +29,7 @@ import msgpack
 
 from graphsenselib.datatypes import DbChangeType
 from graphsenselib.db.analytics import DbChange
+from graphsenselib.db.parallel import PlainRow
 from graphsenselib.deltaupdate.update.account.createdeltas import TxReference
 from graphsenselib.deltaupdate.update.generic import DeltaValue
 
@@ -49,6 +50,9 @@ _HEADER_IDX = -1
 # extension below so it rebinds byte-identically through the driver on replay:
 #   - DeltaValue  (value: int, fiat_values: list[int]) — account + UTXO
 #   - TxReference (trace_index, log_index UDT)          — account only
+#   - PlainRow    (attribute-access view of a driver row/UDT) — account only:
+#         the process-parallel reader returns current DB values as PlainRow
+#         (db/parallel.py), and these enter DbChange.data on the account path.
 #   - datetime    (bookkeeping timestamps)
 # numpy scalars (pandas-derived) collapse to their Python scalar via .item().
 # An unrecognized type raises at encode time (loud, before any write) rather
@@ -57,6 +61,7 @@ _HEADER_IDX = -1
 _EXT_DATETIME = 1
 _EXT_DELTAVALUE = 2
 _EXT_TXREFERENCE = 3
+_EXT_PLAINROW = 4
 
 
 def _packb(obj) -> bytes:
@@ -74,6 +79,10 @@ def _default(obj):
         return msgpack.ExtType(
             _EXT_TXREFERENCE, _packb([obj.trace_index, obj.log_index])
         )
+    if isinstance(obj, PlainRow):
+        # _data may nest further PlainRow/DeltaValue/etc.; _packb recurses
+        # through _default so the whole tree rebinds byte-identically.
+        return msgpack.ExtType(_EXT_PLAINROW, _packb(obj._data))
     if hasattr(obj, "item"):  # numpy scalar
         return obj.item()
     raise TypeError(
@@ -91,6 +100,8 @@ def _ext_hook(code, data):
     if code == _EXT_TXREFERENCE:
         trace_index, log_index = _unpackb(data)
         return TxReference(trace_index=trace_index, log_index=log_index)
+    if code == _EXT_PLAINROW:
+        return PlainRow(_unpackb(data))
     return msgpack.ExtType(code, data)
 
 
