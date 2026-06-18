@@ -386,4 +386,19 @@ class GraphSense(object):
             .merge(df_cluster_definers, on="cluster_id", how="left")
         )
 
+        # Fresh clustering (GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS) persists only
+        # multi-member clusters, so an address with no fresh_address_cluster row
+        # is its own singleton cluster: cluster_id == address_id, one member,
+        # self-defining. Mirrors the account-model branch above. In the legacy
+        # scheme address.cluster_id is always set, so this is a no-op there.
+        missing = result["cluster_id"].isna()
+        if missing.any():
+            result.loc[missing, "cluster_id"] = result.loc[missing, "address_id"]
+            result.loc[missing, "no_addresses"] = 1
+            result.loc[missing, "cluster_defining_address"] = result.loc[
+                missing, "address"
+            ]
+        result["cluster_id"] = result["cluster_id"].astype(int)
+        result["no_addresses"] = result["no_addresses"].astype(int)
+
         return result
