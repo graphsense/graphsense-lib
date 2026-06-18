@@ -30,6 +30,7 @@ from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
 from graphsenselib.db.cassandra import GraphsenseRetryPolicy
 from graphsenselib.utils.accountmodel import hex_to_bytes
+from graphsenselib.config import is_fresh_clustering_enabled
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
 from graphsenselib.datatypes.abi import decode_logs_db
@@ -137,6 +138,27 @@ SEARCH_PAGE_SIZE = 100
 MAX_HEX_STRING_LENGTH = 64
 FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
+
+
+def _cluster_stats_table() -> str:
+    """Entity/cluster stats source, switched by GRAPHSENSE_FRESH_CLUSTERING_ENABLED.
+
+    Fresh: ``fresh_cluster_stats`` (same ``(cluster_id_group, cluster_id)`` key and
+    columns as the legacy Scala ``cluster`` table). Legacy: ``cluster``.
+    """
+    return "fresh_cluster_stats" if is_fresh_clustering_enabled() else "cluster"
+
+
+def _cluster_addresses_table() -> str:
+    """Cluster membership source, switched by the same env var.
+
+    Fresh: ``fresh_cluster_addresses``. Legacy: the Scala ``cluster_addresses``.
+    """
+    return (
+        "fresh_cluster_addresses"
+        if is_fresh_clustering_enabled()
+        else "cluster_addresses"
+    )
 
 
 def account_calc_tx_fee(tx) -> Optional[int]:
@@ -1911,10 +1933,14 @@ class Cassandra:
 
     async def get_fresh_cluster_id(self, currency, address_id):
         """Look up fresh_cluster_id for an address_id. Returns None if not found."""
-        query = "SELECT cluster_id FROM fresh_address_cluster WHERE address_id = %s"
+        address_id_group = self.get_id_group(currency, address_id)
+        query = (
+            "SELECT cluster_id FROM fresh_address_cluster "
+            "WHERE address_id_group = %s AND address_id = %s"
+        )
         try:
             result = await self.execute_async(
-                currency, "transformed", query, [address_id]
+                currency, "transformed", query, [address_id_group, address_id]
             )
         except InvalidRequest:
             # Table may not exist if fresh clustering has not been run yet
@@ -2367,7 +2393,10 @@ class Cassandra:
     async def get_entity(self, currency, entity):
         entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
-        query = "SELECT * FROM cluster WHERE cluster_id_group = %s AND cluster_id = %s "
+        query = (
+            f"SELECT * FROM {_cluster_stats_table()} "
+            "WHERE cluster_id_group = %s AND cluster_id = %s "
+        )
         result = await self.execute_async(
             currency, "transformed", query, [entity_id_group, entity]
         )
@@ -2383,7 +2412,7 @@ class Cassandra:
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
         paging_state = page_from_hex(page)
         flds = ",".join(fields)
-        query = f"SELECT {flds} FROM cluster"
+        query = f"SELECT {flds} FROM {_cluster_stats_table()}"
         has_ids = isinstance(ids, list)
         if has_ids:
             query += " WHERE cluster_id_group = %s AND cluster_id = %s"
@@ -2414,7 +2443,7 @@ class Cassandra:
         entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
         query = (
-            "SELECT address_id FROM cluster_addresses "
+            f"SELECT address_id FROM {_cluster_addresses_table()} "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
