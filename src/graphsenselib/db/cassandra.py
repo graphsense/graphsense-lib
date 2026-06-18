@@ -15,7 +15,12 @@ from cassandra.cluster import (
 
 # Session,
 from cassandra.concurrent import execute_concurrent, execute_concurrent_with_args
-from cassandra.policies import DCAwareRoundRobinPolicy, RetryPolicy, TokenAwarePolicy
+from cassandra.policies import (
+    DCAwareRoundRobinPolicy,
+    ExponentialReconnectionPolicy,
+    RetryPolicy,
+    TokenAwarePolicy,
+)
 from cassandra.cluster import NoHostAvailable
 from cassandra import OperationTimedOut, ReadTimeout, WriteTimeout
 
@@ -33,40 +38,48 @@ DEFAULT_TIMEOUT = 120
 DEFAULT_CONSISTENCY_LEVEL = "LOCAL_QUORUM"
 DEFAULT_SERIAL_CONSISTENCY_LEVEL = "LOCAL_SERIAL"
 
+# Transient driver errors that indicate a temporary cluster-wide stall (e.g.
+# nodes starved of CPU by a concurrent Spark run) rather than a permanent fault.
+# Safe to ride out with application-level backoff on the calling thread.
+TRANSIENT_DB_ERRORS = (NoHostAvailable, OperationTimedOut, ReadTimeout, WriteTimeout)
+
+# Application-level ride-out backoff for synchronous reads. The backoff sleeps on
+# the calling thread (never the driver reactor) so connection heartbeats keep
+# flowing. ~20 retries with delay capped at 30s ≈ multi-minute ride-out window.
+RIDE_OUT_MAX_RETRIES = 20
+RIDE_OUT_BASE_DELAY = 0.5
+RIDE_OUT_MAX_DELAY = 30
+
 # create logger
 logger = logging.getLogger(__name__)
 
 
 # taken from https://github.com/apache/cassandra-dtest/blob/0085d21bc687995478e338302e619e82ad4a4644/dtest.py#L88C5-L88C5 # noqa
 class GraphsenseRetryPolicy(RetryPolicy):
-    """
-    A retry policy that retries 10 times by default, but can be configured to
-    retry more times.
+    """Non-blocking driver-side retry policy.
+
+    The driver invokes these callbacks on its I/O reactor thread, so they MUST
+    NOT block. An earlier version called ``time.sleep()`` here for backoff; during
+    a long sleep the reactor could not service connection heartbeats, so healthy
+    connections were defuncted (heartbeat failure / ``ConnectionShutdown``) and the
+    in-flight query failed.
+
+    Here we only do a few *immediate* retries (on the next coordinator) to absorb
+    a single-host blip, then rethrow. Riding out long, cluster-wide stalls (e.g.
+    nodes starved of CPU by a concurrent Spark run) is done at the application
+    layer with backoff that sleeps on the calling thread — see
+    ``CassandraDb._execute_with_backoff``.
     """
 
-    def __init__(self, max_retries=10, base_delay=0.5, max_delay=10):
+    def __init__(self, max_retries=2):
         self.max_retries = max_retries
-        self.base_delay = base_delay
-        self.max_delay = max_delay
 
     def on_read_timeout(self, *args, **kwargs):
+        # Reads are idempotent: an immediate retry on a different coordinator is
+        # always safe. No sleep here — backoff happens on the application thread.
         if kwargs["retry_num"] < self.max_retries:
-            logger.warning(
-                "Retrying read after timeout. Attempt #" + str(kwargs["retry_num"])
-            )
-            self.__backoff(kwargs["retry_num"])
-            return (self.RETRY, None)
-        else:
-            return (self.RETHROW, None)
-
-    def __backoff(self, retry_num):
-        # exponential backoff with full jitter to avoid thundering-herd on recovery
-        cap = min(self.base_delay * (2 ** (retry_num + 1)), self.max_delay)
-        delay = random.uniform(self.base_delay, cap)
-        logger.warning(
-            f"Backing off for {delay:.2f} seconds (retry number {retry_num})"
-        )
-        time.sleep(delay)
+            return (self.RETRY_NEXT_HOST, None)
+        return (self.RETHROW, None)
 
     def on_write_timeout(
         self,
@@ -80,63 +93,34 @@ class GraphsenseRetryPolicy(RetryPolicy):
         # Only retry writes the application has marked idempotent — non-idempotent
         # retries can silently double-apply on timeout.
         if not getattr(query, "is_idempotent", False):
-            logger.warning(
-                f"write timeout (write_type={write_type}) on non-idempotent query; "
-                "propagating error to application"
-            )
             return (self.RETHROW, None)
-        if retry_num >= self.max_retries:
-            return (self.RETHROW, None)
-        logger.warning(
-            f"write timeout (write_type={write_type}) on idempotent query; "
-            f"retry attempt #{retry_num}"
-        )
-        self.__backoff(retry_num)
-        return (self.RETRY, None)
+        if retry_num < self.max_retries:
+            return (self.RETRY, None)
+        return (self.RETHROW, None)
 
     def on_request_error(self, query, consistency, error, retry_num):
+        # Retrying on another coordinator is only safe for reads or queries the
+        # application marked idempotent; a non-idempotent write could double-apply.
         query_string = (
             query.prepared_statement.query_string
             if isinstance(query, BoundStatement)
             else query.query_string
         )
-        if query_string.upper().startswith("SELECT ") and retry_num < self.max_retries:
-            logger.debug(
-                f"Error while executing request; was read; retry on next host: {error}"
-            )
+        is_read = query_string.upper().lstrip().startswith("SELECT")
+        if (
+            is_read or getattr(query, "is_idempotent", False)
+        ) and retry_num < self.max_retries:
             return (self.RETRY_NEXT_HOST, None)
-        else:
-            logger.debug(
-                "Error while executing request; "
-                f"propagate error to application: {error}"
-            )
-
         return (self.RETHROW, None)
 
     def on_unavailable(
         self, query, consistency, required_replicas, alive_replicas, retry_num
     ):
         # Unavailable is often transient (node restart, GC pause, gossip flap).
-        # First try a different coordinator — its view of replica liveness may be
-        # stale. After that, back off and retry the same host.
-        if retry_num >= self.max_retries:
-            logger.warning(
-                f"Unavailable at {consistency} (need {required_replicas}, "
-                f"have {alive_replicas}); giving up after {retry_num} retries"
-            )
-            return (self.RETHROW, None)
-        if retry_num == 0:
-            logger.warning(
-                f"Unavailable at {consistency} (need {required_replicas}, "
-                f"have {alive_replicas}); retrying on next host"
-            )
+        # Try a different coordinator — its view of replica liveness may be stale.
+        if retry_num < self.max_retries:
             return (self.RETRY_NEXT_HOST, None)
-        logger.warning(
-            f"Unavailable at {consistency} (need {required_replicas}, "
-            f"have {alive_replicas}); retry attempt #{retry_num}"
-        )
-        self.__backoff(retry_num)
-        return (self.RETRY, None)
+        return (self.RETHROW, None)
 
 
 def normalize_cql_statement(stmt: str) -> str:
@@ -487,7 +471,17 @@ class CassandraDb:
             port=self.db_port,
             execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
             connect_timeout=15,
-            idle_heartbeat_timeout=30,
+            # Tolerate longer server-side stalls (e.g. a node starved of CPU by a
+            # concurrent Spark run) before declaring a connection defunct.
+            idle_heartbeat_timeout=60,
+            # Pin the keepalive cadence explicitly (driver default is 30s) so a
+            # defuncted connection is re-probed promptly after a stall.
+            idle_heartbeat_interval=30,
+            # Background reconnection backoff for hosts marked down (e.g. after a
+            # heartbeat-induced defunct). This is host reconnection, NOT query
+            # retry — query ride-out happens in _execute_with_backoff. Start at 1s,
+            # cap at 60s so a recovered node is re-added within ~a minute.
+            reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
             # protocol_version=6,
             compression="lz4",
             auth_provider=auth_provider,
@@ -532,6 +526,38 @@ class CassandraDb:
         except Exception as e:
             raise StorageError(f"Error when executing query: \n{query}") from e
 
+    def _execute_with_backoff(self, statement, parameters=None) -> Iterable:
+        """Run a read on the calling thread, riding out transient cluster-wide
+        stalls with exponential backoff + jitter.
+
+        Backoff sleeps here (the application thread), never inside the driver
+        retry policy which runs on the I/O reactor thread; sleeping there would
+        stall connection heartbeats and defunct otherwise-healthy connections.
+        """
+        attempt = 0
+        while True:
+            try:
+                if parameters is None:
+                    return self.session.execute(statement)
+                return self.session.execute(statement, parameters)
+            except TRANSIENT_DB_ERRORS as exc:
+                if attempt >= RIDE_OUT_MAX_RETRIES:
+                    logger.error(
+                        f"Read gave up after {attempt + 1} attempts "
+                        f"({type(exc).__name__}): {exc}"
+                    )
+                    raise
+                cap = min(
+                    RIDE_OUT_BASE_DELAY * (2 ** (attempt + 1)), RIDE_OUT_MAX_DELAY
+                )
+                delay = random.uniform(RIDE_OUT_BASE_DELAY, cap)
+                logger.warning(
+                    f"Transient DB error ({type(exc).__name__}); retry "
+                    f"#{attempt + 1} after {delay:.2f}s backoff"
+                )
+                time.sleep(delay)
+                attempt += 1
+
     @needs_session
     def execute_safe(
         self, cql_query_str: str, params: dict, fetch_size=None
@@ -539,7 +565,7 @@ class CassandraDb:
         # flat_stmt = cql_query_str.replace("\n", " ")
         # logger.debug(f"{flat_stmt} in keyspace {self.session.keyspace}")
         stmt = SimpleStatement(cql_query_str, fetch_size=fetch_size)
-        return self.session.execute(stmt, params)
+        return self._execute_with_backoff(stmt, params)
 
     @needs_session
     def execute(
@@ -552,7 +578,7 @@ class CassandraDb:
         if fetch_size is not None:
             stmt.fetch_size = fetch_size
 
-        return self.session.execute(stmt)
+        return self._execute_with_backoff(stmt)
 
     @needs_session
     def read_partitions_concurrent(
@@ -609,7 +635,7 @@ class CassandraDb:
 
     @needs_session
     def execute_statement(self, stmt: BoundStatement, fetch_size=None) -> Iterable:
-        return self.session.execute(stmt)
+        return self._execute_with_backoff(stmt)
 
     @needs_session
     def execute_async(self, cql_query_str: str, fetch_size=None):

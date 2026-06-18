@@ -8,6 +8,7 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import RedirectResponse
 from starlette.routing import Route
 
+from graphsenselib import __version__ as gs_version
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
 from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
@@ -41,6 +42,7 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     mcp = FastMCP.from_fastapi(
         app=app,
         name="graphsense-mcp",
+        version=gs_version,
         instructions=config.resolved_instructions(),
         route_map_fn=route_map_fn,
         mcp_component_fn=component_fn,

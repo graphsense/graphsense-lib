@@ -1,5 +1,8 @@
 import logging
+import os
+import socket
 import time
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -9,6 +12,12 @@ from ...utils.logging import LoggerScope
 from .generic import Action
 
 logger = logging.getLogger(__name__)
+
+
+def make_run_id() -> str:
+    """Identifier for this updater process; used to fence WAL ownership."""
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+
 
 TABLE_NAME_DELTA_HISTORY = "delta_updater_history"
 TABLE_NAME_DELTA_STATUS = "delta_updater_status"
@@ -170,12 +179,16 @@ class UpdateStrategy(AbstractUpdateStrategy):
         self._db = db
         self._currency = currency
         self._batch_start_time = None
+        self._batch_first_block = None
         self._nr_new_addresses = 0
         self._nr_new_clusters = 0
         self._nr_new_transactions = 0
         self._highest_address_id = db.transformed.get_highest_address_id() or 0
         self._highest_cluster_id = db.transformed.get_highest_cluster_id() or 1
         self.forward_fill_rates = forward_fill_rates
+        self._run_id = make_run_id()
+        self._wal = None
+        self._wal_enabled = False
 
     def get_forward_fill_rate(self):
         return
@@ -221,10 +234,48 @@ class UpdateStrategy(AbstractUpdateStrategy):
     def import_exchange_rates(self, batch: List[int]):
         fill_and_store_rates(self._db, batch, self.forward_fill_rates)
 
+    @property
+    def wal(self):
+        """Lazily-constructed redo write-ahead log (DB-backed, shared per
+        keyspace). See graphsenselib.deltaupdate.wal."""
+        if self._wal is None:
+            from graphsenselib import __version__
+            from graphsenselib.deltaupdate.wal import DeltaWal
+
+            self._wal = DeltaWal(self._db.transformed, self._run_id, __version__)
+            self._wal.ensure_schema()
+        return self._wal
+
+    def _stage_wal(self, changes, bookkeeping):
+        """Durably record the resolved change set before any of it is applied.
+
+        No-op unless the WAL is enabled. Call immediately before applying; pair
+        with ``self.wal.clear()`` after the whole set (data + bookkeeping) is
+        acknowledged. Recovery/replay of a staged record happens at run startup
+        in ``deltaupdater._recover_pending_writes``.
+        """
+        if not self._wal_enabled or (not changes and not bookkeeping):
+            return
+        from graphsenselib import __version__
+        from graphsenselib.deltaupdate.wal import WalRecord
+
+        first = self._batch_first_block
+        last = self.last_block_processed
+        record = WalRecord(
+            run_id=self._run_id,
+            code_version=__version__,
+            block_lo=first if first is not None else (last or 0),
+            block_hi=last if last is not None else 0,
+            changes=list(changes),
+            bookkeeping=list(bookkeeping),
+        )
+        self.wal.stage(record)
+
     def process_batch(self, batch: Iterable[int]) -> Action:
         self._batch_start_time = time.time()
 
         batch_int = list(batch)
+        self._batch_first_block = batch_int[0] if batch_int else None
         t_start = time.time()
         with LoggerScope.debug(logger, "Importing exchange rates"):
             self.import_exchange_rates(batch_int)

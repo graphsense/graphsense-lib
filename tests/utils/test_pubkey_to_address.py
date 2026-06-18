@@ -1,4 +1,37 @@
-from graphsenselib.utils.pubkey_to_address import convert_pubkey_to_addresses
+import base58
+
+from graphsenselib.utils.pubkey_to_address import (
+    cashaddr_encode,
+    convert_pubkey_to_addresses,
+)
+
+
+def test_cashaddr_encode_spec_vectors():
+    # Canonical base58 -> CashAddr P2PKH vectors from the BCH cashaddr spec.
+    # Decode the base58 to its 20-byte hash160 and re-encode as CashAddr.
+    vectors = {
+        "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu": (
+            "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ),
+        "1KXrWXciRDZUpQwQmuM1DbwsKDLYAYsVLR": (
+            "bitcoincash:qr95sy3j9xwd2ap32xkykttr4cvcu7as4y0qverfuy"
+        ),
+        "16w1D5WRVKJuZUsSRzdLp9w3YGcgoxDXb": (
+            "bitcoincash:qqq3728yw0y47sqn6l2na30mcw6zm78dzqre909m2r"
+        ),
+    }
+    for b58, expected in vectors.items():
+        decoded = base58.b58decode(b58)  # version(1) + hash160(20) + checksum(4)
+        h160 = decoded[1:21]
+        assert cashaddr_encode("bitcoincash", 0x00, h160) == expected
+
+
+def test_bch_address_derived():
+    addresses = convert_pubkey_to_addresses(
+        "027a4da4310322bd0d85d84b25cce883f2dbf119cfa74e80aa6555de765c003438",
+        currencies=["bch"],
+    )
+    assert addresses["bch"]["p2pkh_cashaddr"].startswith("bitcoincash:q")
 
 
 def test_pubkey_to_address():

@@ -1,6 +1,7 @@
 from eth_hash.auto import keccak
 from typing import Tuple
 
+from coincurve.keys import PublicKey as _CoincurvePublicKey
 from ecdsa.curves import SECP256k1  # https://pypi.org/project/ecdsa/
 from ecdsa.ellipticcurve import Point
 
@@ -86,11 +87,30 @@ def secp256k1_pubkey_to_eth_addr(pubkey: bytes) -> bytes:
     return keccak(pubkey[1:])[-20:]
 
 
-def is_valid_secp256k1_pubkey(pk: bytes) -> bool:
+def is_valid_secp256k1_pubkey(pk: bytes, fast: bool = True) -> bool:
     """Takes a compressed or uncompressed secp256k1 public key and checks if it is a valid public key for that curve
 
     For more information see SEC1v2 https://www.secg.org/sec1-v2.pdf#subsubsection.3.2.2
+
+    ``fast=True`` (default) validates via coincurve (C/libsecp256k1) in
+    microseconds — the right choice for bulk extraction. ``fast=False`` uses the
+    pure-Python ``ecdsa`` reference path below; it is ~1000x slower because of
+    the subgroup ``n * Q`` scalar-multiply, which is in fact *redundant* for
+    secp256k1 (cofactor h = 1, so every on-curve in-range point is already in the
+    prime-order group). Kept only as a cross-check oracle. Both paths reject
+    off-curve, out-of-range and zero-coordinate keys identically.
     """
+    if fast:
+        try:
+            _CoincurvePublicKey(bytes(pk))
+            return True
+        except ValueError:
+            # coincurve raises ValueError for any unparseable / off-curve /
+            # out-of-range key — the definitive "not a valid pubkey". Narrow on
+            # purpose: a non-bytes arg (TypeError) or any other error is a bug we
+            # want surfaced, not silently turned into a dropped key.
+            return False
+
     x_bytes, y_bytes = secp256k1_extract_coordinates(pk)
     x = int.from_bytes(x_bytes, byteorder="big")
     y = int.from_bytes(y_bytes, byteorder="big")

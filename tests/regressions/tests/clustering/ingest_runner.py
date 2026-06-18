@@ -1,5 +1,6 @@
 """Run ingest, Scala transformation, and Rust clustering for regression tests."""
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -151,7 +152,11 @@ def run_exchange_rates_ingest(
     cassandra_port: int,
     keyspace_name: str,
 ):
-    """Ingest exchange rates via graphsense-cli exchange-rates cryptocompare ingest."""
+    """Ingest exchange rates via graphsense-cli exchange-rates coingecko ingest.
+
+    Requires the COINGECKO_API_KEY environment variable; cryptocompare is
+    no longer usable here since it started requiring an API key (~2026-06).
+    """
     gs_config = build_gs_config(
         currency=config.currency,
         node_url=config.node_url,
@@ -160,9 +165,10 @@ def run_exchange_rates_ingest(
         cassandra_port=cassandra_port,
         keyspace_name=keyspace_name,
     )
+    gs_config["coingecko_api_key"] = os.environ["COINGECKO_API_KEY"]
 
     cmd_args = [
-        "exchange-rates", "cryptocompare", "ingest",
+        "exchange-rates", "coingecko", "ingest",
         "-e", "test",
         "-c", config.currency,
     ]

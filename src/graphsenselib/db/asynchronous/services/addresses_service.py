@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Callable
 
+from graphsenselib.config import chain_forks
 from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import (
@@ -79,7 +80,9 @@ class DatabaseProtocol(Protocol):
     def get_token_configuration(self, currency: str) -> Dict[str, Any]: ...
 
 
-FORK_TUPLES = [("btc", "bch")]
+# (base_chain, fork_chain) pairs, derived from the shared fork registry
+# (config.chain_forks) so fork relationships live in one place.
+FORK_TUPLES = [(spec["base"], fork) for fork, spec in chain_forks.items()]
 
 # Networks where an address on one chain is structurally identical to an
 # address on the other, so cross-chain presence can be detected by a direct

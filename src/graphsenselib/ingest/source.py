@@ -309,6 +309,7 @@ class SourceUTXO(Source):
             timeout=provider_timeout,
             verbosity=verbosity,
             resolve_inputs=resolve_inputs,
+            network=network,
         )
         # Keep legacy adapter for get_last_synced_block (uses getblockcount)
         self._provider_uri = provider_uri

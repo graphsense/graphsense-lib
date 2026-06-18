@@ -155,3 +155,64 @@ def test_missing_id_keys_do_not_crash() -> None:
     # Must not raise; warnings list shape is unspecified for this case
     # (the contract is: don't crash).
     verify_structural(spec)
+
+
+CHECKSUMMED = "0x4e1773615dFc62A5dDc901b36223F1eAedB8F6Df"
+
+
+def test_case_variant_duplicate_address_warns() -> None:
+    """The same EVM address listed checksummed AND lowercase is one
+    address, not two — flag it so the caller fixes the spec (the
+    encoder merges them regardless)."""
+    spec = {
+        "addresses": [
+            {"id": CHECKSUMMED, "starting_point": True},
+            {"id": CHECKSUMMED.lower()},
+        ],
+        "txs": [],
+        "agg_edges": [],
+    }
+    warnings = verify_structural(spec)
+    assert any("more than once" in w and "case-insensitive" in w for w in warnings), (
+        warnings
+    )
+
+
+def test_case_variant_duplicate_tx_warns() -> None:
+    tx = "0x" + "AB" * 32
+    spec = {
+        "addresses": [{"id": "a", "starting_point": True}],
+        "txs": [{"id": tx}, {"id": tx.lower()}],
+        "agg_edges": [{"a": "a", "b": "a", "tx_ids": [tx]}],
+    }
+    warnings = verify_structural(spec)
+    assert any("same transaction more than once" in w for w in warnings), warnings
+
+
+def test_same_id_on_different_networks_is_not_a_duplicate() -> None:
+    spec = {
+        "addresses": [
+            {"id": CHECKSUMMED, "network": "eth", "starting_point": True},
+            {"id": CHECKSUMMED, "network": "base", "starting_point": True},
+        ],
+        "txs": [],
+        "agg_edges": [],
+    }
+    assert verify_structural(spec) == []
+
+
+def test_case_variant_edge_endpoint_is_not_unknown() -> None:
+    """An edge endpoint written checksummed must resolve against an
+    address listed lowercase (and vice versa) — no spurious
+    unknown-address or stray-address warnings."""
+    other = "0x" + "ab" * 20
+    tx = "0x" + "cd" * 32
+    spec = {
+        "addresses": [
+            {"id": CHECKSUMMED.lower(), "starting_point": True},
+            {"id": other},
+        ],
+        "txs": [{"id": tx.upper().replace("0X", "0x")}],
+        "agg_edges": [{"a": CHECKSUMMED, "b": other, "tx_ids": [tx]}],
+    }
+    assert verify_structural(spec) == []

@@ -5,7 +5,6 @@ import re
 from datetime import timedelta
 from typing import Iterable, Optional, Sequence, Any, Union, List
 
-import pandas as pd
 import base64
 import sys
 
@@ -148,6 +147,8 @@ def dict_with_snake_keys(d) -> dict:
 
 
 def get_cassandra_result_as_dateframe(result):
+    import pandas as pd  # deferred: keep pandas off the utils import path (Spark UDFs)
+
     df = pd.DataFrame(result)
     return df
 
@@ -188,6 +189,8 @@ def binary_search(L, x, lo, hi):
 
 
 def pandas_row_factory(colnames, rows):
+    import pandas as pd  # deferred: keep pandas off the utils import path (Spark UDFs)
+
     return pd.DataFrame(rows, columns=colnames)
 
 

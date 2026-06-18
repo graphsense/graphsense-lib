@@ -107,7 +107,7 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=rc,enable=${{ github.ref_type == 'tag' && contains(github.ref_name, '-rc.') }}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-dev.') }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-dev.') && !contains(github.ref_name, '+') }}
             type=ref,event=branch
             type=sha,prefix=,format=short
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/develop' }}

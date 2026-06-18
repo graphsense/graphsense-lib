@@ -1,9 +1,13 @@
+import logging
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime as dt
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import GRAPHSENSE_DEFAULT_DATETIME_FORMAT
 from ..db import DbFactory
+from .notifications import send_msg_to_topic
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -88,3 +92,25 @@ def is_raw_behind_schedule(
         # print(rs, last_ts_str, diff_hours)
 
         return (diff_hours > threshold_in_hours, hb, last_ts_str)
+
+
+def check_raw_ingest_staleness(
+    env: str,
+    network: str,
+    threshold_in_hours: int,
+    topic: str = "exceptions",
+    dry_run: bool = False,
+) -> bool:
+    """Check whether the raw keyspace ingest is behind schedule and notify
+    the topic if it is. Returns True if the data is stale."""
+    behind, block, date = is_raw_behind_schedule(env, network, threshold_in_hours)
+    if behind:
+        msg = (
+            f"WARNING: raw keyspace ingest {network} "
+            f"Last ingested block {(block,)} ({date}) "
+            f"older than {threshold_in_hours} hours"
+        )
+        logger.warning(msg)
+        if not dry_run:
+            send_msg_to_topic(topic, msg)
+    return behind

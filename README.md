@@ -334,6 +334,67 @@ graphsense-cli ingest from-node \
     --batch-size 100
 ```
 
+### Full Transform (raw → transformed)
+
+Run the raw → transformed "full transform" by driving the external
+[graphsense-spark](https://github.com/graphsense/graphsense-spark) Scala job via
+`spark-submit`. The release jar is downloaded from a public GitHub Release asset
+(token-free) and cached under `<cache_directory>/spark-jars`. The command creates
+a fresh dated transformed keyspace, resolves Spark properties from a
+`spark_config` profile, and launches the job.
+
+```bash
+# Show options
+graphsense-cli transformation raw-to-transformed --help
+
+# Run against a pinned release, creating a fresh dated transformed keyspace
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version v26.06.0
+
+# Use the latest stable release (also the default when no version is configured)
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version latest
+
+# Preview only: print the resolved Spark config + spark-submit command, no side effects
+graphsense-cli transformation raw-to-transformed -e prod -c btc --dry-run
+
+# Run Spark locally for testing
+graphsense-cli transformation raw-to-transformed -e dev -c btc --local
+
+# Write into an existing transformed keyspace instead of a fresh dated one
+graphsense-cli transformation raw-to-transformed -e prod -c btc \
+    --target-keyspace btc_transformed
+
+# Pass extra args through to the graphsense-spark job after `--`
+graphsense-cli transformation raw-to-transformed -e prod -c btc -- --debug 1
+```
+
+Configured via a `full_transform_args` section in the config file:
+
+```yaml
+full_transform_args:
+  # Release tag to run. Omit or set to "latest" to resolve the newest stable
+  # (non-prerelease) release from the GitHub API at run time.
+  version: v26.06.0
+  version_overrides: # optional, per-currency
+    eth: v26.06.1
+  artifact: fat # "fat" (self-contained assembly, default) or "slim" (+ Maven packages)
+  spark_profile: # selects a spark_config profile per currency
+    btc: utxo
+  jar_args: # optional, per-currency extra job args
+    btc: ["--bech32-prefix", "bc", "--bucket-size", "5000"]
+  # Optional Cassandra Sidecar bulk-write path
+  sidecar:
+    enabled: false
+    contact_points: ["cassandra-1:9043", "cassandra-2:9043"]
+    local_dc: dc1
+    consistency_level: LOCAL_QUORUM
+```
+
+Spark properties (including `spark.master`) come from the selected `spark_config`
+profile; Cassandra coordinates (host/port/credentials) are taken from the
+environment config. The command is backend-neutral (`backend: scala` today,
+`pyspark` reserved) so a future native implementation can be selected without
+changing how it is invoked.
+
 ### Delta Updates
 
 Update transformed keyspace from raw keyspace.
@@ -372,6 +433,10 @@ graphsense-cli exchange-rates coindesk -e dev -c btc
 
 # Fetch from CoinMarketCap (requires API key in config)
 graphsense-cli exchange-rates coinmarketcap -e dev -c btc
+
+# Ingest from CryptoCompare (requires cryptocompare_api_key in config,
+# see https://developers.coindesk.com/)
+graphsense-cli exchange-rates cryptocompare ingest -e dev -c btc --abort-on-gaps
 ```
 
 ### Monitoring
@@ -466,6 +531,16 @@ environments:
           # Optional authentication for node
           # username: "rpcuser"
           # password: "rpcpassword"
+          # Optional: staleness tolerance in hours. After every
+          # `ingest from-node` run the timestamp of the highest ingested raw
+          # block is checked against this threshold and a notification is sent
+          # if the data is older (same check as `monitoring monitor-raw-ingest`).
+          # raw_ingest_staleness_threshold: 10
+          # Optional: ingest the latest exchange rates from this provider
+          # before every `ingest from-node` run (same as `exchange-rates
+          # <provider> ingest --abort-on-gaps`). Supported: coingecko,
+          # coinmarketcap, cryptocompare (each needs its API key below).
+          # exchange_rates_provider: "coingecko"
 
         # Keyspace setup for schema creation
         keyspace_setup_config:
@@ -519,6 +594,9 @@ slack_topics:
 # Optional: API keys for external services
 coingecko_api_key: ""
 coinmarketcap_api_key: "YOUR_CMC_API_KEY"
+# Required for the cryptocompare exchange-rates provider since June 2026
+# (https://developers.coindesk.com/)
+cryptocompare_api_key: ""
 
 # Optional: cache directory for temporary files
 cache_directory: "~/.graphsense/cache"

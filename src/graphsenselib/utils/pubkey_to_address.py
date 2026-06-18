@@ -269,6 +269,52 @@ def get_tron_address(pubkey_comp_hex: str) -> str:
     return evm_to_tron_address_string(eth)
 
 
+# --- Bitcoin Cash CashAddr ---
+_CASHADDR_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def _cashaddr_polymod(values: List[int]) -> int:
+    """BCH CashAddr checksum polymod (spec/cashaddr.md)."""
+    c = 1
+    for d in values:
+        c0 = c >> 35
+        c = ((c & 0x07FFFFFFFF) << 5) ^ d
+        if c0 & 0x01:
+            c ^= 0x98F2BC8E61
+        if c0 & 0x02:
+            c ^= 0x79B76D99E2
+        if c0 & 0x04:
+            c ^= 0xF33E5FB3C4
+        if c0 & 0x08:
+            c ^= 0xAE2EABE2A8
+        if c0 & 0x10:
+            c ^= 0x1E4F43E470
+    return c ^ 1
+
+
+def cashaddr_encode(prefix: str, version_byte: int, payload_bytes: bytes) -> str:
+    """Encode a CashAddr address. The prefix is folded into the checksum."""
+    data = convertbits([version_byte] + list(payload_bytes), 8, 5)
+    if data is None:
+        raise ValueError("CashAddr bit conversion failed")
+    prefix_expanded = [ord(x) & 0x1F for x in prefix] + [0]
+    polymod = _cashaddr_polymod(prefix_expanded + data + [0] * 8)
+    checksum = [(polymod >> 5 * (7 - i)) & 0x1F for i in range(8)]
+    encoded = "".join(_CASHADDR_CHARSET[d] for d in data + checksum)
+    return f"{prefix}:{encoded}"
+
+
+def get_bch_addresses(pubkey_hex):
+    """Bitcoin Cash CashAddr P2PKH address (type 0, 160-bit pubkey hash).
+
+    BCH has no SegWit, so a pubkey maps to a single standard receive address.
+    The legacy base58 form is identical to Bitcoin's P2PKH (already derived
+    under ``btc``), so only the modern CashAddr form is added here.
+    """
+    pubkey_hash = hash160(hex_to_bytes(pubkey_hex))
+    return {"p2pkh_cashaddr": cashaddr_encode("bitcoincash", 0x00, pubkey_hash)}
+
+
 # --- Main Conversion Function ---
 def convert_pubkey_to_addresses(
     pubkey_hex: str, currencies: List[str] = ["btc", "doge", "ltc", "zec", "eth", "trx"]
@@ -320,6 +366,8 @@ def convert_pubkey_to_addresses(
                 all_addresses["eth"] = {"eth": get_ethereum_address(pubkey_hex_comp)}
             elif currency == "trx":
                 all_addresses["trx"] = {"trx": get_tron_address(pubkey_hex_comp)}
+            elif currency == "bch":
+                all_addresses["bch"] = get_bch_addresses(pubkey_hex_comp)
 
         except ValueError as e:
             all_addresses[currency] = {

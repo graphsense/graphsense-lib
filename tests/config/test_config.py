@@ -103,6 +103,61 @@ top_level_typo: hello
         os.unlink(fname)
 
 
+def test_raw_ingest_staleness_threshold_parses_and_defaults_to_none():
+    cfg = """
+environments:
+  dev:
+    cassandra_nodes: [localhost]
+    keyspaces:
+      btc:
+        raw_keyspace_name: btc_raw_dev
+        transformed_keyspace_name: btc_transformed_dev
+        schema_type: utxo
+        ingest_config:
+          node_reference: http://localhost:8332
+          raw_ingest_staleness_threshold: 10
+          exchange_rates_provider: coingecko
+      eth:
+        raw_keyspace_name: eth_raw_dev
+        transformed_keyspace_name: eth_transformed_dev
+        schema_type: account
+        ingest_config:
+          node_reference: http://localhost:8545
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(cfg)
+        fname = f.name
+
+    try:
+        config = AppConfig(load=True, config_file=fname)
+        btc_ic = config.get_keyspace_config("dev", "btc").ingest_config
+        eth_ic = config.get_keyspace_config("dev", "eth").ingest_config
+        assert btc_ic is not None and eth_ic is not None
+        assert btc_ic.raw_ingest_staleness_threshold == 10
+        assert eth_ic.raw_ingest_staleness_threshold is None
+        assert btc_ic.exchange_rates_provider == "coingecko"
+        assert eth_ic.exchange_rates_provider is None
+    finally:
+        os.unlink(fname)
+
+
+def test_exchange_rates_provider_rejects_unknown_value():
+    from graphsenselib.config.config import IngestConfig
+
+    for valid in ["coingecko", "coinmarketcap", "cryptocompare"]:
+        ic = IngestConfig(
+            node_reference="http://localhost:8332",
+            exchange_rates_provider=valid,
+        )
+        assert ic.exchange_rates_provider == valid
+
+    with pytest.raises(ValidationError, match="exchange_rates_provider"):
+        IngestConfig(
+            node_reference="http://localhost:8332",
+            exchange_rates_provider="coinbase",
+        )
+
+
 def test_load_partial_parses_slack_topics_from_env(monkeypatch):
     cfg = AppConfig(load=False)
     monkeypatch.setenv(

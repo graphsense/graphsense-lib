@@ -88,6 +88,11 @@ def build_gs_config(
         },
     }
 
+    # min-api.cryptocompare.com requires an API key since June 2026
+    cryptocompare_api_key = os.environ.get("CRYPTOCOMPARE_API_KEY", "")
+    if cryptocompare_api_key:
+        gs_config["cryptocompare_api_key"] = cryptocompare_api_key
+
     if minio_endpoint:
         creds = {
             "AWS_ENDPOINT_URL": minio_endpoint,
@@ -133,7 +138,9 @@ def detect_no_lock_flag(cli_bin: str, env: dict | None = None) -> str:
     return "--no-lock"
 
 
-def make_cli_env(venv_dir: Path, config_path: str = "", extra: dict | None = None) -> dict:
+def make_cli_env(
+    venv_dir: Path, config_path: str = "", extra: dict | None = None
+) -> dict:
     """Build an environment dict for subprocess calls to graphsense-cli."""
     env = os.environ.copy()
     env["PATH"] = f"{venv_dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"

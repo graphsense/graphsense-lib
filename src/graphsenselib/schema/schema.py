@@ -347,6 +347,58 @@ class GraphsenseSchemas:
         for kstype in keyspace_types:
             self.create_keyspace_if_not_exist(env, currency, kstype)
 
+    def create_pubkey_keyspace_if_not_exist(
+        self,
+        env: str,
+        keyspace_name: str = "pubkey",
+        replication_config: Optional[str] = None,
+    ) -> None:
+        """Create the cross-chain ``pubkey`` keyspace.
+
+        Cross-currency by design, so this bypasses the per-currency
+        ``KeyspaceConfig`` machinery used by ``create_keyspace_if_not_exist``
+        and uses a single fixed keyspace name. Replication config defaults to
+        the first configured currency's raw replication for the environment.
+        """
+        from ..db.cassandra import CassandraScope
+
+        config = get_config()
+        env_config = config.get_environment(env)
+
+        if replication_config is None:
+            for cur in env_config.keyspaces:
+                ks_config = config.get_keyspace_config(env, cur)
+                replication_config = ks_config.keyspace_setup_config[
+                    "raw"
+                ].replication_config
+                break
+        if replication_config is None:
+            raise BadUserInputError(
+                f"No replication_config available for env {env}: "
+                "configure at least one currency to derive a default, "
+                "or pass replication_config explicitly."
+            )
+
+        schema_text = self.load_schema_text("pubkey_schema.sql")
+        schema = Schema(schema_text)
+        schema_to_create = schema.get_schema_string(keyspace_name, replication_config)
+
+        with CassandraScope(
+            db_nodes=env_config.cassandra_nodes,
+            username=env_config.username,
+            password=env_config.password,
+        ) as db:
+            if db.has_keyspace(keyspace_name):
+                logger.info(
+                    f"Keyspace {keyspace_name} for env {env} exists, nothing to do"
+                )
+                return
+            db.setup_keyspace_using_schema(schema_to_create)
+            logger.info(
+                f"Keyspace {keyspace_name} for env {env} created with "
+                f"replication config {replication_config}."
+            )
+
     def create_keyspace_if_not_exist(
         self,
         env,

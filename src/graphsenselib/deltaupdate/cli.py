@@ -71,6 +71,33 @@ def delta():
     is_flag=True,
     help="Disables safety checks for the delta update.",
 )
+@click.option(
+    "--parallel-workers",
+    type=int,
+    show_default=True,
+    default=1,
+    help="Nr. of worker processes for the batch reads and writes "
+    "(account model only). The driver work is client-CPU-bound, so "
+    "values above 1 parallelize it across processes; 1 keeps the "
+    "single-process behavior.",
+)
+@click.option(
+    "--enable-wal/--no-enable-wal",
+    "enable_wal",
+    default=None,
+    help="Enable/disable the crash-safe write-ahead log (stage batch writes "
+    "durably and replay a torn batch on the next run). Overrides the "
+    "delta_updater_wal_enabled config value; default follows the config "
+    "(on unless set to false).",
+)
+@click.option(
+    "--force-wal-replay",
+    is_flag=True,
+    help="Override the WAL code-version fence when recovering a pending "
+    "record written by a different graphsense-lib version. Prompts for an "
+    "interactive yes/no confirmation before replaying the staged values "
+    "verbatim. Requires the WAL to be enabled.",
+)
 def deltaupdate(
     env,
     currency,
@@ -84,6 +111,9 @@ def deltaupdate(
     create_schema,
     forward_fill_rates,
     disable_safety_checks,
+    parallel_workers,
+    enable_wal,
+    force_wal_replay,
 ):
     """Updates the transformend keyspace for new data in raw, if possible.
     \f
@@ -114,6 +144,9 @@ def deltaupdate(
         pedantic,
         forward_fill_rates,
         disable_safety_checks,
+        parallel_workers=parallel_workers,
+        enable_wal=enable_wal,
+        force_wal_replay=force_wal_replay,
     )
 
 

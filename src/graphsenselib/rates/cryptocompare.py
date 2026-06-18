@@ -39,9 +39,31 @@ def cryptocompare_historical_url(
         )
 
 
-def fetch_cryptocompare_rates(start: str, end: str, symbol: str, fiat: str):
-    r1 = requests.get(cryptocompare_historical_url(start, end, symbol, fiat))
-    rates = pd.DataFrame(json.loads(r1.content)["Data"]["Data"])
+def fetch_cryptocompare_rates(
+    start: str, end: str, symbol: str, fiat: str, api_key: str
+):
+    headers = {"Authorization": f"Apikey {api_key}"} if api_key else {}
+    r1 = requests.get(
+        cryptocompare_historical_url(start, end, symbol, fiat), headers=headers
+    )
+    body = json.loads(r1.content)
+    data = body.get("Data")
+    rows = data.get("Data") if isinstance(data, dict) else None
+    if not rows:
+        msg = (
+            body.get("Err", {}).get("message")
+            or body.get("Message")
+            or f"unexpected response {r1.content[:200]!r}"
+        )
+        logger.error(f"CryptoCompare API request failed: {msg}")
+        if "api key" in str(msg).lower():
+            logger.error(
+                "Anonymous access to min-api.cryptocompare.com was switched "
+                "off in June 2026. Get a key at https://developers.coindesk.com/ "
+                "and set cryptocompare_api_key in graphsense.yaml."
+            )
+        raise SystemExit(1)
+    rates = pd.DataFrame(rows)
     rates["date"] = pd.to_datetime(rates["time"], unit="s").dt.floor("D")
 
     # assert rates.date[0] == pd.Timestamp(MIN_START)
@@ -57,7 +79,7 @@ def fetch_cryptocompare_rates(start: str, end: str, symbol: str, fiat: str):
     return rates[["date", fiat]]
 
 
-def fetch(env, currency, fiat_currencies, start_date, end_date):
+def fetch(env, currency, fiat_currencies, start_date, end_date, api_key: str):
     with DbFactory().from_config(env, currency) as db:
         return fetch_impl(
             db,
@@ -69,6 +91,7 @@ def fetch(env, currency, fiat_currencies, start_date, end_date):
             start_date != MIN_START,
             False,
             True,
+            api_key,
         )
 
 
@@ -82,6 +105,7 @@ def fetch_impl(
     force: bool,
     dry_run: bool,
     abort_on_gaps: bool,
+    api_key: str,
 ):
     most_recent_date = None
     if not force and db:
@@ -104,7 +128,9 @@ def fetch_impl(
         logger.error("Error: start date after end date.")
         raise SystemExit
 
-    usd_rates = fetch_cryptocompare_rates(start_date, end_date, currency, "USD")
+    usd_rates = fetch_cryptocompare_rates(
+        start_date, end_date, currency, "USD", api_key
+    )
 
     ecb_rates = fetch_ecb_rates(fiat_currencies)
 
@@ -157,6 +183,7 @@ def ingest(
     force,
     dry_run,
     abort_on_gaps,
+    api_key,
 ):
     if dry_run:
         logger.warning("This is a Dry-Run. Nothing will be written to the database!")
@@ -171,6 +198,7 @@ def ingest(
             force,
             dry_run,
             abort_on_gaps,
+            api_key,
         )
 
         if exchange_rates.isna().values.any():

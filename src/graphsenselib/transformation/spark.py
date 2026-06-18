@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,18 @@ def create_spark_session(
     builder = SparkSession.builder.appName(app_name)
 
     if local:
+        # In client mode the driver JVM is already running by the time the
+        # builder config is read, so `spark.driver.memory` set here is a no-op
+        # (see Spark docs). The heap must be set before launch via the
+        # launcher args. Set PYSPARK_SUBMIT_ARGS unless the user already did.
+        driver_memory = (spark_config or {}).get("spark.driver.memory", "8g")
+        if "PYSPARK_SUBMIT_ARGS" not in os.environ:
+            os.environ["PYSPARK_SUBMIT_ARGS"] = (
+                f"--driver-memory {driver_memory} pyspark-shell"
+            )
         builder = (
             builder.master("local[*]")
-            .config("spark.driver.memory", "4g")
+            .config("spark.driver.memory", driver_memory)
             .config("spark.sql.shuffle.partitions", "8")
         )
 
@@ -145,10 +155,15 @@ def create_spark_session(
             builder = builder.config(key, value)
 
     # PySpark's SparkContext reads PYSPARK_PYTHON from os.environ (not from
-    # Spark config) to determine which Python binary workers use. Mirror the
-    # spark.pyspark.python config value to the env var so it actually works.
+    # Spark config) to pick the worker Python. If it is unset the workers fall
+    # back to `python3` on PATH, which under `uv run` is NOT the venv — so they
+    # can't import graphsenselib and UDFs fail with ModuleNotFoundError. Default
+    # the worker interpreter to the driver's (sys.executable); an explicit
+    # spark.pyspark.python or a pre-set PYSPARK_PYTHON still wins.
     if spark_config and "spark.pyspark.python" in spark_config:
         os.environ["PYSPARK_PYTHON"] = spark_config["spark.pyspark.python"]
+    else:
+        os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
 
     spark = builder.getOrCreate()
     logger.info(f"SparkSession created: {app_name} (local={local})")
