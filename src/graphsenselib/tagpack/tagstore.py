@@ -19,11 +19,33 @@ from graphsenselib.tagpack import ValidationError
 from graphsenselib.tagpack.constants import KNOWN_NETWORKS
 from graphsenselib.tagpack.tagpack import TagPack
 from graphsenselib.tagpack.utils import get_github_repo_url
+from graphsenselib.config import is_tagstore_fresh_clusters_enabled
 import logging
 
 register_adapter(np.int64, AsIs)
 
 logger = logging.getLogger(__name__)
+
+
+def _acm_table() -> str:
+    """Active address->cluster mapping table, switched by the env var.
+
+    Fresh: ``address_cluster_mapping_v2`` (fed from the fresh-clustering tables).
+    Legacy: ``address_cluster_mapping``. The whole cluster-tag read path (both
+    MVs) sits on top of whichever this returns.
+    """
+    return (
+        "address_cluster_mapping_v2"
+        if is_tagstore_fresh_clusters_enabled()
+        else "address_cluster_mapping"
+    )
+
+
+def _cluster_mv_names() -> tuple:
+    """The (tag_count, best_tag) cluster MV names for the active mapping."""
+    if is_tagstore_fresh_clusters_enabled():
+        return ("tag_count_by_cluster_v2", "best_cluster_tag_v2")
+    return ("tag_count_by_cluster", "best_cluster_tag")
 
 
 def _normalize_db_value(value):
@@ -688,10 +710,9 @@ class TagStore(object):
     def refresh_db(self):
         # self.cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY label")
         self.cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY statistics")
-        self.cursor.execute(
-            "REFRESH MATERIALIZED VIEW CONCURRENTLY tag_count_by_cluster"
-        )
-        self.cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY best_cluster_tag")  # noqa
+        tag_count_mv, best_tag_mv = _cluster_mv_names()
+        self.cursor.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {tag_count_mv}")
+        self.cursor.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {best_tag_mv}")
 
     def get_addresses(self, update_existing):
         if update_existing:
@@ -715,6 +736,7 @@ class TagStore(object):
         network the ordering is gs_cluster_no_addr DESC then address, so
         repeated runs sample the same heavy-hitter clusters first.
         """
+        acm = _acm_table()
         if networks:
             q = (
                 "SELECT address, network, gs_cluster_id FROM ("
@@ -723,7 +745,7 @@ class TagStore(object):
                 "      PARTITION BY network "
                 "      ORDER BY gs_cluster_no_addr DESC NULLS LAST, address"
                 "    ) AS rn "
-                "  FROM address_cluster_mapping "
+                f"  FROM {acm} "
                 "  WHERE network IN %s"
                 ") sub WHERE rn <= %s"
             )
@@ -736,7 +758,7 @@ class TagStore(object):
                 "      PARTITION BY network "
                 "      ORDER BY gs_cluster_no_addr DESC NULLS LAST, address"
                 "    ) AS rn "
-                "  FROM address_cluster_mapping"
+                f"  FROM {acm}"
                 ") sub WHERE rn <= %s"
             )
             self.cursor.execute(q, (limit_per_network,))
@@ -769,7 +791,7 @@ class TagStore(object):
     @auto_commit
     def insert_cluster_mappings(self, clusters):
         if not clusters.empty:
-            q = "INSERT INTO address_cluster_mapping (address, network, \
+            q = f"INSERT INTO {_acm_table()} (address, network, \
                 gs_cluster_id , gs_cluster_def_addr , gs_cluster_no_addr) \
                 VALUES (%s, %s, %s, %s, %s) ON CONFLICT (network, address) \
                 DO UPDATE SET gs_cluster_id = EXCLUDED.gs_cluster_id, \
