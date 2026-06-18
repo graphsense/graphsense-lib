@@ -19,9 +19,42 @@ from tenacity.wait import wait_exponential
 
 from graphsenselib.utils.tron import tron_address_to_evm, evm_to_tron_address_string
 from graphsenselib.utils.rest_utils import is_eth_like
+from graphsenselib.config import is_tagstore_fresh_clusters_enabled
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _cluster_id_query() -> str:
+    """address_id -> cluster_id lookup, switched by GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS.
+
+    Fresh: membership lives in ``fresh_address_cluster`` (same
+    ``(address_id_group, address_id)`` key as ``address``). Legacy: the Scala
+    ``address.cluster_id`` column.
+    """
+    if is_tagstore_fresh_clusters_enabled():
+        return (
+            "SELECT address_id, cluster_id "
+            "FROM fresh_address_cluster WHERE address_id_group=? and address_id=?"
+        )
+    return (
+        "SELECT address_id, cluster_id "
+        "FROM address WHERE address_id_group=? and address_id=?"
+    )
+
+
+def _cluster_stats_query() -> str:
+    """cluster_id -> no_addresses lookup, switched by the same env var.
+
+    Fresh: ``fresh_cluster_stats`` (only ``no_addresses`` is needed downstream).
+    Legacy: the Scala ``cluster`` table.
+    """
+    if is_tagstore_fresh_clusters_enabled():
+        return (
+            "SELECT cluster_id, no_addresses FROM fresh_cluster_stats "
+            "WHERE cluster_id_group=? and cluster_id=?"
+        )
+    return "SELECT * FROM cluster WHERE cluster_id_group=? and cluster_id=?"
 
 
 def try_convert_tron_to_eth(x):
@@ -254,10 +287,7 @@ class GraphSense(object):
             df_temp["address_id"] / ks_config["bucket_size"]
         ).astype(int)
 
-        query = (
-            "SELECT address_id, cluster_id "
-            + "FROM address WHERE address_id_group=? and address_id=?"
-        )
+        query = _cluster_id_query()
         statement = self.session.prepare(query)
         parameters = df_temp[["address_id_group", "address_id"]].to_records(index=False)
 
@@ -280,7 +310,7 @@ class GraphSense(object):
             df_temp["cluster_id"] / ks_config["bucket_size"]
         ).astype(int)
 
-        query = "SELECT * FROM cluster " + "WHERE cluster_id_group=? and cluster_id=?"
+        query = _cluster_stats_query()
         statement = self.session.prepare(query)
         parameters = df_temp[["cluster_id_group", "cluster_id"]].to_records(index=False)
 

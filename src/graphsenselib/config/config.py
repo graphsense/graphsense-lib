@@ -74,12 +74,19 @@ def is_fresh_clustering_enabled() -> bool:
 
 
 def is_tagstore_fresh_clusters_enabled() -> bool:
-    """Read-side switch: serve cluster tags from the fresh-clustering ``*_v2``
-    tagstore views/mapping instead of the legacy ones. Independent of
-    ``is_fresh_clustering_enabled`` (the write side) so v2 can be populated and
-    validated while reads still go to the legacy relations. Flip on only after
-    ``address_cluster_mapping_v2`` is populated, else cluster-tag reads come back
-    empty."""
+    """Tagstore fresh-clustering switch — flips the whole cluster-tag path,
+    read **and** feed, to the ``*_v2`` relations in one move:
+
+    - REST reads resolve to ``address_cluster_mapping_v2`` / ``*_v2`` MVs;
+    - the tagpack ``sync`` feeder reads cluster membership from
+      ``fresh_address_cluster`` / ``fresh_cluster_stats`` (Cassandra) and writes
+      ``address_cluster_mapping_v2`` (Postgres), refreshing the ``*_v2`` MVs.
+
+    Exclusive switch: while on, the legacy ``address_cluster_mapping`` is no
+    longer maintained. Independent of ``is_fresh_clustering_enabled`` (the
+    Cassandra write side / one-off clustering job). Flip on only after
+    ``address_cluster_mapping_v2`` has been populated by a full feeder rerun,
+    else cluster-tag reads come back empty."""
     return os.environ.get("GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS", "false").lower() in (
         "1",
         "true",
