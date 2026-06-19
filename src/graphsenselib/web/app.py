@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.routing import Route
@@ -1220,6 +1220,21 @@ def _get_docs_favicon_url(app: FastAPI) -> Optional[str]:
     return None
 
 
+def _get_docs_favicon_file(app: FastAPI) -> Optional[str]:
+    """Local filesystem path of the favicon to serve at /favicon.ico.
+
+    Mirrors `_get_docs_favicon_url` but returns an on-disk path (a remote
+    `docs_favicon_url` can't be served from here, so it's ignored). Prefers a
+    real `.ico`, falling back to the bundled `.png`; `FileResponse` sets the
+    content-type from the extension.
+    """
+    for name in ("favicon.ico", "favicon.png"):
+        path = f"{DOCS_STATIC_DIR}/{name}"
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def _get_docs_links(app: FastAPI, page: str) -> list[tuple[str, str]]:
     config = app.state.config
     links: list[tuple[str, str]] = []
@@ -1291,6 +1306,13 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
         StaticFiles(directory=DOCS_STATIC_DIR, check_dir=False),
         name="docs-assets",
     )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        path = _get_docs_favicon_file(app)
+        if path is None:
+            return Response(status_code=404)
+        return FileResponse(path)
 
     @app.get("/ui", include_in_schema=False)
     async def custom_swagger_ui() -> HTMLResponse:
