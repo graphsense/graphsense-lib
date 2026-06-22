@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Web API + Python client
+
+#### Fixed
+- **`GET /{network}/addresses/{address}/neighbors?only_ids=...` returned 500 on an invalid `only_ids` value for trx.** A garbage TRON id (e.g. `only_ids=dummy`) canonicalized via `validate=False` to empty bytes `b""`, which `bytes_to_hex` maps to `None`, crashing `scrub_prefix` with `AttributeError: 'NoneType' object has no attribute 'startswith'`. An empty/unknown id is now treated as a not-found neighbor and silently dropped (matching the existing behavior for valid-but-unknown ids and for utxo networks), so `get_address_id` short-circuits to `None` before issuing an empty-partition-key query to Cassandra.
+
 ## [2.14.5] - 2026-06-22
 
 ### Library

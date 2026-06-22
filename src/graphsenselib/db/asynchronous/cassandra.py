@@ -1663,6 +1663,11 @@ class Cassandra:
         return None
 
     async def get_address_id(self, currency, address):
+        # An empty address (e.g. an invalid trx address canonicalized with
+        # validate=False yields b"") cannot exist; short-circuit before it
+        # reaches Cassandra, which rejects an empty partition key.
+        if not address:
+            return None
         prefix = self.scrub_prefix(currency, address)
         if is_eth_like(currency):
             prefix = prefix.upper()
@@ -2853,7 +2858,11 @@ class Cassandra:
 
     def scrub_prefix(self, currency, expression):
         if isinstance(expression, bytes):
-            expression = bytes_to_hex(expression)
+            # bytes_to_hex returns None for empty input (e.g. an invalid trx
+            # address canonicalized with validate=False yields b""). Treat it as
+            # an empty prefix so the lookup simply finds nothing instead of
+            # raising AttributeError on None.startswith below.
+            expression = bytes_to_hex(expression) or ""
 
         if currency == "eth":
             expression = strip_0x(expression)

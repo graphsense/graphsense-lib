@@ -681,6 +681,22 @@ def test_list_address_neighbors(client):
     assert status == 400
     assert "is not formatted correctly" in body
 
+    # a garbage trx only_ids value used to canonicalize to empty bytes and
+    # crash scrub_prefix with AttributeError (NoneType.startswith) -> 500.
+    # It must instead be treated as an unknown neighbor and dropped.
+    status, body = raw_request(
+        client,
+        (
+            "/{currency}/addresses/{address}/neighbors"
+            "?direction={direction}&only_ids={only_ids}"
+        ),
+        currency="trx",
+        address=evm_to_tron_address_string("0xabcdef"),
+        direction="out",
+        only_ids="dummy",
+    )
+    assert status == 200, body
+
 
 def test_get_address_entity(client):
     path = "/{currency}/addresses/{address}/entity"
