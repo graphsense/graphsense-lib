@@ -10,7 +10,11 @@ import requests
 from graphsenselib.db import DbFactory
 from graphsenselib.db.analytics import DATE_FORMAT
 from graphsenselib.rates.coingecko import fetch_ecb_rates
-from graphsenselib.rates.utils import as_utc_datetime, normalize_date_bounds
+from graphsenselib.rates.utils import (
+    as_utc_datetime,
+    forward_filled_fx_rate,
+    normalize_date_bounds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,16 +145,15 @@ def fetch_impl(
     date_range = date_range["date"].dt.strftime("%Y-%m-%d")
 
     for fiat_currency in set(fiat_currencies) - {"USD"}:
-        ecb_rate = ecb_rates[["date", fiat_currency]].rename(
-            columns={fiat_currency: "fx_rate"}
+        # Gap-free, forward-filled ECB rate so weekend / not-yet-published
+        # days inherit the most recent known FX rate; the anchoring rate can
+        # lie before the import window (see forward_filled_fx_rate).
+        ecb_rate = forward_filled_fx_rate(ecb_rates, fiat_currency, end_date)
+        merged_df = (
+            pd.DataFrame({"date": date_range})
+            .merge(usd_rates, on="date", how="left")
+            .merge(ecb_rate, on="date", how="left")
         )
-        merged_df = exchange_rates.merge(ecb_rate, on="date", how="left").merge(
-            date_range, how="right"
-        )
-
-        # fill gaps over weekends
-        merged_df["fx_rate"] = merged_df["fx_rate"].ffill()
-        merged_df["fx_rate"] = merged_df["fx_rate"].bfill()
 
         if abort_on_gaps and merged_df["fx_rate"].isnull().values.any():
             logger.error(

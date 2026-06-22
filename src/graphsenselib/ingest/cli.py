@@ -566,18 +566,35 @@ def _run_exchange_rates_ingest(
         sys.exit(11)
 
     logger.info(f"Ingesting {provider} exchange rates for {currency} up to {prev_date}")
-    ingest_rates(
-        env,
-        currency,
-        list(supported_fiat_currencies),
-        MIN_START,
-        prev_date,
-        "exchange_rates",
-        False,  # force
-        False,  # dry_run
-        True,  # abort_on_gaps
-        *api_key_args,
-    )
+    try:
+        ingest_rates(
+            env,
+            currency,
+            list(supported_fiat_currencies),
+            MIN_START,
+            prev_date,
+            "exchange_rates",
+            False,  # force
+            False,  # dry_run
+            True,  # abort_on_gaps
+            *api_key_args,
+        )
+    except SystemExit as e:
+        # The rates ingest signals a recoverable gap (e.g. ECB has not
+        # published weekend / not-yet-released FX rates) with exit code 15,
+        # and a critical multi-day gap with exit code 2. As a *pre-ingest*
+        # step this must not abort block ingestion for a recoverable gap:
+        # that step used to run as a separate command whose exit-15 was
+        # tolerated, and the block ingest still ran. Continue on 15, but let
+        # critical gaps (2) and any other error propagate.
+        if e.code == 15:
+            logger.warning(
+                "Exchange-rates pre-ingest found a recoverable gap "
+                "(likely a weekend / not-yet-published FX rate); continuing "
+                "with block ingestion without new rates."
+            )
+        else:
+            raise
 
 
 def _run_staleness_check(

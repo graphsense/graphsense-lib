@@ -202,3 +202,49 @@ def test_coinmarketcap_normalizes_naive_db_dates(monkeypatch):
         "api_key": "api-key",
     }
     assert df.to_dict("records") == [{"date": "2026-03-17", "USD": 100.0, "EUR": 90.0}]
+
+
+def test_coingecko_forward_fills_weekend_fx_gap(monkeypatch):
+    """Monday update whose window is only Sat+Sun: the ECB has not published
+    weekend FX, so the anchoring Friday rate lies *before* the window. The
+    rate must be forward-filled (not aborted) so the import continues."""
+
+    def fake_fetch_coingecko_rates(start, end, crypto_currency, api_key):
+        # coingecko provides crypto USD prices for the weekend days
+        return pd.DataFrame(
+            {"date": ["2026-06-20", "2026-06-21"], "USD": [475.79, 471.43]}
+        )
+
+    def fake_fetch_ecb_rates(symbol_list):
+        # ECB history ends on Friday 2026-06-19 (no weekend rates)
+        return pd.DataFrame(
+            {
+                "date": ["2026-06-18", "2026-06-19"],
+                "USD": [1.0, 1.0],
+                "EUR": [0.89, 0.90],
+            }
+        )
+
+    monkeypatch.setattr(coingecko, "fetch_coingecko_rates", fake_fetch_coingecko_rates)
+    monkeypatch.setattr(coingecko, "fetch_ecb_rates", fake_fetch_ecb_rates)
+
+    # last imported rate is Saturday -> window normalizes to Sat..Sun
+    df = coingecko.fetch_impl(
+        DummyDb(datetime(2026, 6, 20)),
+        "dev",
+        "ZEC",
+        ["USD", "EUR"],
+        "2026-06-20T00:00:00.000000+00:00",
+        "2026-06-21T00:00:00.000000+00:00",
+        "exchange_rates",
+        False,  # force
+        False,  # dry_run
+        True,  # abort_on_gaps
+        "api-key",
+    )
+
+    # Friday's EUR fx (0.90) is carried forward onto both weekend days
+    assert df.to_dict("records") == [
+        {"date": "2026-06-20", "USD": 475.79, "EUR": 475.79 * 0.90},
+        {"date": "2026-06-21", "USD": 471.43, "EUR": 471.43 * 0.90},
+    ]
