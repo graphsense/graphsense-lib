@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
+## [2.14.5] - 2026-06-22
 
 ### Library
 
@@ -19,6 +19,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Added
 - **MCP server advertises a connector icon and website URL in the `initialize` handshake.** New `GSMCPConfig` fields populate the MCP `serverInfo` `icons`/`websiteUrl` fields for spec-compliant hosts. `website_url` defaults to `https://www.iknaio.com/`; the icon defaults to the bundled favicon the REST app already serves at `/docs_assets/favicon.png` (same asset as the API docs) — a root-relative URL the host resolves against the server origin. Override the icon with `icon_url` (+ `icon_mime_type`, `icon_sizes`) — set an absolute, unauthenticated URL (not a data URI) for hosts that don't resolve relative refs — or suppress either by setting it to an empty string. Note that some hosts (e.g. Mistral) ignore `icons` entirely and derive the connector logo from the origin favicon instead.
+
+### Web API + Python client (webapi-2.13.5)
+
+No changes.
+
 
 ## [2.14.4] - 2026-06-16
 
