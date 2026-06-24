@@ -152,7 +152,7 @@ class TxsApi:
     ) -> TransactionComparison:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/graph/summary instead.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -230,7 +230,7 @@ class TxsApi:
     ) -> ApiResponse[TransactionComparison]:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/graph/summary instead.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -308,7 +308,7 @@ class TxsApi:
     ) -> RESTResponseType:
         """Compare multiple transactions
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
+        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/graph/summary instead.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str

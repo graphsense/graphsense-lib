@@ -4,11 +4,11 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**subgraph_summary**](SubgraphApi.md#subgraph_summary) | **POST** /{currency}/subgraph/summary | Summarize a set of transactions and/or addresses
+[**graph_summary**](SubgraphApi.md#graph_summary) | **POST** /{currency}/graph/summary | Summarize a set of transactions and/or addresses
 
 
-# **subgraph_summary**
-> SubgraphSummary subgraph_summary(currency, subgraph_summary_request)
+# **graph_summary**
+> SubgraphSummary graph_summary(currency, subgraph_summary_request)
 
 Summarize a set of transactions and/or addresses
 
@@ -51,11 +51,11 @@ with graphsense.ApiClient(configuration) as api_client:
 
     try:
         # Summarize a set of transactions and/or addresses
-        api_response = api_instance.subgraph_summary(currency, subgraph_summary_request)
-        print("The response of SubgraphApi->subgraph_summary:\n")
+        api_response = api_instance.graph_summary(currency, subgraph_summary_request)
+        print("The response of SubgraphApi->graph_summary:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling SubgraphApi->subgraph_summary: %s\n" % e)
+        print("Exception when calling SubgraphApi->graph_summary: %s\n" % e)
 ```
 
 

@@ -215,21 +215,19 @@ async def summary(
     txs = list(dict.fromkeys(txs))
     addresses = list(dict.fromkeys(addresses))
     if not txs and not addresses:
-        raise BadUserInputException(
-            "/subgraph/summary needs tx hashes and/or addresses."
-        )
+        raise BadUserInputException("/graph/summary needs tx hashes and/or addresses.")
     if txs and len(txs) < 2:
         raise BadUserInputException(
-            "/subgraph/summary needs at least 2 distinct tx hashes when txs are given."
+            "/graph/summary needs at least 2 distinct tx hashes when txs are given."
         )
     if addresses and len(addresses) < 2:
         raise BadUserInputException(
-            "/subgraph/summary needs at least 2 distinct addresses "
+            "/graph/summary needs at least 2 distinct addresses "
             "when addresses are given."
         )
     if len(txs) + len(addresses) > _MAX_NODES:
         raise BadUserInputException(
-            f"/subgraph/summary accepts at most {_MAX_NODES} nodes."
+            f"/graph/summary accepts at most {_MAX_NODES} nodes."
         )
 
     tx_block = None

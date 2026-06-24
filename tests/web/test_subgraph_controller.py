@@ -1,4 +1,4 @@
-"""Tests for `POST /{currency}/subgraph/summary`.
+"""Tests for `POST /{currency}/graph/summary`.
 
 Exercised end-to-end through the FastAPI test client. We monkeypatch the
 service-layer function ``graphsenselib.web.service.subgraph_service.summary``
@@ -75,16 +75,16 @@ def patch_summary(monkeypatch):
         dtxs, daddrs = list(set(txs)), list(set(addresses))
         if not dtxs and not daddrs:
             raise BadUserInputException(
-                "/subgraph/summary needs tx hashes and/or addresses."
+                "/graph/summary needs tx hashes and/or addresses."
             )
         if dtxs and len(dtxs) < 2:
             raise BadUserInputException(
-                "/subgraph/summary needs at least 2 distinct tx hashes "
+                "/graph/summary needs at least 2 distinct tx hashes "
                 "when txs are given."
             )
         if daddrs and len(daddrs) < 2:
             raise BadUserInputException(
-                "/subgraph/summary needs at least 2 distinct addresses "
+                "/graph/summary needs at least 2 distinct addresses "
                 "when addresses are given."
             )
         return SubgraphSummary(
@@ -102,7 +102,7 @@ def patch_summary(monkeypatch):
 
 def test_subgraph_summary_happy_path(client, patch_summary):
     result = request_with_status(
-        client, "/btc/subgraph/summary", 200, body={"txs": [HASH_A, HASH_B]}
+        client, "/btc/graph/summary", 200, body={"txs": [HASH_A, HASH_B]}
     )
     assert result["currency"] == "btc"
     # tx-only request: no addresses block present (response_model_exclude_none).
@@ -124,7 +124,7 @@ def test_subgraph_summary_happy_path(client, patch_summary):
 def test_subgraph_summary_fiat_currency_passed_through(client, patch_summary):
     result = request_with_status(
         client,
-        "/btc/subgraph/summary",
+        "/btc/graph/summary",
         200,
         body={"txs": [HASH_A, HASH_B], "fiat_currency": "eur"},
     )
@@ -135,7 +135,7 @@ def test_subgraph_summary_fiat_currency_passed_through(client, patch_summary):
 def test_subgraph_summary_invalid_fiat_currency_returns_422(client, patch_summary):
     status, _ = raw_request(
         client,
-        "/btc/subgraph/summary",
+        "/btc/graph/summary",
         body={"txs": [HASH_A, HASH_B], "fiat_currency": "gbp"},
     )
     assert status == 422
@@ -145,18 +145,18 @@ def test_subgraph_summary_invalid_fiat_currency_returns_422(client, patch_summar
 def test_subgraph_summary_all_chains(client, patch_summary, currency):
     # Unlike /txs/compare, the summary works for every chain.
     result = request_with_status(
-        client, f"/{currency}/subgraph/summary", 200, body={"txs": [HASH_A, HASH_B]}
+        client, f"/{currency}/graph/summary", 200, body={"txs": [HASH_A, HASH_B]}
     )
     assert result["currency"] == currency
 
 
 def test_subgraph_summary_single_node_rejected(client, patch_summary):
-    status, _ = raw_request(client, "/btc/subgraph/summary", body={"txs": [HASH_A]})
+    status, _ = raw_request(client, "/btc/graph/summary", body={"txs": [HASH_A]})
     assert status == 400
 
 
 def test_subgraph_summary_empty_body_rejected(client, patch_summary):
-    status, _ = raw_request(client, "/btc/subgraph/summary", body={})
+    status, _ = raw_request(client, "/btc/graph/summary", body={})
     assert status == 400
 
 
@@ -164,7 +164,7 @@ def test_subgraph_summary_empty_addresses_list_ok(client, patch_summary):
     # An explicit empty addresses list is accepted alongside txs.
     result = request_with_status(
         client,
-        "/btc/subgraph/summary",
+        "/btc/graph/summary",
         200,
         body={"txs": [HASH_A, HASH_B], "addresses": []},
     )
@@ -173,7 +173,7 @@ def test_subgraph_summary_empty_addresses_list_ok(client, patch_summary):
 
 def test_subgraph_summary_addresses_only(client, patch_summary):
     result = request_with_status(
-        client, "/btc/subgraph/summary", 200, body={"addresses": [ADDR_A, ADDR_B]}
+        client, "/btc/graph/summary", 200, body={"addresses": [ADDR_A, ADDR_B]}
     )
     # txs block omitted entirely (response_model_exclude_none).
     assert "txs" not in result
@@ -189,7 +189,7 @@ def test_subgraph_summary_addresses_only(client, patch_summary):
 def test_subgraph_summary_mixed_returns_both_blocks(client, patch_summary):
     result = request_with_status(
         client,
-        "/btc/subgraph/summary",
+        "/btc/graph/summary",
         200,
         body={"txs": [HASH_A, HASH_B], "addresses": [ADDR_A, ADDR_B]},
     )
@@ -199,7 +199,7 @@ def test_subgraph_summary_mixed_returns_both_blocks(client, patch_summary):
 
 def test_subgraph_summary_single_address_rejected(client, patch_summary):
     status, body = raw_request(
-        client, "/btc/subgraph/summary", body={"addresses": [ADDR_A]}
+        client, "/btc/graph/summary", body={"addresses": [ADDR_A]}
     )
     assert status == 400
     assert "addresses" in body
@@ -208,7 +208,7 @@ def test_subgraph_summary_single_address_rejected(client, patch_summary):
 def test_subgraph_summary_one_tx_one_address_rejected(client, patch_summary):
     status, _ = raw_request(
         client,
-        "/btc/subgraph/summary",
+        "/btc/graph/summary",
         body={"txs": [HASH_A], "addresses": [ADDR_A]},
     )
     assert status == 400

@@ -79,7 +79,7 @@ async def list_token_txs(
         "rollup verdict on whether the supplied transactions are likely "
         "linked to the same actor. The fingerprinting analysis is BTC-only; "
         "for chain-agnostic aggregate stats over a set of transactions use "
-        "POST /{currency}/subgraph/summary instead."
+        "POST /{currency}/graph/summary instead."
     ),
     operation_id="compare_txs",
     response_model=TransactionComparison,
@@ -115,7 +115,7 @@ async def compare_txs(
     ctx: ServiceContext = Depends(get_ctx),
 ):
     """Compare two or more transactions. BTC-only fingerprinting analysis;
-    other chains use POST /{currency}/subgraph/summary for aggregate stats."""
+    other chains use POST /{currency}/graph/summary for aggregate stats."""
     components = _expand_compare_include(include)
     result = await service.compare_txs(
         ctx,

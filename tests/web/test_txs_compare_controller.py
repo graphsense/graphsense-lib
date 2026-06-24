@@ -188,7 +188,7 @@ def test_compare_txs_happy_path(client, patch_compare):
     assert "txs" in result
     assert "signals" in result
     assert "verdict" in result
-    # summary moved to /{currency}/subgraph/summary
+    # summary moved to /{currency}/graph/summary
     assert "summary" not in result
 
     assert len(result["txs"]) == 2

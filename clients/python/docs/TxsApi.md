@@ -19,7 +19,7 @@ Method | HTTP request | Description
 
 Compare multiple transactions
 
-Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/subgraph/summary instead.
+Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; for chain-agnostic aggregate stats over a set of transactions use POST /{currency}/graph/summary instead.
 
 ### Example
 

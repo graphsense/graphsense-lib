@@ -156,6 +156,7 @@ class TxsService:
         include_io_index: bool = False,
         include_heuristics: list[str] = [],
         tagstore_groups: list[str] = [],
+        trace_account_chains: bool = False,
     ) -> Union[TxAccount, TxUtxo]:
         trace_index = None
         tx_ident = tx_hash
@@ -199,7 +200,18 @@ class TxsService:
         else:
             result = await self.db.get_tx(currency, tx_hash)
             rates = await self.rates_service.get_rates(currency, result["block_id"])
-            if currency_to_schema_type.get(currency) == "account":
+            # Legacy default (``trace_account_chains=False``): only ETH resolves
+            # to its first trace here, preserving the historical response shape
+            # of the public ``GET /{currency}/txs/{tx_hash}`` endpoint. Internal
+            # callers that need a normalised account tx for every account-model
+            # chain (e.g. TRX) — ``/txs/compare`` and ``get_asset_flows_within_tx``
+            # — opt in via ``trace_account_chains=True``.
+            use_first_trace = (
+                currency_to_schema_type.get(currency) == "account"
+                if trace_account_chains
+                else currency == "eth"
+            )
+            if use_first_trace:
                 return await self._get_trace_txs(
                     currency, result, None, get_first_trace=True
                 )
@@ -290,7 +302,9 @@ class TxsService:
 
                 results_list.extend(traces_converted)
             else:
-                results_list.append(await self.get_tx(network, tx_hash))
+                results_list.append(
+                    await self.get_tx(network, tx_hash, trace_account_chains=True)
+                )
 
             if include_token_txs:
                 tokens = await self.db.list_token_txs(network, tx_hash)

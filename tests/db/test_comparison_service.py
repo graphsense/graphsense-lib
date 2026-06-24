@@ -1784,7 +1784,7 @@ class TestCompareTxsOrchestration:
         "currency", ["eth", "trx", "ETH", "TRX", "bch", "ltc", "zec"]
     )
     async def test_non_btc_rejected(self, currency):
-        # /txs/compare is BTC-only; other chains use /subgraph/summary.
+        # /txs/compare is BTC-only; other chains use /graph/summary.
         svc = FakeTxsService(tx_map={})
         with pytest.raises(BadUserInputException):
             await compare_txs(

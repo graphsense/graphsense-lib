@@ -14,7 +14,7 @@ from graphsenselib.web.models.common import LabeledItemRef
 
 
 class SubgraphSummaryRequest(APIModel):
-    """Request body for ``POST /{currency}/subgraph/summary``.
+    """Request body for ``POST /{currency}/graph/summary``.
 
     The subgraph is defined by ``txs`` (transaction hashes) and/or
     ``addresses``. Each non-empty list must hold at least 2 distinct

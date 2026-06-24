@@ -127,7 +127,7 @@ class SubgraphApi:
 
 
     @validate_call_compat
-    def subgraph_summary(
+    def graph_summary(
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         subgraph_summary_request: SubgraphSummaryRequest,
@@ -174,7 +174,7 @@ class SubgraphApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._subgraph_summary_serialize(
+        _param = self._graph_summary_serialize(
             currency=currency,
             subgraph_summary_request=subgraph_summary_request,
             _request_auth=_request_auth,
@@ -201,7 +201,7 @@ class SubgraphApi:
 
 
     @validate_call_compat
-    def subgraph_summary_with_http_info(
+    def graph_summary_with_http_info(
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         subgraph_summary_request: SubgraphSummaryRequest,
@@ -248,7 +248,7 @@ class SubgraphApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._subgraph_summary_serialize(
+        _param = self._graph_summary_serialize(
             currency=currency,
             subgraph_summary_request=subgraph_summary_request,
             _request_auth=_request_auth,
@@ -275,7 +275,7 @@ class SubgraphApi:
 
 
     @validate_call_compat
-    def subgraph_summary_without_preload_content(
+    def graph_summary_without_preload_content(
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         subgraph_summary_request: SubgraphSummaryRequest,
@@ -322,7 +322,7 @@ class SubgraphApi:
         :return: Returns the result object.
         """ # noqa: E501
 
-        _param = self._subgraph_summary_serialize(
+        _param = self._graph_summary_serialize(
             currency=currency,
             subgraph_summary_request=subgraph_summary_request,
             _request_auth=_request_auth,
@@ -344,7 +344,7 @@ class SubgraphApi:
         return response_data.response
 
 
-    def _subgraph_summary_serialize(
+    def _graph_summary_serialize(
         self,
         currency,
         subgraph_summary_request,
@@ -408,7 +408,7 @@ class SubgraphApi:
 
         return self.api_client.param_serialize(
             method='POST',
-            resource_path='/{currency}/subgraph/summary',
+            resource_path='/{currency}/graph/summary',
             path_params=_path_params,
             query_params=_query_params,
             header_params=_header_params,

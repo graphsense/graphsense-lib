@@ -17,7 +17,7 @@ router = APIRouter(route_class=PluginRoute)
 
 
 @router.post(
-    "/subgraph/summary",
+    "/graph/summary",
     summary="Summarize a set of transactions and/or addresses",
     description=(
         "Returns aggregate stats over the transactions and/or addresses in "
@@ -29,7 +29,7 @@ router = APIRouter(route_class=PluginRoute)
         "list must hold at least 2 distinct entries; together they may hold "
         "at most 100."
     ),
-    operation_id="subgraph_summary",
+    operation_id="graph_summary",
     response_model=SubgraphSummary,
     response_model_exclude_none=True,
     responses={

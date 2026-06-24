@@ -1009,12 +1009,12 @@ async def compare_txs(
 
     # The fingerprinting analysis (signals, lineage, verdict) is BTC-only:
     # several signals (coinjoin variants, exchange overlap, change heuristics)
-    # are tuned to BTC. Other chains use POST /{currency}/subgraph/summary for
+    # are tuned to BTC. Other chains use POST /{currency}/graph/summary for
     # chain-agnostic aggregate stats over a set of transactions.
     if currency.lower() != "btc":
         raise BadUserInputException(
             f"/txs/compare is BTC-only; '{currency}' is not supported. "
-            "Use /{currency}/subgraph/summary for aggregate stats."
+            "Use /{currency}/graph/summary for aggregate stats."
         )
 
     fetched: list[Union[TxUtxo, TxAccount]] = await asyncio.gather(
@@ -1028,6 +1028,7 @@ async def compare_txs(
                 include_io_index=False,
                 include_heuristics=["all_coinjoin", "all_change"],
                 tagstore_groups=tagstore_groups,
+                trace_account_chains=True,
             )
             for h in tx_hashes
         ]
