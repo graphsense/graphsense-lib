@@ -14,6 +14,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Web API + Python client
 
+#### Added
+- **API docs now carry an MCP authentication note.** The "AI assistant access (MCP)" section of the OpenAPI description ends with an authentication note telling users the OAuth client ID (`iknaio-mcp`) to use when adding the MCP connector. The text is the new `docs_mcp_auth_note` config field (env `GSREST_DOCS_MCP_AUTH_NOTE`); override it for a different client ID or set it to an empty string to omit the note (e.g. deployments without OAuth).
+
 #### Fixed
 - **`GET /{network}/addresses/{address}/neighbors?only_ids=...` returned 500 on an invalid `only_ids` value for trx.** A garbage TRON id (e.g. `only_ids=dummy`) canonicalized via `validate=False` to empty bytes `b""`, which `bytes_to_hex` maps to `None`, crashing `scrub_prefix` with `AttributeError: 'NoneType' object has no attribute 'startswith'`. An empty/unknown id is now treated as a not-found neighbor and silently dropped (matching the existing behavior for valid-but-unknown ids and for utxo networks), so `get_address_id` short-circuits to `None` before issuing an empty-partition-key query to Cassandra.
 
