@@ -110,6 +110,44 @@ def test_address_conversion():
         )
 
 
+def test_network_aware_encoding():
+    # Same scripts, encoded for the requested network. BTC stays the default.
+    p2pkh = "76a914df76c017354ac39bde796abe4294d31de8b5788a88ac"
+    p2sh = "a91475b18a0606d57fb14a607e04ff6bcd81db44639187"
+    # Zcash height-0 coinbase P2PK; zcashd reports this exact t-address.
+    p2pk = (
+        "4104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb6"
+        "49f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"
+    )
+
+    assert parse_script(p2pkh, "btc") == (
+        ["1MNZwhTBHN3QTXkwob7NvhVaTVKUm7MRCg"],
+        "p2pkh",
+    )
+    assert parse_script(p2pkh, "zec") == (
+        ["t1eFAx2sKFgq14Aoqk1vW4WbVi9WZe3VfXB"],
+        "p2pkh",
+    )
+    assert parse_script(p2sh, "zec") == (
+        ["t3VHvfxbd5Szod46xPHR6aacqSogiEgf2kx"],
+        "p2sh",
+    )
+    assert parse_script(p2pk, "zec") == (
+        ["t1StbPM4X3j4FGM57HpGnb9BMbS7C1nFW1r"],
+        "p2pk",
+    )
+    # default network is btc (unchanged signature behaviour)
+    assert parse_script(p2pkh) == parse_script(p2pkh, "btc")
+
+
+def test_zcash_has_no_segwit():
+    # A segwit-shaped script is non-standard on Zcash (no native segwit).
+    p2wpkh = "0014f9da60876f467c88ccd5317f5fc21d124b2538c2"
+    assert parse_script(p2wpkh, "btc")[1] == "p2wpkhv0"
+    with pytest.raises(UnknownScriptType):
+        parse_script(p2wpkh, "zec")
+
+
 def test_addresstype_conversion():
     with pytest.raises(UnknownAddressType):
         addresstype_to_int("unknown_type_string")

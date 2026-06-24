@@ -15,6 +15,8 @@ from graphsenselib.convert.gs_files import (
     encode_gs_payload,
     lzw_pack,
     lzw_unpack,
+    normalize_address_id,
+    normalize_tx_id,
     structure,
 )
 from graphsenselib.convert.gs_files.encoder import (
@@ -196,6 +198,108 @@ def test_write_creates_file(tmp_path: Path) -> None:
     assert out.exists() and out.stat().st_size > 0
     # Round-trips through the parser
     structure(decode_gs_bytes(out.read_bytes()))
+
+
+# ---------------------------------------------------------------------------
+# Identifier canonicalization + duplicate merging
+#
+# Regression for the 2026-06-10 report: a .gs file carried the same ETH
+# address twice (checksummed + lowercase), rendering as two nodes in the
+# pathfinder UI. GraphSense stores EVM hex ids lowercase; EIP-55 casing
+# is display-only.
+# ---------------------------------------------------------------------------
+
+CHECKSUMMED = "0x4e1773615dFc62A5dDc901b36223F1eAedB8F6Df"
+LOWERCASE = CHECKSUMMED.lower()
+ETH_TX = "0xAB" + "cd" * 31  # 0x + 64 hex chars, mixed case
+
+
+def test_normalize_address_id() -> None:
+    assert normalize_address_id(CHECKSUMMED) == LOWERCASE
+    assert normalize_address_id(LOWERCASE) == LOWERCASE
+    # Non-EVM ids pass through untouched (base58 is case-sensitive).
+    assert (
+        normalize_address_id("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+        == "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+    )
+    assert (
+        normalize_address_id("TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9")
+        == "TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9"
+    )
+
+
+def test_normalize_tx_id() -> None:
+    assert normalize_tx_id(ETH_TX) == ETH_TX.lower()
+    bare = "4A5E1E4BAAB89F3A32518A88C31BC87F618F76673E2CC77AB2127B7AFDEDA33B"
+    assert normalize_tx_id(bare) == bare.lower()
+    # Account-model sub-payment suffix keeps its uppercase marker.
+    sub = ETH_TX + "_T3"
+    assert normalize_tx_id(sub) == ETH_TX.lower() + "_T3"
+    assert normalize_tx_id(ETH_TX + "_I948") == ETH_TX.lower() + "_I948"
+    # Anything else passes through.
+    assert normalize_tx_id("not-a-hash") == "not-a-hash"
+
+
+def test_builder_lowercases_evm_address() -> None:
+    payload = GsBuilder(default_network="eth").add_address(CHECKSUMMED).to_payload()
+    assert payload[3][0][0] == ["eth", LOWERCASE]
+
+
+def test_builder_merges_case_variant_addresses() -> None:
+    g = (
+        GsBuilder(default_network="eth")
+        .add_address(CHECKSUMMED, starting_point=True)
+        .add_address(LOWERCASE, label="Subject")
+    )
+    payload = g.to_payload()
+    assert len(payload[3]) == 1
+    addr = payload[3][0]
+    assert addr[0] == ["eth", LOWERCASE]
+    assert addr[3] is True  # starting_point survives the merge
+    # Label from the duplicate is folded into the surviving node.
+    assert payload[5] == [[["eth", LOWERCASE], "Subject", None]]
+
+
+def test_builder_merges_duplicate_txs_and_edges() -> None:
+    g = (
+        GsBuilder(default_network="eth")
+        .add_tx(ETH_TX, label="hop 1")
+        .add_tx(ETH_TX.lower())
+        .add_agg_edge(CHECKSUMMED, "0x" + "ab" * 20, tx_ids=[ETH_TX])
+        .add_agg_edge(LOWERCASE, "0x" + "AB" * 20, tx_ids=[ETH_TX.lower()])
+    )
+    payload = g.to_payload()
+    assert len(payload[4]) == 1  # one tx node
+    assert payload[4][0][0] == ["eth", ETH_TX.lower()]
+    assert len(payload[6]) == 1  # one edge, tx_ids deduped
+    assert payload[6][0] == [
+        ["eth", LOWERCASE],
+        ["eth", "0x" + "ab" * 20],
+        [["eth", ETH_TX.lower()]],
+    ]
+
+
+def test_builder_same_id_on_different_networks_not_merged() -> None:
+    g = (
+        GsBuilder(default_network="eth")
+        .add_address(LOWERCASE)
+        .add_address(LOWERCASE, network="trx")
+    )
+    assert len(g.to_payload()[3]) == 2
+
+
+def test_builder_from_spec_merges_case_variants() -> None:
+    spec = {
+        "addresses": [
+            {"id": CHECKSUMMED, "starting_point": True},
+            {"id": LOWERCASE, "label": "Subject"},
+        ],
+    }
+    data = structure(
+        decode_gs_bytes(builder_from_spec(spec, default_network="eth").to_bytes())
+    )
+    assert isinstance(data, PathfinderData)
+    assert [a.id.id for a in data.addresses] == [LOWERCASE]
 
 
 # ---------------------------------------------------------------------------

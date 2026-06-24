@@ -1,6 +1,9 @@
 import logging
 import sys
+from contextlib import nullcontext
 from typing import Optional
+
+from graphsenselib.db.parallel import ParallelDbPool, init_worker
 
 from ..config import get_config, is_fresh_clustering_enabled
 from ..db import DbFactory
@@ -11,6 +14,53 @@ from ..utils.signals import graceful_ctlc_shutdown
 from .update import AbstractUpdateStrategy, Action, UpdaterFactory
 
 logger = logging.getLogger(__name__)
+
+
+def _recover_pending_writes(db, pedantic: bool, force_wal_replay: bool = False) -> None:
+    """Replay any pending delta-update WAL record to completion before the run.
+
+    Idempotent: replays the exact resolved (absolute-value) changes the crashed
+    run staged, then clears the record. A torn (headerless) stage leaves nothing
+    applied and is swept. Raises on a version-mismatched record so stale writes
+    are never applied automatically.
+
+    When ``force_wal_replay`` is set and a version-mismatched record is found,
+    the operator is shown a loud warning and asked for an interactive yes/no
+    confirmation before the version fence is overridden. Declining (or a
+    non-interactive session) re-raises the mismatch and aborts the run.
+    """
+    import click
+
+    from graphsenselib import __version__
+
+    from .update.abstractupdater import make_run_id
+    from .update.utxo.update import apply_changes
+    from .wal import DeltaWal, WalVersionMismatch
+
+    wal = DeltaWal(db.transformed, make_run_id(), __version__)
+    wal.ensure_schema()
+
+    def apply_fn(changes):
+        apply_changes(db, changes, pedantic, try_atomic_writes=False)
+
+    try:
+        wal.recover(apply_fn)
+    except WalVersionMismatch as e:
+        if not force_wal_replay:
+            raise
+        logger.warning("%s", e)
+        confirmed = click.confirm(
+            "A pending WAL record was written by a different code version (see "
+            "warning above). Forcing replay writes the previously staged "
+            "ABSOLUTE values verbatim WITHOUT recomputing them. Only proceed if "
+            "you are certain those staged values are correct under the current "
+            "code. Force replay now?",
+            default=False,
+        )
+        if not confirmed:
+            logger.error("WAL force-replay declined; aborting run.")
+            raise
+        wal.recover(apply_fn, allow_version_mismatch=True)
 
 
 def adjust_start_block(db, start_block) -> int:
@@ -220,9 +270,22 @@ def update(
     pedantic: bool,
     forward_fill_rates: bool,
     disable_safety_checks: bool = False,
+    parallel_workers: int = 1,
+    enable_wal: Optional[bool] = None,
+    force_wal_replay: bool = False,
 ):
     with DbFactory().from_config(env, currency) as db:
         config = get_config()
+        # Flag overrides config; config (default True) decides when unset.
+        wal_enabled = (
+            enable_wal if enable_wal is not None else config.delta_updater_wal_enabled
+        )
+        logger.info(f"Delta update WAL: {'enabled' if wal_enabled else 'disabled'}")
+        if force_wal_replay and not wal_enabled:
+            logger.warning(
+                "--force-wal-replay has no effect while the WAL is disabled; "
+                "enable it with --enable-wal to recover a pending record."
+            )
         if config.get_keyspace_config(env, currency).disable_delta_updates:
             logger.error(
                 f"Delta updates are disabled for {env} - {currency} in the "
@@ -240,6 +303,16 @@ def update(
         try:
             # Acquisition order: raw -> transformed (matches transformation/cli.py).
             with create_lock(raw_ks), create_lock(transformed_ks):
+                # Crash recovery: replay a torn batch's resolved writes (if any)
+                # BEFORE reading any state. The next batch computes aggregate
+                # deltas read-modify-write against the keyspace, so a
+                # partially-applied batch must be completed first. Replaying the
+                # stored absolute-value changes is idempotent; recomputing the
+                # block would double-count. Only when the WAL is enabled — when
+                # off, nothing is ever staged and the table is not created.
+                if wal_enabled:
+                    _recover_pending_writes(db, pedantic, force_wal_replay)
+
                 start_block, end_block, patch_mode = find_import_range(
                     db,
                     start_block,
@@ -313,22 +386,30 @@ def update(
                             "Cannot run delta update."
                         )
                         sys.exit(11)
-                    update_transformed(
-                        start_block,
-                        end_block,
-                        UpdaterFactory().get_updater(
-                            du_config,
-                            db,
-                            updater_version,
-                            write_new,
-                            write_dirty,
-                            pedantic,
-                            write_batch_size,
-                            patch_mode=patch_mode,
-                            forward_fill_rates=forward_fill_rates,
-                        ),
-                        batch_size=write_batch_size,
+                    pool_ctx = (
+                        ParallelDbPool(parallel_workers, init_worker, (env, currency))
+                        if parallel_workers > 1
+                        else nullcontext(None)
                     )
+                    with pool_ctx as parallel_pool:
+                        update_transformed(
+                            start_block,
+                            end_block,
+                            UpdaterFactory().get_updater(
+                                du_config,
+                                db,
+                                updater_version,
+                                write_new,
+                                write_dirty,
+                                pedantic,
+                                write_batch_size,
+                                patch_mode=patch_mode,
+                                forward_fill_rates=forward_fill_rates,
+                                parallel_pool=parallel_pool,
+                                wal_enabled=wal_enabled,
+                            ),
+                            batch_size=write_batch_size,
+                        )
 
                 elif end_block == start_block or start_block - 1 == end_block:
                     logger.info("Nothing to do. Data is up to date.")

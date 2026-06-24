@@ -7,6 +7,7 @@ from .config import (
     KeyspaceConfig,
     IngestConfig,
     avg_blocktimes_by_currencies,
+    chain_forks,
     currency_to_schema_type,
     currency_to_public_schema_type,
     default_environments,

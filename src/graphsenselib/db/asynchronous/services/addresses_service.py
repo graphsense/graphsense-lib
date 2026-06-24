@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Callable
 
+from graphsenselib.config import chain_forks
 from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import (
@@ -10,7 +11,14 @@ from graphsenselib.errors import (
     DBInconsistencyException,
 )
 from graphsenselib.utils.address import address_to_user_format
-from graphsenselib.utils.tron import tron_address_to_evm_string
+from graphsenselib.utils.bch import (
+    InvalidAddress as BCHInvalidAddress,
+    bch_address_to_legacy,
+)
+from graphsenselib.utils.tron import (
+    evm_to_tron_address_string,
+    tron_address_to_evm_string,
+)
 from graphsenselib.tagstore.db import TagPublic
 
 from .blocks_service import BlocksService
@@ -72,7 +80,15 @@ class DatabaseProtocol(Protocol):
     def get_token_configuration(self, currency: str) -> Dict[str, Any]: ...
 
 
-FORK_TUPLES = [("btc", "bch")]
+# (base_chain, fork_chain) pairs, derived from the shared fork registry
+# (config.chain_forks) so fork relationships live in one place.
+FORK_TUPLES = [(spec["base"], fork) for fork, spec in chain_forks.items()]
+
+# Networks where an address on one chain is structurally identical to an
+# address on the other, so cross-chain presence can be detected by a direct
+# lookup of the equivalent address without consulting the pubkey table.
+TRIVIAL_FORK_PAIRS = [("btc", "bch")]
+TRIVIAL_EVM_PAIRS = [("trx", "eth")]
 
 
 class AddressesService:
@@ -148,6 +164,105 @@ class AddressesService:
                 )
         return results
 
+    async def _handle_trivial_cross_chain_overlap(
+        self,
+        address: str,
+        network: Optional[str],
+        existing: List[CrossChainPubkeyRelatedAddress],
+    ) -> List[CrossChainPubkeyRelatedAddress]:
+        # Detect cross-chain presence for cases where the relationship is
+        # structural (not pubkey-derived): same address bytes between BTC and
+        # BCH legacy P2PKH/P2SH, and trivial TRX<->ETH address conversion.
+        if network is None:
+            return []
+
+        existing_keys = {(a.network, a.address) for a in existing}
+        results: List[CrossChainPubkeyRelatedAddress] = []
+
+        for a, b in TRIVIAL_FORK_PAIRS:
+            if network not in (a, b):
+                continue
+            other = b if network == a else a
+
+            try:
+                lookup_address = bch_address_to_legacy(address)
+            except BCHInvalidAddress:
+                continue
+
+            lower = lookup_address.lower()
+            if lower.startswith("bc1") or lower.startswith("ltc1"):
+                # Segwit / bech32 addresses are not script-equivalent across
+                # the BTC/BCH fork; skip rather than emit a false positive.
+                continue
+
+            if (other, lookup_address) in existing_keys:
+                continue
+            try:
+                other_addr = await self.get_address(
+                    other,
+                    lookup_address,
+                    tagstore_groups=[],
+                    include_actors=False,
+                )
+            except (AddressNotFoundException, NetworkNotFoundException):
+                continue
+
+            key = (other_addr.currency, other_addr.address)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            results.append(
+                CrossChainPubkeyRelatedAddress(
+                    currency=other_addr.currency,
+                    address=other_addr.address,
+                    type="trivial_fork",
+                )
+            )
+
+        for a, b in TRIVIAL_EVM_PAIRS:
+            if network not in (a, b):
+                continue
+            other = b if network == a else a
+            try:
+                if network == "trx":
+                    converted = tron_address_to_evm_string(address)
+                else:
+                    converted = evm_to_tron_address_string(address)
+            except Exception as exc:
+                self.logger.warning(
+                    "Skipping trivial EVM cross-chain lookup for %s on %s: %s",
+                    address,
+                    network,
+                    exc,
+                )
+                continue
+
+            if (other, converted) in existing_keys:
+                continue
+            try:
+                other_addr = await self.get_address(
+                    other,
+                    converted,
+                    tagstore_groups=[],
+                    include_actors=False,
+                )
+            except (AddressNotFoundException, NetworkNotFoundException):
+                continue
+
+            key = (other_addr.currency, other_addr.address)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            results.append(
+                CrossChainPubkeyRelatedAddress(
+                    currency=other_addr.currency,
+                    address=other_addr.address,
+                    type="trivial_evm",
+                )
+            )
+
+        return results
+
     async def get_cross_chain_pubkey_related_addresses(
         self,
         address: str,
@@ -215,6 +330,12 @@ class AddressesService:
         )
 
         data.extend(forked_addresses)
+
+        trivial_addresses = await self._handle_trivial_cross_chain_overlap(
+            address, network, data
+        )
+
+        data.extend(trivial_addresses)
 
         # Note: we always produce all results and then simulate pages if needed.
         next_page = None

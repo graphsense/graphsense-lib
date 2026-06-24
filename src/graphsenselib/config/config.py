@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
-from goodconf import _load_config
+from goodconf import FileConfigSettingsSource, _load_config
 from pydantic import BaseModel, field_validator, model_validator
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-from ..utils import first_or_default, flatten
+from ..utils import first_or_default, flatten, resolve_env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ currency_to_public_schema_type = {
     for cur in supported_base_currencies
 }
 supported_fiat_currencies = ["USD", "EUR"]
+EXCHANGE_RATES_PROVIDERS = ["coingecko", "coinmarketcap", "cryptocompare"]
 avg_blocktimes_by_currencies = {
     "trx": 7,
     "eth": 15,
@@ -42,6 +44,19 @@ reorg_backoff_blocks = {
     "bch": 15,
     "zec": 150,
     "ltc": 12,
+}
+
+# Chains that forked off another chain and therefore share the base chain's
+# entire history up to the fork block (e.g. BCH split from BTC at block 478558 —
+# blocks 0..478558 are byte-identical on both). Keyed by the fork chain ->
+# {"base": <parent chain>, "fork_block": <last shared block height>}.
+# Single source of truth for fork-awareness: the REST fork-overlap handler uses
+# the (base, fork) pair, and the pubkey job uses fork_block to skip re-extracting
+# the shared pre-fork history. These are immutable protocol facts — keep them
+# here in code, NOT in graphsense.yaml (a per-env typo would silently corrupt
+# cross-chain handling).
+chain_forks: Dict[str, Dict[str, Any]] = {
+    "bch": {"base": "btc", "fork_block": 478558},
 }
 
 
@@ -192,6 +207,35 @@ class IngestConfig(_WarnExtraModel):
     secondary_node_references: List[str] = Field(default_factory=lambda: [])
     raw_keyspace_file_sinks: Dict[str, FileSink] = Field(default_factory=lambda: {})
     source_max_workers: int = 5
+    raw_ingest_staleness_threshold: Optional[int] = Field(
+        default=None,
+        description=(
+            "Staleness tolerance in hours for the post-ingest check. When set, "
+            "`ingest from-node` verifies after every run that the timestamp of "
+            "the highest ingested raw block is not older than this many hours "
+            "and sends a notification otherwise (same check as `monitoring "
+            "monitor-raw-ingest`). Unset disables the automatic check."
+        ),
+    )
+    exchange_rates_provider: Optional[str] = Field(
+        default=None,
+        description=(
+            "When set, `ingest from-node` ingests the latest exchange rates "
+            "from this provider into the raw keyspace before ingesting blocks "
+            "(same as `exchange-rates <provider> ingest --abort-on-gaps`). "
+            "Supported: coingecko, coinmarketcap, cryptocompare (each needs "
+            "its API key in the config). Unset disables the step."
+        ),
+    )
+
+    @field_validator("exchange_rates_provider")
+    @classmethod
+    def _validate_exchange_rates_provider(cls, v):
+        if v is not None and v not in EXCHANGE_RATES_PROVIDERS:
+            raise ValueError(
+                f"exchange_rates_provider must be one of {EXCHANGE_RATES_PROVIDERS}"
+            )
+        return v
 
     @property
     def all_node_references(self) -> List[str]:
@@ -278,6 +322,35 @@ class KeyspaceConfig(_WarnExtraModel):
                         )
 
 
+class PubkeyConfig(_WarnExtraModel):
+    """Defaults for the cross-chain pubkey-update job for this environment.
+
+    Supplies the shared sink path and backend so ``transformation
+    pubkey-update`` need not pass ``--sink-path`` every run; explicit CLI
+    flags still override. The Cassandra-overwrite warning fires regardless
+    of where the value came from.
+    """
+
+    sink_path: str
+    sink_type: str = "cassandra"
+    keyspace: Optional[str] = Field(
+        default=None,
+        description=(
+            "Cassandra keyspace the pubkey-update job WRITES to. Defaults to "
+            "the job's fresh default (pubkey_v2) when unset, so it never appends "
+            "into a legacy 'pubkey' table. The REST reader selects its source "
+            "separately via cross_chain_pubkey_mapping_keyspace."
+        ),
+    )
+
+    @field_validator("sink_type")
+    @classmethod
+    def _validate_sink_type(cls, v):
+        if v not in ("cassandra", "delta"):
+            raise ValueError("sink_type must be 'cassandra' or 'delta'")
+        return v
+
+
 class Environment(_WarnExtraModel):
     cassandra_nodes: List[str]
     username: Optional[str] = Field(default_factory=lambda: None)
@@ -299,6 +372,7 @@ class Environment(_WarnExtraModel):
         ),
     )
     keyspaces: Dict[str, KeyspaceConfig]
+    pubkey: Optional[PubkeyConfig] = None
 
     @field_validator("consistency_level")
     @classmethod
@@ -330,10 +404,113 @@ class SlackTopic(_WarnExtraModel):
     hooks: List[str] = Field(default_factory=lambda: [])
 
 
+# Maven coordinates of the graphsense-spark job's runtime dependencies. Only
+# needed for the "slim" artifact; the "fat" (assembly) jar bundles these. The
+# slim path also needs the spark-packages resolver for graphframes.
+DEFAULT_SCALA_JOB_PACKAGES = [
+    "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
+    "org.rogach:scallop_2.12:4.1.0",
+    "joda-time:joda-time:2.10.10",
+    "org.web3j:core:4.8.7",
+    "org.web3j:abi:4.8.7",
+    "graphframes:graphframes:0.8.3-spark3.5-s_2.12",
+]
+
+
+class SidecarConfig(BaseModel):
+    """Opt-in Cassandra Sidecar bulk-write path for the full transform.
+
+    When enabled the runner adds the cassandra-analytics package (needed even
+    with the fat jar, where it is not bundled), the SSTable-writer JVM module
+    flags + temp-dir redirect, and the job's --writer/--sidecar-* arguments.
+    """
+
+    enabled: bool = False
+    contact_points: List[str] = Field(default_factory=list)
+    local_dc: Optional[str] = None
+    consistency_level: str = "LOCAL_QUORUM"
+
+
+class FullTransformArgs(BaseModel):
+    """Arguments for the `transformation raw-to-transformed` command.
+
+    Drives the raw -> transformed ("full transform") graph computation. The
+    command itself and its neutral options (env, currency, suffix, keyspaces,
+    spark profile, dry-run) are intentionally backend-agnostic so that a future
+    native-PySpark implementation can be selected via `backend: pyspark` (or
+    --backend) without changing how the command is invoked. The remaining
+    fields (repo/version/artifact/main_class/packages/repositories/jar_args/
+    extra_submit_args) are specific to the current Scala spark-submit backend.
+    """
+
+    # Implementation backend. "scala" launches the external graphsense-spark jar
+    # via spark-submit; "pyspark" is reserved for a future native rewrite.
+    backend: str = "scala"
+
+    # spark_config profile to use per currency (falls back to baseline/flat).
+    # Shared across backends — both resolve Spark properties from spark_config.
+    spark_profile: Dict[str, str] = Field(default_factory=dict)
+
+    # --- Scala (spark-submit) backend ---------------------------------------
+    repo: str = "graphsense/graphsense-spark"
+    # Release tag, e.g. "v26.06.0". Empty or "latest" resolves the latest stable
+    # (non-prerelease) release from the GitHub API at run time.
+    version: str = ""
+    version_overrides: Dict[str, str] = Field(default_factory=dict)
+    artifact: str = "fat"  # "fat" (assembly, self-contained) | "slim" (+packages)
+    main_class: str = "org.graphsense.TransformationJob"
+    packages: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_SCALA_JOB_PACKAGES)
+    )
+    repositories: List[str] = Field(
+        default_factory=lambda: ["https://repos.spark-packages.org/"]
+    )
+    jar_args: Dict[str, List[str]] = Field(default_factory=dict)
+    sidecar: SidecarConfig = Field(default_factory=SidecarConfig)
+    extra_submit_args: List[str] = Field(default_factory=list)
+
+    def version_for(self, currency: str) -> str:
+        return self.version_overrides.get(currency, self.version)
+
+    def profile_for(self, currency: str) -> Optional[str]:
+        return self.spark_profile.get(currency)
+
+
+class _EnvResolvingFileConfigSource(FileConfigSettingsSource):
+    """goodconf file source that resolves ${VAR} placeholders via the
+    environment before the values reach pydantic.
+
+    This covers the native goodconf ``load()`` path; the explicit
+    ``load_partial`` path resolves separately (both share the same helper).
+    """
+
+    def __call__(self) -> Dict[str, Any]:
+        return resolve_env_vars(super().__call__())
+
+
 class AppConfig(GoodConf):
     """Graphsenselib config file"""
 
     default_environment: Optional[str] = None
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        # Mirror goodconf's source ordering but swap in the env-resolving file
+        # source so ${VAR} placeholders are expanded on the native load() path.
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _EnvResolvingFileConfigSource(settings_cls),
+            file_secret_settings,
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -400,16 +577,49 @@ class AppConfig(GoodConf):
         default_factory=lambda: "",
     )
 
+    cryptocompare_api_key: str = Field(
+        default_factory=lambda: "",
+        description=(
+            "API key for min-api.cryptocompare.com (required since June 2026, "
+            "see https://developers.coindesk.com/)."
+        ),
+    )
+
     s3_credentials: Optional[Dict[str, str]] = Field(default_factory=lambda: None)
 
     s3_configs: Dict[str, Dict[str, str]] = Field(default_factory=lambda: {})
 
-    spark_config: Dict[str, str] = Field(
+    spark_config: Dict[str, Any] = Field(
         default_factory=lambda: {},
         description=(
-            "Arbitrary Spark configuration properties passed to SparkSession.builder. "
-            "Use for master URL, executor memory, shuffle partitions, etc. "
-            "Example: {'spark.master': 'spark://host:7077', 'spark.executor.memory': '8g'}"
+            "Spark configuration properties passed to SparkSession.builder. "
+            "Two supported shapes: (1) flat — keys are Spark property names "
+            "and values are strings, e.g. {'spark.master': 'spark://host:7077', "
+            "'spark.executor.memory': '8g'}; (2) nested — keys are profile "
+            "names with dict values, with a reserved 'baseline' profile that "
+            "other profiles inherit from and may override. Access via "
+            "get_spark_config(profile_name)."
+        ),
+    )
+
+    spark_packages: Dict[str, str] = Field(
+        default_factory=lambda: {},
+        description=(
+            "Per-package Maven coordinate overrides for the Spark transformation "
+            "session, keyed by logical name (cassandra_connector, joda_time, "
+            "delta_spark, hadoop_aws). Merged over the built-in defaults, so only "
+            "the packages you want to change need to be listed, e.g. "
+            "{'hadoop_aws': 'org.apache.hadoop:hadoop-aws:3.3.4'}. Defaults stay "
+            "the same when this is empty."
+        ),
+    )
+
+    full_transform_args: Optional[FullTransformArgs] = Field(
+        default=None,
+        description=(
+            "Arguments for the raw -> transformed full-transform command "
+            "(`transformation raw-to-transformed`). Spark properties themselves "
+            "live in spark_config (selected per currency via spark_profile)."
         ),
     )
 
@@ -443,6 +653,19 @@ class AppConfig(GoodConf):
     redis_url: Optional[str] = Field(
         default=None,
         description="Redis URL for distributed locking (e.g. redis://localhost:6379).",
+    )
+
+    delta_updater_wal_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable the crash-safe write-ahead log for delta updates. When on, "
+            "each batch's resolved writes are staged durably (delta_updater_wal "
+            "table in the transformed keyspace) before being applied and replayed "
+            "on the next run if a crash left them partially applied. On by "
+            "default as a mandatory safety net; set to false (or pass "
+            "--no-enable-wal) to opt out. The --enable-wal/--no-enable-wal CLI "
+            "flag overrides this."
+        ),
     )
 
     web: Optional[Dict] = Field(
@@ -528,6 +751,55 @@ class AppConfig(GoodConf):
         else:
             return None
 
+    def get_spark_config(self, profile_name: Optional[str] = None) -> Dict[str, str]:
+        """Resolve the Spark properties dict to pass to SparkSession.builder.
+
+        Supports two YAML shapes (see the spark_config field docstring):
+        - flat (legacy): values are Spark property strings; returned as-is.
+        - nested: values are per-profile dicts; the reserved 'baseline' profile
+          is merged under the requested profile (profile keys win).
+        """
+        raw = self.spark_config or {}
+        nested = any(isinstance(v, dict) for v in raw.values())
+
+        if not nested:
+            if profile_name is not None:
+                raise ValueError(
+                    f"spark_config profile '{profile_name}' requested but "
+                    f"spark_config is in flat (legacy) form. Convert to the "
+                    f"nested form with a 'baseline' key and named profiles."
+                )
+            return dict(raw)
+
+        baseline = raw.get("baseline") or {}
+        if profile_name is None:
+            return dict(baseline)
+        profile = raw.get(profile_name)
+        if profile is None:
+            available = sorted(k for k in raw.keys() if k != "baseline")
+            raise ValueError(
+                f"spark_config profile '{profile_name}' not found. "
+                f"Available: {available}"
+            )
+        if profile_name == "baseline":
+            return dict(profile)
+        return {**baseline, **profile}
+
+    def get_spark_packages(self) -> Dict[str, str]:
+        """Per-package Maven coordinate overrides for the Spark session.
+
+        Returned as-is; merged over the built-in defaults in create_spark_session.
+        """
+        return dict(self.spark_packages or {})
+
+    def get_full_transform_args(self) -> FullTransformArgs:
+        """Args for the raw -> transformed full-transform command.
+
+        Returns defaults when no `full_transform_args` section is configured; a
+        missing release version then surfaces as a clear error at jar-fetch time.
+        """
+        return self.full_transform_args or FullTransformArgs()
+
     def get_s3_credentials(
         self, config_name: Optional[str] = None
     ) -> Optional[Dict[str, str]]:
@@ -538,6 +810,9 @@ class AppConfig(GoodConf):
                     f"s3_config '{config_name}' not found. "
                     f"Available: {list(self.s3_configs.keys())}"
                 )
+            baseline = self.s3_configs.get("baseline")
+            if baseline and config_name != "baseline":
+                return {**baseline, **creds}
             return creds
         return self.s3_credentials
 
@@ -552,7 +827,7 @@ class AppConfig(GoodConf):
         config_file = filename or self.underlying_file
 
         if config_file and os.path.exists(config_file):
-            raw_config = _load_config(config_file)
+            raw_config = resolve_env_vars(_load_config(config_file))
         else:
             logger.warning(
                 f"Config file not found: {config_file}. Continuing with defaults."

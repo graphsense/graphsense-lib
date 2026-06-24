@@ -404,7 +404,7 @@ async def test_invalid_address_rejected(stub_app_with_cluster):
 
     mcp = _tool(stub_app_with_cluster, register_lookup_address)
     async with Client(mcp) as c:
-        with pytest.raises(ToolError, match="Invalid address"):
+        with pytest.raises(ToolError, match="address.*invalid format"):
             await c.call_tool(
                 "lookup_address",
                 {"currency": "btc", "address": "abc/../etc"},
@@ -1056,7 +1056,7 @@ async def test_list_txs_for_validates_neighbor(stub_app_with_txs_and_links):
 
     mcp = _tool(stub_app_with_txs_and_links, register_list_txs_for)
     async with Client(mcp) as c:
-        with pytest.raises(ToolError, match="Invalid neighbor"):
+        with pytest.raises(ToolError, match="neighbor.*invalid format"):
             await c.call_tool(
                 "list_txs_for",
                 {"currency": "btc", "address": "abc", "neighbor": "bad/../path"},
@@ -1238,3 +1238,64 @@ async def test_list_neighbors_passes_include_best_cluster_tag_in_enrichment():
     assert len(received) == 1
     assert received[0]["address"] == "n1"
     assert received[0]["include_best_cluster_tag"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_backend_5xx_logs_at_error_before_raising_tool_error(caplog):
+    """Backend 5xx responses must log at ERROR on
+    `graphsenselib.mcp.tools.consolidated` so the Slack handler attached
+    to the `graphsenselib.mcp` subtree fires for incidents. The same
+    body still raises ToolError so the model's retry contract is
+    unchanged."""
+    import logging
+
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import register_lookup_address
+
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}")
+    async def _boom(currency: str, address: str):
+        raise HTTPException(status_code=503, detail="upstream cassandra timed out")
+
+    mcp = _tool(app, register_lookup_address)
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp.tools.consolidated"):
+        async with Client(mcp) as c:
+            with pytest.raises(ToolError, match="HTTP 503"):
+                await c.call_tool(
+                    "lookup_address", {"currency": "btc", "address": "abc"}
+                )
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "HTTP 503" in errors[0].getMessage()
+    assert "upstream cassandra timed out" in errors[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_backend_4xx_does_not_log_at_error(caplog):
+    """4xx is model-side feedback ('tx not found', 'bad address') — not
+    an incident, so the ERROR log + Slack alert path must stay quiet.
+    Only the ToolError is raised."""
+    import logging
+
+    from fastmcp.exceptions import ToolError
+
+    from graphsenselib.mcp.tools.consolidated import register_lookup_address
+
+    app = FastAPI()
+
+    @app.get("/{currency}/addresses/{address}")
+    async def _missing(currency: str, address: str):
+        raise HTTPException(status_code=404, detail="address not found")
+
+    mcp = _tool(app, register_lookup_address)
+    with caplog.at_level(logging.ERROR, logger="graphsenselib.mcp.tools.consolidated"):
+        async with Client(mcp) as c:
+            with pytest.raises(ToolError, match="HTTP 404"):
+                await c.call_tool(
+                    "lookup_address", {"currency": "btc", "address": "abc"}
+                )
+
+    assert [r for r in caplog.records if r.levelno == logging.ERROR] == []

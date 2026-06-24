@@ -22,6 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from graphsenselib.ingest.rpc_eth import BatchRpcClient, validate_rpc_fields
+from graphsenselib.utils.pubkey_to_address import base58check_encode, hash160
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,14 @@ _TX_BLACKLIST = frozenset(
         "joinSplitPubKey",  # ZEC Sprout joinsplit public key
         "joinSplitSig",  # ZEC Sprout joinsplit signature
         "orchard",  # ZEC NU5 Orchard bundle (actions, proof, etc.)
+        # Zebra adds these per-transaction lookup fields that zcashd does not
+        # emit inside getblock; none carry parser-relevant data.
+        "blockhash",
+        "blocktime",
+        "confirmations",
+        "height",
+        "in_active_chain",
+        "time",
     }
 )
 
@@ -263,7 +272,50 @@ def _script_hex_to_non_standard_address(script_hex):
     return "nonstandard" + script_hash
 
 
-def _parse_input(vin_entry, index):
+# P2PKH/t1 address version byte per network, used to derive the address of a
+# P2PK output that a node classifies as type "pubkey" but returns without an
+# address. zcashd populates it; Zebra and modern Bitcoin Core do not. BCH
+# legacy addresses share BTC's version bytes.
+_PUBKEY_ADDRESS_VERSION = {
+    "btc": b"\x00",
+    "bch": b"\x00",
+    "ltc": b"\x30",
+    "zec": b"\x1c\xb8",  # Zcash t1 prefix
+}
+
+
+def _p2pk_address_from_script(script_hex, network):
+    """Derive the P2PKH-style address of a P2PK locking script.
+
+    A P2PK script is ``<push 33|65> <pubkey> OP_CHECKSIG`` and has no canonical
+    address, so nodes report type "pubkey" but frequently omit the address. We
+    derive ``base58check(version, hash160(pubkey))`` — the same value zcashd
+    returns — so output parsing is identical regardless of whether the node
+    populated the address. Returns ``None`` if ``script_hex`` is not a
+    well-formed P2PK script (caller falls back to the nonstandard synthetic id).
+    """
+    if not script_hex:
+        return None
+    try:
+        script = bytes.fromhex(script_hex)
+    except ValueError:
+        return None
+    if len(script) < 2 or script[-1] != 0xAC:  # trailing OP_CHECKSIG
+        return None
+    push_len = script[0]
+    if push_len not in (33, 65) or len(script) != push_len + 2:
+        return None
+    pubkey = script[1:-1]
+    valid = (push_len == 33 and pubkey[0] in (0x02, 0x03)) or (
+        push_len == 65 and pubkey[0] in (0x04, 0x06, 0x07)
+    )
+    if not valid:
+        return None
+    version = _PUBKEY_ADDRESS_VERSION.get(network, b"\x00")
+    return base58check_encode(version, hash160(pubkey))
+
+
+def _parse_input(vin_entry, index, network="btc"):
     """Parse a single vin entry to input dict matching bitcoin-etl format.
 
     When verbosity 3 data is available, the ``prevout`` object on each input
@@ -314,14 +366,24 @@ def _parse_input(vin_entry, index):
             addresses = [address] if address else []
         output_type = spk.get("type")
 
-        # Non-standard address detection (same logic as _parse_output)
-        # P2PK outputs have type "pubkey" but no address in prevout.
-        # Store prevout script hex so enrich_txs can resolve via parse_script.
+        # Non-standard address detection (same logic as _parse_output).
+        # P2PK prevouts have type "pubkey" but no address — derive it directly
+        # (keeping the node's type). Anything else falls back to the synthetic
+        # nonstandard id, storing the script hex so enrich_txs can try
+        # parse_script later.
         if (not addresses) and output_type != "nulldata":
-            output_type = "nonstandard"
             prevout_hex = spk.get("hex", "")
-            addresses = [_script_hex_to_non_standard_address(prevout_hex)]
-            input_dict["prevout_script_hex"] = prevout_hex
+            derived = (
+                _p2pk_address_from_script(prevout_hex, network)
+                if output_type == "pubkey"
+                else None
+            )
+            if derived is not None:
+                addresses = [derived]
+            else:
+                output_type = "nonstandard"
+                addresses = [_script_hex_to_non_standard_address(prevout_hex)]
+                input_dict["prevout_script_hex"] = prevout_hex
 
         input_dict["addresses"] = addresses
         input_dict["type"] = output_type
@@ -329,7 +391,7 @@ def _parse_input(vin_entry, index):
     return input_dict
 
 
-def _parse_output(vout_entry):
+def _parse_output(vout_entry, network="btc"):
     """Parse a single vout entry to output dict matching bitcoin-etl format."""
     validate_rpc_fields(vout_entry.keys(), _VOUT_KNOWN_KEYS, _VOUT_BLACKLIST, "vout")
     script_pub_key = vout_entry.get("scriptPubKey") or {}
@@ -346,18 +408,35 @@ def _parse_output(vout_entry):
         addresses = [a] if a else []
 
     output_type = script_pub_key.get("type")
+    required_signatures = script_pub_key.get("reqSigs")
 
-    # Non-standard address detection (matching bitcoin-etl's _add_non_standard_addresses)
+    # When the node omits the address: P2PK outputs (type "pubkey") have no
+    # canonical address but we can derive one (keeping the node's type), so a
+    # node that populates it (zcashd) and one that does not (Zebra) parse
+    # identically. Everything else falls back to bitcoin-etl's synthetic
+    # nonstandard id.
     if (not addresses) and output_type != "nulldata":
-        output_type = "nonstandard"
         script_hex = script_pub_key.get("hex", "")
-        addresses = [_script_hex_to_non_standard_address(script_hex)]
+        derived = (
+            _p2pk_address_from_script(script_hex, network)
+            if output_type == "pubkey"
+            else None
+        )
+        if derived is not None:
+            addresses = [derived]
+            # P2PK always requires exactly one signature; nodes that omit the
+            # address omit reqSigs too (Zebra), so fill it to match zcashd.
+            if required_signatures is None:
+                required_signatures = 1
+        else:
+            output_type = "nonstandard"
+            addresses = [_script_hex_to_non_standard_address(script_hex)]
 
     return {
         "index": vout_entry.get("n"),
         "script_asm": script_pub_key.get("asm"),
         "script_hex": script_pub_key.get("hex"),
-        "required_signatures": script_pub_key.get("reqSigs"),
+        "required_signatures": required_signatures,
         "type": output_type,
         "addresses": addresses,
         "value": _btc_to_satoshi(vout_entry.get("value")),
@@ -392,7 +471,7 @@ def _make_shielded_output(index, value):
     }
 
 
-def _parse_btc_block_and_txs(raw_block):
+def _parse_btc_block_and_txs(raw_block, network="btc"):
     """Parse a raw getblock(hash, 2) response into (block_dict, [tx_dicts]).
 
     Handles coinbase detection, value conversion, non-standard addresses,
@@ -425,10 +504,10 @@ def _parse_btc_block_and_txs(raw_block):
                 coinbase_param = vin_entry["coinbase"]
                 is_coinbase = True
             else:
-                inputs.append(_parse_input(vin_entry, input_idx))
+                inputs.append(_parse_input(vin_entry, input_idx, network))
                 input_idx += 1
 
-        outputs = [_parse_output(v) for v in vout]
+        outputs = [_parse_output(v, network) for v in vout]
 
         # ZCash: joinsplit shielded I/O
         # vpub_old = value from transparent → shielded (consumed) = OUTPUT
@@ -555,11 +634,15 @@ class BtcBlockExporter:
         timeout=300,
         verbosity=2,
         resolve_inputs=True,
+        network="btc",
     ):
         self.client = BatchRpcClient(provider_uri, timeout=timeout)
         self.max_workers = max_workers
         self.verbosity = verbosity
         self.resolve_inputs = resolve_inputs
+        # Network code (btc/ltc/bch/zec) selects address version bytes when a
+        # node omits the address for a P2PK output (see _p2pk_address_from_script).
+        self.network = network
         # Cumulative output cache across batches for input resolution.
         # Maps tx_hash → {output_index → {value, addresses, type, script_hex}}.
         # When blocks are processed in small batches, inputs in batch N may
@@ -618,7 +701,7 @@ class BtcBlockExporter:
             raise ValueError(f"Block not found for hash {block_hash}")
 
         t0 = time.monotonic()
-        block, txs = _parse_btc_block_and_txs(raw_block)
+        block, txs = _parse_btc_block_and_txs(raw_block, self.network)
         t_parse = time.monotonic() - t0
 
         return block, txs, t_rpc, t_parse
@@ -663,7 +746,7 @@ class BtcBlockExporter:
                 raw_tx = r["result"]
                 by_index = {}
                 for vout in raw_tx.get("vout", []):
-                    parsed = _parse_output(vout)
+                    parsed = _parse_output(vout, self.network)
                     by_index[parsed["index"]] = _make_cache_entry(
                         parsed["value"],
                         parsed["addresses"],

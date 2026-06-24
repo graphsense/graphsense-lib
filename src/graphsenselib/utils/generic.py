@@ -1,13 +1,54 @@
 import bisect
 import itertools
+import os
+import re
 from datetime import timedelta
 from typing import Iterable, Optional, Sequence, Any, Union, List
 
-import pandas as pd
 import base64
 import sys
 
 max_int64 = 2**63 - 1
+
+# Matches ${VAR} / ${VAR:-default} placeholders, with an optional leading $
+# that escapes the placeholder: $${VAR} resolves to the literal text ${VAR}.
+_ENV_VAR_PATTERN = re.compile(r"(\$?)\$\{([^}]+)\}")
+
+
+def _replace_env_var(match: "re.Match") -> str:
+    escape, body = match.group(1), match.group(2)
+    if escape:
+        # $${...} is an escaped literal ${...}; drop the escaping $.
+        return "${" + body + "}"
+    name, sep, default = body.partition(":-")
+    name = name.strip()
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if sep:
+        return default
+    raise ValueError(
+        f"Config references undefined environment variable '{name}' "
+        f"(use ${{{name}:-default}} to provide a fallback)"
+    )
+
+
+def resolve_env_vars(obj: Any) -> Any:
+    """Recursively resolve ${VAR} / ${VAR:-default} placeholders in a config
+    structure using environment variables.
+
+    Walks dicts and lists, substituting placeholders inside string values.
+    Non-string scalars are returned unchanged. Raises ValueError if a
+    placeholder references an undefined variable and provides no default.
+    Use $${VAR} to emit a literal ${VAR} without substitution.
+    """
+    if isinstance(obj, dict):
+        return {k: resolve_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [resolve_env_vars(v) for v in obj]
+    if isinstance(obj, str):
+        return _ENV_VAR_PATTERN.sub(_replace_env_var, obj)
+    return obj
 
 
 class DataObject:
@@ -106,6 +147,8 @@ def dict_with_snake_keys(d) -> dict:
 
 
 def get_cassandra_result_as_dateframe(result):
+    import pandas as pd  # deferred: keep pandas off the utils import path (Spark UDFs)
+
     df = pd.DataFrame(result)
     return df
 
@@ -146,6 +189,8 @@ def binary_search(L, x, lo, hi):
 
 
 def pandas_row_factory(colnames, rows):
+    import pandas as pd  # deferred: keep pandas off the utils import path (Spark UDFs)
+
     return pd.DataFrame(rows, columns=colnames)
 
 

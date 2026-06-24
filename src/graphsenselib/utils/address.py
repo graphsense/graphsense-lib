@@ -417,19 +417,64 @@ def bech32_hrp_expand(hrp):
     return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
 
 
-def bech32_verify_checksum(hrp, data):
-    """Verify bech32 checksum"""
-    return bech32_polymod(bech32_hrp_expand(hrp) + data) == 1
+# Checksum constants for the two segwit encodings (BIP-173 / BIP-350).
+BECH32_CONST = 1
+BECH32M_CONST = 0x2BC830A3
+
+
+def bech32_checksum_spec(hrp, data):
+    """Return 'bech32', 'bech32m', or None for hrp + data (incl. checksum)."""
+    const = bech32_polymod(bech32_hrp_expand(hrp) + data)
+    if const == BECH32_CONST:
+        return "bech32"
+    if const == BECH32M_CONST:
+        return "bech32m"
+    return None
+
+
+def bech32_convertbits(data, frombits, tobits, pad=True):
+    """General power-of-2 base conversion (BIP-173 reference)."""
+    acc = 0
+    bits = 0
+    ret = []
+    maxv = (1 << tobits) - 1
+    max_acc = (1 << (frombits + tobits - 1)) - 1
+    for value in data:
+        if value < 0 or (value >> frombits):
+            return None
+        acc = ((acc << frombits) | value) & max_acc
+        bits += frombits
+        while bits >= tobits:
+            bits -= tobits
+            ret.append((acc >> bits) & maxv)
+    if pad:
+        if bits:
+            ret.append((acc << (tobits - bits)) & maxv)
+    elif bits >= frombits or ((acc << (tobits - bits)) & maxv):
+        return None
+    return ret
 
 
 def bech32_validate(s: str, expected_hrp: Optional[str] = None) -> bool:
-    """Validate bech32 string"""
+    """Validate a segwit (bech32/bech32m) address per BIP-173 and BIP-350.
+
+    Witness v0 (e.g. bc1q…) is bech32-encoded; witness v1+ (Taproot, bc1p…)
+    is bech32m-encoded. The witness version selects which checksum is required,
+    so a single bech32-only check produces false negatives on Taproot.
+    """
     if not s:
         return False
 
+    # BIP-173 forbids mixed case (all-lower or all-upper only).
+    if s != s.lower() and s != s.upper():
+        return False
     s = s.lower()
+
+    if len(s) > 90:
+        return False
+
     pos = s.rfind("1")
-    if pos < 1 or pos + 7 > len(s) or pos + 1 + 6 > len(s):
+    if pos < 1 or pos + 7 > len(s):
         return False
 
     hrp = s[:pos]
@@ -438,15 +483,34 @@ def bech32_validate(s: str, expected_hrp: Optional[str] = None) -> bool:
     if expected_hrp and hrp != expected_hrp:
         return False
 
-    # Check characters
     charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-    for c in data_part:
-        if c not in charset:
-            return False
+    if any(c not in charset for c in data_part):
+        return False
 
     data = [charset.find(c) for c in data_part]
 
-    return bech32_verify_checksum(hrp, data)
+    spec = bech32_checksum_spec(hrp, data)
+    if spec is None:
+        return False
+
+    # Drop the 6-symbol checksum; remainder is witness version + program.
+    payload = data[:-6]
+    if not payload:
+        return False
+
+    witver = payload[0]
+    if witver > 16:
+        return False
+
+    witprog = bech32_convertbits(payload[1:], 5, 8, False)
+    if witprog is None or len(witprog) < 2 or len(witprog) > 40:
+        return False
+
+    # BIP-350: v0 must use bech32 (and 20- or 32-byte program);
+    # v1..v16 (incl. Taproot) must use bech32m.
+    if witver == 0:
+        return spec == "bech32" and len(witprog) in (20, 32)
+    return spec == "bech32m"
 
 
 def validate_btc_address(address: str) -> bool:

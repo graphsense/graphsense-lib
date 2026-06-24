@@ -145,6 +145,11 @@ def test_get_spending_txs(client):
     assert status == 400
     assert "does not support transaction level linking" in body
 
+    invalid_hash = "bc1qv7zcc9xnalgtrn646hmpwwfv5kkqnnc2797tnd"
+    status, body = raw_request(client, path, currency="btc", tx_hash=invalid_hash)
+    assert status == 400
+    assert f"{invalid_hash} does not look like a valid transaction hash." in body
+
 
 def test_get_spent_in_txs(client):
     path = "/{currency}/txs/{tx_hash}/spent_in"
@@ -161,3 +166,8 @@ def test_get_spent_in_txs(client):
     status, body = raw_request(client, path, currency="eth", tx_hash="ab")
     assert status == 400
     assert "does not support transaction level linking" in body
+
+    invalid_hash = "35uspma3zwqsnygrphupzqdndiuatjhjc3"
+    status, body = raw_request(client, path, currency="btc", tx_hash=invalid_hash)
+    assert status == 400
+    assert f"{invalid_hash} does not look like a valid transaction hash." in body

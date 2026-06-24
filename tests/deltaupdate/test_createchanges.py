@@ -160,3 +160,68 @@ class TestPrepareEntityTxsForIngest(unittest.TestCase):
         # print(changes)
 
         self.assertEqual(len(changes), self.expected_changes_count)
+
+
+class TestPrepareRelationsForIngest(unittest.TestCase):
+    """inrelations carries plain rows (or None), not driver result wrappers,
+    so relation rows can come from worker processes."""
+
+    def setUp(self):
+        from graphsenselib.deltaupdate.update.generic import DeltaValue
+
+        self.delta = [
+            RelationDeltaAccount(
+                src_identifier=b"src",
+                dst_identifier=b"dst",
+                no_transactions=2,
+                value=DeltaValue(10, [1, 2]),
+                token_values={"USDT": DeltaValue(5, [1, 1])},
+                type="test",
+            )
+        ]
+        self.hash_to_id = {b"src": 1, b"dst": 2}
+        self.id_bucket_size = 10
+        self.relations_nbuckets = 10
+
+    def test_merges_existing_relation_given_plain_row(self):
+        from graphsenselib.db.parallel import PlainRow
+        from graphsenselib.deltaupdate.update.generic import DeltaValue
+
+        inrelations = {
+            (b"src", b"dst"): PlainRow(
+                {
+                    "no_transactions": 3,
+                    "value": PlainRow({"value": 100, "fiat_values": [10, 20]}),
+                    "token_values": None,
+                }
+            )
+        }
+        changes, new_in, new_out = prepare_relations_for_ingest(
+            self.delta,
+            self.hash_to_id,
+            inrelations,
+            set(),
+            self.id_bucket_size,
+            self.relations_nbuckets,
+        )
+        in_chg = [c for c in changes if c.table == "address_incoming_relations"][0]
+        self.assertEqual(in_chg.data["no_transactions"], 5)
+        self.assertEqual(in_chg.data["value"], DeltaValue(110, [11, 22]))
+
+    def test_inserts_new_relation_given_none_row(self):
+        from graphsenselib.deltaupdate.update.generic import DeltaValue
+
+        inrelations = {(b"src", b"dst"): None}
+        changes, new_in, new_out = prepare_relations_for_ingest(
+            self.delta,
+            self.hash_to_id,
+            inrelations,
+            set(),
+            self.id_bucket_size,
+            self.relations_nbuckets,
+        )
+        in_chg = [c for c in changes if c.table == "address_incoming_relations"][0]
+        self.assertEqual(in_chg.data["no_transactions"], 2)
+        self.assertEqual(in_chg.data["value"], DeltaValue(10, [1, 2]))
+        self.assertEqual(new_in[b"dst"], 1)
+        self.assertEqual(new_out[b"src"], 1)

@@ -248,6 +248,34 @@ class TestCassandraConfig:
         assert new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
         assert new_config.nodes == ["127.0.0.1"]
 
+    def test_cross_chain_pubkey_keyspaces_default(self):
+        """Default single-keyspace string normalises to a one-element list."""
+        config = CassandraConfig(nodes=["127.0.0.1"])
+        assert config.cross_chain_pubkey_mapping_keyspace == "pubkey"
+        assert config.get_cross_chain_pubkey_keyspaces() == ["pubkey"]
+
+    def test_cross_chain_pubkey_keyspaces_string(self):
+        """An explicit string keyspace stays backwards compatible."""
+        config = CassandraConfig(
+            nodes=["127.0.0.1"], cross_chain_pubkey_mapping_keyspace="pubkey_v2"
+        )
+        assert config.get_cross_chain_pubkey_keyspaces() == ["pubkey_v2"]
+
+    def test_cross_chain_pubkey_keyspaces_list(self):
+        """A list of keyspaces is preserved in order for the merge reader."""
+        config = CassandraConfig(
+            nodes=["127.0.0.1"],
+            cross_chain_pubkey_mapping_keyspace=["pubkey_v2", "pubkey"],
+        )
+        assert config.get_cross_chain_pubkey_keyspaces() == ["pubkey_v2", "pubkey"]
+
+    def test_cross_chain_pubkey_keyspaces_none(self):
+        """None disables the lookup and yields no keyspaces."""
+        config = CassandraConfig(
+            nodes=["127.0.0.1"], cross_chain_pubkey_mapping_keyspace=None
+        )
+        assert config.get_cross_chain_pubkey_keyspaces() == []
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

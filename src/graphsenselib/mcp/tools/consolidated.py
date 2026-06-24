@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 # the intended endpoint — even though FastAPI routing would likely reject
 # it downstream. These patterns are deliberately conservative.
 _CURRENCY_PATTERN = re.compile(r"^[a-z0-9]{2,10}$")
-_ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{1,150}$")
+# Underscore is included so account-model sub-payment identifiers
+# (e.g. `<hash>_I948` for internal traces, `<hash>_T3` for token
+# transfers) pass validation when callers pass them to lookup_tx_details
+# etc. Both `_` and alphanumerics are URL-safe (RFC 3986 unreserved),
+# and the REST endpoint resolves identifier strings in the tx path
+# segment directly.
+_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]{1,150}$")
 
 
 def _validate_currency(currency: str) -> None:
@@ -27,7 +33,12 @@ def _validate_currency(currency: str) -> None:
 def _validate_id(name: str, value: str) -> None:
     """Guard addresses, tx hashes, and opaque ids passed into URL segments."""
     if not _ID_PATTERN.match(value):
-        raise ToolError(f"Invalid {name}: {value!r}")
+        raise ToolError(
+            f"{name} {value!r} has an invalid format (allowed: "
+            "alphanumeric and underscore, 1-150 chars). This is a "
+            "format check at the input boundary, not a check against "
+            "whether the value exists on chain."
+        )
 
 
 def _make_client(app) -> httpx.AsyncClient:
@@ -66,6 +77,36 @@ def _make_client(app) -> httpx.AsyncClient:
     )
 
 
+def _raise_backend_http_error(response: httpx.Response, path: str) -> None:
+    """Convert a non-2xx upstream response into a `ToolError`, and log at
+    ERROR level when the status is >= 500.
+
+    Splitting the report between channels keeps incident triage clean:
+    the model receives a `ToolError` either way (so its retry / recovery
+    logic doesn't need to know about transport details), and ops sees a
+    log record on `graphsenselib.mcp.tools.consolidated` only for
+    real backend failures. The Slack handler attached to
+    `graphsenselib.mcp` (see `web/app.py:setup_logging`) then picks up
+    the 5xx records but stays quiet for 4xx — those are model-side
+    mistakes (`tx not found`, `bad address`, ...) and would just be
+    noise.
+    """
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        detail = response.text
+    if response.status_code >= 500:
+        logger.error(
+            "graphsense backend returned HTTP %d for %s: %s",
+            response.status_code,
+            path,
+            detail,
+        )
+    raise ToolError(
+        f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
+    )
+
+
 async def _get_json(
     client: httpx.AsyncClient,
     path: str,
@@ -73,13 +114,7 @@ async def _get_json(
 ) -> dict[str, Any]:
     response = await client.get(path, params=params)
     if response.status_code >= 400:
-        try:
-            detail = response.json().get("detail")
-        except Exception:
-            detail = response.text
-        raise ToolError(
-            f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
-        )
+        _raise_backend_http_error(response, path)
     return response.json()
 
 
@@ -98,13 +133,7 @@ async def _get_json_optional(
     if response.status_code == 404:
         return None
     if response.status_code >= 400:
-        try:
-            detail = response.json().get("detail")
-        except Exception:
-            detail = response.text
-        raise ToolError(
-            f"Graphsense API returned HTTP {response.status_code} for {path}: {detail}"
-        )
+        _raise_backend_http_error(response, path)
     return response.json()
 
 
@@ -633,6 +662,15 @@ def register_lookup_tx_details(mcp, app, stack) -> None:
         (/spending is backward, /spent_in is forward). This consolidation
         hides that and uses `upstream` / `downstream` to mean what they say.
 
+        Note on `identifier` vs `tx_hash`: account-model responses carry
+        both. `tx_hash` names the on-chain transaction; `identifier`
+        names a specific sub-payment within it (one tx hash can carry
+        many sub-payments — the native transfer plus token transfers,
+        each with its own `identifier`). When feeding a tx into
+        `build_pathfinder_file`, pass the `identifier` so pathfinder can
+        disambiguate which sub-payment is meant. UTXO responses have
+        only `tx_hash` and no `identifier`; use `tx_hash` there.
+
         Args:
             currency: Network identifier (e.g. "btc", "bch", "ltc", "eth").
             tx_hash: Transaction hash.
@@ -740,6 +778,14 @@ def register_list_txs_for(mcp, app, stack) -> None:
         Returns:
             A dict with `address_txs` (or `links` when `neighbor` is set)
             and a `next_page` pagination cursor.
+
+        Note on `identifier` vs `tx_hash`: account-model rows carry both.
+        `tx_hash` names the on-chain transaction; `identifier` names a
+        specific sub-payment within it (one tx hash can carry many
+        sub-payments — the native transfer plus token transfers). When
+        feeding txs into `build_pathfinder_file`, pass the `identifier`
+        so pathfinder can disambiguate which sub-payment is meant. UTXO
+        rows have only `tx_hash`; use `tx_hash` there.
         """
         _validate_currency(currency)
         _validate_id("address", address)

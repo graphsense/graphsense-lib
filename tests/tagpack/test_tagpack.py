@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 import pytest
 
-pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
+pytest.importorskip("yaml_include", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack import ValidationError
 from graphsenselib.tagpack.tagpack import (
@@ -155,6 +155,31 @@ def tagpack_context_obj(schema, taxonomies):
             "currency": "BTC",
             "lastmod": "2021-04-21",
             "tags": [{"label": "a", "address": "b", "context": {"a": "b"}}],
+        },
+        schema,
+        taxonomies,
+    )
+
+
+@pytest.fixture
+def tagpack_context_date_obj(schema, taxonomies):
+    # A bare date scalar inside a YAML context block is parsed by PyYAML into a
+    # datetime.date, which json.dumps cannot serialize without a default handler.
+    return TagPack(
+        "http://example.com",
+        {
+            "title": "Test TagPack",
+            "creator": "GraphSense Team",
+            "source": "http://example.com/my_addresses",
+            "currency": "BTC",
+            "lastmod": "2021-04-21",
+            "tags": [
+                {
+                    "label": "a",
+                    "address": "b",
+                    "context": {"valid_from": date(2022, 9, 23)},
+                }
+            ],
         },
         schema,
         taxonomies,
@@ -348,6 +373,14 @@ def test_validate_str_date(tagpack_str_date):
 
 def test_validate_context_obj(tagpack_context_obj):
     assert tagpack_context_obj.validate()
+
+
+def test_context_obj_with_date_is_serialized(tagpack_context_date_obj):
+    # Regression: a date inside a context dict used to raise
+    # "Object of type date is not JSON serializable" during Tag construction.
+    tag = tagpack_context_date_obj.tags[0]
+    context = json.loads(tag.contents["context"])
+    assert context["valid_from"] == "2022-09-23"
 
 
 def test_verify_addresses(tagpack):
@@ -621,6 +654,90 @@ def test_load_from_file_resolves_yaml_include(taxonomies):
     )
 
 
+def test_find_pack_root_picks_packs_directory(tmp_path):
+    """A directory literally named ``packs`` is the tagpack repo root."""
+    from graphsenselib.tagpack.tagpack import find_pack_root
+
+    inner = tmp_path / "packs" / "group"
+    inner.mkdir(parents=True)
+    target = inner / "file.yaml"
+    target.write_text("body: true\n")
+
+    assert find_pack_root(str(target)) == str(tmp_path / "packs")
+
+
+def test_find_pack_root_picks_git_repo_root(tmp_path):
+    """A directory containing ``.git`` is also accepted as the root."""
+    from graphsenselib.tagpack.tagpack import find_pack_root
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    sub = repo / "sub"
+    sub.mkdir()
+    target = sub / "file.yaml"
+    target.write_text("body: true\n")
+
+    assert find_pack_root(str(target)) == str(repo)
+
+
+def test_find_pack_root_is_bounded_at_three_levels(tmp_path):
+    """The walk is capped so it can't ascend deep into the filesystem.
+    A file buried 4+ levels below a root marker must not bind to it."""
+    from graphsenselib.tagpack.tagpack import find_pack_root
+
+    # 5 levels of subdir above the file; only 3 of them are walked.
+    deep = tmp_path / "a" / "b" / "c" / "d" / "e"
+    deep.mkdir(parents=True)
+    target = deep / "file.yaml"
+    target.write_text("body: true\n")
+    # `packs/` sits 6 dirs above the file -> out of reach.
+    (tmp_path / "packs").mkdir(exist_ok=True)
+    # But the immediate `tmp_path/a/b/c` is also out of reach (>3 ascents).
+    assert find_pack_root(str(target)) is None
+
+
+def test_load_from_file_resolves_include_without_cwd_or_header_dir(
+    tmp_path, monkeypatch
+):
+    """Validating a single tagpack file by absolute path must work
+    regardless of the caller's working directory, as long as the file
+    lives inside a recognised tagpack root (``packs/`` or git repo).
+    This is the bug `find_pack_root` exists to fix."""
+    from graphsenselib.tagpack.tagpack_schema import TagPackSchema
+
+    # Minimal real tagpack layout: header.yaml at packs/, an !include in
+    # a subdir tagpack file.
+    packs = tmp_path / "packs"
+    packs.mkdir()
+    (packs / "header.yaml").write_text(
+        "title: Synthetic TP\n"
+        "creator: tests\n"
+        "currency: BTC\n"
+        "label: synth\n"
+        "confidence: forensic\n"
+        "lastmod: 2024-01-01\n"
+    )
+    group = packs / "group"
+    group.mkdir()
+    target = group / "tp.yaml"
+    target.write_text(
+        "header: !include header.yaml\n"
+        "tags:\n"
+        "  - address: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\n"
+        "    label: synth-tag\n"
+        "    source: tests\n"
+    )
+
+    # Run from a directory that has no header.yaml — would have failed
+    # under the previous CWD-relative behaviour.
+    monkeypatch.chdir(tmp_path / ".." if (tmp_path / "..").exists() else "/tmp")
+
+    tagpack = TagPack.load_from_file(None, str(target), TagPackSchema(), None)
+    assert "header" not in tagpack.contents
+    assert tagpack.contents["title"] == "Synthetic TP"
+    assert tagpack.contents["currency"] == "BTC"
+
+
 def test_file_collection_with_missing_yaml_include_raises_exception():
     bdir = "tests/testfiles/yaml_inclusion_missing_header"
     h_files = collect_tagpack_files(bdir)
@@ -631,7 +748,10 @@ def test_file_collection_with_missing_yaml_include_raises_exception():
 
     with pytest.raises(FileNotFoundError) as e:
         TagPack.load_from_file(None, files[0], None, None, headerfile_path)
-    assert "No such file or directory: 'header.yaml'" in str(e.value)
+    # pyyaml-include v2 resolves the missing path through fsspec and reports
+    # an absolute path; v1 reported the bare 'header.yaml'. Either way the
+    # filename it tried to open must surface in the message.
+    assert "header.yaml" in str(e.value)
 
 
 def test_file_collection_simple_with_concepts(taxonomies):

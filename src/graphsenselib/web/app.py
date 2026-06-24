@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.routing import Route
@@ -36,6 +36,7 @@ from graphsenselib.tagstore.db.database import (
     ensure_database_initialized,
     get_db_engine_async,
 )
+from graphsenselib.utils import resolve_env_vars
 from graphsenselib.utils.slack import SlackLogHandler
 
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
@@ -396,7 +397,7 @@ def load_config(config_file: str) -> dict:
 
     with open(config_file, "r") as input_file:
         config = yaml.safe_load(input_file)
-    return config
+    return resolve_env_vars(config)
 
 
 def setup_logging(
@@ -424,10 +425,21 @@ def setup_logging(
         )
 
     if slack_exception_hook is not None:
+        # MCP code (graphsenselib.mcp.*) is a sibling logger tree, not a child
+        # of graphsenselib.web.app, so handlers attached to app_logger never
+        # reach it via propagation. Attach the same Slack handler to the MCP
+        # tree explicitly — paired with mcp/error_logging.py middleware that
+        # raises logger.exception on unhandled tool failures, this fires Slack
+        # for MCP incidents the way the unhandled-exception handler does for
+        # REST routes.
+        mcp_logger = logging.getLogger("graphsenselib.mcp")
         for h in slack_exception_hook.hooks:
             slack_handler = SlackLogHandler(h, environment=default_environment)
             slack_handler.setLevel("ERROR")
             app_logger.addHandler(slack_handler)
+            mcp_handler = SlackLogHandler(h, environment=default_environment)
+            mcp_handler.setLevel("ERROR")
+            mcp_logger.addHandler(mcp_handler)
 
     smtp = logging_config.smtp
     if not smtp:
@@ -871,9 +883,8 @@ async def _download_file(request: Request) -> Response:
     """Serve a file previously stashed in the download file store.
 
     Registered as a plain Starlette route (see _register_download_route) so it
-    stays out of the OpenAPI schema and bypasses the API-key dependencies: the
-    unguessable token in the URL is the only credential, which is what lets a
-    plain browser click fetch the file.
+    stays out of the OpenAPI schema: the unguessable token in the URL is the
+    only credential, which is what lets a plain browser click fetch the file.
     """
     store = getattr(request.app.state, "file_store", None)
     if store is None:
@@ -894,8 +905,8 @@ def _register_download_route(
     """Register the /download/{token} route when the file store is enabled.
 
     A plain Starlette Route (not a FastAPI APIRoute): excluded from the
-    OpenAPI spec and not subject to the global API-key dependencies, so the
-    unguessable token in the URL is the only credential needed.
+    OpenAPI spec, with the unguessable token in the URL as the only
+    credential.
     """
     if file_store is None or not file_store.enabled:
         return
@@ -1246,6 +1257,21 @@ def _get_docs_favicon_url(app: FastAPI) -> Optional[str]:
     return None
 
 
+def _get_docs_favicon_file(app: FastAPI) -> Optional[str]:
+    """Local filesystem path of the favicon to serve at /favicon.ico.
+
+    Mirrors `_get_docs_favicon_url` but returns an on-disk path (a remote
+    `docs_favicon_url` can't be served from here, so it's ignored). Prefers a
+    real `.ico`, falling back to the bundled `.png`; `FileResponse` sets the
+    content-type from the extension.
+    """
+    for name in ("favicon.ico", "favicon.png"):
+        path = f"{DOCS_STATIC_DIR}/{name}"
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def _get_docs_links(app: FastAPI, page: str) -> list[tuple[str, str]]:
     config = app.state.config
     links: list[tuple[str, str]] = []
@@ -1317,6 +1343,13 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
         StaticFiles(directory=DOCS_STATIC_DIR, check_dir=False),
         name="docs-assets",
     )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        path = _get_docs_favicon_file(app)
+        if path is None:
+            return Response(status_code=404)
+        return FileResponse(path)
 
     @app.get("/ui", include_in_schema=False)
     async def custom_swagger_ui() -> HTMLResponse:

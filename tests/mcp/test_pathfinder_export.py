@@ -30,13 +30,43 @@ from graphsenselib.convert.gs_files import (
     structure,
 )
 from graphsenselib.convert.gs_files.encoder import _HIER_X_STEP
-from graphsenselib.mcp.tools.pathfinder_export import register
+from graphsenselib.mcp.tools.pathfinder_export import (
+    _run_verifier as _real_run_verifier,
+    register,
+)
 
 
 def _mcp(app: FastAPI | None = None) -> FastMCP:
     mcp = FastMCP(name="test")
     register(mcp, app if app is not None else FastAPI(), AsyncExitStack())
     return mcp
+
+
+@pytest.fixture(autouse=True)
+def _stub_verifier(monkeypatch):
+    """Short-circuit the backend-aware verifier in every test.
+
+    The MCP tool now runs the verifier by default (verify=True). Without
+    this fixture, every test would call ``_run_verifier`` against the
+    bare ``FastAPI()`` used here, which 404s every URL and therefore
+    decorates every result with bogus "address does not exist" warnings.
+
+    Returns a list of (args, kwargs) tuples recording each invocation,
+    so tests that care about WHEN the verifier ran can assert on it.
+    Tests that need a different verifier behaviour can re-monkeypatch
+    ``_run_verifier`` themselves; the per-test override wins.
+    """
+    calls: list[tuple[tuple, dict]] = []
+
+    async def stub(*args, **kwargs):
+        calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export._run_verifier",
+        stub,
+    )
+    return calls
 
 
 def _app_with_store(store, *, embed_resource: bool = True) -> FastAPI:
@@ -67,12 +97,27 @@ async def _call(mcp: FastMCP, payload: dict) -> Any:
         return await c.call_tool("build_pathfinder_file", payload)
 
 
+def _embedded(call_result: Any) -> mcp_types.EmbeddedResource:
+    """Find the EmbeddedResource block in the content list. The tool
+    also emits a TextContent block (for clients that only render
+    `content`), so we can't index by position."""
+    blocks = [
+        b for b in call_result.content if isinstance(b, mcp_types.EmbeddedResource)
+    ]
+    assert len(blocks) == 1, call_result.content
+    return blocks[0]
+
+
+def _text(call_result: Any) -> mcp_types.TextContent:
+    blocks = [b for b in call_result.content if isinstance(b, mcp_types.TextContent)]
+    assert len(blocks) == 1, call_result.content
+    return blocks[0]
+
+
 def _decode(call_result: Any) -> PathfinderData:
     """Extract the .gs blob from the embedded resource and round-trip
     it back to a typed PathfinderData."""
-    assert len(call_result.content) == 1, call_result.content
-    block = call_result.content[0]
-    assert isinstance(block, mcp_types.EmbeddedResource), type(block)
+    block = _embedded(call_result)
     assert isinstance(block.resource, mcp_types.BlobResourceContents)
     raw_bytes = base64.b64decode(block.resource.blob)
     data = structure(decode_gs_bytes(raw_bytes))
@@ -179,6 +224,46 @@ async def test_invalid_address_id_rejected() -> None:
     """Slashes / control chars must be rejected at the boundary so a
     malformed spec never lands inside the encoder."""
     with pytest.raises(ToolError, match="address id"):
+        await _call(
+            _mcp(),
+            {
+                "name": "bad",
+                "default_network": "btc",
+                "spec": {
+                    "addresses": [{"id": "addr/with/slashes"}],
+                    "txs": [],
+                    "agg_edges": [],
+                },
+            },
+        )
+
+
+async def test_underscored_tx_identifier_accepted() -> None:
+    """Account-model sub-payment identifiers (`<hash>_I948`, `<hash>_T3`)
+    contain an underscore and must validate. Previously rejected as
+    "Invalid tx hash" — agents misread that as a verify failure and
+    retried with verify=false, which didn't help."""
+    await _call(
+        _mcp(),
+        {
+            "name": "subpayment",
+            "default_network": "eth",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}, {"id": "addrB"}],
+                "txs": [{"id": "0xabc_I948"}, {"id": "0xdef_T3"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["0xabc_I948", "0xdef_T3"]},
+                ],
+            },
+        },
+    )
+
+
+async def test_format_error_message_calls_out_format_vs_verify() -> None:
+    """When the id pattern fails, the error message must make clear
+    it's a FORMAT check at the boundary, not a verify finding — that
+    confusion caused a wasted retry in real usage."""
+    with pytest.raises(ToolError, match="format"):
         await _call(
             _mcp(),
             {
@@ -344,22 +429,302 @@ async def test_warning_when_edge_references_unknown_address() -> None:
     ), warnings
 
 
+async def test_warning_when_tx_has_no_source_or_destination_edge() -> None:
+    """A tx listed in `txs` but never referenced from any `agg_edge.tx_ids`
+    has no source/destination address pairing, so pathfinder renders it
+    as a floating node. On ETH this can also trigger the renderer's
+    off-line drop. Warn the agent so they can attach the tx to an edge."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "floating-tx",
+            "default_network": "eth",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                # txhash1 is wired up; txhash2 is not referenced anywhere.
+                "txs": [{"id": "txhash1"}, {"id": "txhash2"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]},
+                ],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any(
+        "not referenced from any agg_edge.tx_ids" in w
+        and "txhash2" in w
+        # The wired-up tx must not be flagged.
+        and "txhash1" not in w
+        for w in warnings
+    ), warnings
+
+
+async def test_warnings_are_surfaced_in_text_content() -> None:
+    """Hosts that ignore `structured_content` (Mistral Le Chat) would
+    otherwise silently ship a broken .gs. The TextContent block must
+    repeat the warnings so the agent has a chance of seeing them."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "floating-tx-text",
+            "default_network": "eth",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                "txs": [{"id": "txhash1"}, {"id": "txhash2"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]},
+                ],
+            },
+        },
+    )
+    text = _text(call_result).text
+    assert "Warnings" in text
+    assert "txhash2" in text
+
+
+async def test_no_warning_preamble_when_spec_is_clean() -> None:
+    """The warnings preamble must not appear when there are none, so
+    well-formed builds stay terse."""
+    text = _text(
+        await _call(
+            _mcp(),
+            {
+                "name": "clean",
+                "default_network": "btc",
+                "spec": {
+                    "addresses": [
+                        {"id": "addrA", "starting_point": True},
+                        {"id": "addrB"},
+                    ],
+                    "txs": [{"id": "txhash1"}],
+                    "agg_edges": [{"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]}],
+                },
+            },
+        )
+    ).text
+    assert "Warnings" not in text
+
+
+async def test_verify_default_is_on(_stub_verifier) -> None:
+    """The tool now verifies by default — a call that omits the flag
+    invokes the verifier exactly once."""
+    await _call(_mcp(), _MINIMAL_SPEC)
+    assert len(_stub_verifier) == 1
+
+
+async def test_verify_flag_off_opts_out_of_backend_calls(_stub_verifier) -> None:
+    """Passing verify=False skips the verifier entirely so drafting
+    iterations stay fast (and don't require a reachable backend)."""
+    payload = {**_MINIMAL_SPEC, "verify": False}
+    await _call(_mcp(), payload)
+    assert _stub_verifier == []
+
+
+async def test_verify_flag_appends_backend_warnings(monkeypatch) -> None:
+    """The verifier's findings merge into summary.warnings AND the text
+    content block (so Mistral-style hosts see them)."""
+
+    async def fake_run_verifier(*args, **kwargs):
+        return [
+            "backend says these tx hash(es) do not exist on their declared "
+            "network: tx1."
+        ]
+
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export._run_verifier",
+        fake_run_verifier,
+    )
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "verified",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                ],
+                "txs": [{"id": "tx1"}],
+                "agg_edges": [{"a": "addrA", "b": "addrB", "tx_ids": ["tx1"]}],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any("do not exist" in w and "tx1" in w for w in warnings), warnings
+    # Text content block must also carry the warning — that's the whole
+    # point of the channel-folding fix.
+    text = _text(call_result).text
+    assert "tx1" in text
+    assert "Warnings" in text
+
+
+async def test_verify_flag_downgrades_backend_error_to_warning(
+    monkeypatch,
+) -> None:
+    """A transport-level failure during verification must not sink the
+    build: the file is structurally valid, so we ship it with a single
+    "verifier unavailable" warning instead of raising."""
+    import httpx as _httpx
+
+    async def boom(*args, **kwargs):
+        raise _httpx.ConnectError("backend down")
+
+    # Override the autouse stub: restore the real _run_verifier so the
+    # error-downgrade path inside it actually runs. We captured the
+    # original at module load time (before the autouse stub replaces
+    # it). Then patch the verify_against_backend call site underneath
+    # it so it raises.
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export._run_verifier",
+        _real_run_verifier,
+    )
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.verify_against_backend",
+        boom,
+    )
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "flaky",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [],
+                "agg_edges": [],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any("verifier unavailable" in w for w in warnings), warnings
+    # Despite the verifier failure the file IS built (structurally valid).
+    assert _structured(call_result)["summary"]["byte_size"] > 0
+
+
+async def test_layout_inside_spec_is_accepted() -> None:
+    """LLMs frequently nest `layout` inside `spec` because it reads as a
+    graph-shape option. Pydantic previously rejected it with an
+    extra_forbidden error that the model couldn't recover from. The spec
+    now accepts `layout` as a forgiving alias for the top-level argument."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "layout-in-spec",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [],
+                "agg_edges": [],
+                # nested where the model would naturally put it
+                "layout": "hierarchical",
+            },
+        },
+    )
+    summary = _structured(call_result)["summary"]
+    # Hierarchical was the explicit choice — confirm it landed.
+    assert summary["layout"] == "hierarchical"
+
+
+async def test_top_level_layout_wins_over_spec_layout() -> None:
+    """If the caller is explicit at the top level, that always wins
+    over a nested fallback — the nested form is forgiveness, not
+    precedence."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "explicit-tops",
+            "default_network": "btc",
+            "layout": "columnar",
+            "spec": {
+                "addresses": [{"id": "addrA"}],
+                "txs": [],
+                "agg_edges": [],
+                "layout": "hierarchical",
+            },
+        },
+    )
+    summary = _structured(call_result)["summary"]
+    assert summary["layout"] == "columnar"
+
+
 async def test_no_warnings_for_well_formed_abstract_graph() -> None:
-    """An addresses-only spec (no edges, no txs) is legitimately
-    abstract — no warning should fire."""
+    """An addresses-only spec where every address is explicitly an
+    anchor (starting_point) is legitimately abstract — no warning
+    should fire."""
     call_result = await _call(
         _mcp(),
         {
             "name": "addrs-only",
             "default_network": "btc",
             "spec": {
-                "addresses": [{"id": "a"}, {"id": "b"}],
+                "addresses": [
+                    {"id": "a", "starting_point": True},
+                    {"id": "b", "starting_point": True},
+                ],
                 "txs": [],
                 "agg_edges": [],
             },
         },
     )
     assert _structured(call_result)["summary"]["warnings"] == []
+
+
+async def test_warning_when_address_is_unreferenced_and_not_anchor() -> None:
+    """An address listed in `addresses` but never appearing as an edge
+    endpoint — and not declared a starting_point — renders as a
+    floating node. Flag it the same way we flag floating txs."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "stray-addr",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [
+                    {"id": "addrA", "starting_point": True},
+                    {"id": "addrB"},
+                    {"id": "addrStray"},  # not in any edge, not an anchor
+                ],
+                "txs": [{"id": "txhash1"}],
+                "agg_edges": [
+                    {"a": "addrA", "b": "addrB", "tx_ids": ["txhash1"]},
+                ],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert any(
+        "address(es) are not referenced" in w
+        and "addrStray" in w
+        # The wired-up and anchor addresses must not be flagged.
+        and "addrA" not in w
+        and "addrB" not in w
+        for w in warnings
+    ), warnings
+
+
+async def test_starting_point_address_with_no_edges_is_not_flagged() -> None:
+    """A starting_point address without any edges is the documented
+    "anchor only" case (matches _MINIMAL_SPEC). It must NOT be flagged
+    as stray — that's the explicit opt-out."""
+    call_result = await _call(
+        _mcp(),
+        {
+            "name": "anchor-only",
+            "default_network": "btc",
+            "spec": {
+                "addresses": [{"id": "addrA", "starting_point": True}],
+                "txs": [],
+                "agg_edges": [],
+            },
+        },
+    )
+    warnings = _structured(call_result)["summary"]["warnings"]
+    assert not any("are not referenced" in w for w in warnings), warnings
 
 
 async def test_embedded_resource_carries_blob_with_filename_uri() -> None:
@@ -379,9 +744,7 @@ async def test_embedded_resource_carries_blob_with_filename_uri() -> None:
             },
         },
     )
-    assert len(call_result.content) == 1
-    block = call_result.content[0]
-    assert isinstance(block, mcp_types.EmbeddedResource)
+    block = _embedded(call_result)
     assert block.type == "resource"
     assert isinstance(block.resource, mcp_types.BlobResourceContents)
     # Filename should be embedded in the URI so the client can use it.
@@ -399,7 +762,9 @@ async def test_download_url_absent_without_file_store() -> None:
     download_url is null and the embedded resource is still present."""
     call_result = await _call(_mcp(), _MINIMAL_SPEC)
     assert _structured(call_result)["download_url"] is None
-    assert len(call_result.content) == 1
+    # Embedded resource + text fallback for content-only MCP hosts.
+    _embedded(call_result)
+    _text(call_result)
 
 
 async def test_download_url_present_with_file_store(
@@ -426,16 +791,20 @@ async def test_download_url_present_with_file_store(
     assert stored.filename == structured["filename"]
     # embed_resource defaults True -> the resource is still attached, and
     # its bytes are exactly what was stored.
-    assert len(call_result.content) == 1
-    block = call_result.content[0]
+    block = _embedded(call_result)
+    assert isinstance(block.resource, mcp_types.BlobResourceContents)
     assert stored.data == base64.b64decode(block.resource.blob)
+    # The text fallback should carry the download URL verbatim.
+    assert url in _text(call_result).text
 
 
 async def test_embed_resource_false_yields_link_only(
     make_file_store, monkeypatch
 ) -> None:
     """With embed_resource disabled the tool returns the link only — no
-    embedded resource in the content channel."""
+    embedded resource in the content channel, but the TextContent
+    fallback IS still emitted so MCP hosts that only render `content`
+    (Mistral Le Chat) still show the user the download URL."""
     monkeypatch.setattr(
         "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
         lambda: None,
@@ -444,8 +813,15 @@ async def test_embed_resource_false_yields_link_only(
     mcp = _mcp(_app_with_store(store, embed_resource=False))
     call_result = await _call(mcp, _MINIMAL_SPEC)
 
-    assert _structured(call_result)["download_url"] is not None
-    assert call_result.content == []
+    url = _structured(call_result)["download_url"]
+    assert url is not None
+    # No embedded blob in the content channel.
+    assert [
+        b for b in call_result.content if isinstance(b, mcp_types.EmbeddedResource)
+    ] == []
+    # But a single TextContent carrying the download URL.
+    text_block = _text(call_result)
+    assert url in text_block.text
 
 
 async def test_embed_resource_false_still_embeds_when_link_unavailable(
@@ -461,7 +837,8 @@ async def test_embed_resource_false_still_embeds_when_link_unavailable(
     call_result = await _call(mcp, _MINIMAL_SPEC)
 
     assert _structured(call_result)["download_url"] is None
-    assert len(call_result.content) == 1
+    _embedded(call_result)
+    _text(call_result)
 
 
 async def test_oversize_file_rejected_with_tool_error(make_file_store) -> None:

@@ -2,16 +2,22 @@
 
 import logging
 import os
+import sys
 
 logger = logging.getLogger(__name__)
 
-# Default Maven packages. On the iknaio cluster, hadoop-aws must match the
-# cluster's hadoop-common version (3.3.1). Override via spark_config
-# {"spark.jars.packages": "..."} if needed.
-SPARK_CASSANDRA_CONNECTOR = "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1"
-JODA_TIME = "joda-time:joda-time:2.10.10"
-DELTA_SPARK = "io.delta:delta-spark_2.12:3.2.1"
-HADOOP_AWS_DEFAULT = "org.apache.hadoop:hadoop-aws:3.3.1"
+# Default Maven packages, keyed by logical name. On the iknaio cluster,
+# hadoop-aws must match the cluster's hadoop-common version (3.3.1).
+# Override individual coordinates via the `spark_packages` config field, e.g.
+# {"hadoop_aws": "org.apache.hadoop:hadoop-aws:3.3.4"}; or replace the whole
+# list via spark_config {"spark.jars.packages": "..."} (applied last, wins).
+# hadoop_aws is only added to the package list when s3 credentials are present.
+DEFAULT_SPARK_PACKAGES = {
+    "cassandra_connector": "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
+    "joda_time": "joda-time:joda-time:2.10.10",
+    "delta_spark": "io.delta:delta-spark_2.12:3.2.1",
+    "hadoop_aws": "org.apache.hadoop:hadoop-aws:3.3.1",
+}
 
 
 def create_spark_session(
@@ -22,6 +28,7 @@ def create_spark_session(
     cassandra_password=None,
     s3_credentials=None,
     spark_config=None,
+    spark_packages=None,
 ):
     """Create and configure a SparkSession for reading Delta Lake and writing to Cassandra.
 
@@ -33,15 +40,31 @@ def create_spark_session(
     builder = SparkSession.builder.appName(app_name)
 
     if local:
+        # In client mode the driver JVM is already running by the time the
+        # builder config is read, so `spark.driver.memory` set here is a no-op
+        # (see Spark docs). The heap must be set before launch via the
+        # launcher args. Set PYSPARK_SUBMIT_ARGS unless the user already did.
+        driver_memory = (spark_config or {}).get("spark.driver.memory", "8g")
+        if "PYSPARK_SUBMIT_ARGS" not in os.environ:
+            os.environ["PYSPARK_SUBMIT_ARGS"] = (
+                f"--driver-memory {driver_memory} pyspark-shell"
+            )
         builder = (
             builder.master("local[*]")
-            .config("spark.driver.memory", "4g")
+            .config("spark.driver.memory", driver_memory)
             .config("spark.sql.shuffle.partitions", "8")
         )
 
-    packages = [SPARK_CASSANDRA_CONNECTOR, JODA_TIME, DELTA_SPARK]
+    # Merge per-package overrides from config over the defaults, then select
+    # the packages to load. hadoop-aws is only needed when reading from s3.
+    coords = {**DEFAULT_SPARK_PACKAGES, **(spark_packages or {})}
+    packages = [
+        coords["cassandra_connector"],
+        coords["joda_time"],
+        coords["delta_spark"],
+    ]
     if s3_credentials:
-        packages.append(HADOOP_AWS_DEFAULT)
+        packages.append(coords["hadoop_aws"])
 
     builder = (
         builder.config("spark.jars.packages", ",".join(packages))
@@ -126,10 +149,15 @@ def create_spark_session(
             builder = builder.config(key, value)
 
     # PySpark's SparkContext reads PYSPARK_PYTHON from os.environ (not from
-    # Spark config) to determine which Python binary workers use. Mirror the
-    # spark.pyspark.python config value to the env var so it actually works.
+    # Spark config) to pick the worker Python. If it is unset the workers fall
+    # back to `python3` on PATH, which under `uv run` is NOT the venv — so they
+    # can't import graphsenselib and UDFs fail with ModuleNotFoundError. Default
+    # the worker interpreter to the driver's (sys.executable); an explicit
+    # spark.pyspark.python or a pre-set PYSPARK_PYTHON still wins.
     if spark_config and "spark.pyspark.python" in spark_config:
         os.environ["PYSPARK_PYTHON"] = spark_config["spark.pyspark.python"]
+    else:
+        os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
 
     spark = builder.getOrCreate()
     logger.info(f"SparkSession created: {app_name} (local={local})")

@@ -4,12 +4,15 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastmcp import FastMCP
+from mcp.types import Icon
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import RedirectResponse
 from starlette.routing import Route
 
+from graphsenselib import __version__ as gs_version
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
+from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
 from graphsenselib.mcp.tools import register_custom_tools
 
@@ -37,13 +40,39 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     route_map_fn = make_route_map_fn(curation)
     component_fn = make_component_fn(curation)
 
+    # serverInfo extras advertised in the initialize handshake, forwarded
+    # through from_fastapi's **settings to the FastMCP constructor. Both
+    # default to the bundled Iknaio branding (icon = the docs favicon) and can
+    # be overridden or suppressed via config. Note: not all hosts read `icons`
+    # (e.g. Mistral derives the connector icon from the origin favicon instead).
+    icon_src = config.resolved_icon_url()
+    icons = None
+    if icon_src:
+        sizes: list[str] | None = [str(s) for s in (config.icon_sizes or "").split()]
+        sizes = sizes or None
+        icons = [
+            Icon(
+                src=icon_src,
+                mimeType=config.icon_mime_type,
+                sizes=sizes,
+            )
+        ]
+
     mcp = FastMCP.from_fastapi(
         app=app,
         name="graphsense-mcp",
+        version=gs_version,
         instructions=config.resolved_instructions(),
         route_map_fn=route_map_fn,
         mcp_component_fn=component_fn,
+        website_url=config.website_url or None,
+        icons=icons,
     )
+
+    # Surface unhandled tool/resource/prompt exceptions to the graphsenselib.mcp
+    # logger so the same handlers the REST app uses for incident notifications
+    # (Slack/SMTP, set up in web/app.py:setup_logging) fire for MCP failures too.
+    mcp.add_middleware(ErrorLoggingMiddleware())
 
     stack = AsyncExitStack()
     register_custom_tools(mcp, app, curation, config, stack)

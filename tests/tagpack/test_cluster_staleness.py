@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-pytest.importorskip("yamlinclude", reason="PyYAML is required for tagpack tests")
+pytest.importorskip("yaml_include", reason="PyYAML is required for tagpack tests")
 
 from graphsenselib.tagpack.cli import check_cluster_mapping_staleness
 

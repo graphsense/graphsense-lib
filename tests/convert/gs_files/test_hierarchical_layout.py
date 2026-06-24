@@ -304,6 +304,61 @@ def test_shared_tx_averages_all_endpoints() -> None:
     assert txs["peel"][1] == expected
 
 
+def test_multi_tx_edge_de_overlaps_into_a_vertical_strip() -> None:
+    """A single agg edge that carries N transactions used to stack all N
+    txs at the same (column-x, midpoint-y) — visually invisible past the
+    first. They must now be spread along y around the midpoint, with no
+    two ending at the same (x, y).
+    """
+    spec = {
+        "addresses": [
+            {"id": "root", "starting_point": True},
+            {"id": "dest"},
+        ],
+        "txs": [{"id": f"tx{i}"} for i in range(8)],
+        "agg_edges": [
+            {"a": "root", "b": "dest", "tx_ids": [f"tx{i}" for i in range(8)]},
+        ],
+    }
+    out = apply_hierarchical_layout(spec)
+    txs = _xy_by_id(out["txs"])
+    positions = [txs[f"tx{i}"] for i in range(8)]
+    # Same column (the edge spans one BFS hop).
+    assert len({x for x, _ in positions}) == 1
+    # No two txs share a coordinate.
+    assert len(set(positions)) == 8
+
+
+def test_singleton_tx_landing_on_a_pile_spread_slot_is_pulled_into_the_pile() -> None:
+    """The pathological case from the Internet Archive → Coinbase/Kraken
+    spec: a multi-tx edge's spread positions extend beyond the original
+    snap point, occasionally landing exactly where a singleton edge's
+    midpoint would sit. The de-overlap step must run iteratively so the
+    singleton joins the pile instead of collapsing onto a spread slot.
+    """
+    # Three siblings of root: two are leaves on each side (singletons),
+    # the middle one is the target of a 5-tx edge. The 5-tx pile spreads
+    # wide enough to brush against the singleton midpoints.
+    spec = {
+        "addresses": [
+            {"id": "root", "starting_point": True},
+            {"id": "top"},
+            {"id": "mid"},
+            {"id": "bot"},
+        ],
+        "txs": [{"id": f"t{i}"} for i in range(7)],
+        "agg_edges": [
+            {"a": "root", "b": "top", "tx_ids": ["t0"]},
+            {"a": "root", "b": "mid", "tx_ids": ["t1", "t2", "t3", "t4", "t5"]},
+            {"a": "root", "b": "bot", "tx_ids": ["t6"]},
+        ],
+    }
+    out = apply_hierarchical_layout(spec)
+    txs = _xy_by_id(out["txs"])
+    positions = [txs[f"t{i}"] for i in range(7)]
+    assert len(set(positions)) == 7, f"overlaps: {positions}"
+
+
 def test_multiline_label_widens_row_spacing() -> None:
     """A node whose label wraps to multiple lines pushes its column
     neighbours apart so the label text does not overlap them."""

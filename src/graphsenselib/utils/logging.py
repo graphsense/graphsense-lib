@@ -114,6 +114,12 @@ def configure_logging(loglevel):
         handlers=handlers,
     )
 
+    # py4j logs every JVM<->Python call at DEBUG ("Answer received: ...",
+    # "Command to send: ..."), which floods verbose PySpark runs with no useful
+    # signal. Pin it to INFO regardless of our verbosity so real logs stay
+    # readable; py4j warnings/errors still surface.
+    logging.getLogger("py4j").setLevel(logging.INFO)
+
     if loglevel <= logging.DEBUG:
         logger.debug("Logging set to verbose mode.")
         # Suppress cassandra driver logs to avoid interleaving with performance logs

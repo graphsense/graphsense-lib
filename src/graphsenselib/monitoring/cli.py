@@ -6,7 +6,11 @@ import click
 from ..cli.common import out_file, require_currency, require_environment
 from ..config import get_config
 from ..utils.console import console
-from .monitoring import DbSummaryRecord, get_db_summary_record, is_raw_behind_schedule
+from .monitoring import (
+    DbSummaryRecord,
+    check_raw_ingest_staleness,
+    get_db_summary_record,
+)
 from .notifications import send_msg_to_topic
 
 
@@ -49,22 +53,13 @@ def monitor_raw_ingest(env, currency, threshold, topic, dry_run):
     """
     config = get_config()
     if currency is None:
-        # create rows for all configured currencies
-        records = [
-            (currency_config, is_raw_behind_schedule(env, currency_config, threshold))
-            for currency_config in config.get_environment(
-                env
-            ).get_configured_currencies()
-        ]
+        # check all configured currencies
+        networks = config.get_environment(env).get_configured_currencies()
     else:
-        records = [(currency, is_raw_behind_schedule(env, currency, threshold))]
+        networks = [currency]
 
-    for net, (bs, b, date) in records:
-        if bs:
-            msg = f"""WARNING: raw keyspace ingest {net} Last ingested block {(b,)} ({date}) older than {threshold} hours"""
-            print(msg)  # noqa T201
-            if not dry_run:
-                send_msg_to_topic(topic, msg)
+    for net in networks:
+        check_raw_ingest_staleness(env, net, threshold, topic=topic, dry_run=dry_run)
 
 
 @monitoring.command(

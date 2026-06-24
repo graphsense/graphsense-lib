@@ -3,7 +3,7 @@ import tempfile
 import pytest
 from click.testing import CliRunner
 
-pytest.importorskip("yamlinclude")
+pytest.importorskip("yaml_include")
 pytest.importorskip("rapidfuzz")
 
 from graphsenselib.tagpack.cli import tagpacktool_cli

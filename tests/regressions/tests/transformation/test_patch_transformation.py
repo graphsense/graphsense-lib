@@ -9,9 +9,9 @@ because the derived spend tables (``transaction_spending`` /
 ``transaction_spent_in``) are not window-local.
 
 Two paths per (account-)currency:
-1. Path FULL:    transformation run --start a --end b
-2. Path PATCH:   transformation run --start a --end m
-                 transformation run --start m+1 --end b --patch
+1. Path FULL:    transformation delta-to-raw --start a --end b
+2. Path PATCH:   transformation delta-to-raw --start a --end m
+                 transformation delta-to-raw --start m+1 --end b --patch
 
 Requires the same docker / minio / cassandra / node setup as the sibling
 ``test_transformation.py``.

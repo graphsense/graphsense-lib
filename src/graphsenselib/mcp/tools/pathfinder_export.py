@@ -25,17 +25,25 @@ import re
 from contextlib import AsyncExitStack
 from typing import Any, Literal, Optional
 
+import httpx
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools.base import ToolResult
 from fastmcp.utilities.types import File
+from mcp.types import TextContent
 from pydantic import BaseModel, ConfigDict, Field
 
 from graphsenselib.convert.gs_files import (
     apply_hierarchical_layout,
     builder_from_spec,
+)
+from graphsenselib.mcp.tools.consolidated import _make_client
+from graphsenselib.pathfinder import (
+    RestBackend,
+    verify_against_backend,
+    verify_structural,
 )
 from graphsenselib.web.file_store import FileTooLargeError
 
@@ -46,7 +54,13 @@ logger = logging.getLogger(__name__)
 # so a malformed spec is rejected at the boundary instead of producing
 # an unopenable .gs.
 _CURRENCY_PATTERN = re.compile(r"^[a-z0-9]{2,10}$")
-_ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{1,150}$")
+# Underscore is included so account-model sub-payment identifiers
+# (e.g. `<hash>_I948` for internal traces, `<hash>_T3` for token
+# transfers) pass validation. Both `_` and bare alphanumerics are
+# URL-safe (RFC 3986 unreserved), and the REST endpoint resolves
+# identifier strings natively — see the
+# `project_tx_endpoint_identifier_resolution` memory.
+_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]{1,150}$")
 # Filenames are derived from the user-supplied graph name; keep the
 # derived basename safe for any OS the client might save to.
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -101,7 +115,28 @@ class _AddressSpec(BaseModel):
 class _TxSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(description="Transaction hash on the given network.")
+    id: str = Field(
+        description=(
+            "Transaction identifier. On UTXO chains (BTC, BCH, LTC, ZEC) "
+            "use the bare `tx_hash` — there's nothing else to pass. On "
+            "account-model chains (ETH, TRX) a single on-chain transaction "
+            "can carry both the native transfer and one or more token / "
+            "internal sub-payments; the response carries an `identifier` "
+            "field for each. Two cases:\n"
+            "\n"
+            "  * For the native/base transfer, pass the bare `tx_hash` "
+            "    (simplest and what the validator expects most often).\n"
+            "  * To point at a SPECIFIC sub-payment (an internal trace or "
+            "    a token transfer), pass the corresponding `identifier` "
+            "    verbatim — it looks like `<hash>_I<n>` (internal) or "
+            "    `<hash>_T<n>` (token).\n"
+            "\n"
+            "Allowed characters: alphanumeric and underscore, 1-150 chars. "
+            "Anything else is a format error at the input boundary, NOT a "
+            "verify finding — do not toggle `verify` to work around a "
+            "format complaint."
+        )
+    )
     network: Optional[str] = Field(default=None)
     index: int = Field(
         default=0, description="Within-block index; almost always 0 for one-off txs."
@@ -164,6 +199,21 @@ class PathfinderSpec(BaseModel):
         default_factory=list,
         description="Aggregated address↔address relationships, optionally tx-mediated.",
     )
+    # Forgiving alias for the top-level `layout` argument. The model
+    # often nests layout inside `spec` because it reads as a graph-shape
+    # option; before this field existed that produced a Pydantic
+    # "extra_forbidden" error that the model couldn't recover from. When
+    # set here AND the top-level argument is the default ("auto"), the
+    # value here wins; otherwise the top-level argument wins.
+    layout: Optional[Literal["auto", "hierarchical", "columnar"]] = Field(
+        default=None,
+        description=(
+            "Layout name. This is also accepted as a top-level argument to "
+            "the tool, and the top-level argument is the preferred place — "
+            "but for backwards compatibility / agent forgiveness, putting "
+            "it here works too."
+        ),
+    )
 
 
 def _validate_currency(currency: str, *, field_name: str = "network") -> None:
@@ -173,7 +223,15 @@ def _validate_currency(currency: str, *, field_name: str = "network") -> None:
 
 def _validate_id(name: str, value: str) -> None:
     if not _ID_PATTERN.match(value):
-        raise ToolError(f"Invalid {name}: {value!r}")
+        # Make it clear this is a FORMAT complaint at input validation,
+        # not a verify finding about whether the value exists on chain
+        # — agents have re-tried with verify=false because the wording
+        # implied "verify rejected it".
+        raise ToolError(
+            f"{name} {value!r} has an invalid format (allowed: "
+            "alphanumeric and underscore, 1-150 chars). This is a "
+            "format check at the input boundary, NOT a verify finding."
+        )
 
 
 def _validate_spec(spec: PathfinderSpec, default_network: str) -> None:
@@ -215,77 +273,9 @@ def _should_use_hierarchical(spec: PathfinderSpec) -> bool:
     )
 
 
-# Cap how many unknown-ref ids we list in a single warning so a
-# malformed spec can't bloat the response. The truncation suffix tells
-# the agent how many more there were.
-_WARNING_REF_LIMIT = 10
-
-
-def _collect_warnings(spec: PathfinderSpec) -> list[str]:
-    """Surface common spec shapes that produce a syntactically valid .gs
-    file but visually wrong / empty pathfinder output.
-
-    These are warnings, not errors: sometimes the agent really does want
-    an abstract relationship graph with no txs. But silently shipping
-    a "no transactions appear" file (the historical failure mode) is
-    worse than telling the agent up front so it can fix and retry.
-    """
-    warnings: list[str] = []
-    address_ids = {a.id for a in spec.addresses}
-    tx_ids = {t.id for t in spec.txs}
-
-    if spec.agg_edges and not spec.txs:
-        warnings.append(
-            f"spec has {len(spec.agg_edges)} agg_edge(s) but no txs were "
-            "provided; pathfinder will show abstract address-to-address "
-            "links only (no transactions render). Populate `txs` and "
-            "reference the hashes from `agg_edges.tx_ids` to make "
-            "transactions appear."
-        )
-
-    edges_without_tx_ids = sum(1 for e in spec.agg_edges if not e.tx_ids)
-    if edges_without_tx_ids and spec.txs:
-        warnings.append(
-            f"{edges_without_tx_ids} of {len(spec.agg_edges)} agg_edge(s) "
-            "have no tx_ids; those edges will render as abstract a↔b lines "
-            "and the txs you provided will not be tied to them."
-        )
-
-    unknown_tx: list[str] = []
-    seen_tx: set[str] = set()
-    for e in spec.agg_edges:
-        for tid in e.tx_ids or []:
-            if tid not in tx_ids and tid not in seen_tx:
-                unknown_tx.append(tid)
-                seen_tx.add(tid)
-    if unknown_tx:
-        shown = unknown_tx[:_WARNING_REF_LIMIT]
-        more = len(unknown_tx) - len(shown)
-        suffix = f" (+{more} more)" if more > 0 else ""
-        warnings.append(
-            "agg_edge.tx_ids references tx hash(es) not in `txs`: "
-            f"{', '.join(shown)}{suffix}. Add them to `txs` or remove the "
-            "references."
-        )
-
-    unknown_addr: list[str] = []
-    seen_addr: set[str] = set()
-    for e in spec.agg_edges:
-        for endpoint in (e.a, e.b):
-            if endpoint not in address_ids and endpoint not in seen_addr:
-                unknown_addr.append(endpoint)
-                seen_addr.add(endpoint)
-    if unknown_addr:
-        shown = unknown_addr[:_WARNING_REF_LIMIT]
-        more = len(unknown_addr) - len(shown)
-        suffix = f" (+{more} more)" if more > 0 else ""
-        warnings.append(
-            "agg_edge endpoints reference address(es) not in `addresses`: "
-            f"{', '.join(shown)}{suffix}. Add them to `addresses` or fix the "
-            "typo."
-        )
-
-    return warnings
+# The structural and backend-aware verifiers live in
+# `graphsenselib.pathfinder`. This module only adapts the MCP pydantic
+# spec to the dict shape they expect.
 
 
 class _PathfinderBuildSummary(BaseModel):
@@ -308,12 +298,42 @@ class _PathfinderBuildResult(BaseModel):
     summary: _PathfinderBuildSummary
 
 
+async def _run_verifier(
+    spec_dict: dict[str, Any],
+    default_network: str,
+    app: FastAPI,
+) -> list[str]:
+    """Backend-aware checks for the build tool. Wraps
+    :func:`verify_against_backend` with the existing MCP httpx client
+    lifecycle and downgrades transport errors to a single "verifier
+    unavailable" warning — the file is structurally valid, so a backend
+    hiccup shouldn't sink the call."""
+    client = _make_client(app)
+    try:
+        async with client:
+            backend = RestBackend(client)
+            return await verify_against_backend(
+                spec_dict, default_network=default_network, backend=backend
+            )
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        logger.warning(
+            "build_pathfinder_file: backend verifier failed (%s); "
+            "shipping file without backend-aware warnings",
+            exc,
+        )
+        return [
+            "backend verifier unavailable; backend-aware checks were "
+            "skipped — structural checks still ran."
+        ]
+
+
 def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa: ARG001
     """Register the build_pathfinder_file tool on the given MCP instance.
 
-    Matches the (mcp, app, stack) signature of other consolidated tools
-    even though this one needs neither the FastAPI app (no REST fan-out)
-    nor the exit stack (no httpx client lifecycle).
+    Matches the (mcp, app, stack) signature of other consolidated tools.
+    The exit stack is unused — the build path holds no long-lived
+    resources — but ``app`` is used when ``verify=True`` to mint the
+    httpx client the verifier needs (see ``_run_verifier``).
     """
 
     @mcp.tool(tags={"gs_pathfinder", "gs_export"})
@@ -322,6 +342,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         default_network: str,
         spec: PathfinderSpec,
         layout: Literal["auto", "hierarchical", "columnar"] = "auto",
+        verify: bool = True,
     ) -> ToolResult:
         """Build a Pathfinder .gs save file from an investigation graph.
 
@@ -353,6 +374,14 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         transactions are shown for it. If you provide ``agg_edges`` but
         leave ``txs`` empty, the response includes a warning and the
         resulting .gs renders only abstract relationship lines.
+
+        For every tx you include, provide at least one source and one
+        destination address — i.e. add an ``agg_edge`` with the tx's
+        ``from``-address as ``a`` and the tx's ``to``-address as ``b``,
+        with the tx hash in ``tx_ids``. Optional but strongly
+        recommended for proper visualisation: a tx not referenced from
+        any ``agg_edge`` renders as a floating node, and on ETH the
+        renderer can silently drop edges whose tx node is off-line.
 
         Labels — keep ``label`` (on addresses and txs) for case context
         the UI cannot already show. Pathfinder renders attribution tags
@@ -389,6 +418,17 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 starting_point is set, else columnar. "hierarchical" forces
                 BFS-by-hop layout; "columnar" forces the GsBuilder default
                 (addresses, txs, side-aware columns).
+            verify: When True (the default), additionally cross-check
+                the spec against the backend: every address and tx hash
+                is looked up, and each agg_edge.tx_ids reference is
+                verified to actually mediate the claimed a↔b
+                relationship on chain. Findings are appended to
+                ``summary.warnings`` and to the text content block.
+                Adds N+M backend calls (capped by an internal
+                concurrency limit). Pass False to skip for fast
+                iteration while drafting; backend hiccups during verify
+                are downgraded to a soft warning so a flaky backend
+                cannot sink a structurally valid file.
 
         Returns:
             A tool result whose structured content carries
@@ -404,6 +444,13 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
             relay the file's contents.
         """
         _validate_spec(spec, default_network)
+
+        # If the caller put `layout` inside `spec` instead of at top
+        # level (a common LLM misplacement), respect it as long as the
+        # top-level arg is the default ("auto"). Explicit top-level
+        # always wins.
+        if layout == "auto" and spec.layout is not None:
+            layout = spec.layout
 
         chosen = layout
         if chosen == "auto":
@@ -475,7 +522,29 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 name=filename.removesuffix(".gs"),
                 format="gs",
             ).to_resource_content(mime_type="application/octet-stream")
-            content = [file_resource]
+            content.append(file_resource)
+        # Always include a TextContent block so MCP hosts that only
+        # render `content` (and ignore `structured_content`) — Mistral Le
+        # Chat is the known offender — show the user something usable.
+        warnings = verify_structural(spec_dict)
+        if verify:
+            warnings.extend(await _run_verifier(spec_dict, default_network, app))
+        if download_url is not None:
+            text = f"Pathfinder file `{filename}` is ready. Download: {download_url}"
+        else:
+            text = (
+                f"Pathfinder file `{filename}` is ready (embedded in this "
+                f"response; no download link configured)."
+            )
+        # Fold warnings into the text block too: hosts that drop
+        # `structured_content` (Mistral Le Chat) otherwise never see them,
+        # and silently shipping a broken .gs is the exact failure mode
+        # these warnings exist to prevent.
+        if warnings:
+            text += "\n\nWarnings — fix the spec and rebuild:\n" + "\n".join(
+                f"- {w}" for w in warnings
+            )
+        content.append(TextContent(type="text", text=text))
 
         result = _PathfinderBuildResult(
             filename=filename,
@@ -486,7 +555,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 n_agg_edges=len(spec.agg_edges),
                 layout=chosen,
                 byte_size=len(payload),
-                warnings=_collect_warnings(spec),
+                warnings=warnings,
             ),
         )
         return ToolResult(

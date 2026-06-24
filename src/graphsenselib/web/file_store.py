@@ -6,20 +6,22 @@ instead of streaming the whole payload back inline. Files live in Redis with a
 TTL, so the store works correctly across multiple REST workers and cleans up
 after itself.
 
-The download URL carries an unguessable random token as its only credential
-(256 bits of CSPRNG entropy). It is therefore safe to expose the ``/download``
-route without API-key auth — which is required, since a plain browser click
-cannot send an API key.
+The download URL carries an unguessable random token (256 bits of CSPRNG
+entropy) — i.e. possession of the URL IS the authorization, so the URL
+must be treated as a bearer credential by anything that hands it out.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from typing import Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 from starlette.requests import Request
+
+logger = logging.getLogger(__name__)
 
 
 class FileTooLargeError(Exception):
@@ -140,18 +142,39 @@ class RedisFileStore:
 
     def url_for(self, request: Request, token: str) -> str:
         path = f"{self._download_path}/{token}"
-        if self._base_url:
-            return f"{self._base_url}{path}"
-        host = (
+        # Compute the header-derived values up front so the diagnostic
+        # below can show what they would have produced, even when
+        # base_url is set and short-circuits the actual return.
+        header_host = (
             _first_header_value(request.headers.get("x-forwarded-host"))
             or request.headers.get("host")
             or request.url.netloc
         )
-        scheme = (
+        header_scheme = (
             _first_header_value(request.headers.get("x-forwarded-proto"))
             or request.url.scheme
         )
-        return f"{scheme}://{host}{path}"
+        final_url = (
+            f"{self._base_url}{path}"
+            if self._base_url
+            else f"{header_scheme}://{header_host}{path}"
+        )
+        logger.warning(
+            "file_store url_for: "
+            "xf-proto=%r xf-host=%r host=%r request.url.scheme=%r "
+            "netloc=%r base_url=%r header_derived=%s://%s%s -> %s",
+            request.headers.get("x-forwarded-proto"),
+            request.headers.get("x-forwarded-host"),
+            request.headers.get("host"),
+            request.url.scheme,
+            request.url.netloc,
+            self._base_url,
+            header_scheme,
+            header_host,
+            path,
+            final_url,
+        )
+        return final_url
 
     async def aclose(self) -> None:
         await self._redis.aclose()

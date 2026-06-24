@@ -8,7 +8,7 @@ from collections import defaultdict
 from typing import Optional
 
 import yaml
-from yamlinclude import YamlIncludeConstructor
+import yaml_include
 
 from graphsenselib.tagpack import TagPackFileError, UniqueKeyLoader, ValidationError
 from graphsenselib.tagpack.utils import (
@@ -65,8 +65,17 @@ class ActorPack(object):
         apply_to_dict_field(self.contents, "lastmod", try_parse_date, fail=False)
 
     def load_from_file(uri, pathname, schema, taxonomies, header_dir=None):
-        YamlIncludeConstructor.add_to_loader_class(
-            loader_class=UniqueKeyLoader, base_dir=header_dir
+        # Resolution order matches TagPack.load_from_file: explicit
+        # header_dir, then walk-up to the tagpack repo root, then
+        # None (pyyaml-include's CWD-relative default, preserved for
+        # backwards compatibility).
+        from graphsenselib.tagpack.tagpack import find_pack_root
+
+        include_base = header_dir or find_pack_root(pathname)
+        yaml.add_constructor(
+            "!include",
+            yaml_include.Constructor(base_dir=include_base),
+            UniqueKeyLoader,
         )
 
         if not os.path.isfile(pathname):
@@ -360,7 +369,12 @@ class Actor(object):
         # normal yaml syntax which is now converted to a json string
         # of directly as json string.
         if isinstance(self.contents.get("context", None), dict):
-            apply_to_dict_field(self.contents, "context", json.dumps, fail=True)
+            apply_to_dict_field(
+                self.contents,
+                "context",
+                lambda c: json.dumps(c, default=str),
+                fail=True,
+            )
 
     @staticmethod
     def from_contents(contents, actorpack):

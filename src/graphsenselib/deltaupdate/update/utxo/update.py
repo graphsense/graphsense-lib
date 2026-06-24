@@ -9,6 +9,7 @@ from graphsenselib.config import is_fresh_clustering_enabled
 from graphsenselib.datatypes import DbChangeType, EntityType
 from graphsenselib.db import AnalyticsDb, DbChange
 from graphsenselib.db.analytics import ApplyChangesResult
+from graphsenselib.db.parallel import worker_apply_changes
 from graphsenselib.deltaupdate.update.abstractupdater import (
     TABLE_NAME_DELTA_HISTORY,
     UpdateStrategy,
@@ -1206,6 +1207,7 @@ def apply_changes(
     changes: List[DbChange],
     pedantic: bool,
     try_atomic_writes: bool,
+    pool=None,
 ):
     """Apply a list of db-changes to the database. Changes are applied
     atomically and in order.
@@ -1215,6 +1217,11 @@ def apply_changes(
         changes (List[DbChange]): List of changes
         pedantic (bool): Validate changes before applying
         try_atomic_writes (bool): Attempt atomic batch writes first
+        pool (ParallelDbPool): When given (and try_atomic_writes is False),
+            shard the upserts across worker processes instead of writing
+            from this process. Safe because every change targets a distinct
+            row (guaranteed by the upstream delta compression) and each
+            worker reuses the same retry logic.
     Returns:
         None: Nothing
 
@@ -1255,6 +1262,13 @@ def apply_changes(
             [f"{get_table_abbrev(t)}: {action_str}" for t, action_str in t_actions]
         )
         logger.info(short_summary)
+
+    if pool is not None and not try_atomic_writes:
+        with LoggerScope.debug(logger, "Applying changes via worker pool") as _:
+            for result in pool.map_chunked(worker_apply_changes, changes):
+                if result.warning_text is not None:
+                    _notify_db_retries(result, len(changes))
+        return
 
     with LoggerScope.debug(logger, "Applying changes") as _:
         try:
@@ -1299,8 +1313,10 @@ class UpdateStrategyUtxo(UpdateStrategy):
         application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
+        wal_enabled: bool = False,
     ):
         super().__init__(db, currency, forward_fill_rates=forward_fill_rates)
+        self._wal_enabled = wal_enabled
         crash_file = (
             "/tmp/utxo_deltaupdate_"
             f"{self._db.raw.get_keyspace()}_{self._db.transformed.get_keyspace()}"
@@ -1323,9 +1339,17 @@ class UpdateStrategyUtxo(UpdateStrategy):
     def persist_updater_progress(self):
         if self.changes is not None:
             atomic = ApplicationStrategy.TX == self.application_strategy
+            # In BATCH mode self.changes carries data + bookkeeping; stage it
+            # durably before applying so a torn batch is replayed, not
+            # recomputed, on the next run. (TX mode applies per-tx atomically
+            # inside process_batch and reaches here with self.changes == None.)
+            # No-op when the WAL is disabled.
+            self._stage_wal(self.changes, [])
             apply_changes(
                 self._db, self.changes, self._pedantic, try_atomic_writes=atomic
             )
+            if self._wal_enabled:
+                self.wal.clear()
             self.changes = None
         self._time_last_batch = time.time() - self._batch_start_time
 

@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -42,6 +42,15 @@ class CassandraConfig(BaseSettings):
     consistency_level: str = Field(
         default="LOCAL_ONE", description="Cassandra consistency level"
     )
+    consistency_level_fallback: bool = Field(
+        default=False,
+        description=(
+            "If true and consistency_level=LOCAL_QUORUM, allow the read path "
+            "to downgrade to LOCAL_ONE on the first Unavailable / ReadTimeout "
+            "when at least one replica is alive. Lets the web tier survive "
+            "rolling restarts on RF=2 at the cost of read-after-write guarantees."
+        ),
+    )
 
     strict_data_validation: bool = Field(
         default=True, description="Enable strict data validation"
@@ -55,9 +64,30 @@ class CassandraConfig(BaseSettings):
         default=False, description="Use legacy address transaction ordering"
     )
 
-    cross_chain_pubkey_mapping_keyspace: Optional[str] = Field(
-        default="pubkey", description="Keyspace for cross-chain public key mapping"
+    cross_chain_pubkey_mapping_keyspace: Optional[Union[str, List[str]]] = Field(
+        default="pubkey",
+        description=(
+            "Keyspace(s) the REST API READS cross-chain pubkey→address mappings "
+            "from. Defaults to the legacy 'pubkey' keyspace. The pubkey-update "
+            "job writes to a fresh keyspace by default (pubkey_v2); point this "
+            "there once that data is validated, or set to null to disable the "
+            "lookup. May also be a LIST of keyspaces (e.g. [pubkey_v2, pubkey]) "
+            "— the reader looks the address up in each and merges the derived "
+            "addresses, so the legacy keyspace can still contribute keys the new "
+            "pipeline cannot reproduce (e.g. doge-sourced). Only keyspaces that "
+            "actually contain a 'pubkey_by_address' table are used; the feature "
+            "auto-enables if at least one does."
+        ),
     )
+
+    def get_cross_chain_pubkey_keyspaces(self) -> List[str]:
+        """Normalise cross_chain_pubkey_mapping_keyspace to a list of keyspaces."""
+        ks = self.cross_chain_pubkey_mapping_keyspace
+        if ks is None:
+            return []
+        if isinstance(ks, str):
+            return [ks]
+        return list(ks)
 
     ignore_traces_not_found_in_list_txs: bool = Field(
         default=True,

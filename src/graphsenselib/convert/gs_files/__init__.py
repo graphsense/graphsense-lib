@@ -17,6 +17,8 @@ from .encoder import (
     apply_hierarchical_layout,
     builder_from_spec,
     encode_gs_payload,
+    normalize_address_id,
+    normalize_tx_id,
 )
 from .parser import (
     Color,
@@ -59,6 +61,8 @@ __all__ = [
     "encode_gs_payload",
     "lzw_pack",
     "lzw_unpack",
+    "normalize_address_id",
+    "normalize_tx_id",
     "structure",
     "summarize",
     "to_jsonable",
