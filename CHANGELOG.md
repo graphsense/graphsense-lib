@@ -10,20 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
+## [2.14.6] - 2026-06-24
 
 ### Library
 
 #### Added
 - **`recover_base58_case` recovers the original letter-casing of a base58check string whose case was lost** (e.g. an address that was upper- or lower-cased). base58check carries a 4-byte SHA256d checksum and SHA256 is not invertible, so there is no algebraic shortcut: `graphsenselib.utils.address.recover_base58_case` enumerates the valid case variants of each letter and returns the first one whose checksum is intact. The search is pruned to genuinely case-ambiguous characters (digits and the asymmetric `i`/`o`/`l` are fixed) and stops at the first match (the 32-bit checksum makes a hit effectively unique), so a typical 34-char address (~2^24..2^28 variants) resolves in seconds to minutes. Companion helpers `iter_base58_case_recovery` (lazy generator of all matches) and `count_base58_case_candidates` (search-space size) are also exported; a `max_candidates` guard prevents accidental runaway searches. Applies to base58check only — bech32 (`bc1…`, `ltc1…`) is spec-defined as single-case so there is nothing to recover.
 
-### Web API + Python client
+#### Fixed
+- **Cross-chain pubkey lookups no longer surface Bitcoin Cash addresses in `bitcoincash:` CashAddr form.** BCH addresses were materialized into the `pubkey_by_address` dataset in the modern CashAddr encoding (e.g. `bitcoincash:qqtmf0v6...`), while the rest of the system keys BCH addresses by their legacy base58 form (`13AM4VW2...`, ingest normalizes CashAddr → legacy). The two encodings of the same address showed up as duplicate graph nodes in `GET /{network}/addresses/{address}/related?address_relation_type=pubkey`. The reader (`get_cross_chain_pubkey_related_addresses`) now normalizes every derived address to its canonical user form (CashAddr → legacy base58 for BCH; a no-op for already-canonical networks) and dedupes on `(currency, address)`, so the encodings collapse to a single node. No dataset rebuild is required — the fix is applied per request on read.
+- **`GET /{network}/addresses/{address}/neighbors?only_ids=...` returned 500 on an invalid `only_ids` value for trx.** A garbage TRON id (e.g. `only_ids=dummy`) canonicalized via `validate=False` to empty bytes `b""`, which `bytes_to_hex` maps to `None`, crashing `scrub_prefix` with `AttributeError: 'NoneType' object has no attribute 'startswith'`. An empty/unknown id is now treated as a not-found neighbor and silently dropped (matching the existing behavior for valid-but-unknown ids and for utxo networks), so `get_address_id` short-circuits to `None` before issuing an empty-partition-key query to Cassandra.
+
+### Web API + Python client (webapi-2.13.5)
 
 #### Added
 - **API docs now carry an MCP authentication note.** The "AI assistant access (MCP)" section of the OpenAPI description ends with an authentication note telling users the OAuth client ID (`iknaio-mcp`) to use when adding the MCP connector. The text is the new `docs_mcp_auth_note` config field (env `GSREST_DOCS_MCP_AUTH_NOTE`); override it for a different client ID or set it to an empty string to omit the note (e.g. deployments without OAuth).
-
-#### Fixed
-- **`GET /{network}/addresses/{address}/neighbors?only_ids=...` returned 500 on an invalid `only_ids` value for trx.** A garbage TRON id (e.g. `only_ids=dummy`) canonicalized via `validate=False` to empty bytes `b""`, which `bytes_to_hex` maps to `None`, crashing `scrub_prefix` with `AttributeError: 'NoneType' object has no attribute 'startswith'`. An empty/unknown id is now treated as a not-found neighbor and silently dropped (matching the existing behavior for valid-but-unknown ids and for utxo networks), so `get_address_id` short-circuits to `None` before issuing an empty-partition-key query to Cassandra.
 
 ## [2.14.5] - 2026-06-22
 
