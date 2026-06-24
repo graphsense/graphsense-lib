@@ -12,6 +12,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Library
+
+#### Added
+- **`recover_base58_case` recovers the original letter-casing of a base58check string whose case was lost** (e.g. an address that was upper- or lower-cased). base58check carries a 4-byte SHA256d checksum and SHA256 is not invertible, so there is no algebraic shortcut: `graphsenselib.utils.address.recover_base58_case` enumerates the valid case variants of each letter and returns the first one whose checksum is intact. The search is pruned to genuinely case-ambiguous characters (digits and the asymmetric `i`/`o`/`l` are fixed) and stops at the first match (the 32-bit checksum makes a hit effectively unique), so a typical 34-char address (~2^24..2^28 variants) resolves in seconds to minutes. Companion helpers `iter_base58_case_recovery` (lazy generator of all matches) and `count_base58_case_candidates` (search-space size) are also exported; a `max_candidates` guard prevents accidental runaway searches. Applies to base58check only — bech32 (`bc1…`, `ltc1…`) is spec-defined as single-case so there is nothing to recover.
+
 ### Web API + Python client
 
 #### Added
