@@ -31,13 +31,20 @@ Matching is an exact join on the raw 21-byte (0x41-prefixed) address blob
 against the transformed ``address.address`` column, so it needs no knowledge of
 the address-prefix or bucket-size layout.
 
-Example
--------
-    uv run python scripts/backfill_trx_is_contract.py \
-        --raw-keyspace trx_raw \
-        --transformed-keyspace trx_transformed \
-        --cassandra-host db1:9042,db2:9042 \
-        --dry-run
+Connection / Spark details are read from ``graphsense.yaml`` (same convention as
+the scripts/pubkey/* jobs): ``--env`` selects the environment (Cassandra nodes +
+credentials and, with ``--currency``, the raw/transformed keyspace names) and
+``--spark-profile`` selects a ``spark_config`` profile.
+
+Example (run in the graphsense-lib image, like scripts/pubkey/*):
+
+    docker run --rm --network host \
+      -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml \
+      -v /path/to/graphsense.yaml:/graphsense.yaml:ro \
+      -v $PWD/scripts/backfill_trx_is_contract.py:/backfill_trx_is_contract.py:ro \
+      -v gs-backfill-ivy:/root/.ivy2 \
+      ghcr.io/graphsense/graphsense-lib:<tag> \
+      python /backfill_trx_is_contract.py --env <env> --local --dry-run
 
 Drop ``--dry-run`` to actually write. Reads the full (column-pruned) ``trace``,
 ``transaction`` and ``address`` tables once, so run it off-peak.
@@ -59,17 +66,30 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Backfill is_contract on TRX transformed addresses.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--raw-keyspace", required=True, help="TRX raw keyspace.")
+    p.add_argument("--env", required=True, help="graphsense.yaml environment.")
     p.add_argument(
-        "--transformed-keyspace", required=True, help="TRX transformed keyspace."
+        "--currency",
+        default="trx",
+        help="Currency key in the environment (only 'trx' is supported).",
     )
     p.add_argument(
-        "--cassandra-host",
-        default="localhost:9042",
-        help="Comma-separated host:port list.",
+        "--raw-keyspace",
+        default=None,
+        help="Override the raw keyspace (default: from env/currency).",
     )
-    p.add_argument("--username", default=None, help="Cassandra username (optional).")
-    p.add_argument("--password", default=None, help="Cassandra password (optional).")
+    p.add_argument(
+        "--transformed-keyspace",
+        default=None,
+        help="Override the transformed keyspace (default: from env/currency).",
+    )
+    p.add_argument(
+        "--spark-profile",
+        default="",
+        help=(
+            "spark_config profile to use (nested baseline+profiles form). "
+            "Empty (default) uses the default/baseline spark config."
+        ),
+    )
     p.add_argument(
         "--min-block",
         type=int,
@@ -135,17 +155,47 @@ def main(argv: list[str]) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    if args.currency != "trx":
+        raise SystemExit("This backfill only supports --currency trx.")
+
     from pyspark.sql import functions as F
 
+    from graphsenselib.config import get_config
     from graphsenselib.transformation.spark import create_spark_session
 
-    nodes = [h.strip() for h in args.cassandra_host.split(",") if h.strip()]
+    # Resolve connection / Spark details from graphsense.yaml (pubkey convention).
+    config = get_config()
+    env_config = config.get_environment(args.env)
+    keyspace = config.get_keyspace_config(args.env, args.currency)
+    if args.raw_keyspace is None:
+        args.raw_keyspace = keyspace.raw_keyspace_name
+    if args.transformed_keyspace is None:
+        args.transformed_keyspace = keyspace.transformed_keyspace_name
+
+    # Empty profile -> default/baseline spark config (mirrors scripts/pubkey/*).
+    spark_config = (
+        config.get_spark_config(args.spark_profile)
+        if args.spark_profile
+        else config.get_spark_config()
+    )
+
+    logger.info(
+        "env=%s currency=%s raw=%s transformed=%s nodes=%s",
+        args.env,
+        args.currency,
+        args.raw_keyspace,
+        args.transformed_keyspace,
+        env_config.cassandra_nodes,
+    )
+
     spark = create_spark_session(
-        app_name=f"backfill-trx-is-contract-{args.transformed_keyspace}",
+        app_name=f"backfill-trx-is-contract-{args.env}",
         local=args.local,
-        cassandra_nodes=nodes,
-        cassandra_username=args.username,
-        cassandra_password=args.password,
+        cassandra_nodes=env_config.cassandra_nodes,
+        cassandra_username=env_config.username,
+        cassandra_password=env_config.password,
+        spark_config=spark_config,
+        spark_packages=config.get_spark_packages(),
     )
 
     try:
