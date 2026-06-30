@@ -36,6 +36,16 @@ the scripts/pubkey/* jobs): ``--env`` selects the environment (Cassandra nodes +
 credentials and, with ``--currency``, the raw/transformed keyspace names) and
 ``--spark-profile`` selects a ``spark_config`` profile.
 
+Safety
+------
+The script is dry-run by default and writes nothing until ``--write`` is given.
+It only ever sets ``is_contract = true`` (it can never blank a field or un-flag
+a contract), it only touches rows that already exist in the ``address`` table
+(inner join), and it writes only the primary key + ``is_contract`` (a partial
+CQL upsert -- every other column is left untouched). The address match is an
+exact byte join, so the only failure mode is *under*-matching (writing nothing),
+never mis-flagging a different address.
+
 Example (run in the graphsense-lib image, like scripts/pubkey/*):
 
     docker run --rm --network host \
@@ -44,10 +54,11 @@ Example (run in the graphsense-lib image, like scripts/pubkey/*):
       -v $PWD/scripts/backfill_trx_is_contract.py:/backfill_trx_is_contract.py:ro \
       -v gs-backfill-ivy:/root/.ivy2 \
       ghcr.io/graphsense/graphsense-lib:<tag> \
-      python /backfill_trx_is_contract.py --env <env> --local --dry-run
+      python /backfill_trx_is_contract.py --env <env> --spark-profile <profile>
 
-Drop ``--dry-run`` to actually write. Reads the full (column-pruned) ``trace``,
-``transaction`` and ``address`` tables once, so run it off-peak.
+That is a dry run. Add ``--write`` to actually apply. Reads the full
+(column-pruned) ``trace``, ``transaction`` and ``address`` tables once, so run
+it off-peak.
 """
 
 from __future__ import annotations
@@ -103,9 +114,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Only scan raw rows with block_id <= this (full scan if unset).",
     )
     p.add_argument(
-        "--dry-run",
+        "--write",
         action="store_true",
-        help="Compute and report counts but do not write any updates.",
+        help=(
+            "Actually write the updates. Without this flag the script runs in "
+            "dry-run mode (the safe default): it computes and reports counts but "
+            "writes nothing."
+        ),
     )
     p.add_argument("--local", action="store_true", help="Run Spark in local[*] mode.")
     return p.parse_args(argv)
@@ -178,6 +193,10 @@ def main(argv: list[str]) -> int:
         if args.spark_profile
         else config.get_spark_config()
     )
+    # Defensive: never write a null/tombstone for any column. Our write only
+    # ever sets is_contract=true on existing rows and never carries a null, but
+    # this guarantees a null can never blank out a column even if the job changes.
+    spark_config = {**spark_config, "spark.cassandra.output.ignoreNulls": "true"}
 
     logger.info(
         "env=%s currency=%s raw=%s transformed=%s nodes=%s",
@@ -220,6 +239,17 @@ def main(argv: list[str]) -> int:
         updates = to_update.select(
             "address_id_group", "address_id", F.lit(True).alias("is_contract")
         ).cache()
+
+        # Hard safety guard: the write must carry ONLY the primary key plus
+        # is_contract. Any extra column here would be written to the address
+        # table and could overwrite real data. Fail loudly rather than risk it.
+        expected_cols = ["address_id_group", "address_id", "is_contract"]
+        if updates.columns != expected_cols:
+            raise SystemExit(
+                f"Refusing to proceed: write columns {updates.columns} != "
+                f"expected {expected_cols}."
+            )
+
         n_updates = updates.count()
         logger.info(
             "Transformed addresses needing is_contract=true: %d "
@@ -227,8 +257,11 @@ def main(argv: list[str]) -> int:
             n_updates,
         )
 
-        if args.dry_run:
-            logger.info("--dry-run set: not writing. Sample of pending updates:")
+        if not args.write:
+            logger.info(
+                "DRY RUN (default): writing nothing. Pass --write to apply. "
+                "Sample of pending updates:"
+            )
             updates.show(20, truncate=False)
             return 0
 
@@ -237,8 +270,15 @@ def main(argv: list[str]) -> int:
             return 0
 
         # Partial column write: only the primary key + is_contract are present,
-        # so the connector issues a CQL upsert that touches just is_contract and
-        # leaves every other column on the row untouched.
+        # so the connector issues a CQL upsert (INSERT of just these columns)
+        # that sets is_contract and leaves every other column on the row
+        # untouched. mode MUST be "append" -- "overwrite" would TRUNCATE the
+        # whole address table first. Never change this to overwrite.
+        logger.info(
+            "Writing is_contract=true to %s.address for %d rows ...",
+            args.transformed_keyspace,
+            n_updates,
+        )
         (
             updates.write.format(CASSANDRA_FORMAT)
             .options(keyspace=args.transformed_keyspace, table="address")
