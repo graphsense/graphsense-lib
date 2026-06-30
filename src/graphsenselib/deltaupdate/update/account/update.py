@@ -23,6 +23,7 @@ from graphsenselib.deltaupdate.update.account.createchanges import (
 )
 from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_balance_deltas,
+    get_contract_creation_deltas_trace,
     get_entity_transaction_updates_trace_token,
     get_entity_transactions_updates_tx,
     get_entity_updates_trace_token,
@@ -696,6 +697,15 @@ class UpdateStrategyAccount(UpdateStrategy):
                 )
 
                 entity_deltas += entity_deltas_tx
+
+                # Factory-deployed contracts only appear as 'create' traces (the
+                # top-level tx is a TriggerSmartContract with no
+                # receipt_contract_address), so flag them from the unfiltered
+                # successful traces. Value/tx-count accounting stays on the call
+                # traces above; this only adds is_contract=True.
+                entity_deltas += get_contract_creation_deltas_trace(
+                    traces_s, hash_to_id, currency
+                )
 
                 relation_updates_tx = [
                     relationdelta_from_transaction(tx, rates, currency)

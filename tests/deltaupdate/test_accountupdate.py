@@ -428,3 +428,56 @@ def test_token_with_eur_peg():
     assert float(euro_value) == 29.0
 
     assert decoded_transfer == check
+
+
+def test_trx_factory_contract_flagged_from_create_trace():
+    """A TRON contract deployed by a factory only shows up as a 'create' trace
+    (top-level tx is a TriggerSmartContract, so receipt_contract_address is
+    null). It must still be flagged as a contract via the trace."""
+    from graphsenselib.deltaupdate.update.account.createdeltas import (
+        get_contract_creation_deltas_trace,
+        is_contract_trace,
+    )
+    from graphsenselib.deltaupdate.update.account.modelsraw import Trace
+
+    created = b"\x7f[\xd5#Z\"\xeb\xe6\x7f\xf9\xc6\x19\x08&\x01'::\r;p"
+    tx_hash = b"\x09\xa0\x4e\x21"
+
+    create_trace = Trace(
+        block_id=65717331,
+        tx_hash=tx_hash,
+        trace_index=1,
+        from_address=b"\xc2-\xd1",
+        to_address=created,
+        value=0,
+        call_type="create",
+        status=1,
+    )
+    call_trace = Trace(
+        block_id=65717331,
+        tx_hash=tx_hash,
+        trace_index=2,
+        from_address=b"\xc2-\xd1",
+        to_address=created,
+        value=0,
+        call_type="call",
+        status=1,
+    )
+
+    assert is_contract_trace(create_trace, "TRX") is True
+    assert is_contract_trace(call_trace, "TRX") is False
+
+    deltas = get_contract_creation_deltas_trace(
+        [create_trace, call_trace], {tx_hash: 42}, "TRX"
+    )
+
+    assert len(deltas) == 1
+    delta = deltas[0]
+    assert delta.identifier == created
+    assert delta.is_contract is True
+    assert delta.first_tx_id == 42
+    # no value / tx-count side effects
+    assert delta.no_incoming_txs == 0
+    assert delta.no_outgoing_txs == 0
+    assert delta.total_received.value == 0
+    assert delta.total_spent.value == 0

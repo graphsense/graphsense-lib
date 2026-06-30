@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.14.7] - 2026-06-30
+
+### Library
+
+#### Fixed
+- **TRON factory-deployed contracts are now flagged with `is_contract=true`.** Contract detection for TRON only recognized contracts deployed by a top-level `CreateSmartContract` transaction (via `receipt_contract_address`). A contract deployed by a *factory* contract — where the top-level transaction is a `TriggerSmartContract` and the new contract appears only as an internal `create` trace — was never flagged (e.g. the PEPE TRC20 token `TMacq4TDUw5q8NFBwmbY4RLXvzvG5JTkvi`). `is_contract_trace` now detects TRON `create` traces (the adapter remaps the internal-tx `note` onto `call_type`), and the delta-update emits a minimal, value-free entity delta carrying only `is_contract=true` for the created address — value, tx-count and balance accounting stay on the call traces, unchanged. This brings the incremental Python delta-updater in line with the Spark transform (`computeContracts`), which already unioned trace- and tx-based creation detection. Takes effect for newly (re)processed blocks; to repair already-ingested keyspaces in place without a full re-transform, use the new `scripts/backfill_trx_is_contract.py` PySpark job (recomputes the contract-address set from the raw keyspace and flips only the `is_contract` column on the transformed `address` table; idempotent, supports `--dry-run`).
+
+### Web API + Python client (webapi-2.13.5)
+
+No changes.
+
 ## [2.14.6] - 2026-06-24
 
 ### Library

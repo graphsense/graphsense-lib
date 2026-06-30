@@ -323,10 +323,53 @@ def is_contract_transaction(tx: Transaction, currency: str) -> bool:
 def is_contract_trace(trace: Trace, currency: str) -> bool:
     if currency == "ETH":  # could improve this with the specific type of transaction
         return trace.trace_type == "create"
-    elif currency == "TRX":  # traces dont create contracts transactions do (in data)
-        return False
+    elif currency == "TRX":
+        # A top-level CreateSmartContract tx is handled in is_contract_transaction.
+        # Contracts deployed by a factory via an internal CREATE only show up as a
+        # 'create' trace (the TRX adapter remaps the internal-tx `note` field onto
+        # `call_type`), so detect those here.
+        return trace.call_type == "create"
     else:
         raise ValueError(f"Unknown currency {currency}")
+
+
+def get_contract_creation_deltas_trace(
+    traces: List[Trace],
+    hash_to_id: dict,
+    currency: str,
+) -> List[EntityDeltaAccount]:
+    """Flag addresses created by an internal CREATE trace as contracts.
+
+    On TRON a contract can be deployed by a factory contract: the top-level
+    transaction is a TriggerSmartContract (so it carries no
+    receipt_contract_address) and the new contract only appears as a 'create'
+    trace. The transaction-based detection in is_contract_transaction misses
+    these, so we emit a minimal, value-free entity delta that carries nothing
+    but is_contract=True for the created address. All value / tx-count / balance
+    accounting stays on the call traces (see only_call_traces), unaffected.
+    """
+    deltas = []
+    for trace in traces:
+        if trace.to_address is None or not is_contract_trace(trace, currency):
+            continue
+        tx_id = hash_to_id[trace.tx_hash]
+        deltas.append(
+            EntityDeltaAccount(
+                identifier=trace.to_address,
+                total_received=DeltaValue(0, [0, 0]),
+                total_spent=DeltaValue(0, [0, 0]),
+                total_tokens_received={},
+                total_tokens_spent={},
+                first_tx_id=tx_id,
+                last_tx_id=tx_id,
+                no_incoming_txs=0,
+                no_outgoing_txs=0,
+                no_incoming_txs_zero_value=0,
+                no_outgoing_txs_zero_value=0,
+                is_contract=True,
+            )
+        )
+    return deltas
 
 
 def get_entitydelta_from_transaction(
