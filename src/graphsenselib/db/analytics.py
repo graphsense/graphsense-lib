@@ -785,15 +785,6 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         )
         return {r.cluster_id: (r.no_addresses, r.min_address_id) for r in rows}
 
-    def is_fresh_clustering_empty(self) -> bool:
-        """Check if the fresh_address_cluster table has any rows."""
-        rows = list(
-            self.execute_raw_cql(
-                f"SELECT address_id FROM {self._keyspace}.fresh_address_cluster LIMIT 1"
-            )
-        )
-        return len(rows) == 0
-
     def get_exchange_rates_by_block(self, block) -> Iterable:
         return self.select_one("exchange_rates", where={"block_id": block})
 

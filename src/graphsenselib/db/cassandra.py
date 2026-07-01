@@ -603,23 +603,22 @@ class CassandraDb:
         timeout, and ``execute_concurrent_with_args`` keeps throughput up with
         bounded concurrency. Returns the flattened list of rows across all keys.
 
-        When ``group_column``/``bucket_size`` are given the table is bucketed on a
-        composite key ``(group_column, key_column)``; the query restricts both and
-        the bucket ``floor(key / bucket_size)`` is derived per key.
+        The table is bucketed on a composite key ``(group_column, key_column)``;
+        the query restricts both and the bucket ``floor(key / bucket_size)`` is
+        derived per key. ``group_column`` and ``bucket_size`` are required.
         """
         if not keys:
             return []
-        if group_column is not None:
-            stmt = self.session.prepare(
-                f"SELECT {select_columns} FROM {keyspace}.{table} "
-                f"WHERE {group_column} = ? AND {key_column} = ?"
+        if group_column is None or bucket_size is None:
+            raise ValueError(
+                "read_partitions_concurrent requires group_column and bucket_size "
+                "for the bucketed composite key"
             )
-            args = [(k // bucket_size, k) for k in keys]
-        else:
-            stmt = self.session.prepare(
-                f"SELECT {select_columns} FROM {keyspace}.{table} WHERE {key_column} = ?"
-            )
-            args = [(k,) for k in keys]
+        stmt = self.session.prepare(
+            f"SELECT {select_columns} FROM {keyspace}.{table} "
+            f"WHERE {group_column} = ? AND {key_column} = ?"
+        )
+        args = [(k // bucket_size, k) for k in keys]
         stmt.fetch_size = fetch_size
         results = execute_concurrent_with_args(
             self.session,
