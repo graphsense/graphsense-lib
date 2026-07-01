@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Added
+- **SunSwap V3 `PoolCreated` events are now decoded, restoring DEX-pair detection on TRON.** SunSwap V3 is TRON's main concentrated-liquidity DEX and a Uniswap V3 fork, but its factory appends a trailing `poolLength` field to the `PoolCreated` event. That extra parameter changes the event signature and therefore its `topic0`, so the log did not match the existing Uniswap V3 `PoolCreated` entry and was silently skipped. A dedicated ABI entry for the SunSwap V3 `topic0` (`0x20a108fa…`) is added to `log_signatures` in `datatypes/abi.py`; `token0`/`token1`/`fee` remain indexed and the extra `poolLength` field is decoded but unused, so `get_pair_from_decoded_log` (which keys on the `PoolCreated` name) now picks up SunSwap V3 pairs.
+
 ## [2.14.7] - 2026-06-30
 
 ### Library

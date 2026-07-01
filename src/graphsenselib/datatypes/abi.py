@@ -334,6 +334,25 @@ log_signatures = {
             "tags": ["uniswap_v3", "dex-pair-created"],
         },
     ],
+    # SunSwap V3 (TRON) is a Uniswap V3 fork, but its factory adds a trailing
+    # `poolLength` field to PoolCreated, changing the event signature and thus
+    # topic0. Without this entry TRON's main concentrated-liquidity DEX is
+    # missed. token0/token1/fee stay indexed; the extra param is decoded but
+    # unused by get_pair_from_decoded_log (which keys on the "PoolCreated" name).
+    "0x20a108faf9dc51ca2b459a109d08568e65a9cb87569b6b3a334c275d504ff94f": [
+        {
+            "name": "PoolCreated",
+            "inputs": [
+                {"name": "token0", "type": "address", "indexed": True},
+                {"name": "token1", "type": "address", "indexed": True},
+                {"name": "fee", "type": "uint24", "indexed": True},
+                {"name": "tickSpacing", "type": "int24", "indexed": False},
+                {"name": "pool", "type": "address", "indexed": False},
+                {"name": "poolLength", "type": "uint256", "indexed": False},
+            ],
+            "tags": ["sunswap_v3", "dex-pair-created"],
+        },
+    ],
     "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438": [
         {
             "name": "Initialize",
