@@ -21,6 +21,48 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Fixed
 - **v2 cluster-mapping feeder no longer fails on singleton addresses.** Fresh clustering persists only multi-member clusters, so an address absent from `fresh_address_cluster` is its own singleton (`cluster_id == address_id`, one member). The UTXO feeder left-joined `fresh_address_cluster` and tried to insert the resulting `NULL` `gs_cluster_id` into `address_cluster_mapping_v2` (NOT NULL violation); it now coalesces a missing `cluster_id` to the `address_id` (mirroring the account-model branch), a no-op for the legacy `address.cluster_id` path.
+- **REST cluster reads synthesize fresh-clustering singletons instead of 500ing.** Because fresh clustering stores only multi-member clusters, a singleton id has no `fresh_cluster_stats` row: `get_entity` now synthesizes the one-address entity, `get_address_entity_id` resolves the *fresh* cluster id (falling back to the `address_id`) rather than the stale legacy `address.cluster_id`, and `list_entities` restores singletons dropped from the bulk lookup, preserving input order and omitting only genuinely unknown ids (matching legacy behavior). UTXO only, active under `GRAPHSENSE_FRESH_CLUSTERING_ENABLED`.
+
+### Web API + Python client (webapi-2.13.5)
+
+No changes.
+
+## [2.14.7] - 2026-06-30
+
+### Library
+
+#### Fixed
+- **TRON factory-deployed contracts are now flagged with `is_contract=true`.** Contract detection for TRON only recognized contracts deployed by a top-level `CreateSmartContract` transaction (via `receipt_contract_address`). A contract deployed by a *factory* contract — where the top-level transaction is a `TriggerSmartContract` and the new contract appears only as an internal `create` trace — was never flagged (e.g. the PEPE TRC20 token `TMacq4TDUw5q8NFBwmbY4RLXvzvG5JTkvi`). `is_contract_trace` now detects TRON `create` traces (the adapter remaps the internal-tx `note` onto `call_type`), and the delta-update emits a minimal, value-free entity delta carrying only `is_contract=true` for the created address — value, tx-count and balance accounting stay on the call traces, unchanged. This brings the incremental Python delta-updater in line with the Spark transform (`computeContracts`), which already unioned trace- and tx-based creation detection. Takes effect for newly (re)processed blocks; to repair already-ingested keyspaces in place without a full re-transform, use the new `scripts/backfill_trx_is_contract.py` PySpark job (recomputes the contract-address set from the raw keyspace and flips only the `is_contract` column on the transformed `address` table via a partial CQL upsert; idempotent, dry-run by default with an explicit `--write` to apply, and reads connection/Spark details from `graphsense.yaml` like the `scripts/pubkey/*` jobs).
+
+### Web API + Python client (webapi-2.13.5)
+
+No changes.
+
+## [2.14.6] - 2026-06-24
+
+### Library
+
+#### Added
+- **`recover_base58_case` recovers the original letter-casing of a base58check string whose case was lost** (e.g. an address that was upper- or lower-cased). base58check carries a 4-byte SHA256d checksum and SHA256 is not invertible, so there is no algebraic shortcut: `graphsenselib.utils.address.recover_base58_case` enumerates the valid case variants of each letter and returns the first one whose checksum is intact. The search is pruned to genuinely case-ambiguous characters (digits and the asymmetric `i`/`o`/`l` are fixed) and stops at the first match (the 32-bit checksum makes a hit effectively unique), so a typical 34-char address (~2^24..2^28 variants) resolves in seconds to minutes. Companion helpers `iter_base58_case_recovery` (lazy generator of all matches) and `count_base58_case_candidates` (search-space size) are also exported; a `max_candidates` guard prevents accidental runaway searches. Applies to base58check only — bech32 (`bc1…`, `ltc1…`) is spec-defined as single-case so there is nothing to recover.
+
+#### Fixed
+- **Cross-chain pubkey lookups no longer surface Bitcoin Cash addresses in `bitcoincash:` CashAddr form.** BCH addresses were materialized into the `pubkey_by_address` dataset in the modern CashAddr encoding (e.g. `bitcoincash:qqtmf0v6...`), while the rest of the system keys BCH addresses by their legacy base58 form (`13AM4VW2...`, ingest normalizes CashAddr → legacy). The two encodings of the same address showed up as duplicate graph nodes in `GET /{network}/addresses/{address}/related?address_relation_type=pubkey`. The reader (`get_cross_chain_pubkey_related_addresses`) now normalizes every derived address to its canonical user form (CashAddr → legacy base58 for BCH; a no-op for already-canonical networks) and dedupes on `(currency, address)`, so the encodings collapse to a single node. No dataset rebuild is required — the fix is applied per request on read.
+- **`GET /{network}/addresses/{address}/neighbors?only_ids=...` returned 500 on an invalid `only_ids` value for trx.** A garbage TRON id (e.g. `only_ids=dummy`) canonicalized via `validate=False` to empty bytes `b""`, which `bytes_to_hex` maps to `None`, crashing `scrub_prefix` with `AttributeError: 'NoneType' object has no attribute 'startswith'`. An empty/unknown id is now treated as a not-found neighbor and silently dropped (matching the existing behavior for valid-but-unknown ids and for utxo networks), so `get_address_id` short-circuits to `None` before issuing an empty-partition-key query to Cassandra.
+
+### Web API + Python client (webapi-2.13.5)
+
+#### Added
+- **API docs now carry an MCP authentication note.** The "AI assistant access (MCP)" section of the OpenAPI description ends with an authentication note telling users the OAuth client ID (`iknaio-mcp`) to use when adding the MCP connector. The text is the new `docs_mcp_auth_note` config field (env `GSREST_DOCS_MCP_AUTH_NOTE`); override it for a different client ID or set it to an empty string to omit the note (e.g. deployments without OAuth).
+
+## [2.14.5] - 2026-06-22
+
+### Library
+
+#### Fixed
+- **Weekend FX-rate gaps spuriously aborted exchange-rate (and block) ingestion, stalling updates for fiat-converted currencies.** Two compounding bugs: (1) the per-day FX forward-fill only ran *within* the import window, so a Monday update whose window is just Sat+Sun (the ECB publishes no weekend rates) had no in-window anchor to fill from and aborted with "found missing values ... Probably a weekend". The FX rate is now forward-filled over a gap-free daily index from the full ECB history (`forward_filled_fx_rate`), so weekend / not-yet-published days correctly inherit the most recent known rate even when the anchor lies before the window. Fixed across all three providers (`coingecko`, `coinmarketcap`, `cryptocompare`). (2) The pre-ingest exchange-rates step (folded into `ingest from-node`) used to run as a separate command whose recoverable-gap exit (`SystemExit(15)`) was tolerated, so block ingestion still ran; after fusing it in, that exit aborted the entire command. The wrapper now treats the recoverable gap (exit 15) as a warning and continues with block ingestion, while still propagating critical multi-day gaps (exit 2) and any other error.
+
+#### Added
+- **MCP server advertises a connector icon and website URL in the `initialize` handshake.** New `GSMCPConfig` fields populate the MCP `serverInfo` `icons`/`websiteUrl` fields for spec-compliant hosts. `website_url` defaults to `https://www.iknaio.com/`; the icon defaults to the bundled favicon the REST app already serves at `/docs_assets/favicon.png` (same asset as the API docs) — a root-relative URL the host resolves against the server origin. Override the icon with `icon_url` (+ `icon_mime_type`, `icon_sizes`) — set an absolute, unauthenticated URL (not a data URI) for hosts that don't resolve relative refs — or suppress either by setting it to an empty string. Note that some hosts (e.g. Mistral) ignore `icons` entirely and derive the connector logo from the origin favicon instead.
 
 ### Web API + Python client (webapi-2.13.5)
 

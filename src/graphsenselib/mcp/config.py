@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -5,6 +6,13 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graphsenselib.web.config import LoggingConfig
+
+# Mirrors the docs static mount in web/app.py (DOCS_STATIC_URL / DOCS_STATIC_DIR).
+# Kept as local constants to avoid importing the heavy web.app module just for
+# two paths; the REST app serves `docs/static/` at `/docs_assets`.
+_DOCS_STATIC_URL = "/docs_assets"
+_DOCS_STATIC_DIR = "./docs/static"
+_DEFAULT_ICON_FILENAME = "favicon.png"
 
 
 class SearchNeighborsConfig(BaseSettings):
@@ -106,6 +114,41 @@ class GSMCPConfig(BaseSettings):
         ),
     )
 
+    website_url: Optional[str] = Field(
+        default="https://www.iknaio.com/",
+        description=(
+            "`websiteUrl` advertised in the MCP initialize handshake "
+            "(serverInfo). Some hosts surface it as a link next to the "
+            "connector. Set to an empty string to suppress it."
+        ),
+    )
+    icon_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Override URL of the connector icon advertised in the MCP "
+            "initialize handshake (serverInfo `icons`). When unset, the "
+            "bundled favicon served by the REST app at "
+            "`/docs_assets/favicon.png` is used (same asset as the API docs), "
+            "a root-relative URL the host resolves against the server origin. "
+            "Set an absolute, publicly reachable, unauthenticated URL for "
+            "hosts that don't resolve relative refs; use a URL, not a data "
+            "URI, to keep the handshake small. Note: not all hosts read this "
+            "field (e.g. Mistral derives the icon from the origin favicon "
+            "instead). See `resolved_icon_url`."
+        ),
+    )
+    icon_mime_type: str = Field(
+        default="image/png",
+        description="MIME type reported for `icon_url` (ignored when icon_url is unset)",
+    )
+    icon_sizes: Optional[str] = Field(
+        default="any",
+        description=(
+            "Optional `sizes` hint reported for `icon_url` (e.g. '48x48' or "
+            "'any'); ignored when icon_url is unset. Set to empty to omit."
+        ),
+    )
+
     search_neighbors: Optional[SearchNeighborsConfig] = Field(
         default=None,
         description=(
@@ -133,6 +176,21 @@ class GSMCPConfig(BaseSettings):
         default_factory=LoggingConfig,
         description="Logging configuration (shared with the REST app)",
     )
+
+    def resolved_icon_url(self) -> Optional[str]:
+        """Resolve the connector icon URL for the MCP initialize handshake.
+
+        Precedence: explicit `icon_url` (including empty string -> suppress),
+        then the bundled favicon served by the REST app at
+        `/docs_assets/favicon.png` when that asset is present in the container
+        (the same file the API docs use), else None. Mirrors the docs favicon
+        fallback in web/app.py so the connector icon matches the API docs.
+        """
+        if self.icon_url is not None:
+            return self.icon_url or None
+        if os.path.isfile(f"{_DOCS_STATIC_DIR}/{_DEFAULT_ICON_FILENAME}"):
+            return f"{_DOCS_STATIC_URL}/{_DEFAULT_ICON_FILENAME}"
+        return None
 
     def bundled_curation_path(self) -> Path:
         return Path(__file__).parent / "curation" / "tools.yaml"

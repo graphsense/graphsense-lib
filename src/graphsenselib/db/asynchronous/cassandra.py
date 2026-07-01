@@ -1685,6 +1685,11 @@ class Cassandra:
         return None
 
     async def get_address_id(self, currency, address):
+        # An empty address (e.g. an invalid trx address canonicalized with
+        # validate=False yields b"") cannot exist; short-circuit before it
+        # reaches Cassandra, which rejects an empty partition key.
+        if not address:
+            return None
         prefix = self.scrub_prefix(currency, address)
         if is_eth_like(currency):
             prefix = prefix.upper()
@@ -2962,7 +2967,11 @@ class Cassandra:
 
     def scrub_prefix(self, currency, expression):
         if isinstance(expression, bytes):
-            expression = bytes_to_hex(expression)
+            # bytes_to_hex returns None for empty input (e.g. an invalid trx
+            # address canonicalized with validate=False yields b""). Treat it as
+            # an empty prefix so the lookup simply finds nothing instead of
+            # raising AttributeError on None.startswith below.
+            expression = bytes_to_hex(expression) or ""
 
         if currency == "eth":
             expression = strip_0x(expression)
@@ -4050,9 +4059,17 @@ class Cassandra:
         if not keys:
             return []
 
-        # Derive every pubkey to addresses and union the rows. Different
-        # encodings of the same key (legacy uncompressed vs new compressed)
-        # resolve to the same addresses, so dedupe on (currency, type, address).
+        # Derive every pubkey to addresses and union the rows. Two things can
+        # produce different strings for the *same* graph node:
+        #   * different encodings of the same key (legacy uncompressed vs new
+        #     compressed) resolve to the same addresses, and
+        #   * BCH is derived in the modern ``bitcoincash:`` CashAddr encoding,
+        #     while the rest of the graph keys BCH addresses by their legacy
+        #     base58 form (the materialised dataset still holds CashAddr rows).
+        # Normalise every derived address to its canonical user form (a no-op
+        # for networks already in canonical form; CashAddr -> legacy base58 for
+        # BCH) and dedupe on (currency, address) so the two encodings collapse
+        # to a single node instead of surfacing as duplicates.
         result = []
         seen_rows = set()
         for key in keys:
@@ -4061,13 +4078,18 @@ class Cassandra:
             )
             for cur, addressesInC in addresses.items():
                 for addr_type, addr in addressesInC.items():
-                    dedup = (cur, addr_type, addr)
+                    if addr_type == "error":
+                        continue
+                    norm_addr = address_to_user_format(
+                        cur, cannonicalize_address(cur, addr)
+                    )
+                    dedup = (cur, norm_addr)
                     if dedup in seen_rows:
                         continue
                     seen_rows.add(dedup)
                     result.append(
                         {
-                            "address": addr,
+                            "address": norm_addr,
                             "type": addr_type,
                             "currency": cur,
                             "pubkey": key,

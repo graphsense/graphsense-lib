@@ -4,6 +4,7 @@ import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastmcp import FastMCP
+from mcp.types import Icon
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import RedirectResponse
 from starlette.routing import Route
@@ -39,6 +40,24 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     route_map_fn = make_route_map_fn(curation)
     component_fn = make_component_fn(curation)
 
+    # serverInfo extras advertised in the initialize handshake, forwarded
+    # through from_fastapi's **settings to the FastMCP constructor. Both
+    # default to the bundled Iknaio branding (icon = the docs favicon) and can
+    # be overridden or suppressed via config. Note: not all hosts read `icons`
+    # (e.g. Mistral derives the connector icon from the origin favicon instead).
+    icon_src = config.resolved_icon_url()
+    icons = None
+    if icon_src:
+        sizes: list[str] | None = [str(s) for s in (config.icon_sizes or "").split()]
+        sizes = sizes or None
+        icons = [
+            Icon(
+                src=icon_src,
+                mimeType=config.icon_mime_type,
+                sizes=sizes,
+            )
+        ]
+
     mcp = FastMCP.from_fastapi(
         app=app,
         name="graphsense-mcp",
@@ -46,6 +65,8 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         instructions=config.resolved_instructions(),
         route_map_fn=route_map_fn,
         mcp_component_fn=component_fn,
+        website_url=config.website_url or None,
+        icons=icons,
     )
 
     # Surface unhandled tool/resource/prompt exceptions to the graphsenselib.mcp

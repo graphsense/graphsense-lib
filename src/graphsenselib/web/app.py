@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.routing import Route
@@ -107,6 +107,19 @@ To use it, add that `/mcp` URL to an MCP-capable assistant as a new
 connector or tool source; the assistant then handles the rest.
 """
 logger = logging.getLogger(__name__)
+
+
+def _build_api_description(config: GSRestConfig) -> str:
+    """API docs description with the MCP authentication note appended.
+
+    The MCP section is the last section of API_DESCRIPTION, so the
+    configurable `docs_mcp_auth_note` (e.g. the OAuth client ID) is appended
+    as a trailing paragraph. An empty note omits it entirely.
+    """
+    note = (config.docs_mcp_auth_note or "").strip()
+    if not note:
+        return API_DESCRIPTION
+    return f"{API_DESCRIPTION}\n{note}\n"
 
 
 def _to_snake_case(name: str) -> str:
@@ -1154,7 +1167,7 @@ def _setup_custom_openapi(app: FastAPI) -> None:
             "url": config.docs_contact_url,
         }
 
-        openapi_schema["info"]["description"] = API_DESCRIPTION
+        openapi_schema["info"]["description"] = _build_api_description(config)
         external_docs_url = config.docs_external_url
         if external_docs_url:
             openapi_schema["externalDocs"] = {
@@ -1217,6 +1230,21 @@ def _get_docs_favicon_url(app: FastAPI) -> Optional[str]:
         return DEFAULT_DOCS_FAVICON_ICO_URL
     if os.path.isfile(f"{DOCS_STATIC_DIR}/favicon.png"):
         return DEFAULT_DOCS_FAVICON_PNG_URL
+    return None
+
+
+def _get_docs_favicon_file(app: FastAPI) -> Optional[str]:
+    """Local filesystem path of the favicon to serve at /favicon.ico.
+
+    Mirrors `_get_docs_favicon_url` but returns an on-disk path (a remote
+    `docs_favicon_url` can't be served from here, so it's ignored). Prefers a
+    real `.ico`, falling back to the bundled `.png`; `FileResponse` sets the
+    content-type from the extension.
+    """
+    for name in ("favicon.ico", "favicon.png"):
+        path = f"{DOCS_STATIC_DIR}/{name}"
+        if os.path.isfile(path):
+            return path
     return None
 
 
@@ -1291,6 +1319,13 @@ def _setup_custom_docs_ui(app: FastAPI) -> None:
         StaticFiles(directory=DOCS_STATIC_DIR, check_dir=False),
         name="docs-assets",
     )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        path = _get_docs_favicon_file(app)
+        if path is None:
+            return Response(status_code=404)
+        return FileResponse(path)
 
     @app.get("/ui", include_in_schema=False)
     async def custom_swagger_ui() -> HTMLResponse:

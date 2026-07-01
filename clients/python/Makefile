@@ -26,6 +26,7 @@ generate-openapi-client:
 		--additional-properties=packageName=graphsense \
 		--additional-properties=projectName=graphsense-python \
 		--additional-properties=packageVersion=$$API_VERSION \
+		--additional-properties=httpUserAgent=graphsense-python/$$API_VERSION \
 		--additional-properties=library=urllib3 && \
 	echo "Fixing project name and version in pyproject.toml..." && \
 	sed -i 's/^name = "graphsense"/name = "graphsense-python"/' pyproject.toml && \
