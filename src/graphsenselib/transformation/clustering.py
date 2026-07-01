@@ -285,25 +285,25 @@ def cluster_additive_stats(members_df, address_df):
 
 
 def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
-    """Per-cluster degrees, tx-counts and adjusted totals from address relations
-    mapped to clusters.
+    """Per-cluster degrees and adjusted totals from address relations mapped to
+    clusters.
 
     Maps each address relation's endpoints through ``members_df`` (an address
     absent from membership is a singleton cluster = its own id), drops
     intra-cluster (self) edges, then per cluster:
       * ``in_degree`` / ``out_degree`` = distinct neighbouring clusters;
-      * ``no_incoming_txs`` / ``no_outgoing_txs`` = summed ``no_transactions``
-        over the external edges;
       * ``total_received_adj`` / ``total_spent_adj`` = summed ``estimated_value``
         over the external edges — the cluster total adjusted to exclude
         intra-cluster flows (only value crossing the cluster boundary), the
         canonical GraphSense "adjusted" totals.
 
-    This mirrors the legacy delta aggregation (``to_cluster_delta`` +
-    ``compress``): address relations summed up to cluster level. Self-edges are
-    excluded so a cluster is not its own neighbour. (Exact parity with the old
-    `cluster` table on self-edge / multi-member-per-tx counting must be validated
-    against a real keyspace before REST reads these — see migration notes.)
+    Tx-counts (``no_incoming_txs`` / ``no_outgoing_txs``) are deliberately NOT
+    derived here: the relation tables carry a per-edge ``no_transactions`` count,
+    not tx identity, so summing them up to cluster level counts one multi-input
+    tx once per member address (a large over-count). They are counted DISTINCT
+    from ``address_transactions`` in :func:`cluster_tx_counts` instead. Degrees
+    stay correct because ``countDistinct`` over neighbouring clusters is already
+    identity-free; adjusted values are boundary sums and are unaffected.
     """
     from pyspark.sql import functions as F
 
@@ -325,11 +325,8 @@ def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
         out_mapped.groupBy("src_cluster")
         .agg(
             F.countDistinct("dst_cluster").cast("int").alias("out_degree"),
-            F.sum("no_transactions").cast("int").alias("no_outgoing_txs"),
         )
-        .select(
-            F.col("src_cluster").alias("cluster_id"), "out_degree", "no_outgoing_txs"
-        )
+        .select(F.col("src_cluster").alias("cluster_id"), "out_degree")
     )
     out_adj = _currency_sum_by(
         out_mapped, "src_cluster", "estimated_value", "total_spent_adj"
@@ -345,11 +342,8 @@ def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
         in_mapped.groupBy("dst_cluster")
         .agg(
             F.countDistinct("src_cluster").cast("int").alias("in_degree"),
-            F.sum("no_transactions").cast("int").alias("no_incoming_txs"),
         )
-        .select(
-            F.col("dst_cluster").alias("cluster_id"), "in_degree", "no_incoming_txs"
-        )
+        .select(F.col("dst_cluster").alias("cluster_id"), "in_degree")
     )
     in_adj = _currency_sum_by(
         in_mapped, "dst_cluster", "estimated_value", "total_received_adj"
@@ -359,23 +353,61 @@ def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
     return in_stats.join(out_stats, "cluster_id", "outer")
 
 
-def compute_fresh_cluster_stats(members_df, address_df, in_rel_df, out_rel_df):
-    """Full per-cluster stat frame: additive stats + relation-derived degrees.
+def cluster_tx_counts(members_df, address_txs_df):
+    """Distinct incoming/outgoing tx counts per cluster from ``address_transactions``.
 
-    Left-joins :func:`cluster_relation_stats` onto :func:`cluster_additive_stats`
-    (additive carries every cluster; degree/tx-counts default to 0 and
-    ``total_*_adj`` to a zero currency for clusters with no external edges).
+    ``members_df`` = ``fresh_address_cluster`` (``address_id``, ``cluster_id``);
+    ``address_txs_df`` = ``address_transactions`` (``address_id``,
+    ``is_outgoing``, ``tx_id``). Inner-joins the tx rows to membership — so only
+    clustered addresses count (singletons are synthesized at REST read time from
+    the ``address`` row) — then per cluster counts DISTINCT ``tx_id`` split by
+    direction.
+
+    ``countDistinct`` is the whole fix: ``address_transactions`` is unique only
+    per ``(address, is_outgoing, tx_id)``, so a multi-input tx spanning N member
+    addresses of one cluster yields N identical ``(cluster, tx_id)`` rows. A
+    plain ``count`` (equivalently, summing the relation tables' per-edge
+    ``no_transactions``) would count that single cluster tx N times; distinct
+    collapses it back to one, matching the legacy node-level tx count.
+    """
+    from pyspark.sql import functions as F
+
+    mapped = address_txs_df.join(
+        members_df.select("address_id", "cluster_id"), "address_id", "inner"
+    )
+    return mapped.groupBy("cluster_id").agg(
+        F.countDistinct(F.when(F.col("is_outgoing"), F.col("tx_id")))
+        .cast("int")
+        .alias("no_outgoing_txs"),
+        F.countDistinct(F.when(~F.col("is_outgoing"), F.col("tx_id")))
+        .cast("int")
+        .alias("no_incoming_txs"),
+    )
+
+
+def compute_fresh_cluster_stats(
+    members_df, address_df, address_txs_df, in_rel_df, out_rel_df
+):
+    """Full per-cluster stat frame: additive stats + degrees + distinct tx-counts.
+
+    Left-joins :func:`cluster_relation_stats` (degrees, adjusted totals) and
+    :func:`cluster_tx_counts` (distinct tx-counts) onto
+    :func:`cluster_additive_stats` (additive carries every cluster; degrees and
+    tx-counts default to 0 and ``total_*_adj`` to a zero currency for clusters
+    with no external edges / no txs).
     """
     from pyspark.sql import functions as F
 
     base = cluster_additive_stats(members_df, address_df)
     rels = cluster_relation_stats(members_df, in_rel_df, out_rel_df)
+    tx_counts = cluster_tx_counts(members_df, address_txs_df)
     zero_currency = F.struct(
         F.lit(0).cast("bigint").alias("value"),
         F.array().cast("array<float>").alias("fiat_values"),
     )
     return (
         base.join(rels, "cluster_id", "left")
+        .join(tx_counts, "cluster_id", "left")
         .fillna(
             0,
             subset=["in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs"],
@@ -396,9 +428,11 @@ def recompute_fresh_cluster_stats(
     """Recompute the full ``fresh_cluster_stats`` from the address-level tables.
 
     Reads ``fresh_address_cluster`` (membership), ``address`` (per-address stats),
-    and ``address_incoming/outgoing_relations`` via the Spark Cassandra connector,
-    aggregates with :func:`compute_fresh_cluster_stats`, and writes every well-
-    defined column back to ``fresh_cluster_stats`` (append/upsert; the caller
+    ``address_transactions`` (for distinct tx-counts) and
+    ``address_incoming/outgoing_relations`` (for degrees + adjusted totals) via the
+    Spark Cassandra connector, aggregates with :func:`compute_fresh_cluster_stats`,
+    and writes every well-defined column back to ``fresh_cluster_stats``
+    (append/upsert; the caller
     truncates first under the keyspace lock for a clean rebuild). ``no_addresses``
     and ``min_address_id`` are recomputed here too so the row is whole. Returns the
     number of cluster rows written.
@@ -424,15 +458,18 @@ def recompute_fresh_cluster_stats(
     address = read("address").select(
         "address_id", "total_received", "total_spent", "first_tx_id", "last_tx_id"
     )
+    address_txs = read("address_transactions").select(
+        "address_id", "is_outgoing", "tx_id"
+    )
     in_rel = read("address_incoming_relations").select(
-        "dst_address_id", "src_address_id", "no_transactions", "estimated_value"
+        "dst_address_id", "src_address_id", "estimated_value"
     )
     out_rel = read("address_outgoing_relations").select(
-        "src_address_id", "dst_address_id", "no_transactions", "estimated_value"
+        "src_address_id", "dst_address_id", "estimated_value"
     )
 
     stats = (
-        compute_fresh_cluster_stats(members, address, in_rel, out_rel)
+        compute_fresh_cluster_stats(members, address, address_txs, in_rel, out_rel)
         .select(
             "cluster_id",
             "no_addresses",
