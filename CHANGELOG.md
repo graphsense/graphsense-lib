@@ -20,9 +20,6 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Web API + Python client
 
-#### Fixed
-- **`/{addresses,entities}/{id}/links?neighbor=…` no longer times out on large Ethereum/TRON addresses.** The links query used to (re)discover the directed edge `id → neighbor` by paging the smaller node's *entire* `address_transactions` history, so two exchange-scale addresses that share few or no direct txs would exhaust the 30 s timeout. `CassandraDb.list_links` now first point-looks-up the edge in the `*_outgoing_relations` tables (reusing `list_neighbors(..., targets=[neighbor])`): it returns immediately when no edge exists, and stops paging as soon as all `no_transactions` edge txs have been found instead of walking the rest of the partition. The cluster/entity links path also gains the `asyncio.wait_for` request-timeout wrapper the address path already had (reusing `address_links_request_timeout`), so slow cluster-links queries fail fast instead of hanging.
-
 #### Added
 - **`graphsense file scan-for-addresses` brings the address scanner to the standalone `graphsense-python` client.** The scanner package is vendored from `src/graphsenselib/convert/address_scan/` via `clients/python/scripts/sync_address_scan.py` (pre-commit `sync-address-scan` + `make check-address-scan` guard drift), mirroring the existing `gs_files` vendoring. To keep the client dependency-free, the sync rewrites the two graphsenselib imports: address validation points at a new **stdlib-only** `graphsense/address_scan/validators.py` (base58check, bech32, pure-Python keccak for EIP-55, ripple base58check for XRP), and `.gs` decoding reuses the vendored `graphsense.gs_files.parser`. graphsenselib itself continues to use its lib-backed `utils/address.py`; the two validator implementations are pinned together by `tests/convert/address_scan/test_validators_crosscheck.py`.
 
