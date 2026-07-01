@@ -1442,7 +1442,6 @@ def run_clustering(env, currency, local, read_partitions, end_block):
     from graphsenselib.schema.schema import GraphsenseSchemas
     from graphsenselib.transformation.clustering import run_clustering_spark
     from graphsenselib.transformation.spark import create_spark_session
-    from graphsenselib.utils.locking import create_lock
 
     if not is_fresh_clustering_enabled():
         raise click.ClickException(
@@ -1471,42 +1470,39 @@ def run_clustering(env, currency, local, read_partitions, end_block):
             f"Starting Spark clustering: env={env}, currency={currency}, "
             f"raw={raw_keyspace}, transformed={transformed_keyspace}"
         )
-        with create_lock(transformed_keyspace):
-            # Clear the fresh_* tables first so a re-run is idempotent. Membership
-            # and stats are append/upsert-written and cluster_id == min(address_id)
-            # can SHRINK across re-runs (a smaller address_id joins/merges a cluster),
-            # so stale cluster_id-keyed rows in fresh_cluster_addresses /
-            # fresh_cluster_stats would otherwise survive as phantom clusters
-            # (fresh_address_cluster self-heals per-address, but is truncated too
-            # so a shrunk keyspace never keeps orphaned member rows).
-            db.transformed.execute_raw_cql("TRUNCATE fresh_address_cluster")
-            db.transformed.execute_raw_cql("TRUNCATE fresh_cluster_addresses")
-            db.transformed.execute_raw_cql("TRUNCATE fresh_cluster_stats")
-            spark_session = create_spark_session(
-                app_name=f"graphsense-clustering-{currency}-{env}",
-                local=local,
-                cassandra_nodes=env_config.cassandra_nodes,
-                cassandra_username=env_config.username,
-                cassandra_password=env_config.password,
-                spark_config=config.get_spark_config(),
-                spark_packages=config.get_spark_packages(),
+        # NOTE: the fresh_* tables are written append/upsert with no truncate, on
+        # purpose — a live keyspace keeps serving the previous mapping throughout the
+        # (multi-hour) run instead of going empty. The trade-off is that a re-run over
+        # CHANGED data can leave phantom cluster_id-keyed rows (cluster_id ==
+        # min(address_id) shrinks when a smaller address merges a cluster);
+        # fresh_address_cluster self-heals per-address, and a first cold-start
+        # bootstrap on empty tables is clean. Clear stale rows out-of-band if a
+        # re-run's phantoms matter (see the range-recluster / cleanup path).
+        spark_session = create_spark_session(
+            app_name=f"graphsense-clustering-{currency}-{env}",
+            local=local,
+            cassandra_nodes=env_config.cassandra_nodes,
+            cassandra_username=env_config.username,
+            cassandra_password=env_config.password,
+            spark_config=config.get_spark_config(),
+            spark_packages=config.get_spark_packages(),
+        )
+        try:
+            spark_kwargs = {}
+            if read_partitions is not None:
+                spark_kwargs["read_partitions"] = read_partitions
+            run_clustering_spark(
+                spark_session,
+                raw_keyspace=raw_keyspace,
+                transformed_keyspace=transformed_keyspace,
+                max_address_id=max_address_id,
+                bucket_size=db.transformed.get_cluster_id_bucket_size(),
+                end_block=end_block,
+                **spark_kwargs,
             )
-            try:
-                spark_kwargs = {}
-                if read_partitions is not None:
-                    spark_kwargs["read_partitions"] = read_partitions
-                run_clustering_spark(
-                    spark_session,
-                    raw_keyspace=raw_keyspace,
-                    transformed_keyspace=transformed_keyspace,
-                    max_address_id=max_address_id,
-                    bucket_size=db.transformed.get_cluster_id_bucket_size(),
-                    end_block=end_block,
-                    **spark_kwargs,
-                )
-            finally:
-                spark_session.stop()
-                logger.info("SparkSession stopped.")
+        finally:
+            spark_session.stop()
+            logger.info("SparkSession stopped.")
         logger.info("One-off clustering complete.")
 
 
