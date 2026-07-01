@@ -36,6 +36,8 @@ All hand-written code lives under paths listed in `.openapi-generator-ignore`:
 - `graphsense/cli/*` — the `graphsense` CLI.
 - `graphsense/gs_files/*` — **vendored** from `src/graphsenselib/convert/gs_files/`;
   see "Vendored `gs_files`" below.
+- `graphsense/address_scan/*` — **vendored** from
+  `src/graphsenselib/convert/address_scan/`; see "Vendored `address_scan`" below.
 - `tests/*` — regression tests.
 - `docs/ext/*`, `docs/cli/*` — hand-written docs.
 - `README_CLI.md`, `README_EXT.md`, `CLAUDE.md` (this file).
@@ -80,6 +82,39 @@ vendoring cheap.
 - Public API: import `from graphsense.gs_files import decode_gs,
   structure, summarize, to_jsonable, GsBuilder, ...` (mirrors
   `graphsenselib.convert.gs_files`).
+
+## Vendored `address_scan`
+
+The `graphsense/address_scan/` package is **not hand-written**: it is a copy of
+`src/graphsenselib/convert/address_scan/` synced by
+`scripts/sync_address_scan.py`. It powers `graphsense file scan-for-addresses`
+— scanning text/SQL files and compressed containers for crypto addresses.
+
+Unlike `gs_files`, the source is *not* fully standalone: in graphsenselib its
+`detectors.py` uses `graphsenselib.utils.address` and `decompress.py` uses
+`graphsenselib.convert.gs_files.parser`. To keep the client dependency-free the
+sync script **rewrites** those two imports:
+
+- `graphsenselib.utils.address` → `graphsense.address_scan.validators`, a
+  **stdlib-only** reimplementation of the validators (base58check, bech32,
+  pure-Python keccak for EIP-55, ripple base58check for XRP). graphsenselib
+  itself keeps using its lib-backed `utils/address.py`; the two are pinned
+  together by `tests/convert/address_scan/test_validators_crosscheck.py` in the
+  main repo. **Do not** point graphsenselib at the stdlib module — it exists
+  only for the vendored client.
+- `graphsenselib.convert.gs_files.parser` → `graphsense.gs_files.parser`
+  (already vendored).
+
+**Rules**:
+
+- Edit the source (`src/graphsenselib/convert/address_scan/`), never the
+  vendored copy (each carries an `AUTO-GENERATED — DO NOT EDIT` header).
+- Run `make sync-address-scan` to refresh; `make check-address-scan` is the
+  drift check used by CI and the repo's pre-commit hook. If you add/remove a
+  cross-module import in the source, update `REWRITES` in
+  `scripts/sync_address_scan.py`.
+- `cli.py` from the source is excluded — the client's wrapper is
+  `graphsense/cli/scan.py`.
 
 ## Deprecated endpoints
 

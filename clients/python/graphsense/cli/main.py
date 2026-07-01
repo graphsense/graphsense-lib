@@ -18,6 +18,7 @@ from graphsense.cli.convenience import register_convenience_commands
 from graphsense.cli.errors import FriendlyErrorGroup
 from graphsense.cli.gs import gs_group
 from graphsense.cli.raw import build_raw_group
+from graphsense.cli.scan import file_group
 from graphsense.ext.client import API_KEY_ENV_VARS, HOST_ENV_VARS
 
 pass_ctx = click.make_pass_decorator(CliContext)
@@ -208,6 +209,7 @@ register_convenience_commands(cli)
 cli.add_command(bulk_command, name="bulk")
 cli.add_command(build_raw_group(), name="raw")
 cli.add_command(gs_group, name="gs")
+cli.add_command(file_group, name="file")
 
 
 def main() -> None:  # pragma: no cover - trivial
