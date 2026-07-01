@@ -101,6 +101,8 @@ async def list_cluster_links(
     page=None,
     pagesize=None,
 ):
+    request_timeout = ctx.config.address_links_request_timeout
+
     pydantic_result = await ctx.services.entities_service.list_entity_links(
         currency,
         cluster,
@@ -113,6 +115,7 @@ async def list_cluster_links(
         token_currency,
         page,
         pagesize,
+        request_timeout,
     )
 
     return to_api_links(pydantic_result)
