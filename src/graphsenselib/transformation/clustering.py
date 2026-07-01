@@ -808,10 +808,20 @@ def _write_mapping_to_cassandra(
         f"{'singletons + placeholder' if skip_singletons else 'placeholder'}) ──"
     )
 
-    def _write_slice(slice_df, table, cols):
+    def _write_slice(slice_df, table, cols, repartition_col=None):
+        df = slice_df.select(*cols)
+        # The mapping arrives ordered by address_id (Rust get_mapping iterates
+        # 0..=max_id), so fresh_address_cluster's address_id_group partition key is
+        # already contiguous per slice and batches well. fresh_cluster_addresses is
+        # keyed on cluster_id_group, whose values are SCATTERED across that ordering,
+        # so without a repartition each task touches many C* partitions and the
+        # connector's per-partition-key grouping buffer flushes near-empty batches.
+        # Repartitioning by the write key co-locates each cluster_id_group into one
+        # task — one extra shuffle of a cached slice, far cheaper than the RPC storm.
+        if repartition_col is not None:
+            df = df.repartition(F.col(repartition_col))
         (
-            slice_df.select(*cols)
-            .write.format(cass_format)
+            df.write.format(cass_format)
             .options(table=table, keyspace=transformed_keyspace)
             .mode("append")
             .save()
@@ -865,6 +875,7 @@ def _write_mapping_to_cassandra(
             sdf,
             "fresh_cluster_addresses",
             ["cluster_id_group", "cluster_id", "address_id"],
+            repartition_col="cluster_id_group",
         )
         fc_s = time.perf_counter() - g0
         t_fc += fc_s
