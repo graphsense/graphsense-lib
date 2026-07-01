@@ -308,6 +308,8 @@ def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
     from pyspark.sql import functions as F
 
     def to_cluster(rel_df, addr_col, cl_col):
+        # Neighbour endpoint: a singleton (address absent from membership) maps to
+        # its own id, so it still counts as a distinct neighbouring cluster.
         m = members_df.select(
             F.col("address_id").alias(addr_col),
             F.col("cluster_id").alias(cl_col),
@@ -316,8 +318,22 @@ def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
             cl_col, F.coalesce(F.col(cl_col), F.col(addr_col))
         )
 
+    def anchor_cluster(rel_df, addr_col, cl_col):
+        # Anchor endpoint (the group-by key): inner-join membership so only edges
+        # anchored on a multi-member cluster survive. Singleton-anchored rows are
+        # dropped downstream anyway by the base left-join in
+        # compute_fresh_cluster_stats (base carries only multi-member clusters),
+        # so pruning them here is result-identical and shrinks the degree/value
+        # aggregation shuffles from ~edges-touching-any-cluster down to
+        # ~edges-anchored-on-a-multi-member-cluster.
+        m = members_df.select(
+            F.col("address_id").alias(addr_col),
+            F.col("cluster_id").alias(cl_col),
+        )
+        return rel_df.join(m, addr_col, "inner")
+
     out_mapped = to_cluster(
-        to_cluster(out_rel_df, "src_address_id", "src_cluster"),
+        anchor_cluster(out_rel_df, "src_address_id", "src_cluster"),
         "dst_address_id",
         "dst_cluster",
     ).filter(F.col("src_cluster") != F.col("dst_cluster"))
@@ -334,7 +350,7 @@ def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
     out_stats = out_stats.join(out_adj, "cluster_id", "outer")
 
     in_mapped = to_cluster(
-        to_cluster(in_rel_df, "dst_address_id", "dst_cluster"),
+        anchor_cluster(in_rel_df, "dst_address_id", "dst_cluster"),
         "src_address_id",
         "src_cluster",
     ).filter(F.col("src_cluster") != F.col("dst_cluster"))
@@ -463,7 +479,11 @@ def recompute_fresh_cluster_stats(
             .load()
         )
 
-    members = read("fresh_address_cluster").select("address_id", "cluster_id")
+    # members feeds three joins under different partitionings (address_id in the
+    # additive + tx-count stats, src_address_id and dst_address_id in the relation
+    # stats), which ReuseExchange cannot dedupe — persist once so fresh_address_cluster
+    # is scanned from Cassandra a single time instead of ~3×.
+    members = read("fresh_address_cluster").select("address_id", "cluster_id").persist()
     address = read("address").select(
         "address_id", "total_received", "total_spent", "first_tx_id", "last_tx_id"
     )
@@ -506,6 +526,7 @@ def recompute_fresh_cluster_stats(
         .save()
     )
     stats.unpersist()
+    members.unpersist()
     return n_clusters
 
 

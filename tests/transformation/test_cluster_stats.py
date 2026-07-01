@@ -183,9 +183,11 @@ def test_relation_stats_excludes_self_and_maps_singletons(spark):
     assert out[4]["total_spent_adj"]["value"] == 70
     assert out[4]["total_spent_adj"]["fiat_values"] == pytest.approx([7.0, 14.0])
 
-    # singleton 99 appears as a neighbour-derived row (filtered out later by the
-    # additive base, which only has real clusters).
-    assert 99 in out
+    # singleton 99 is only ever an edge NEIGHBOUR, never a multi-member anchor,
+    # so anchor-pruning drops it from the relation-stats output — but it is still
+    # counted as c4's out-neighbour (out_degree == 1 above), which is all the
+    # downstream stats need (the additive base carries no singleton row anyway).
+    assert 99 not in out
 
 
 def test_tx_counts_are_netted_per_cluster(spark):
