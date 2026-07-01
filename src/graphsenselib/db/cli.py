@@ -246,14 +246,15 @@ def get_dex(
                     blockrange = task_queue.get()
                     tokens = set()
                     pairs = set()
+                    failed = set()
                     if blockrange is None:  # Sentinel value to stop the worker
                         rc.decrement()
                         if rc.value() == 0:
                             logger.info("Last reader down sending None to writer.")
                             result_queue.put(None)
                         break
-                    try:
-                        for block in blockrange:
+                    for block in blockrange:
+                        try:
                             for dlog, log in decode_logs_db(
                                 db.raw.get_logs_in_block(block),
                                 log_signatures_local=signatureDb,
@@ -263,31 +264,26 @@ def get_dex(
                                 tokens.add(pair.t0)
                                 tokens.add(pair.t1)
                                 pairs.add((block, pair))
+                        except Exception as e:
+                            logger.error(f"Failed to process block {block}: {e}")
+                            failed.add(block)
 
-                        logger.info(
-                            f"Found {len(pairs)} new pairs in range {blockrange[0]}"
-                        )
+                    logger.info(
+                        f"Found {len(pairs)} new pairs in range {blockrange[0]}"
+                    )
 
-                        result_queue.put((blockrange, pairs, tokens))
-
-                    except Exception as e:
-                        logger.error(str(e))
-                        # result_queue.put(str(e))
-                        rc.decrement()
-                        if rc.value() == 0:
-                            result_queue.put(None)
-                        break
+                    result_queue.put((blockrange, pairs, tokens, failed))
 
         def writer(results_queue, output_name):
             with shelve.open(output_name) as dex_db:
                 while True:
                     data = results_queue.get()
                     if data is None:
-                        logger.log("Got None, writer out.")
+                        logger.info("Got None, writer out.")
                         break
                     else:
                         try:
-                            btch, pairs, tokens = data
+                            btch, pairs, tokens, failed = data
 
                             for block, pair in pairs:
                                 dex_db[f"p_{pair.get_id()}"] = (block, pair)
@@ -303,9 +299,14 @@ def get_dex(
                             for t in tokens_to_fetch:
                                 dex_db[f"t_{t}"] = get_token_details(rpc, t)
 
-                            logger.info("Marking batch blocks as done")
+                            # Skip failed blocks so a later run retries them.
+                            logger.info(
+                                f"Marking batch blocks as done "
+                                f"({len(failed)} failed, left for retry)"
+                            )
                             for block in btch:
-                                dex_db[f"blk_{block}"] = True
+                                if block not in failed:
+                                    dex_db[f"blk_{block}"] = True
                         except Exception as e:
                             logger.error(str(e))
 
@@ -328,6 +329,11 @@ def get_dex(
             fbtch = [b for b in btch if b not in existing_blocks]
             if len(fbtch) > 0:
                 task_queue.put(fbtch)
+
+        # One sentinel per worker so each reader shuts down cleanly once the
+        # queue is drained (the last one down signals the writer to stop).
+        for _ in range(n_workers):
+            task_queue.put(None)
 
         for worker_process in readers:
             worker_process.join()

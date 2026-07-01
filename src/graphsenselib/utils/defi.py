@@ -42,9 +42,9 @@ def get_pair_from_decoded_log(dlog, log_raw):
     issuer = dlog["address"]
 
     creation_log = SubTransactionIdentifier(
-        tx_hash=ensure_0x_prefix(log_raw["tx_hash"].hex()),
+        tx_hash=ensure_0x_prefix(log_raw.tx_hash.hex()),
         tx_type=SubTransactionType.GenericLog,
-        sub_index=log_raw["log_index"],
+        sub_index=log_raw.log_index,
     ).to_string()
 
     if name == "PairCreated":
