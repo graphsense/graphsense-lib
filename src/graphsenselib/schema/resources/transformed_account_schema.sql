@@ -27,6 +27,13 @@ CREATE TABLE exchange_rates (
     fiat_values list<float>
 );
 
+CREATE TABLE token_exchange_rates (
+    asset text,
+    block_id int,
+    fiat_values list<float>,
+    PRIMARY KEY (asset, block_id)
+) WITH CLUSTERING ORDER BY (block_id DESC);
+
 CREATE TABLE transaction_ids_by_transaction_id_group (
     transaction_id_group int,
     transaction_id bigint,

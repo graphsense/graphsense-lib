@@ -702,6 +702,62 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         ]
         return [{"block_id": b, "fiat_values": get_values_list(er)} for b, er in ers]
 
+    def get_last_token_exchange_rate_date(self, asset) -> Optional[datetime]:
+        """Most recent date for which a per-token rate exists (fetch resume)."""
+        r = list(self.select("token_exchange_rates", where={"asset": asset}))
+        return max([datetime.fromisoformat(x.date) for x in r]) if len(r) > 0 else None
+
+    def get_token_exchange_rates_batch(self, assets: list[str], dates: list[datetime]):
+        """Fetch raw daily per-token rates for the given assets x dates.
+
+        Returns {(asset, date_str): row_or_None}.
+        """
+        stmt = self.select_stmt(
+            "token_exchange_rates", where={"asset": "?", "date": "?"}, limit=1
+        )
+        ds = list({date.strftime(DATE_FORMAT) for date in dates if date is not None})
+        params = [((a, d), [a, d]) for a in assets for d in ds]
+        results = self._db.execute_batch(stmt, params)
+
+        def get_result_item(r):
+            r = r.current_rows
+            return r[0] if len(r) > 0 else None
+
+        return {key: get_result_item(row) for (key, row) in results}
+
+    def get_token_exchange_rates_for_block_batch(
+        self, batch: list[int], assets: list[str]
+    ):
+        """Map raw daily per-token rates to per-block positional rows.
+
+        Mirrors get_exchange_rates_for_block_batch but with a token dimension.
+        Sparse: only emits a row where a rate exists for that (asset, block).
+        Returns [{"asset": a, "block_id": b, "fiat_values": [...]}].
+        """
+        if not assets:
+            return []
+        block_to_ts = self.get_block_timestamps_batch(batch)
+        rates = self.get_token_exchange_rates_batch(assets, block_to_ts.values())
+
+        def get_values_list(er):
+            return (
+                [er.fiat_values.get(x) for x in list(er.fiat_values.keys())]
+                if er is not None
+                else None
+            )
+
+        out = []
+        for b in batch:
+            ts = block_to_ts[b]
+            if ts is None:
+                continue
+            d = ts.strftime(DATE_FORMAT)
+            for a in assets:
+                vals = get_values_list(rates.get((a, d)))
+                if vals is not None:
+                    out.append({"asset": a, "block_id": b, "fiat_values": vals})
+        return out
+
 
 class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def __init__(self, keyspace_config: KeyspaceConfig, db: CassandraDb):
@@ -958,7 +1014,8 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             }
 
     def get_token_configuration(self):
-        stmt = self.select_stmt("token_configuration", limit=100)
+        # No limit: load every configured token (supports hundreds-thousands).
+        stmt = self.select_stmt("token_configuration")
         res = self._db.execute(stmt)
         df = pd.DataFrame(res)
         df["token_address"] = df["token_address"].apply(lambda x: "0x" + x.hex())

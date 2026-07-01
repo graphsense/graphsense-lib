@@ -10,6 +10,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Changed
+- **Token support no longer scales query fan-out with the number of supported tokens**, so the `token_configuration` set can grow to hundreds–thousands of tokens. Previously several serving paths expanded *every* supported token into a separate concurrent Cassandra query per request (address/entity tx listing, neighbor links, and per-address balances), which is why only a handful of tokens were configured. Now: (1) the address/entity tx listing and neighbor-link fan-out is bounded to the tokens an address *actually* used, read direction-aware from the address row's `total_tokens_received`/`total_tokens_spent` maps (new `get_address_token_assets` helper) instead of the global token set; (2) per-address balances are fetched in a single partition read (`currency` is a clustering column of the `balance` table) rather than one query per currency; and (3) the sync `get_token_configuration` no longer caps the read at `LIMIT 100`. Per-request cost now tracks what each address touched, not how many tokens exist globally.
+
+#### Added
+- **Unpegged tokens are now supported** (tokens with no USD/EUR/ETH `peg_currency`). Such tokens flow through ingest and the API carrying their raw on-chain amount with empty/zero fiat values instead of raising. Previously the value-conversion path (`map_rates_for_peged_tokens`) and the ingest price computation (`get_prices`) rejected anything not pegged to ether, euro or usd, restricting the supported set to stablecoins and wrapped native coins. `peg_currency` may now be null on `token_configuration` rows.
+- **Per-token exchange rates give unpegged tokens real fiat values.** A new token-rate track mirrors the native exchange-rate pipeline: the `rates … <provider> ingest` commands (and the pre-ingest hook run by `ingest`) now automatically fetch daily prices for every unpegged token in `token_configuration` — across **all** rate providers (coingecko, coinmarketcap, cryptocompare; coindesk is BTC-only and skipped) — preferring the token's **contract address** and falling back to its ticker symbol. Prices land in a new raw `token_exchange_rates(asset, date)` table; the delta-update maps them to per-block rows in a new transformed `token_exchange_rates(asset, block_id)` table and uses them to price stored aggregates (`total_tokens_received`/`_spent`, relation `token_values`). The API prices per-tx token values and token balances from these rates, with the empty/zero-fiat behavior retained as the fallback whenever a token has no fetched rate. Add `--no-token-rates` to skip token fetching. (Note: historical stored aggregates only reflect real fiat for newly (re)processed blocks; a backfill/re-transform fills older data.)
+
 ## [2.14.7] - 2026-06-30
 
 ### Library

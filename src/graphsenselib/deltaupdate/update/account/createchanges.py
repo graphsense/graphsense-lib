@@ -25,6 +25,23 @@ from graphsenselib.utils.logging import LoggerScope
 logger = logging.getLogger(__name__)
 
 
+def prepare_token_exchange_rates_for_ingest(
+    token_rates: Dict[Tuple[str, int], List[float]],
+) -> List[DbChange]:
+    """Write per-block token exchange rates for the transferred (asset, block)
+    pairs so the serving layer can price unpegged tokens.
+
+    token_rates maps (asset, block_id) -> positional fiat_values list.
+    """
+    return [
+        DbChange.new(
+            table="token_exchange_rates",
+            data={"asset": asset, "block_id": block_id, "fiat_values": fiat_values},
+        )
+        for (asset, block_id), fiat_values in token_rates.items()
+    ]
+
+
 def prepare_txs_for_ingest(
     delta: List[Tx],
     id_bucket_size: int,

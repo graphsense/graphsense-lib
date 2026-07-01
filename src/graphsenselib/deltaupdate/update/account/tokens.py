@@ -77,7 +77,10 @@ class ERC20Decoder:
                     self.supported_tokens["token_address"] == "0x" + log.address.hex()
                 )
                 asset = self.supported_tokens[mask]["currency_ticker"].values[0]
-                peg = self.supported_tokens[mask]["peg_currency"].values[0].upper()
+                peg = self.supported_tokens[mask]["peg_currency"].values[0]
+                # Unpegged tokens (missing/empty peg, incl. pandas NaN) carry no
+                # fiat equivalent.
+                peg = "" if pd.isna(peg) else str(peg).upper()
                 coin_equivalent = peg == self.currency
                 usd_equivalent = peg == "USD"
                 eur_equivalent = peg == "EUR"

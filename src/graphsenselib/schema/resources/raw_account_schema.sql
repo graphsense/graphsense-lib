@@ -106,6 +106,13 @@ CREATE TABLE exchange_rates (
     fiat_values map<text, float>
 );
 
+CREATE TABLE token_exchange_rates (
+    asset text,
+    date text,
+    fiat_values map<text, float>,
+    PRIMARY KEY (asset, date)
+);
+
 CREATE TABLE configuration (
     id text PRIMARY KEY,
     block_bucket_size int,

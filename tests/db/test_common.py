@@ -1,5 +1,59 @@
 from graphsenselib.db.asynchronous.services.common import function_call_from_row
 from graphsenselib.db.asynchronous.services.common import FunctionCall
+from graphsenselib.db.asynchronous.services.common import (
+    convert_token_value,
+    map_rates_for_peged_tokens,
+)
+
+RATES = [{"code": "eur", "value": 0.9}, {"code": "usd", "value": 1.0}]
+
+
+def test_map_rates_for_unpegged_token_returns_empty():
+    # Unpegged / unknown / missing peg -> no fiat conversion (no exception).
+    assert map_rates_for_peged_tokens(RATES, {"peg_currency": None}) == []
+    assert map_rates_for_peged_tokens(RATES, {"peg_currency": ""}) == []
+    assert map_rates_for_peged_tokens(RATES, {"peg_currency": "SOL"}) == []
+
+
+def test_map_rates_for_usd_pegged_token():
+    r = map_rates_for_peged_tokens(RATES, {"peg_currency": "USD"})
+    assert {i["code"]: i["value"] for i in r} == {"eur": 0.9, "usd": 1}
+
+
+def test_convert_token_value_unpegged_has_no_fiat_values():
+    token_config = {"peg_currency": None, "decimal_divisor": 10**6}
+    result = convert_token_value(2_500_000, RATES, token_config)
+    # raw amount preserved, but no fiat conversion
+    assert result.value == 2_500_000
+    assert result.fiat_values == []
+
+
+def test_convert_token_value_usd_pegged_has_fiat_values():
+    token_config = {"peg_currency": "USD", "decimal_divisor": 10**6}
+    result = convert_token_value(2_500_000, RATES, token_config)
+    fiat = {f.code: f.value for f in result.fiat_values}
+    assert result.value == 2_500_000
+    assert fiat == {"usd": 2.5, "eur": 2.25}
+
+
+def test_convert_token_value_unpegged_with_rate_uses_token_rate():
+    # A fetched per-token rate (fiat-per-whole-token) prices an unpegged token.
+    token_config = {"peg_currency": None, "decimal_divisor": 10**6}
+    token_rate = [{"code": "eur", "value": 2.0}, {"code": "usd", "value": 2.5}]
+    result = convert_token_value(2_500_000, RATES, token_config, token_rate=token_rate)
+    fiat = {f.code: f.value for f in result.fiat_values}
+    assert result.value == 2_500_000
+    assert fiat == {"eur": 5.0, "usd": 6.25}
+
+
+def test_map_rates_for_unpegged_token_uses_supplied_rate():
+    token_rate = [{"code": "eur", "value": 2.0}, {"code": "usd", "value": 2.5}]
+    assert (
+        map_rates_for_peged_tokens(RATES, {"peg_currency": None}, token_rate=token_rate)
+        == token_rate
+    )
+    # no rate -> empty (zero fiat fallback)
+    assert map_rates_for_peged_tokens(RATES, {"peg_currency": None}) == []
 
 
 def test_function_call_from_row_none():

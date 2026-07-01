@@ -142,7 +142,11 @@ class EntitiesService:
             out_degree=row["out_degree"],
             balance=convert_value(currency, row["balance"], rates),
             token_balances=convert_token_values_map(
-                currency, row.get("token_balances"), rates, token_config
+                currency,
+                row.get("token_balances"),
+                rates,
+                token_config,
+                token_rates=row.get("token_balance_rates"),
             ),
             best_address_tag=best_tag,
             no_address_tags=count,
