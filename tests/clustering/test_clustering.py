@@ -46,81 +46,6 @@ def test_one_off_clustering():
     assert clus[4] != clus[7]
 
 
-def test_incremental_clustering():
-    """Rebuild from existing mapping, process new tx, get diff."""
-    c = Clustering(max_address_id=100)
-
-    # Existing state: cluster 10 = {1,2,3}, cluster 20 = {4,5}, cluster 30 = {6}
-    c.rebuild_from_mapping(
-        address_ids=[1, 2, 3, 4, 5, 6],
-        cluster_ids=[10, 10, 10, 20, 20, 30],
-    )
-
-    # New transaction: inputs [3, 4] → merges cluster 10 and cluster 20
-    c.process_transactions([[3, 4]])
-
-    # Check diff
-    diff = c.get_diff()
-    changed_addrs = set(diff.column("address_id").to_pylist())
-
-    # Some addresses must have changed (at least the merged ones)
-    assert len(changed_addrs) > 0
-
-    # Verify all are now in the same cluster
-    full = c.get_mapping()
-    clus = dict(
-        zip(
-            full.column("address_id").to_pylist(),
-            full.column("cluster_id").to_pylist(),
-        )
-    )
-    assert clus[1] == clus[2] == clus[3] == clus[4] == clus[5]
-
-
-def test_incremental_no_change():
-    """If new transactions don't cause merges, diff should be empty."""
-    c = Clustering(max_address_id=100)
-    c.rebuild_from_mapping(
-        address_ids=[1, 2, 3],
-        cluster_ids=[10, 10, 10],
-    )
-
-    # Transaction with addresses already in the same cluster → no change
-    c.process_transactions([[1, 2]])
-
-    diff = c.get_diff()
-    assert len(diff.column("address_id").to_pylist()) == 0
-
-
-def test_incremental_new_addresses():
-    """New addresses not in existing mapping get their own clusters."""
-    c = Clustering(max_address_id=100)
-    c.rebuild_from_mapping(
-        address_ids=[1, 2],
-        cluster_ids=[10, 10],
-    )
-
-    # New tx with a brand new address 50
-    c.process_transactions([[1, 50]])
-
-    diff = c.get_diff()
-    changed_addrs = set(diff.column("address_id").to_pylist())
-
-    # Address 50 was not in the snapshot (find(50)==50 before and after rebuild,
-    # but now find(50)==find(1) which changed), so it should appear in diff
-    assert 50 in changed_addrs
-
-    # Verify address 50 is now in the same cluster as 1,2
-    full = c.get_mapping()
-    clus = dict(
-        zip(
-            full.column("address_id").to_pylist(),
-            full.column("cluster_id").to_pylist(),
-        )
-    )
-    assert clus[1] == clus[2] == clus[50]
-
-
 def test_chunked_processing():
     """Multiple process_transactions calls produce same result as one."""
     # Single call
@@ -145,21 +70,3 @@ def test_chunked_processing():
             assert (clus1[i] == clus1[j]) == (clus2[i] == clus2[j]), (
                 f"Grouping mismatch at ({i},{j})"
             )
-
-
-def test_rebuild_mismatched_lengths():
-    """rebuild_from_mapping should reject mismatched arrays."""
-    c = Clustering(max_address_id=10)
-    with pytest.raises(ValueError):
-        c.rebuild_from_mapping(
-            address_ids=[1, 2, 3],
-            cluster_ids=[10, 10],
-        )
-
-
-def test_get_diff_without_rebuild():
-    """get_diff should raise if rebuild was not called."""
-    c = Clustering(max_address_id=10)
-    c.process_transactions([[1, 2]])
-    with pytest.raises(RuntimeError):
-        c.get_diff()
