@@ -2052,6 +2052,37 @@ class Cassandra:
             tx_id_upper_bound or node_tx_id_upper_bound, node_tx_id_upper_bound
         )
 
+        # Point-lookup the directed edge (id -> neighbor) in the relations
+        # tables to bound this query. list_links otherwise walks the smaller
+        # node's entire tx history to (re)discover an edge whose exact tx count
+        # is already stored as no_transactions. This lets us (a) return
+        # immediately when no direct edge exists and (b) stop paging once every
+        # edge tx has been found (see the early-stop check in the loop below).
+        # The endpoint is directional (from_address == id, to_address ==
+        # neighbor), i.e. id's outgoing relation to neighbor.
+        if node_type == NodeType.ADDRESS:
+            neighbor_id = await self.get_address_id(currency, neighbor)
+        else:
+            neighbor_id = int(neighbor)
+
+        edge_tx_count = 0
+        if neighbor_id is not None:
+            edge_rows, _ = await self.list_neighbors(
+                currency,
+                id,
+                True,
+                node_type,
+                targets=[neighbor_id],
+                page=None,
+                pagesize=None,
+            )
+            if edge_rows:
+                edge_tx_count = sum(row["no_transactions"] for row in edge_rows)
+
+        if edge_tx_count == 0:
+            # No direct edge id -> neighbor: there can be no links.
+            return [], None
+
         final_results = []
         requested_pagesize = pagesize or SMALL_PAGE_SIZE
         fetch_size = max(FETCH_SIZE_MIN, requested_pagesize)
@@ -2218,6 +2249,12 @@ class Cassandra:
                         and await has_cluster_id_in_ios(neighbor, fr["outputs"])
                     ]
 
+            # Once every edge tx has been found there is nothing left to page
+            # for: results2 already expanded all asset rows for these tx ids,
+            # so counting distinct tx ids against the pair's (per-tx) count is a
+            # safe upper bound that can only over-scan, never truncate.
+            all_edge_found = len({row[tx_id] for row in final_results}) >= edge_tx_count
+
             # Check if we have enough results after all filtering
             if len(final_results) >= requested_pagesize:
                 # Truncate to exact requested size and get page token from last result
@@ -2241,6 +2278,13 @@ class Cassandra:
                 self.logger.debug(
                     f"early termination with {len(final_results)} results, page: {page}"
                 )
+                break
+
+            if all_edge_found:
+                # All edge txs found and they fit within one page: no more
+                # results exist, so there is no next page.
+                page = None
+                self.logger.debug(f"all {edge_tx_count} edge txs found; stopping scan")
                 break
 
             page = new_pages[-1] if new_pages else None
