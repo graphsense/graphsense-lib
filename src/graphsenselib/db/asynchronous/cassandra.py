@@ -1915,6 +1915,16 @@ class Cassandra:
             currency, address
         )
 
+        if is_fresh_clustering_enabled():
+            # Fresh clustering owns the address->cluster mapping and may assign a
+            # different (min-address-id) cluster than the legacy address table.
+            # The legacy id can be absent from fresh_cluster_stats, so resolve
+            # through the fresh table here too. An address with no
+            # fresh_address_cluster row is its own singleton (cluster_id ==
+            # address_id), mirroring the sparse-singleton write side.
+            fresh_cluster_id = await self.get_fresh_cluster_id(currency, address_id)
+            return fresh_cluster_id if fresh_cluster_id is not None else address_id
+
         query = (
             "SELECT cluster_id FROM address WHERE "
             "address_id_group = %s AND address_id = %s "
@@ -2402,8 +2412,74 @@ class Cassandra:
         )
         result = one(result)
         if not result:
+            if is_fresh_clustering_enabled():
+                singleton = await self._fresh_singleton_entity(currency, entity)
+                if singleton is not None:
+                    return (await self.finish_entities(currency, [singleton]))[0]
             raise ClusterNotFoundException(currency, entity)
         return (await self.finish_entities(currency, [result]))[0]
+
+    async def _fresh_singleton_entity(self, currency, cluster_id):
+        """Synthesize a one-address entity for a fresh-clustering singleton.
+
+        Fresh clustering stores only multi-member clusters, so a cluster id with
+        no ``fresh_cluster_stats`` row is its own singleton
+        (``cluster_id == address_id``). Shape that address's row as a
+        single-member cluster-stats row; adjusted totals equal the raw totals
+        as a one-address cluster has no intra-cluster flow to net out. Returns
+        ``None`` when no such address exists (a genuinely unknown id).
+        """
+        address_id_group = self.get_id_group(currency, cluster_id)
+        query = "SELECT * FROM address WHERE address_id_group = %s AND address_id = %s"
+        row = one(
+            await self.execute_async(
+                currency, "transformed", query, [address_id_group, cluster_id]
+            )
+        )
+        if not row:
+            return None
+        return {
+            "cluster_id": cluster_id,
+            "no_addresses": 1,
+            "min_address_id": cluster_id,
+            "no_incoming_txs": row["no_incoming_txs"],
+            "no_outgoing_txs": row["no_outgoing_txs"],
+            "in_degree": row["in_degree"],
+            "out_degree": row["out_degree"],
+            "first_tx_id": row["first_tx_id"],
+            "last_tx_id": row["last_tx_id"],
+            "total_received": row["total_received"],
+            "total_spent": row["total_spent"],
+            "total_received_adj": row["total_received"],
+            "total_spent_adj": row["total_spent"],
+        }
+
+    async def _fresh_fill_singleton_entities(self, currency, ids, rows):
+        """Restore singletons dropped from a fresh bulk entity lookup.
+
+        ``list_entities`` reads ``fresh_cluster_stats``, which holds only
+        multi-member clusters, so singleton ids return no row. Legacy returned
+        one row per stored cluster id, so mirror that by synthesizing the
+        one-address entity for each requested id missing from ``rows``,
+        preserving input order and dropping only genuinely unknown ids (no
+        address) — exactly the ids legacy would also have omitted.
+        """
+        found = {row["cluster_id"]: row for row in rows if "cluster_id" in row}
+        missing = [int(id) for id in ids if int(id) not in found]
+        synthesized = await asyncio.gather(
+            *[self._fresh_singleton_entity(currency, id) for id in missing]
+        )
+        singletons = {
+            id: entity for id, entity in zip(missing, synthesized) if entity is not None
+        }
+        result = []
+        for id in ids:
+            id = int(id)
+            if id in found:
+                result.append(found[id])
+            elif id in singletons:
+                result.append(singletons[id])
+        return result
 
     @eth
     async def list_entities(
@@ -2420,6 +2496,10 @@ class Cassandra:
             result = await self.concurrent_with_args(
                 currency, "transformed", query, params
             )
+            if is_fresh_clustering_enabled():
+                result = await self._fresh_fill_singleton_entities(
+                    currency, ids, result
+                )
             paging_state = None
         else:
             result = await self.execute_async(
