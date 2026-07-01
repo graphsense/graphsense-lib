@@ -66,11 +66,19 @@ impl Clustering {
 
 impl Clustering {
     fn parallel_find_all(&self) -> (Vec<u32>, Vec<u32>) {
-        let results: Vec<(u32, u32)> = (0..=self.max_id)
-            .into_par_iter()
-            .map(|id| (id, self.uf.find(id as usize) as u32))
-            .collect();
-        results.into_iter().unzip()
+        // Fill cluster_ids in place by index and generate address_ids from the
+        // dense 0..=max_id range. Avoids the ~8 GB intermediate Vec<(u32,u32)>
+        // and the single-threaded unzip a `.map(|id| (id, find)).collect().unzip()`
+        // would incur — both matter on a full BTC keyspace (~1e9 ids) inside the
+        // memory-constrained Spark driver.
+        let n = (self.max_id as usize) + 1;
+        let mut cluster_ids = vec![0u32; n];
+        cluster_ids
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(id, c)| *c = self.uf.find(id) as u32);
+        let address_ids: Vec<u32> = (0..=self.max_id).collect();
+        (address_ids, cluster_ids)
     }
 
     fn make_record_batch(
