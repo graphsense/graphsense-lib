@@ -36,13 +36,25 @@ def test_file_subcommand_unwraps_gzip(tmp_path: Path) -> None:
     assert report["summary"]["unique_valid_addresses"] == 1
 
 
-def test_tx_hashes_warns_on_stderr(tmp_path: Path) -> None:
+def test_tx_hashes_warns_and_json_parses(tmp_path: Path) -> None:
     p = tmp_path / "dump.txt"
     p.write_text(f"{BTC} {SHA}")
     res = CliRunner().invoke(
         cli, ["file", "scan-for-addresses", "--tx-hashes", "--json", str(p)]
     )
     assert res.exit_code == 0, res.output
-    report = json.loads(res.stdout)
+
+    # The warning is emitted to stderr (so it never corrupts the JSON on stdout
+    # in real use). Older click versions merge the streams in CliRunner, so
+    # check the combined output rather than depending on separation.
+    combined = res.stdout
+    try:
+        combined += res.stderr
+    except ValueError:  # streams not separately captured on this click version
+        pass
+    assert "WARNING" in combined
+
+    # JSON must still be parseable; slice from the first '{' to be robust to
+    # test-runners that prepend the merged stderr warning.
+    report = json.loads(res.stdout[res.stdout.index("{") :])
     assert report["summary"]["unique_tx_hash_candidates"] == 1
-    assert "WARNING" in res.stderr
