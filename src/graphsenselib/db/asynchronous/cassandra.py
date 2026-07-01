@@ -139,6 +139,16 @@ FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
 
+class _AddressIdNotFound(Exception):
+    """Internal sentinel raised on an address_id cache miss.
+
+    ``@alru_cache`` does not cache calls that raise, so raising here keeps
+    "address not found" out of the cache: an assigned ``address_id`` is
+    immutable and safe to cache forever, but a currently-unknown address may
+    be ingested later and must always be re-resolved.
+    """
+
+
 def account_calc_tx_fee(tx) -> Optional[int]:
     rgu = tx.get("receipt_gas_used", None)
     if rgu is None:
@@ -1698,6 +1708,18 @@ class Cassandra:
         # reaches Cassandra, which rejects an empty partition key.
         if not address:
             return None
+        try:
+            # Cache hits only: address_ids are immutable once assigned, but a
+            # miss must never be cached (see _AddressIdNotFound). This resolver
+            # backs get_address, get_address_entity_id, list_address_txs_ordered
+            # and the links path, so the same address is otherwise re-resolved
+            # several times per request (and across requests for hot addresses).
+            return await self._get_address_id_cached(currency, address)
+        except _AddressIdNotFound:
+            return None
+
+    @alru_cache(maxsize=100_000)
+    async def _get_address_id_cached(self, currency, address):
         prefix = self.scrub_prefix(currency, address)
         if is_eth_like(currency):
             prefix = prefix.upper()
@@ -1711,7 +1733,7 @@ class Cassandra:
         )
         result = one(result)
         if not result:
-            return None
+            raise _AddressIdNotFound()
 
         return result["address_id"]
 
