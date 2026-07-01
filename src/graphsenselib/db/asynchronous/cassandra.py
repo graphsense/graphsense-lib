@@ -2207,12 +2207,24 @@ class Cassandra:
                 else [(row[tx_id], None) for row in results1_raw]
             )
 
-            assets = set([currency.upper()])
-            if is_eth_like(currency):
-                for row in results1_raw:
-                    assets.add(row["currency"])
+            if token_currency is not None:
+                # Token-filtered query: only the token's rows on the `second`
+                # side are relevant. Fetching the native asset (or others) here
+                # would (a) let non-token events leak into a token-filtered
+                # result — e.g. the native contract-call trace when `neighbor`
+                # is the token contract, which passes the address-only filter
+                # below but is not a token transfer — and (b) multiply the
+                # per-page fan-out against a possibly huge `second` partition.
+                # It never drops a genuine token link: a real token transfer
+                # id -> neighbor still produces a token row on the second side.
+                assets = [token_currency.upper()]
+            else:
+                assets = set([currency.upper()])
+                if is_eth_like(currency):
+                    for row in results1_raw:
+                        assets.add(row["currency"])
 
-            assets = list(assets)
+                assets = list(assets)
 
             results2, _, _ = await self.list_address_txs_ordered(
                 network=currency,
