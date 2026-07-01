@@ -372,6 +372,12 @@ class GraphSense(object):
 
         df_cluster_ids = self.get_cluster_ids(df_address_ids, network)
         if len(df_cluster_ids) == 0:
+            # Fresh clustering stores only multi-member clusters, so an empty
+            # result means every address in this batch is a singleton — map each
+            # to itself instead of dropping the batch. Legacy always has a
+            # cluster row, so there an empty result genuinely means "not found".
+            if is_tagstore_fresh_clusters_enabled():
+                return self._as_singleton_clusters(df_address_ids)
             return DataFrame()
 
         df_cluster_definers = self._get_cluster_definers(df_cluster_ids, network)
@@ -401,4 +407,18 @@ class GraphSense(object):
         result["cluster_id"] = result["cluster_id"].astype(int)
         result["no_addresses"] = result["no_addresses"].astype(int)
 
+        return result
+
+    def _as_singleton_clusters(self, df_address_ids: DataFrame) -> DataFrame:
+        """Map every passed address to its own singleton cluster.
+
+        Used in fresh-clustering mode when no multi-member membership is found:
+        cluster_id == address_id, one member, self-defining. Mirrors the shape
+        of the normal ``get_address_clusters`` result (address, address_id,
+        cluster_id, no_addresses, cluster_defining_address).
+        """
+        result = df_address_ids.copy()
+        result["cluster_id"] = result["address_id"].astype(int)
+        result["no_addresses"] = 1
+        result["cluster_defining_address"] = result["address"]
         return result
