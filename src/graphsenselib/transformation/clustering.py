@@ -354,32 +354,41 @@ def cluster_relation_stats(members_df, in_rel_df, out_rel_df):
 
 
 def cluster_tx_counts(members_df, address_txs_df):
-    """Distinct incoming/outgoing tx counts per cluster from ``address_transactions``.
+    """Incoming/outgoing tx counts per cluster, re-netted at cluster granularity.
 
     ``members_df`` = ``fresh_address_cluster`` (``address_id``, ``cluster_id``);
-    ``address_txs_df`` = ``address_transactions`` (``address_id``,
-    ``is_outgoing``, ``tx_id``). Inner-joins the tx rows to membership — so only
-    clustered addresses count (singletons are synthesized at REST read time from
-    the ``address`` row) — then per cluster counts DISTINCT ``tx_id`` split by
-    direction.
+    ``address_txs_df`` = ``address_transactions`` (``address_id``, ``tx_id``,
+    ``value`` — the SIGNED net value change of that address in that tx, negative
+    when the address is a net spender; ``is_outgoing`` is just ``value < 0``).
+    Inner-joins to membership (singletons are synthesized at REST read time from
+    the ``address`` row), sums the signed ``value`` across all member addresses
+    per ``(cluster, tx)``, and assigns each ``(cluster, tx)`` a SINGLE direction
+    from the sign of that cluster-level net: ``< 0`` outgoing, ``> 0`` incoming,
+    ``== 0`` neither.
 
-    ``countDistinct`` is the whole fix: ``address_transactions`` is unique only
-    per ``(address, is_outgoing, tx_id)``, so a multi-input tx spanning N member
-    addresses of one cluster yields N identical ``(cluster, tx_id)`` rows. A
-    plain ``count`` (equivalently, summing the relation tables' per-edge
-    ``no_transactions``) would count that single cluster tx N times; distinct
-    collapses it back to one, matching the legacy node-level tx count.
+    This reproduces the legacy Scala ``computeClusterTransactions`` (union the
+    clustered inputs/outputs, ``sum(value)`` per ``(tx, cluster)``, direction from
+    the net sign) exactly — which is why it re-nets on the signed ``value`` rather
+    than counting the per-address ``is_outgoing`` flag. Two over-counts are
+    avoided by the cluster-level netting: a multi-input tx spanning N members
+    collapses to one row (so no distinct count is needed), and the ubiquitous
+    change pattern (spend from member A, change to a different member B of the
+    same cluster) is counted once in its true net direction instead of once in
+    each direction.
     """
     from pyspark.sql import functions as F
 
     mapped = address_txs_df.join(
         members_df.select("address_id", "cluster_id"), "address_id", "inner"
     )
-    return mapped.groupBy("cluster_id").agg(
-        F.countDistinct(F.when(F.col("is_outgoing"), F.col("tx_id")))
+    per_cluster_tx = mapped.groupBy("cluster_id", "tx_id").agg(
+        F.sum("value").alias("net_value")
+    )
+    return per_cluster_tx.groupBy("cluster_id").agg(
+        F.count(F.when(F.col("net_value") < 0, F.col("tx_id")))
         .cast("int")
         .alias("no_outgoing_txs"),
-        F.countDistinct(F.when(~F.col("is_outgoing"), F.col("tx_id")))
+        F.count(F.when(F.col("net_value") > 0, F.col("tx_id")))
         .cast("int")
         .alias("no_incoming_txs"),
     )
@@ -458,9 +467,7 @@ def recompute_fresh_cluster_stats(
     address = read("address").select(
         "address_id", "total_received", "total_spent", "first_tx_id", "last_tx_id"
     )
-    address_txs = read("address_transactions").select(
-        "address_id", "is_outgoing", "tx_id"
-    )
+    address_txs = read("address_transactions").select("address_id", "tx_id", "value")
     in_rel = read("address_incoming_relations").select(
         "dst_address_id", "src_address_id", "estimated_value"
     )

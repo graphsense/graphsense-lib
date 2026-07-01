@@ -20,7 +20,6 @@ pyspark = pytest.importorskip("pyspark")
 
 from pyspark.sql.types import (  # noqa: E402
     ArrayType,
-    BooleanType,
     FloatType,
     IntegerType,
     LongType,
@@ -69,8 +68,8 @@ _IN_REL_SCHEMA = StructType(
 _ADDRESS_TXS_SCHEMA = StructType(
     [
         StructField("address_id", IntegerType()),
-        StructField("is_outgoing", BooleanType()),
         StructField("tx_id", LongType()),
+        StructField("value", LongType()),  # SIGNED net flow (negative = spent)
     ]
 )
 
@@ -99,19 +98,26 @@ _IN_REL = [
     (1, 3, 1, (999, [9.0, 9.0])),  # c1 <- c1 self, dropped
     (99, 4, 5, (70, [7.0, 14.0])),  # singleton 99 <- c4
 ]
-# address_transactions: (address_id, is_outgoing, tx_id). tx 1000 is a
-# multi-input tx co-spending all three c1 members — ONE cluster tx that appears
-# as three rows; distinct counting must collapse it (a plain count would say 3).
+# address_transactions: (address_id, tx_id, value) with value = SIGNED net flow.
+# Two over-counts the cluster-level netting must avoid:
+#   tx 1000 — multi-input co-spend of all three c1 members (one cluster tx);
+#   tx 5000 — the change pattern: c1 spends from member 1 and sends change to a
+#   *different* member 2 in the SAME tx. Per-address flags would count tx 5000
+#   as BOTH outgoing (member 1) and incoming (member 2); the cluster net is
+#   -61 < 0, so it is one OUTGOING tx. tx 6000 nets to exactly 0 -> neither.
 _ADDRESS_TXS = [
-    (1, True, 1000),
-    (2, True, 1000),
-    (3, True, 1000),  # c1 multi-input tx -> 1 distinct outgoing
-    (1, True, 1001),  # c1 second outgoing tx
-    (2, False, 2000),
-    (3, False, 2000),  # c1 multi-output receive -> 1 distinct incoming
-    (4, True, 3000),  # c4 outgoing
-    (4, False, 4000),
-    (5, False, 4000),  # c4 receive -> 1 distinct incoming
+    (1, 1000, -100),
+    (2, 1000, -50),
+    (3, 1000, -30),  # c1 multi-input tx, net -180 -> 1 outgoing
+    (1, 5000, -100),
+    (2, 5000, 39),  # c1 change pattern, net -61 -> 1 outgoing (not both)
+    (2, 2000, 100),
+    (3, 2000, 50),  # c1 receive, net +150 -> 1 incoming
+    (1, 6000, -50),
+    (2, 6000, 50),  # c1 net 0 -> counted in neither direction
+    (4, 3000, -70),  # c4 outgoing
+    (4, 4000, 40),
+    (5, 4000, 30),  # c4 receive, net +70 -> 1 incoming
 ]
 
 
@@ -182,16 +188,18 @@ def test_relation_stats_excludes_self_and_maps_singletons(spark):
     assert 99 in out
 
 
-def test_tx_counts_are_distinct_per_cluster(spark):
+def test_tx_counts_are_netted_per_cluster(spark):
     members = spark.createDataFrame(_MEMBERS, _MEMBERS_SCHEMA)
     out = _by_cluster(cluster_tx_counts(members, _txs_frame(spark)).collect())
 
-    # tx 1000 co-spends all three c1 members but is ONE cluster tx: distinct
-    # gives 2 outgoing ({1000, 1001}), NOT 4 (the plain-count over-count).
+    # c1 outgoing: tx 1000 (multi-input, net<0) and tx 5000 (change pattern,
+    # net<0) -> 2. The change tx must NOT also inflate incoming.
     assert out[1]["no_outgoing_txs"] == 2
-    assert out[1]["no_incoming_txs"] == 1  # {2000}, not 2
-    assert out[4]["no_outgoing_txs"] == 1  # {3000}
-    assert out[4]["no_incoming_txs"] == 1  # {4000}, not 2
+    # c1 incoming: only tx 2000 (net>0). tx 5000 is outgoing-only, tx 6000 nets
+    # to zero -> neither. A per-address flag count would wrongly give 2 here.
+    assert out[1]["no_incoming_txs"] == 1
+    assert out[4]["no_outgoing_txs"] == 1  # tx 3000
+    assert out[4]["no_incoming_txs"] == 1  # tx 4000
 
 
 def test_compute_full_stats_left_joins_and_zero_fills(spark):
@@ -210,7 +218,7 @@ def test_compute_full_stats_left_joins_and_zero_fills(spark):
     assert out[1]["in_degree"] == 0
     assert out[1]["no_incoming_txs"] == 1
     assert out[1]["out_degree"] == 1
-    assert out[1]["no_outgoing_txs"] == 2  # distinct {1000, 1001}
+    assert out[1]["no_outgoing_txs"] == 2  # netted {1000, 5000}
     assert out[1]["no_addresses"] == 3
     assert out[1]["total_received"]["value"] == 600
     # total_spent_adj summed; total_received_adj zero-filled (no external in).
