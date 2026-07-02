@@ -2547,6 +2547,13 @@ class Cassandra:
             (self.get_id_group(currency, row["address_id"]), row["address_id"])
             for row in results.current_rows
         ]
+        if not params and page is None and is_fresh_clustering_enabled():
+            # Fresh clustering stores only multi-member clusters, so a cluster
+            # id with no membership rows is its own singleton (cluster_id ==
+            # address_id). Legacy cluster_addresses had a row for singletons
+            # too, so serve that one address; an unknown id still yields an
+            # empty result, matching legacy.
+            params = [(entity_id_group, entity)]
         query = "SELECT * FROM address WHERE address_id_group = %s and address_id = %s"
         result = await self.concurrent_with_args(currency, "transformed", query, params)
 
