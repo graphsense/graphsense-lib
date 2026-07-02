@@ -20,6 +20,7 @@ defaults in :class:`GsBuilder` otherwise.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 from contextlib import AsyncExitStack
@@ -64,6 +65,19 @@ _ID_PATTERN = re.compile(r"^[a-zA-Z0-9_]{1,150}$")
 # Filenames are derived from the user-supplied graph name; keep the
 # derived basename safe for any OS the client might save to.
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+# The open-in-Pathfinder deep link is feature-gated (see
+# GSMCPConfig.pathfinder_open_url_enabled). Passages of the tool
+# docstring that advertise it are wrapped in these sentinels; at
+# registration time the sentinels are stripped (feature on) or the whole
+# wrapped passage is removed (feature off), so a disabled deployment
+# never advertises `open_url` to the model.
+_OPEN_URL_DOC_RE = re.compile(r"\[\[open-url\]\](.*?)\[\[/open-url\]\]", re.DOTALL)
+
+
+def _resolve_open_url_docs(doc: str, *, enabled: bool) -> str:
+    return _OPEN_URL_DOC_RE.sub(lambda m: m.group(1) if enabled else "", doc)
+
 
 Color = tuple[float, float, float, float]
 
@@ -295,6 +309,7 @@ class _PathfinderBuildSummary(BaseModel):
 class _PathfinderBuildResult(BaseModel):
     filename: str
     download_url: Optional[str] = None
+    open_url: Optional[str] = None
     summary: _PathfinderBuildSummary
 
 
@@ -336,7 +351,6 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
     httpx client the verifier needs (see ``_run_verifier``).
     """
 
-    @mcp.tool(tags={"gs_pathfinder", "gs_export"})
     async def build_pathfinder_file(
         name: str,
         default_network: str,
@@ -358,8 +372,13 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
 
         Once the tool succeeds, tell the user where their file is:
 
-        * If the result has a non-null ``download_url``, give that link to
-          the user verbatim — it is a real, time-limited download link.
+        [[open-url]]* If the result has a non-null ``open_url``, give that link to the
+          user verbatim — clicking it opens the graph directly in the
+          Pathfinder web app (no manual download/import needed). It is
+          time-limited like the download link.
+        [[/open-url]]* If the result has a non-null ``download_url``, give that link to
+          the user verbatim — it is a real, time-limited download link
+          for the ``.gs`` file itself.
         * Otherwise the file is delivered as an attachment embedded in this
           tool's result; tell the user to open or save it from their
           client (the file is named ``filename``).
@@ -432,12 +451,15 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
 
         Returns:
             A tool result whose structured content carries
-            ``{filename, download_url, summary}`` — this, and only this,
-            is what you can read. ``download_url`` is either a real,
-            time-limited download link or null (null when the server has
-            no file store configured, or could not address the link); the
-            file is then delivered as an embedded attachment instead.
-            Inspect ``summary.warnings`` (it flags common authoring
+            ``{filename, download_url,[[open-url]] open_url,[[/open-url]] summary}`` — this, and
+            only this, is what you can read. ``download_url`` is either a
+            real, time-limited download link or null (null when the server
+            has no file store configured, or could not address the link);
+            the file is then delivered as an embedded attachment instead.
+            [[open-url]]``open_url`` is a deep link that opens the graph directly in
+            the Pathfinder web app (null when no file store is
+            configured); prefer surfacing it first when present.
+            [[/open-url]]Inspect ``summary.warnings`` (it flags common authoring
             mistakes) and mention any to the user. The .gs bytes travel
             as an embedded MCP resource and/or via the download link;
             they never enter your context, so do not expect to access or
@@ -478,6 +500,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         # when they drop embedded resources. The size cap lives in the
         # store; exceeding it is a hard error.
         download_url: Optional[str] = None
+        open_url: Optional[str] = None
         store = getattr(app.state, "file_store", None)
         if store is not None:
             try:
@@ -492,6 +515,14 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                     f"({exc}); reduce the number of addresses, transactions "
                     "and edges in the spec, then retry"
                 ) from exc
+            # Open-in-Pathfinder deep link (feature-gated): the dashboard's
+            # `?import=<id>` loader takes the opaque store token (NOT a
+            # URL) and fetches `<REST>/download/<id>` itself, so this
+            # only needs the token plus the configured Pathfinder base
+            # URL (set on app.state by mcp/server.py:build_mcp — None
+            # when pathfinder_open_url_enabled is off).
+            if open_url_enabled:
+                open_url = f"{pathfinder_base_url}/pathfinder?import={token}"
             try:
                 download_url = store.url_for(get_http_request(), token)
             except Exception:
@@ -536,6 +567,8 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 f"Pathfinder file `{filename}` is ready (embedded in this "
                 f"response; no download link configured)."
             )
+        if open_url is not None:
+            text += f"\nOpen directly in Pathfinder: {open_url}"
         # Fold warnings into the text block too: hosts that drop
         # `structured_content` (Mistral Le Chat) otherwise never see them,
         # and silently shipping a broken .gs is the exact failure mode
@@ -549,6 +582,7 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
         result = _PathfinderBuildResult(
             filename=filename,
             download_url=download_url,
+            open_url=open_url,
             summary=_PathfinderBuildSummary(
                 n_addresses=len(spec.addresses),
                 n_txs=len(spec.txs),
@@ -558,7 +592,32 @@ def register(mcp: FastMCP, app: FastAPI, stack: AsyncExitStack) -> None:  # noqa
                 warnings=warnings,
             ),
         )
+        # When the open-url feature is off, drop the key entirely (rather
+        # than sending null) so the structured content matches the
+        # advertised `{filename, download_url, summary}` shape.
+        structured = result.model_dump(
+            exclude=None if open_url_enabled else {"open_url"}
+        )
         return ToolResult(
             content=content,
-            structured_content=result.model_dump(),
+            structured_content=structured,
         )
+
+    # Feature gate, resolved once at registration: build_mcp puts the
+    # Pathfinder base URL on app.state only when
+    # GSMCPConfig.pathfinder_open_url_enabled is true. The same flag
+    # controls whether the docstring advertises `open_url` at all.
+    pathfinder_base_url = getattr(
+        app.state, "_graphsense_mcp_pathfinder_base_url", None
+    )
+    open_url_enabled = pathfinder_base_url is not None
+
+    # cleandoc mirrors what FastMCP does to a plain docstring; without it
+    # the explicit description would keep the source indentation.
+    mcp.tool(
+        tags={"gs_pathfinder", "gs_export"},
+        description=_resolve_open_url_docs(
+            inspect.cleandoc(build_pathfinder_file.__doc__ or ""),
+            enabled=open_url_enabled,
+        ),
+    )(build_pathfinder_file)
