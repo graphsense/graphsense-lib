@@ -14,6 +14,7 @@ from graphsenselib.db.parallel import worker_apply_changes
 from graphsenselib.deltaupdate.update.abstractupdater import (
     TABLE_NAME_DELTA_HISTORY,
     UpdateStrategy,
+    accumulate_phase,
 )
 from graphsenselib.deltaupdate.update.generic import (
     Action,
@@ -27,9 +28,10 @@ from graphsenselib.deltaupdate.update.generic import (
     prepare_relations_for_ingest,
     prepare_txs_for_ingest,
 )
+from graphsenselib.deltaupdate.update.utxo import parallelio
 from graphsenselib.rates import convert_to_fiat
 from graphsenselib.utils import DataObject as MutableNamedTuple
-from graphsenselib.utils import group_by, no_nones
+from graphsenselib.utils import group_by
 from graphsenselib.monitoring.notifications import send_msg_to_topic
 from graphsenselib.utils.errorhandling import CrashRecoverer
 from graphsenselib.utils.logging import LoggerScope
@@ -451,6 +453,8 @@ def get_transaction_changes(
     get_next_address_id: Callable[[], int],
     get_next_cluster_id: Callable[[], int],
     collect_cluster_inputs: bool = False,
+    timings: Optional[Dict[str, float]] = None,
+    pool=None,
 ) -> Tuple[List[DbChange], int, int, int, int, List[List[int]]]:
     """Main function to transform a list of transactions from the raw
     keyspace to changes to the transformed db.
@@ -465,6 +469,11 @@ def get_transaction_changes(
         collect_cluster_inputs (bool): when True, also return the multi-input
             transactions' input ``address_id`` sets (the Union-Find edges for
             incremental fresh clustering); empty list when False.
+        timings (Optional[Dict[str, float]]): accumulates wall-clock time per
+        phase under "cassandra_read"/"transform". All reads resolve inside
+        their own section, so the split is exact.
+        pool (ParallelDbPool): when given, reads are fanned out to worker
+        processes (driver row deserialization is client-CPU-bound).
     """
     tdb = db.transformed
 
@@ -512,15 +521,13 @@ def get_transaction_changes(
     len_addr = len(addresses)
 
     """
-        Start loading the address_ids for the addresses async
+        Load the address_ids for the addresses
     """
-    with LoggerScope.debug(logger, f"Checking existence for {len_addr} addresses") as _:
-        addr_ids = {  # noqa: C416
-            adr: address_id
-            for adr, address_id in db.transformed.get_address_id_async_batch(
-                list(addresses)
-            )
-        }
+    with (
+        accumulate_phase(timings, "cassandra_read"),
+        LoggerScope.debug(logger, f"Checking existence for {len_addr} addresses") as _,
+    ):
+        addr_ids = parallelio.fetch_address_ids(tdb, pool, list(addresses))
 
         del addresses
 
@@ -561,32 +568,23 @@ def get_transaction_changes(
     """
         Read address data to merge for address updates
     """
-    with LoggerScope.debug(logger, "Reading addresses to be updated") as lg:
-        existing_addr_ids = no_nones(
-            [address_id.result_or_exc.one() for adr, address_id in addr_ids.items()]
-        )
-        addresses_resolved = {  # noqa: C416
-            addr_id: address
-            for addr_id, address in tdb.get_address_async_batch(
-                [adr.address_id for adr in existing_addr_ids]
-            )
-        }
+    with (
+        accumulate_phase(timings, "cassandra_read"),
+        LoggerScope.debug(logger, "Reading addresses to be updated") as lg,
+    ):
+        existing_addr_ids = [
+            addr_id for addr_id in addr_ids.values() if addr_id is not None
+        ]
+        addresses_resolved = parallelio.fetch_address_rows(tdb, pool, existing_addr_ids)
         del existing_addr_ids
 
-        def get_resolved_address(addr_id_exc):
-            addr_id = addr_id_exc.result_or_exc.one()
-            return (
+        addresses = {
+            adr: (
                 (None, None)
                 if addr_id is None
-                else (
-                    addr_id.address_id,
-                    addresses_resolved[addr_id.address_id].result_or_exc.one(),  # noqa
-                )
+                else (addr_id, addresses_resolved[addr_id])
             )
-
-        addresses = {
-            adr: get_resolved_address(address_id)
-            for adr, address_id in addr_ids.items()
+            for adr, addr_id in addr_ids.items()
         }
 
         del addresses_resolved
@@ -648,34 +646,41 @@ def get_transaction_changes(
     """
         Reading relations to be updated.
     """
-    with LoggerScope.debug(logger, "Reading address relations to be updated") as _:
+    with (
+        accumulate_phase(timings, "cassandra_read"),
+        LoggerScope.debug(logger, "Reading address relations to be updated") as _,
+    ):
         # Only query incoming relations: outgoing carries identical
         # (no_transactions, estimated_value) data for the same edge.
         rel_to_query = [
             (addresses[update.dst_identifier][0], addresses[update.src_identifier][0])
             for update in address_delta.relation_updates
         ]
-        addr_inrelations_q = tdb.get_address_incoming_relations_async_batch(
-            rel_to_query
+        addr_inrelations_rows = parallelio.fetch_address_incoming_relations(
+            tdb, pool, rel_to_query
         )
         addr_inrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(address_delta.relation_updates, addr_inrelations_q)
-        }
-
-        del rel_to_query, addr_inrelations_q
-
-    with LoggerScope.debug(logger, "Reading clusters for addresses") as _:
-        clusters_resolved = {  # noqa: C416
-            cluster_id: cluster
-            for cluster_id, cluster in tdb.get_cluster_async_batch(
-                [
-                    address.cluster_id
-                    for adr, (addr_id, address) in addresses.items()
-                    if address is not None
-                ]
+            (update.src_identifier, update.dst_identifier): row
+            for update, row in zip(
+                address_delta.relation_updates, addr_inrelations_rows
             )
         }
+
+        del rel_to_query, addr_inrelations_rows
+
+    with (
+        accumulate_phase(timings, "cassandra_read"),
+        LoggerScope.debug(logger, "Reading clusters for addresses") as _,
+    ):
+        clusters_resolved = parallelio.fetch_cluster_rows(
+            tdb,
+            pool,
+            [
+                address.cluster_id
+                for adr, (addr_id, address) in addresses.items()
+                if address is not None
+            ],
+        )
 
         def get_resolved_cluster(address_tuple):
             aidr, address = address_tuple
@@ -686,7 +691,7 @@ def get_transaction_changes(
                     aidr,
                     address,
                     address.cluster_id,
-                    clusters_resolved[address.cluster_id].result_or_exc.one(),  # noqa
+                    clusters_resolved[address.cluster_id],  # noqa: F821
                 )
             else:
                 return (aidr, None, new_cluster_ids[aidr], None)
@@ -753,27 +758,35 @@ def get_transaction_changes(
     with LoggerScope.debug(logger, "Creating cluster changeset") as lg:
         cluster_delta = address_delta.to_cluster_delta(address_to_cluster_id)
 
-    with LoggerScope.debug(logger, "Reading cluster relations to be updated") as lg:
+    with (
+        accumulate_phase(timings, "cassandra_read"),
+        LoggerScope.debug(logger, "Reading cluster relations to be updated") as lg,
+    ):
         # Only query incoming relations: outgoing carries identical data.
         rel_to_query = [
             (update.dst_identifier, update.src_identifier)
             for update in cluster_delta.relation_updates
         ]
-        clstr_inrelations_q = tdb.get_cluster_incoming_relations_async_batch(
-            rel_to_query
+        clstr_inrelations_rows = parallelio.fetch_cluster_incoming_relations(
+            tdb, pool, rel_to_query
         )
         clstr_inrelations = {
-            (update.src_identifier, update.dst_identifier): qr
-            for update, qr in zip(cluster_delta.relation_updates, clstr_inrelations_q)
+            (update.src_identifier, update.dst_identifier): row
+            for update, row in zip(
+                cluster_delta.relation_updates, clstr_inrelations_rows
+            )
         }
 
-        del rel_to_query, clstr_inrelations_q
+        del rel_to_query, clstr_inrelations_rows
 
     """
         Merge Db Entries with deltas
     """
 
-    with LoggerScope.debug(logger, "Preparing data to be written.") as lg:
+    with (
+        accumulate_phase(timings, "transform"),
+        LoggerScope.debug(logger, "Preparing data to be written.") as lg,
+    ):
         changes = []
 
         ingest_configs = {
@@ -1482,6 +1495,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
+        parallel_pool=None,
         wal_enabled: bool = False,
     ):
         super().__init__(db, currency, forward_fill_rates=forward_fill_rates)
@@ -1501,25 +1515,51 @@ class UpdateStrategyUtxo(UpdateStrategy):
         self._pedantic = pedantic
         self._patch_mode = patch_mode
         self.changes = None
+        self.bookkeeping_changes = None
+        self._parallel_pool = parallel_pool
         self.application_strategy = application_strategy
         logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
 
     def persist_updater_progress(self):
         if self.changes is not None:
+            t_start = time.time()
             atomic = ApplicationStrategy.TX == self.application_strategy
-            # In BATCH mode self.changes carries data + bookkeeping; stage it
+            bookkeeping = self.bookkeeping_changes or []
+            # In BATCH mode self.changes carries the data changes and
+            # self.bookkeeping_changes the summary/history rows; stage both
             # durably before applying so a torn batch is replayed, not
             # recomputed, on the next run. (TX mode applies per-tx atomically
             # inside process_batch and reaches here with self.changes == None.)
             # No-op when the WAL is disabled.
-            self._stage_wal(self.changes, [])
-            apply_changes(
-                self._db, self.changes, self._pedantic, try_atomic_writes=atomic
-            )
+            self._stage_wal(self.changes, bookkeeping)
+            if self._parallel_pool is not None and not atomic:
+                # Shard the data writes across the worker pool; only write
+                # the bookkeeping rows (summary statistics, delta history)
+                # after every data shard has been acked, so a torn batch can
+                # never look completed.
+                apply_changes(
+                    self._db,
+                    self.changes,
+                    self._pedantic,
+                    try_atomic_writes=False,
+                    pool=self._parallel_pool,
+                )
+                apply_changes(
+                    self._db, bookkeeping, self._pedantic, try_atomic_writes=False
+                )
+            else:
+                apply_changes(
+                    self._db,
+                    self.changes + bookkeeping,
+                    self._pedantic,
+                    try_atomic_writes=atomic,
+                )
             if self._wal_enabled:
                 self.wal.clear()
             self.changes = None
+            self.bookkeeping_changes = None
+            self._timing_persist += time.time() - t_start
         self._time_last_batch = time.time() - self._batch_start_time
 
     def prepare_database(self):
@@ -1635,6 +1675,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         rates = {}
         txs = []
         bts = {}
+        timings = {}
         """
             Read transaction and exchange rates data
         """
@@ -1655,10 +1696,17 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 )
                 batch = [mb] + batch
 
-        with LoggerScope.debug(logger, "Reading transaction and rates data") as log:
+        with (
+            accumulate_phase(timings, "cassandra_read"),
+            LoggerScope.debug(logger, "Reading transaction and rates data") as log,
+        ):
+            for _block, block_txs in parallelio.fetch_block_transactions(
+                self._db, self._parallel_pool, batch
+            ):
+                txs.extend(block_txs)
+
             missing_rates_in_block = False
             for block in batch:
-                txs.extend(self._db.raw.get_transactions_in_block(block))
                 fiat_values = self._db.transformed.get_exchange_rates_by_block(
                     block
                 ).fiat_values
@@ -1682,7 +1730,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
         if self.application_strategy == ApplicationStrategy.BATCH:
             if self.crash_recoverer.is_in_recovery_mode():
                 raise Exception("Batch mode is not allowed in recovery mode.")
-            changes = []
             (
                 delta_changes,
                 nr_new_addresses,
@@ -1697,34 +1744,33 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 lambda: self.consume_address_id(),
                 lambda: self.consume_cluster_id(),
                 collect_cluster_inputs=collect_cluster_inputs,
+                timings=timings,
+                pool=self._parallel_pool,
             )
 
             last_block_processed = batch[-1]
             nr_new_tx = len(txs)
-            changes.extend(delta_changes)
             runtime_seconds = int(time.time() - self.batch_start_time)
 
-            changes.extend(
-                get_bookkeeping_changes(
-                    self._statistics,
-                    self._db.transformed.get_summary_statistics(),
-                    last_block_processed,
-                    nr_new_address_relations,
-                    nr_new_addresses,
-                    nr_new_cluster_relations,
-                    nr_new_clusters,
-                    nr_new_tx,
-                    self.highest_address_id,
-                    runtime_seconds,
-                    bts,
-                    patch_mode=self._patch_mode,
-                )
+            # Store changes to be written. They are applied at the end of
+            # the batch in persist_updater_progress; bookkeeping is kept
+            # separate so the pooled write path can order it after the
+            # data shards.
+            self.changes = delta_changes
+            self.bookkeeping_changes = get_bookkeeping_changes(
+                self._statistics,
+                self._db.transformed.get_summary_statistics(),
+                last_block_processed,
+                nr_new_address_relations,
+                nr_new_addresses,
+                nr_new_cluster_relations,
+                nr_new_clusters,
+                nr_new_tx,
+                self.highest_address_id,
+                runtime_seconds,
+                bts,
+                patch_mode=self._patch_mode,
             )
-
-            # Store changes to be written
-            # They are applied at the end of the batch in
-            # persist_upater_progress
-            self.changes = changes
         elif self.application_strategy == ApplicationStrategy.TX:
             nr_new_address_relations, nr_new_cluster_relations, nr_new_tx = (0, 0, 0)
             last_tx = None
@@ -1851,5 +1897,9 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 f"Fresh clustering: {len(cluster_inputs)} multi-input txs -> "
                 f"{n_changes} db changes"
             )
+
+        self._timing_cassandra_read += timings.get("cassandra_read", 0.0)
+        self._timing_transform += timings.get("transform", 0.0)
+        self._timing_persist += timings.get("persist", 0.0)
 
         return Action.CONTINUE, batch[-1]

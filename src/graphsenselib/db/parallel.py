@@ -42,6 +42,16 @@ class PlainRow:
     def __eq__(self, other):
         return isinstance(other, PlainRow) and other._data == self._data
 
+    def _replace(self, **kwargs):
+        """Return a copy with the given fields overridden, mirroring
+        namedtuple._replace so flattened rows stay drop-in replacements
+        for driver rows."""
+        data = object.__getattribute__(self, "_data")
+        unknown = set(kwargs) - set(data)
+        if unknown:
+            raise ValueError(f"Got unexpected field names: {sorted(unknown)!r}")
+        return PlainRow({**data, **kwargs})
+
     def __repr__(self):
         return f"PlainRow({self._data!r})"
 
@@ -126,12 +136,29 @@ def worker_apply_changes(chunk: list) -> list:
     return [get_worker_db().transformed.apply_changes(chunk, atomic=False)]
 
 
+def _init_worker_signal_inert(initializer, initargs):
+    """Pool-worker bootstrap: ignore termination signals, then run the
+    caller's initializer.
+
+    Terminal Ctrl-C delivers SIGINT to the whole foreground process
+    group; a worker dying mid-write would turn the parent's graceful
+    flag-based shutdown into a BrokenProcessPool mid-batch. Workers only
+    stop via pool shutdown (or SIGKILL).
+    """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    if initializer is not None:
+        initializer(*initargs)
+
+
 class ParallelDbPool:
     """Pool of worker processes for client-CPU-bound Cassandra work.
 
     Workers are created with the spawn context because the
     cassandra-driver is not fork-safe; each worker opens its own Cluster
     session via the initializer and keeps it for the pool's lifetime.
+    Workers ignore SIGINT/SIGTERM (see _init_worker_signal_inert) so
+    group-delivered terminal signals cannot abort a batch mid-write.
     """
 
     def __init__(self, num_workers: int, initializer, initargs=()):
@@ -139,8 +166,8 @@ class ParallelDbPool:
         self._executor = ProcessPoolExecutor(
             max_workers=num_workers,
             mp_context=multiprocessing.get_context("spawn"),
-            initializer=initializer,
-            initargs=initargs,
+            initializer=_init_worker_signal_inert,
+            initargs=(initializer, initargs),
         )
 
     def map_chunked(self, fn, items: list) -> list:

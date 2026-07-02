@@ -4,6 +4,7 @@ import socket
 import time
 import uuid
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -12,6 +13,21 @@ from ...utils.logging import LoggerScope
 from .generic import Action
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def accumulate_phase(timings: Optional[Dict[str, float]], key: str):
+    """Accumulate wall-clock time of the with-block into timings[key].
+
+    A None timings dict disables measurement, so call sites don't need
+    to branch. Async-driver caveat: sections that only fire futures are
+    cheap here; the wait/decode cost lands in whichever later section
+    resolves them.
+    """
+    start = time.time()
+    yield
+    if timings is not None:
+        timings[key] = timings.get(key, 0.0) + (time.time() - start)
 
 
 def make_run_id() -> str:

@@ -98,7 +98,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         db,
         du_config: DeltaUpdaterConfig,
         pedantic: bool,
-        application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
+        # BATCH is the only strategy process_batch_impl_hook implements.
+        application_strategy: ApplicationStrategy = ApplicationStrategy.BATCH,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
         parallel_pool=None,
