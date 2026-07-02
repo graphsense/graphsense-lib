@@ -24,7 +24,6 @@ __all__ = [
     "GeneralApi",
     "GraphApi",
     "RatesApi",
-    "SubgraphApi",
     "TagsApi",
     "TokensApi",
     "TxsApi",
@@ -104,10 +103,6 @@ __all__ = [
     "SearchResultLevel5",
     "SearchResultLevel6",
     "Stats",
-    "SubgraphAddressSummary",
-    "SubgraphSummary",
-    "SubgraphSummaryRequest",
-    "SubgraphTxSummary",
     "Tag",
     "TagCloudEntry",
     "TagSummary",
@@ -145,7 +140,6 @@ from graphsense.api.entities_api import EntitiesApi as EntitiesApi
 from graphsense.api.general_api import GeneralApi as GeneralApi
 from graphsense.api.graph_api import GraphApi as GraphApi
 from graphsense.api.rates_api import RatesApi as RatesApi
-from graphsense.api.subgraph_api import SubgraphApi as SubgraphApi
 from graphsense.api.tags_api import TagsApi as TagsApi
 from graphsense.api.tokens_api import TokensApi as TokensApi
 from graphsense.api.txs_api import TxsApi as TxsApi
@@ -229,10 +223,6 @@ from graphsense.models.search_result_level4 import SearchResultLevel4 as SearchR
 from graphsense.models.search_result_level5 import SearchResultLevel5 as SearchResultLevel5
 from graphsense.models.search_result_level6 import SearchResultLevel6 as SearchResultLevel6
 from graphsense.models.stats import Stats as Stats
-from graphsense.models.subgraph_address_summary import SubgraphAddressSummary as SubgraphAddressSummary
-from graphsense.models.subgraph_summary import SubgraphSummary as SubgraphSummary
-from graphsense.models.subgraph_summary_request import SubgraphSummaryRequest as SubgraphSummaryRequest
-from graphsense.models.subgraph_tx_summary import SubgraphTxSummary as SubgraphTxSummary
 from graphsense.models.tag import Tag as Tag
 from graphsense.models.tag_cloud_entry import TagCloudEntry as TagCloudEntry
 from graphsense.models.tag_summary import TagSummary as TagSummary

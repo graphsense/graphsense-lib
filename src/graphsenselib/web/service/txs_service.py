@@ -1,13 +1,9 @@
 from typing import Optional
 
-from graphsenselib.db.asynchronous.services.comparison_service import (
-    compare_txs as _db_compare_txs,
-)
 from graphsenselib.web.service import parse_page_int_optional
 from graphsenselib.web.translators import (
     pydantic_to_openapi,
     to_api_external_conversion,
-    to_api_transaction_comparison,
     to_api_tx,
     to_api_tx_account,
     to_api_tx_ref,
@@ -78,30 +74,6 @@ async def get_tx_conversions(ctx, currency, tx_hash):
         currency, tx_hash, included_bridges=included_bridges
     )
     return [to_api_external_conversion(conv) for conv in result]
-
-
-async def compare_txs(
-    ctx,
-    currency: str,
-    tx_hashes: list[str],
-    include_characteristics: bool,
-    include_details: bool,
-    include_signals: bool,
-    include_lineage: bool,
-    include_verdict: bool,
-):
-    result = await _db_compare_txs(
-        ctx.services.txs_service,
-        currency,
-        tx_hashes,
-        include_details=include_details,
-        include_characteristics=include_characteristics,
-        include_signals=include_signals,
-        include_lineage=include_lineage,
-        include_verdict=include_verdict,
-        tagstore_groups=ctx.tagstore_groups,
-    )
-    return to_api_transaction_comparison(result)
 
 
 async def list_tx_flows(

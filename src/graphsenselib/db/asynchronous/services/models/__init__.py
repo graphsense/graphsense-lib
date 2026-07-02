@@ -514,59 +514,6 @@ class LineageEdgeInternal(BaseModel):
     in_index: Optional[int] = None
 
 
-class SubgraphTxSummaryInternal(BaseModel):
-    tx_count: int
-    # total_value is in the queried currency's native base unit (satoshi for
-    # UTXO, wei/sun for account chains) and sums native transfers only;
-    # total_value_fiat sums the fiat value (in fiat_currency) across all
-    # transfers (incl. tokens). total_fee stays in the native unit. notes
-    # flags caveats (partial fiat totals, excluded token transfers).
-    total_value: int
-    total_value_fiat: Optional[float] = None
-    # Which fiat currency total_value_fiat is denominated in (e.g. "usd").
-    fiat_currency: str = "usd"
-    total_fee: Optional[int] = None
-    # io counts are UTXO-only; None for account-model (ETH/TRX) summaries.
-    total_inputs: Optional[int] = None
-    total_outputs: Optional[int] = None
-    block_min: int
-    block_max: int
-    timestamp_min: int
-    timestamp_max: int
-    notes: List[str] = Field(default_factory=list)
-
-
-class SubgraphAddressSummaryInternal(BaseModel):
-    address_count: int
-    # Native base-unit sums (satoshi / wei / sun) over the selected
-    # addresses. Account-chain token holdings are not folded in; notes
-    # flags them. The *_fiat fields sum the fiat_currency value across
-    # the set, partial when some addresses lack a rate (noted).
-    total_received: int
-    total_received_fiat: Optional[float] = None
-    total_spent: int
-    total_spent_fiat: Optional[float] = None
-    balance: int
-    balance_fiat: Optional[float] = None
-    fiat_currency: str = "usd"
-    # min/max activity timestamps over the set; None when no selected
-    # address has any on-chain activity.
-    first_usage: Optional[int] = None
-    last_usage: Optional[int] = None
-    # Addresses with at least one tag visible to the caller's groups.
-    tagged_address_count: int = 0
-    # Distinct actors across all tags on the set, deduped by id.
-    actors: List[LabeledItemRef] = Field(default_factory=list)
-    notes: List[str] = Field(default_factory=list)
-
-
-class SubgraphSummaryInternal(BaseModel):
-    currency: str
-    # Each block is present iff the request carried that node type.
-    txs: Optional[SubgraphTxSummaryInternal] = None
-    addresses: Optional[SubgraphAddressSummaryInternal] = None
-
-
 class TxRefInternal(BaseModel):
     network: str
     tx_hash: str

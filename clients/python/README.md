@@ -169,7 +169,6 @@ Class | Method | HTTP request | Description
 *GraphApi* | [**graph_compare**](docs/GraphApi.md#graph_compare) | **POST** /graph/compare | Compare multiple transactions
 *GraphApi* | [**graph_summary**](docs/GraphApi.md#graph_summary) | **POST** /graph/summary | Summarize a set of transactions and/or addresses
 *RatesApi* | [**get_exchange_rates**](docs/RatesApi.md#get_exchange_rates) | **GET** /{currency}/rates/{height} | Get fiat exchange rates at a block height
-*SubgraphApi* | [**subgraph_summary**](docs/SubgraphApi.md#subgraph_summary) | **POST** /{currency}/graph/summary | Summarize a set of transactions and/or addresses
 *TagsApi* | [**get_actor**](docs/TagsApi.md#get_actor) | **GET** /tags/actors/{actor} | Get actor details by ID
 *TagsApi* | [**get_actor_tags**](docs/TagsApi.md#get_actor_tags) | **GET** /tags/actors/{actor}/tags | List tags associated with an actor
 *TagsApi* | [**list_address_tags**](docs/TagsApi.md#list_address_tags) | **GET** /tags | List address tags by label
@@ -177,7 +176,6 @@ Class | Method | HTTP request | Description
 *TagsApi* | [**list_taxonomies**](docs/TagsApi.md#list_taxonomies) | **GET** /tags/taxonomies | List all taxonomies
 *TagsApi* | [**report_tag**](docs/TagsApi.md#report_tag) | **POST** /tags/report-tag | Submit a user-reported tag
 *TokensApi* | [**list_supported_tokens**](docs/TokensApi.md#list_supported_tokens) | **GET** /{currency}/supported_tokens | List supported tokens for a currency
-*TxsApi* | [**compare_txs**](docs/TxsApi.md#compare_txs) | **GET** /{currency}/txs/compare | Compare multiple transactions
 *TxsApi* | [**get_spending_txs**](docs/TxsApi.md#get_spending_txs) | **GET** /{currency}/txs/{tx_hash}/spending | List source transactions
 *TxsApi* | [**get_spent_in_txs**](docs/TxsApi.md#get_spent_in_txs) | **GET** /{currency}/txs/{tx_hash}/spent_in | List spending transactions
 *TxsApi* | [**get_tx**](docs/TxsApi.md#get_tx) | **GET** /{currency}/txs/{tx_hash} | Get transaction details by hash
@@ -256,10 +254,6 @@ Class | Method | HTTP request | Description
  - [SearchResultLevel5](docs/SearchResultLevel5.md)
  - [SearchResultLevel6](docs/SearchResultLevel6.md)
  - [Stats](docs/Stats.md)
- - [SubgraphAddressSummary](docs/SubgraphAddressSummary.md)
- - [SubgraphSummary](docs/SubgraphSummary.md)
- - [SubgraphSummaryRequest](docs/SubgraphSummaryRequest.md)
- - [SubgraphTxSummary](docs/SubgraphTxSummary.md)
  - [Tag](docs/Tag.md)
  - [TagCloudEntry](docs/TagCloudEntry.md)
  - [TagSummary](docs/TagSummary.md)

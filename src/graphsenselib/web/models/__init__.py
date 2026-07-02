@@ -44,13 +44,6 @@ from graphsenselib.web.models.compare import (
     TxCharacteristics,
     TxComparedItem,
 )
-from graphsenselib.web.models.subgraph import (
-    SubgraphAddressSummary,
-    SubgraphSummary,
-    SubgraphSummaryRequest,
-    SubgraphTxSummary,
-)
-
 from graphsenselib.web.models.graph import (
     GraphAddressNetworkSummary,
     GraphAddressOverall,
@@ -205,11 +198,6 @@ __all__ = [
     "LineageEdge",
     "ComparisonVerdict",
     "TransactionComparison",
-    # Subgraph
-    "SubgraphAddressSummary",
-    "SubgraphSummary",
-    "SubgraphTxSummary",
-    "SubgraphSummaryRequest",
     # Graph
     "GraphTxRef",
     "GraphAddressRef",

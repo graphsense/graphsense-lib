@@ -216,22 +216,6 @@ def test_pydantic_validation_error_is_handled_as_bad_user_input():
     assert "Input should be a valid integer" in response.json()["detail"]
 
 
-def test_txs_compare_is_ordered_after_tx_detail_endpoints():
-    app = create_spec_app()
-    with TestClient(app) as client:
-        spec = client.get("/openapi.json").json()
-
-    path_order = list(spec["paths"])
-    compare_idx = path_order.index("/{currency}/txs/compare")
-    detail_indices = [
-        i for i, p in enumerate(path_order) if "/txs/{tx_hash}" in p
-    ]
-
-    assert detail_indices, "expected /txs/{tx_hash} endpoints in the spec"
-    # compare must render after every regular /txs/{tx_hash} endpoint
-    assert compare_idx > max(detail_indices)
-
-
 def test_openapi_examples_are_normalized_for_generated_client_snippets():
     app = create_spec_app()
     with TestClient(app) as client:

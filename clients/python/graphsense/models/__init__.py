@@ -78,10 +78,6 @@ from graphsense.models.search_result_level4 import SearchResultLevel4
 from graphsense.models.search_result_level5 import SearchResultLevel5
 from graphsense.models.search_result_level6 import SearchResultLevel6
 from graphsense.models.stats import Stats
-from graphsense.models.subgraph_address_summary import SubgraphAddressSummary
-from graphsense.models.subgraph_summary import SubgraphSummary
-from graphsense.models.subgraph_summary_request import SubgraphSummaryRequest
-from graphsense.models.subgraph_tx_summary import SubgraphTxSummary
 from graphsense.models.tag import Tag
 from graphsense.models.tag_cloud_entry import TagCloudEntry
 from graphsense.models.tag_summary import TagSummary
