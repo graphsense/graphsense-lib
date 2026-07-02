@@ -1947,7 +1947,14 @@ class Cassandra:
         return result["cluster_id"]
 
     async def get_fresh_cluster_id(self, currency, address_id):
-        """Look up fresh_cluster_id for an address_id. Returns None if not found."""
+        """Resolve an address's fresh cluster id.
+
+        Fresh clustering stores only multi-member clusters, so an address
+        without a ``fresh_address_cluster`` row is its own singleton
+        (``cluster_id == address_id``). Returns None only when the fresh
+        tables are unavailable (fresh clustering has not been run on this
+        keyspace).
+        """
         address_id_group = self.get_id_group(currency, address_id)
         query = (
             "SELECT cluster_id FROM fresh_address_cluster "
@@ -1962,7 +1969,7 @@ class Cassandra:
             return None
         result = one(result)
         if not result:
-            return None
+            return address_id
         return result["cluster_id"]
 
     async def list_address_links(
