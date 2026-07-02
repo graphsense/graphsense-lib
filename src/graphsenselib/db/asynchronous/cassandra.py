@@ -149,6 +149,15 @@ def _cluster_stats_table() -> str:
     return "fresh_cluster_stats" if is_fresh_clustering_enabled() else "cluster"
 
 
+def _fresh_stats_pending(row) -> bool:
+    """A fresh_cluster_stats row whose stat columns are still null.
+
+    Delta-update clustering writes only ``no_addresses``/``min_address_id``;
+    everything else stays null until the next recompute-cluster-stats run.
+    """
+    return "total_received" in row and row["total_received"] is None
+
+
 def _cluster_addresses_table() -> str:
     """Cluster membership source, switched by the same env var.
 
@@ -2429,6 +2438,10 @@ class Cassandra:
                 if singleton is not None:
                     return (await self.finish_entities(currency, [singleton]))[0]
             raise ClusterNotFoundException(currency, entity)
+        if is_fresh_clustering_enabled() and _fresh_stats_pending(result):
+            result = await self._fresh_entity_from_members(currency, result)
+            if result is None:
+                raise ClusterNotFoundException(currency, entity)
         return (await self.finish_entities(currency, [result]))[0]
 
     async def _fresh_singleton_entity(self, currency, cluster_id):
@@ -2465,6 +2478,86 @@ class Cassandra:
             "total_received_adj": row["total_received"],
             "total_spent_adj": row["total_spent"],
         }
+
+    def _zero_values(self, currency):
+        Values = namedtuple("Values", ["value", "fiat_values"])
+        return Values(
+            value=0,
+            fiat_values=[0.0 for _ in self.parameters[currency]["fiat_currencies"]],
+        )
+
+    def _sum_currency(self, currency, values_list):
+        """Sum currency structs (value + per-fiat values) across address rows."""
+        Values = namedtuple("Values", ["value", "fiat_values"])
+        fiat = [0.0 for _ in self.parameters[currency]["fiat_currencies"]]
+        total = 0
+        for v in values_list:
+            if v is None:
+                continue
+            total += v.value
+            for i, f in enumerate(v.fiat_values or []):
+                fiat[i] += f
+        return Values(value=total, fiat_values=fiat)
+
+    async def _fresh_entity_from_members(self, currency, row):
+        """Fill a stats-pending fresh cluster row from its member address rows.
+
+        Delta-update clustering writes only ``no_addresses``/``min_address_id``;
+        the remaining columns stay null until the next recompute-cluster-stats
+        run. Money columns and first/last tx are exact (plain sums / extrema
+        over members). Tx counts and degrees are member sums and OVERCOUNT: a
+        co-spend tx is counted once per participating member, and intra-cluster
+        edges / shared counterparties inflate degrees. Exact netting needs tx
+        identity and counterparty->cluster resolution — what recompute does and
+        too expensive per request — so serve the upper bound until recompute
+        replaces it. Adjusted totals are set to the raw sums (same upper-bound
+        rationale). Returns ``None`` when no member address exists.
+        """
+        cluster_id = row["cluster_id"]
+        cluster_id_group = self.get_id_group(currency, cluster_id)
+        query = (
+            f"SELECT address_id FROM {_cluster_addresses_table()} "
+            "WHERE cluster_id_group = %s AND cluster_id = %s"
+        )
+        members = await self.execute_async(
+            currency, "transformed", query, [cluster_id_group, cluster_id]
+        )
+        member_ids = [r["address_id"] for r in members.current_rows] or [cluster_id]
+        params = [(self.get_id_group(currency, id), id) for id in member_ids]
+        query = "SELECT * FROM address WHERE address_id_group = %s AND address_id = %s"
+        addrs = await self.concurrent_with_args(currency, "transformed", query, params)
+        if not addrs:
+            return None
+        total_received = self._sum_currency(
+            currency, [a["total_received"] for a in addrs]
+        )
+        total_spent = self._sum_currency(currency, [a["total_spent"] for a in addrs])
+        return {
+            "cluster_id": cluster_id,
+            "no_addresses": row["no_addresses"],
+            "min_address_id": row.get("min_address_id"),
+            "no_incoming_txs": sum(a["no_incoming_txs"] for a in addrs),
+            "no_outgoing_txs": sum(a["no_outgoing_txs"] for a in addrs),
+            "in_degree": sum(a["in_degree"] for a in addrs),
+            "out_degree": sum(a["out_degree"] for a in addrs),
+            "first_tx_id": min(a["first_tx_id"] for a in addrs),
+            "last_tx_id": max(a["last_tx_id"] for a in addrs),
+            "total_received": total_received,
+            "total_spent": total_spent,
+            "total_received_adj": total_received,
+            "total_spent_adj": total_spent,
+        }
+
+    async def _fresh_heal_pending_entities(self, currency, rows):
+        """Replace stats-pending rows in a bulk entity result; drop unhealable."""
+
+        async def heal(row):
+            if not _fresh_stats_pending(row):
+                return row
+            return await self._fresh_entity_from_members(currency, row)
+
+        healed = await asyncio.gather(*[heal(row) for row in rows])
+        return [row for row in healed if row is not None]
 
     async def _fresh_fill_singleton_entities(self, currency, ids, rows):
         """Restore singletons dropped from a fresh bulk entity lookup.
@@ -2523,6 +2616,9 @@ class Cassandra:
             )
             paging_state = result.paging_state
             result = result.current_rows
+
+        if is_fresh_clustering_enabled():
+            result = await self._fresh_heal_pending_entities(currency, result)
 
         with_txs = "*" in fields or "first_tx_id" in fields or "last_tx_id" in fields
         return await self.finish_entities(currency, result, with_txs), to_hex(
@@ -3077,6 +3173,12 @@ class Cassandra:
 
     @eth
     async def finish_address(self, currency, row, with_txs=True):
+        # Backstop for stats-pending fresh cluster rows that slipped past
+        # synthesis: zero-fill instead of 500ing on values._fields.
+        if row["total_received"] is None:
+            row["total_received"] = self._zero_values(currency)
+        if row["total_spent"] is None:
+            row["total_spent"] = self._zero_values(currency)
         row["total_received"] = self.markup_currency(currency, row["total_received"])
         row["total_spent"] = self.markup_currency(currency, row["total_spent"])
 

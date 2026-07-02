@@ -78,6 +78,9 @@ def _make_self(multi_member_ids, known_address_ids):
     ns._fresh_fill_singleton_entities = lambda currency, ids, rows: (
         Cassandra._fresh_fill_singleton_entities(ns, currency, ids, rows)
     )
+    ns._fresh_heal_pending_entities = lambda currency, rows: (
+        Cassandra._fresh_heal_pending_entities(ns, currency, rows)
+    )
     return ns
 
 
