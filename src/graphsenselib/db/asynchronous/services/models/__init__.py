@@ -106,6 +106,7 @@ class Address(BaseModel):
     address: str
     currency: str
     entity: Optional[int] = None
+    fresh_cluster_id: Optional[int] = None
     first_tx: Optional[TxSummary] = None
     last_tx: Optional[TxSummary] = None
     no_incoming_txs: int = 0
