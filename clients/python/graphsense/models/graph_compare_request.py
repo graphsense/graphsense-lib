@@ -15,22 +15,31 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.tx import Tx
-from graphsense.models.tx_characteristics import TxCharacteristics
+from typing_extensions import Annotated
+from graphsense.models.graph_tx_ref import GraphTxRef
 from typing import Optional, Set
 from typing_extensions import Self
 
-class TxComparedItem(BaseModel):
+class GraphCompareRequest(BaseModel):
     """
-    Per-tx entry. ``characteristics`` is populated when ``include_characteristics`` is set (default true), ``details`` when ``include_details`` is set.
+    Request body for ``POST /graph/compare``.  The fingerprinting analysis is BTC-only for now; every ref's network must be ``btc`` (400 otherwise). ``include`` selects response components; signals, lineage and verdict are always computed internally (the verdict depends on the signals), the list only controls what is returned. ``all`` expands to every component.
     """ # noqa: E501
-    tx_hash: StrictStr
-    network: Optional[StrictStr] = 'btc'
-    characteristics: Optional[TxCharacteristics] = None
-    details: Optional[Tx] = None
-    __properties: ClassVar[List[str]] = ["tx_hash", "network", "characteristics", "details"]
+    txs: Annotated[List[GraphTxRef], Field(min_length=2, max_length=100)]
+    include: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["txs", "include"]
+
+    @field_validator('include')
+    def include_validate_enum(cls, value):
+        """Validates the enum"""
+        if value is None:
+            return value
+
+        for i in value:
+            if i not in set(['all', 'characteristics', 'details', 'signals', 'lineage', 'verdict']):
+                raise ValueError("each list item must be one of ('all', 'characteristics', 'details', 'signals', 'lineage', 'verdict')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -50,7 +59,7 @@ class TxComparedItem(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of TxComparedItem from a JSON string"""
+        """Create an instance of GraphCompareRequest from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -71,18 +80,18 @@ class TxComparedItem(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of characteristics
-        if self.characteristics:
-            _dict['characteristics'] = self.characteristics.to_dict()
-        # override the default output from pydantic by calling `to_dict()` of details
-        if self.details:
-            _dict['details'] = self.details.to_dict()
-
+        # override the default output from pydantic by calling `to_dict()` of each item in txs (list)
+        _items = []
+        if self.txs:
+            for _item_txs in self.txs:
+                if _item_txs:
+                    _items.append(_item_txs.to_dict())
+            _dict['txs'] = _items
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of TxComparedItem from a dict"""
+        """Create an instance of GraphCompareRequest from a dict"""
         if obj is None:
             return None
 
@@ -90,10 +99,8 @@ class TxComparedItem(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tx_hash": obj.get("tx_hash"),
-            "network": obj.get("network") if obj.get("network") is not None else 'btc',
-            "characteristics": TxCharacteristics.from_dict(obj["characteristics"]) if obj.get("characteristics") is not None else None,
-            "details": Tx.from_dict(obj["details"]) if obj.get("details") is not None else None
+            "txs": [GraphTxRef.from_dict(_item) for _item in obj["txs"]] if obj.get("txs") is not None else None,
+            "include": obj.get("include")
         })
         return _obj
 

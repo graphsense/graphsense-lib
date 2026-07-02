@@ -1004,17 +1004,17 @@ async def compare_txs(
     tx_hashes = list(dict.fromkeys(tx_hashes))
     if len(tx_hashes) < 2:
         raise BadUserInputException(
-            "/txs/compare needs at least 2 distinct transaction hashes."
+            "/graph/compare needs at least 2 distinct transaction hashes."
         )
 
     # The fingerprinting analysis (signals, lineage, verdict) is BTC-only:
     # several signals (coinjoin variants, exchange overlap, change heuristics)
-    # are tuned to BTC. Other chains use POST /{currency}/graph/summary for
+    # are tuned to BTC. Other chains use POST /graph/summary for
     # chain-agnostic aggregate stats over a set of transactions.
     if currency.lower() != "btc":
         raise BadUserInputException(
-            f"/txs/compare is BTC-only; '{currency}' is not supported. "
-            "Use /{currency}/graph/summary for aggregate stats."
+            f"/graph/compare is BTC-only; '{currency}' is not supported. "
+            "Use /graph/summary for aggregate stats."
         )
 
     fetched: list[Union[TxUtxo, TxAccount]] = await asyncio.gather(
@@ -1089,6 +1089,7 @@ async def compare_txs(
     items = [
         TxComparedItemInternal(
             tx_hash=tx_hashes[i],
+            network=currency,
             characteristics=chars[i] if include_characteristics else None,
             details=fetched[i] if include_details else None,
         )

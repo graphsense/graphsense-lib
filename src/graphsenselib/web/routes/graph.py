@@ -9,7 +9,12 @@ endpoint (added separately) runs the BTC-only fingerprinting analysis.
 from fastapi import APIRouter, Depends, Request
 
 from graphsenselib.web.service import ServiceContext
-from graphsenselib.web.models import GraphSummary, GraphSummaryRequest
+from graphsenselib.web.models import (
+    GraphCompareRequest,
+    GraphSummary,
+    GraphSummaryRequest,
+    TransactionComparison,
+)
 from graphsenselib.web.routes.base import PluginRoute, get_ctx
 import graphsenselib.web.service.graph_service as service
 
@@ -50,3 +55,34 @@ async def graph_summary(
 ):
     """Aggregate stats over a set of transactions and/or addresses."""
     return await service.summary(ctx, txs=body.txs, addresses=body.addresses)
+
+
+@router.post(
+    "/graph/compare",
+    summary="Compare multiple transactions",
+    description=(
+        "Returns per-tx characteristics, pairwise similarity signals, and a "
+        "rollup verdict on whether the supplied transactions are likely "
+        "linked to the same actor. The fingerprinting analysis is BTC-only; "
+        "every ref's network must be btc. For chain-agnostic aggregate "
+        "stats over a node set use POST /graph/summary instead."
+    ),
+    operation_id="graph_compare",
+    response_model=TransactionComparison,
+    response_model_exclude_none=True,
+    responses={
+        400: {
+            "description": (
+                "Invalid request (need 2+ distinct tx refs, or a non-BTC network)."
+            )
+        },
+        404: {"description": "One of the transactions was not found."},
+    },
+)
+async def graph_compare(
+    request: Request,
+    body: GraphCompareRequest,
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Compare two or more transactions (BTC-only fingerprinting analysis)."""
+    return await service.compare(ctx, txs=body.txs, include=body.include)

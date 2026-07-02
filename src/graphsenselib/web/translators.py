@@ -751,6 +751,7 @@ def to_api_transaction_comparison(
         items.append(
             TxComparedItem(
                 tx_hash=item.tx_hash,
+                network=item.network,
                 characteristics=characteristics,
                 details=details,
             )

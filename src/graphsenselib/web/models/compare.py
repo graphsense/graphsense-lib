@@ -104,6 +104,7 @@ class TxComparedItem(APIModel):
     ``include_details`` is set."""
 
     tx_hash: str
+    network: str = "btc"
     characteristics: Optional[TxCharacteristics] = None
     details: Optional[Union[TxUtxo, TxAccount]] = None
 

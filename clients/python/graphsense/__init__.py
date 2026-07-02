@@ -66,6 +66,7 @@ __all__ = [
     "GraphAddressOverall",
     "GraphAddressRef",
     "GraphAddressSummary",
+    "GraphCompareRequest",
     "GraphSummary",
     "GraphSummaryRequest",
     "GraphTxNetworkSummary",
@@ -190,6 +191,7 @@ from graphsense.models.graph_address_network_summary import GraphAddressNetworkS
 from graphsense.models.graph_address_overall import GraphAddressOverall as GraphAddressOverall
 from graphsense.models.graph_address_ref import GraphAddressRef as GraphAddressRef
 from graphsense.models.graph_address_summary import GraphAddressSummary as GraphAddressSummary
+from graphsense.models.graph_compare_request import GraphCompareRequest as GraphCompareRequest
 from graphsense.models.graph_summary import GraphSummary as GraphSummary
 from graphsense.models.graph_summary_request import GraphSummaryRequest as GraphSummaryRequest
 from graphsense.models.graph_tx_network_summary import GraphTxNetworkSummary as GraphTxNetworkSummary

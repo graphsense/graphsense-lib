@@ -662,6 +662,7 @@ class ComparisonVerdictInternal(BaseModel):
 
 class TxComparedItemInternal(BaseModel):
     tx_hash: str
+    network: str = "btc"
     characteristics: Optional[TxCharacteristicsInternal] = None
     details: Optional[Union[TxUtxo, TxAccount]] = None
 

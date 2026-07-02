@@ -7,6 +7,7 @@ Per-tx entry. ``characteristics`` is populated when ``include_characteristics`` 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **tx_hash** | **str** |  | 
+**network** | **str** |  | [optional] [default to 'btc']
 **characteristics** | [**TxCharacteristics**](TxCharacteristics.md) |  | [optional] 
 **details** | [**Tx**](Tx.md) |  | [optional] 
 

@@ -40,6 +40,7 @@ from graphsense.models.graph_address_network_summary import GraphAddressNetworkS
 from graphsense.models.graph_address_overall import GraphAddressOverall
 from graphsense.models.graph_address_ref import GraphAddressRef
 from graphsense.models.graph_address_summary import GraphAddressSummary
+from graphsense.models.graph_compare_request import GraphCompareRequest
 from graphsense.models.graph_summary import GraphSummary
 from graphsense.models.graph_summary_request import GraphSummaryRequest
 from graphsense.models.graph_tx_network_summary import GraphTxNetworkSummary

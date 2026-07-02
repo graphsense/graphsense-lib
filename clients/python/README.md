@@ -166,6 +166,7 @@ Class | Method | HTTP request | Description
 *EntitiesApi* | [**search_entity_neighbors**](docs/EntitiesApi.md#search_entity_neighbors) | **GET** /{currency}/entities/{entity}/search | Search entity neighborhood
 *GeneralApi* | [**get_statistics**](docs/GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
 *GeneralApi* | [**search**](docs/GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
+*GraphApi* | [**graph_compare**](docs/GraphApi.md#graph_compare) | **POST** /graph/compare | Compare multiple transactions
 *GraphApi* | [**graph_summary**](docs/GraphApi.md#graph_summary) | **POST** /graph/summary | Summarize a set of transactions and/or addresses
 *RatesApi* | [**get_exchange_rates**](docs/RatesApi.md#get_exchange_rates) | **GET** /{currency}/rates/{height} | Get fiat exchange rates at a block height
 *SubgraphApi* | [**subgraph_summary**](docs/SubgraphApi.md#subgraph_summary) | **POST** /{currency}/graph/summary | Summarize a set of transactions and/or addresses
@@ -217,6 +218,7 @@ Class | Method | HTTP request | Description
  - [GraphAddressOverall](docs/GraphAddressOverall.md)
  - [GraphAddressRef](docs/GraphAddressRef.md)
  - [GraphAddressSummary](docs/GraphAddressSummary.md)
+ - [GraphCompareRequest](docs/GraphCompareRequest.md)
  - [GraphSummary](docs/GraphSummary.md)
  - [GraphSummaryRequest](docs/GraphSummaryRequest.md)
  - [GraphTxNetworkSummary](docs/GraphTxNetworkSummary.md)
