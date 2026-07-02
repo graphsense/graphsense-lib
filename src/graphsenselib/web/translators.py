@@ -103,6 +103,9 @@ from graphsenselib.db.asynchronous.services.models import (
 from graphsenselib.db.asynchronous.services.models import (
     SubgraphSummaryInternal as PydanticSubgraphSummary,
 )
+from graphsenselib.db.asynchronous.services.models import (
+    GraphSummaryInternal as PydanticGraphSummary,
+)
 
 from graphsenselib.web.models import (
     Actor,
@@ -153,6 +156,7 @@ from graphsenselib.web.models.compare import (
     TxComparedItem,
 )
 from graphsenselib.web.models.subgraph import SubgraphSummary
+from graphsenselib.web.models.graph import GraphSummary
 from graphsenselib.web.models.heuristics import (
     AddressOutput as ApiHeuristicAddressOutput,
 )
@@ -775,3 +779,11 @@ def to_api_subgraph_summary(
     """Convert service-layer SubgraphSummaryInternal to API SubgraphSummary.
     The two models share field names, so a flat round-trip is enough."""
     return SubgraphSummary.model_validate(pydantic_summary.model_dump())
+
+
+def to_api_graph_summary(
+    pydantic_summary: PydanticGraphSummary,
+) -> GraphSummary:
+    """Convert service-layer GraphSummaryInternal to API GraphSummary.
+    The two models share field names, so a flat round-trip is enough."""
+    return GraphSummary.model_validate(pydantic_summary.model_dump())
