@@ -1395,6 +1395,26 @@ def run_full_transform(
     logger.info(f"Full transform complete: {currency} -> {target_keyspace}")
 
 
+def _delete_fresh_cluster_stats_rows(transformed_db, keys):
+    """Delete stale ``fresh_cluster_stats`` rows.
+
+    ``keys`` is a list of ``(cluster_id_group, cluster_id)`` tuples; deletes are
+    issued per partition (single ``cluster_id_group``) in bounded ``IN`` chunks.
+    """
+    from collections import defaultdict
+
+    by_group = defaultdict(list)
+    for group, cluster_id in keys:
+        by_group[group].append(cluster_id)
+    for group, cluster_ids in by_group.items():
+        for i in range(0, len(cluster_ids), 500):
+            ids = ",".join(str(c) for c in cluster_ids[i : i + 500])
+            transformed_db.execute_raw_cql(
+                f"DELETE FROM fresh_cluster_stats "
+                f"WHERE cluster_id_group = {group} AND cluster_id IN ({ids})"
+            )
+
+
 @transformation.command("cluster", short_help="Run one-off UTXO address clustering.")
 @require_environment()
 @require_currency()
@@ -1475,9 +1495,10 @@ def run_clustering(env, currency, local, read_partitions, end_block):
         # (multi-hour) run instead of going empty. The trade-off is that a re-run over
         # CHANGED data can leave phantom cluster_id-keyed rows (cluster_id ==
         # min(address_id) shrinks when a smaller address merges a cluster);
-        # fresh_address_cluster self-heals per-address, and a first cold-start
-        # bootstrap on empty tables is clean. Clear stale rows out-of-band if a
-        # re-run's phantoms matter (see the range-recluster / cleanup path).
+        # fresh_address_cluster self-heals per-address, fresh_cluster_stats
+        # phantoms are deleted post-upsert (delete_stale below), and a first
+        # cold-start bootstrap on empty tables is clean. Only fresh_cluster_addresses
+        # phantoms need out-of-band cleanup if a re-run's phantoms matter.
         spark_session = create_spark_session(
             app_name=f"graphsense-clustering-{currency}-{env}",
             local=local,
@@ -1498,6 +1519,9 @@ def run_clustering(env, currency, local, read_partitions, end_block):
                 max_address_id=max_address_id,
                 bucket_size=db.transformed.get_cluster_id_bucket_size(),
                 end_block=end_block,
+                delete_stale=lambda keys: _delete_fresh_cluster_stats_rows(
+                    db.transformed, keys
+                ),
                 **spark_kwargs,
             )
         finally:
@@ -1528,11 +1552,15 @@ def recompute_cluster_stats(env, currency, local):
     cluster-level stats lag behind and this job refreshes them in one pass.
 
     Holds the transformed-keyspace lock (the same lock the delta updater takes) so
-    it never races a delta merge, and truncates ``fresh_cluster_stats`` first for a
-    clean, self-healing rebuild (clears rows of clusters merged away since the last
-    run). ``total_received_adj`` / ``total_spent_adj`` are the cluster totals
-    minus intra-cluster flows (summed external-relation ``estimated_value``);
-    validate against a real keyspace before REST reads them.
+    it never races a delta merge, and upserts ``fresh_cluster_stats`` in place
+    (append/upsert, no truncate) so a REST-served keyspace keeps serving the
+    previous stats throughout the multi-hour run instead of going empty. Rows
+    keyed by cluster_ids that are no longer roots (the root shrinks when a
+    smaller address merges a cluster) are deleted after the upsert and the count
+    logged, so the table ends the run phantom-free without ever being empty.
+    ``total_received_adj`` / ``total_spent_adj`` are the cluster totals minus
+    intra-cluster flows (summed external-relation ``estimated_value``); validate
+    against a real keyspace before REST reads them.
     \f
     """
     from graphsenselib.config import get_config, is_fresh_clustering_enabled
@@ -1560,7 +1588,6 @@ def recompute_cluster_stats(env, currency, local):
             f"transformed={transformed_keyspace} (acquiring keyspace lock)"
         )
         with create_lock(transformed_keyspace):
-            db.transformed.execute_raw_cql("TRUNCATE fresh_cluster_stats")
             spark_session = create_spark_session(
                 app_name=f"graphsense-cluster-stats-{currency}-{env}",
                 local=local,
@@ -1575,6 +1602,9 @@ def recompute_cluster_stats(env, currency, local):
                     spark_session,
                     transformed_keyspace,
                     db.transformed.get_cluster_id_bucket_size(),
+                    delete_stale=lambda keys: _delete_fresh_cluster_stats_rows(
+                        db.transformed, keys
+                    ),
                 )
             finally:
                 spark_session.stop()

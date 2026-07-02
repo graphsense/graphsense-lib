@@ -448,7 +448,7 @@ def compute_fresh_cluster_stats(
 
 
 def recompute_fresh_cluster_stats(
-    spark, transformed_keyspace: str, bucket_size: int
+    spark, transformed_keyspace: str, bucket_size: int, delete_stale=None
 ) -> int:
     """Recompute the full ``fresh_cluster_stats`` from the address-level tables.
 
@@ -457,10 +457,17 @@ def recompute_fresh_cluster_stats(
     ``address_incoming/outgoing_relations`` (for degrees + adjusted totals) via the
     Spark Cassandra connector, aggregates with :func:`compute_fresh_cluster_stats`,
     and writes every well-defined column back to ``fresh_cluster_stats``
-    (append/upsert; the caller
-    truncates first under the keyspace lock for a clean rebuild). ``no_addresses``
+    (append/upsert under the caller's keyspace lock, in place — no truncate, so a
+    REST-served keyspace never goes empty mid-run). ``no_addresses``
     and ``min_address_id`` are recomputed here too so the row is whole. Returns the
     number of cluster rows written.
+
+    ``delete_stale`` (a callable taking a list of ``(cluster_id_group,
+    cluster_id)`` tuples) enables stale-row cleanup: rows keyed by cluster_ids
+    that are no longer roots (the root shrinks when a smaller address merges a
+    cluster) are collected *before* the upsert and deleted *after* it, so the
+    served table transitions old → new+stale → new without ever being empty.
+    When ``None`` (e.g. the regression harness) no cleanup runs.
 
     Does NOT relabel ``fresh_address_cluster`` — membership is already written
     ``min(address_id)``-labeled by the one-off (and the incremental path), so the
@@ -518,6 +525,18 @@ def recompute_fresh_cluster_stats(
     )
     stats.persist()
     n_clusters = stats.count()
+
+    # Stale keys must be diffed BEFORE the upsert (old − new); the delete runs
+    # after it so the table is never missing current rows.
+    stale = None
+    if delete_stale is not None:
+        stale = (
+            read("fresh_cluster_stats")
+            .select("cluster_id_group", "cluster_id")
+            .join(stats.select("cluster_id"), on="cluster_id", how="left_anti")
+            .collect()
+        )
+
     logger.info(f"Recomputed fresh_cluster_stats for {n_clusters:,} clusters; writing")
     (
         stats.write.format(cass_format)
@@ -527,6 +546,14 @@ def recompute_fresh_cluster_stats(
     )
     stats.unpersist()
     members.unpersist()
+
+    if delete_stale is not None:
+        if stale:
+            delete_stale([(r["cluster_id_group"], r["cluster_id"]) for r in stale])
+        logger.info(
+            f"Cleaned up {len(stale):,} stale fresh_cluster_stats rows "
+            "(cluster_ids no longer roots)"
+        )
     return n_clusters
 
 
@@ -910,6 +937,7 @@ def run_clustering_spark(
     read_partitions: int = DEFAULT_READ_PARTITIONS,
     skip_singletons: bool = True,
     end_block: Optional[int] = None,
+    delete_stale=None,
 ):
     """Full one-off UTXO clustering with PySpark bulk read and bulk write.
 
@@ -1028,7 +1056,9 @@ def run_clustering_spark(
     # elect a merge survivor (the rich columns then stay fresh via the periodic
     # recompute job).
     stats_start = time.perf_counter()
-    n_stats = recompute_fresh_cluster_stats(spark, transformed_keyspace, bucket_size)
+    n_stats = recompute_fresh_cluster_stats(
+        spark, transformed_keyspace, bucket_size, delete_stale=delete_stale
+    )
     stats_secs = time.perf_counter() - stats_start
     logger.info(
         f"  [stats] fresh_cluster_stats: {n_stats:,} clusters in {stats_secs:.1f}s"

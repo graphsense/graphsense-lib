@@ -234,3 +234,29 @@ def test_compute_full_stats_left_joins_and_zero_fills(spark):
     assert out[4]["no_outgoing_txs"] == 1
     assert out[4]["total_received_adj"]["value"] == 300
     assert out[4]["total_spent_adj"]["value"] == 70
+
+
+def test_delete_stale_rows_groups_and_chunks():
+    """The stale-row deleter issues single-partition deletes in bounded IN chunks."""
+    from graphsenselib.transformation.cli import _delete_fresh_cluster_stats_rows
+
+    class FakeDb:
+        def __init__(self):
+            self.cql = []
+
+        def execute_raw_cql(self, cql):
+            self.cql.append(cql)
+
+    db = FakeDb()
+    keys = [(0, i) for i in range(1200)] + [(7, 35001), (7, 35002)]
+    _delete_fresh_cluster_stats_rows(db, keys)
+
+    group0 = [c for c in db.cql if "cluster_id_group = 0 " in c]
+    group7 = [c for c in db.cql if "cluster_id_group = 7 " in c]
+    assert len(db.cql) == 4  # 1200 -> 500 + 500 + 200, plus one for group 7
+    assert [c.count(",") + 1 for c in group0] == [500, 500, 200]
+    assert group7 == [
+        "DELETE FROM fresh_cluster_stats "
+        "WHERE cluster_id_group = 7 AND cluster_id IN (35001,35002)"
+    ]
+    assert all(c.startswith("DELETE FROM fresh_cluster_stats WHERE") for c in db.cql)
