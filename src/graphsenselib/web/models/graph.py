@@ -37,8 +37,8 @@ class GraphSummaryRequest(APIModel):
     together they may hold at most 100. Fiat totals always carry every
     rate GraphSense stores (eur, usd)."""
 
-    txs: list[GraphTxRef] = Field(default_factory=list)
-    addresses: list[GraphAddressRef] = Field(default_factory=list)
+    txs: list[GraphTxRef] = Field(default_factory=list, max_length=100)
+    addresses: list[GraphAddressRef] = Field(default_factory=list, max_length=100)
 
 
 class GraphCompareRequest(APIModel):

@@ -15,8 +15,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from graphsense.models.graph_address_ref import GraphAddressRef
 from graphsense.models.graph_tx_ref import GraphTxRef
 from typing import Optional, Set
@@ -26,8 +27,8 @@ class GraphSummaryRequest(BaseModel):
     """
     Request body for ``POST /graph/summary``.  The node set is defined by ``txs`` and/or ``addresses``; every item carries its own network, so the set may span chains. Each non-empty list must hold at least 2 distinct entries (keyed on network + hash); together they may hold at most 100. Fiat totals always carry every rate GraphSense stores (eur, usd).
     """ # noqa: E501
-    txs: Optional[List[GraphTxRef]] = None
-    addresses: Optional[List[GraphAddressRef]] = None
+    txs: Optional[Annotated[List[GraphTxRef], Field(max_length=100)]] = None
+    addresses: Optional[Annotated[List[GraphAddressRef], Field(max_length=100)]] = None
     __properties: ClassVar[List[str]] = ["txs", "addresses"]
 
     model_config = ConfigDict(

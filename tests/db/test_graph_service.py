@@ -24,6 +24,7 @@ from graphsenselib.db.asynchronous.services.models import (
 from graphsenselib.errors import (
     AddressNotFoundException,
     BadUserInputException,
+    NotFoundException,
     TransactionNotFoundException,
 )
 from tests.db.helpers import make_account_tx, make_address, make_tx, make_value
@@ -715,6 +716,41 @@ class TestGraphSummaryAddresses:
         # overall dedupes binance across the two network blocks.
         assert sorted(a.id for a in s.addresses.overall.actors) == ["binance", "kraken"]
         assert s.addresses.overall.tagged_address_count == 3
+
+    async def test_missing_actor_is_skipped_not_fatal(self):
+        # One tag references a resolvable actor, another references an actor
+        # id whose pack is not loaded (get_actor raises NotFoundException).
+        # The summary must still succeed: the resolved actor appears, the
+        # missing one is silently omitted (per-network and overall).
+        addr_svc = self._addr_setup()
+        tag_svc = FakeTagsService(
+            tags=[
+                FakeTag("b1", "binance"),
+                FakeTag("b2", "ghost"),  # actor id with no loaded row
+            ],
+            actors={"binance": SimpleNamespace(id="binance", label="Binance")},
+        )
+
+        async def _raising_get_actor(actor_id):
+            tag_svc.actor_calls.append(actor_id)
+            if actor_id not in tag_svc._actors:
+                raise NotFoundException(f"actor {actor_id} not found")
+            return tag_svc._actors[actor_id]
+
+        tag_svc.get_actor = _raising_get_actor
+        tx_svc = FakeTxsService(supported=["btc"])
+        refs = [
+            AddressRefInternal(network="btc", address="b1"),
+            AddressRefInternal(network="btc", address="b2"),
+        ]
+        s = await summary(tx_svc, addr_svc, tag_svc, [], refs, tagstore_groups=[])
+        assert sorted(tag_svc.actor_calls) == ["binance", "ghost"]
+        # resolved actor present, missing one omitted (per-network).
+        assert [a.id for a in s.addresses.networks[0].actors] == ["binance"]
+        # and in the overall rollup.
+        assert [a.id for a in s.addresses.overall.actors] == ["binance"]
+        # the tagged-address count still reflects both tagged addresses.
+        assert s.addresses.networks[0].tagged_address_count == 2
 
     async def test_mixed_txs_and_addresses(self):
         tx_map, h0, h1 = _btc_txs()

@@ -15,7 +15,7 @@ import asyncio
 from typing import Union
 
 from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
-from graphsenselib.errors import BadUserInputException
+from graphsenselib.errors import BadUserInputException, NotFoundException
 from graphsenselib.tagstore.db import TagPublic
 from graphsenselib.db.asynchronous.services.common import gather_bounded
 from graphsenselib.db.asynchronous.services.models import (
@@ -81,6 +81,9 @@ def build_network_tx_summary(
     if is_eth_like(network):
         native_txs = [t for t in txs if t.token_tx_id is None]
         total_value = sum(t.value.value for t in native_txs)
+        # Token-transfer legs carry fee=None, so only the base transaction
+        # contributes one fee per tx (no double count). A schema change adding
+        # fees to token rows would break this invariant.
         fees = [t.fee.value for t in txs if t.fee is not None]
         total_inputs = None
         total_outputs = None
@@ -177,7 +180,8 @@ def _sum_fiat_lists(lists: list[list[FiatValue]]) -> list[FiatValue]:
     sums: dict[str, float] = {}
     for fvs in lists:
         for fv in fvs:
-            sums[fv.code] = sums.get(fv.code, 0.0) + fv.value
+            code = fv.code.lower()
+            sums[code] = sums.get(code, 0.0) + fv.value
     return [FiatValue(code=c, value=round(v, 2)) for c, v in sorted(sums.items())]
 
 
@@ -387,17 +391,30 @@ async def summary(
             dict.fromkeys(aid for ids in actor_ids_per_net for aid in ids)
         )
         sem = asyncio.Semaphore(get_tagstore_max_concurrency())
+
+        async def _resolve_actor(aid):
+            # A tag can reference an actor pack that is not loaded; a missing
+            # actor must not fail the summary (every tx/address still exists).
+            try:
+                return await tags_service.get_actor(aid)
+            except NotFoundException:
+                return None
+
         actor_objs = await gather_bounded(
-            sem, *[tags_service.get_actor(aid) for aid in all_actor_ids]
+            sem, *[_resolve_actor(aid) for aid in all_actor_ids]
         )
-        actor_by_id = {a.id: LabeledItemRef(id=a.id, label=a.label) for a in actor_objs}
+        actor_by_id = {
+            a.id: LabeledItemRef(id=a.id, label=a.label)
+            for a in actor_objs
+            if a is not None
+        }
 
         blocks = [
             build_network_address_summary(
                 net,
                 rows,
                 tags,
-                [actor_by_id[aid] for aid in ids],
+                [actor_by_id[aid] for aid in ids if aid in actor_by_id],
             )
             for (net, _), (rows, tags), ids in zip(
                 addr_groups.items(), per_net, actor_ids_per_net

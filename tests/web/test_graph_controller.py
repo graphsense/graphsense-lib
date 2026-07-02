@@ -121,6 +121,15 @@ def test_summary_missing_network_field_is_422(client, patch_summary):
     request_with_status(client, "/graph/summary", 422, body=body)
 
 
+def test_summary_over_max_length_is_422(client, patch_summary):
+    # Request-boundary cap: more than 100 tx refs is rejected before the
+    # service (the combined-100 rule stays authoritative service-side).
+    body = {
+        "txs": [{"tx_hash": f"{i:064x}", "network": "btc"} for i in range(101)]
+    }
+    request_with_status(client, "/graph/summary", 422, body=body)
+
+
 def test_summary_addresses_only(client, monkeypatch):
     from graphsenselib.web.models import (
         GraphAddressNetworkSummary,
