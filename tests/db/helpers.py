@@ -57,6 +57,9 @@ def make_tx(
     total_input: int | None = None,
     total_output: int | None = None,
     total_output_usd: float | None = None,
+    fiat_usd: float | None = None,
+    fiat_eur: float | None = None,
+    no_rates: bool = False,
     heuristics: UtxoHeuristics | None = None,
     version: int | None = None,
     lock_time: int | None = None,
@@ -67,6 +70,13 @@ def make_tx(
         total_input = sum(i.value.value for i in inputs)
     if total_output is None:
         total_output = sum(o.value.value for o in outputs)
+    # ``total_output_usd`` is the legacy single-rate kwarg; ``fiat_usd`` /
+    # ``fiat_eur`` set both codes on the output, ``no_rates`` drops all rates.
+    if no_rates:
+        usd = eur = None
+    else:
+        usd = fiat_usd if fiat_usd is not None else total_output_usd
+        eur = fiat_eur
     return TxUtxo(
         currency=CURRENCY,
         tx_hash=tx_hash,
@@ -78,7 +88,7 @@ def make_tx(
         outputs=outputs,
         timestamp=timestamp,
         total_input=make_value(total_input),
-        total_output=make_value(total_output, usd=total_output_usd),
+        total_output=make_value(total_output, usd=usd, eur=eur),
         heuristics=heuristics,
         version=version,
         lock_time=lock_time,

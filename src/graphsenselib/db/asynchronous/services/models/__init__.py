@@ -567,6 +567,90 @@ class SubgraphSummaryInternal(BaseModel):
     addresses: Optional[SubgraphAddressSummaryInternal] = None
 
 
+class TxRefInternal(BaseModel):
+    network: str
+    tx_hash: str
+
+
+class AddressRefInternal(BaseModel):
+    network: str
+    address: str
+
+
+class GraphTxNetworkSummaryInternal(BaseModel):
+    network: str
+    tx_count: int
+    # total_value.value is the network's native base unit (satoshi for UTXO,
+    # wei/sun for account chains) and sums native transfers only; its
+    # fiat_values sum the fiat value per code (eur, usd) across all
+    # transfers (incl. tokens). notes flags caveats (partial fiat totals,
+    # excluded token transfers). total_fee stays a plain native amount.
+    total_value: Values
+    total_fee: Optional[int] = None
+    # io counts are UTXO-only; None for account-model (ETH/TRX) summaries.
+    total_inputs: Optional[int] = None
+    total_outputs: Optional[int] = None
+    block_min: int
+    block_max: int
+    timestamp_min: int
+    timestamp_max: int
+    notes: List[str] = Field(default_factory=list)
+
+
+class GraphTxOverallInternal(BaseModel):
+    # Network-agnostic aggregate: fiat only (base units are not comparable
+    # across chains), timestamps only (block heights are not either).
+    tx_count: int
+    total_value_fiat: List[FiatValue] = Field(default_factory=list)
+    timestamp_min: int
+    timestamp_max: int
+    notes: List[str] = Field(default_factory=list)
+
+
+class GraphTxSummaryInternal(BaseModel):
+    overall: GraphTxOverallInternal
+    networks: List[GraphTxNetworkSummaryInternal]
+
+
+class GraphAddressNetworkSummaryInternal(BaseModel):
+    network: str
+    address_count: int
+    # Native base-unit sums with per-code fiat sums; account-chain token
+    # holdings are not folded into the native values (noted).
+    total_received: Values
+    total_spent: Values
+    balance: Values
+    first_usage: Optional[int] = None
+    last_usage: Optional[int] = None
+    tagged_address_count: int = 0
+    actors: List[LabeledItemRef] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
+class GraphAddressOverallInternal(BaseModel):
+    address_count: int
+    total_received_fiat: List[FiatValue] = Field(default_factory=list)
+    total_spent_fiat: List[FiatValue] = Field(default_factory=list)
+    balance_fiat: List[FiatValue] = Field(default_factory=list)
+    first_usage: Optional[int] = None
+    last_usage: Optional[int] = None
+    tagged_address_count: int = 0
+    # Distinct actors across all networks, deduped by id.
+    actors: List[LabeledItemRef] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
+class GraphAddressSummaryInternal(BaseModel):
+    overall: GraphAddressOverallInternal
+    networks: List[GraphAddressNetworkSummaryInternal]
+
+
+class GraphSummaryInternal(BaseModel):
+    # Each block is present iff the request carried that node type.
+    txs: Optional[GraphTxSummaryInternal] = None
+    addresses: Optional[GraphAddressSummaryInternal] = None
+
+
 class ComparisonVerdictInternal(BaseModel):
     relation: str
     confidence: int
