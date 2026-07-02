@@ -101,7 +101,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **get_spending_txs**
-> List[TxRef] get_spending_txs(currency, tx_hash, io_index=io_index)
+> List[TxRefOutput] get_spending_txs(currency, tx_hash, io_index=io_index)
 
 List source transactions
 
@@ -113,7 +113,7 @@ Returns references to transactions whose outputs are consumed by this transactio
 
 ```python
 import graphsense
-from graphsense.models.tx_ref import TxRef
+from graphsense.models.tx_ref_output import TxRefOutput
 from graphsense.rest import ApiException
 from pprint import pprint
 
@@ -164,7 +164,7 @@ Name | Type | Description  | Notes
 
 ### Return type
 
-[**List[TxRef]**](TxRef.md)
+[**List[TxRefOutput]**](TxRefOutput.md)
 
 ### Authorization
 
@@ -186,7 +186,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **get_spent_in_txs**
-> List[TxRef] get_spent_in_txs(currency, tx_hash, io_index=io_index)
+> List[TxRefOutput] get_spent_in_txs(currency, tx_hash, io_index=io_index)
 
 List spending transactions
 
@@ -198,7 +198,7 @@ Returns references to transactions that spend outputs created by this transactio
 
 ```python
 import graphsense
-from graphsense.models.tx_ref import TxRef
+from graphsense.models.tx_ref_output import TxRefOutput
 from graphsense.rest import ApiException
 from pprint import pprint
 
@@ -249,7 +249,7 @@ Name | Type | Description  | Notes
 
 ### Return type
 
-[**List[TxRef]**](TxRef.md)
+[**List[TxRefOutput]**](TxRefOutput.md)
 
 ### Authorization
 

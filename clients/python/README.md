@@ -166,8 +166,9 @@ Class | Method | HTTP request | Description
 *EntitiesApi* | [**search_entity_neighbors**](docs/EntitiesApi.md#search_entity_neighbors) | **GET** /{currency}/entities/{entity}/search | Search entity neighborhood
 *GeneralApi* | [**get_statistics**](docs/GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
 *GeneralApi* | [**search**](docs/GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
+*GraphApi* | [**graph_summary**](docs/GraphApi.md#graph_summary) | **POST** /graph/summary | Summarize a set of transactions and/or addresses
 *RatesApi* | [**get_exchange_rates**](docs/RatesApi.md#get_exchange_rates) | **GET** /{currency}/rates/{height} | Get fiat exchange rates at a block height
-*SubgraphApi* | [**graph_summary**](docs/SubgraphApi.md#graph_summary) | **POST** /{currency}/graph/summary | Summarize a set of transactions and/or addresses
+*SubgraphApi* | [**subgraph_summary**](docs/SubgraphApi.md#subgraph_summary) | **POST** /{currency}/graph/summary | Summarize a set of transactions and/or addresses
 *TagsApi* | [**get_actor**](docs/TagsApi.md#get_actor) | **GET** /tags/actors/{actor} | Get actor details by ID
 *TagsApi* | [**get_actor_tags**](docs/TagsApi.md#get_actor_tags) | **GET** /tags/actors/{actor}/tags | List tags associated with an actor
 *TagsApi* | [**list_address_tags**](docs/TagsApi.md#list_address_tags) | **GET** /tags | List address tags by label
@@ -191,6 +192,7 @@ Class | Method | HTTP request | Description
  - [ActorContext](docs/ActorContext.md)
  - [Address](docs/Address.md)
  - [AddressOutput](docs/AddressOutput.md)
+ - [AddressRef](docs/AddressRef.md)
  - [AddressTag](docs/AddressTag.md)
  - [AddressTags](docs/AddressTags.md)
  - [AddressTx](docs/AddressTx.md)
@@ -212,6 +214,14 @@ Class | Method | HTTP request | Description
  - [Entity](docs/Entity.md)
  - [EntityAddresses](docs/EntityAddresses.md)
  - [ExternalConversion](docs/ExternalConversion.md)
+ - [GraphAddressNetworkSummary](docs/GraphAddressNetworkSummary.md)
+ - [GraphAddressOverall](docs/GraphAddressOverall.md)
+ - [GraphAddressSummary](docs/GraphAddressSummary.md)
+ - [GraphSummary](docs/GraphSummary.md)
+ - [GraphSummaryRequest](docs/GraphSummaryRequest.md)
+ - [GraphTxNetworkSummary](docs/GraphTxNetworkSummary.md)
+ - [GraphTxOverall](docs/GraphTxOverall.md)
+ - [GraphTxSummary](docs/GraphTxSummary.md)
  - [HTTPValidationError](docs/HTTPValidationError.md)
  - [JoinMarketHeuristic](docs/JoinMarketHeuristic.md)
  - [LabelSummary](docs/LabelSummary.md)
@@ -258,7 +268,8 @@ Class | Method | HTTP request | Description
  - [TxAccount](docs/TxAccount.md)
  - [TxCharacteristics](docs/TxCharacteristics.md)
  - [TxComparedItem](docs/TxComparedItem.md)
- - [TxRef](docs/TxRef.md)
+ - [TxRefInput](docs/TxRefInput.md)
+ - [TxRefOutput](docs/TxRefOutput.md)
  - [TxSummary](docs/TxSummary.md)
  - [TxUtxo](docs/TxUtxo.md)
  - [TxValue](docs/TxValue.md)

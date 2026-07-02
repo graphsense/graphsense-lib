@@ -1,18 +1,18 @@
-# graphsense.SubgraphApi
+# graphsense.GraphApi
 
 All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
-[**subgraph_summary**](SubgraphApi.md#subgraph_summary) | **POST** /{currency}/graph/summary | Summarize a set of transactions and/or addresses
+[**graph_summary**](GraphApi.md#graph_summary) | **POST** /graph/summary | Summarize a set of transactions and/or addresses
 
 
-# **subgraph_summary**
-> SubgraphSummary subgraph_summary(currency, subgraph_summary_request)
+# **graph_summary**
+> GraphSummary graph_summary(graph_summary_request)
 
 Summarize a set of transactions and/or addresses
 
-Returns aggregate stats over the transactions and/or addresses in the request body, split into a txs block (value, fee, input/output counts, block and timestamp ranges) and an addresses block (value totals, balance, usage span, tag overview). Each block is derived from header fields only, so it works for every supported chain and is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
+Returns aggregate stats over the transactions and/or addresses in the request body. Every item carries its own network, so the set may span chains. Each node-type block holds a network-agnostic overall part (fiat totals per code, timestamp span) and one full per-network block (native base-unit values via the Values pattern) per network in the request. Each block is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
 
 ### Example
 
@@ -20,8 +20,8 @@ Returns aggregate stats over the transactions and/or addresses in the request bo
 
 ```python
 import graphsense
-from graphsense.models.subgraph_summary import SubgraphSummary
-from graphsense.models.subgraph_summary_request import SubgraphSummaryRequest
+from graphsense.models.graph_summary import GraphSummary
+from graphsense.models.graph_summary_request import GraphSummaryRequest
 from graphsense.rest import ApiException
 from pprint import pprint
 
@@ -45,17 +45,16 @@ configuration.api_key['api_key'] = os.environ["API_KEY"]
 # Enter a context with an instance of the API client
 with graphsense.ApiClient(configuration) as api_client:
     # Create an instance of the API class
-    api_instance = graphsense.SubgraphApi(api_client)
-    currency = 'btc' # str | The cryptocurrency code (e.g., btc)
-    subgraph_summary_request = graphsense.SubgraphSummaryRequest() # SubgraphSummaryRequest | 
+    api_instance = graphsense.GraphApi(api_client)
+    graph_summary_request = graphsense.GraphSummaryRequest() # GraphSummaryRequest | 
 
     try:
         # Summarize a set of transactions and/or addresses
-        api_response = api_instance.subgraph_summary(currency, subgraph_summary_request)
-        print("The response of SubgraphApi->subgraph_summary:\n")
+        api_response = api_instance.graph_summary(graph_summary_request)
+        print("The response of GraphApi->graph_summary:\n")
         pprint(api_response)
     except Exception as e:
-        print("Exception when calling SubgraphApi->subgraph_summary: %s\n" % e)
+        print("Exception when calling GraphApi->graph_summary: %s\n" % e)
 ```
 
 
@@ -65,12 +64,11 @@ with graphsense.ApiClient(configuration) as api_client:
 
 Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
- **currency** | **str**| The cryptocurrency code (e.g., btc) | 
- **subgraph_summary_request** | [**SubgraphSummaryRequest**](SubgraphSummaryRequest.md)|  | 
+ **graph_summary_request** | [**GraphSummaryRequest**](GraphSummaryRequest.md)|  | 
 
 ### Return type
 
-[**SubgraphSummary**](SubgraphSummary.md)
+[**GraphSummary**](GraphSummary.md)
 
 ### Authorization
 
@@ -86,7 +84,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (each non-empty list needs at least 2 distinct entries, at most 100 nodes combined). |  -  |
+**400** | Invalid request (each non-empty list needs at least 2 distinct entries, at most 100 nodes combined, networks must be supported). |  -  |
 **404** | One of the transactions or addresses was not found. |  -  |
 **422** | Validation Error |  -  |
 
