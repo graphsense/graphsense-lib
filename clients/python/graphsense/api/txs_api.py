@@ -21,7 +21,7 @@ from graphsense.models.external_conversion import ExternalConversion
 from graphsense.models.transaction_comparison import TransactionComparison
 from graphsense.models.tx import Tx
 from graphsense.models.tx_account import TxAccount
-from graphsense.models.tx_ref_output import TxRefOutput
+from graphsense.models.tx_ref import TxRef
 from graphsense.models.tx_value import TxValue
 
 from graphsense.api_client import ApiClient, RequestSerialized
@@ -455,7 +455,7 @@ class TxsApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> List[TxRefOutput]:
+    ) -> List[TxRef]:
         """List source transactions
 
         Returns references to transactions whose outputs are consumed by this transaction.
@@ -499,7 +499,7 @@ class TxsApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "List[TxRefOutput]",
+            '200': "List[TxRef]",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -532,7 +532,7 @@ class TxsApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[List[TxRefOutput]]:
+    ) -> ApiResponse[List[TxRef]]:
         """List source transactions
 
         Returns references to transactions whose outputs are consumed by this transaction.
@@ -576,7 +576,7 @@ class TxsApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "List[TxRefOutput]",
+            '200': "List[TxRef]",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -653,7 +653,7 @@ class TxsApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "List[TxRefOutput]",
+            '200': "List[TxRef]",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -754,7 +754,7 @@ class TxsApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> List[TxRefOutput]:
+    ) -> List[TxRef]:
         """List spending transactions
 
         Returns references to transactions that spend outputs created by this transaction.
@@ -798,7 +798,7 @@ class TxsApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "List[TxRefOutput]",
+            '200': "List[TxRef]",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -831,7 +831,7 @@ class TxsApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[List[TxRefOutput]]:
+    ) -> ApiResponse[List[TxRef]]:
         """List spending transactions
 
         Returns references to transactions that spend outputs created by this transaction.
@@ -875,7 +875,7 @@ class TxsApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "List[TxRefOutput]",
+            '200': "List[TxRef]",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -952,7 +952,7 @@ class TxsApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "List[TxRefOutput]",
+            '200': "List[TxRef]",
             '404': None,
             '422': "HTTPValidationError",
         }

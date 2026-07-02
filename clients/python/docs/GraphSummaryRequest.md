@@ -6,8 +6,8 @@ Request body for ``POST /graph/summary``.  The node set is defined by ``txs`` an
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**txs** | [**List[TxRefInput]**](TxRefInput.md) |  | [optional] 
-**addresses** | [**List[AddressRef]**](AddressRef.md) |  | [optional] 
+**txs** | [**List[GraphTxRef]**](GraphTxRef.md) |  | [optional] 
+**addresses** | [**List[GraphAddressRef]**](GraphAddressRef.md) |  | [optional] 
 
 ## Example
 

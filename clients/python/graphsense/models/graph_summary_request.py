@@ -17,8 +17,8 @@ import json
 
 from pydantic import BaseModel, ConfigDict
 from typing import Any, ClassVar, Dict, List, Optional
-from graphsense.models.address_ref import AddressRef
-from graphsense.models.tx_ref_input import TxRefInput
+from graphsense.models.graph_address_ref import GraphAddressRef
+from graphsense.models.graph_tx_ref import GraphTxRef
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -26,8 +26,8 @@ class GraphSummaryRequest(BaseModel):
     """
     Request body for ``POST /graph/summary``.  The node set is defined by ``txs`` and/or ``addresses``; every item carries its own network, so the set may span chains. Each non-empty list must hold at least 2 distinct entries (keyed on network + hash); together they may hold at most 100. Fiat totals always carry every rate GraphSense stores (eur, usd).
     """ # noqa: E501
-    txs: Optional[List[TxRefInput]] = None
-    addresses: Optional[List[AddressRef]] = None
+    txs: Optional[List[GraphTxRef]] = None
+    addresses: Optional[List[GraphAddressRef]] = None
     __properties: ClassVar[List[str]] = ["txs", "addresses"]
 
     model_config = ConfigDict(
@@ -95,8 +95,8 @@ class GraphSummaryRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "txs": [TxRefInput.from_dict(_item) for _item in obj["txs"]] if obj.get("txs") is not None else None,
-            "addresses": [AddressRef.from_dict(_item) for _item in obj["addresses"]] if obj.get("addresses") is not None else None
+            "txs": [GraphTxRef.from_dict(_item) for _item in obj["txs"]] if obj.get("txs") is not None else None,
+            "addresses": [GraphAddressRef.from_dict(_item) for _item in obj["addresses"]] if obj.get("addresses") is not None else None
         })
         return _obj
 

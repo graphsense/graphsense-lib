@@ -14,14 +14,14 @@ from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.values import Rate, Values
 
 
-class TxRef(APIModel):
+class GraphTxRef(APIModel):
     """A transaction reference: hash plus the network it lives on."""
 
     tx_hash: str
     network: str = Field(examples=["btc"])
 
 
-class AddressRef(APIModel):
+class GraphAddressRef(APIModel):
     """An address reference: address plus the network it lives on."""
 
     address: str
@@ -37,8 +37,8 @@ class GraphSummaryRequest(APIModel):
     together they may hold at most 100. Fiat totals always carry every
     rate GraphSense stores (eur, usd)."""
 
-    txs: list[TxRef] = Field(default_factory=list)
-    addresses: list[AddressRef] = Field(default_factory=list)
+    txs: list[GraphTxRef] = Field(default_factory=list)
+    addresses: list[GraphAddressRef] = Field(default_factory=list)
 
 
 class GraphCompareRequest(APIModel):
@@ -50,7 +50,7 @@ class GraphCompareRequest(APIModel):
     internally (the verdict depends on the signals), the list only
     controls what is returned. ``all`` expands to every component."""
 
-    txs: list[TxRef] = Field(min_length=2, max_length=100)
+    txs: list[GraphTxRef] = Field(min_length=2, max_length=100)
     include: list[
         Literal["all", "characteristics", "details", "signals", "lineage", "verdict"]
     ] = Field(default=["characteristics", "signals", "lineage", "verdict"])

@@ -15,19 +15,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictStr
 from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class TxRefOutput(BaseModel):
+class GraphAddressRef(BaseModel):
     """
-    Transaction reference model.
+    An address reference: address plus the network it lives on.
     """ # noqa: E501
-    input_index: StrictInt
-    output_index: StrictInt
-    tx_hash: StrictStr
-    __properties: ClassVar[List[str]] = ["input_index", "output_index", "tx_hash"]
+    address: StrictStr
+    network: StrictStr
+    __properties: ClassVar[List[str]] = ["address", "network"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +46,7 @@ class TxRefOutput(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of TxRefOutput from a JSON string"""
+        """Create an instance of GraphAddressRef from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -72,7 +71,7 @@ class TxRefOutput(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of TxRefOutput from a dict"""
+        """Create an instance of GraphAddressRef from a dict"""
         if obj is None:
             return None
 
@@ -80,9 +79,8 @@ class TxRefOutput(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "input_index": obj.get("input_index"),
-            "output_index": obj.get("output_index"),
-            "tx_hash": obj.get("tx_hash")
+            "address": obj.get("address"),
+            "network": obj.get("network")
         })
         return _obj
 

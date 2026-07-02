@@ -41,7 +41,6 @@ __all__ = [
     "ActorContext",
     "Address",
     "AddressOutput",
-    "AddressRef",
     "AddressTag",
     "AddressTags",
     "AddressTx",
@@ -65,11 +64,13 @@ __all__ = [
     "ExternalConversion",
     "GraphAddressNetworkSummary",
     "GraphAddressOverall",
+    "GraphAddressRef",
     "GraphAddressSummary",
     "GraphSummary",
     "GraphSummaryRequest",
     "GraphTxNetworkSummary",
     "GraphTxOverall",
+    "GraphTxRef",
     "GraphTxSummary",
     "HTTPValidationError",
     "JoinMarketHeuristic",
@@ -117,8 +118,7 @@ __all__ = [
     "TxAccount",
     "TxCharacteristics",
     "TxComparedItem",
-    "TxRefInput",
-    "TxRefOutput",
+    "TxRef",
     "TxSummary",
     "TxUtxo",
     "TxValue",
@@ -165,7 +165,6 @@ from graphsense.models.actor import Actor as Actor
 from graphsense.models.actor_context import ActorContext as ActorContext
 from graphsense.models.address import Address as Address
 from graphsense.models.address_output import AddressOutput as AddressOutput
-from graphsense.models.address_ref import AddressRef as AddressRef
 from graphsense.models.address_tag import AddressTag as AddressTag
 from graphsense.models.address_tags import AddressTags as AddressTags
 from graphsense.models.address_tx import AddressTx as AddressTx
@@ -189,11 +188,13 @@ from graphsense.models.entity_addresses import EntityAddresses as EntityAddresse
 from graphsense.models.external_conversion import ExternalConversion as ExternalConversion
 from graphsense.models.graph_address_network_summary import GraphAddressNetworkSummary as GraphAddressNetworkSummary
 from graphsense.models.graph_address_overall import GraphAddressOverall as GraphAddressOverall
+from graphsense.models.graph_address_ref import GraphAddressRef as GraphAddressRef
 from graphsense.models.graph_address_summary import GraphAddressSummary as GraphAddressSummary
 from graphsense.models.graph_summary import GraphSummary as GraphSummary
 from graphsense.models.graph_summary_request import GraphSummaryRequest as GraphSummaryRequest
 from graphsense.models.graph_tx_network_summary import GraphTxNetworkSummary as GraphTxNetworkSummary
 from graphsense.models.graph_tx_overall import GraphTxOverall as GraphTxOverall
+from graphsense.models.graph_tx_ref import GraphTxRef as GraphTxRef
 from graphsense.models.graph_tx_summary import GraphTxSummary as GraphTxSummary
 from graphsense.models.http_validation_error import HTTPValidationError as HTTPValidationError
 from graphsense.models.join_market_heuristic import JoinMarketHeuristic as JoinMarketHeuristic
@@ -241,8 +242,7 @@ from graphsense.models.tx import Tx as Tx
 from graphsense.models.tx_account import TxAccount as TxAccount
 from graphsense.models.tx_characteristics import TxCharacteristics as TxCharacteristics
 from graphsense.models.tx_compared_item import TxComparedItem as TxComparedItem
-from graphsense.models.tx_ref_input import TxRefInput as TxRefInput
-from graphsense.models.tx_ref_output import TxRefOutput as TxRefOutput
+from graphsense.models.tx_ref import TxRef as TxRef
 from graphsense.models.tx_summary import TxSummary as TxSummary
 from graphsense.models.tx_utxo import TxUtxo as TxUtxo
 from graphsense.models.tx_value import TxValue as TxValue

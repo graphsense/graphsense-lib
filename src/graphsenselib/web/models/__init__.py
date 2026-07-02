@@ -51,20 +51,17 @@ from graphsenselib.web.models.subgraph import (
     SubgraphTxSummary,
 )
 
-# Note: graph.TxRef ({tx_hash, network}) is intentionally NOT re-exported here
-# to avoid shadowing the transactions TxRef ({input_index, output_index,
-# tx_hash}) which is already exported and used by routes/txs.py. Import the
-# graph TxRef directly from graphsenselib.web.models.graph.
 from graphsenselib.web.models.graph import (
-    AddressRef,
     GraphAddressNetworkSummary,
     GraphAddressOverall,
+    GraphAddressRef,
     GraphAddressSummary,
     GraphCompareRequest,
     GraphSummary,
     GraphSummaryRequest,
     GraphTxNetworkSummary,
     GraphTxOverall,
+    GraphTxRef,
     GraphTxSummary,
 )
 from graphsenselib.web.models.heuristics import (
@@ -214,7 +211,8 @@ __all__ = [
     "SubgraphTxSummary",
     "SubgraphSummaryRequest",
     # Graph
-    "AddressRef",
+    "GraphTxRef",
+    "GraphAddressRef",
     "GraphSummaryRequest",
     "GraphCompareRequest",
     "GraphTxOverall",

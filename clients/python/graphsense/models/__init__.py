@@ -15,7 +15,6 @@ from graphsense.models.actor import Actor
 from graphsense.models.actor_context import ActorContext
 from graphsense.models.address import Address
 from graphsense.models.address_output import AddressOutput
-from graphsense.models.address_ref import AddressRef
 from graphsense.models.address_tag import AddressTag
 from graphsense.models.address_tags import AddressTags
 from graphsense.models.address_tx import AddressTx
@@ -39,11 +38,13 @@ from graphsense.models.entity_addresses import EntityAddresses
 from graphsense.models.external_conversion import ExternalConversion
 from graphsense.models.graph_address_network_summary import GraphAddressNetworkSummary
 from graphsense.models.graph_address_overall import GraphAddressOverall
+from graphsense.models.graph_address_ref import GraphAddressRef
 from graphsense.models.graph_address_summary import GraphAddressSummary
 from graphsense.models.graph_summary import GraphSummary
 from graphsense.models.graph_summary_request import GraphSummaryRequest
 from graphsense.models.graph_tx_network_summary import GraphTxNetworkSummary
 from graphsense.models.graph_tx_overall import GraphTxOverall
+from graphsense.models.graph_tx_ref import GraphTxRef
 from graphsense.models.graph_tx_summary import GraphTxSummary
 from graphsense.models.http_validation_error import HTTPValidationError
 from graphsense.models.join_market_heuristic import JoinMarketHeuristic
@@ -91,8 +92,7 @@ from graphsense.models.tx import Tx
 from graphsense.models.tx_account import TxAccount
 from graphsense.models.tx_characteristics import TxCharacteristics
 from graphsense.models.tx_compared_item import TxComparedItem
-from graphsense.models.tx_ref_input import TxRefInput
-from graphsense.models.tx_ref_output import TxRefOutput
+from graphsense.models.tx_ref import TxRef
 from graphsense.models.tx_summary import TxSummary
 from graphsense.models.tx_utxo import TxUtxo
 from graphsense.models.tx_value import TxValue

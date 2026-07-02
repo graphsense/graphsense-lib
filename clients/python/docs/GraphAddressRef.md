@@ -1,4 +1,4 @@
-# AddressRef
+# GraphAddressRef
 
 An address reference: address plus the network it lives on.
 
@@ -12,19 +12,19 @@ Name | Type | Description | Notes
 ## Example
 
 ```python
-from graphsense.models.address_ref import AddressRef
+from graphsense.models.graph_address_ref import GraphAddressRef
 
 # TODO update the JSON string below
 json = "{}"
-# create an instance of AddressRef from a JSON string
-address_ref_instance = AddressRef.from_json(json)
+# create an instance of GraphAddressRef from a JSON string
+graph_address_ref_instance = GraphAddressRef.from_json(json)
 # print the JSON string representation of the object
-print(AddressRef.to_json())
+print(GraphAddressRef.to_json())
 
 # convert the object into a dict
-address_ref_dict = address_ref_instance.to_dict()
-# create an instance of AddressRef from a dict
-address_ref_from_dict = AddressRef.from_dict(address_ref_dict)
+graph_address_ref_dict = graph_address_ref_instance.to_dict()
+# create an instance of GraphAddressRef from a dict
+graph_address_ref_from_dict = GraphAddressRef.from_dict(graph_address_ref_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 
