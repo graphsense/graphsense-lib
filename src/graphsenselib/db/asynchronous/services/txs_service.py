@@ -204,8 +204,9 @@ class TxsService:
             # to its first trace here, preserving the historical response shape
             # of the public ``GET /{currency}/txs/{tx_hash}`` endpoint. Internal
             # callers that need a normalised account tx for every account-model
-            # chain (e.g. TRX) — ``/txs/compare`` and ``get_asset_flows_within_tx``
-            # — opt in via ``trace_account_chains=True``.
+            # chain (e.g. TRX), such as ``/graph/compare`` and
+            # ``get_asset_flows_within_tx``, opt in via
+            # ``trace_account_chains=True``.
             use_first_trace = (
                 currency_to_schema_type.get(currency) == "account"
                 if trace_account_chains

@@ -1037,7 +1037,7 @@ async def compare_txs(
     # Exchange-flag lookup now needs the address→cluster map, so it can't run
     # in parallel with cluster resolution like the old digest-based path did.
     # Resolve clusters and parent refs in parallel first, then derive the
-    # exchange flags — the new lookup is cheap (existence query) so the lost
+    # exchange flags. The new lookup is cheap (existence query) so the lost
     # parallelism costs ~tens of ms vs the seconds saved by avoiding the
     # ``best_cluster_tag`` digest path.
     addr_to_cluster, parent_refs = await asyncio.gather(

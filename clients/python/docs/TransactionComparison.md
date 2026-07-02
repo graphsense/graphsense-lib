@@ -1,6 +1,6 @@
 # TransactionComparison
 
-Top-level response for /txs/compare.
+Top-level response for /graph/compare.
 
 ## Properties
 

@@ -14,6 +14,13 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Web API + Python client
 
+#### Added
+- **New currency-less `POST /graph/summary`.** Replaces the old per-currency `GET /{currency}/graph/summary`. The request body carries a list of mixed-network references (`GraphTxRef`/`GraphAddressRef`, each naming its own `network`), so a single call can summarize transactions and addresses spanning several chains. Fiat is no longer selected by a request parameter: every monetary value is emitted for both `eur` and `usd` via the shared `Values`/`Rate` pattern. The response carries an `overall` block aggregating across all references plus a `networks` block with one entry per distinct network.
+- **New `POST /graph/compare`.** Replaces `GET /{currency}/txs/compare`. Currency-less like `/graph/summary` (references carry their own `network`), and each compared item now echoes back its `network` field. Remains BTC-only for now; a non-btc reference is rejected with a 400 that names the offending network(s).
+
+#### Removed
+- **BREAKING: removed `GET /{currency}/graph/summary`, `GET /{currency}/txs/compare`, and the `fiat_currency` request parameter.** The per-currency graph-summary and txs-compare endpoints are gone; use the currency-less `POST /graph/summary` and `POST /graph/compare` instead. `fiat_currency` no longer selects a single fiat currency anywhere in the API; responses now always include both `eur` and `usd` via `Values`/`Rate`.
+
 #### Fixed
 - **`GET /{network}/addresses/{address}/neighbors?only_ids=...` returned 500 on an invalid `only_ids` value for trx.** A garbage TRON id (e.g. `only_ids=dummy`) canonicalized via `validate=False` to empty bytes `b""`, which `bytes_to_hex` maps to `None`, crashing `scrub_prefix` with `AttributeError: 'NoneType' object has no attribute 'startswith'`. An empty/unknown id is now treated as a not-found neighbor and silently dropped (matching the existing behavior for valid-but-unknown ids and for utxo networks), so `get_address_id` short-circuits to `None` before issuing an empty-partition-key query to Cassandra.
 

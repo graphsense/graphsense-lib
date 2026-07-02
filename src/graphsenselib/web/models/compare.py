@@ -110,7 +110,7 @@ class TxComparedItem(APIModel):
 
 
 class TransactionComparison(APIModel):
-    """Top-level response for /txs/compare."""
+    """Top-level response for /graph/compare."""
 
     txs: list[TxComparedItem]
     signals: list[ComparisonSignal]

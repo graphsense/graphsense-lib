@@ -20,7 +20,7 @@ from graphsenselib.db.asynchronous.services.models import (
     TxCharacteristicsInternal,
     TxComparedItemInternal,
 )
-from tests.web.helpers import request_with_status
+from tests.web.helpers import raw_request, request_with_status
 
 
 SIGNAL_KINDS = {"discriminator", "score", "linkage"}
@@ -216,7 +216,7 @@ def test_compare_happy_path(client, patch_compare):
     assert call["tx_hashes"] == [HASH_A, HASH_B]
 
 
-def test_compare_non_btc_network_is_400(client, monkeypatch):
+def test_compare_non_btc_network_is_400(client):
     # The web service rejects mixed/non-btc networks before calling the DB
     # layer, so no patching of the DB compare is needed here.
     body = {
@@ -225,7 +225,9 @@ def test_compare_non_btc_network_is_400(client, monkeypatch):
             {"tx_hash": "bb22", "network": "eth"},
         ]
     }
-    request_with_status(client, "/graph/compare", 400, body=body)
+    status, text = raw_request(client, "/graph/compare", body=body)
+    assert status == 400
+    assert "eth" in text
 
 
 def test_compare_needs_two_refs_is_422(client):

@@ -26,7 +26,7 @@ from typing_extensions import Self
 
 class TransactionComparison(BaseModel):
     """
-    Top-level response for /txs/compare.
+    Top-level response for /graph/compare.
     """ # noqa: E501
     txs: List[TxComparedItem]
     signals: List[ComparisonSignal]
