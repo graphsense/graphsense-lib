@@ -1,12 +1,13 @@
 """Cluster degrees for fresh entities come from the legacy table.
 
-The fresh recompute no longer derives ``in_degree``/``out_degree`` (that
-required scanning the address-relations tables), so recomputed
-``fresh_cluster_stats`` rows carry null degrees. REST fills them via the
-root-address hop: the fresh root's address row still carries its LEGACY
-cluster id, whose ``cluster`` row has the degrees. Clusters without a legacy
-row (root postdates the last full transform, hence small) fall back to
-member-summed address degrees.
+``fresh_cluster_stats`` no longer carries ``in_degree``/``out_degree``
+(dropped in transformed_utxo migration 4->5; deriving them required scanning
+the address-relations tables), so rows miss the keys — or hold nulls on a
+not-yet-migrated keyspace. REST fills them via the root-address hop: the
+fresh root's address row still carries its LEGACY cluster id, whose
+``cluster`` row has the degrees. Clusters without a legacy row (root
+postdates the last full transform, hence small) fall back to member-summed
+address degrees.
 
 DB-free: real ``Cassandra`` methods bound to a fake self.
 """
@@ -31,19 +32,19 @@ class _Result:
         return self.current_rows[0] if self.current_rows else None
 
 
-def _degrees_null_row(cluster_id):
+def _stats_row(cluster_id, **extra):
+    # post-drop shape: fresh_cluster_stats carries no degree columns at all
     return {
         "cluster_id": cluster_id,
         "no_addresses": 3,
         "min_address_id": cluster_id,
         "no_incoming_txs": 4,
         "no_outgoing_txs": 2,
-        "in_degree": None,
-        "out_degree": None,
         "first_tx_id": 10,
         "last_tx_id": 20,
         "total_received": Values(600, [60.0, 6.0]),
         "total_spent": Values(100, [10.0, 1.0]),
+        **extra,
     }
 
 
@@ -121,7 +122,7 @@ def _get(s, entity):
 def test_degrees_filled_from_legacy_cluster(monkeypatch):
     monkeypatch.setenv(_ENV, "true")
     s = _make_self(
-        stats_rows_by_id={100: _degrees_null_row(100)},
+        stats_rows_by_id={100: _stats_row(100)},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
         legacy_cluster_rows_by_id={555: {"in_degree": 7, "out_degree": 9}},
     )
@@ -136,7 +137,7 @@ def test_degrees_filled_from_legacy_cluster(monkeypatch):
 def test_member_sum_fallback_without_legacy_row(monkeypatch):
     monkeypatch.setenv(_ENV, "true")
     s = _make_self(
-        stats_rows_by_id={100: _degrees_null_row(100)},
+        stats_rows_by_id={100: _stats_row(100)},
         address_rows_by_id={
             100: {
                 "address_id": 100,
@@ -180,9 +181,22 @@ def test_fully_pending_row_uses_member_synthesis(monkeypatch):
     assert entity["total_received"] == Values(10, [1.0, 0.1])
 
 
+def test_null_degree_columns_also_trigger_hop(monkeypatch):
+    # pre-migration keyspace: columns still exist, values null
+    monkeypatch.setenv(_ENV, "true")
+    s = _make_self(
+        stats_rows_by_id={100: _stats_row(100, in_degree=None, out_degree=None)},
+        address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
+        legacy_cluster_rows_by_id={555: {"in_degree": 7, "out_degree": 9}},
+    )
+    entity = _get(s, 100)
+    assert entity["in_degree"] == 7
+    assert entity["out_degree"] == 9
+
+
 def test_full_row_untouched(monkeypatch):
     monkeypatch.setenv(_ENV, "true")
-    row = _degrees_null_row(100)
+    row = _stats_row(100)
     row["in_degree"] = 3
     row["out_degree"] = 4
     s = _make_self(
@@ -202,7 +216,9 @@ def test_no_hop_when_fresh_disabled(monkeypatch):
     s = _make_self(
         stats_rows_by_id={},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
-        legacy_cluster_rows_by_id={100: _degrees_null_row(100)},
+        legacy_cluster_rows_by_id={
+            100: _stats_row(100, in_degree=None, out_degree=None)
+        },
     )
     entity = _get(s, 100)
     assert entity["in_degree"] is None
@@ -215,10 +231,10 @@ def test_bulk_heal_mixes_synthesis_and_degree_fill(monkeypatch):
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
         legacy_cluster_rows_by_id={555: {"in_degree": 7, "out_degree": 9}},
     )
-    full = _degrees_null_row(200)
+    full = _stats_row(200)
     full["in_degree"] = 1
     full["out_degree"] = 1
-    rows = [full, _degrees_null_row(100)]
+    rows = [full, _stats_row(100)]
     healed = asyncio.run(s._fresh_heal_pending_entities("ltc", rows))
     assert healed[0]["in_degree"] == 1
     assert healed[1]["in_degree"] == 7

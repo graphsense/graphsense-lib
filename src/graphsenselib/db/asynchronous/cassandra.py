@@ -159,14 +159,17 @@ def _fresh_stats_pending(row) -> bool:
 
 
 def _fresh_degrees_pending(row) -> bool:
-    """A fresh_cluster_stats row with stats but null degrees.
+    """A fresh_cluster_stats row lacking degrees.
 
-    The recompute no longer derives ``in_degree``/``out_degree`` (that required
-    scanning the address-relations tables), so recomputed rows carry null
-    degrees; the API requires non-null ints, filled via the legacy hop.
+    ``fresh_cluster_stats`` no longer carries ``in_degree``/``out_degree``
+    (dropped in transformed_utxo migration 4->5; the recompute never derives
+    them), so rows miss the keys entirely — or carry nulls on a
+    not-yet-migrated keyspace. The API requires non-null ints, filled via the
+    legacy hop. Guarded on ``total_received`` so field-subset lookups do not
+    trigger fills.
     """
-    return ("in_degree" in row and row["in_degree"] is None) or (
-        "out_degree" in row and row["out_degree"] is None
+    return "total_received" in row and (
+        row.get("in_degree") is None or row.get("out_degree") is None
     )
 
 
@@ -2465,9 +2468,8 @@ class Cassandra:
         Fresh clustering stores only multi-member clusters, so a cluster id with
         no ``fresh_cluster_stats`` row is its own singleton
         (``cluster_id == address_id``). Shape that address's row as a
-        single-member cluster-stats row; adjusted totals equal the raw totals
-        as a one-address cluster has no intra-cluster flow to net out. Returns
-        ``None`` when no such address exists (a genuinely unknown id).
+        single-member cluster-stats row. Returns ``None`` when no such address
+        exists (a genuinely unknown id).
         """
         address_id_group = self.get_id_group(currency, cluster_id)
         query = "SELECT * FROM address WHERE address_id_group = %s AND address_id = %s"
@@ -2490,8 +2492,6 @@ class Cassandra:
             "last_tx_id": row["last_tx_id"],
             "total_received": row["total_received"],
             "total_spent": row["total_spent"],
-            "total_received_adj": row["total_received"],
-            "total_spent_adj": row["total_spent"],
         }
 
     def _zero_values(self, currency):
@@ -2523,10 +2523,11 @@ class Cassandra:
         over members). Tx counts and degrees are member sums and OVERCOUNT: a
         co-spend tx is counted once per participating member, and intra-cluster
         edges / shared counterparties inflate degrees. Exact netting needs tx
-        identity and counterparty->cluster resolution — what recompute does and
-        too expensive per request — so serve the upper bound until recompute
-        replaces it. Adjusted totals are set to the raw sums (same upper-bound
-        rationale). Returns ``None`` when no member address exists.
+        identity and counterparty->cluster resolution — too expensive per
+        request — so serve the upper bound until recompute replaces the tx
+        counts (degrees are never recomputed; the legacy hop serves them once
+        the cluster has a legacy root). Returns ``None`` when no member
+        address exists.
         """
         cluster_id = row["cluster_id"]
         cluster_id_group = self.get_id_group(currency, cluster_id)
@@ -2559,17 +2560,15 @@ class Cassandra:
             "last_tx_id": max(a["last_tx_id"] for a in addrs),
             "total_received": total_received,
             "total_spent": total_spent,
-            "total_received_adj": total_received,
-            "total_spent_adj": total_spent,
         }
 
     async def _fresh_fill_degrees(self, currency, row):
-        """Fill null cluster degrees from the legacy ``cluster`` table.
+        """Fill missing cluster degrees from the legacy ``cluster`` table.
 
-        The fresh recompute no longer derives degrees (that required scanning
-        the address-relations tables). The fresh root address (``cluster_id ==
-        min(address_id)``) still carries its LEGACY cluster id on its address
-        row, so serve that legacy cluster's degrees. Where fresh merged several
+        ``fresh_cluster_stats`` does not carry degrees (deriving them required
+        scanning the address-relations tables). The fresh root address
+        (``cluster_id == min(address_id)``) still carries its LEGACY cluster id
+        on its address row, so serve that legacy cluster's degrees. Where fresh merged several
         legacy clusters this is the root's fragment and UNDERSTATES — which
         fails open for degree-threshold consumers (gssearch prunes on
         ``degree > N``, so an understated degree never hides results).

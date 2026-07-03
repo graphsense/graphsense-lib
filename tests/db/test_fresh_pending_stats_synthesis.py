@@ -135,7 +135,6 @@ def test_pending_entity_synthesized_from_members(monkeypatch):
     # member sums, documented over-count until recompute
     assert entity["no_incoming_txs"] == 5
     assert entity["in_degree"] == 3
-    assert entity["total_received_adj"] == entity["total_received"]
 
 
 def test_full_row_served_untouched(monkeypatch):

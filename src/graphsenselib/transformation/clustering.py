@@ -330,9 +330,10 @@ def compute_fresh_cluster_stats(members_df, address_df, address_txs_df):
     :func:`cluster_additive_stats` (additive carries every cluster; tx-counts
     default to 0 for clusters with no txs).
 
-    Degrees and adjusted totals are deliberately NOT computed: they were the
-    only consumers of the address-relations tables (the most expensive scan of
-    the job), nothing reads the ``total_*_adj`` columns, and REST serves
+    Degrees and adjusted totals are deliberately absent (the columns are
+    dropped from ``fresh_cluster_stats``): they were the only consumers of the
+    address-relations tables (the most expensive scan of the job), nothing
+    reads the ``total_*_adj`` columns, and REST serves
     ``in_degree``/``out_degree`` from the legacy ``cluster`` table via the
     root-address hop (see ``_fresh_fill_degrees`` in the async Cassandra layer).
     """
@@ -358,8 +359,8 @@ def recompute_fresh_cluster_stats(
     the row is whole. Returns the number of cluster rows written.
 
     ``in_degree``/``out_degree`` and ``total_received_adj``/``total_spent_adj``
-    are NOT maintained (see :func:`compute_fresh_cluster_stats`); the upsert
-    leaves any historical values in those columns untouched.
+    do not exist on ``fresh_cluster_stats`` (dropped in transformed_utxo
+    migration 4->5); see :func:`compute_fresh_cluster_stats`.
 
     ``delete_stale`` (a callable taking a list of ``(cluster_id_group,
     cluster_id)`` tuples) enables stale-row cleanup: rows keyed by cluster_ids

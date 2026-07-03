@@ -73,10 +73,8 @@ def test_get_entity_synthesizes_singleton_when_fresh(monkeypatch):
     assert entity["cluster_id"] == 99
     assert entity["no_addresses"] == 1
     assert entity["min_address_id"] == 99
-    # singleton: adjusted totals equal the raw totals (no intra-cluster flow)
     assert entity["total_received"] == {"value": 500}
-    assert entity["total_received_adj"] == {"value": 500}
-    assert entity["total_spent_adj"] == {"value": 300}
+    assert entity["total_spent"] == {"value": 300}
     assert entity["in_degree"] == 1
     assert entity["out_degree"] == 2
     assert entity["first_tx_id"] == 10
