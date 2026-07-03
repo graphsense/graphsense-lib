@@ -19,7 +19,6 @@ from ..utils.accountmodel import hex_str_to_bytes, hex_to_bytes, is_hex_string, 
 from ..utils.console import console
 from ..utils.defi import get_pair_from_decoded_log, get_token_details
 from ..utils.generic import batch
-from ..utils.multiprocessing import MPCounter
 from .factory import DbFactory
 from .trace import trace as trace_it
 
@@ -239,8 +238,7 @@ def get_dex(
             f"The database already holds {nblks} blocks, {npairs} pairs, and {ntokens} tokens"
         )
 
-        def reader(task_queue, result_queue, rc):
-            rc.increment()
+        def reader(task_queue, result_queue):
             with DbFactory().from_config(env, currency) as db:
                 while True:
                     blockrange = task_queue.get()
@@ -248,10 +246,6 @@ def get_dex(
                     pairs = set()
                     failed = set()
                     if blockrange is None:  # Sentinel value to stop the worker
-                        rc.decrement()
-                        if rc.value() == 0:
-                            logger.info("Last reader down sending None to writer.")
-                            result_queue.put(None)
                         break
                     for block in blockrange:
                         try:
@@ -312,13 +306,10 @@ def get_dex(
 
         task_queue = Queue()
         result_queue = Queue()
-        reader_count = MPCounter()
         readers = []
 
         for _ in range(n_workers):
-            worker_process = Process(
-                target=reader, args=(task_queue, result_queue, reader_count)
-            )
+            worker_process = Process(target=reader, args=(task_queue, result_queue))
             worker_process.start()
             readers.append(worker_process)
 
@@ -331,13 +322,20 @@ def get_dex(
                 task_queue.put(fbtch)
 
         # One sentinel per worker so each reader shuts down cleanly once the
-        # queue is drained (the last one down signals the writer to stop).
+        # queue is drained.
         for _ in range(n_workers):
             task_queue.put(None)
 
+        # Join readers while the writer is still consuming, so every reader's
+        # queue feeder thread can flush its buffered results (a reader cannot
+        # exit with unflushed items once the pipe is full). Only signal the
+        # writer to stop afterwards: readers must not send the sentinel
+        # themselves, because queue ordering across processes is not FIFO and
+        # the sentinel could overtake another reader's pending batch.
         for worker_process in readers:
             worker_process.join()
 
+        result_queue.put(None)
         writer.join()
 
     else:
