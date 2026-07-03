@@ -158,6 +158,18 @@ def _fresh_stats_pending(row) -> bool:
     return "total_received" in row and row["total_received"] is None
 
 
+def _fresh_degrees_pending(row) -> bool:
+    """A fresh_cluster_stats row with stats but null degrees.
+
+    The recompute no longer derives ``in_degree``/``out_degree`` (that required
+    scanning the address-relations tables), so recomputed rows carry null
+    degrees; the API requires non-null ints, filled via the legacy hop.
+    """
+    return ("in_degree" in row and row["in_degree"] is None) or (
+        "out_degree" in row and row["out_degree"] is None
+    )
+
+
 def _cluster_addresses_table() -> str:
     """Cluster membership source, switched by the same env var.
 
@@ -2438,10 +2450,13 @@ class Cassandra:
                 if singleton is not None:
                     return (await self.finish_entities(currency, [singleton]))[0]
             raise ClusterNotFoundException(currency, entity)
-        if is_fresh_clustering_enabled() and _fresh_stats_pending(result):
-            result = await self._fresh_entity_from_members(currency, result)
-            if result is None:
-                raise ClusterNotFoundException(currency, entity)
+        if is_fresh_clustering_enabled():
+            if _fresh_stats_pending(result):
+                result = await self._fresh_entity_from_members(currency, result)
+                if result is None:
+                    raise ClusterNotFoundException(currency, entity)
+            elif _fresh_degrees_pending(result):
+                result = await self._fresh_fill_degrees(currency, result)
         return (await self.finish_entities(currency, [result]))[0]
 
     async def _fresh_singleton_entity(self, currency, cluster_id):
@@ -2548,13 +2563,84 @@ class Cassandra:
             "total_spent_adj": total_spent,
         }
 
+    async def _fresh_fill_degrees(self, currency, row):
+        """Fill null cluster degrees from the legacy ``cluster`` table.
+
+        The fresh recompute no longer derives degrees (that required scanning
+        the address-relations tables). The fresh root address (``cluster_id ==
+        min(address_id)``) still carries its LEGACY cluster id on its address
+        row, so serve that legacy cluster's degrees. Where fresh merged several
+        legacy clusters this is the root's fragment and UNDERSTATES — which
+        fails open for degree-threshold consumers (gssearch prunes on
+        ``degree > N``, so an understated degree never hides results).
+
+        No legacy id/row means the root postdates the last full transform, so
+        the whole cluster is post-transform and small: fall back to
+        member-summed address degrees, an OVERCOUNT (intra-cluster edges and
+        shared counterparties count once per member). Coalesce to 0 — the API
+        requires non-null ints.
+        """
+        cluster_id = row["cluster_id"]
+        addr = one(
+            await self.execute_async(
+                currency,
+                "transformed",
+                "SELECT cluster_id FROM address "
+                "WHERE address_id_group = %s AND address_id = %s",
+                [self.get_id_group(currency, cluster_id), cluster_id],
+            )
+        )
+        legacy = None
+        if addr and addr.get("cluster_id") is not None:
+            legacy_id = addr["cluster_id"]
+            legacy = one(
+                await self.execute_async(
+                    currency,
+                    "transformed",
+                    "SELECT in_degree, out_degree FROM cluster "
+                    "WHERE cluster_id_group = %s AND cluster_id = %s",
+                    [self.get_id_group(currency, legacy_id), legacy_id],
+                )
+            )
+        if legacy:
+            row["in_degree"] = legacy["in_degree"] or 0
+            row["out_degree"] = legacy["out_degree"] or 0
+            return row
+        query = (
+            f"SELECT address_id FROM {_cluster_addresses_table()} "
+            "WHERE cluster_id_group = %s AND cluster_id = %s"
+        )
+        members = await self.execute_async(
+            currency,
+            "transformed",
+            query,
+            [self.get_id_group(currency, cluster_id), cluster_id],
+        )
+        member_ids = [r["address_id"] for r in members.current_rows] or [cluster_id]
+        params = [(self.get_id_group(currency, id), id) for id in member_ids]
+        query = (
+            "SELECT in_degree, out_degree FROM address "
+            "WHERE address_id_group = %s AND address_id = %s"
+        )
+        addrs = await self.concurrent_with_args(currency, "transformed", query, params)
+        row["in_degree"] = sum(a["in_degree"] or 0 for a in addrs)
+        row["out_degree"] = sum(a["out_degree"] or 0 for a in addrs)
+        return row
+
     async def _fresh_heal_pending_entities(self, currency, rows):
-        """Replace stats-pending rows in a bulk entity result; drop unhealable."""
+        """Heal incomplete rows in a bulk entity result; drop unhealable.
+
+        Fully-pending rows (delta-created, all stat columns null) are
+        synthesized from their members; rows with stats but null degrees get
+        the legacy degree fill.
+        """
 
         async def heal(row):
-            if not _fresh_stats_pending(row):
-                return row
-            return await self._fresh_entity_from_members(currency, row)
+            if _fresh_stats_pending(row):
+                return await self._fresh_entity_from_members(currency, row)
+            if _fresh_degrees_pending(row):
+                return await self._fresh_fill_degrees(currency, row)
+            return row
 
         healed = await asyncio.gather(*[heal(row) for row in rows])
         return [row for row in healed if row is not None]
