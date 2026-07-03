@@ -3661,6 +3661,11 @@ class Cassandra:
                 addr_tx["trace_index"] = addr_tx["tx_reference"].trace_index
 
             full_tx = full_txs[addr_tx["transaction_id"]]
+            if full_tx is None:
+                # tx id not yet resolvable to a hash (delta-updater in-flight,
+                # see list_txs_by_ids_eth); drop the row instead of failing
+                addr_tx["error"] = "transaction not yet resolvable to a hash"
+                continue
             contract_creation = full_tx.get("contract_creation", None)
 
             addr_tx["contract_creation"] = contract_creation
@@ -3767,7 +3772,36 @@ class Cassandra:
             )
         return [tx for tx in txs if "error" not in tx]  # remove errored txs
 
+    async def _check_unresolvable_tx_ids_tolerable(self, currency, missing_ids):
+        """Decide if tx ids missing in transaction_ids_by_transaction_id_group
+        are tolerable or a real inconsistency.
+
+        While the delta-updater persists a batch, its data writes are sharded
+        without cross-table ordering, so address_transactions rows can become
+        visible before the corresponding tx-id mapping. Summary statistics are
+        only committed after all data writes, therefore such in-flight txs
+        always lie in blocks above the last committed block. Misses at or
+        below it cannot be that race and raise instead of being masked.
+        """
+        stats = await self.get_currency_statistics(currency)
+        last_committed_block = stats["no_blocks"] - 1 if stats else -1
+        stale = [
+            id for id in missing_ids if get_block_from_tx_id(id) <= last_committed_block
+        ]
+        if stale:
+            raise DBInconsistencyException(
+                f"transaction ids {stale} in network {currency} not found in "
+                "transaction_ids_by_transaction_id_group although at or below "
+                f"the last committed block {last_committed_block}"
+            )
+        self.logger.warning(
+            f"Dropping {len(missing_ids)} txs of network {currency} not yet "
+            f"resolvable to hashes (ids {missing_ids}): above last committed "
+            f"block {last_committed_block}, delta-updater presumably in-flight."
+        )
+
     async def list_txs_by_ids_eth(self, currency, ids, include_token_txs=False):
+        ids = list(ids)
         params = [[self.get_tx_id_group(currency, id), id] for id in ids]
         statement = (
             "SELECT transaction from transaction_ids_by_transaction_id_group"
@@ -3777,11 +3811,23 @@ class Cassandra:
             currency, "transformed", statement, params, filter_empty=False
         )
 
-        return await self.list_txs_by_hashes(
+        any_missing = any(row is None for row in result)
+        if any_missing:
+            missing_ids = [id for id, row in zip(ids, result) if row is None]
+            await self._check_unresolvable_tx_ids_tolerable(currency, missing_ids)
+
+        found = await self.list_txs_by_hashes(
             currency,
-            [row["transaction"] for row in result],
+            [row["transaction"] for row in result if row is not None],
             include_token_txs=include_token_txs,
         )
+        if not any_missing or include_token_txs:
+            # with include_token_txs the result interleaves token txs and is
+            # never positionally aligned with ids, so missing ids are dropped
+            return found
+        # keep the result aligned with ids: None placeholder per missing id
+        found_iter = iter(found)
+        return [None if row is None else next(found_iter) for row in result]
 
     async def get_tx_by_id_eth(self, currency, id):
         params = [self.get_tx_id_group(currency, id), id]
