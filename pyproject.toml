@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77, <80.9", "setuptools-scm>=8"]
+requires = ["setuptools>=77,<83.1", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -18,7 +18,7 @@ classifiers = [
 ]
 requires-python = ">=3.10, <3.14"
 dependencies = [
-    'setuptools>=80.0.0, <80.9',
+    'setuptools>=80.0.0,<83.1',
     "filelock>=3.16",
     "click>=8.1",
     "pandas>=2.3.3",
@@ -68,7 +68,7 @@ Download = "https://github.com/graphsense"
 [dependency-groups]
 # Core testing dependencies
 testing = [
-    "setuptools>=80.0.0, <80.9",
+    "setuptools>=80.0.0,<83.1",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "testcontainers[cassandra]>=4.9.1",
@@ -80,7 +80,7 @@ testing = [
 
 # Development dependencies
 dev = [
-    "setuptools>=80.0.0, <80.9",
+    "setuptools>=80.0.0,<83.1",
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "ruff>=0.15.1",
