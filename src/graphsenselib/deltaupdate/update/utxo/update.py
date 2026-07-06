@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from cassandra import InvalidRequest
 
-from graphsenselib.config import is_fresh_clustering_enabled
 from graphsenselib.datatypes import DbChangeType, EntityType
 from graphsenselib.db import AnalyticsDb, DbChange
 from graphsenselib.db.analytics import ApplyChangesResult
@@ -1517,6 +1516,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         self.changes = None
         self.bookkeeping_changes = None
         self._parallel_pool = parallel_pool
+        self._fresh_clustering_active_cached = None
         self.application_strategy = application_strategy
         logger.info(f"Updater running in {application_strategy} mode.")
         self.crash_recoverer = CrashRecoverer(crash_file)
@@ -1623,6 +1623,22 @@ class UpdateStrategyUtxo(UpdateStrategy):
         apply_changes(self._db, changes, self._pedantic, try_atomic_writes=False)
         return len(changes)
 
+    def _fresh_clustering_active(self) -> bool:
+        """Cached per-run read of the keyspace's bootstrap marker.
+
+        Fresh clustering needs no env switch: the one-off bootstrap writes the
+        ``fresh_clustering_active`` state row, and the updater maintains the
+        fresh_* tables iff it is present. Without the marker (tables merely
+        created empty by migrations) incremental clustering would build
+        garbage from a mid-chain starting point, so we must not guess from
+        table existence.
+        """
+        if self._fresh_clustering_active_cached is None:
+            self._fresh_clustering_active_cached = (
+                self._db.transformed.is_fresh_clustering_active()
+            )
+        return self._fresh_clustering_active_cached
+
     def run_fresh_clustering(self, start_block: int, end_block: int):
         """Stand-alone (re)clustering of a block range, reading the raw txs back.
 
@@ -1633,10 +1649,10 @@ class UpdateStrategyUtxo(UpdateStrategy):
         this — it harvests the multi-input id sets from the txs it already holds
         and clusters per batch (see :meth:`process_batch_impl_hook`).
         """
-        if not is_fresh_clustering_enabled(self._currency):
+        if not self._fresh_clustering_active():
             logger.info(
-                f"Fresh clustering disabled for {self._currency} "
-                "(not in GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES), skipping"
+                f"Fresh clustering not bootstrapped on this keyspace "
+                f"({self._currency}); skipping"
             )
             return
 
@@ -1723,7 +1739,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         # and applied below, before persist_updater_progress advances
         # last_synced_block.
         collect_cluster_inputs = (
-            is_fresh_clustering_enabled(self._currency) and _check_gs_clustering()
+            self._fresh_clustering_active() and _check_gs_clustering()
         )
         cluster_inputs: List[List[int]] = []
 

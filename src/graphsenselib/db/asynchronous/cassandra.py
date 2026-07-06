@@ -31,7 +31,11 @@ from cassandra.query import SimpleStatement, ValueSequence, dict_factory
 from graphsenselib.db.cassandra import GraphsenseRetryPolicy
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
-from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
+from graphsenselib.db.state import (
+    FRESH_CLUSTERING_ACTIVE_KEY,
+    INGEST_COMPLETE_KEY,
+    STATE_TABLE,
+)
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
@@ -1945,6 +1949,35 @@ class Cassandra:
             )
         return result["cluster_id"]
 
+    async def _fresh_clustering_active(self, currency) -> bool:
+        """Cached (60s TTL) read of the keyspace's fresh-clustering marker.
+
+        The one-off bootstrap writes the ``fresh_clustering_active`` state row
+        as its last step. The fill below must gate on it — the fresh_* tables
+        exist empty on every migrated keyspace, and treating every address as
+        an implicit singleton on an un-bootstrapped keyspace would be wrong.
+        Missing state table (pre-migration keyspace) counts as inactive.
+        """
+        cache = getattr(self, "_fresh_active_cache", None)
+        if cache is None:
+            cache = self._fresh_active_cache = {}
+        hit = cache.get(currency)
+        now = time.monotonic()
+        if hit is not None and now - hit[1] < 60.0:
+            return hit[0]
+        try:
+            result = await self.execute_async(
+                currency,
+                "transformed",
+                f"SELECT key FROM {STATE_TABLE} WHERE key = %s",
+                [FRESH_CLUSTERING_ACTIVE_KEY],
+            )
+            active = one(result) is not None
+        except InvalidRequest:
+            active = False
+        cache[currency] = (active, now)
+        return active
+
     async def get_fresh_cluster_id(self, currency, address_id):
         """Resolve an address's public (shifted) fresh cluster id.
 
@@ -1953,9 +1986,11 @@ class Cassandra:
         (``cluster_id == address_id``). The raw table id is translated to the
         public id space (``+ FRESH_CLUSTER_ID_OFFSET``) so callers can hand it
         straight to the self-routing entity endpoints. Returns None only when
-        the fresh tables are unavailable (fresh clustering has not been run on
-        this keyspace).
+        fresh clustering is not active on this keyspace (bootstrap marker
+        absent or fresh tables unavailable).
         """
+        if not await self._fresh_clustering_active(currency):
+            return None
         address_id_group = self.get_id_group(currency, address_id)
         query = (
             "SELECT cluster_id FROM fresh_address_cluster "

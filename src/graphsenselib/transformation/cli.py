@@ -1457,17 +1457,12 @@ def run_clustering(env, currency, local, read_partitions, end_block):
     prior run) so summary_statistics.no_addresses is populated.
     \f
     """
-    from graphsenselib.config import get_config, is_fresh_clustering_enabled
+    from graphsenselib.config import get_config
     from graphsenselib.db.factory import DbFactory
+    from graphsenselib.db.state import mark_fresh_clustering_active
     from graphsenselib.schema.schema import GraphsenseSchemas
     from graphsenselib.transformation.clustering import run_clustering_spark
     from graphsenselib.transformation.spark import create_spark_session
-
-    if not is_fresh_clustering_enabled(currency):
-        raise click.ClickException(
-            f"Fresh clustering is disabled for {currency}. Add it to "
-            "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES to enable."
-        )
 
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
 
@@ -1527,7 +1522,13 @@ def run_clustering(env, currency, local, read_partitions, end_block):
         finally:
             spark_session.stop()
             logger.info("SparkSession stopped.")
-        logger.info("One-off clustering complete.")
+        # Enable switch: the marker makes the delta updater maintain the
+        # fresh_* tables and REST fill fresh_cluster_id from here on.
+        mark_fresh_clustering_active(db)
+        logger.info(
+            "One-off clustering complete; fresh clustering marked active on "
+            f"{transformed_keyspace}."
+        )
 
 
 @transformation.command(
@@ -1563,18 +1564,12 @@ def recompute_cluster_stats(env, currency, local):
     against a real keyspace before REST reads them.
     \f
     """
-    from graphsenselib.config import get_config, is_fresh_clustering_enabled
+    from graphsenselib.config import get_config
     from graphsenselib.db.factory import DbFactory
     from graphsenselib.schema.schema import GraphsenseSchemas
     from graphsenselib.transformation.clustering import recompute_fresh_cluster_stats
     from graphsenselib.transformation.spark import create_spark_session
     from graphsenselib.utils.locking import create_lock
-
-    if not is_fresh_clustering_enabled(currency):
-        raise click.ClickException(
-            f"Fresh clustering is disabled for {currency}. Add it to "
-            "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES to enable."
-        )
 
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
 

@@ -28,7 +28,7 @@ Design notes / assumptions (validate on first live run):
     the manufactured addresses must be identity-encoded
     (``to_db_address(a).db_encoding == a``).  The seeder asserts this and fails
     loudly otherwise — pick different addresses if it trips.
-  * ``run_fresh_clustering`` is gated on ``GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES``;
+  * ``run_fresh_clustering`` is gated on the ``fresh_clustering_active`` state marker;
     the incremental subprocess inherits the test-process env, same as the
     existing ``test_clustering.py`` incremental step.
 """
@@ -264,6 +264,19 @@ def _create_raw_keyspace(cassandra_host: str, cassandra_port: int, keyspace: str
             session.execute(stmt)
 
 
+def _mark_fresh_active(cassandra_host: str, cassandra_port: int, keyspace: str):
+    """Simulate a completed bootstrap: the incremental production path only
+    maintains the fresh_* tables when the marker row is present."""
+    from cassandra.cluster import Cluster
+
+    with Cluster([cassandra_host], port=cassandra_port) as cluster:
+        session = cluster.connect()
+        session.execute(
+            f"INSERT INTO {keyspace}.state (key, value, updated_at) "  # noqa: S608
+            "VALUES ('fresh_clustering_active', 'test', toTimestamp(now()))"
+        )
+
+
 def _truncate_fresh(cassandra_host: str, cassandra_port: int, keyspace: str):
     from cassandra.cluster import Cluster
 
@@ -280,16 +293,16 @@ def _truncate_fresh(cassandra_host: str, cassandra_port: int, keyspace: str):
 class TestClusteringManufactured:
     """PySpark one-off and incremental clustering must agree on a crafted set."""
 
-    def test_oneoff_vs_incremental(self, cassandra_coords, current_venv, monkeypatch):
-        # run_fresh_clustering (the incremental subprocess) is gated on this;
-        # the spark one-off ignores it.  Set it so subprocesses inherit it.
-        monkeypatch.setenv("GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES", CURRENCY)
+    def test_oneoff_vs_incremental(self, cassandra_coords, current_venv):
         host, port = cassandra_coords
         raw_ks = "clust_manu_raw"
         tks = "clust_manu_transformed"
 
         _create_raw_keyspace(host, port, raw_ks)
         _create_transformed_keyspace(host, port, tks)
+        # run_fresh_clustering (the incremental subprocess) is gated on the
+        # bootstrap marker; the spark one-off ignores it.
+        _mark_fresh_active(host, port, tks)
 
         seed_args = dict(
             cassandra_host=host,
@@ -376,16 +389,13 @@ class TestClusteringManufactured:
             + "\n".join(f"  - {m}" for m in mismatches[:50])
         )
 
-    def test_oneoff_endblock_vs_incremental(
-        self, cassandra_coords, current_venv, monkeypatch
-    ):
+    def test_oneoff_endblock_vs_incremental(self, cassandra_coords, current_venv):
         """A one-off capped at --end-block N must equal incremental over [0, N].
 
         Caps at block 2: ``{A,B,C}`` and ``{D,E}`` exist but the block-3 merge
         (C-D) and the block-5 ``{G,H}`` cluster are excluded — so this fails if
         ``end_block`` does not actually restrict the one-off's read.
         """
-        monkeypatch.setenv("GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES", CURRENCY)
         host, port = cassandra_coords
         raw_ks = "clust_manu_eb_raw"
         tks = "clust_manu_eb_transformed"
@@ -393,6 +403,7 @@ class TestClusteringManufactured:
 
         _create_raw_keyspace(host, port, raw_ks)
         _create_transformed_keyspace(host, port, tks)
+        _mark_fresh_active(host, port, tks)
 
         _run_in_venv(
             current_venv,

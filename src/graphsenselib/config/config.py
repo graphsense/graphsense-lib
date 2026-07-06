@@ -79,23 +79,6 @@ VALID_CONSISTENCY_LEVELS = {
 VALID_SERIAL_CONSISTENCY_LEVELS = {"SERIAL", "LOCAL_SERIAL"}
 
 
-def is_fresh_clustering_enabled(currency: str) -> bool:
-    """Per-currency fresh-clustering rollout switch.
-
-    ``GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES`` holds a comma-separated list of
-    network codes (e.g. ``ltc`` or ``ltc,btc``); fresh clustering is enabled
-    for a currency iff it is in the list. This is a WRITE-side switch only —
-    the delta updater and the one-off clustering commands — so currencies can
-    be brought into fresh clustering one at a time. The REST read path needs
-    no switch: entity ids are self-describing (fresh ids live above
-    ``FRESH_CLUSTER_ID_OFFSET``, see ``graphsenselib.utils.constants``).
-    """
-    enabled = os.environ.get("GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES", "")
-    return currency.strip().lower() in {
-        c.strip().lower() for c in enabled.split(",") if c.strip()
-    }
-
-
 def is_tagstore_fresh_clusters_enabled() -> bool:
     """Tagstore fresh-clustering switch — flips the whole cluster-tag path,
     read **and** feed, to the ``*_v2`` relations in one move:
@@ -106,8 +89,9 @@ def is_tagstore_fresh_clusters_enabled() -> bool:
       ``address_cluster_mapping_v2`` (Postgres), refreshing the ``*_v2`` MVs.
 
     Exclusive switch: while on, the legacy ``address_cluster_mapping`` is no
-    longer maintained. Independent of ``is_fresh_clustering_enabled`` (the
-    Cassandra write side / one-off clustering job). Flip on only after
+    longer maintained. Independent of the Cassandra write side (the delta
+    updater / one-off clustering job self-detect on the per-keyspace
+    ``fresh_clustering_active`` state marker). Flip on only after
     ``address_cluster_mapping_v2`` has been populated by a full feeder rerun,
     else cluster-tag reads come back empty."""
     return os.environ.get("GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS", "false").lower() in (

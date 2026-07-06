@@ -16,7 +16,12 @@ from functools import lru_cache, partial
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import pandas as pd
-from cassandra import OperationTimedOut, Unavailable, WriteTimeout
+from cassandra import InvalidRequest, OperationTimedOut, Unavailable, WriteTimeout
+
+from graphsenselib.db.state import (
+    FRESH_CLUSTERING_ACTIVE_KEY,
+    STATE_TABLE,
+)
 from cassandra.cluster import NoHostAvailable
 from tenacity import (
     Retrying,
@@ -731,6 +736,22 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         if not self.exists():
             return None
         return self._get_only_row_from_table("summary_statistics")
+
+    def is_fresh_clustering_active(self) -> bool:
+        """True iff the fresh-clustering bootstrap marker is set on this keyspace.
+
+        The marker (state table, ``fresh_clustering_active``) is written by the
+        one-off ``transformation cluster`` bootstrap. Table existence alone is
+        no signal — migrations create the fresh_* tables empty everywhere.
+        Missing state table (pre-migration keyspace) counts as inactive.
+        """
+        try:
+            row = self.select_one(
+                STATE_TABLE, where={"key": FRESH_CLUSTERING_ACTIVE_KEY}
+            )
+        except InvalidRequest:
+            return False
+        return row is not None
 
     def get_fresh_clusters_for_addresses(
         self, address_ids: List[int]

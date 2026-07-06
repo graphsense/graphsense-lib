@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 STATE_TABLE = "state"
 INGEST_COMPLETE_KEY = "ingest_complete"
+FRESH_CLUSTERING_ACTIVE_KEY = "fresh_clustering_active"
 
 
 def build_ingest_complete_row() -> dict:
@@ -31,3 +32,28 @@ def build_ingest_complete_row() -> dict:
 
 def mark_ingest_complete(db, keyspace_type: str) -> None:
     db.by_ks_type(keyspace_type).ingest(STATE_TABLE, [build_ingest_complete_row()])
+
+
+def build_fresh_clustering_active_row() -> dict:
+    """Marker row: fresh clustering is bootstrapped and live on this keyspace.
+
+    Written by the one-off ``transformation cluster`` bootstrap as its last
+    step. Consumers self-detect on it — the delta updater maintains the
+    fresh_* tables and REST fills ``fresh_cluster_id`` on address responses
+    iff the marker is present. Mere existence of the fresh_* tables is NOT
+    sufficient (migrations create them empty on every keyspace); without the
+    bootstrap the incremental path would build garbage clusters from a
+    mid-chain starting point.
+    """
+    now = datetime.now(timezone.utc)
+    return {
+        "key": FRESH_CLUSTERING_ACTIVE_KEY,
+        "value": now.isoformat(),
+        "updated_at": now,
+    }
+
+
+def mark_fresh_clustering_active(db) -> None:
+    db.by_ks_type("transformed").ingest(
+        STATE_TABLE, [build_fresh_clustering_active_row()]
+    )
