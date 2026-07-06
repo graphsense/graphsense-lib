@@ -938,12 +938,13 @@ def run_clustering_spark(
 
     # PHASE 4: full cluster stats — the same recompute the standalone
     # recompute-cluster-stats job runs, aggregating the just-written membership
-    # (fresh_address_cluster) with the address + address_incoming/outgoing_relations
-    # tables into per-cluster size, root, totals, first/last tx, degrees, tx-counts
-    # and adjusted totals. So a one-off bootstrap leaves fresh_cluster_stats
-    # complete, not just the size+root the incremental delta loop maintains live to
-    # elect a merge survivor (the rich columns then stay fresh via the periodic
-    # recompute job).
+    # (fresh_address_cluster) with the address + address_transactions tables into
+    # per-cluster size, root, totals, first/last tx and tx-counts (degrees and
+    # adjusted totals are not maintained for fresh clusters; REST serves degrees
+    # via the root address's legacy cluster). So a one-off bootstrap leaves
+    # fresh_cluster_stats complete, not just the size+root the incremental delta
+    # loop maintains live to elect a merge survivor (the rich columns then stay
+    # fresh via the periodic recompute job).
     stats_start = time.perf_counter()
     n_stats = recompute_fresh_cluster_stats(
         spark, transformed_keyspace, bucket_size, delete_stale=delete_stale
