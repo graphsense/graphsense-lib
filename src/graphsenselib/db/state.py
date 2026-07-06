@@ -44,6 +44,14 @@ def build_fresh_clustering_active_row() -> dict:
     sufficient (migrations create them empty on every keyspace); without the
     bootstrap the incremental path would build garbage clusters from a
     mid-chain starting point.
+
+    TODO(next major upgrade): remove this marker mechanism entirely once
+    fresh clustering is the only clustering mode — drop this writer, the
+    delta updater gate (deltaupdate/update/utxo/update.py
+    ``_fresh_clustering_active``) and the REST gate
+    (db/asynchronous/cassandra.py ``_fresh_clustering_active`` /
+    analytics.py ``is_fresh_clustering_active``), and assume active on
+    every transformed keyspace.
     """
     now = datetime.now(timezone.utc)
     return {
