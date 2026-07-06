@@ -4,7 +4,7 @@ Fresh clustering persists only multi-member clusters, so a cluster id absent
 from ``fresh_cluster_stats`` is a singleton (``cluster_id == address_id``, one
 member). ``get_entity`` must synthesize that one-address entity from the
 ``address`` row instead of raising ``ClusterNotFoundException`` — otherwise the
-REST 500s for every singleton when the fresh read switch is on.
+REST 500s for every singleton id in the fresh (shifted) id space.
 
 DB-free: the real ``Cassandra.get_entity`` is bound to a fake self that stands
 in for its db dependencies. ``finish_entities`` is stubbed to a pass-through so
@@ -18,8 +18,7 @@ import pytest
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
 from graphsenselib.errors.errors import ClusterNotFoundException
-
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
+from graphsenselib.utils.constants import FRESH_CLUSTER_ID_OFFSET as _OFF
 
 _ADDR_ROW = {
     "address_id": 99,
@@ -63,14 +62,14 @@ def _make_self(cluster_stats_row, address_row):
     ns._fresh_singleton_entity = lambda currency, cid: (
         Cassandra._fresh_singleton_entity(ns, currency, cid)
     )
+    ns._get_fresh_entity = Cassandra._get_fresh_entity.__get__(ns)
     return ns
 
 
-def test_get_entity_synthesizes_singleton_when_fresh(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_get_entity_synthesizes_singleton_when_fresh():
     s = _make_self(cluster_stats_row=None, address_row=_ADDR_ROW)
-    entity = asyncio.run(Cassandra.get_entity(s, "ltc", 99))
-    assert entity["cluster_id"] == 99
+    entity = asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + 99))
+    assert entity["cluster_id"] == _OFF + 99
     assert entity["no_addresses"] == 1
     assert entity["min_address_id"] == 99
     assert entity["total_received"] == {"value": 500}
@@ -81,16 +80,15 @@ def test_get_entity_synthesizes_singleton_when_fresh(monkeypatch):
     assert entity["last_tx_id"] == 20
 
 
-def test_get_entity_raises_when_no_cluster_and_no_address(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_get_entity_raises_when_no_cluster_and_no_address():
     s = _make_self(cluster_stats_row=None, address_row=None)
     with pytest.raises(ClusterNotFoundException):
-        asyncio.run(Cassandra.get_entity(s, "ltc", 99))
+        asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + 99))
 
 
-def test_get_entity_uses_cluster_stats_for_multi_member(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_get_entity_uses_cluster_stats_for_multi_member():
     cluster_stats = {"cluster_id": 7, "no_addresses": 5}
     s = _make_self(cluster_stats_row=cluster_stats, address_row=_ADDR_ROW)
-    entity = asyncio.run(Cassandra.get_entity(s, "ltc", 7))
+    entity = asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + 7))
     assert entity["no_addresses"] == 5  # served from stats, not synthesized
+    assert entity["cluster_id"] == _OFF + 7

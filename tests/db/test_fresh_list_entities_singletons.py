@@ -7,9 +7,10 @@ clusters, so singleton ids have no ``fresh_cluster_stats`` row and
 ``concurrent_with_args`` silently drops them — the bulk response would then be
 missing entities that legacy returned.
 
-With ``GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES`` on, ``list_entities`` must
-synthesize the one-address entity for each singleton id (mirroring
-``get_entity``), preserving input order and dropping only genuinely unknown ids.
+For ids in the fresh (shifted) id space, ``list_entities`` must synthesize
+the one-address entity for each singleton id (mirroring ``get_entity``),
+preserving input order and dropping only genuinely unknown ids. Legacy and
+fresh ids can be mixed in one request; each id routes to its own table.
 
 DB-free: the real ``Cassandra.list_entities`` is bound to a fake self standing
 in for its db dependencies.
@@ -19,8 +20,7 @@ import asyncio
 from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
-
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
+from graphsenselib.utils.constants import FRESH_CLUSTER_ID_OFFSET as _OFF
 
 
 def _addr_row(address_id):
@@ -84,24 +84,31 @@ def _make_self(multi_member_ids, known_address_ids):
     return ns
 
 
-def test_fresh_fills_singletons_in_input_order(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_fresh_fills_singletons_in_input_order():
     # 7 is a real multi-member cluster; 3 and 5 are singletons (address rows
     # exist); 99 is genuinely unknown (no cluster, no address).
     s = _make_self(multi_member_ids={7}, known_address_ids={3, 5})
-    entities, _page = asyncio.run(Cassandra.list_entities(s, "ltc", [3, 7, 5, 99]))
+    ids_in = [_OFF + 3, _OFF + 7, _OFF + 5, _OFF + 99]
+    entities, _page = asyncio.run(Cassandra.list_entities(s, "ltc", ids_in))
     ids = [e["cluster_id"] for e in entities]
     # input order preserved; unknown 99 dropped (as legacy dropped absent ids)
-    assert ids == [3, 7, 5]
-    singleton = next(e for e in entities if e["cluster_id"] == 3)
+    assert ids == [_OFF + 3, _OFF + 7, _OFF + 5]
+    singleton = next(e for e in entities if e["cluster_id"] == _OFF + 3)
     assert singleton["no_addresses"] == 1
-    multi = next(e for e in entities if e["cluster_id"] == 7)
+    multi = next(e for e in entities if e["cluster_id"] == _OFF + 7)
     assert multi["no_addresses"] == 9
 
 
-def test_disabled_drops_singletons_like_legacy(monkeypatch):
-    monkeypatch.delenv(_ENV, raising=False)
+def test_legacy_ids_drop_singletons_like_legacy():
     s = _make_self(multi_member_ids={7}, known_address_ids={3, 5})
     entities, _page = asyncio.run(Cassandra.list_entities(s, "ltc", [3, 7, 5]))
-    # switch off: no synthesis, only the stored cluster row comes back
+    # legacy id space: no synthesis, only the stored cluster row comes back
     assert [e["cluster_id"] for e in entities] == [7]
+
+
+def test_mixed_id_spaces_route_per_id():
+    s = _make_self(multi_member_ids={7}, known_address_ids={3})
+    entities, _page = asyncio.run(Cassandra.list_entities(s, "ltc", [_OFF + 3, 7]))
+    # the fresh singleton is synthesized, the legacy row served as stored,
+    # input order preserved across the two id spaces
+    assert [e["cluster_id"] for e in entities] == [_OFF + 3, 7]

@@ -14,8 +14,7 @@ from collections import namedtuple
 from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
-
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
+from graphsenselib.utils.constants import FRESH_CLUSTER_ID_OFFSET as _OFF
 
 Values = namedtuple("Values", ["value", "fiat_values"])
 
@@ -107,6 +106,7 @@ def _make_self(stats_rows_by_id, membership_by_id, address_rows_by_id):
     ns._zero_values = Cassandra._zero_values.__get__(ns)
     ns._fresh_entity_from_members = Cassandra._fresh_entity_from_members.__get__(ns)
     ns._fresh_heal_pending_entities = Cassandra._fresh_heal_pending_entities.__get__(ns)
+    ns._get_fresh_entity = Cassandra._get_fresh_entity.__get__(ns)
     return ns
 
 
@@ -123,10 +123,9 @@ _ADDRESSES = {
 }
 
 
-def test_pending_entity_synthesized_from_members(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_pending_entity_synthesized_from_members():
     s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
-    entity = asyncio.run(Cassandra.get_entity(s, "ltc", 100))
+    entity = asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + 100))
     assert entity["no_addresses"] == 2
     assert entity["total_received"] == Values(1200, [120.0, 12.0])
     assert entity["total_spent"] == Values(300, [30.0, 3.0])
@@ -137,23 +136,22 @@ def test_pending_entity_synthesized_from_members(monkeypatch):
     assert entity["in_degree"] == 3
 
 
-def test_full_row_served_untouched(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_full_row_served_untouched():
     s = _make_self({200: _FULL_ROW}, {}, {})
-    entity = asyncio.run(Cassandra.get_entity(s, "ltc", 200))
+    entity = asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + 200))
     assert entity["total_received"] == Values(500, [50.0, 5.0])
     assert entity["no_incoming_txs"] == 7
 
 
-def test_no_synthesis_when_fresh_disabled(monkeypatch):
-    monkeypatch.setenv(_ENV, "")
+def test_no_synthesis_for_legacy_ids():
+    # legacy id space serves the cluster row as stored — healing is a
+    # fresh-table concern only
     s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", 100))
     assert entity["total_received"] is None
 
 
-def test_bulk_list_heals_only_pending_rows(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_bulk_list_heals_only_pending_rows():
     s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
     rows = [dict(_FULL_ROW), dict(_PENDING_ROW)]
     healed = asyncio.run(s._fresh_heal_pending_entities("ltc", rows))
@@ -161,8 +159,7 @@ def test_bulk_list_heals_only_pending_rows(monkeypatch):
     assert healed[1]["total_received"] == Values(1200, [120.0, 12.0])
 
 
-def test_finish_address_backstop_zero_fills(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_finish_address_backstop_zero_fills():
     s = _make_self({}, {}, {})
     s.markup_currency = Cassandra.markup_currency.__get__(s)
     s.markup_values = Cassandra.markup_values.__get__(s)

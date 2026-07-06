@@ -16,8 +16,7 @@ import asyncio
 from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
-
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
+from graphsenselib.utils.constants import FRESH_CLUSTER_ID_OFFSET as _OFF
 
 
 class _MembershipResult:
@@ -59,42 +58,39 @@ def _list(s, entity, page=None):
     return asyncio.run(Cassandra.list_entity_addresses(s, "ltc", entity, page=page))
 
 
-def test_singleton_serves_own_address_when_fresh(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_singleton_serves_own_address_when_fresh():
     s = _make_self(membership_rows=[], address_rows_by_id={99: {"address_id": 99}})
-    addresses, paging = _list(s, 99)
+    addresses, paging = _list(s, _OFF + 99)
     assert addresses == [{"address_id": 99}]
     assert s._calls["concurrent_params"] == [(0, 99)]
     assert paging is None
 
 
-def test_unknown_id_stays_empty_when_fresh(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_unknown_id_stays_empty_when_fresh():
     s = _make_self(membership_rows=[], address_rows_by_id={})
-    addresses, _ = _list(s, 12345)
+    addresses, _ = _list(s, _OFF + 12345)
     assert addresses == []
 
 
-def test_multi_member_cluster_uses_membership_rows(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_multi_member_cluster_uses_membership_rows():
     s = _make_self(
         membership_rows=[{"address_id": 5}, {"address_id": 8}],
         address_rows_by_id={5: {"address_id": 5}, 8: {"address_id": 8}},
     )
-    addresses, _ = _list(s, 5)
+    addresses, _ = _list(s, _OFF + 5)
     assert addresses == [{"address_id": 5}, {"address_id": 8}]
     assert s._calls["concurrent_params"] == [(0, 5), (0, 8)]
 
 
-def test_no_fallback_when_fresh_disabled(monkeypatch):
-    monkeypatch.setenv(_ENV, "")
+def test_no_fallback_for_legacy_ids():
+    # legacy id space: cluster_addresses always stored singleton rows, so an
+    # empty membership genuinely means "unknown id" — no synthesis
     s = _make_self(membership_rows=[], address_rows_by_id={99: {"address_id": 99}})
     addresses, _ = _list(s, 99)
     assert addresses == []
 
 
-def test_no_fallback_on_continuation_page(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_no_fallback_on_continuation_page():
     s = _make_self(membership_rows=[], address_rows_by_id={99: {"address_id": 99}})
-    addresses, _ = _list(s, 99, page="00ff")
+    addresses, _ = _list(s, _OFF + 99, page="00ff")
     assert addresses == []

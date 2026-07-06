@@ -2,7 +2,9 @@
 
 Fresh clustering stores only multi-member clusters, so the lookup applies the
 absent->self singleton convention itself: a row resolves to its cluster id, a
-missing row resolves to the address id (singleton). ``None`` is reserved for
+missing row resolves to the address id (singleton) — both published shifted
+into the public id space (``+ FRESH_CLUSTER_ID_OFFSET``) so they route back to
+the fresh tables when handed to the entity endpoints. ``None`` is reserved for
 "fresh tables unavailable" (clustering never ran on the keyspace), so callers
 like the address response can tell singletons apart from missing data.
 
@@ -15,6 +17,7 @@ from types import SimpleNamespace
 from cassandra import InvalidRequest
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
+from graphsenselib.utils.constants import FRESH_CLUSTER_ID_OFFSET as _OFF
 
 
 class _Result:
@@ -43,12 +46,12 @@ def _lookup(s, address_id):
 
 def test_row_resolves_to_its_cluster_id():
     s = _make_self(row={"cluster_id": 1353379})
-    assert _lookup(s, 99) == 1353379
+    assert _lookup(s, 99) == _OFF + 1353379
 
 
 def test_missing_row_is_a_singleton_resolving_to_address_id():
     s = _make_self(row=None)
-    assert _lookup(s, 99) == 99
+    assert _lookup(s, 99) == _OFF + 99
 
 
 def test_missing_table_returns_none():

@@ -17,8 +17,7 @@ from collections import namedtuple
 from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
-
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
+from graphsenselib.utils.constants import FRESH_CLUSTER_ID_OFFSET as _OFF
 
 Values = namedtuple("Values", ["value", "fiat_values"])
 
@@ -112,15 +111,16 @@ def _make_self(
     ns._fresh_fill_degrees = Cassandra._fresh_fill_degrees.__get__(ns)
     ns._fresh_entity_from_members = Cassandra._fresh_entity_from_members.__get__(ns)
     ns._fresh_heal_pending_entities = Cassandra._fresh_heal_pending_entities.__get__(ns)
+    ns._get_fresh_entity = Cassandra._get_fresh_entity.__get__(ns)
     return ns
 
 
 def _get(s, entity):
-    return asyncio.run(Cassandra.get_entity(s, "ltc", entity))
+    """Fetch via the public fresh id space (shifted)."""
+    return asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + entity))
 
 
-def test_degrees_filled_from_legacy_cluster(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_degrees_filled_from_legacy_cluster():
     s = _make_self(
         stats_rows_by_id={100: _stats_row(100)},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
@@ -134,8 +134,7 @@ def test_degrees_filled_from_legacy_cluster(monkeypatch):
     assert entity["no_incoming_txs"] == 4
 
 
-def test_member_sum_fallback_without_legacy_row(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_member_sum_fallback_without_legacy_row():
     s = _make_self(
         stats_rows_by_id={100: _stats_row(100)},
         address_rows_by_id={
@@ -155,8 +154,7 @@ def test_member_sum_fallback_without_legacy_row(monkeypatch):
     assert entity["out_degree"] == 5
 
 
-def test_fully_pending_row_uses_member_synthesis(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_fully_pending_row_uses_member_synthesis():
     member = {
         "address_id": 300,
         "cluster_id": 555,
@@ -181,9 +179,8 @@ def test_fully_pending_row_uses_member_synthesis(monkeypatch):
     assert entity["total_received"] == Values(10, [1.0, 0.1])
 
 
-def test_null_degree_columns_also_trigger_hop(monkeypatch):
+def test_null_degree_columns_also_trigger_hop():
     # pre-migration keyspace: columns still exist, values null
-    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(
         stats_rows_by_id={100: _stats_row(100, in_degree=None, out_degree=None)},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
@@ -194,8 +191,7 @@ def test_null_degree_columns_also_trigger_hop(monkeypatch):
     assert entity["out_degree"] == 9
 
 
-def test_full_row_untouched(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_full_row_untouched():
     row = _stats_row(100)
     row["in_degree"] = 3
     row["out_degree"] = 4
@@ -209,10 +205,9 @@ def test_full_row_untouched(monkeypatch):
     assert entity["out_degree"] == 4
 
 
-def test_no_hop_when_fresh_disabled(monkeypatch):
-    monkeypatch.setenv(_ENV, "")
-    # flag off: the stats source IS the legacy `cluster` table, so the
-    # (hypothetical) degrees-null row lives there; no fill must run on it.
+def test_no_hop_for_legacy_ids():
+    # legacy id space: the stats source IS the legacy `cluster` table, so a
+    # (hypothetical) degrees-null row there is served as stored; no fill.
     s = _make_self(
         stats_rows_by_id={},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
@@ -220,12 +215,11 @@ def test_no_hop_when_fresh_disabled(monkeypatch):
             100: _stats_row(100, in_degree=None, out_degree=None)
         },
     )
-    entity = _get(s, 100)
+    entity = asyncio.run(Cassandra.get_entity(s, "ltc", 100))
     assert entity["in_degree"] is None
 
 
-def test_bulk_heal_mixes_synthesis_and_degree_fill(monkeypatch):
-    monkeypatch.setenv(_ENV, "ltc")
+def test_bulk_heal_mixes_synthesis_and_degree_fill():
     s = _make_self(
         stats_rows_by_id={},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},

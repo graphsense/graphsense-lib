@@ -11,6 +11,10 @@ from graphsenselib.errors import (
     NetworkNotFoundException,
 )
 from graphsenselib.utils.address import address_to_user_format
+from graphsenselib.utils.constants import (
+    is_fresh_cluster_id,
+    to_raw_fresh_cluster_id,
+)
 from graphsenselib.utils.rest_utils import get_first_key_present, is_eth_like
 
 from .models import (
@@ -266,6 +270,21 @@ def cannonicalize_address(currency: str, address: str) -> str:
             "The address provided does not look"
             f" like a {currency.upper()} address: {address}"
         )
+
+
+def tagstore_cluster_id(entity_id: int) -> int:
+    """Translate a public entity id to the id keyed in the tagstore mapping.
+
+    The tagstore cluster mapping stores raw cluster ids — legacy ids from the
+    legacy transform, raw fresh ids (root == min address id) under the fresh
+    feeder. The public fresh id shift is a REST-boundary concern only, so
+    fresh-space ids are unshifted before any tagstore lookup; legacy ids pass
+    through unchanged.
+    """
+    entity_id = int(entity_id)
+    if is_fresh_cluster_id(entity_id):
+        return to_raw_fresh_cluster_id(entity_id)
+    return entity_id
 
 
 async def try_get_cluster_id(

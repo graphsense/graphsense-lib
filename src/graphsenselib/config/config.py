@@ -84,9 +84,11 @@ def is_fresh_clustering_enabled(currency: str) -> bool:
 
     ``GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES`` holds a comma-separated list of
     network codes (e.g. ``ltc`` or ``ltc,btc``); fresh clustering is enabled
-    for a currency iff it is in the list. Read by the REST entity endpoints,
-    the delta updater and the one-off clustering commands, so currencies can
-    be cut over one at a time.
+    for a currency iff it is in the list. This is a WRITE-side switch only —
+    the delta updater and the one-off clustering commands — so currencies can
+    be brought into fresh clustering one at a time. The REST read path needs
+    no switch: entity ids are self-describing (fresh ids live above
+    ``FRESH_CLUSTER_ID_OFFSET``, see ``graphsenselib.utils.constants``).
     """
     enabled = os.environ.get("GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES", "")
     return currency.strip().lower() in {

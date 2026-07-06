@@ -30,7 +30,6 @@ from cassandra.protocol import ProtocolException
 from cassandra.query import SimpleStatement, ValueSequence, dict_factory
 from graphsenselib.db.cassandra import GraphsenseRetryPolicy
 from graphsenselib.utils.accountmodel import hex_to_bytes
-from graphsenselib.config import is_fresh_clustering_enabled
 from graphsenselib.config.cassandra_async_config import CassandraConfig
 from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
 from graphsenselib.datatypes.abi import decode_logs_db
@@ -38,7 +37,10 @@ from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
 from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
 from graphsenselib.utils.constants import (
+    is_fresh_cluster_id,
     replace_tron_dummy_address_with_valid_null_address,
+    to_public_fresh_cluster_id,
+    to_raw_fresh_cluster_id,
 )
 from graphsenselib.utils.function_call_parser import (
     parse_function_call,
@@ -140,16 +142,6 @@ FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
 
-def _cluster_stats_table(currency: str) -> str:
-    """Entity/cluster stats source, switched per currency by
-    GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES.
-
-    Fresh: ``fresh_cluster_stats`` (same ``(cluster_id_group, cluster_id)`` key and
-    columns as the legacy Scala ``cluster`` table). Legacy: ``cluster``.
-    """
-    return "fresh_cluster_stats" if is_fresh_clustering_enabled(currency) else "cluster"
-
-
 def _fresh_stats_pending(row) -> bool:
     """A fresh_cluster_stats row whose stat columns are still null.
 
@@ -171,18 +163,6 @@ def _fresh_degrees_pending(row) -> bool:
     """
     return "total_received" in row and (
         row.get("in_degree") is None or row.get("out_degree") is None
-    )
-
-
-def _cluster_addresses_table(currency: str) -> str:
-    """Cluster membership source, switched by the same env var.
-
-    Fresh: ``fresh_cluster_addresses``. Legacy: the Scala ``cluster_addresses``.
-    """
-    return (
-        "fresh_cluster_addresses"
-        if is_fresh_clustering_enabled(currency)
-        else "cluster_addresses"
     )
 
 
@@ -1945,16 +1925,10 @@ class Cassandra:
             currency, address
         )
 
-        if is_fresh_clustering_enabled(currency):
-            # Fresh clustering owns the address->cluster mapping and may assign a
-            # different (min-address-id) cluster than the legacy address table.
-            # The legacy id can be absent from fresh_cluster_stats, so resolve
-            # through the fresh table here too. An address with no
-            # fresh_address_cluster row is its own singleton (cluster_id ==
-            # address_id), mirroring the sparse-singleton write side.
-            fresh_cluster_id = await self.get_fresh_cluster_id(currency, address_id)
-            return fresh_cluster_id if fresh_cluster_id is not None else address_id
-
+        # Always the legacy cluster id: entity ids are self-describing
+        # (fresh ids live above FRESH_CLUSTER_ID_OFFSET), and the fresh id of
+        # an address is discoverable via the fresh_cluster_id field on address
+        # responses, so this legacy resolution needs no switch.
         query = (
             "SELECT cluster_id FROM address WHERE "
             "address_id_group = %s AND address_id = %s "
@@ -1972,13 +1946,15 @@ class Cassandra:
         return result["cluster_id"]
 
     async def get_fresh_cluster_id(self, currency, address_id):
-        """Resolve an address's fresh cluster id.
+        """Resolve an address's public (shifted) fresh cluster id.
 
         Fresh clustering stores only multi-member clusters, so an address
         without a ``fresh_address_cluster`` row is its own singleton
-        (``cluster_id == address_id``). Returns None only when the fresh
-        tables are unavailable (fresh clustering has not been run on this
-        keyspace).
+        (``cluster_id == address_id``). The raw table id is translated to the
+        public id space (``+ FRESH_CLUSTER_ID_OFFSET``) so callers can hand it
+        straight to the self-routing entity endpoints. Returns None only when
+        the fresh tables are unavailable (fresh clustering has not been run on
+        this keyspace).
         """
         address_id_group = self.get_id_group(currency, address_id)
         query = (
@@ -1994,8 +1970,8 @@ class Cassandra:
             return None
         result = one(result)
         if not result:
-            return address_id
-        return result["cluster_id"]
+            return to_public_fresh_cluster_id(address_id)
+        return to_public_fresh_cluster_id(result["cluster_id"])
 
     async def list_address_links(
         self,
@@ -2438,30 +2414,48 @@ class Cassandra:
 
     @eth
     async def get_entity(self, currency, entity):
-        entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
-        query = (
-            f"SELECT * FROM {_cluster_stats_table(currency)} "
-            "WHERE cluster_id_group = %s AND cluster_id = %s "
-        )
+        if is_fresh_cluster_id(entity):
+            return await self._get_fresh_entity(currency, entity)
+        entity_id_group = self.get_id_group(currency, entity)
+        query = "SELECT * FROM cluster WHERE cluster_id_group = %s AND cluster_id = %s "
         result = await self.execute_async(
             currency, "transformed", query, [entity_id_group, entity]
         )
         result = one(result)
         if not result:
-            if is_fresh_clustering_enabled(currency):
-                singleton = await self._fresh_singleton_entity(currency, entity)
-                if singleton is not None:
-                    return (await self.finish_entities(currency, [singleton]))[0]
             raise ClusterNotFoundException(currency, entity)
-        if is_fresh_clustering_enabled(currency):
-            if _fresh_stats_pending(result):
-                result = await self._fresh_entity_from_members(currency, result)
-                if result is None:
-                    raise ClusterNotFoundException(currency, entity)
-            elif _fresh_degrees_pending(result):
-                result = await self._fresh_fill_degrees(currency, result)
         return (await self.finish_entities(currency, [result]))[0]
+
+    async def _get_fresh_entity(self, currency, entity):
+        """Serve an entity from the fresh tables (public id >= offset).
+
+        Works on the raw table id internally (root resolution and membership
+        are keyed by it) and shifts ``cluster_id`` back to the public id space
+        on the finished row.
+        """
+        raw = to_raw_fresh_cluster_id(entity)
+        query = (
+            "SELECT * FROM fresh_cluster_stats "
+            "WHERE cluster_id_group = %s AND cluster_id = %s "
+        )
+        result = await self.execute_async(
+            currency, "transformed", query, [self.get_id_group(currency, raw), raw]
+        )
+        result = one(result)
+        if not result:
+            result = await self._fresh_singleton_entity(currency, raw)
+            if result is None:
+                raise ClusterNotFoundException(currency, entity)
+        elif _fresh_stats_pending(result):
+            result = await self._fresh_entity_from_members(currency, result)
+            if result is None:
+                raise ClusterNotFoundException(currency, entity)
+        elif _fresh_degrees_pending(result):
+            result = await self._fresh_fill_degrees(currency, result)
+        finished = (await self.finish_entities(currency, [result]))[0]
+        finished["cluster_id"] = to_public_fresh_cluster_id(finished["cluster_id"])
+        return finished
 
     async def _fresh_singleton_entity(self, currency, cluster_id):
         """Synthesize a one-address entity for a fresh-clustering singleton.
@@ -2533,7 +2527,7 @@ class Cassandra:
         cluster_id = row["cluster_id"]
         cluster_id_group = self.get_id_group(currency, cluster_id)
         query = (
-            f"SELECT address_id FROM {_cluster_addresses_table(currency)} "
+            "SELECT address_id FROM fresh_cluster_addresses "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         members = await self.execute_async(
@@ -2562,6 +2556,35 @@ class Cassandra:
             "total_received": total_received,
             "total_spent": total_spent,
         }
+
+    async def _legacy_relations_cluster_id(self, currency, entity):
+        """Map a public entity id to the id keyed in the legacy relations tables.
+
+        The fresh tables carry no cluster relations (neighbors / cluster
+        transactions / links), so fresh ids are served from the legacy tables
+        via the root-address hop: the fresh root (raw id == min address id)
+        still carries its legacy cluster id on its address row. This is the
+        same hop that fills degrees, so listed neighbors always match the
+        degrees served on the entity. Where fresh merged several legacy
+        clusters this is the root's fragment and understates. Returns None
+        when the root has no legacy cluster (postdates the last full
+        transform) — callers serve an empty result then.
+        """
+        if not is_fresh_cluster_id(entity):
+            return entity
+        raw = to_raw_fresh_cluster_id(entity)
+        addr = one(
+            await self.execute_async(
+                currency,
+                "transformed",
+                "SELECT cluster_id FROM address "
+                "WHERE address_id_group = %s AND address_id = %s",
+                [self.get_id_group(currency, raw), raw],
+            )
+        )
+        if addr and addr.get("cluster_id") is not None:
+            return addr["cluster_id"]
+        return None
 
     async def _fresh_fill_degrees(self, currency, row):
         """Fill missing cluster degrees from the legacy ``cluster`` table.
@@ -2607,7 +2630,7 @@ class Cassandra:
             row["out_degree"] = legacy["out_degree"] or 0
             return row
         query = (
-            f"SELECT address_id FROM {_cluster_addresses_table(currency)} "
+            "SELECT address_id FROM fresh_cluster_addresses "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         members = await self.execute_async(
@@ -2676,35 +2699,74 @@ class Cassandra:
     async def list_entities(
         self, currency, ids, page=None, pagesize=None, fields=["*"]
     ):
+        """List entities by id (mixed legacy/fresh) or page the legacy table.
+
+        Explicit ids are routed per id: ids >= FRESH_CLUSTER_ID_OFFSET are
+        served from the fresh tables (with singleton synthesis and pending
+        healing), the rest from the legacy ``cluster`` table; input order is
+        preserved. The id-less paging form enumerates the legacy table only —
+        fresh clusters are not enumerable through this endpoint.
+        """
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
         paging_state = page_from_hex(page)
         flds = ",".join(fields)
-        query = f"SELECT {flds} FROM {_cluster_stats_table(currency)}"
         has_ids = isinstance(ids, list)
         if has_ids:
-            query += " WHERE cluster_id_group = %s AND cluster_id = %s"
-            params = [[self.get_id_group(currency, id), id] for id in ids]
-            result = await self.concurrent_with_args(
-                currency, "transformed", query, params
+            ids = [int(id) for id in ids]
+            fresh_raw = [
+                to_raw_fresh_cluster_id(id) for id in ids if is_fresh_cluster_id(id)
+            ]
+            legacy_ids = [id for id in ids if not is_fresh_cluster_id(id)]
+            with_txs = (
+                "*" in fields or "first_tx_id" in fields or "last_tx_id" in fields
             )
-            if is_fresh_clustering_enabled(currency):
-                result = await self._fresh_fill_singleton_entities(
-                    currency, ids, result
+            by_public_id = {}
+            if legacy_ids:
+                query = (
+                    f"SELECT {flds} FROM cluster"
+                    " WHERE cluster_id_group = %s AND cluster_id = %s"
                 )
-            paging_state = None
-        else:
-            result = await self.execute_async(
-                currency,
-                "transformed",
-                query,
-                paging_state=paging_state,
-                fetch_size=fetch_size,
-            )
-            paging_state = result.paging_state
-            result = result.current_rows
+                params = [[self.get_id_group(currency, id), id] for id in legacy_ids]
+                rows = await self.concurrent_with_args(
+                    currency, "transformed", query, params
+                )
+                rows = await self.finish_entities(currency, rows, with_txs)
+                by_public_id.update(
+                    {row["cluster_id"]: row for row in rows if "cluster_id" in row}
+                )
+            if fresh_raw:
+                query = (
+                    f"SELECT {flds} FROM fresh_cluster_stats"
+                    " WHERE cluster_id_group = %s AND cluster_id = %s"
+                )
+                params = [[self.get_id_group(currency, id), id] for id in fresh_raw]
+                rows = await self.concurrent_with_args(
+                    currency, "transformed", query, params
+                )
+                rows = await self._fresh_fill_singleton_entities(
+                    currency, fresh_raw, rows
+                )
+                rows = await self._fresh_heal_pending_entities(currency, rows)
+                # finish on raw ids (root resolution), publish shifted ids
+                rows = await self.finish_entities(currency, rows, with_txs)
+                for row in rows:
+                    row["cluster_id"] = to_public_fresh_cluster_id(row["cluster_id"])
+                by_public_id.update(
+                    {row["cluster_id"]: row for row in rows if "cluster_id" in row}
+                )
+            result = [by_public_id[id] for id in ids if id in by_public_id]
+            return result, to_hex(None)
 
-        if is_fresh_clustering_enabled(currency):
-            result = await self._fresh_heal_pending_entities(currency, result)
+        query = f"SELECT {flds} FROM cluster"
+        rows = await self.execute_async(
+            currency,
+            "transformed",
+            query,
+            paging_state=paging_state,
+            fetch_size=fetch_size,
+        )
+        paging_state = rows.paging_state
+        result = rows.current_rows
 
         with_txs = "*" in fields or "first_tx_id" in fields or "last_tx_id" in fields
         return await self.finish_entities(currency, result, with_txs), to_hex(
@@ -2714,10 +2776,14 @@ class Cassandra:
     @eth
     async def list_entity_addresses(self, currency, entity, page=None, pagesize=None):
         paging_state = page_from_hex(page)
-        entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
+        fresh = is_fresh_cluster_id(entity)
+        if fresh:
+            entity = to_raw_fresh_cluster_id(entity)
+        entity_id_group = self.get_id_group(currency, entity)
+        table = "fresh_cluster_addresses" if fresh else "cluster_addresses"
         query = (
-            f"SELECT address_id FROM {_cluster_addresses_table(currency)} "
+            f"SELECT address_id FROM {table} "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
@@ -2736,7 +2802,7 @@ class Cassandra:
             (self.get_id_group(currency, row["address_id"]), row["address_id"])
             for row in results.current_rows
         ]
-        if not params and page is None and is_fresh_clustering_enabled(currency):
+        if not params and page is None and fresh:
             # Fresh clustering stores only multi-member clusters, so a cluster
             # id with no membership rows is its own singleton (cluster_id ==
             # address_id). Legacy cluster_addresses had a row for singletons
@@ -2769,6 +2835,10 @@ class Cassandra:
             id = int(id)
             if is_eth_like(currency):
                 node_type = NodeType.ADDRESS
+            else:
+                id = await self._legacy_relations_cluster_id(currency, id)
+                if id is None:
+                    return [], None
 
         if is_outgoing:
             direction, this, that = ("outgoing", "src", "dst")
@@ -3625,8 +3695,12 @@ class Cassandra:
         else:
             if is_eth_like(network):
                 node_type = NodeType.ADDRESS
-            item_id = id
-            item_id_group = self.get_id_group(network, id)
+                item_id = id
+            else:
+                item_id = await self._legacy_relations_cluster_id(network, int(id))
+                if item_id is None:
+                    return [], [], True
+            item_id_group = self.get_id_group(network, item_id)
 
         item_id_secondary_group = [0]
         if is_eth_like(network):
