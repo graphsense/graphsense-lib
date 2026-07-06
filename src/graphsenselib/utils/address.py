@@ -25,7 +25,7 @@ from .tron import (
 )
 
 
-class InvalidAddress(Exception):
+class InvalidAddress(ValueError):
     pass
 
 

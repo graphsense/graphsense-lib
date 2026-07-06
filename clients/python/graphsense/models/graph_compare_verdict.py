@@ -15,19 +15,36 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
+from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing import Optional, Set
 from typing_extensions import Self
 
-class GraphTxRef(BaseModel):
+class GraphCompareVerdict(BaseModel):
     """
-    A transaction reference: hash plus the network it lives on.
+    Aggregator's opinion. Sub-verdicts kept independent.  ``confidence`` and ``score_total`` are tentative, weights have not yet been calibrated against ground-truth data.
     """ # noqa: E501
-    tx_hash: Annotated[str, Field(strict=True, max_length=128)]
-    network: Annotated[str, Field(strict=True, max_length=32)]
-    __properties: ClassVar[List[str]] = ["tx_hash", "network"]
+    relation: StrictStr
+    confidence: StrictInt
+    cluster_verdict: StrictStr
+    discriminator_hits: Optional[List[StrictStr]] = None
+    score_total: Optional[Union[StrictFloat, StrictInt]] = 0.0
+    notes: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["relation", "confidence", "cluster_verdict", "discriminator_hits", "score_total", "notes"]
+
+    @field_validator('relation')
+    def relation_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['linked', 'likely_linked', 'potential_link', 'inconclusive', 'potential_unlink', 'likely_unlinked', 'unlinked']):
+            raise ValueError("must be one of enum values ('linked', 'likely_linked', 'potential_link', 'inconclusive', 'potential_unlink', 'likely_unlinked', 'unlinked')")
+        return value
+
+    @field_validator('cluster_verdict')
+    def cluster_verdict_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['same', 'different', 'unknown']):
+            raise ValueError("must be one of enum values ('same', 'different', 'unknown')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +64,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a JSON string"""
+        """Create an instance of GraphCompareVerdict from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -72,7 +89,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a dict"""
+        """Create an instance of GraphCompareVerdict from a dict"""
         if obj is None:
             return None
 
@@ -80,8 +97,12 @@ class GraphTxRef(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tx_hash": obj.get("tx_hash"),
-            "network": obj.get("network")
+            "relation": obj.get("relation"),
+            "confidence": obj.get("confidence"),
+            "cluster_verdict": obj.get("cluster_verdict"),
+            "discriminator_hits": obj.get("discriminator_hits"),
+            "score_total": obj.get("score_total") if obj.get("score_total") is not None else 0.0,
+            "notes": obj.get("notes")
         })
         return _obj
 

@@ -27,8 +27,6 @@ from graphsense.models.cluster import Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses
 from graphsense.models.coin_join_consensus import CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics
-from graphsense.models.comparison_signal import ComparisonSignal
-from graphsense.models.comparison_verdict import ComparisonVerdict
 from graphsense.models.concept import Concept
 from graphsense.models.consensus_entry import ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats
@@ -41,8 +39,15 @@ from graphsense.models.graph_address_overall import GraphAddressOverall
 from graphsense.models.graph_address_ref import GraphAddressRef
 from graphsense.models.graph_address_summary import GraphAddressSummary
 from graphsense.models.graph_compare_request import GraphCompareRequest
+from graphsense.models.graph_compare_signal import GraphCompareSignal
+from graphsense.models.graph_compare_verdict import GraphCompareVerdict
+from graphsense.models.graph_compared_tx import GraphComparedTx
+from graphsense.models.graph_comparison import GraphComparison
+from graphsense.models.graph_lineage_edge import GraphLineageEdge
+from graphsense.models.graph_note import GraphNote
 from graphsense.models.graph_summary import GraphSummary
 from graphsense.models.graph_summary_request import GraphSummaryRequest
+from graphsense.models.graph_tx_characteristics import GraphTxCharacteristics
 from graphsense.models.graph_tx_network_summary import GraphTxNetworkSummary
 from graphsense.models.graph_tx_overall import GraphTxOverall
 from graphsense.models.graph_tx_ref import GraphTxRef
@@ -51,7 +56,6 @@ from graphsense.models.http_validation_error import HTTPValidationError
 from graphsense.models.join_market_heuristic import JoinMarketHeuristic
 from graphsense.models.label_summary import LabelSummary
 from graphsense.models.labeled_item_ref import LabeledItemRef
-from graphsense.models.lineage_edge import LineageEdge
 from graphsense.models.link import Link
 from graphsense.models.link_utxo import LinkUtxo
 from graphsense.models.links import Links
@@ -84,11 +88,8 @@ from graphsense.models.tag_summary import TagSummary
 from graphsense.models.taxonomy import Taxonomy
 from graphsense.models.token_config import TokenConfig
 from graphsense.models.token_configs import TokenConfigs
-from graphsense.models.transaction_comparison import TransactionComparison
 from graphsense.models.tx import Tx
 from graphsense.models.tx_account import TxAccount
-from graphsense.models.tx_characteristics import TxCharacteristics
-from graphsense.models.tx_compared_item import TxComparedItem
 from graphsense.models.tx_ref import TxRef
 from graphsense.models.tx_summary import TxSummary
 from graphsense.models.tx_utxo import TxUtxo

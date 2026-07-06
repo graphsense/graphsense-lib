@@ -95,7 +95,7 @@ def _build_internal_response(
         ),
     ]
 
-    signals = []
+    signals = None
     if include_signals:
         signals = [
             ComparisonSignalInternal(
@@ -130,7 +130,7 @@ def _build_internal_response(
     return TransactionComparisonInternal(
         txs=items,
         signals=signals,
-        lineage=[],
+        lineage=[] if include_lineage else None,
         verdict=verdict,
     )
 
@@ -199,6 +199,11 @@ def test_compare_happy_path(client, patch_compare):
     assert "verdict" in result
     # summary lives at POST /graph/summary
     assert "summary" not in result
+
+    # Lineage is included by default (no request-scoped edges here, but the
+    # field must stay present as [], not be omitted like an excluded field).
+    assert "lineage" in result
+    assert result["lineage"] == []
 
     assert len(result["txs"]) == 2
     assert result["txs"][0]["tx_hash"] == HASH_A
@@ -294,7 +299,8 @@ def test_compare_include_subset_only(client, patch_compare):
 def test_compare_include_verdict_only_omits_signals(client, patch_compare):
     body = _body(HASH_A, HASH_B, include=["verdict"])
     result = request_with_status(client, "/graph/compare", 200, body=body)
-    assert result["signals"] == []
+    assert "signals" not in result
+    assert "lineage" not in result
     assert "verdict" in result
 
 
@@ -325,7 +331,7 @@ def test_compare_include_signals_does_not_change_verdict(client, patch_compare):
     )
 
     assert len(with_signals["signals"]) > 0
-    assert without_signals["signals"] == []
+    assert "signals" not in without_signals
 
     assert with_signals["verdict"]["relation"] == without_signals["verdict"]["relation"]
     assert (

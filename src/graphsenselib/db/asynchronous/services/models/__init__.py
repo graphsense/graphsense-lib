@@ -4,6 +4,11 @@ from pydantic import BaseModel, Field
 
 from graphsenselib.db.asynchronous.services.heuristics import UtxoHeuristics
 
+# Combined cap on graph node sets (txs + addresses per request). Shared by
+# the API request models and the db-layer safety check so the two cannot
+# disagree.
+MAX_GRAPH_NODES = 100
+
 
 class SearchRequestConfig(BaseModel):
     include_sub_tx_identifiers: bool = True
@@ -444,9 +449,10 @@ class Txs(BaseModel):
     next_page: Optional[int] = None
 
 
-# Comparison internal models. API counterparts live in web/models/compare.py;
-# the translator at web/translators.py:to_api_transaction_comparison maps
-# between the two. To add a field that should reach the API, update all three.
+# Comparison internal models. API counterparts (Graph* prefix) live in
+# web/models/graph.py; the translator at web/translators.py:
+# to_api_transaction_comparison maps between the two. To add a field that
+# should reach the API, update all three.
 
 
 class TxCharacteristicsInternal(BaseModel):
@@ -524,6 +530,16 @@ class AddressRefInternal(BaseModel):
     address: str
 
 
+class GraphNoteInternal(BaseModel):
+    """A machine-readable caveat on a summary block: stable ``code`` for
+    clients to branch on, human ``message`` for display. ``network`` is set
+    on overall-rollup notes to attribute them to their source network."""
+
+    code: str
+    message: str
+    network: Optional[str] = None
+
+
 class GraphTxNetworkSummaryInternal(BaseModel):
     network: str
     tx_count: int
@@ -541,7 +557,7 @@ class GraphTxNetworkSummaryInternal(BaseModel):
     block_max: int
     timestamp_min: int
     timestamp_max: int
-    notes: List[str] = Field(default_factory=list)
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
 
 
 class GraphTxOverallInternal(BaseModel):
@@ -551,7 +567,7 @@ class GraphTxOverallInternal(BaseModel):
     total_value_fiat: List[FiatValue] = Field(default_factory=list)
     timestamp_min: int
     timestamp_max: int
-    notes: List[str] = Field(default_factory=list)
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
 
 
 class GraphTxSummaryInternal(BaseModel):
@@ -571,7 +587,7 @@ class GraphAddressNetworkSummaryInternal(BaseModel):
     last_usage: Optional[int] = None
     tagged_address_count: int = 0
     actors: List[LabeledItemRef] = Field(default_factory=list)
-    notes: List[str] = Field(default_factory=list)
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
 
 
 class GraphAddressOverallInternal(BaseModel):
@@ -584,7 +600,7 @@ class GraphAddressOverallInternal(BaseModel):
     tagged_address_count: int = 0
     # Distinct actors across all networks, deduped by id.
     actors: List[LabeledItemRef] = Field(default_factory=list)
-    notes: List[str] = Field(default_factory=list)
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
 
 
 class GraphAddressSummaryInternal(BaseModel):
@@ -616,8 +632,9 @@ class TxComparedItemInternal(BaseModel):
 
 class TransactionComparisonInternal(BaseModel):
     txs: List[TxComparedItemInternal] = Field(default_factory=list)
-    signals: List[ComparisonSignalInternal] = Field(default_factory=list)
-    lineage: List[LineageEdgeInternal] = Field(default_factory=list)
+    # None when excluded from the include list; [] means computed but empty.
+    signals: Optional[List[ComparisonSignalInternal]] = None
+    lineage: Optional[List[LineageEdgeInternal]] = None
     # None when the verdict is excluded from the include list.
     verdict: Optional[ComparisonVerdictInternal] = None
 

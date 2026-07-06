@@ -15,8 +15,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, ClassVar, Dict, List
+from typing_extensions import Annotated
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -24,8 +25,8 @@ class GraphAddressRef(BaseModel):
     """
     An address reference: address plus the network it lives on.
     """ # noqa: E501
-    address: StrictStr
-    network: StrictStr
+    address: Annotated[str, Field(strict=True, max_length=128)]
+    network: Annotated[str, Field(strict=True, max_length=32)]
     __properties: ClassVar[List[str]] = ["address", "network"]
 
     model_config = ConfigDict(

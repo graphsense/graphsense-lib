@@ -15,19 +15,24 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
+from pydantic import BaseModel, ConfigDict
+from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.graph_compare_signal import GraphCompareSignal
+from graphsense.models.graph_compare_verdict import GraphCompareVerdict
+from graphsense.models.graph_compared_tx import GraphComparedTx
+from graphsense.models.graph_lineage_edge import GraphLineageEdge
 from typing import Optional, Set
 from typing_extensions import Self
 
-class GraphTxRef(BaseModel):
+class GraphComparison(BaseModel):
     """
-    A transaction reference: hash plus the network it lives on.
+    Top-level response for /graph/compare.
     """ # noqa: E501
-    tx_hash: Annotated[str, Field(strict=True, max_length=128)]
-    network: Annotated[str, Field(strict=True, max_length=32)]
-    __properties: ClassVar[List[str]] = ["tx_hash", "network"]
+    txs: List[GraphComparedTx]
+    signals: Optional[List[GraphCompareSignal]] = None
+    lineage: Optional[List[GraphLineageEdge]] = None
+    verdict: Optional[GraphCompareVerdict] = None
+    __properties: ClassVar[List[str]] = ["txs", "signals", "lineage", "verdict"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +52,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a JSON string"""
+        """Create an instance of GraphComparison from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,11 +73,36 @@ class GraphTxRef(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in txs (list)
+        _items = []
+        if self.txs:
+            for _item_txs in self.txs:
+                if _item_txs:
+                    _items.append(_item_txs.to_dict())
+            _dict['txs'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in signals (list)
+        _items = []
+        if self.signals:
+            for _item_signals in self.signals:
+                if _item_signals:
+                    _items.append(_item_signals.to_dict())
+            _dict['signals'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in lineage (list)
+        _items = []
+        if self.lineage:
+            for _item_lineage in self.lineage:
+                if _item_lineage:
+                    _items.append(_item_lineage.to_dict())
+            _dict['lineage'] = _items
+        # override the default output from pydantic by calling `to_dict()` of verdict
+        if self.verdict:
+            _dict['verdict'] = self.verdict.to_dict()
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a dict"""
+        """Create an instance of GraphComparison from a dict"""
         if obj is None:
             return None
 
@@ -80,8 +110,10 @@ class GraphTxRef(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tx_hash": obj.get("tx_hash"),
-            "network": obj.get("network")
+            "txs": [GraphComparedTx.from_dict(_item) for _item in obj["txs"]] if obj.get("txs") is not None else None,
+            "signals": [GraphCompareSignal.from_dict(_item) for _item in obj["signals"]] if obj.get("signals") is not None else None,
+            "lineage": [GraphLineageEdge.from_dict(_item) for _item in obj["lineage"]] if obj.get("lineage") is not None else None,
+            "verdict": GraphCompareVerdict.from_dict(obj["verdict"]) if obj.get("verdict") is not None else None
         })
         return _obj
 

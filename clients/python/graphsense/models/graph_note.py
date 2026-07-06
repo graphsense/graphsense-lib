@@ -15,19 +15,19 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
+from pydantic import BaseModel, ConfigDict, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class GraphTxRef(BaseModel):
+class GraphNote(BaseModel):
     """
-    A transaction reference: hash plus the network it lives on.
+    A caveat attached to a summary block. ``code`` is the stable machine-readable contract; ``message`` is display text and may be reworded without notice. ``network`` attributes overall-rollup notes to their source network.
     """ # noqa: E501
-    tx_hash: Annotated[str, Field(strict=True, max_length=128)]
-    network: Annotated[str, Field(strict=True, max_length=32)]
-    __properties: ClassVar[List[str]] = ["tx_hash", "network"]
+    code: StrictStr
+    message: StrictStr
+    network: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["code", "message", "network"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +47,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a JSON string"""
+        """Create an instance of GraphNote from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,11 +68,12 @@ class GraphTxRef(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a dict"""
+        """Create an instance of GraphNote from a dict"""
         if obj is None:
             return None
 
@@ -80,7 +81,8 @@ class GraphTxRef(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tx_hash": obj.get("tx_hash"),
+            "code": obj.get("code"),
+            "message": obj.get("message"),
             "network": obj.get("network")
         })
         return _obj

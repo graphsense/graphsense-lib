@@ -9,7 +9,7 @@ Method | HTTP request | Description
 
 
 # **graph_compare**
-> TransactionComparison graph_compare(graph_compare_request)
+> GraphComparison graph_compare(graph_compare_request)
 
 Compare multiple transactions
 
@@ -22,7 +22,7 @@ Returns per-tx characteristics, pairwise similarity signals, and a rollup verdic
 ```python
 import graphsense
 from graphsense.models.graph_compare_request import GraphCompareRequest
-from graphsense.models.transaction_comparison import TransactionComparison
+from graphsense.models.graph_comparison import GraphComparison
 from graphsense.rest import ApiException
 from pprint import pprint
 
@@ -69,7 +69,7 @@ Name | Type | Description  | Notes
 
 ### Return type
 
-[**TransactionComparison**](TransactionComparison.md)
+[**GraphComparison**](GraphComparison.md)
 
 ### Authorization
 
@@ -85,7 +85,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (need 2+ distinct tx refs, or a non-BTC network). |  -  |
+**400** | Invalid request (need 2+ distinct tx refs, a non-BTC network, or a transaction set whose combined inputs/outputs exceed the comparison work limit). |  -  |
 **404** | One of the transactions was not found. |  -  |
 **422** | Validation Error |  -  |
 
@@ -168,7 +168,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (each non-empty list needs at least 2 distinct entries, at most 100 nodes combined, networks must be supported). |  -  |
+**400** | Invalid request (each non-empty list needs at least 2 distinct entries, networks must be supported). |  -  |
 **404** | One of the transactions or addresses was not found. |  -  |
 **422** | Validation Error |  -  |
 

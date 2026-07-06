@@ -17,7 +17,12 @@ from typing import Union
 from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.errors import BadUserInputException, NotFoundException
 from graphsenselib.tagstore.db import TagPublic
-from graphsenselib.db.asynchronous.services.common import gather_bounded
+from graphsenselib.db.asynchronous.services.common import (
+    cannonicalize_address,
+    canonical_tx_hash,
+    dedup_refs,
+    gather_bounded,
+)
 from graphsenselib.db.asynchronous.services.models import (
     Address,
     AddressRefInternal,
@@ -26,11 +31,13 @@ from graphsenselib.db.asynchronous.services.models import (
     GraphAddressNetworkSummaryInternal,
     GraphAddressOverallInternal,
     GraphAddressSummaryInternal,
+    GraphNoteInternal,
     GraphSummaryInternal,
     GraphTxNetworkSummaryInternal,
     GraphTxOverallInternal,
     GraphTxSummaryInternal,
     LabeledItemRef,
+    MAX_GRAPH_NODES,
     TxAccount,
     TxRefInternal,
     TxUtxo,
@@ -38,33 +45,46 @@ from graphsenselib.db.asynchronous.services.models import (
 )
 from graphsenselib.utils.rest_utils import is_eth_like
 
-_MAX_NODES = 100
+
+def _sum_fiat_lists(lists: list[list[FiatValue]]) -> list[FiatValue]:
+    """Accumulate fiat amounts per code, rounded to cents (float summation
+    otherwise leaks representation noise into the response). Sorted by code
+    for stable output."""
+    sums: dict[str, float] = {}
+    for fvs in lists:
+        for fv in fvs:
+            code = fv.code.lower()
+            sums[code] = sums.get(code, 0.0) + fv.value
+    return [FiatValue(code=c, value=round(v, 2)) for c, v in sorted(sums.items())]
 
 
 def _fiat_sums(values_list) -> tuple[list[FiatValue], int]:
-    """Sum fiat amounts per code across Values objects, rounded to cents
-    (float summation otherwise leaks representation noise into the
-    response). Returns (per-code sums, sorted by code, and the number of
-    rows carrying no rate at all)."""
-    sums: dict[str, float] = {}
-    n_missing = 0
-    for vs in values_list:
-        if not vs.fiat_values:
-            n_missing += 1
-            continue
-        for fv in vs.fiat_values:
-            code = fv.code.lower()
-            sums[code] = sums.get(code, 0.0) + fv.value
-    fiat = [FiatValue(code=c, value=round(v, 2)) for c, v in sorted(sums.items())]
+    """Per-code fiat sums across Values objects plus the number of rows
+    carrying no rate at all."""
+    n_missing = sum(1 for vs in values_list if not vs.fiat_values)
+    fiat = _sum_fiat_lists([vs.fiat_values for vs in values_list if vs.fiat_values])
     return fiat, n_missing
 
 
-def _missing_rate_notes(n_missing: int, n_total: int, unit: str) -> list[str]:
+def _missing_rate_notes(
+    n_missing: int, n_total: int, singular: str, plural: str
+) -> list[GraphNoteInternal]:
     if n_missing == n_total:
-        return [f"fiat totals unavailable: no rate for any {unit}"]
+        return [
+            GraphNoteInternal(
+                code="fiat_totals_missing",
+                message=f"fiat totals unavailable: no rate for any {singular}",
+            )
+        ]
     if n_missing:
         return [
-            f"fiat totals are partial: {n_missing} of {n_total} {unit}s had no rate"
+            GraphNoteInternal(
+                code="fiat_totals_partial",
+                message=(
+                    f"fiat totals are partial: {n_missing} of {n_total} "
+                    f"{plural} had no rate"
+                ),
+            )
         ]
     return []
 
@@ -77,9 +97,12 @@ def build_network_tx_summary(
     headers. total_value.value sums native transfers only (account token
     transfers carry no native-unit amount, noted); total_value.fiat_values
     sum per fiat code across every tx (native and token)."""
-    notes: list[str] = []
+    notes: list[GraphNoteInternal] = []
     if is_eth_like(network):
+        # ``txs`` holds one leg per asset flow (base tx plus token-transfer
+        # legs); the submitted transactions are exactly the base legs.
         native_txs = [t for t in txs if t.token_tx_id is None]
+        tx_count = len(native_txs)
         total_value = sum(t.value.value for t in native_txs)
         # Token-transfer legs carry fee=None, so only the base transaction
         # contributes one fee per tx (no double count). A schema change adding
@@ -88,13 +111,22 @@ def build_network_tx_summary(
         total_inputs = None
         total_outputs = None
         fiat_values, n_missing = _fiat_sums([t.value for t in txs])
+        # Fiat is summed per leg, so missing rates are counted in transfers.
+        notes.extend(_missing_rate_notes(n_missing, len(txs), "transfer", "transfers"))
         n_token = len(txs) - len(native_txs)
         if n_token:
             notes.append(
-                f"total_value covers native transfers only; {n_token} token "
-                "transfer(s) excluded (their value is in the fiat totals)"
+                GraphNoteInternal(
+                    code="token_value_excluded",
+                    message=(
+                        f"total_value covers native transfers only; {n_token} "
+                        "token transfer(s) excluded (their value is in the "
+                        "fiat totals)"
+                    ),
+                )
             )
     else:
+        tx_count = len(txs)
         total_value = sum(t.total_output.value for t in txs)
         fees = [
             t.total_input.value - t.total_output.value for t in txs if not t.coinbase
@@ -102,12 +134,11 @@ def build_network_tx_summary(
         total_inputs = sum(t.no_inputs for t in txs)
         total_outputs = sum(t.no_outputs for t in txs)
         fiat_values, n_missing = _fiat_sums([t.total_output for t in txs])
-
-    notes.extend(_missing_rate_notes(n_missing, len(txs), "tx"))
+        notes.extend(_missing_rate_notes(n_missing, len(txs), "tx", "txs"))
 
     return GraphTxNetworkSummaryInternal(
         network=network,
-        tx_count=len(txs),
+        tx_count=tx_count,
         total_value=Values(value=total_value, fiat_values=fiat_values),
         total_fee=sum(fees) if fees else None,
         total_inputs=total_inputs,
@@ -130,7 +161,7 @@ def build_network_address_summary(
     TagPublic rows of the batched tagstore query for this network (only
     ``identifier`` is read); ``actors`` are the already-resolved distinct
     actor refs for this network."""
-    notes: list[str] = []
+    notes: list[GraphNoteInternal] = []
 
     def _values(values_list) -> tuple[Values, int]:
         fiat, n_missing = _fiat_sums(values_list)
@@ -144,12 +175,17 @@ def build_network_address_summary(
     total_received, n_missing = _values([a.total_received for a in addresses])
     total_spent, _ = _values([a.total_spent for a in addresses])
     balance, _ = _values([a.balance for a in addresses])
-    notes.extend(_missing_rate_notes(n_missing, len(addresses), "address"))
+    notes.extend(_missing_rate_notes(n_missing, len(addresses), "address", "addresses"))
 
     first_usages = [a.first_tx.timestamp for a in addresses if a.first_tx]
     last_usages = [a.last_tx.timestamp for a in addresses if a.last_tx]
     if not first_usages:
-        notes.append("usage span unavailable: no selected address has any activity")
+        notes.append(
+            GraphNoteInternal(
+                code="usage_span_unavailable",
+                message="usage span unavailable: no selected address has any activity",
+            )
+        )
 
     n_token = sum(
         1
@@ -158,8 +194,13 @@ def build_network_address_summary(
     )
     if n_token:
         notes.append(
-            f"native totals exclude token holdings; {n_token} address(es) "
-            "hold or moved tokens"
+            GraphNoteInternal(
+                code="token_holdings_excluded",
+                message=(
+                    f"native totals exclude token holdings; {n_token} "
+                    "address(es) hold or moved tokens"
+                ),
+            )
         )
 
     return GraphAddressNetworkSummaryInternal(
@@ -176,17 +217,12 @@ def build_network_address_summary(
     )
 
 
-def _sum_fiat_lists(lists: list[list[FiatValue]]) -> list[FiatValue]:
-    sums: dict[str, float] = {}
-    for fvs in lists:
-        for fv in fvs:
-            code = fv.code.lower()
-            sums[code] = sums.get(code, 0.0) + fv.value
-    return [FiatValue(code=c, value=round(v, 2)) for c, v in sorted(sums.items())]
-
-
-def _prefixed_notes(blocks) -> list[str]:
-    return [f"{b.network}: {n}" for b in blocks for n in b.notes]
+def _rollup_notes(blocks) -> list[GraphNoteInternal]:
+    """Per-network notes lifted into the overall rollup, tagged with their
+    source network."""
+    return [
+        n.model_copy(update={"network": b.network}) for b in blocks for n in b.notes
+    ]
 
 
 def build_tx_overall(
@@ -194,13 +230,13 @@ def build_tx_overall(
 ) -> GraphTxOverallInternal:
     """Network-agnostic rollup: fiat sums per code and timestamp span only
     (base units and block heights are not comparable across chains).
-    Per-network notes carry their network as prefix."""
+    Per-network notes carry their source network in ``network``."""
     return GraphTxOverallInternal(
         tx_count=sum(b.tx_count for b in blocks),
         total_value_fiat=_sum_fiat_lists([b.total_value.fiat_values for b in blocks]),
         timestamp_min=min(b.timestamp_min for b in blocks),
         timestamp_max=max(b.timestamp_max for b in blocks),
-        notes=_prefixed_notes(blocks),
+        notes=_rollup_notes(blocks),
     )
 
 
@@ -227,19 +263,20 @@ def build_address_overall(
         last_usage=max(last_usages) if last_usages else None,
         tagged_address_count=sum(b.tagged_address_count for b in blocks),
         actors=actors,
-        notes=_prefixed_notes(blocks),
+        notes=_rollup_notes(blocks),
     )
 
 
-def _dedup(refs, key):
-    seen = set()
-    out = []
-    for r in refs:
-        k = key(r)
-        if k not in seen:
-            seen.add(k)
-            out.append(r)
-    return out
+def _canonical_tx_key(ref: TxRefInternal) -> tuple[str, str]:
+    # Hashes are canonicalized (lowercase, no 0x) at ref construction, so
+    # network + hash is the dedup identity.
+    return (ref.network, ref.tx_hash)
+
+
+def _canonical_address_key(ref: AddressRefInternal) -> tuple[str, object]:
+    # Same reasoning as for tx hashes: get_address canonicalizes (eth hex
+    # decode, trx base58 to evm, bch cashaddr to legacy) before the lookup.
+    return (ref.network, cannonicalize_address(ref.network, ref.address))
 
 
 def _group_by_network(refs, value) -> dict[str, list[str]]:
@@ -297,21 +334,27 @@ async def summary(
     """Aggregate stats over the node set ``txs`` and/or ``addresses``.
 
     Each non-empty list must hold at least 2 distinct entries (distinctness
-    keyed on (network, hash)); together at most 100. Every ref's network
+    keyed on (network, canonical hash/address), so spelling variants of one
+    node count once); together at most MAX_GRAPH_NODES. Every ref's network
     must be a supported currency (400 otherwise); unknown nodes fail the
     whole request (404). Each block of the result is present iff its input
     list was non-empty.
     """
-    txs = _dedup(
-        [TxRefInternal(network=r.network.lower(), tx_hash=r.tx_hash) for r in txs],
-        key=lambda r: (r.network, r.tx_hash),
+    txs = dedup_refs(
+        [
+            TxRefInternal(
+                network=r.network.lower(), tx_hash=canonical_tx_hash(r.tx_hash)
+            )
+            for r in txs
+        ],
+        key=_canonical_tx_key,
     )
-    addresses = _dedup(
+    addresses = dedup_refs(
         [
             AddressRefInternal(network=r.network.lower(), address=r.address)
             for r in addresses
         ],
-        key=lambda r: (r.network, r.address),
+        key=_canonical_address_key,
     )
     if not txs and not addresses:
         raise BadUserInputException("/graph/summary needs tx refs and/or addresses.")
@@ -324,9 +367,9 @@ async def summary(
             "/graph/summary needs at least 2 distinct addresses "
             "when addresses are given."
         )
-    if len(txs) + len(addresses) > _MAX_NODES:
+    if len(txs) + len(addresses) > MAX_GRAPH_NODES:
         raise BadUserInputException(
-            f"/graph/summary accepts at most {_MAX_NODES} nodes."
+            f"/graph/summary accepts at most {MAX_GRAPH_NODES} nodes."
         )
 
     supported = {c.lower() for c in txs_service.db.get_supported_currencies()}
@@ -334,8 +377,7 @@ async def summary(
         if net not in supported:
             raise BadUserInputException(f"unsupported network '{net}'")
 
-    tx_block = None
-    if txs:
+    async def _tx_block():
         tx_groups = _group_by_network(txs, lambda r: r.tx_hash)
         fetched = await asyncio.gather(
             *[
@@ -347,34 +389,34 @@ async def summary(
             build_network_tx_summary(net, net_txs)
             for net, net_txs in zip(tx_groups, fetched)
         ]
-        tx_block = GraphTxSummaryInternal(
-            overall=build_tx_overall(blocks), networks=blocks
-        )
+        return GraphTxSummaryInternal(overall=build_tx_overall(blocks), networks=blocks)
 
-    address_block = None
-    if addresses:
+    async def _address_block():
         addr_groups = _group_by_network(addresses, lambda r: r.address)
 
         async def _rows_and_tags(net, addrs):
             # Header-level rows: no per-address actor query (actors come
             # from the batched tag query) and no new-address fallback, so an
             # unknown address fails the request instead of contributing
-            # zeros.
-            rows = await asyncio.gather(
-                *[
-                    addresses_service.get_address(
-                        net,
-                        a,
-                        tagstore_groups,
-                        include_actors=False,
-                        new_address_fallback=False,
-                    )
-                    for a in addrs
-                ]
-            )
-            tags, _ = await tags_service.list_tags_by_addresses_raw(
-                [AddressTagQueryInput(network=net, address=a) for a in addrs],
-                tagstore_groups,
+            # zeros. Rows and the batched tag query are independent, so
+            # they run concurrently.
+            rows, (tags, _) = await asyncio.gather(
+                asyncio.gather(
+                    *[
+                        addresses_service.get_address(
+                            net,
+                            a,
+                            tagstore_groups,
+                            include_actors=False,
+                            new_address_fallback=False,
+                        )
+                        for a in addrs
+                    ]
+                ),
+                tags_service.list_tags_by_addresses_raw(
+                    [AddressTagQueryInput(network=net, address=a) for a in addrs],
+                    tagstore_groups,
+                ),
             )
             return rows, tags
 
@@ -420,8 +462,23 @@ async def summary(
                 addr_groups.items(), per_net, actor_ids_per_net
             )
         ]
-        address_block = GraphAddressSummaryInternal(
+        return GraphAddressSummaryInternal(
             overall=build_address_overall(blocks), networks=blocks
         )
+
+    async def _none():
+        return None
+
+    tx_task = asyncio.ensure_future(_tx_block() if txs else _none())
+    address_task = asyncio.ensure_future(_address_block() if addresses else _none())
+    try:
+        tx_block, address_block = await asyncio.gather(tx_task, address_task)
+    except BaseException:
+        # A failed phase must not leave the sibling's db queries running in
+        # the background: cancel the survivor and drain it before re-raising.
+        tx_task.cancel()
+        address_task.cancel()
+        await asyncio.gather(tx_task, address_task, return_exceptions=True)
+        raise
 
     return GraphSummaryInternal(txs=tx_block, addresses=address_block)

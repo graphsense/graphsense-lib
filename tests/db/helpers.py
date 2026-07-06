@@ -1,6 +1,6 @@
 """Shared tx-model builders for db-service tests.
 
-Used by test_comparison_service.py and test_subgraph_service.py. Not a test
+Used by test_comparison_service.py and test_graph_service.py. Not a test
 module itself (pytest only collects test_*.py).
 """
 

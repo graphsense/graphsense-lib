@@ -3,11 +3,13 @@ the summary orchestration over a mixed-network node set."""
 
 from __future__ import annotations
 
+import asyncio
 from collections import namedtuple
 from types import SimpleNamespace
 
 import pytest
 
+from graphsenselib.db.asynchronous.services.common import canonical_tx_hash
 from graphsenselib.db.asynchronous.services.graph_service import (
     build_address_overall,
     build_network_address_summary,
@@ -17,6 +19,7 @@ from graphsenselib.db.asynchronous.services.graph_service import (
 )
 from graphsenselib.db.asynchronous.services.models import (
     AddressRefInternal,
+    FiatValue,
     LabeledItemRef,
     TxRefInternal,
     Txs,
@@ -27,7 +30,28 @@ from graphsenselib.errors import (
     NotFoundException,
     TransactionNotFoundException,
 )
-from tests.db.helpers import make_account_tx, make_address, make_tx, make_value
+from tests.db.helpers import (
+    make_account_tx,
+    make_address,
+    make_tx,
+    make_txvalue,
+    make_value,
+)
+
+
+# ---------------------------------------------------------------------------
+# canonical_tx_hash (pure)
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalTxHash:
+    def test_lowercases_before_stripping_uppercase_0x_prefix(self):
+        # removeprefix("0x") only matches a lowercase prefix, so lower()
+        # must run first or an uppercase "0X" would survive untouched.
+        assert canonical_tx_hash("0X" + "AB" * 32) == "ab" * 32
+
+    def test_plain_lowercase_hash_passes_through(self):
+        assert canonical_tx_hash("ab" * 32) == "ab" * 32
 
 
 # ---------------------------------------------------------------------------
@@ -37,8 +61,6 @@ from tests.db.helpers import make_account_tx, make_address, make_tx, make_value
 
 class TestBuildNetworkTxSummary:
     def test_utxo_aggregates_value_fee_inputs_outputs_block_timestamp(self):
-        from tests.db.helpers import make_txvalue
-
         txs = [
             make_tx(
                 inputs=[make_txvalue("a", 1)] * 2,
@@ -115,7 +137,8 @@ class TestBuildNetworkTxSummary:
             ),
         ]
         block = build_network_tx_summary("btc", txs)
-        assert any("partial" in n for n in block.notes)
+        assert [n.code for n in block.notes] == ["fiat_totals_partial"]
+        assert "1 of 2" in block.notes[0].message
 
     def test_all_rates_missing_noted(self):
         txs = [
@@ -124,11 +147,9 @@ class TestBuildNetworkTxSummary:
         ]
         block = build_network_tx_summary("btc", txs)
         assert block.total_value.fiat_values == []
-        assert any("unavailable" in n for n in block.notes)
+        assert [n.code for n in block.notes] == ["fiat_totals_missing"]
 
     def test_coinbase_contributes_no_fee(self):
-        from tests.db.helpers import make_txvalue
-
         txs = [
             make_tx(
                 inputs=[make_txvalue("coinbase", 0)],
@@ -141,6 +162,75 @@ class TestBuildNetworkTxSummary:
         block = build_network_tx_summary("btc", txs)
         assert block.total_value.value == 50_000
         assert block.total_fee is None
+
+    def test_fiat_sum_rounded_to_cents(self):
+        # 0.1 + 0.2 must come out as 0.3, not 0.30000000000000004.
+        txs = [
+            make_tx(total_input=100, total_output=90, fiat_eur=0.1),
+            make_tx(total_input=100, total_output=90, fiat_eur=0.2),
+        ]
+        block = build_network_tx_summary("btc", txs)
+        codes = {fv.code: fv.value for fv in block.total_value.fiat_values}
+        assert codes["eur"] == 0.3
+
+    def test_fiat_codes_merge_case_insensitively(self):
+        # Codes from different sources may differ in case; "USD" and "usd"
+        # must land in one bucket.
+        txs = [
+            make_tx(
+                total_input=100,
+                total_output=90,
+                outputs=[],
+            ),
+            make_tx(total_input=100, total_output=90, fiat_usd=2.0),
+        ]
+        txs[0].total_output.fiat_values = [FiatValue(code="USD", value=1.0)]
+        block = build_network_tx_summary("btc", txs)
+        assert [(fv.code, fv.value) for fv in block.total_value.fiat_values] == [
+            ("usd", 3.0)
+        ]
+
+    def test_account_aggregates_fee_without_double_count(self):
+        # Fees sum across base transactions only: the token leg carries
+        # fee=None so the tx's fee is counted once.
+        txs = [
+            make_account_tx(value=1_000, value_usd=1.0, fee=21),
+            make_account_tx(value=2_000, value_usd=2.0, fee=42),
+            make_account_tx(value=0, value_usd=3.0, token_tx_id=0, asset="usdt"),
+        ]
+        block = build_network_tx_summary("eth", txs)
+        assert block.total_fee == 63
+
+    def test_account_fee_none_when_unavailable(self):
+        txs = [
+            make_account_tx(value=1, value_usd=1.0),
+            make_account_tx(value=2, value_usd=2.0),
+        ]
+        block = build_network_tx_summary("eth", txs)
+        assert block.total_fee is None
+
+    def test_account_tx_count_excludes_token_legs(self):
+        # One submitted eth tx expands to a base leg plus a token leg; the
+        # response's tx_count must reflect the submitted transaction, not
+        # the number of asset-flow legs.
+        txs = [
+            make_account_tx(value=1_000, value_usd=2.5),
+            make_account_tx(value=0, value_usd=5.0, token_tx_id=0, asset="usdt"),
+        ]
+        block = build_network_tx_summary("eth", txs)
+        assert block.tx_count == 1
+
+    def test_account_missing_rates_counted_per_transfer(self):
+        # Fiat sums are per leg on account chains, so the missing-rate note
+        # counts transfers, not submitted txs.
+        txs = [
+            make_account_tx(value=1_000, value_usd=2.5),
+            make_account_tx(value=0, token_tx_id=0, asset="usdt"),  # no rate
+        ]
+        block = build_network_tx_summary("eth", txs)
+        codes = {n.code: n for n in block.notes}
+        assert "fiat_totals_partial" in codes
+        assert "1 of 2 transfers had no rate" in codes["fiat_totals_partial"].message
 
     def test_account_no_io_counts_and_token_excluded(self):
         # Native ETH transfer + a USDT token transfer. total_value is the
@@ -166,7 +256,7 @@ class TestBuildNetworkTxSummary:
         assert codes == {"eur": 6.0, "usd": 7.5}  # both, per code
         assert block.total_inputs is None
         assert block.total_outputs is None
-        assert any("token transfer" in n for n in block.notes)
+        assert "token_value_excluded" in [n.code for n in block.notes]
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +307,8 @@ class TestBuildTxOverall:
         # overall has no block heights (chain-specific), by model shape.
         assert not hasattr(overall, "block_min")
 
-    def test_network_notes_are_prefixed(self):
-        # a per-network note appears in overall prefixed with its network.
+    def test_network_notes_are_tagged_with_network(self):
+        # a per-network note appears in overall tagged with its network.
         btc = build_network_tx_summary(
             "btc",
             [
@@ -234,7 +324,9 @@ class TestBuildTxOverall:
             ],
         )
         overall = build_tx_overall([btc, eth])
-        assert any(n.startswith("eth: ") for n in overall.notes)
+        assert {(n.network, n.code) for n in overall.notes} == {
+            ("eth", "fiat_totals_missing"),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +335,9 @@ class TestBuildTxOverall:
 
 # Minimal stand-in for tagstore TagPublic: the aggregator only reads
 # .identifier (the tagged address) and .actor (an actor id or None).
-FakeTag = namedtuple("FakeTag", "identifier actor")
+# FakeTagsService additionally matches on .network, mirroring the real
+# tagstore query, so tests that route tags through it must set a real one.
+FakeTag = namedtuple("FakeTag", "identifier actor network")
 
 
 class TestBuildNetworkAddressSummary:
@@ -291,7 +385,39 @@ class TestBuildNetworkAddressSummary:
         ]
         block = build_network_address_summary("btc", addrs, [], [])
         assert block.total_received.value == 300
-        assert any("partial" in n for n in block.notes)
+        assert [n.code for n in block.notes] == ["fiat_totals_partial"]
+        assert "1 of 2 addresses had no rate" in block.notes[0].message
+
+    def test_all_fiat_missing_noted(self):
+        addrs = [
+            make_address("a1", total_received=make_value(100)),
+            make_address("a2", total_received=make_value(200)),
+        ]
+        block = build_network_address_summary("btc", addrs, [], [])
+        assert block.total_received.fiat_values == []
+        assert [n.code for n in block.notes] == ["fiat_totals_missing"]
+
+    def test_fiat_sums_rounded_to_cents(self):
+        # 0.1 + 0.2 must come out as 0.3, not 0.30000000000000004.
+        addrs = [
+            make_address("a1", total_received=make_value(1, eur=0.1)),
+            make_address("a2", total_received=make_value(2, eur=0.2)),
+        ]
+        block = build_network_address_summary("btc", addrs, [], [])
+        codes = {fv.code: fv.value for fv in block.total_received.fiat_values}
+        assert codes["eur"] == 0.3
+
+    def test_inactive_addresses_skipped_for_usage_span(self):
+        # Addresses without activity are skipped; the span still derives
+        # from the active ones (and no unavailable-note is emitted).
+        addrs = [
+            make_address("a1", first_ts=None, last_ts=None),
+            make_address("a2", first_ts=700, last_ts=900),
+        ]
+        block = build_network_address_summary("btc", addrs, [], [])
+        assert block.first_usage == 700
+        assert block.last_usage == 900
+        assert "usage_span_unavailable" not in [n.code for n in block.notes]
 
     def test_no_activity_at_all_omits_span_with_note(self):
         addrs = [
@@ -301,7 +427,7 @@ class TestBuildNetworkAddressSummary:
         block = build_network_address_summary("btc", addrs, [], [])
         assert block.first_usage is None
         assert block.last_usage is None
-        assert any("activity" in n for n in block.notes)
+        assert "usage_span_unavailable" in [n.code for n in block.notes]
 
     def test_token_holdings_note(self):
         addrs = [
@@ -309,14 +435,14 @@ class TestBuildNetworkAddressSummary:
             make_address("a2"),
         ]
         block = build_network_address_summary("eth", addrs, [], [])
-        assert any("token" in n.lower() for n in block.notes)
+        assert "token_holdings_excluded" in [n.code for n in block.notes]
 
     def test_tagged_count_dedupes_and_actors_pass_through(self):
         addrs = [make_address("a1"), make_address("a2"), make_address("a3")]
         tags = [
-            FakeTag("a1", "binance"),
-            FakeTag("a1", None),  # actor-less tag still counts the address
-            FakeTag("a2", "kraken"),
+            FakeTag("a1", "binance", "btc"),
+            FakeTag("a1", None, "btc"),  # actor-less tag still counts the address
+            FakeTag("a2", "kraken", "btc"),
         ]
         actors = [LabeledItemRef(id="binance", label="Binance")]
         block = build_network_address_summary("btc", addrs, tags, actors)
@@ -403,7 +529,7 @@ class FakeTxsService:
         self._tx_map = tx_map or {}
         self._flows = flows_map or {}
         self.get_tx_calls: list[dict] = []
-        self.flows_calls: list[str] = []
+        self.flows_calls: list[dict] = []
         self.db = FakeDb(supported)
 
     async def get_tx(self, network, tx_hash, *args, **kwargs):
@@ -413,7 +539,11 @@ class FakeTxsService:
         return self._tx_map[tx_hash]
 
     async def get_asset_flows_within_tx(self, network, tx_hash, **kwargs):
-        self.flows_calls.append(tx_hash)
+        self.flows_calls.append({"network": network, "tx_hash": tx_hash, **kwargs})
+        # Mirror the real service: an unknown hash raises rather than
+        # returning an empty flow set.
+        if tx_hash not in self._flows and tx_hash not in self._tx_map:
+            raise TransactionNotFoundException(network, tx_hash)
         legs = self._flows.get(tx_hash) or [self._tx_map[tx_hash]]
         return Txs(txs=legs)
 
@@ -456,7 +586,7 @@ class FakeTagsService:
         self.actor_calls: list[str] = []
 
     async def list_tags_by_addresses_raw(self, addresses, tagstore_groups, **kw):
-        addrs = {a.address for a in addresses}
+        keys = {(a.network, a.address) for a in addresses}
         self.tags_calls.append(
             {
                 "addresses": [a.address for a in addresses],
@@ -464,9 +594,9 @@ class FakeTagsService:
                 "groups": list(tagstore_groups),
             }
         )
-        # Tag rows are matched to the queried addresses so per-network calls
-        # only see their own tags.
-        return [t for t in self._tags if t.identifier in addrs], True
+        # Tags match on (network, identifier), mirroring the real tagstore
+        # query, so per-network calls only see their own tags.
+        return [t for t in self._tags if (t.network, t.identifier) in keys], True
 
     async def get_actor(self, actor_id):
         self.actor_calls.append(actor_id)
@@ -500,7 +630,27 @@ def _btc_txs():
 
 class TestGraphSummary:
     async def test_utxo_header_only_fetch(self):
-        tx_map, h0, h1 = _btc_txs()
+        h0, h1 = "aa" * 32, "bb" * 32
+        tx_map = {
+            h0: make_tx(
+                tx_hash=h0,
+                inputs=[make_txvalue("addr_a", 600), make_txvalue("addr_b", 400)],
+                outputs=[make_txvalue("addr_c", 900)],
+                height=100,
+                timestamp=1000,
+                fiat_eur=10.0,
+                fiat_usd=12.0,
+            ),
+            h1: make_tx(
+                tx_hash=h1,
+                inputs=[make_txvalue("addr_d", 500)],
+                outputs=[make_txvalue("addr_e", 480)],
+                height=200,
+                timestamp=2000,
+                fiat_eur=5.0,
+                fiat_usd=6.5,
+            ),
+        }
         svc = FakeTxsService(tx_map=tx_map)
         refs = [
             TxRefInternal(network="btc", tx_hash=h0),
@@ -512,7 +662,9 @@ class TestGraphSummary:
         block = s.txs.networks[0]
         assert block.tx_count == 2
         assert block.total_value.value == 1_380
-        assert block.total_inputs == 0  # header-only fetch, no io rows
+        # IO counts come from the row header, independent of include_io.
+        assert block.total_inputs == 3
+        assert block.total_outputs == 2
         # UTXO summary fetches headers only: no IO, no heuristics.
         assert svc.get_tx_calls[0]["include_io"] is False
         assert svc.get_tx_calls[0]["include_heuristics"] == []
@@ -542,8 +694,14 @@ class TestGraphSummary:
         codes = {fv.code: fv.value for fv in s.txs.overall.total_value_fiat}
         assert codes == {"eur": 21.0, "usd": 27.5}
         # Account path uses asset flows, UTXO path uses get_tx headers.
-        assert svc.flows_calls == [e0, e1]
+        assert [c["tx_hash"] for c in svc.flows_calls] == [e0, e1]
         assert [c["network"] for c in svc.get_tx_calls] == ["btc", "btc"]
+        flow_call = svc.flows_calls[0]
+        # Correctness-critical fetch flags: internal traces excluded (they
+        # are not submitted txs), token legs and the base leg included.
+        assert flow_call["include_internal_txs"] is False
+        assert flow_call["include_token_txs"] is True
+        assert flow_call["include_base_transaction"] is True
 
     async def test_dedup_on_network_and_hash(self):
         tx_map, h0, h1 = _btc_txs()
@@ -556,6 +714,34 @@ class TestGraphSummary:
         s = await summary(svc, None, None, refs, [], tagstore_groups=[])
         assert s.txs.networks[0].tx_count == 2
         assert len(svc.get_tx_calls) == 2
+
+    async def test_case_variant_utxo_tx_refs_deduped(self):
+        # Hex hashes compare case-insensitively downstream, so a spelling
+        # variant of an already-listed hash is the same node: fetched once,
+        # counted once.
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        refs = [
+            TxRefInternal(network="btc", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash=h0.upper()),
+            TxRefInternal(network="btc", tx_hash=h1),
+        ]
+        s = await summary(svc, None, None, refs, [], tagstore_groups=[])
+        assert s.txs.networks[0].tx_count == 2
+        assert len(svc.get_tx_calls) == 2
+
+    async def test_case_and_prefix_variant_tx_refs_do_not_satisfy_minimum(self):
+        # Two spellings of one eth tx (0x prefix, upper hex) are one distinct
+        # node and must not satisfy the 2-distinct minimum.
+        e0 = "cc" * 32
+        eth = make_account_tx(tx_hash=e0, value=1_000, value_usd=3.0)
+        svc = FakeTxsService(flows_map={e0: [eth]})
+        refs = [
+            TxRefInternal(network="eth", tx_hash=e0),
+            TxRefInternal(network="eth", tx_hash="0x" + e0.upper()),
+        ]
+        with pytest.raises(BadUserInputException, match="at least 2"):
+            await summary(svc, None, None, refs, [], tagstore_groups=[])
 
     async def test_same_hash_different_networks_not_deduped(self):
         # A btc and an eth ref sharing the same hash string are distinct nodes.
@@ -572,6 +758,42 @@ class TestGraphSummary:
         s = await summary(svc, None, None, refs, [], tagstore_groups=[])
         assert {b.network for b in s.txs.networks} == {"btc", "eth"}
         assert s.txs.overall.tx_count == 2
+
+    async def test_uppercase_network_accepted_and_normalized(self):
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        refs = [
+            TxRefInternal(network="BTC", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash=h1),
+        ]
+        s = await summary(svc, None, None, refs, [], tagstore_groups=[])
+        assert [b.network for b in s.txs.networks] == ["btc"]
+        assert s.txs.networks[0].tx_count == 2
+
+    async def test_account_summary_counts_submitted_txs_not_legs(self):
+        # A submitted eth tx with a token transfer expands to 2 legs; the
+        # per-network and overall counts must stay at the submitted 2 txs.
+        e0, e1 = "cc" * 32, "dd" * 32
+        flows = {
+            e0: [
+                make_account_tx(tx_hash=e0, value=1_000, value_usd=3.0),
+                make_account_tx(
+                    tx_hash=e0, value=0, value_usd=5.0, token_tx_id=0, asset="usdt"
+                ),
+            ],
+            e1: [make_account_tx(tx_hash=e1, value=2_000, value_usd=6.0)],
+        }
+        svc = FakeTxsService(flows_map=flows)
+        refs = [
+            TxRefInternal(network="eth", tx_hash=e0),
+            TxRefInternal(network="eth", tx_hash=e1),
+        ]
+        s = await summary(svc, None, None, refs, [], tagstore_groups=[])
+        assert s.txs.networks[0].tx_count == 2
+        assert s.txs.overall.tx_count == 2
+        # Fiat still sums across all legs, token transfer included.
+        codes = {fv.code: fv.value for fv in s.txs.overall.total_value_fiat}
+        assert codes == {"usd": 14.0}
 
     async def test_needs_at_least_two_tx_refs(self):
         tx_map, h0, h1 = _btc_txs()
@@ -616,6 +838,72 @@ class TestGraphSummary:
         ]
         with pytest.raises(TransactionNotFoundException):
             await summary(svc, None, None, refs, [], tagstore_groups=[])
+
+    async def test_failed_tx_phase_cancels_address_phase(self):
+        # A 404 from the tx phase must not leave the address phase's db
+        # queries running in the background after summary() has raised.
+        tx_map, h0, _ = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class HangingAddressesService(FakeAddressesService):
+            async def get_address(self, *args, **kwargs):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        tx_refs = [
+            TxRefInternal(network="btc", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash="ff" * 32),
+        ]
+        addr_refs = [
+            AddressRefInternal(network="btc", address="a1"),
+            AddressRefInternal(network="btc", address="a2"),
+        ]
+        with pytest.raises(TransactionNotFoundException):
+            await summary(
+                svc,
+                HangingAddressesService(),
+                FakeTagsService(),
+                tx_refs,
+                addr_refs,
+                tagstore_groups=[],
+            )
+        assert started.is_set()
+        assert cancelled.is_set()
+
+    async def test_missing_account_tx_raises_not_found(self):
+        e0, e1 = "cc" * 32, "dd" * 32
+        svc = FakeTxsService(tx_map={e0: make_account_tx(tx_hash=e0)})
+        refs = [
+            TxRefInternal(network="eth", tx_hash=e0),
+            TxRefInternal(network="eth", tx_hash=e1),
+        ]
+        with pytest.raises(TransactionNotFoundException):
+            await summary(svc, None, None, refs, [], tagstore_groups=[])
+
+    async def test_malformed_bch_address_raises_bad_user_input(self):
+        # cannonicalize_address must map structurally broken cashaddrs to a
+        # 400, not let IndexError/InvalidAddress escape as a 500.
+        svc = FakeTxsService(supported=("btc", "bch"))
+        refs = [
+            AddressRefInternal(network="bch", address="bitcoincash:qq"),
+            AddressRefInternal(network="bch", address="bitcoincash:zz"),
+        ]
+        with pytest.raises(BadUserInputException):
+            await summary(
+                svc,
+                FakeAddressesService(),
+                FakeTagsService(),
+                [],
+                refs,
+                tagstore_groups=[],
+            )
 
 
 class TestGraphSummaryAddresses:
@@ -694,9 +982,9 @@ class TestGraphSummaryAddresses:
         addr_svc = self._addr_setup()
         tag_svc = FakeTagsService(
             tags=[
-                FakeTag("b1", "binance"),
-                FakeTag("e1", "binance"),  # same actor, other network
-                FakeTag("e2", "kraken"),
+                FakeTag("b1", "binance", "btc"),
+                FakeTag("e1", "binance", "eth"),  # same actor, other network
+                FakeTag("e2", "kraken", "eth"),
             ],
             actors={
                 "binance": SimpleNamespace(id="binance", label="Binance"),
@@ -717,6 +1005,42 @@ class TestGraphSummaryAddresses:
         assert sorted(a.id for a in s.addresses.overall.actors) == ["binance", "kraken"]
         assert s.addresses.overall.tagged_address_count == 3
 
+    async def test_tags_matched_per_network(self):
+        # A tag on the btc spelling of an address must not leak into an
+        # eth block that queries the same identifier string. The identifier
+        # is hex-shaped so it canonicalizes cleanly on both networks.
+        shared = "0x" + "ab" * 20
+        other = "0x" + "cd" * 20
+        addr_svc = FakeAddressesService(
+            {
+                shared: make_address(
+                    shared,
+                    total_received=make_value(100, usd=1.0),
+                    balance=make_value(100, usd=1.0),
+                ),
+                other: make_address(
+                    other,
+                    total_received=make_value(200, usd=2.0),
+                    balance=make_value(200, usd=2.0),
+                ),
+            }
+        )
+        tag_svc = FakeTagsService(
+            tags=[FakeTag(shared, "binance", "btc")],
+            actors={"binance": SimpleNamespace(id="binance", label="Binance")},
+        )
+        tx_svc = FakeTxsService(supported=["btc", "eth"])
+        refs = [
+            AddressRefInternal(network="btc", address=shared),
+            AddressRefInternal(network="btc", address=other),
+            AddressRefInternal(network="eth", address=shared),
+            AddressRefInternal(network="eth", address=other),
+        ]
+        s = await summary(tx_svc, addr_svc, tag_svc, [], refs, tagstore_groups=[])
+        blocks = {b.network: b for b in s.addresses.networks}
+        assert blocks["btc"].tagged_address_count == 1
+        assert blocks["eth"].tagged_address_count == 0
+
     async def test_missing_actor_is_skipped_not_fatal(self):
         # One tag references a resolvable actor, another references an actor
         # id whose pack is not loaded (get_actor raises NotFoundException).
@@ -725,8 +1049,8 @@ class TestGraphSummaryAddresses:
         addr_svc = self._addr_setup()
         tag_svc = FakeTagsService(
             tags=[
-                FakeTag("b1", "binance"),
-                FakeTag("b2", "ghost"),  # actor id with no loaded row
+                FakeTag("b1", "binance", "btc"),
+                FakeTag("b2", "ghost", "btc"),  # actor id with no loaded row
             ],
             actors={"binance": SimpleNamespace(id="binance", label="Binance")},
         )
@@ -784,6 +1108,23 @@ class TestGraphSummaryAddresses:
         assert s.addresses.networks[0].address_count == 2
         assert len(addr_svc.calls) == 2
 
+    async def test_case_variant_addresses_do_not_satisfy_minimum(self):
+        # eth addresses are hex: a checksummed and a lowercase spelling of
+        # the same address are one node, not two distinct ones.
+        a = "0x" + "ab" * 20
+        addr_svc = FakeAddressesService(
+            {a: make_address(a, total_received=make_value(10, usd=1.0))}
+        )
+        tx_svc = FakeTxsService(supported=["eth"])
+        refs = [
+            AddressRefInternal(network="eth", address=a),
+            AddressRefInternal(network="eth", address="0x" + "AB" * 20),
+        ]
+        with pytest.raises(BadUserInputException, match="at least 2"):
+            await summary(
+                tx_svc, addr_svc, FakeTagsService(), [], refs, tagstore_groups=[]
+            )
+
     async def test_unknown_address_fails_whole_request(self):
         addr_svc = self._addr_setup()
         tx_svc = FakeTxsService(supported=["btc"])
@@ -807,6 +1148,42 @@ class TestGraphSummaryAddresses:
                 addr_svc,
                 FakeTagsService(),
                 [TxRefInternal(network="btc", tx_hash=h0)],
+                [AddressRefInternal(network="btc", address="b1")],
+                tagstore_groups=[],
+            )
+
+    async def test_per_list_minimum_short_tx_list_names_tx_refs(self):
+        # A single tx ref is below its own minimum even when the address
+        # list is fine; the error names the offending list.
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        addr_svc = self._addr_setup()
+        with pytest.raises(BadUserInputException, match="tx refs"):
+            await summary(
+                svc,
+                addr_svc,
+                FakeTagsService(),
+                [TxRefInternal(network="btc", tx_hash=h0)],
+                [
+                    AddressRefInternal(network="btc", address="b1"),
+                    AddressRefInternal(network="btc", address="b2"),
+                ],
+                tagstore_groups=[],
+            )
+
+    async def test_per_list_minimum_short_address_list_names_addresses(self):
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        addr_svc = self._addr_setup()
+        with pytest.raises(BadUserInputException, match="addresses"):
+            await summary(
+                svc,
+                addr_svc,
+                FakeTagsService(),
+                [
+                    TxRefInternal(network="btc", tx_hash=h0),
+                    TxRefInternal(network="btc", tx_hash=h1),
+                ],
                 [AddressRefInternal(network="btc", address="b1")],
                 tagstore_groups=[],
             )

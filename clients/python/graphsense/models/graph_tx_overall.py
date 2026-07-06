@@ -15,21 +15,22 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictInt
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.graph_note import GraphNote
 from graphsense.models.rate import Rate
 from typing import Optional, Set
 from typing_extensions import Self
 
 class GraphTxOverall(BaseModel):
     """
-    Network-agnostic rollup over all transactions in the set: fiat and timestamps only, since base units and block heights are not comparable across chains. Per-network notes carry their network as prefix.
+    Network-agnostic rollup over all transactions in the set: fiat and timestamps only, since base units and block heights are not comparable across chains. Per-network notes carry their source network in ``network``.
     """ # noqa: E501
     tx_count: StrictInt
     total_value_fiat: Optional[List[Rate]] = None
     timestamp_min: StrictInt
     timestamp_max: StrictInt
-    notes: Optional[List[StrictStr]] = None
+    notes: Optional[List[GraphNote]] = None
     __properties: ClassVar[List[str]] = ["tx_count", "total_value_fiat", "timestamp_min", "timestamp_max", "notes"]
 
     model_config = ConfigDict(
@@ -78,6 +79,13 @@ class GraphTxOverall(BaseModel):
                 if _item_total_value_fiat:
                     _items.append(_item_total_value_fiat.to_dict())
             _dict['total_value_fiat'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in notes (list)
+        _items = []
+        if self.notes:
+            for _item_notes in self.notes:
+                if _item_notes:
+                    _items.append(_item_notes.to_dict())
+            _dict['notes'] = _items
         return _dict
 
     @classmethod
@@ -94,7 +102,7 @@ class GraphTxOverall(BaseModel):
             "total_value_fiat": [Rate.from_dict(_item) for _item in obj["total_value_fiat"]] if obj.get("total_value_fiat") is not None else None,
             "timestamp_min": obj.get("timestamp_min"),
             "timestamp_max": obj.get("timestamp_max"),
-            "notes": obj.get("notes")
+            "notes": [GraphNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None
         })
         return _obj
 

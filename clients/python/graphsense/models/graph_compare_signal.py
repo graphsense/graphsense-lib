@@ -15,19 +15,35 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class GraphTxRef(BaseModel):
+class GraphCompareSignal(BaseModel):
     """
-    A transaction reference: hash plus the network it lives on.
+    One row of the pairwise comparison table; values stringified per tx.
     """ # noqa: E501
-    tx_hash: Annotated[str, Field(strict=True, max_length=128)]
-    network: Annotated[str, Field(strict=True, max_length=32)]
-    __properties: ClassVar[List[str]] = ["tx_hash", "network"]
+    name: StrictStr
+    kind: StrictStr
+    per_tx: List[Optional[StrictStr]]
+    verdict: StrictStr
+    weight: Optional[StrictInt] = 0
+    __properties: ClassVar[List[str]] = ["name", "kind", "per_tx", "verdict", "weight"]
+
+    @field_validator('kind')
+    def kind_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['discriminator', 'score', 'linkage']):
+            raise ValueError("must be one of enum values ('discriminator', 'score', 'linkage')")
+        return value
+
+    @field_validator('verdict')
+    def verdict_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['match', 'mismatch', 'inconclusive']):
+            raise ValueError("must be one of enum values ('match', 'mismatch', 'inconclusive')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +63,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a JSON string"""
+        """Create an instance of GraphCompareSignal from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -72,7 +88,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a dict"""
+        """Create an instance of GraphCompareSignal from a dict"""
         if obj is None:
             return None
 
@@ -80,8 +96,11 @@ class GraphTxRef(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tx_hash": obj.get("tx_hash"),
-            "network": obj.get("network")
+            "name": obj.get("name"),
+            "kind": obj.get("kind"),
+            "per_tx": obj.get("per_tx"),
+            "verdict": obj.get("verdict"),
+            "weight": obj.get("weight") if obj.get("weight") is not None else 0
         })
         return _obj
 

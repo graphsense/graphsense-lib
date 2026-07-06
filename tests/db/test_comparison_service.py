@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from graphsenselib.db.asynchronous.services.comparison_service import (
+    _MAX_TOTAL_IOS,
     _aggregate_inputs_have_witness,
     _bip69_outputs_sorted,
     _canonical_input_addresses,
@@ -1205,6 +1206,18 @@ class TestAggregateVerdict:
         )
         assert verdict.relation == "inconclusive"
 
+    def test_weak_negative_with_match_falls_to_inconclusive(self):
+        # Spec (fingerprint_verdict.tex): potential_link requires mis_w == 0.
+        # A weak negative in (-30, 0), e.g. a single rbf mismatch at -25,
+        # plus a positive match must not read as potential_link.
+        chars = [make_chars(), make_chars()]
+        verdict = aggregate_verdict(
+            [_disc("mismatch", name="rbf", weight=-25), _disc("match")],
+            chars,
+            "unknown",
+        )
+        assert verdict.relation == "inconclusive"
+
     def test_coinjoin_note_appended(self):
         chars = [make_chars(coinjoin_detected=True), make_chars()]
         verdict = aggregate_verdict([_disc("match"), _score(0)], chars, "unknown")
@@ -1603,6 +1616,24 @@ class TestCompareTxsOrchestration:
         assert edge.out_index == 0
         assert edge.in_index == 0
 
+    async def test_case_variant_hash_still_yields_lineage(self):
+        # Parent refs come back lowercase from the db. A case-variant
+        # compared hash must be canonicalized up front, or the h_to_idx
+        # lookup misses and the lineage edge is silently dropped.
+        svc, hashes = self._make_two_linked_txs()
+        variant = [hashes[0], hashes[1].upper()]
+        result = await compare_txs(
+            svc,
+            CURRENCY,
+            variant,
+            include_details=False,
+            include_characteristics=True,
+            include_signals=True,
+            tagstore_groups=[],
+        )
+        assert len(result.lineage) == 1
+        assert result.txs[1].tx_hash == hashes[1]  # canonical spelling echoed
+
     async def test_include_signals_false_suppresses(self):
         svc, hashes = self._make_two_linked_txs()
         result = await compare_txs(
@@ -1614,7 +1645,7 @@ class TestCompareTxsOrchestration:
             include_signals=False,
             tagstore_groups=[],
         )
-        assert result.signals == []
+        assert result.signals is None
         # Verdict still computed.
         assert result.verdict is not None
 
@@ -1659,7 +1690,7 @@ class TestCompareTxsOrchestration:
             include_lineage=False,
             tagstore_groups=[],
         )
-        assert result.lineage == []
+        assert result.lineage is None
         # Verdict still computed.
         assert result.verdict is not None
 
@@ -1762,6 +1793,21 @@ class TestCompareTxsOrchestration:
                 tagstore_groups=[],
             )
 
+    async def test_case_variant_duplicate_collapses_to_one_rejected(self):
+        # Hex hashes compare case-insensitively downstream, so an uppercase
+        # spelling of the same hash is the same tx: nothing to compare.
+        svc, hashes = self._make_two_linked_txs()
+        with pytest.raises(BadUserInputException):
+            await compare_txs(
+                svc,
+                CURRENCY,
+                [hashes[0], hashes[0].upper()],
+                include_details=False,
+                include_characteristics=True,
+                include_signals=True,
+                tagstore_groups=[],
+            )
+
     async def test_duplicate_hashes_deduped_before_compare(self):
         # An over-specified list (a hash repeated alongside distinct ones)
         # dedups order-preserving: the summary counts each tx once and each tx
@@ -1796,3 +1842,39 @@ class TestCompareTxsOrchestration:
                 include_signals=True,
                 tagstore_groups=[],
             )
+
+    async def test_compare_accepts_io_set_at_exact_limit(self):
+        # The ref-count cap bounds list length, not work: the address and
+        # cluster prefetches scale with the IO count of the fetched txs.
+        # Exactly _MAX_TOTAL_IOS combined inputs/outputs must still pass.
+        svc, hashes = self._make_two_linked_txs()
+        # Base fixture already contributes 1 output (tx0) + 1 input + 1
+        # output (tx1) = 3 ios outside the field under test.
+        svc._tx_map[hashes[0]].no_inputs = _MAX_TOTAL_IOS - 3
+        result = await compare_txs(
+            svc,
+            CURRENCY,
+            hashes,
+            include_details=False,
+            include_characteristics=True,
+            include_signals=True,
+            tagstore_groups=[],
+        )
+        assert len(result.txs) == 2
+
+    async def test_compare_rejects_io_set_over_limit(self):
+        svc, hashes = self._make_two_linked_txs()
+        svc._tx_map[hashes[0]].no_inputs = _MAX_TOTAL_IOS - 2
+        with pytest.raises(BadUserInputException):
+            await compare_txs(
+                svc,
+                CURRENCY,
+                hashes,
+                include_details=False,
+                include_characteristics=True,
+                include_signals=True,
+                tagstore_groups=[],
+            )
+        # Rejection happens before any of the expensive prefetches run.
+        assert svc.spending_calls == 0
+        svc.db.get_addresses_light.assert_not_awaited()

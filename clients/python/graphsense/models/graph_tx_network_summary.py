@@ -17,6 +17,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.graph_note import GraphNote
 from graphsense.models.values import Values
 from typing import Optional, Set
 from typing_extensions import Self
@@ -35,7 +36,7 @@ class GraphTxNetworkSummary(BaseModel):
     block_max: StrictInt
     timestamp_min: StrictInt
     timestamp_max: StrictInt
-    notes: Optional[List[StrictStr]] = None
+    notes: Optional[List[GraphNote]] = None
     __properties: ClassVar[List[str]] = ["network", "tx_count", "total_value", "total_fee", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max", "notes"]
 
     model_config = ConfigDict(
@@ -80,6 +81,13 @@ class GraphTxNetworkSummary(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of total_value
         if self.total_value:
             _dict['total_value'] = self.total_value.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of each item in notes (list)
+        _items = []
+        if self.notes:
+            for _item_notes in self.notes:
+                if _item_notes:
+                    _items.append(_item_notes.to_dict())
+            _dict['notes'] = _items
 
         return _dict
 
@@ -103,7 +111,7 @@ class GraphTxNetworkSummary(BaseModel):
             "block_max": obj.get("block_max"),
             "timestamp_min": obj.get("timestamp_min"),
             "timestamp_max": obj.get("timestamp_max"),
-            "notes": obj.get("notes")
+            "notes": [GraphNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None
         })
         return _obj
 

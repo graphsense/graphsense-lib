@@ -15,19 +15,22 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
+from pydantic import BaseModel, ConfigDict, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.graph_tx_characteristics import GraphTxCharacteristics
+from graphsense.models.tx import Tx
 from typing import Optional, Set
 from typing_extensions import Self
 
-class GraphTxRef(BaseModel):
+class GraphComparedTx(BaseModel):
     """
-    A transaction reference: hash plus the network it lives on.
+    Per-tx entry. ``characteristics`` and ``details`` are populated iff the request's ``include`` list names them (``details`` is off by default).
     """ # noqa: E501
-    tx_hash: Annotated[str, Field(strict=True, max_length=128)]
-    network: Annotated[str, Field(strict=True, max_length=32)]
-    __properties: ClassVar[List[str]] = ["tx_hash", "network"]
+    tx_hash: StrictStr
+    network: Optional[StrictStr] = 'btc'
+    characteristics: Optional[GraphTxCharacteristics] = None
+    details: Optional[Tx] = None
+    __properties: ClassVar[List[str]] = ["tx_hash", "network", "characteristics", "details"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +50,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a JSON string"""
+        """Create an instance of GraphComparedTx from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,11 +71,18 @@ class GraphTxRef(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of characteristics
+        if self.characteristics:
+            _dict['characteristics'] = self.characteristics.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of details
+        if self.details:
+            _dict['details'] = self.details.to_dict()
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a dict"""
+        """Create an instance of GraphComparedTx from a dict"""
         if obj is None:
             return None
 
@@ -81,7 +91,9 @@ class GraphTxRef(BaseModel):
 
         _obj = cls.model_validate({
             "tx_hash": obj.get("tx_hash"),
-            "network": obj.get("network")
+            "network": obj.get("network") if obj.get("network") is not None else 'btc',
+            "characteristics": GraphTxCharacteristics.from_dict(obj["characteristics"]) if obj.get("characteristics") is not None else None,
+            "details": Tx.from_dict(obj["details"]) if obj.get("details") is not None else None
         })
         return _obj
 

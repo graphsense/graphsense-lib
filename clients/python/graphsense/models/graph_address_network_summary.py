@@ -17,6 +17,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.graph_note import GraphNote
 from graphsense.models.labeled_item_ref import LabeledItemRef
 from graphsense.models.values import Values
 from typing import Optional, Set
@@ -35,7 +36,7 @@ class GraphAddressNetworkSummary(BaseModel):
     last_usage: Optional[StrictInt] = None
     tagged_address_count: Optional[StrictInt] = 0
     actors: Optional[List[LabeledItemRef]] = None
-    notes: Optional[List[StrictStr]] = None
+    notes: Optional[List[GraphNote]] = None
     __properties: ClassVar[List[str]] = ["network", "address_count", "total_received", "total_spent", "balance", "first_usage", "last_usage", "tagged_address_count", "actors", "notes"]
 
     model_config = ConfigDict(
@@ -93,6 +94,13 @@ class GraphAddressNetworkSummary(BaseModel):
                 if _item_actors:
                     _items.append(_item_actors.to_dict())
             _dict['actors'] = _items
+        # override the default output from pydantic by calling `to_dict()` of each item in notes (list)
+        _items = []
+        if self.notes:
+            for _item_notes in self.notes:
+                if _item_notes:
+                    _items.append(_item_notes.to_dict())
+            _dict['notes'] = _items
 
         return _dict
 
@@ -115,7 +123,7 @@ class GraphAddressNetworkSummary(BaseModel):
             "last_usage": obj.get("last_usage"),
             "tagged_address_count": obj.get("tagged_address_count") if obj.get("tagged_address_count") is not None else 0,
             "actors": [LabeledItemRef.from_dict(_item) for _item in obj["actors"]] if obj.get("actors") is not None else None,
-            "notes": obj.get("notes")
+            "notes": [GraphNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None
         })
         return _obj
 

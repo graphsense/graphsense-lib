@@ -6,7 +6,11 @@ import asyncio
 from typing import Any, Optional, Union
 
 from graphsenselib.errors import BadUserInputException
-from graphsenselib.db.asynchronous.services.common import cannonicalize_address
+from graphsenselib.db.asynchronous.services.common import (
+    cannonicalize_address,
+    canonical_tx_hash,
+    dedup_refs,
+)
 from graphsenselib.db.asynchronous.services.models import (
     ComparisonSignalInternal,
     ComparisonVerdictInternal,
@@ -649,6 +653,12 @@ def compute_cluster_verdict(chars: list[TxCharacteristicsInternal]) -> str:
 _LIKELY_UNLINKED_THRESHOLD = -60
 _POTENTIAL_UNLINK_THRESHOLD = -30
 
+# Work bound for a single compare request: the address and cluster
+# prefetches scale with the combined IO count of the fetched txs, which the
+# ref-count cap alone does not bound (one consolidation tx can carry 20k
+# inputs).
+_MAX_TOTAL_IOS = 20_000
+
 
 def _clamp_confidence(value: int) -> int:
     return max(0, min(100, value))
@@ -780,7 +790,7 @@ def aggregate_verdict(
     # 6. potential_link: no linkage; mis_w == 0; match_w > 0. Discriminator /
     #    score agreement alone cannot cross into likely_linked without an
     #    actual on-chain linkage gate.
-    elif match_w > 0:
+    elif mis_w == 0 and match_w > 0:
         relation = "potential_link"
         confidence = 35
 
@@ -998,10 +1008,12 @@ async def compare_txs(
     include_lineage: bool = True,
     include_verdict: bool = True,
 ) -> TransactionComparisonInternal:
-    # Dedup hashes (order-preserving) up front: a repeated hash would otherwise
-    # be fetched twice and trivially compare as linked to itself. Need 2+
-    # distinct txs to have anything to compare.
-    tx_hashes = list(dict.fromkeys(tx_hashes))
+    # Canonicalize spellings up front (lowercase, no 0x): the db returns
+    # parent refs in lowercase hex, so the h_to_idx maps built for lineage
+    # and utxo_linkage must be keyed on the same form, and a repeated hash
+    # would otherwise be fetched twice and trivially compare as linked to
+    # itself. Need 2+ distinct txs to have anything to compare.
+    tx_hashes = dedup_refs([canonical_tx_hash(h) for h in tx_hashes], key=lambda h: h)
     if len(tx_hashes) < 2:
         raise BadUserInputException(
             "/graph/compare needs at least 2 distinct transaction hashes."
@@ -1033,6 +1045,15 @@ async def compare_txs(
             for h in tx_hashes
         ]
     )
+
+    total_ios = sum(
+        t.no_inputs + t.no_outputs for t in fetched if isinstance(t, TxUtxo)
+    )
+    if total_ios > _MAX_TOTAL_IOS:
+        raise BadUserInputException(
+            f"transaction set too large to compare: {total_ios} combined "
+            f"inputs and outputs exceed the limit of {_MAX_TOTAL_IOS}."
+        )
 
     # Exchange-flag lookup now needs the address→cluster map, so it can't run
     # in parallel with cluster resolution like the old digest-based path did.
@@ -1096,11 +1117,13 @@ async def compare_txs(
         for i in range(len(fetched))
     ]
 
-    # Signals/lineage/verdict are always computed (the verdict depends on the
-    # signals); the include flags only control what is returned.
+    # Signals/lineage/verdict are always computed (the verdict depends on
+    # the signals); the include flags only control what is returned. None
+    # marks "excluded from the request" so the response omits the field,
+    # keeping it distinguishable from computed-but-empty.
     return TransactionComparisonInternal(
         txs=items,
-        signals=signals if include_signals else [],
-        lineage=lineage if include_lineage else [],
+        signals=signals if include_signals else None,
+        lineage=lineage if include_lineage else None,
         verdict=verdict if include_verdict else None,
     )

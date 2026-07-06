@@ -15,19 +15,28 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Any, ClassVar, Dict, List
-from typing_extensions import Annotated
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class GraphTxRef(BaseModel):
+class GraphTxCharacteristics(BaseModel):
     """
-    A transaction reference: hash plus the network it lives on.
+    Extracted characteristics for a single transaction.  ``input_script_types`` / ``output_script_types`` hold the distinct script types observed across the inputs/outputs, sorted for stable output. Empty list means none could be derived from address strings.  Several internal fields are intentionally omitted from the API surface because the same information is exposed via the corresponding signals (``rbf``, ``witness_present``, ``bip69_outputs_sorted``, ``exchange_input_overlap``) and on-chain edge collections (``input_addresses_canon``, ``change_addresses_canon``, ``parent_tx_hashes``, ``utxo_parent_indexes``). Surface them here if a consumer needs the per-tx booleans alongside the comparison verdict.
     """ # noqa: E501
-    tx_hash: Annotated[str, Field(strict=True, max_length=128)]
-    network: Annotated[str, Field(strict=True, max_length=32)]
-    __properties: ClassVar[List[str]] = ["tx_hash", "network"]
+    input_script_types: Optional[List[StrictStr]] = None
+    output_script_types: Optional[List[StrictStr]] = None
+    n_inputs: StrictInt
+    n_outputs: StrictInt
+    total_input_sat: StrictInt
+    total_output_sat: StrictInt
+    fee_sat: Optional[StrictInt] = None
+    tx_version: Optional[StrictInt] = None
+    locktime: Optional[StrictInt] = None
+    input_cluster_ids: Optional[List[StrictInt]] = None
+    coinjoin_detected: Optional[StrictBool] = False
+    coinjoin_protocol: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["input_script_types", "output_script_types", "n_inputs", "n_outputs", "total_input_sat", "total_output_sat", "fee_sat", "tx_version", "locktime", "input_cluster_ids", "coinjoin_detected", "coinjoin_protocol"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -47,7 +56,7 @@ class GraphTxRef(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a JSON string"""
+        """Create an instance of GraphTxCharacteristics from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,11 +77,12 @@ class GraphTxRef(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GraphTxRef from a dict"""
+        """Create an instance of GraphTxCharacteristics from a dict"""
         if obj is None:
             return None
 
@@ -80,8 +90,18 @@ class GraphTxRef(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "tx_hash": obj.get("tx_hash"),
-            "network": obj.get("network")
+            "input_script_types": obj.get("input_script_types"),
+            "output_script_types": obj.get("output_script_types"),
+            "n_inputs": obj.get("n_inputs"),
+            "n_outputs": obj.get("n_outputs"),
+            "total_input_sat": obj.get("total_input_sat"),
+            "total_output_sat": obj.get("total_output_sat"),
+            "fee_sat": obj.get("fee_sat"),
+            "tx_version": obj.get("tx_version"),
+            "locktime": obj.get("locktime"),
+            "input_cluster_ids": obj.get("input_cluster_ids"),
+            "coinjoin_detected": obj.get("coinjoin_detected") if obj.get("coinjoin_detected") is not None else False,
+            "coinjoin_protocol": obj.get("coinjoin_protocol")
         })
         return _obj
 

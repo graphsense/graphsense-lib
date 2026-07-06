@@ -269,6 +269,25 @@ def cannonicalize_address(currency: str, address: str) -> str:
         )
 
 
+def canonical_tx_hash(tx_hash: str) -> str:
+    """Canonical spelling of a tx hash: lowercase, no 0x prefix. The fetch
+    layer stores and returns lowercase hex, so every dedup key and index
+    map must use this form or spellings drift apart."""
+    return tx_hash.lower().removeprefix("0x")
+
+
+def dedup_refs(refs, key):
+    """Order-preserving dedup of refs by key(ref)."""
+    seen = set()
+    out = []
+    for r in refs:
+        k = key(r)
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
 async def try_get_cluster_id(
     db: DatabaseProtocol, network: str, address: str, cache=None
 ) -> Optional[int]:

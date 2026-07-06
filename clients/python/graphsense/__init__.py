@@ -52,8 +52,6 @@ __all__ = [
     "ClusterAddresses",
     "CoinJoinConsensus",
     "CoinJoinHeuristics",
-    "ComparisonSignal",
-    "ComparisonVerdict",
     "Concept",
     "ConsensusEntry",
     "CurrencyStats",
@@ -66,8 +64,15 @@ __all__ = [
     "GraphAddressRef",
     "GraphAddressSummary",
     "GraphCompareRequest",
+    "GraphCompareSignal",
+    "GraphCompareVerdict",
+    "GraphComparedTx",
+    "GraphComparison",
+    "GraphLineageEdge",
+    "GraphNote",
     "GraphSummary",
     "GraphSummaryRequest",
+    "GraphTxCharacteristics",
     "GraphTxNetworkSummary",
     "GraphTxOverall",
     "GraphTxRef",
@@ -76,7 +81,6 @@ __all__ = [
     "JoinMarketHeuristic",
     "LabelSummary",
     "LabeledItemRef",
-    "LineageEdge",
     "Link",
     "LinkUtxo",
     "Links",
@@ -109,11 +113,8 @@ __all__ = [
     "Taxonomy",
     "TokenConfig",
     "TokenConfigs",
-    "TransactionComparison",
     "Tx",
     "TxAccount",
-    "TxCharacteristics",
-    "TxComparedItem",
     "TxRef",
     "TxSummary",
     "TxUtxo",
@@ -172,8 +173,6 @@ from graphsense.models.cluster import Cluster as Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses as ClusterAddresses
 from graphsense.models.coin_join_consensus import CoinJoinConsensus as CoinJoinConsensus
 from graphsense.models.coin_join_heuristics import CoinJoinHeuristics as CoinJoinHeuristics
-from graphsense.models.comparison_signal import ComparisonSignal as ComparisonSignal
-from graphsense.models.comparison_verdict import ComparisonVerdict as ComparisonVerdict
 from graphsense.models.concept import Concept as Concept
 from graphsense.models.consensus_entry import ConsensusEntry as ConsensusEntry
 from graphsense.models.currency_stats import CurrencyStats as CurrencyStats
@@ -186,8 +185,15 @@ from graphsense.models.graph_address_overall import GraphAddressOverall as Graph
 from graphsense.models.graph_address_ref import GraphAddressRef as GraphAddressRef
 from graphsense.models.graph_address_summary import GraphAddressSummary as GraphAddressSummary
 from graphsense.models.graph_compare_request import GraphCompareRequest as GraphCompareRequest
+from graphsense.models.graph_compare_signal import GraphCompareSignal as GraphCompareSignal
+from graphsense.models.graph_compare_verdict import GraphCompareVerdict as GraphCompareVerdict
+from graphsense.models.graph_compared_tx import GraphComparedTx as GraphComparedTx
+from graphsense.models.graph_comparison import GraphComparison as GraphComparison
+from graphsense.models.graph_lineage_edge import GraphLineageEdge as GraphLineageEdge
+from graphsense.models.graph_note import GraphNote as GraphNote
 from graphsense.models.graph_summary import GraphSummary as GraphSummary
 from graphsense.models.graph_summary_request import GraphSummaryRequest as GraphSummaryRequest
+from graphsense.models.graph_tx_characteristics import GraphTxCharacteristics as GraphTxCharacteristics
 from graphsense.models.graph_tx_network_summary import GraphTxNetworkSummary as GraphTxNetworkSummary
 from graphsense.models.graph_tx_overall import GraphTxOverall as GraphTxOverall
 from graphsense.models.graph_tx_ref import GraphTxRef as GraphTxRef
@@ -196,7 +202,6 @@ from graphsense.models.http_validation_error import HTTPValidationError as HTTPV
 from graphsense.models.join_market_heuristic import JoinMarketHeuristic as JoinMarketHeuristic
 from graphsense.models.label_summary import LabelSummary as LabelSummary
 from graphsense.models.labeled_item_ref import LabeledItemRef as LabeledItemRef
-from graphsense.models.lineage_edge import LineageEdge as LineageEdge
 from graphsense.models.link import Link as Link
 from graphsense.models.link_utxo import LinkUtxo as LinkUtxo
 from graphsense.models.links import Links as Links
@@ -229,11 +234,8 @@ from graphsense.models.tag_summary import TagSummary as TagSummary
 from graphsense.models.taxonomy import Taxonomy as Taxonomy
 from graphsense.models.token_config import TokenConfig as TokenConfig
 from graphsense.models.token_configs import TokenConfigs as TokenConfigs
-from graphsense.models.transaction_comparison import TransactionComparison as TransactionComparison
 from graphsense.models.tx import Tx as Tx
 from graphsense.models.tx_account import TxAccount as TxAccount
-from graphsense.models.tx_characteristics import TxCharacteristics as TxCharacteristics
-from graphsense.models.tx_compared_item import TxComparedItem as TxComparedItem
 from graphsense.models.tx_ref import TxRef as TxRef
 from graphsense.models.tx_summary import TxSummary as TxSummary
 from graphsense.models.tx_utxo import TxUtxo as TxUtxo

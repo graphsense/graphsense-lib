@@ -144,15 +144,15 @@ from graphsenselib.web.models import (
     TxValue,
     Values,
 )
-from graphsenselib.web.models.compare import (
-    ComparisonSignal,
-    ComparisonVerdict,
-    LineageEdge,
-    TransactionComparison,
-    TxCharacteristics,
-    TxComparedItem,
+from graphsenselib.web.models.graph import (
+    GraphCompareSignal,
+    GraphCompareVerdict,
+    GraphComparedTx,
+    GraphComparison,
+    GraphLineageEdge,
+    GraphSummary,
+    GraphTxCharacteristics,
 )
-from graphsenselib.web.models.graph import GraphSummary
 from graphsenselib.web.models.heuristics import (
     AddressOutput as ApiHeuristicAddressOutput,
 )
@@ -717,10 +717,10 @@ def pydantic_to_openapi(pydantic_obj: Any) -> Any:
 def to_api_transaction_comparison(
     pydantic_cmp: PydanticTransactionComparison,
 ):
-    """Convert service-layer TransactionComparisonInternal to API TransactionComparison.
+    """Convert service-layer TransactionComparisonInternal to API GraphComparison.
 
-    ``TxCharacteristics`` is built explicitly (script-type lists are sorted
-    for stable output); other sub-models map field-for-field.
+    ``GraphTxCharacteristics`` is built explicitly (script-type lists are
+    sorted for stable output); other sub-models map field-for-field.
     """
     items: list = []
     for item in pydantic_cmp.txs:
@@ -730,7 +730,7 @@ def to_api_transaction_comparison(
         characteristics = None
         if item.characteristics is not None:
             c = item.characteristics
-            characteristics = TxCharacteristics(
+            characteristics = GraphTxCharacteristics(
                 input_script_types=sorted(c.inputs_script_types),
                 output_script_types=sorted(c.outputs_script_types),
                 n_inputs=c.n_inputs,
@@ -745,7 +745,7 @@ def to_api_transaction_comparison(
                 coinjoin_protocol=c.coinjoin_protocol,
             )
         items.append(
-            TxComparedItem(
+            GraphComparedTx(
                 tx_hash=item.tx_hash,
                 network=item.network,
                 characteristics=characteristics,
@@ -753,17 +753,26 @@ def to_api_transaction_comparison(
             )
         )
 
-    return TransactionComparison(
+    return GraphComparison(
         txs=items,
-        signals=[
-            ComparisonSignal.model_validate(s.model_dump())
-            for s in pydantic_cmp.signals
-        ],
-        lineage=[
-            LineageEdge.model_validate(e.model_dump()) for e in pydantic_cmp.lineage
-        ],
+        signals=(
+            [
+                GraphCompareSignal.model_validate(s.model_dump())
+                for s in pydantic_cmp.signals
+            ]
+            if pydantic_cmp.signals is not None
+            else None
+        ),
+        lineage=(
+            [
+                GraphLineageEdge.model_validate(e.model_dump())
+                for e in pydantic_cmp.lineage
+            ]
+            if pydantic_cmp.lineage is not None
+            else None
+        ),
         verdict=(
-            ComparisonVerdict.model_validate(pydantic_cmp.verdict.model_dump())
+            GraphCompareVerdict.model_validate(pydantic_cmp.verdict.model_dump())
             if pydantic_cmp.verdict is not None
             else None
         ),

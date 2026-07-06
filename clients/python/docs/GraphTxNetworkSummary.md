@@ -16,7 +16,7 @@ Name | Type | Description | Notes
 **block_max** | **int** |  | 
 **timestamp_min** | **int** |  | 
 **timestamp_max** | **int** |  | 
-**notes** | **List[str]** |  | [optional] 
+**notes** | [**List[GraphNote]**](GraphNote.md) |  | [optional] 
 
 ## Example
 

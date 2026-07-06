@@ -8,12 +8,13 @@ endpoint (added separately) runs the BTC-only fingerprinting analysis.
 
 from fastapi import APIRouter, Depends, Request
 
+from graphsenselib.db.asynchronous.services.models import MAX_GRAPH_NODES
 from graphsenselib.web.service import ServiceContext
 from graphsenselib.web.models import (
     GraphCompareRequest,
+    GraphComparison,
     GraphSummary,
     GraphSummaryRequest,
-    TransactionComparison,
 )
 from graphsenselib.web.routes.base import PluginRoute, get_ctx
 import graphsenselib.web.service.graph_service as service
@@ -32,7 +33,7 @@ router = APIRouter(route_class=PluginRoute)
         "per-network block (native base-unit values via the Values pattern) "
         "per network in the request. Each block is present iff the request "
         "carried that node type. Each non-empty list must hold at least 2 "
-        "distinct entries; together they may hold at most 100."
+        f"distinct entries; together they may hold at most {MAX_GRAPH_NODES}."
     ),
     operation_id="graph_summary",
     response_model=GraphSummary,
@@ -41,8 +42,7 @@ router = APIRouter(route_class=PluginRoute)
         400: {
             "description": (
                 "Invalid request (each non-empty list needs at least 2 "
-                "distinct entries, at most 100 nodes combined, networks "
-                "must be supported)."
+                "distinct entries, networks must be supported)."
             )
         },
         404: {"description": "One of the transactions or addresses was not found."},
@@ -68,12 +68,14 @@ async def graph_summary(
         "stats over a node set use POST /graph/summary instead."
     ),
     operation_id="graph_compare",
-    response_model=TransactionComparison,
+    response_model=GraphComparison,
     response_model_exclude_none=True,
     responses={
         400: {
             "description": (
-                "Invalid request (need 2+ distinct tx refs, or a non-BTC network)."
+                "Invalid request (need 2+ distinct tx refs, a non-BTC network, "
+                "or a transaction set whose combined inputs/outputs exceed "
+                "the comparison work limit)."
             )
         },
         404: {"description": "One of the transactions was not found."},

@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
 from graphsense.models.graph_compare_request import GraphCompareRequest
+from graphsense.models.graph_comparison import GraphComparison
 from graphsense.models.graph_summary import GraphSummary
 from graphsense.models.graph_summary_request import GraphSummaryRequest
-from graphsense.models.transaction_comparison import TransactionComparison
 
 from graphsense.api_client import ApiClient, RequestSerialized
 from graphsense.api_response import ApiResponse
@@ -142,7 +142,7 @@ class GraphApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> TransactionComparison:
+    ) -> GraphComparison:
         """Compare multiple transactions
 
         Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead.
@@ -180,7 +180,7 @@ class GraphApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "TransactionComparison",
+            '200': "GraphComparison",
             '400': None,
             '404': None,
             '422': "HTTPValidationError",
@@ -212,7 +212,7 @@ class GraphApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[TransactionComparison]:
+    ) -> ApiResponse[GraphComparison]:
         """Compare multiple transactions
 
         Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead.
@@ -250,7 +250,7 @@ class GraphApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "TransactionComparison",
+            '200': "GraphComparison",
             '400': None,
             '404': None,
             '422': "HTTPValidationError",
@@ -320,7 +320,7 @@ class GraphApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "TransactionComparison",
+            '200': "GraphComparison",
             '400': None,
             '404': None,
             '422': "HTTPValidationError",

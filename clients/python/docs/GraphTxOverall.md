@@ -1,6 +1,6 @@
 # GraphTxOverall
 
-Network-agnostic rollup over all transactions in the set: fiat and timestamps only, since base units and block heights are not comparable across chains. Per-network notes carry their network as prefix.
+Network-agnostic rollup over all transactions in the set: fiat and timestamps only, since base units and block heights are not comparable across chains. Per-network notes carry their source network in ``network``.
 
 ## Properties
 
@@ -10,7 +10,7 @@ Name | Type | Description | Notes
 **total_value_fiat** | [**List[Rate]**](Rate.md) |  | [optional] 
 **timestamp_min** | **int** |  | 
 **timestamp_max** | **int** |  | 
-**notes** | **List[str]** |  | [optional] 
+**notes** | [**List[GraphNote]**](GraphNote.md) |  | [optional] 
 
 ## Example
 

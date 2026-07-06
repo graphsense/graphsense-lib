@@ -1,3 +1,5 @@
+from typing import get_args
+
 from graphsenselib.db.asynchronous.services.comparison_service import (
     compare_txs as _db_compare_txs,
 )
@@ -9,13 +11,15 @@ from graphsenselib.db.asynchronous.services.models import (
     TxRefInternal,
 )
 from graphsenselib.errors import BadUserInputException
+from graphsenselib.web.models.graph import CompareComponent
 from graphsenselib.web.translators import (
     to_api_graph_summary,
     to_api_transaction_comparison,
 )
 
-# Response components selectable via the compare ``include`` list.
-_COMPARE_COMPONENTS = ("characteristics", "details", "signals", "lineage", "verdict")
+# Response components selectable via the compare ``include`` list, derived
+# from the request model's Literal so the two cannot drift.
+_COMPARE_COMPONENTS = get_args(CompareComponent)
 
 
 def _expand_include(include: list[str]) -> set[str]:

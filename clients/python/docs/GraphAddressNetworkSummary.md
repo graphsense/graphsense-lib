@@ -15,7 +15,7 @@ Name | Type | Description | Notes
 **last_usage** | **int** |  | [optional] 
 **tagged_address_count** | **int** |  | [optional] [default to 0]
 **actors** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | [optional] 
-**notes** | **List[str]** |  | [optional] 
+**notes** | [**List[GraphNote]**](GraphNote.md) |  | [optional] 
 
 ## Example
 
