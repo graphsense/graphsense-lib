@@ -1,6 +1,7 @@
 import click
 
 from .accountsetl import convert_etl_to_ingestable_logs
+from .address_scan.cli import scan_for_addresses_cmd
 from .gs_files.cli import gs_files_cli
 
 
@@ -16,6 +17,11 @@ def convert():
 
 
 convert.add_command(gs_files_cli)
+convert.add_command(scan_for_addresses_cmd)
+
+# `file` is an alias for the `convert` group so the file tools can also be
+# reached as `graphsense-cli file ...` (the commands here operate on files).
+convert_cli.add_command(convert, name="file")
 
 
 @convert.command("log-to-ingestable-log")

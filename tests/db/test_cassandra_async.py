@@ -281,6 +281,109 @@ class TestFallbackToLocalOneOnReadTimeout:
         assert result[1] is None or result[1] != ConsistencyLevel.LOCAL_ONE
 
 
+# ---------------------------------------------------------------------------
+# list_txs_by_ids_eth: missing tx-id mappings
+#
+# While the delta-updater persists a batch, address_transactions rows can be
+# visible before the matching transaction_ids_by_transaction_id_group row
+# (data writes are sharded without cross-table ordering; summary statistics
+# commit strictly afterwards). Such in-flight txs always lie above the last
+# committed block and must be tolerated (dropped, aligned with None
+# placeholders); misses at or below it are real inconsistencies and raise.
+# Regression for a prod 500: `TypeError: 'NoneType' object is not
+# subscriptable` on /eth/addresses/<a>/txs?direction=out&order=desc.
+# ---------------------------------------------------------------------------
+
+import logging  # noqa: E402
+
+from graphsenselib.errors import DBInconsistencyException  # noqa: E402
+from graphsenselib.utils.account import get_tx_id  # noqa: E402
+
+
+class _FakeTxIdDb:
+    """Stand-in providing only what list_txs_by_ids_eth touches."""
+
+    list_txs_by_ids_eth = Cassandra.list_txs_by_ids_eth
+    _check_unresolvable_tx_ids_tolerable = (
+        Cassandra._check_unresolvable_tx_ids_tolerable
+    )
+
+    def __init__(self, tx_hash_by_id, last_committed_block):
+        self._tx_hash_by_id = tx_hash_by_id
+        self._no_blocks = last_committed_block + 1
+        self.logger = logging.getLogger("test")
+
+    def get_tx_id_group(self, currency, id_):
+        return id_ // 10_000
+
+    async def concurrent_with_args(
+        self, currency, keyspace, statement, params, filter_empty=True
+    ):
+        assert not filter_empty
+        return [
+            {"transaction": self._tx_hash_by_id[tx_id]}
+            if tx_id in self._tx_hash_by_id
+            else None
+            for _, tx_id in params
+        ]
+
+    async def get_currency_statistics(self, currency):
+        return {"no_blocks": self._no_blocks}
+
+    async def list_txs_by_hashes(self, currency, hashes, include_token_txs=False):
+        txs = []
+        for h in hashes:
+            txs.append({"tx_hash": h})
+            if include_token_txs:
+                txs.append({"tx_hash": h, "type": "erc20"})
+        return txs
+
+
+async def test_all_tx_ids_resolvable_returns_aligned_txs():
+    ids = [get_tx_id(100, 0), get_tx_id(100, 1)]
+    db = _FakeTxIdDb(
+        {ids[0]: b"aa", ids[1]: b"bb"},
+        last_committed_block=100,
+    )
+    result = await db.list_txs_by_ids_eth("eth", ids)
+    assert [tx["tx_hash"] for tx in result] == [b"aa", b"bb"]
+
+
+async def test_miss_above_last_committed_block_is_dropped_with_placeholder():
+    resolvable = get_tx_id(100, 0)
+    in_flight = get_tx_id(101, 3)  # above last committed block 100
+    db = _FakeTxIdDb({resolvable: b"aa"}, last_committed_block=100)
+
+    result = await db.list_txs_by_ids_eth("eth", [resolvable, in_flight])
+
+    # alignment with ids must survive: callers zip ids with the result
+    assert result == [{"tx_hash": b"aa"}, None]
+
+
+async def test_miss_at_or_below_last_committed_block_raises():
+    resolvable = get_tx_id(100, 0)
+    stale = get_tx_id(99, 1)  # below last committed block -> inconsistency
+    db = _FakeTxIdDb({resolvable: b"aa"}, last_committed_block=100)
+
+    with pytest.raises(DBInconsistencyException):
+        await db.list_txs_by_ids_eth("eth", [resolvable, stale])
+
+
+async def test_tolerated_miss_with_token_txs_drops_without_placeholder():
+    # with include_token_txs the result interleaves token txs and is never
+    # positionally aligned with ids, so no placeholders are inserted
+    resolvable = get_tx_id(100, 0)
+    in_flight = get_tx_id(101, 0)
+    db = _FakeTxIdDb({resolvable: b"aa"}, last_committed_block=100)
+
+    result = await db.list_txs_by_ids_eth(
+        "eth", [resolvable, in_flight], include_token_txs=True
+    )
+
+    assert None not in result
+    assert [tx["tx_hash"] for tx in result] == [b"aa", b"aa"]
+
+
 class TestFallbackToLocalOneInheritedBehavior:
     def test_write_timeout_path_is_inherited_unchanged(self):
         # The web reader is read-only, but if a write ever flows through

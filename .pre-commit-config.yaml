@@ -74,6 +74,12 @@ repos:
         language: system
         pass_filenames: false
         files: ^src/graphsenselib/convert/gs_files/|^clients/python/graphsense/gs_files/|^clients/python/scripts/sync_gs_files\.py$
+    -   id: sync-address-scan
+        name: Sync address_scan into the python client
+        entry: make -C clients/python sync-address-scan
+        language: system
+        pass_filenames: false
+        files: ^src/graphsenselib/convert/address_scan/|^clients/python/graphsense/address_scan/|^clients/python/scripts/sync_address_scan\.py$
     -   id: ensure-env
         name: Ensure UV environment is ready
         entry: uv sync --dev --all-packages --all-extras

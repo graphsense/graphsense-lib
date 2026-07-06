@@ -740,12 +740,31 @@ def validate_trx_address(address: str) -> bool:
     return base58_check_validate(address)
 
 
+def validate_xrp_address(address: str) -> bool:
+    """Validate an XRP classic (r...) address.
+
+    XRP uses base58check with the same SHA256d checksum as Bitcoin but a
+    different alphabet (the "ripple" dictionary), so we decode against that
+    alphabet and let ``b58decode_check`` verify the 4-byte checksum.
+    """
+    if not address or not address.startswith("r"):
+        return False
+
+    import base58
+
+    try:
+        base58.b58decode_check(address, alphabet=base58.RIPPLE_ALPHABET)
+        return True
+    except Exception:
+        return False
+
+
 def validate_address(currency: str, address: str) -> bool:
     """
     Validate cryptocurrency address for the given currency.
 
     Args:
-        currency: Currency code (btc, bch, ltc, zec, eth, trx)
+        currency: Currency code (btc, bch, ltc, zec, eth, trx, xrp)
         address: Address to validate
 
     Returns:
@@ -763,6 +782,7 @@ def validate_address(currency: str, address: str) -> bool:
         "zec": validate_zec_address,
         "eth": validate_eth_address,
         "trx": validate_trx_address,
+        "xrp": validate_xrp_address,
     }
 
     validator = validation_functions.get(currency)

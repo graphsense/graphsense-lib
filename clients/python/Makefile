@@ -53,6 +53,17 @@ sync-gs-files:
 check-gs-files:
 	uv run python scripts/sync_gs_files.py --check
 
+# Vendor src/graphsenselib/convert/address_scan into graphsense/address_scan.
+# Rewrites the two graphsenselib imports so the client stays standalone
+# (validators -> vendored stdlib-only module, lzw_unpack -> graphsense.gs_files).
+# cli.py is excluded — the client has its own CLI in graphsense/cli/scan.py.
+sync-address-scan:
+	uv run python scripts/sync_address_scan.py
+
+# Drift check used by pre-commit / CI.
+check-address-scan:
+	uv run python scripts/sync_address_scan.py --check
+
 # Offline regression tests for graphsense.ext and the gs CLI.
 test:
 	uv run --extra cli pytest tests/ -q
@@ -79,4 +90,4 @@ type-check:
 run-examples:
 	API_KEY=$(API_KEY) uv run --with pypandoc test_examples.py
 
-.PHONY: generate-openapi-client test-compat test test-ci lint format type-check run-examples sync-gs-files check-gs-files
+.PHONY: generate-openapi-client test-compat test test-ci lint format type-check run-examples sync-gs-files check-gs-files sync-address-scan check-address-scan

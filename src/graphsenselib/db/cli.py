@@ -19,7 +19,6 @@ from ..utils.accountmodel import hex_str_to_bytes, hex_to_bytes, is_hex_string, 
 from ..utils.console import console
 from ..utils.defi import get_pair_from_decoded_log, get_token_details
 from ..utils.generic import batch
-from ..utils.multiprocessing import MPCounter
 from .factory import DbFactory
 from .trace import trace as trace_it
 
@@ -239,21 +238,17 @@ def get_dex(
             f"The database already holds {nblks} blocks, {npairs} pairs, and {ntokens} tokens"
         )
 
-        def reader(task_queue, result_queue, rc):
-            rc.increment()
+        def reader(task_queue, result_queue):
             with DbFactory().from_config(env, currency) as db:
                 while True:
                     blockrange = task_queue.get()
                     tokens = set()
                     pairs = set()
+                    failed = set()
                     if blockrange is None:  # Sentinel value to stop the worker
-                        rc.decrement()
-                        if rc.value() == 0:
-                            logger.info("Last reader down sending None to writer.")
-                            result_queue.put(None)
                         break
-                    try:
-                        for block in blockrange:
+                    for block in blockrange:
+                        try:
                             for dlog, log in decode_logs_db(
                                 db.raw.get_logs_in_block(block),
                                 log_signatures_local=signatureDb,
@@ -263,31 +258,26 @@ def get_dex(
                                 tokens.add(pair.t0)
                                 tokens.add(pair.t1)
                                 pairs.add((block, pair))
+                        except Exception as e:
+                            logger.error(f"Failed to process block {block}: {e}")
+                            failed.add(block)
 
-                        logger.info(
-                            f"Found {len(pairs)} new pairs in range {blockrange[0]}"
-                        )
+                    logger.info(
+                        f"Found {len(pairs)} new pairs in range {blockrange[0]}"
+                    )
 
-                        result_queue.put((blockrange, pairs, tokens))
-
-                    except Exception as e:
-                        logger.error(str(e))
-                        # result_queue.put(str(e))
-                        rc.decrement()
-                        if rc.value() == 0:
-                            result_queue.put(None)
-                        break
+                    result_queue.put((blockrange, pairs, tokens, failed))
 
         def writer(results_queue, output_name):
             with shelve.open(output_name) as dex_db:
                 while True:
                     data = results_queue.get()
                     if data is None:
-                        logger.log("Got None, writer out.")
+                        logger.info("Got None, writer out.")
                         break
                     else:
                         try:
-                            btch, pairs, tokens = data
+                            btch, pairs, tokens, failed = data
 
                             for block, pair in pairs:
                                 dex_db[f"p_{pair.get_id()}"] = (block, pair)
@@ -303,21 +293,23 @@ def get_dex(
                             for t in tokens_to_fetch:
                                 dex_db[f"t_{t}"] = get_token_details(rpc, t)
 
-                            logger.info("Marking batch blocks as done")
+                            # Skip failed blocks so a later run retries them.
+                            logger.info(
+                                f"Marking batch blocks as done "
+                                f"({len(failed)} failed, left for retry)"
+                            )
                             for block in btch:
-                                dex_db[f"blk_{block}"] = True
+                                if block not in failed:
+                                    dex_db[f"blk_{block}"] = True
                         except Exception as e:
                             logger.error(str(e))
 
         task_queue = Queue()
         result_queue = Queue()
-        reader_count = MPCounter()
         readers = []
 
         for _ in range(n_workers):
-            worker_process = Process(
-                target=reader, args=(task_queue, result_queue, reader_count)
-            )
+            worker_process = Process(target=reader, args=(task_queue, result_queue))
             worker_process.start()
             readers.append(worker_process)
 
@@ -329,9 +321,21 @@ def get_dex(
             if len(fbtch) > 0:
                 task_queue.put(fbtch)
 
+        # One sentinel per worker so each reader shuts down cleanly once the
+        # queue is drained.
+        for _ in range(n_workers):
+            task_queue.put(None)
+
+        # Join readers while the writer is still consuming, so every reader's
+        # queue feeder thread can flush its buffered results (a reader cannot
+        # exit with unflushed items once the pipe is full). Only signal the
+        # writer to stop afterwards: readers must not send the sentinel
+        # themselves, because queue ordering across processes is not FIFO and
+        # the sentinel could overtake another reader's pending batch.
         for worker_process in readers:
             worker_process.join()
 
+        result_queue.put(None)
         writer.join()
 
     else:

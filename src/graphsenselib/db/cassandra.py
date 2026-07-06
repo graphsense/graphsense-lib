@@ -23,6 +23,7 @@ from cassandra.policies import (
 )
 from cassandra.cluster import NoHostAvailable
 from cassandra import OperationTimedOut, ReadTimeout, WriteTimeout
+from cassandra.segment import CrcException
 
 from cassandra.query import (
     UNSET_VALUE,
@@ -41,7 +42,17 @@ DEFAULT_SERIAL_CONSISTENCY_LEVEL = "LOCAL_SERIAL"
 # Transient driver errors that indicate a temporary cluster-wide stall (e.g.
 # nodes starved of CPU by a concurrent Spark run) rather than a permanent fault.
 # Safe to ride out with application-level backoff on the calling thread.
-TRANSIENT_DB_ERRORS = (NoHostAvailable, OperationTimedOut, ReadTimeout, WriteTimeout)
+# CrcException is the client-side protocol-v5 segment checksum failure
+# (CASSANDRA-19971): the driver defuncts the affected connection, so the retry
+# runs on a fresh one and typically succeeds immediately. Retrying it here is
+# no more ambiguous than the existing WriteTimeout retry.
+TRANSIENT_DB_ERRORS = (
+    NoHostAvailable,
+    OperationTimedOut,
+    ReadTimeout,
+    WriteTimeout,
+    CrcException,
+)
 
 # Application-level ride-out backoff for synchronous reads. The backoff sleeps on
 # the calling thread (never the driver reactor) so connection heartbeats keep
@@ -577,6 +588,15 @@ class CassandraDb:
         stmt = SimpleStatement(cql_query_str, fetch_size=None, keyspace=keyspace)
         if fetch_size is not None:
             stmt.fetch_size = fetch_size
+
+        # The statement-level keyspace above is only sent on protocol v5+; on
+        # older versions the driver drops it silently and bare table names
+        # would resolve against the session keyspace. Switch the session
+        # keyspace as well so the query targets the right keyspace regardless
+        # of the negotiated protocol version.
+        if keyspace is not None and self.get_keyspace() != keyspace:
+            with self.on_keyspace(keyspace):
+                return self._execute_with_backoff(stmt)
 
         return self._execute_with_backoff(stmt)
 

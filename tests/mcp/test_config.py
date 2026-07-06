@@ -70,6 +70,32 @@ def test_bundled_instructions_loaded_by_default(monkeypatch):
     assert "https://app.iknaio.com/pathfinder" in text
 
 
+def test_open_url_instructions_stripped_by_default(monkeypatch):
+    """The open-in-Pathfinder paragraph in the bundled instructions is
+    feature-gated: with the flag off (default) neither the paragraph nor
+    the HTML marker comments may reach the client."""
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS_FILE", raising=False)
+    monkeypatch.delenv("GS_MCP_PATHFINDER_OPEN_URL_ENABLED", raising=False)
+
+    text = GSMCPConfig().resolved_instructions()
+    assert text is not None
+    assert "open_url" not in text
+    assert "feature:pathfinder-open-url" not in text
+
+
+def test_open_url_instructions_kept_when_enabled(monkeypatch):
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS", raising=False)
+    monkeypatch.delenv("GS_MCP_INSTRUCTIONS_FILE", raising=False)
+    monkeypatch.setenv("GS_MCP_PATHFINDER_OPEN_URL_ENABLED", "true")
+
+    text = GSMCPConfig().resolved_instructions()
+    assert text is not None
+    assert "open_url" in text
+    # Markers themselves are stripped either way.
+    assert "feature:pathfinder-open-url" not in text
+
+
 def test_instructions_explicit_override_wins(monkeypatch):
     monkeypatch.setenv("GS_MCP_INSTRUCTIONS", "Custom system prompt.")
     cfg = GSMCPConfig()

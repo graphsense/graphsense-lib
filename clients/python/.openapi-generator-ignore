@@ -41,6 +41,7 @@ templates/*
 graphsense/ext/*
 graphsense/cli/*
 graphsense/gs_files/*
+graphsense/address_scan/*
 tests/*
 docs/cli/*
 docs/ext/*

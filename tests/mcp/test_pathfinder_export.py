@@ -841,6 +841,96 @@ async def test_embed_resource_false_still_embeds_when_link_unavailable(
     _text(call_result)
 
 
+async def test_open_url_present_with_file_store_and_base_url(
+    make_file_store, monkeypatch
+) -> None:
+    """With a file store AND a pathfinder base URL on app.state (set by
+    mcp/server.py:build_mcp), the tool returns an open_url deep link
+    carrying the store token as the `?import=` id — the dashboard fetches
+    `<REST>/download/<id>` itself."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
+        lambda: None,
+    )
+    store = make_file_store()
+    app = _app_with_store(store)
+    app.state._graphsense_mcp_pathfinder_base_url = "https://app.iknaio.com"
+    call_result = await _call(_mcp(app), _MINIMAL_SPEC)
+
+    structured = _structured(call_result)
+    open_url = structured["open_url"]
+    assert open_url is not None
+    token = open_url.rsplit("=", 1)[-1]
+    assert open_url == f"https://app.iknaio.com/pathfinder?import={token}"
+    assert token in store.files
+    # The text fallback should carry the open link verbatim.
+    assert open_url in _text(call_result).text
+
+
+async def test_open_url_absent_without_base_url(make_file_store, monkeypatch) -> None:
+    """A file store alone is not enough — without the pathfinder base URL
+    on app.state (feature flag off, or standalone tool registration) the
+    structured content carries no open_url key at all."""
+    monkeypatch.setattr(
+        "graphsenselib.mcp.tools.pathfinder_export.get_http_request",
+        lambda: None,
+    )
+    store = make_file_store()
+    call_result = await _call(_mcp(_app_with_store(store)), _MINIMAL_SPEC)
+    structured = _structured(call_result)
+    assert "open_url" not in structured
+    assert structured["download_url"] is not None
+
+
+async def test_open_url_absent_without_file_store() -> None:
+    """No file store means no token, so no open link either."""
+    app = FastAPI()
+    app.state._graphsense_mcp_pathfinder_base_url = "https://app.iknaio.com"
+    call_result = await _call(_mcp(app), _MINIMAL_SPEC)
+    assert _structured(call_result)["open_url"] is None
+
+
+async def test_open_url_survives_download_link_failure(make_file_store) -> None:
+    """open_url only needs the store token + base URL, not url_for — when
+    link building fails (no HTTP request context) the open link must
+    still be returned even though download_url is null."""
+    store = make_file_store()
+    app = _app_with_store(store)
+    app.state._graphsense_mcp_pathfinder_base_url = "https://app.iknaio.com"
+    # get_http_request() is NOT monkeypatched: in the in-memory client it
+    # raises, so url_for fails and download_url stays null.
+    call_result = await _call(_mcp(app), _MINIMAL_SPEC)
+
+    structured = _structured(call_result)
+    assert structured["download_url"] is None
+    assert structured["open_url"] is not None
+    assert structured["open_url"].startswith(
+        "https://app.iknaio.com/pathfinder?import="
+    )
+
+
+async def _tool_description(mcp: FastMCP) -> str:
+    async with Client(mcp) as c:
+        tools = {t.name: t for t in await c.list_tools()}
+    return tools["build_pathfinder_file"].description or ""
+
+
+async def test_open_url_advertised_only_when_enabled(make_file_store) -> None:
+    """The tool description mentions open_url only when the feature flag
+    put a base URL on app.state; the [[open-url]] sentinels never leak."""
+    enabled_app = _app_with_store(make_file_store())
+    enabled_app.state._graphsense_mcp_pathfinder_base_url = "https://app.iknaio.com"
+    enabled_desc = await _tool_description(_mcp(enabled_app))
+    assert "open_url" in enabled_desc
+    assert "[[open-url]]" not in enabled_desc and "[[/open-url]]" not in enabled_desc
+
+    disabled_desc = await _tool_description(_mcp())
+    assert "open_url" not in disabled_desc
+    assert "[[open-url]]" not in disabled_desc and "[[/open-url]]" not in disabled_desc
+    # The download_url delivery instructions must survive the stripping.
+    assert "download_url" in disabled_desc
+
+
 async def test_oversize_file_rejected_with_tool_error(make_file_store) -> None:
     """When a file store is configured, a built .gs larger than the cap
     fails hard with a ToolError (the hard size limit)."""

@@ -131,6 +131,13 @@ it). Patterns:
 (`btc`, `eth`, `trx`, …). Don't link cluster ids — they are internal
 and unstable; link the anchor address instead.
 
+<!-- feature:pathfinder-open-url -->
+When you build a graph with `build_pathfinder_file`, the result may
+carry an `open_url` — a deep link that opens the built graph
+directly in Pathfinder. Surface it verbatim; never construct an
+`?import=` link yourself.
+<!-- /feature:pathfinder-open-url -->
+
 ## Misc
 
 - Monetary values are flattened: `{native: N, usd: X, eur: Y, …}`.
