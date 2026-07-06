@@ -1633,10 +1633,10 @@ class UpdateStrategyUtxo(UpdateStrategy):
         this — it harvests the multi-input id sets from the txs it already holds
         and clusters per batch (see :meth:`process_batch_impl_hook`).
         """
-        if not is_fresh_clustering_enabled():
+        if not is_fresh_clustering_enabled(self._currency):
             logger.info(
-                "Fresh clustering disabled "
-                "(GRAPHSENSE_FRESH_CLUSTERING_ENABLED is not true), skipping"
+                f"Fresh clustering disabled for {self._currency} "
+                "(not in GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES), skipping"
             )
             return
 
@@ -1723,7 +1723,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
         # and applied below, before persist_updater_progress advances
         # last_synced_block.
         collect_cluster_inputs = (
-            is_fresh_clustering_enabled() and _check_gs_clustering()
+            is_fresh_clustering_enabled(self._currency) and _check_gs_clustering()
         )
         cluster_inputs: List[List[int]] = []
 

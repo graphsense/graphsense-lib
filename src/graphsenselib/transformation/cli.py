@@ -1463,10 +1463,10 @@ def run_clustering(env, currency, local, read_partitions, end_block):
     from graphsenselib.transformation.clustering import run_clustering_spark
     from graphsenselib.transformation.spark import create_spark_session
 
-    if not is_fresh_clustering_enabled():
+    if not is_fresh_clustering_enabled(currency):
         raise click.ClickException(
-            "Fresh clustering is disabled. Set "
-            "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
+            f"Fresh clustering is disabled for {currency}. Add it to "
+            "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES to enable."
         )
 
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
@@ -1570,10 +1570,10 @@ def recompute_cluster_stats(env, currency, local):
     from graphsenselib.transformation.spark import create_spark_session
     from graphsenselib.utils.locking import create_lock
 
-    if not is_fresh_clustering_enabled():
+    if not is_fresh_clustering_enabled(currency):
         raise click.ClickException(
-            "Fresh clustering is disabled. Set "
-            "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
+            f"Fresh clustering is disabled for {currency}. Add it to "
+            "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES to enable."
         )
 
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")

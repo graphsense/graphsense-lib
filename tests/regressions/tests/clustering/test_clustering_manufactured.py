@@ -28,7 +28,7 @@ Design notes / assumptions (validate on first live run):
     the manufactured addresses must be identity-encoded
     (``to_db_address(a).db_encoding == a``).  The seeder asserts this and fails
     loudly otherwise — pick different addresses if it trips.
-  * ``run_fresh_clustering`` is gated on ``GRAPHSENSE_FRESH_CLUSTERING_ENABLED``;
+  * ``run_fresh_clustering`` is gated on ``GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES``;
     the incremental subprocess inherits the test-process env, same as the
     existing ``test_clustering.py`` incremental step.
 """
@@ -283,7 +283,7 @@ class TestClusteringManufactured:
     def test_oneoff_vs_incremental(self, cassandra_coords, current_venv, monkeypatch):
         # run_fresh_clustering (the incremental subprocess) is gated on this;
         # the spark one-off ignores it.  Set it so subprocesses inherit it.
-        monkeypatch.setenv("GRAPHSENSE_FRESH_CLUSTERING_ENABLED", "true")
+        monkeypatch.setenv("GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES", CURRENCY)
         host, port = cassandra_coords
         raw_ks = "clust_manu_raw"
         tks = "clust_manu_transformed"
@@ -385,7 +385,7 @@ class TestClusteringManufactured:
         (C-D) and the block-5 ``{G,H}`` cluster are excluded — so this fails if
         ``end_block`` does not actually restrict the one-off's read.
         """
-        monkeypatch.setenv("GRAPHSENSE_FRESH_CLUSTERING_ENABLED", "true")
+        monkeypatch.setenv("GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES", CURRENCY)
         host, port = cassandra_coords
         raw_ks = "clust_manu_eb_raw"
         tks = "clust_manu_eb_transformed"

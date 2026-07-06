@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
 
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_ENABLED"
+_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
 
 Values = namedtuple("Values", ["value", "fiat_values"])
 
@@ -120,7 +120,7 @@ def _get(s, entity):
 
 
 def test_degrees_filled_from_legacy_cluster(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(
         stats_rows_by_id={100: _stats_row(100)},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
@@ -135,7 +135,7 @@ def test_degrees_filled_from_legacy_cluster(monkeypatch):
 
 
 def test_member_sum_fallback_without_legacy_row(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(
         stats_rows_by_id={100: _stats_row(100)},
         address_rows_by_id={
@@ -156,7 +156,7 @@ def test_member_sum_fallback_without_legacy_row(monkeypatch):
 
 
 def test_fully_pending_row_uses_member_synthesis(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     member = {
         "address_id": 300,
         "cluster_id": 555,
@@ -183,7 +183,7 @@ def test_fully_pending_row_uses_member_synthesis(monkeypatch):
 
 def test_null_degree_columns_also_trigger_hop(monkeypatch):
     # pre-migration keyspace: columns still exist, values null
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(
         stats_rows_by_id={100: _stats_row(100, in_degree=None, out_degree=None)},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},
@@ -195,7 +195,7 @@ def test_null_degree_columns_also_trigger_hop(monkeypatch):
 
 
 def test_full_row_untouched(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     row = _stats_row(100)
     row["in_degree"] = 3
     row["out_degree"] = 4
@@ -210,7 +210,7 @@ def test_full_row_untouched(monkeypatch):
 
 
 def test_no_hop_when_fresh_disabled(monkeypatch):
-    monkeypatch.setenv(_ENV, "false")
+    monkeypatch.setenv(_ENV, "")
     # flag off: the stats source IS the legacy `cluster` table, so the
     # (hypothetical) degrees-null row lives there; no fill must run on it.
     s = _make_self(
@@ -225,7 +225,7 @@ def test_no_hop_when_fresh_disabled(monkeypatch):
 
 
 def test_bulk_heal_mixes_synthesis_and_degree_fill(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(
         stats_rows_by_id={},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},

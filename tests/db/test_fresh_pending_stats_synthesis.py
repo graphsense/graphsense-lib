@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
 
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_ENABLED"
+_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
 
 Values = namedtuple("Values", ["value", "fiat_values"])
 
@@ -124,7 +124,7 @@ _ADDRESSES = {
 
 
 def test_pending_entity_synthesized_from_members(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", 100))
     assert entity["no_addresses"] == 2
@@ -138,7 +138,7 @@ def test_pending_entity_synthesized_from_members(monkeypatch):
 
 
 def test_full_row_served_untouched(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self({200: _FULL_ROW}, {}, {})
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", 200))
     assert entity["total_received"] == Values(500, [50.0, 5.0])
@@ -146,14 +146,14 @@ def test_full_row_served_untouched(monkeypatch):
 
 
 def test_no_synthesis_when_fresh_disabled(monkeypatch):
-    monkeypatch.setenv(_ENV, "false")
+    monkeypatch.setenv(_ENV, "")
     s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", 100))
     assert entity["total_received"] is None
 
 
 def test_bulk_list_heals_only_pending_rows(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
     rows = [dict(_FULL_ROW), dict(_PENDING_ROW)]
     healed = asyncio.run(s._fresh_heal_pending_entities("ltc", rows))
@@ -162,7 +162,7 @@ def test_bulk_list_heals_only_pending_rows(monkeypatch):
 
 
 def test_finish_address_backstop_zero_fills(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self({}, {}, {})
     s.markup_currency = Cassandra.markup_currency.__get__(s)
     s.markup_values = Cassandra.markup_values.__get__(s)

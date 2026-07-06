@@ -140,13 +140,14 @@ FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
 
-def _cluster_stats_table() -> str:
-    """Entity/cluster stats source, switched by GRAPHSENSE_FRESH_CLUSTERING_ENABLED.
+def _cluster_stats_table(currency: str) -> str:
+    """Entity/cluster stats source, switched per currency by
+    GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES.
 
     Fresh: ``fresh_cluster_stats`` (same ``(cluster_id_group, cluster_id)`` key and
     columns as the legacy Scala ``cluster`` table). Legacy: ``cluster``.
     """
-    return "fresh_cluster_stats" if is_fresh_clustering_enabled() else "cluster"
+    return "fresh_cluster_stats" if is_fresh_clustering_enabled(currency) else "cluster"
 
 
 def _fresh_stats_pending(row) -> bool:
@@ -173,14 +174,14 @@ def _fresh_degrees_pending(row) -> bool:
     )
 
 
-def _cluster_addresses_table() -> str:
+def _cluster_addresses_table(currency: str) -> str:
     """Cluster membership source, switched by the same env var.
 
     Fresh: ``fresh_cluster_addresses``. Legacy: the Scala ``cluster_addresses``.
     """
     return (
         "fresh_cluster_addresses"
-        if is_fresh_clustering_enabled()
+        if is_fresh_clustering_enabled(currency)
         else "cluster_addresses"
     )
 
@@ -1944,7 +1945,7 @@ class Cassandra:
             currency, address
         )
 
-        if is_fresh_clustering_enabled():
+        if is_fresh_clustering_enabled(currency):
             # Fresh clustering owns the address->cluster mapping and may assign a
             # different (min-address-id) cluster than the legacy address table.
             # The legacy id can be absent from fresh_cluster_stats, so resolve
@@ -2440,7 +2441,7 @@ class Cassandra:
         entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
         query = (
-            f"SELECT * FROM {_cluster_stats_table()} "
+            f"SELECT * FROM {_cluster_stats_table(currency)} "
             "WHERE cluster_id_group = %s AND cluster_id = %s "
         )
         result = await self.execute_async(
@@ -2448,12 +2449,12 @@ class Cassandra:
         )
         result = one(result)
         if not result:
-            if is_fresh_clustering_enabled():
+            if is_fresh_clustering_enabled(currency):
                 singleton = await self._fresh_singleton_entity(currency, entity)
                 if singleton is not None:
                     return (await self.finish_entities(currency, [singleton]))[0]
             raise ClusterNotFoundException(currency, entity)
-        if is_fresh_clustering_enabled():
+        if is_fresh_clustering_enabled(currency):
             if _fresh_stats_pending(result):
                 result = await self._fresh_entity_from_members(currency, result)
                 if result is None:
@@ -2532,7 +2533,7 @@ class Cassandra:
         cluster_id = row["cluster_id"]
         cluster_id_group = self.get_id_group(currency, cluster_id)
         query = (
-            f"SELECT address_id FROM {_cluster_addresses_table()} "
+            f"SELECT address_id FROM {_cluster_addresses_table(currency)} "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         members = await self.execute_async(
@@ -2606,7 +2607,7 @@ class Cassandra:
             row["out_degree"] = legacy["out_degree"] or 0
             return row
         query = (
-            f"SELECT address_id FROM {_cluster_addresses_table()} "
+            f"SELECT address_id FROM {_cluster_addresses_table(currency)} "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         members = await self.execute_async(
@@ -2678,7 +2679,7 @@ class Cassandra:
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
         paging_state = page_from_hex(page)
         flds = ",".join(fields)
-        query = f"SELECT {flds} FROM {_cluster_stats_table()}"
+        query = f"SELECT {flds} FROM {_cluster_stats_table(currency)}"
         has_ids = isinstance(ids, list)
         if has_ids:
             query += " WHERE cluster_id_group = %s AND cluster_id = %s"
@@ -2686,7 +2687,7 @@ class Cassandra:
             result = await self.concurrent_with_args(
                 currency, "transformed", query, params
             )
-            if is_fresh_clustering_enabled():
+            if is_fresh_clustering_enabled(currency):
                 result = await self._fresh_fill_singleton_entities(
                     currency, ids, result
                 )
@@ -2702,7 +2703,7 @@ class Cassandra:
             paging_state = result.paging_state
             result = result.current_rows
 
-        if is_fresh_clustering_enabled():
+        if is_fresh_clustering_enabled(currency):
             result = await self._fresh_heal_pending_entities(currency, result)
 
         with_txs = "*" in fields or "first_tx_id" in fields or "last_tx_id" in fields
@@ -2716,7 +2717,7 @@ class Cassandra:
         entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
         query = (
-            f"SELECT address_id FROM {_cluster_addresses_table()} "
+            f"SELECT address_id FROM {_cluster_addresses_table(currency)} "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
@@ -2735,7 +2736,7 @@ class Cassandra:
             (self.get_id_group(currency, row["address_id"]), row["address_id"])
             for row in results.current_rows
         ]
-        if not params and page is None and is_fresh_clustering_enabled():
+        if not params and page is None and is_fresh_clustering_enabled(currency):
             # Fresh clustering stores only multi-member clusters, so a cluster
             # id with no membership rows is its own singleton (cluster_id ==
             # address_id). Legacy cluster_addresses had a row for singletons

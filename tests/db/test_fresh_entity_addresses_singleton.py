@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
 
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_ENABLED"
+_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
 
 
 class _MembershipResult:
@@ -60,7 +60,7 @@ def _list(s, entity, page=None):
 
 
 def test_singleton_serves_own_address_when_fresh(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(membership_rows=[], address_rows_by_id={99: {"address_id": 99}})
     addresses, paging = _list(s, 99)
     assert addresses == [{"address_id": 99}]
@@ -69,14 +69,14 @@ def test_singleton_serves_own_address_when_fresh(monkeypatch):
 
 
 def test_unknown_id_stays_empty_when_fresh(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(membership_rows=[], address_rows_by_id={})
     addresses, _ = _list(s, 12345)
     assert addresses == []
 
 
 def test_multi_member_cluster_uses_membership_rows(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(
         membership_rows=[{"address_id": 5}, {"address_id": 8}],
         address_rows_by_id={5: {"address_id": 5}, 8: {"address_id": 8}},
@@ -87,14 +87,14 @@ def test_multi_member_cluster_uses_membership_rows(monkeypatch):
 
 
 def test_no_fallback_when_fresh_disabled(monkeypatch):
-    monkeypatch.setenv(_ENV, "false")
+    monkeypatch.setenv(_ENV, "")
     s = _make_self(membership_rows=[], address_rows_by_id={99: {"address_id": 99}})
     addresses, _ = _list(s, 99)
     assert addresses == []
 
 
 def test_no_fallback_on_continuation_page(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(membership_rows=[], address_rows_by_id={99: {"address_id": 99}})
     addresses, _ = _list(s, 99, page="00ff")
     assert addresses == []

@@ -7,7 +7,7 @@ clusters, so singleton ids have no ``fresh_cluster_stats`` row and
 ``concurrent_with_args`` silently drops them — the bulk response would then be
 missing entities that legacy returned.
 
-With ``GRAPHSENSE_FRESH_CLUSTERING_ENABLED`` on, ``list_entities`` must
+With ``GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES`` on, ``list_entities`` must
 synthesize the one-address entity for each singleton id (mirroring
 ``get_entity``), preserving input order and dropping only genuinely unknown ids.
 
@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 from graphsenselib.db.asynchronous.cassandra import Cassandra
 
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_ENABLED"
+_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
 
 
 def _addr_row(address_id):
@@ -85,7 +85,7 @@ def _make_self(multi_member_ids, known_address_ids):
 
 
 def test_fresh_fills_singletons_in_input_order(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     # 7 is a real multi-member cluster; 3 and 5 are singletons (address rows
     # exist); 99 is genuinely unknown (no cluster, no address).
     s = _make_self(multi_member_ids={7}, known_address_ids={3, 5})

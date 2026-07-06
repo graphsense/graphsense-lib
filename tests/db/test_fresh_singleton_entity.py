@@ -19,7 +19,7 @@ import pytest
 from graphsenselib.db.asynchronous.cassandra import Cassandra
 from graphsenselib.errors.errors import ClusterNotFoundException
 
-_ENV = "GRAPHSENSE_FRESH_CLUSTERING_ENABLED"
+_ENV = "GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES"
 
 _ADDR_ROW = {
     "address_id": 99,
@@ -67,7 +67,7 @@ def _make_self(cluster_stats_row, address_row):
 
 
 def test_get_entity_synthesizes_singleton_when_fresh(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(cluster_stats_row=None, address_row=_ADDR_ROW)
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", 99))
     assert entity["cluster_id"] == 99
@@ -82,14 +82,14 @@ def test_get_entity_synthesizes_singleton_when_fresh(monkeypatch):
 
 
 def test_get_entity_raises_when_no_cluster_and_no_address(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     s = _make_self(cluster_stats_row=None, address_row=None)
     with pytest.raises(ClusterNotFoundException):
         asyncio.run(Cassandra.get_entity(s, "ltc", 99))
 
 
 def test_get_entity_uses_cluster_stats_for_multi_member(monkeypatch):
-    monkeypatch.setenv(_ENV, "true")
+    monkeypatch.setenv(_ENV, "ltc")
     cluster_stats = {"cluster_id": 7, "no_addresses": 5}
     s = _make_self(cluster_stats_row=cluster_stats, address_row=_ADDR_ROW)
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", 7))

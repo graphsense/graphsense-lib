@@ -79,12 +79,19 @@ VALID_CONSISTENCY_LEVELS = {
 VALID_SERIAL_CONSISTENCY_LEVELS = {"SERIAL", "LOCAL_SERIAL"}
 
 
-def is_fresh_clustering_enabled() -> bool:
-    return os.environ.get("GRAPHSENSE_FRESH_CLUSTERING_ENABLED", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+def is_fresh_clustering_enabled(currency: str) -> bool:
+    """Per-currency fresh-clustering rollout switch.
+
+    ``GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES`` holds a comma-separated list of
+    network codes (e.g. ``ltc`` or ``ltc,btc``); fresh clustering is enabled
+    for a currency iff it is in the list. Read by the REST entity endpoints,
+    the delta updater and the one-off clustering commands, so currencies can
+    be cut over one at a time.
+    """
+    enabled = os.environ.get("GRAPHSENSE_FRESH_CLUSTERING_CURRENCIES", "")
+    return currency.strip().lower() in {
+        c.strip().lower() for c in enabled.split(",") if c.strip()
+    }
 
 
 def is_tagstore_fresh_clusters_enabled() -> bool:
