@@ -16,7 +16,7 @@ class SearchRequestConfig(BaseModel):
 class TokenConfig(BaseModel):
     ticker: str
     decimals: int
-    peg_currency: str
+    peg_currency: Optional[str] = None
     contract_address: str
 
 

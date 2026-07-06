@@ -385,6 +385,33 @@ class TxsService:
             rates_by_height[height] = rates
 
         token_config = self.db.get_token_configuration(currency)
+
+        # Resolve fetched per-block rates for unpegged tokens so their fiat
+        # value is priced; missing rate -> None -> zero fiat fallback.
+        def _is_unpegged(ticker):
+            if not token_config:
+                return False
+            cfg = token_config.get(ticker) or token_config.get(ticker.upper())
+            if cfg is None:
+                return False
+            peg = cfg["peg_currency"]
+            return peg is None or (isinstance(peg, str) and peg.strip() == "")
+
+        rate_pairs = list(
+            {
+                (r["currency"], r["block_id"])
+                for r in results
+                if _is_unpegged(r.get("currency"))
+            }
+        )
+        if rate_pairs:
+            resolved = await asyncio.gather(
+                *[self.db.get_token_rate(currency, a, b) for a, b in rate_pairs]
+            )
+            token_rate_map = dict(zip(rate_pairs, resolved))
+            for r in results:
+                r["token_rate"] = token_rate_map.get((r["currency"], r["block_id"]))
+
         txs = list(
             await asyncio.gather(
                 *[

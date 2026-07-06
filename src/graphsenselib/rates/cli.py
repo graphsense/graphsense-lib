@@ -21,8 +21,41 @@ from .cryptocompare import MIN_START as MS_CC
 from .cryptocompare import fetch as fetchCC
 from .cryptocompare import fetch_impl as dumpCC
 from .cryptocompare import ingest as ingestCC
+from .token_rates import ingest_token_rates
 
 logger = logging.getLogger(__name__)
+
+
+def _ingest_token_rates(
+    provider,
+    env,
+    currency,
+    fiat_currencies,
+    start_date,
+    end_date,
+    force,
+    dry_run,
+    api_key,
+    no_token_rates,
+):
+    """Fetch per-token rates for unpegged tokens alongside native rates."""
+    if no_token_rates:
+        return
+    try:
+        ingest_token_rates(
+            env,
+            currency,
+            provider,
+            list(fiat_currencies),
+            start_date,
+            end_date,
+            force,
+            dry_run,
+            api_key,
+        )
+    except Exception as e:
+        # Token rates are best-effort; never let them break native rate ingest.
+        logger.warning(f"token rate ingest ({provider}) failed: {e}")
 
 
 def get_api_key(key):
@@ -114,6 +147,15 @@ def shared_ingest_flags():
             "--dry-run",
             is_flag=True,
             help="Don't write new records to Cassandra.",
+        )(function)
+
+        function = click.option(
+            "--no-token-rates",
+            is_flag=True,
+            help=(
+                "Skip fetching per-token rates for unpegged tokens "
+                "(token_exchange_rates)."
+            ),
         )(function)
         return function
 
@@ -391,6 +433,7 @@ def ingest_cmk(
     force: bool,
     dry_run: bool,
     abort_on_gaps: bool,
+    no_token_rates: bool,
 ):
     """Ingest exchange rates into Cassandra
     \f
@@ -404,6 +447,7 @@ def ingest_cmk(
         force (bool): -
         dry_run (bool): -
         abort_on_gaps (bool): -
+        no_token_rates (bool): -
     """
     api_key = get_api_key("coinmarketcap")
     ingestCMK(
@@ -417,6 +461,18 @@ def ingest_cmk(
         dry_run,
         abort_on_gaps,
         api_key,
+    )
+    _ingest_token_rates(
+        "coinmarketcap",
+        env,
+        currency,
+        fiat_currencies,
+        start_date,
+        end_date,
+        force,
+        dry_run,
+        api_key,
+        no_token_rates,
     )
 
 
@@ -435,6 +491,7 @@ def ingest_gecko(
     force: bool,
     dry_run: bool,
     abort_on_gaps: bool,
+    no_token_rates: bool,
 ):
     """Ingest exchange rates into Cassandra
     \f
@@ -448,6 +505,7 @@ def ingest_gecko(
         force (bool): -
         dry_run (bool): -
         abort_on_gaps (bool): -
+        no_token_rates (bool): -
     """
     api_key = get_api_key("coingecko")
     ingestGecko(
@@ -461,6 +519,18 @@ def ingest_gecko(
         dry_run,
         abort_on_gaps,
         api_key,
+    )
+    _ingest_token_rates(
+        "coingecko",
+        env,
+        currency,
+        fiat_currencies,
+        start_date,
+        end_date,
+        force,
+        dry_run,
+        api_key,
+        no_token_rates,
     )
 
 
@@ -479,6 +549,7 @@ def ingest_cd(
     force,
     dry_run,
     abort_on_gaps,
+    no_token_rates,
 ):
     """Ingests new exchange rates into cassandra raw keyspace.
     \f
@@ -492,7 +563,9 @@ def ingest_cd(
         force (bool): -
         dry_run (bool): -
         abort_on_gaps (bool): -
+        no_token_rates (bool): -
     """
+    # coindesk is BTC-only (Bitcoin Price Index); no unpegged tokens to fetch.
     ingestCD(
         env,
         currency,
@@ -521,6 +594,7 @@ def ingest_cc(
     force,
     dry_run,
     abort_on_gaps,
+    no_token_rates,
 ):
     """Ingests new exchange rates into cassandra raw keyspace.
     \f
@@ -534,6 +608,7 @@ def ingest_cc(
         force (bool): -
         dry_run (bool): -
         abort_on_gaps (bool): -
+        no_token_rates (bool): -
     """
     api_key = get_api_key("cryptocompare")
     ingestCC(
@@ -547,4 +622,16 @@ def ingest_cc(
         dry_run,
         abort_on_gaps,
         api_key,
+    )
+    _ingest_token_rates(
+        "cryptocompare",
+        env,
+        currency,
+        fiat_currencies,
+        start_date,
+        end_date,
+        force,
+        dry_run,
+        api_key,
+        no_token_rates,
     )
