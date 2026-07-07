@@ -1,11 +1,11 @@
+use crate::unionfind::MinUnionFind;
 use arrow::array::{Array, ListArray, UInt32Array};
 use rayon::prelude::*;
-use uf_rush::UFRush;
 
 /// Execute union operations for a batch of transactions.
 /// Each inner Vec contains the input address IDs of one transaction.
 /// Addresses sharing a transaction input are united (multi-input heuristic).
-pub fn execute_union_operations(uf: &UFRush, transactions: &[Vec<u32>]) {
+pub fn execute_union_operations(uf: &MinUnionFind, transactions: &[Vec<u32>]) {
     transactions.par_iter().for_each(|address_ids| {
         if address_ids.len() > 1 {
             let first = address_ids[0] as usize;
@@ -23,7 +23,7 @@ pub fn execute_union_operations(uf: &UFRush, transactions: &[Vec<u32>]) {
 /// contiguous values buffer are read in place. Returns `Err` if the inner
 /// value type is not uint32. Inner values are assumed non-null (upstream
 /// resolves and filters addresses); null *lists* are skipped defensively.
-pub fn execute_union_operations_arrow(uf: &UFRush, lists: &ListArray) -> Result<(), String> {
+pub fn execute_union_operations_arrow(uf: &MinUnionFind, lists: &ListArray) -> Result<(), String> {
     let values = lists
         .values()
         .as_any()
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn test_multi_input_clustering() {
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let txs = vec![vec![1u32, 2, 3]];
         execute_union_operations(&uf, &txs);
         assert_eq!(uf.find(1), uf.find(2));
@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn test_singleton_no_union() {
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let txs = vec![vec![5u32]];
         execute_union_operations(&uf, &txs);
         assert_eq!(uf.find(5), 5);
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_transitive_merge() {
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let txs = vec![vec![1u32, 2], vec![2u32, 3]];
         execute_union_operations(&uf, &txs);
         assert_eq!(uf.find(1), uf.find(3));
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_separate_clusters() {
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let txs = vec![vec![1u32, 2], vec![4u32, 5]];
         execute_union_operations(&uf, &txs);
         assert_eq!(uf.find(1), uf.find(2));
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_empty_transaction() {
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let txs: Vec<Vec<u32>> = vec![vec![]];
         execute_union_operations(&uf, &txs);
         // No panics, no changes
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn test_rebuild_from_mapping() {
         // Simulate existing mapping: addresses 1,2,3 in cluster 1; 4,5 in cluster 4
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
 
         // Group by cluster_id, unite within groups
         // Cluster 1: addresses 1, 2, 3
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_rebuild_then_merge() {
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         // Rebuild: cluster A = {1,2}, cluster B = {3,4}
         uf.unite(1, 2);
         uf.unite(3, 4);
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn test_arrow_multi_input_clustering() {
         use arrow::datatypes::UInt32Type;
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![
             Some(1u32),
             Some(2),
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn test_arrow_singleton_no_union() {
         use arrow::datatypes::UInt32Type;
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![Some(5u32)])]);
         execute_union_operations_arrow(&uf, &list).unwrap();
         assert_eq!(uf.find(5), 5);
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn test_arrow_equivalence_and_singleton() {
         use arrow::datatypes::UInt32Type;
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![
             Some(vec![Some(1u32), Some(2), Some(3)]),
             Some(vec![Some(4u32), Some(5)]),
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn test_arrow_wrong_value_type_errors() {
         use arrow::datatypes::Int64Type;
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         let list = ListArray::from_iter_primitive::<Int64Type, _, _>(vec![Some(vec![
             Some(1i64),
             Some(2),
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn test_arrow_null_list_skipped() {
         use arrow::datatypes::UInt32Type;
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         // a null list between two real ones must be skipped, not united
         let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![
             Some(vec![Some(1u32), Some(2)]),
@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn test_arrow_empty_inner_list() {
         use arrow::datatypes::UInt32Type;
-        let uf = UFRush::new(10);
+        let uf = MinUnionFind::new(10);
         // a zero-length input set is a no-op (does not panic on offsets)
         let list = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![
             Some(Vec::<Option<u32>>::new()),
@@ -219,11 +219,15 @@ mod tests {
     #[test]
     fn test_arrow_accumulates_across_calls() {
         use arrow::datatypes::UInt32Type;
-        let uf = UFRush::new(10);
-        let a =
-            ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![Some(1u32), Some(2)])]);
-        let b =
-            ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![Some(2u32), Some(3)])]);
+        let uf = MinUnionFind::new(10);
+        let a = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![
+            Some(1u32),
+            Some(2),
+        ])]);
+        let b = ListArray::from_iter_primitive::<UInt32Type, _, _>(vec![Some(vec![
+            Some(2u32),
+            Some(3),
+        ])]);
         execute_union_operations_arrow(&uf, &a).unwrap();
         execute_union_operations_arrow(&uf, &b).unwrap();
         // 1-2 then 2-3 across separate arrays => {1,2,3}

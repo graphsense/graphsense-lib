@@ -639,74 +639,6 @@ def _read_edges_into_unionfind(
     }
 
 
-def _mapping_to_write_arrays(mapping_batch, max_address_id: int, skip_singletons: bool):
-    """PHASE 2 (cont.): relabel ``get_mapping()``'s batch to canonical
-    ``min(address_id)`` cluster ids and filter to the rows to write. Returns
-    ``(aid_w, cid_w, write_rows, skipped)``.
-
-    ``mapping_batch`` holds one row per address id, dense and ascending
-    (0..=max_address_id — enforced below; the scatter relabel relies on it).
-    The Rust union-find roots a component by rank, so ``cluster_id`` carries an
-    arbitrary member id. We relabel every cluster to the minimum address_id it
-    contains, so the stored ``cluster_id`` is the canonical root
-    ``== min(address_id) == fresh_cluster_stats.min_address_id`` — the same
-    survivor rule the incremental delta path elects on a merge, so the one-off
-    and incremental labels are identical (the system-wide invariant downstream
-    consumers rely on).
-
-    Memory: everything stays uint32. Min-per-root is a reversed fancy
-    assignment (duplicate indices keep the LAST write; aid descends in reversed
-    order, so each root ends at its smallest member — the placeholder's own
-    component still maps to 0 and is dropped below). The pandas
-    ``groupby().min()`` this replaces factorized cluster_id into int64 codes
-    plus a hashtable, ~10 extra bytes per address — the allocation peak of the
-    whole job on billion-address chains.
-
-    Drops the coinbase placeholder (address_id 0). With ``skip_singletons`` also
-    drops SIZE-1 clusters — a singleton is size 1, NOT merely
-    ``cluster_id == address_id`` (a real cluster's min-root satisfies that too):
-    keep addresses whose cluster_id has a non-root member.
-    """
-    import numpy as np
-
-    # numpy views over the Arrow mapping (zero-copy; the mapping has no nulls).
-    aid_all = mapping_batch.column("address_id").to_numpy()
-    cid_all = mapping_batch.column("cluster_id").to_numpy()
-
-    if (
-        len(aid_all) != max_address_id + 1
-        or aid_all[0] != 0
-        or aid_all[-1] != max_address_id
-    ):
-        raise ValueError(
-            "get_mapping() must emit one row per address id, dense and "
-            f"ascending 0..={max_address_id:,}; got {len(aid_all):,} rows "
-            f"[{aid_all[0]}..{aid_all[-1]}]"
-        )
-
-    relabel_start = time.perf_counter()
-    root_to_min = np.zeros(max_address_id + 1, dtype=cid_all.dtype)
-    root_to_min[cid_all[::-1]] = aid_all[::-1]
-    cid_all = root_to_min[cid_all]
-    del root_to_min
-    logger.info(
-        f"  [map] relabelled to min(address_id) cluster_id in "
-        f"{time.perf_counter() - relabel_start:.1f}s"
-    )
-
-    keep = aid_all != 0
-    if skip_singletons:
-        non_root = aid_all != cid_all
-        nontrivial = np.zeros(max_address_id + 1, dtype=bool)
-        nontrivial[cid_all[non_root]] = True
-        keep &= nontrivial[cid_all]
-    aid_w = aid_all[keep]
-    cid_w = cid_all[keep]
-    write_rows = int(aid_w.shape[0])
-    skipped = int(aid_all.shape[0] - write_rows)
-    return aid_w, cid_w, write_rows, skipped
-
-
 def _write_mapping_to_cassandra(
     spark,
     transformed_keyspace: str,
@@ -946,25 +878,27 @@ def run_clustering_spark(
     logger.info(f"  [mem] peak rss after read: {_peak_rss_gb():.1f} GB")
 
     # PHASE 2: pull the address→cluster mapping out of Rust (Arrow fast path needs
-    # this conf for the createDataFrame in PHASE 3).
+    # this conf for the createDataFrame in PHASE 3). Relabelling and filtering
+    # happen inside the crate: the union-find links by minimum, so cluster_id is
+    # canonically min(address_id) with no relabel pass, and the batch carries
+    # only the rows to write — the placeholder and (with skip_singletons)
+    # size-1 clusters never cross the boundary.
     spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
     logger.info("── PHASE 2/3: materialize address→cluster mapping from Rust ──")
     map_start = time.perf_counter()
-    mapping_batch = c.get_mapping()
+    mapping_batch = c.get_mapping_min(skip_singletons)
     map_secs = time.perf_counter() - map_start
+    write_rows = mapping_batch.num_rows
+    skipped = max_address_id + 1 - write_rows
     logger.info(
-        f"  [map] get_mapping() → {mapping_batch.num_rows:,} rows in {map_secs:.1f}s"
+        f"  [map] get_mapping_min() → {write_rows:,} rows to write in "
+        f"{map_secs:.1f}s (skipped {skipped:,})"
     )
-    # The batch owns its buffers (fresh Vecs on the Rust side), so the
-    # union-find — the other multi-GB resident — can be freed before the
-    # relabel allocates; otherwise the peaks stack on billion-address chains.
+    # The batch owns fresh buffers, so the union-find — the other multi-GB
+    # resident — is freed here; aid_w/cid_w stay zero-copy views into the batch.
     del c
-    aid_w, cid_w, write_rows, skipped = _mapping_to_write_arrays(
-        mapping_batch, max_address_id, skip_singletons
-    )
-    # aid_w/cid_w are filtered copies; drop the per-address batch before the
-    # write slices allocate.
-    del mapping_batch
+    aid_w = mapping_batch.column("address_id").to_numpy()
+    cid_w = mapping_batch.column("cluster_id").to_numpy()
     logger.info(f"  [mem] peak rss after mapping: {_peak_rss_gb():.1f} GB")
 
     # PHASE 3: bulk write to fresh_address_cluster / fresh_cluster_addresses.
