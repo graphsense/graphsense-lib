@@ -2140,7 +2140,7 @@ class Cassandra:
                 self._warn_unconfigured_tokens(
                     currency, token_config.keys(), used, f"links {id} -> {neighbor}"
                 )
-                if self.tconfig.token_fanout_bounding_enabled:
+                if self.tconfig.fanout_bounding_and_links_precheck_enabled:
                     include_assets = [a for a in token_config.keys() if a in used]
                 else:
                     include_assets = list(token_config.keys())
@@ -2176,28 +2176,32 @@ class Cassandra:
         # edge tx has been found (see the early-stop check in the loop below).
         # The endpoint is directional (from_address == id, to_address ==
         # neighbor), i.e. id's outgoing relation to neighbor.
-        if node_type == NodeType.ADDRESS:
-            neighbor_id = await self.get_address_id(currency, neighbor)
-        else:
-            neighbor_id = int(neighbor)
+        # edge_tx_count None means the pre-check is disabled: no early return
+        # here and no early stop in the loop below (full history walk).
+        edge_tx_count = None
+        if self.tconfig.fanout_bounding_and_links_precheck_enabled:
+            if node_type == NodeType.ADDRESS:
+                neighbor_id = await self.get_address_id(currency, neighbor)
+            else:
+                neighbor_id = int(neighbor)
 
-        edge_tx_count = 0
-        if neighbor_id is not None:
-            edge_rows, _ = await self.list_neighbors(
-                currency,
-                id,
-                True,
-                node_type,
-                targets=[neighbor_id],
-                page=None,
-                pagesize=None,
-            )
-            if edge_rows:
-                edge_tx_count = sum(row["no_transactions"] for row in edge_rows)
+            edge_tx_count = 0
+            if neighbor_id is not None:
+                edge_rows, _ = await self.list_neighbors(
+                    currency,
+                    id,
+                    True,
+                    node_type,
+                    targets=[neighbor_id],
+                    page=None,
+                    pagesize=None,
+                )
+                if edge_rows:
+                    edge_tx_count = sum(row["no_transactions"] for row in edge_rows)
 
-        if edge_tx_count == 0:
-            # No direct edge id -> neighbor: there can be no links.
-            return [], None
+            if edge_tx_count == 0:
+                # No direct edge id -> neighbor: there can be no links.
+                return [], None
 
         final_results = []
         requested_pagesize = pagesize or SMALL_PAGE_SIZE
@@ -2381,7 +2385,12 @@ class Cassandra:
             # for: results2 already expanded all asset rows for these tx ids,
             # so counting distinct tx ids against the pair's (per-tx) count is a
             # safe upper bound that can only over-scan, never truncate.
-            all_edge_found = len({row[tx_id] for row in final_results}) >= edge_tx_count
+            # edge_tx_count is None when the pre-check is disabled: never stop
+            # early then.
+            all_edge_found = (
+                edge_tx_count is not None
+                and len({row[tx_id] for row in final_results}) >= edge_tx_count
+            )
 
             # Check if we have enough results after all filtering
             if len(final_results) >= requested_pagesize:
@@ -3804,7 +3813,7 @@ class Cassandra:
             self._warn_unconfigured_tokens(
                 currency, token_config.keys(), address_assets, f"address {address}"
             )
-            if self.tconfig.token_fanout_bounding_enabled:
+            if self.tconfig.fanout_bounding_and_links_precheck_enabled:
                 include_assets = [a for a in token_config.keys() if a in address_assets]
             else:
                 include_assets = list(token_config.keys())
