@@ -2281,7 +2281,6 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "requests" },
     { name = "rich" },
-    { name = "setuptools" },
     { name = "simplejson" },
     { name = "tenacity" },
 ]
@@ -2525,7 +2524,6 @@ requires-dist = [
     { name = "redis", marker = "extra == 'web'", specifier = ">=5.0.0" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "rich", specifier = ">=13.9" },
-    { name = "setuptools", specifier = ">=80.0.0,<80.9" },
     { name = "simplejson", specifier = ">=3.19" },
     { name = "sqlmodel", marker = "extra == 'tagstore'", specifier = ">=0.0.22" },
     { name = "tabulate", marker = "extra == 'tagstore'", specifier = ">=0.9.0" },
@@ -2547,7 +2545,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "pytest-vcr" },
     { name = "ruff", specifier = ">=0.15.1" },
-    { name = "setuptools", specifier = ">=80.0.0,<80.9" },
+    { name = "setuptools", specifier = ">=80.0.0" },
     { name = "setuptools-scm", specifier = ">=8.1.0" },
     { name = "testcontainers", extras = ["cassandra"], specifier = ">=4.9.1" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.9.1" },
@@ -2559,7 +2557,7 @@ testing = [
     { name = "pytest-asyncio", specifier = ">=0.26.0" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "pytest-vcr" },
-    { name = "setuptools", specifier = ">=80.0.0,<80.9" },
+    { name = "setuptools", specifier = ">=80.0.0" },
     { name = "testcontainers", extras = ["cassandra"], specifier = ">=4.9.1" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.9.1" },
     { name = "vcrpy" },
@@ -5385,11 +5383,11 @@ wheels = [
 
 [[package]]
 name = "setuptools"
-version = "80.8.0"
+version = "83.0.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8d/d2/ec1acaaff45caed5c2dedb33b67055ba9d4e96b091094df90762e60135fe/setuptools-80.8.0.tar.gz", hash = "sha256:49f7af965996f26d43c8ae34539c8d99c5042fbff34302ea151eaa9c207cd257", size = 1319720 }
+sdist = { url = "https://files.pythonhosted.org/packages/34/26/f5d29e25ffdb535afef2d35cdb55b325298f96debd670da4c325e08d70f4/setuptools-83.0.0.tar.gz", hash = "sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef", size = 1154254 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/29/93c53c098d301132196c3238c312825324740851d77a8500a2462c0fd888/setuptools-80.8.0-py3-none-any.whl", hash = "sha256:95a60484590d24103af13b686121328cc2736bee85de8936383111e421b9edc0", size = 1201470 },
+    { url = "https://files.pythonhosted.org/packages/5d/40/e1e72872c6354b306daef1703549e8e83b4d43cfea356311bf722a043752/setuptools-83.0.0-py3-none-any.whl", hash = "sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3", size = 1008090 },
 ]
 
 [[package]]
