@@ -24,7 +24,7 @@ from typing_extensions import Self
 
 class GraphComparedTx(BaseModel):
     """
-    Per-tx entry. ``characteristics`` and ``details`` are populated iff the request's ``include`` list names them (``details`` is off by default).
+    Per-tx entry. ``characteristics`` and ``details`` are populated iff the request's ``include`` list names them (``details`` is off by default). ``details`` includes nonstandard I/Os (e.g. OP_RETURN outputs, with an empty ``address``) — they are part of the fingerprint — unlike the plain tx endpoint, which excludes them unless explicitly requested.
     """ # noqa: E501
     tx_hash: StrictStr
     network: StrictStr

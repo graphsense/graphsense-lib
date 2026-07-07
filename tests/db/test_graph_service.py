@@ -927,6 +927,50 @@ class TestGraphSummary:
         assert notes[0].network == "eth"
         assert notes[0].items == [missing]
 
+    async def test_duplicate_tx_refs_noted(self):
+        # 2 distinct txs, one submitted twice (once with an uppercase
+        # spelling): the collapse must be observable via a
+        # duplicates_collapsed note, not just a smaller tx_count.
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        refs = [
+            TxRefInternal(network="btc", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash=h1),
+            TxRefInternal(network="btc", tx_hash=h0.upper()),
+        ]
+        result = await summary(svc, None, None, refs, [], tagstore_groups=[])
+        assert result.txs.overall.tx_count == 2
+        notes = [
+            n for n in result.txs.overall.notes if n.code == "duplicates_collapsed"
+        ]
+        assert len(notes) == 1
+        assert notes[0].network == "btc"
+        assert notes[0].items == [h0]
+
+    async def test_no_duplicates_no_note(self):
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        refs = [
+            TxRefInternal(network="btc", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash=h1),
+        ]
+        result = await summary(svc, None, None, refs, [], tagstore_groups=[])
+        assert not any(
+            n.code == "duplicates_collapsed" for n in result.txs.overall.notes
+        )
+
+    async def test_sub_tx_identifier_rejected(self):
+        # <hash>_T1-style refs would double count against their base hash
+        # (dedup cannot unify them) and are rejected with a clear 400.
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        refs = [
+            TxRefInternal(network="eth", tx_hash="0x" + "cc" * 32),
+            TxRefInternal(network="eth", tx_hash="0x" + "cc" * 32 + "_T1"),
+        ]
+        with pytest.raises(BadUserInputException, match="sub-transaction"):
+            await summary(svc, None, None, refs, [], tagstore_groups=[])
+
     async def test_all_txs_missing_raises_not_found(self):
         svc = FakeTxsService(tx_map={})
         refs = [

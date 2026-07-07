@@ -15,7 +15,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from graphsense.models.per_tx_inner import PerTxInner
 from typing import Optional, Set
@@ -29,8 +29,7 @@ class GraphCompareSignal(BaseModel):
     kind: StrictStr
     per_tx: List[Optional[PerTxInner]]
     verdict: StrictStr
-    weight: Optional[StrictInt] = 0
-    __properties: ClassVar[List[str]] = ["name", "kind", "per_tx", "verdict", "weight"]
+    __properties: ClassVar[List[str]] = ["name", "kind", "per_tx", "verdict"]
 
     @field_validator('kind')
     def kind_validate_enum(cls, value):
@@ -107,8 +106,7 @@ class GraphCompareSignal(BaseModel):
             "name": obj.get("name"),
             "kind": obj.get("kind"),
             "per_tx": [PerTxInner.from_dict(_item) for _item in obj["per_tx"]] if obj.get("per_tx") is not None else None,
-            "verdict": obj.get("verdict"),
-            "weight": obj.get("weight") if obj.get("weight") is not None else 0
+            "verdict": obj.get("verdict")
         })
         return _obj
 

@@ -85,7 +85,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request. Causes: fewer than 2 distinct tx refs; a non-BTC network; combined inputs/outputs above the comparison work limit. |  -  |
+**400** | Invalid request. Causes: fewer than 2 distinct tx refs; a non-BTC network; a sub-transaction identifier instead of a base tx hash; combined inputs/outputs above the comparison work limit. |  -  |
 **404** | One or more transactions were not found; the message names every missing hash. The analysis is all-or-nothing — there is no partial comparison. |  -  |
 **422** | Validation Error |  -  |
 
@@ -168,7 +168,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request. Causes: both lists empty; a non-empty list with fewer than 2 distinct entries; more than 100 entries combined; an unsupported network. |  -  |
+**400** | Invalid request. Causes: both lists empty; a non-empty list with fewer than 2 distinct entries; more than 100 entries combined; an unsupported network; a sub-transaction identifier instead of a base tx hash. |  -  |
 **404** | Fewer than 2 of a list&#39;s references exist (the message names the missing ones). Unknown references in an otherwise viable request do not 404 — they are dropped and reported in a nodes_not_found note. |  -  |
 **422** | Validation Error |  -  |
 

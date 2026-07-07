@@ -7,9 +7,9 @@ does not depend on Cassandra fixtures or DB-layer wiring. The real web
 service ``compare`` (network validation, include expansion, translation)
 runs unpatched.
 
-CRITICAL: tests do NOT pin specific values for `weight`. It is tentative
-and not yet calibrated — as are the internal `confidence`/`score_total`,
-which are backend-only and must not appear in responses at all.
+CRITICAL: the uncalibrated numerics — per-signal `weight` and the
+verdict's `confidence`/`score_total` — are backend-only and must not
+appear in responses at all.
 """
 
 import pytest
@@ -213,8 +213,12 @@ def test_compare_happy_path(client, patch_compare):
     for s in result["signals"]:
         assert s["kind"] in SIGNAL_KINDS
         assert s["verdict"] in SIGNAL_VERDICTS
+        # Uncalibrated aggregator weight must never reach the wire.
+        assert "weight" not in s
     assert result["verdict"]["relation"] in RELATIONS
     assert result["verdict"]["cluster_verdict"] in CLUSTER_VERDICTS
+    assert "confidence" not in result["verdict"]
+    assert "score_total" not in result["verdict"]
 
     assert len(patch_compare["calls"]) == 1
     call = patch_compare["calls"][0]

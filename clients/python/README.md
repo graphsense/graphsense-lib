@@ -216,6 +216,7 @@ Class | Method | HTTP request | Description
  - [GraphAddressOverall](docs/GraphAddressOverall.md)
  - [GraphAddressRef](docs/GraphAddressRef.md)
  - [GraphAddressSummary](docs/GraphAddressSummary.md)
+ - [GraphCompareNote](docs/GraphCompareNote.md)
  - [GraphCompareRequest](docs/GraphCompareRequest.md)
  - [GraphCompareSignal](docs/GraphCompareSignal.md)
  - [GraphCompareVerdict](docs/GraphCompareVerdict.md)

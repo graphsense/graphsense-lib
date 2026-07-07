@@ -319,6 +319,41 @@ def _group_by_network(refs, value) -> dict[str, list[str]]:
     return groups
 
 
+def _duplicates_by_network(refs, key, ident_attr: str) -> dict[str, list[str]]:
+    """Refs that occurred more than once (by canonical key), grouped by
+    network. Each duplicated node is reported once, as the first-seen
+    spelling of its ``ident_attr``."""
+    first_seen: dict = {}
+    dups: dict[str, list[str]] = {}
+    reported: set = set()
+    for r in refs:
+        k = key(r)
+        if k in first_seen:
+            if k not in reported:
+                reported.add(k)
+                dups.setdefault(r.network, []).append(
+                    getattr(first_seen[k], ident_attr)
+                )
+        else:
+            first_seen[k] = r
+    return dups
+
+
+def _duplicates_note(
+    network: str, dups: list[str], singular: str, plural: str
+) -> GraphNoteInternal:
+    word = singular if len(dups) == 1 else plural
+    return GraphNoteInternal(
+        code="duplicates_collapsed",
+        message=(
+            f"{len(dups)} {word} on {network} appeared more than once "
+            "(duplicates or spelling variants); each node is counted once"
+        ),
+        network=network,
+        items=sorted(dups),
+    )
+
+
 def _nodes_not_found_note(
     network: str, missing: list[str], singular: str, plural: str
 ) -> GraphNoteInternal:
@@ -393,29 +428,39 @@ async def summary(
 
     Each non-empty list must hold at least 2 distinct entries (distinctness
     keyed on (network, canonical hash/address), so spelling variants of one
-    node count once); together at most MAX_GRAPH_NODES. Every ref's network
-    must be a supported currency (400 otherwise). Unknown nodes are dropped
-    and reported per network in a ``nodes_not_found`` note on the block's
+    node count once — collapses are reported per network in a
+    ``duplicates_collapsed`` note); together at most MAX_GRAPH_NODES. Every
+    ref's network must be a supported currency (400 otherwise), and
+    sub-transaction identifiers (``<hash>_T1`` style) are rejected — the
+    summary aggregates every leg of a base tx anyway, and a base hash plus
+    its own sub-id would double count. Unknown nodes are dropped and
+    reported per network in a ``nodes_not_found`` note on the block's
     overall rollup (``items`` carries the refs); the request fails with 404
     only when fewer than 2 of a list's refs exist. Each block of the result
     is present iff its input list was non-empty; a network whose refs are
     all unknown gets no per-network block.
     """
-    txs = dedup_refs(
-        [
-            TxRefInternal(
-                network=r.network.lower(), tx_hash=canonical_tx_hash(r.tx_hash)
-            )
-            for r in txs
-        ],
-        key=_canonical_tx_key,
-    )
-    addresses = dedup_refs(
-        [
-            AddressRefInternal(network=r.network.lower(), address=r.address)
-            for r in addresses
-        ],
-        key=_canonical_address_key,
+    canonical_txs = [
+        TxRefInternal(network=r.network.lower(), tx_hash=canonical_tx_hash(r.tx_hash))
+        for r in txs
+    ]
+    sub_tx_ids = sorted({r.tx_hash for r in canonical_txs if "_" in r.tx_hash})
+    if sub_tx_ids:
+        raise BadUserInputException(
+            "sub-transaction identifiers are not supported: "
+            + ", ".join(sub_tx_ids)
+            + ". Pass the base tx hash; its transfer legs are aggregated "
+            "automatically."
+        )
+    canonical_addresses = [
+        AddressRefInternal(network=r.network.lower(), address=r.address)
+        for r in addresses
+    ]
+    txs = dedup_refs(canonical_txs, key=_canonical_tx_key)
+    addresses = dedup_refs(canonical_addresses, key=_canonical_address_key)
+    tx_dups = _duplicates_by_network(canonical_txs, _canonical_tx_key, "tx_hash")
+    address_dups = _duplicates_by_network(
+        canonical_addresses, _canonical_address_key, "address"
     )
     if not txs and not addresses:
         raise BadUserInputException("/graph/summary needs tx refs and/or addresses.")
@@ -466,6 +511,9 @@ async def summary(
         overall.notes.extend(
             _nodes_not_found_note(net, m, "tx", "txs")
             for net, m in missing_by_net.items()
+        )
+        overall.notes.extend(
+            _duplicates_note(net, d, "tx ref", "tx refs") for net, d in tx_dups.items()
         )
         return GraphTxSummaryInternal(overall=overall, networks=blocks)
 
@@ -570,6 +618,10 @@ async def summary(
         overall.notes.extend(
             _nodes_not_found_note(net, m, "address", "addresses")
             for net, m in missing_by_net.items()
+        )
+        overall.notes.extend(
+            _duplicates_note(net, d, "address", "addresses")
+            for net, d in address_dups.items()
         )
         return GraphAddressSummaryInternal(overall=overall, networks=blocks)
 

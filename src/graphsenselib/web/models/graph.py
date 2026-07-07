@@ -14,6 +14,7 @@ from pydantic import Field, model_validator
 
 from graphsenselib.db.asynchronous.services.models import (
     MAX_GRAPH_NODES,
+    CompareNoteCode,
     GraphNoteCode,
     SignalPerTxValue,
 )
@@ -275,7 +276,9 @@ class GraphCompareSignal(APIModel):
     kind: SignalKind
     per_tx: list[Optional[SignalPerTxValue]]
     verdict: SignalVerdict
-    weight: int = 0
+    # The internal aggregator weight is not exposed: like the verdict's
+    # confidence/score_total it is uncalibrated and will change; clients
+    # must branch on kind/verdict, not re-derive scores.
 
 
 class GraphLineageEdge(APIModel):
@@ -290,6 +293,15 @@ class GraphLineageEdge(APIModel):
     in_index: Optional[int] = None
 
 
+class GraphCompareNote(APIModel):
+    """A machine-readable annotation on the verdict. ``code`` is the
+    stable contract (closed vocabulary, shared with the internal model);
+    ``message`` is display text and may be reworded without notice."""
+
+    code: CompareNoteCode
+    message: str
+
+
 class GraphCompareVerdict(APIModel):
     """Aggregator's opinion. Sub-verdicts kept independent.
 
@@ -298,19 +310,25 @@ class GraphCompareVerdict(APIModel):
     (see ``ComparisonVerdictInternal``), but their weights have not been
     calibrated against ground-truth data, so they stay backend-only —
     consumers would inevitably treat them as probabilities. Add them here
-    once calibrated.
+    once calibrated. ``discriminator_hits`` names the mismatched
+    discriminator signals (evidence against a link), ``linkage_hits`` the
+    fired linkage gates (evidence for one); both reference signal names.
     """
 
     relation: ComparisonRelation
     cluster_verdict: ClusterVerdict
     discriminator_hits: list[str] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
+    linkage_hits: list[str] = Field(default_factory=list)
+    notes: list[GraphCompareNote] = Field(default_factory=list)
 
 
 class GraphComparedTx(APIModel):
     """Per-tx entry. ``characteristics`` and ``details`` are populated iff
     the request's ``include`` list names them (``details`` is off by
-    default)."""
+    default). ``details`` includes nonstandard I/Os (e.g. OP_RETURN
+    outputs, with an empty ``address``) — they are part of the
+    fingerprint — unlike the plain tx endpoint, which excludes them
+    unless explicitly requested."""
 
     tx_hash: str
     network: str

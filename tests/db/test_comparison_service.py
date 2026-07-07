@@ -944,7 +944,7 @@ class TestExchangeOverlapDemotion:
         assert baseline.relation == "linked"
         assert demoted.relation == "likely_linked"
         assert demoted.confidence < baseline.confidence
-        assert any("exchange" in n.lower() for n in demoted.notes)
+        assert any(n.code == "exchange_overlap_demotion" for n in demoted.notes)
 
     def test_same_cluster_with_disc_and_exchange_compounds(self):
         chars = [make_chars(), make_chars()]
@@ -1101,17 +1101,17 @@ class TestAggregateVerdict:
         verdict = aggregate_verdict([_disc("match"), _score(0)], chars, "same")
         assert verdict.relation == "linked"
         assert verdict.cluster_verdict == "same"
-        assert any("share at least one input cluster" in n for n in verdict.notes)
+        assert any(n.code == "shared_cluster_support" for n in verdict.notes)
+        # The fired linkage gates are exposed machine-readably, mirroring
+        # discriminator_hits on the negative side.
+        assert verdict.linkage_hits == ["shared_cluster"]
 
     def test_same_cluster_with_disc_hit_likely_linked_with_merge_note(self):
         chars = [make_chars(), make_chars()]
         verdict = aggregate_verdict([_disc("mismatch")], chars, "same")
         assert verdict.relation == "likely_linked"
         assert "script_type" in verdict.discriminator_hits
-        assert any(
-            "cluster-merge artifact" in n or "wallet upgrade" in n
-            for n in verdict.notes
-        )
+        assert any(n.code == "cluster_merge_or_wallet_upgrade" for n in verdict.notes)
 
     def test_same_cluster_disc_hit_score_disagrees_lowers_confidence(self):
         chars = [make_chars(), make_chars()]
@@ -1191,7 +1191,7 @@ class TestAggregateVerdict:
         )
         assert verdict.relation == "likely_linked"
         assert verdict.confidence == 65
-        assert any("on-chain linkage" in n for n in verdict.notes)
+        assert any(n.code == "onchain_linkage_support" for n in verdict.notes)
 
     def test_different_cluster_one_match_likely_unlinked(self):
         chars = [make_chars(), make_chars()]
@@ -1250,7 +1250,7 @@ class TestAggregateVerdict:
     def test_coinjoin_note_appended(self):
         chars = [make_chars(coinjoin_detected=True), make_chars()]
         verdict = aggregate_verdict([_disc("match"), _score(0)], chars, "unknown")
-        assert any("coinjoin" in n.lower() for n in verdict.notes)
+        assert any(n.code == "coinjoin_detected" for n in verdict.notes)
 
     def test_relation_label_in_known_set(self):
         # Sanity: every branch returns one of the documented labels.
@@ -1827,6 +1827,21 @@ class TestCompareTxsOrchestration:
         assert not any(kw.get("include_io") for kw in svc.get_tx_calls)
         assert svc.spending_calls == 0
 
+    async def test_sub_tx_identifier_rejected(self):
+        # Account-model sub-tx identifiers (<hash>_T1) are meaningless on
+        # the BTC-only compare and must 400 with a clear message, not 404.
+        svc, hashes = self._make_two_linked_txs()
+        with pytest.raises(BadUserInputException, match="sub-transaction"):
+            await compare_txs(
+                svc,
+                CURRENCY,
+                [hashes[0], hashes[1] + "_T1"],
+                include_details=False,
+                include_characteristics=False,
+                include_signals=True,
+                tagstore_groups=[],
+            )
+
     async def test_duplicate_hashes_collapse_to_one_rejected(self):
         # The same hash repeated is a single distinct tx; with nothing to
         # compare it against, the request must be rejected (not a self-link).
@@ -1876,6 +1891,13 @@ class TestCompareTxsOrchestration:
         # duplicate ref adds no DB work.
         assert len(svc.get_tx_calls) == 4
         assert sum(1 for kw in svc.get_tx_calls if kw.get("include_io")) == 2
+        # The full fetch must include nonstandard I/Os (OP_RETURN outputs
+        # are part of the fingerprint).
+        assert all(
+            kw.get("include_nonstandard_io")
+            for kw in svc.get_tx_calls
+            if kw.get("include_io")
+        )
 
     @pytest.mark.parametrize(
         "currency", ["eth", "trx", "ETH", "TRX", "bch", "ltc", "zec"]

@@ -1,9 +1,9 @@
 """Tests for `to_api_transaction_comparison` translator.
 
-We deliberately DO NOT pin specific numeric values for `weight`,
-`confidence`, or `score_total`, those are tentative and not yet
-calibrated. We only assert categorical labels, structural shape, and
-field-level round-trip identity.
+The uncalibrated numerics (`weight`, `confidence`, `score_total`) are
+backend-only: the API must not carry them at all. We only assert
+categorical labels, structural shape, and field-level round-trip
+identity of the exposed fields.
 """
 
 from typing import Optional
@@ -85,6 +85,7 @@ def _make_verdict(
     cluster_verdict: str = "same",
     score_total: float = 1.25,
     discriminator_hits: Optional[list] = None,
+    linkage_hits: Optional[list] = None,
     notes: Optional[list] = None,
 ) -> ComparisonVerdictInternal:
     return ComparisonVerdictInternal(
@@ -92,8 +93,15 @@ def _make_verdict(
         confidence=confidence,
         cluster_verdict=cluster_verdict,
         discriminator_hits=discriminator_hits or ["shared_cluster"],
+        linkage_hits=linkage_hits or ["shared_cluster"],
         score_total=score_total,
-        notes=notes or ["computed from 4 signals"],
+        notes=notes
+        or [
+            {
+                "code": "shared_cluster_support",
+                "message": "All compared txs share at least one input cluster.",
+            }
+        ],
     )
 
 
@@ -284,7 +292,11 @@ def test_to_api_transaction_comparison_verdict_round_trip():
         cluster_verdict="unknown",
         score_total=0.875,
         discriminator_hits=["script_type", "shared_cluster"],
-        notes=["a", "b", "c"],
+        linkage_hits=["common_ancestor", "shared_cluster"],
+        notes=[
+            {"code": "coinjoin_detected", "message": "a"},
+            {"code": "exchange_overlap_demotion", "message": "b"},
+        ],
     )
     internal = _make_full_internal(verdict=internal_verdict)
 
@@ -293,11 +305,15 @@ def test_to_api_transaction_comparison_verdict_round_trip():
     assert api.verdict.relation == internal_verdict.relation
     assert api.verdict.cluster_verdict == internal_verdict.cluster_verdict
     assert api.verdict.discriminator_hits == internal_verdict.discriminator_hits
-    assert api.verdict.notes == internal_verdict.notes
+    assert api.verdict.linkage_hits == internal_verdict.linkage_hits
+    assert [(n.code, n.message) for n in api.verdict.notes] == [
+        (n.code, n.message) for n in internal_verdict.notes
+    ]
     # confidence / score_total are backend-only until calibrated: the API
-    # model must not carry them.
+    # model must not carry them — and neither is the per-signal weight.
     assert not hasattr(api.verdict, "confidence")
     assert not hasattr(api.verdict, "score_total")
+    assert all(not hasattr(sig, "weight") for sig in api.signals)
 
     # categorical sanity
     assert api.verdict.relation in RELATIONS

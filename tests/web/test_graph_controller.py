@@ -303,3 +303,15 @@ def test_summary_not_found_propagates_404(client, monkeypatch):
     }
     status, _ = raw_request(client, "/graph/summary", body=body)
     assert status == 404
+
+
+def test_graph_routes_marked_beta(client):
+    # Both /graph/* routes are beta: the flag must be visible in the spec
+    # ((beta) in the summary, BETA lead-in, x-beta extension) until the
+    # graduation decision removes it everywhere at once.
+    schema = client.app.openapi()
+    for path in ("/graph/summary", "/graph/compare"):
+        op = schema["paths"][path]["post"]
+        assert op["x-beta"] is True
+        assert "(beta)" in op["summary"]
+        assert op["description"].startswith("**BETA**")

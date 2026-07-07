@@ -38,6 +38,7 @@ from graphsense.models.graph_address_network_summary import GraphAddressNetworkS
 from graphsense.models.graph_address_overall import GraphAddressOverall
 from graphsense.models.graph_address_ref import GraphAddressRef
 from graphsense.models.graph_address_summary import GraphAddressSummary
+from graphsense.models.graph_compare_note import GraphCompareNote
 from graphsense.models.graph_compare_request import GraphCompareRequest
 from graphsense.models.graph_compare_signal import GraphCompareSignal
 from graphsense.models.graph_compare_verdict import GraphCompareVerdict

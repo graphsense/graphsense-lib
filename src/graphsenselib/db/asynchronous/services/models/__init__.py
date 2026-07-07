@@ -556,6 +556,7 @@ GraphNoteCode = Literal[
     "token_holdings_excluded",
     "usage_span_unavailable",
     "nodes_not_found",
+    "duplicates_collapsed",
 ]
 
 
@@ -657,18 +658,44 @@ class GraphSummaryInternal(BaseModel):
     addresses: Optional[GraphAddressSummaryInternal] = None
 
 
+# Closed vocabulary of verdict-note codes; the API model reuses this
+# Literal (same pattern as GraphNoteCode) so every code lands in the
+# OpenAPI schema and a typo fails at construction.
+CompareNoteCode = Literal[
+    "coinjoin_detected",
+    "cluster_split_contradiction",
+    "exchange_overlap_demotion",
+    "shared_cluster_support",
+    "common_ancestor_support",
+    "cluster_merge_or_wallet_upgrade",
+    "onchain_linkage_support",
+]
+
+
+class CompareNoteInternal(BaseModel):
+    """A machine-readable annotation on the comparison verdict: stable
+    ``code`` for clients to branch on, human ``message`` for display."""
+
+    code: CompareNoteCode
+    message: str
+
+
 class ComparisonVerdictInternal(BaseModel):
     relation: str
     # confidence and score_total are backend-only: their weights are not
     # calibrated against ground-truth data, so the API verdict
     # (GraphCompareVerdict) exposes only the categorical relation tier and
     # the translator drops these fields. Promote them to the API model once
-    # calibrated.
+    # calibrated. (Per-signal ``weight`` is API-dropped for the same
+    # reason, see GraphCompareSignal.)
     confidence: int
     cluster_verdict: str
     discriminator_hits: List[str] = Field(default_factory=list)
+    # Linkage gates that fired in favor of a connection (the positive
+    # counterpart of discriminator_hits), sorted.
+    linkage_hits: List[str] = Field(default_factory=list)
     score_total: float = 0.0
-    notes: List[str] = Field(default_factory=list)
+    notes: List[CompareNoteInternal] = Field(default_factory=list)
 
 
 class TxComparedItemInternal(BaseModel):

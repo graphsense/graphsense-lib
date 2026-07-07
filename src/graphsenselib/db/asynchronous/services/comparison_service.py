@@ -17,6 +17,7 @@ from graphsenselib.db.asynchronous.services.common import (
     partition_not_found,
 )
 from graphsenselib.db.asynchronous.services.models import (
+    CompareNoteInternal,
     ComparisonSignalInternal,
     ComparisonVerdictInternal,
     LineageEdgeInternal,
@@ -716,9 +717,13 @@ def aggregate_verdict(
     ]
     promotion_hits = sorted(promotion_gates)
 
-    notes: list[str] = []
+    notes: list[CompareNoteInternal] = []
+
+    def _note(code: str, message: str) -> None:
+        notes.append(CompareNoteInternal(code=code, message=message))
+
     if any(c.coinjoin_detected for c in chars):
-        notes.append("At least one tx is detected as a coinjoin")
+        _note("coinjoin_detected", "At least one tx is detected as a coinjoin")
 
     # Tier rules, applied in priority order; first match wins.
 
@@ -726,9 +731,10 @@ def aggregate_verdict(
     if cluster_verdict == "different" and mis_w < 0:
         relation = "unlinked"
         confidence = 95
-        notes.append(
+        _note(
+            "cluster_split_contradiction",
             "Cluster splits these txs and discriminators contradict; "
-            "strong evidence of separate actors."
+            "strong evidence of separate actors.",
         )
 
     # 2. linked: primary linkage gate + clean fingerprint. Exchange overlap
@@ -737,19 +743,24 @@ def aggregate_verdict(
         if exchange_overlap and cluster_verdict == "same":
             relation = "likely_linked"
             confidence = 65
-            notes.append(
+            _note(
+                "exchange_overlap_demotion",
                 "Cluster overlap is exchange-tagged; exchanges merge "
-                "many users, so this is weak evidence of linkage."
+                "many users, so this is weak evidence of linkage.",
             )
         else:
             relation = "linked"
             # Stronger weighted agreement nudges within the cap.
             confidence = _clamp_confidence(95 + match_w // 25)
             if cluster_verdict == "same":
-                notes.append("All compared txs share at least one input cluster.")
+                _note(
+                    "shared_cluster_support",
+                    "All compared txs share at least one input cluster.",
+                )
             elif common_ancestor_match:
-                notes.append(
-                    "Compared txs share a one-hop ancestor: direct on-chain linkage."
+                _note(
+                    "common_ancestor_support",
+                    "Compared txs share a one-hop ancestor: direct on-chain linkage.",
                 )
 
     # 3. likely_linked: any linkage gate fires. Includes the spec-gap case
@@ -760,26 +771,31 @@ def aggregate_verdict(
         if cluster_verdict == "same" and discriminator_hits:
             # More negative weighted evidence past -30 lowers confidence.
             confidence = _clamp_confidence(60 + (mis_w + 30) // 5)
-            notes.append(
+            _note(
+                "cluster_merge_or_wallet_upgrade",
                 "Cluster overlap despite discriminator mismatch: "
-                "possible cluster-merge artifact or wallet upgrade."
+                "possible cluster-merge artifact or wallet upgrade.",
             )
             if exchange_overlap:
                 confidence = _clamp_confidence(confidence - 15)
-                notes.append(
+                _note(
+                    "exchange_overlap_demotion",
                     "Exchange-tagged inputs further weaken the cluster "
-                    "overlap evidence."
+                    "overlap evidence.",
                 )
         elif cluster_verdict == "different":
             confidence = 65
-            notes.append(
+            _note(
+                "onchain_linkage_support",
                 f"Cluster splits these txs, but on-chain linkage "
-                f"({', '.join(promotion_hits)}) supports a connection."
+                f"({', '.join(promotion_hits)}) supports a connection.",
             )
         else:
             confidence = 60
-            notes.append(
-                f"On-chain linkage ({', '.join(promotion_hits)}) supports a connection."
+            _note(
+                "onchain_linkage_support",
+                f"On-chain linkage ({', '.join(promotion_hits)}) "
+                "supports a connection.",
             )
 
     # 4. likely_unlinked: cluster=different alone, or a strong negative
@@ -810,6 +826,7 @@ def aggregate_verdict(
         confidence=confidence,
         cluster_verdict=cluster_verdict,
         discriminator_hits=discriminator_hits,
+        linkage_hits=promotion_hits,
         score_total=score_total,
         notes=notes,
     )
@@ -1020,6 +1037,13 @@ async def compare_txs(
     # would otherwise be fetched twice and trivially compare as linked to
     # itself. Need 2+ distinct txs to have anything to compare.
     tx_hashes = dedup_refs([canonical_tx_hash(h) for h in tx_hashes], key=lambda h: h)
+    sub_tx_ids = sorted({h for h in tx_hashes if "_" in h})
+    if sub_tx_ids:
+        raise BadUserInputException(
+            "sub-transaction identifiers are not supported: "
+            + ", ".join(sub_tx_ids)
+            + ". Pass the base tx hash."
+        )
     if len(tx_hashes) < 2:
         raise BadUserInputException(
             "/graph/compare needs at least 2 distinct transaction hashes."

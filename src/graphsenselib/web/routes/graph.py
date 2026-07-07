@@ -56,7 +56,9 @@ router = APIRouter(route_class=PluginRoute)
             "description": (
                 "Invalid request. Causes: both lists empty; a non-empty list "
                 "with fewer than 2 distinct entries; more than "
-                f"{MAX_GRAPH_NODES} entries combined; an unsupported network."
+                f"{MAX_GRAPH_NODES} entries combined; an unsupported "
+                "network; a sub-transaction identifier instead of a base "
+                "tx hash."
             )
         },
         404: {
@@ -103,7 +105,8 @@ async def graph_summary(
         400: {
             "description": (
                 "Invalid request. Causes: fewer than 2 distinct tx refs; a "
-                "non-BTC network; combined inputs/outputs above the "
+                "non-BTC network; a sub-transaction identifier instead of "
+                "a base tx hash; combined inputs/outputs above the "
                 "comparison work limit."
             )
         },

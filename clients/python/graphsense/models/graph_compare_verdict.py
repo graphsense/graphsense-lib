@@ -17,18 +17,20 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.graph_compare_note import GraphCompareNote
 from typing import Optional, Set
 from typing_extensions import Self
 
 class GraphCompareVerdict(BaseModel):
     """
-    Aggregator's opinion. Sub-verdicts kept independent.  Only the categorical tier (``relation``) is exposed. The internal aggregator also computes a numeric ``confidence`` and ``score_total`` (see ``ComparisonVerdictInternal``), but their weights have not been calibrated against ground-truth data, so they stay backend-only — consumers would inevitably treat them as probabilities. Add them here once calibrated.
+    Aggregator's opinion. Sub-verdicts kept independent.  Only the categorical tier (``relation``) is exposed. The internal aggregator also computes a numeric ``confidence`` and ``score_total`` (see ``ComparisonVerdictInternal``), but their weights have not been calibrated against ground-truth data, so they stay backend-only — consumers would inevitably treat them as probabilities. Add them here once calibrated. ``discriminator_hits`` names the mismatched discriminator signals (evidence against a link), ``linkage_hits`` the fired linkage gates (evidence for one); both reference signal names.
     """ # noqa: E501
     relation: StrictStr
     cluster_verdict: StrictStr
     discriminator_hits: Optional[List[StrictStr]] = None
-    notes: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["relation", "cluster_verdict", "discriminator_hits", "notes"]
+    linkage_hits: Optional[List[StrictStr]] = None
+    notes: Optional[List[GraphCompareNote]] = None
+    __properties: ClassVar[List[str]] = ["relation", "cluster_verdict", "discriminator_hits", "linkage_hits", "notes"]
 
     @field_validator('relation')
     def relation_validate_enum(cls, value):
@@ -83,6 +85,13 @@ class GraphCompareVerdict(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in notes (list)
+        _items = []
+        if self.notes:
+            for _item_notes in self.notes:
+                if _item_notes:
+                    _items.append(_item_notes.to_dict())
+            _dict['notes'] = _items
         return _dict
 
     @classmethod
@@ -98,7 +107,8 @@ class GraphCompareVerdict(BaseModel):
             "relation": obj.get("relation"),
             "cluster_verdict": obj.get("cluster_verdict"),
             "discriminator_hits": obj.get("discriminator_hits"),
-            "notes": obj.get("notes")
+            "linkage_hits": obj.get("linkage_hits"),
+            "notes": [GraphCompareNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None
         })
         return _obj
 

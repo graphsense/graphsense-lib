@@ -10,7 +10,6 @@ Name | Type | Description | Notes
 **kind** | **str** |  | 
 **per_tx** | [**List[PerTxInner]**](PerTxInner.md) |  | 
 **verdict** | **str** |  | 
-**weight** | **int** |  | [optional] [default to 0]
 
 ## Example
 

@@ -1,6 +1,6 @@
 # GraphCompareVerdict
 
-Aggregator's opinion. Sub-verdicts kept independent.  Only the categorical tier (``relation``) is exposed. The internal aggregator also computes a numeric ``confidence`` and ``score_total`` (see ``ComparisonVerdictInternal``), but their weights have not been calibrated against ground-truth data, so they stay backend-only — consumers would inevitably treat them as probabilities. Add them here once calibrated.
+Aggregator's opinion. Sub-verdicts kept independent.  Only the categorical tier (``relation``) is exposed. The internal aggregator also computes a numeric ``confidence`` and ``score_total`` (see ``ComparisonVerdictInternal``), but their weights have not been calibrated against ground-truth data, so they stay backend-only — consumers would inevitably treat them as probabilities. Add them here once calibrated. ``discriminator_hits`` names the mismatched discriminator signals (evidence against a link), ``linkage_hits`` the fired linkage gates (evidence for one); both reference signal names.
 
 ## Properties
 
@@ -9,7 +9,8 @@ Name | Type | Description | Notes
 **relation** | **str** |  | 
 **cluster_verdict** | **str** |  | 
 **discriminator_hits** | **List[str]** |  | [optional] 
-**notes** | **List[str]** |  | [optional] 
+**linkage_hits** | **List[str]** |  | [optional] 
+**notes** | [**List[GraphCompareNote]**](GraphCompareNote.md) |  | [optional] 
 
 ## Example
 

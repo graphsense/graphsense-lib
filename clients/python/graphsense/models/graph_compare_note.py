@@ -16,25 +16,23 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class GraphNote(BaseModel):
+class GraphCompareNote(BaseModel):
     """
-    A caveat attached to a summary block. ``code`` is the stable machine-readable contract (closed vocabulary, shared with the internal model so new codes surface in the OpenAPI schema); ``message`` is display text and may be reworded without notice. ``network`` attributes overall-rollup notes to their source network. ``items`` carries the references a note applies to (e.g. the not-found tx hashes / addresses of a ``nodes_not_found`` note), so clients never have to parse ``message``.
+    A machine-readable annotation on the verdict. ``code`` is the stable contract (closed vocabulary, shared with the internal model); ``message`` is display text and may be reworded without notice.
     """ # noqa: E501
     code: StrictStr
     message: StrictStr
-    network: Optional[StrictStr] = None
-    items: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["code", "message", "network", "items"]
+    __properties: ClassVar[List[str]] = ["code", "message"]
 
     @field_validator('code')
     def code_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['fiat_totals_missing', 'fiat_totals_partial', 'token_value_excluded', 'token_holdings_excluded', 'usage_span_unavailable', 'nodes_not_found', 'duplicates_collapsed']):
-            raise ValueError("must be one of enum values ('fiat_totals_missing', 'fiat_totals_partial', 'token_value_excluded', 'token_holdings_excluded', 'usage_span_unavailable', 'nodes_not_found', 'duplicates_collapsed')")
+        if value not in set(['coinjoin_detected', 'cluster_split_contradiction', 'exchange_overlap_demotion', 'shared_cluster_support', 'common_ancestor_support', 'cluster_merge_or_wallet_upgrade', 'onchain_linkage_support']):
+            raise ValueError("must be one of enum values ('coinjoin_detected', 'cluster_split_contradiction', 'exchange_overlap_demotion', 'shared_cluster_support', 'common_ancestor_support', 'cluster_merge_or_wallet_upgrade', 'onchain_linkage_support')")
         return value
 
     model_config = ConfigDict(
@@ -55,7 +53,7 @@ class GraphNote(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GraphNote from a JSON string"""
+        """Create an instance of GraphCompareNote from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -76,12 +74,11 @@ class GraphNote(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GraphNote from a dict"""
+        """Create an instance of GraphCompareNote from a dict"""
         if obj is None:
             return None
 
@@ -90,9 +87,7 @@ class GraphNote(BaseModel):
 
         _obj = cls.model_validate({
             "code": obj.get("code"),
-            "message": obj.get("message"),
-            "network": obj.get("network"),
-            "items": obj.get("items")
+            "message": obj.get("message")
         })
         return _obj
 
