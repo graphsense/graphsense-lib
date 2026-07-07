@@ -13,6 +13,11 @@ from .generic import filter_sensitive_sys_argv
 
 logger = logging.getLogger(__name__)
 
+# (connect, read) timeout for Slack webhook posts. Without it requests.post
+# blocks forever; on the async error path (500 handler, report_tag) that would
+# freeze the event loop when the webhook host is unreachable.
+_SLACK_TIMEOUT = (3.05, 10)
+
 
 class SlackLogHandler(logging.Handler):
     def __init__(self, webhook_url, environment: Optional[str] = None):
@@ -30,7 +35,9 @@ class SlackLogHandler(logging.Handler):
         payload = {
             "text": f"{prefix}{log_entry}",
         }
-        requests.post(self.webhook_url, data=json.dumps(payload))
+        requests.post(
+            self.webhook_url, data=json.dumps(payload), timeout=_SLACK_TIMEOUT
+        )
 
 
 class ClickSlackErrorNotificationContext:
@@ -119,4 +126,6 @@ def send_payload_to_slack(payload: Dict, webhook: str):
         HTTP response code, i.e. <Response [503]>
     """
     headers = {"Content-type": "application/json"}
-    return requests.post(webhook, json.dumps(payload), headers=headers)
+    return requests.post(
+        webhook, json.dumps(payload), headers=headers, timeout=_SLACK_TIMEOUT
+    )
