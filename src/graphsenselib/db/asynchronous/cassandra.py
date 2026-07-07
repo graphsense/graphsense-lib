@@ -1977,6 +1977,23 @@ class Cassandra:
             return received | spent
         return spent if is_outgoing else received
 
+    def _warn_unconfigured_tokens(
+        self, currency, configured_assets, used_assets, context
+    ):
+        """Warn when address aggregates reference tokens that are missing from
+        token_configuration. Transactions in such tokens can never be returned
+        by the per-token queries — with or without fan-out bounding — so this
+        points at a token_configuration gap, not at the bounding itself.
+        """
+        missing = set(used_assets) - {a.upper() for a in configured_assets}
+        missing.discard(currency.upper())
+        if missing and self.logger:
+            self.logger.warning(
+                f"{currency}: {context} used tokens missing from "
+                f"token_configuration: {sorted(missing)}; transactions in "
+                "these tokens are not included in results."
+            )
+
     @eth
     async def get_address_entity_id(self, currency, address):
         address_id, address_id_group = await self.get_address_id_id_group(
@@ -2120,7 +2137,13 @@ class Cassandra:
                 else:
                     used = dst_node.get("total_tokens_received") or {}
                 used = {k.upper() for k in used}
-                include_assets = [a for a in token_config.keys() if a in used]
+                self._warn_unconfigured_tokens(
+                    currency, token_config.keys(), used, f"links {id} -> {neighbor}"
+                )
+                if self.tconfig.token_fanout_bounding_enabled:
+                    include_assets = [a for a in token_config.keys() if a in used]
+                else:
+                    include_assets = list(token_config.keys())
                 include_assets.append(currency.upper())
             else:
                 include_assets = [currency.upper()]
@@ -3778,7 +3801,13 @@ class Cassandra:
             address_assets = await self.get_address_token_assets(
                 currency, address, is_outgoing
             )
-            include_assets = [a for a in token_config.keys() if a in address_assets]
+            self._warn_unconfigured_tokens(
+                currency, token_config.keys(), address_assets, f"address {address}"
+            )
+            if self.tconfig.token_fanout_bounding_enabled:
+                include_assets = [a for a in token_config.keys() if a in address_assets]
+            else:
+                include_assets = list(token_config.keys())
             include_assets.append(currency.upper())
         else:
             include_assets = [token_currency.upper()]
