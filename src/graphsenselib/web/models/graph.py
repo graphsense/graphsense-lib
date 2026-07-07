@@ -107,7 +107,9 @@ class GraphTxNetworkSummary(APIModel):
     ``total_value.fiat_values`` sum per fiat code across all transfers,
     including tokens. ``total_fee`` stays in the native unit.
     ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for
-    account-model summaries. ``notes`` flags caveats."""
+    account-model summaries. ``notes`` flags caveats. ``assets`` lists the
+    distinct assets involved on this network (lowercase, native first then
+    tokens sorted)."""
 
     network: str
     tx_count: int
@@ -120,6 +122,7 @@ class GraphTxNetworkSummary(APIModel):
     timestamp_min: int
     timestamp_max: int
     notes: list[GraphNote] = Field(default_factory=list)
+    assets: list[str] = Field(default_factory=list)
 
 
 class GraphTxSummary(APIModel):
@@ -146,7 +149,9 @@ class GraphAddressOverall(APIModel):
 class GraphAddressNetworkSummary(APIModel):
     """Aggregate stats over one network's addresses. Value totals follow
     the ``Values`` pattern (native base unit plus per-code fiat sums);
-    token holdings are excluded from native totals (noted)."""
+    token holdings are excluded from native totals (noted). ``assets``
+    lists the distinct assets involved on this network (lowercase, native
+    first then tokens sorted)."""
 
     network: str
     address_count: int
@@ -158,6 +163,7 @@ class GraphAddressNetworkSummary(APIModel):
     tagged_address_count: int = 0
     actors: list[LabeledItemRef] = Field(default_factory=list)
     notes: list[GraphNote] = Field(default_factory=list)
+    assets: list[str] = Field(default_factory=list)
 
 
 class GraphAddressSummary(APIModel):

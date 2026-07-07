@@ -558,6 +558,9 @@ class GraphTxNetworkSummaryInternal(BaseModel):
     timestamp_min: int
     timestamp_max: int
     notes: List[GraphNoteInternal] = Field(default_factory=list)
+    # Distinct assets involved on this network, lowercase, native asset
+    # first then tokens sorted. Native only for UTXO chains.
+    assets: List[str] = Field(default_factory=list)
 
 
 class GraphTxOverallInternal(BaseModel):
@@ -588,6 +591,9 @@ class GraphAddressNetworkSummaryInternal(BaseModel):
     tagged_address_count: int = 0
     actors: List[LabeledItemRef] = Field(default_factory=list)
     notes: List[GraphNoteInternal] = Field(default_factory=list)
+    # Distinct assets involved on this network, lowercase, native asset
+    # first then tokens sorted. Native only for UTXO chains.
+    assets: List[str] = Field(default_factory=list)
 
 
 class GraphAddressOverallInternal(BaseModel):

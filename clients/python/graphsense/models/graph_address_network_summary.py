@@ -25,7 +25,7 @@ from typing_extensions import Self
 
 class GraphAddressNetworkSummary(BaseModel):
     """
-    Aggregate stats over one network's addresses. Value totals follow the ``Values`` pattern (native base unit plus per-code fiat sums); token holdings are excluded from native totals (noted).
+    Aggregate stats over one network's addresses. Value totals follow the ``Values`` pattern (native base unit plus per-code fiat sums); token holdings are excluded from native totals (noted). ``assets`` lists the distinct assets involved on this network (lowercase, native first then tokens sorted).
     """ # noqa: E501
     network: StrictStr
     address_count: StrictInt
@@ -37,7 +37,8 @@ class GraphAddressNetworkSummary(BaseModel):
     tagged_address_count: Optional[StrictInt] = 0
     actors: Optional[List[LabeledItemRef]] = None
     notes: Optional[List[GraphNote]] = None
-    __properties: ClassVar[List[str]] = ["network", "address_count", "total_received", "total_spent", "balance", "first_usage", "last_usage", "tagged_address_count", "actors", "notes"]
+    assets: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["network", "address_count", "total_received", "total_spent", "balance", "first_usage", "last_usage", "tagged_address_count", "actors", "notes", "assets"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -123,7 +124,8 @@ class GraphAddressNetworkSummary(BaseModel):
             "last_usage": obj.get("last_usage"),
             "tagged_address_count": obj.get("tagged_address_count") if obj.get("tagged_address_count") is not None else 0,
             "actors": [LabeledItemRef.from_dict(_item) for _item in obj["actors"]] if obj.get("actors") is not None else None,
-            "notes": [GraphNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None
+            "notes": [GraphNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None,
+            "assets": obj.get("assets")
         })
         return _obj
 

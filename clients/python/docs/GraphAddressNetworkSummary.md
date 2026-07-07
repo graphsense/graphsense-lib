@@ -1,6 +1,6 @@
 # GraphAddressNetworkSummary
 
-Aggregate stats over one network's addresses. Value totals follow the ``Values`` pattern (native base unit plus per-code fiat sums); token holdings are excluded from native totals (noted).
+Aggregate stats over one network's addresses. Value totals follow the ``Values`` pattern (native base unit plus per-code fiat sums); token holdings are excluded from native totals (noted). ``assets`` lists the distinct assets involved on this network (lowercase, native first then tokens sorted).
 
 ## Properties
 
@@ -16,6 +16,7 @@ Name | Type | Description | Notes
 **tagged_address_count** | **int** |  | [optional] [default to 0]
 **actors** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | [optional] 
 **notes** | [**List[GraphNote]**](GraphNote.md) |  | [optional] 
+**assets** | **List[str]** |  | [optional] 
 
 ## Example
 

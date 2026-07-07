@@ -89,6 +89,14 @@ def _missing_rate_notes(
     return []
 
 
+def _order_assets(native: str, symbols: set[str]) -> list[str]:
+    """Native asset first, remaining tokens sorted alphabetically. All
+    values lowercase. Native is always included even if absent from
+    ``symbols``."""
+    rest = sorted(s for s in symbols if s != native)
+    return [native, *rest]
+
+
 def build_network_tx_summary(
     network: str,
     txs: list[Union[TxUtxo, TxAccount]],
@@ -136,6 +144,8 @@ def build_network_tx_summary(
         fiat_values, n_missing = _fiat_sums([t.total_output for t in txs])
         notes.extend(_missing_rate_notes(n_missing, len(txs), "tx", "txs"))
 
+    assets = _order_assets(network, {t.currency.lower() for t in txs})
+
     return GraphTxNetworkSummaryInternal(
         network=network,
         tx_count=tx_count,
@@ -148,6 +158,7 @@ def build_network_tx_summary(
         timestamp_min=min(t.timestamp for t in txs),
         timestamp_max=max(t.timestamp for t in txs),
         notes=notes,
+        assets=assets,
     )
 
 
@@ -203,6 +214,13 @@ def build_network_address_summary(
             )
         )
 
+    token_symbols: set[str] = set()
+    for a in addresses:
+        for d in (a.total_tokens_received, a.total_tokens_spent, a.token_balances):
+            if d:
+                token_symbols.update(k.lower() for k in d)
+    assets = _order_assets(network, token_symbols)
+
     return GraphAddressNetworkSummaryInternal(
         network=network,
         address_count=len(addresses),
@@ -214,6 +232,7 @@ def build_network_address_summary(
         tagged_address_count=len({t.identifier for t in tags}),
         actors=actors,
         notes=notes,
+        assets=assets,
     )
 
 

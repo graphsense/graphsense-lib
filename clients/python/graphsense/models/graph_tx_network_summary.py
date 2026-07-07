@@ -24,7 +24,7 @@ from typing_extensions import Self
 
 class GraphTxNetworkSummary(BaseModel):
     """
-    Aggregate stats over one network's transactions.  ``total_value.value`` is the network's native base unit (satoshi for UTXO, wei/sun for account chains) and sums native transfers only; ``total_value.fiat_values`` sum per fiat code across all transfers, including tokens. ``total_fee`` stays in the native unit. ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for account-model summaries. ``notes`` flags caveats.
+    Aggregate stats over one network's transactions.  ``total_value.value`` is the network's native base unit (satoshi for UTXO, wei/sun for account chains) and sums native transfers only; ``total_value.fiat_values`` sum per fiat code across all transfers, including tokens. ``total_fee`` stays in the native unit. ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for account-model summaries. ``notes`` flags caveats. ``assets`` lists the distinct assets involved on this network (lowercase, native first then tokens sorted).
     """ # noqa: E501
     network: StrictStr
     tx_count: StrictInt
@@ -37,7 +37,8 @@ class GraphTxNetworkSummary(BaseModel):
     timestamp_min: StrictInt
     timestamp_max: StrictInt
     notes: Optional[List[GraphNote]] = None
-    __properties: ClassVar[List[str]] = ["network", "tx_count", "total_value", "total_fee", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max", "notes"]
+    assets: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["network", "tx_count", "total_value", "total_fee", "total_inputs", "total_outputs", "block_min", "block_max", "timestamp_min", "timestamp_max", "notes", "assets"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -111,7 +112,8 @@ class GraphTxNetworkSummary(BaseModel):
             "block_max": obj.get("block_max"),
             "timestamp_min": obj.get("timestamp_min"),
             "timestamp_max": obj.get("timestamp_max"),
-            "notes": [GraphNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None
+            "notes": [GraphNote.from_dict(_item) for _item in obj["notes"]] if obj.get("notes") is not None else None,
+            "assets": obj.get("assets")
         })
         return _obj
 

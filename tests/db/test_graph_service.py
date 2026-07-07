@@ -258,6 +258,28 @@ class TestBuildNetworkTxSummary:
         assert block.total_outputs is None
         assert "token_value_excluded" in [n.code for n in block.notes]
 
+    def test_utxo_assets_is_native_only(self):
+        block = build_network_tx_summary("btc", [make_tx(), make_tx()])
+        assert block.assets == ["btc"]
+
+    def test_account_assets_native_first_tokens_sorted_lowercased(self):
+        # Base eth leg plus two token legs (declared out of order, mixed case)
+        txs = [
+            make_account_tx(value=1_000, value_usd=2.5),  # currency "eth"
+            make_account_tx(value=0, value_usd=5.0, token_tx_id=0, asset="USDT"),
+            make_account_tx(value=0, value_usd=1.0, token_tx_id=1, asset="usdc"),
+        ]
+        block = build_network_tx_summary("eth", txs)
+        assert block.assets == ["eth", "usdc", "usdt"]
+
+    def test_account_assets_native_only_when_no_tokens(self):
+        txs = [
+            make_account_tx(value=1, value_usd=1.0),
+            make_account_tx(value=2, value_usd=2.0),
+        ]
+        block = build_network_tx_summary("eth", txs)
+        assert block.assets == ["eth"]
+
 
 # ---------------------------------------------------------------------------
 # build_tx_overall (pure)
@@ -377,6 +399,17 @@ class TestBuildNetworkAddressSummary:
         assert block.tagged_address_count == 0
         assert block.actors == []
         assert block.notes == []
+
+    def test_address_assets_native_first_tokens_sorted(self):
+        addr = make_address(
+            token_balances={"USDT": make_value(5), "usdc": make_value(3)}
+        )
+        block = build_network_address_summary("eth", [addr], [], [])
+        assert block.assets == ["eth", "usdc", "usdt"]
+
+    def test_address_assets_native_only_when_no_tokens(self):
+        block = build_network_address_summary("btc", [make_address()], [], [])
+        assert block.assets == ["btc"]
 
     def test_partial_fiat_noted(self):
         addrs = [

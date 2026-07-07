@@ -34,6 +34,7 @@ def _internal_summary() -> GraphSummaryInternal:
         timestamp_min=1_700_000_000,
         timestamp_max=1_700_000_500,
         notes=[],
+        assets=["btc"],
     )
     addr_block = GraphAddressNetworkSummaryInternal(
         network="btc",
@@ -91,6 +92,8 @@ def test_round_trip_maps_all_fields():
     }
     assert api.addresses.overall.balance_fiat[0].code == "usd"
     assert api.addresses.networks[0].actors[0].label == "Binance"
+    # assets carries through the flat model_validate round-trip
+    assert api.txs.networks[0].assets == ["btc"]
 
 
 def test_blocks_optional():
