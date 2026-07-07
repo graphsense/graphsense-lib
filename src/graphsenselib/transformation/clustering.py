@@ -150,7 +150,11 @@ def iter_multi_input_tx_inputs(
 # memory; --read-partitions is the primary control. Only binds when a partition
 # holds more rows than this.
 DEFAULT_FEED_BATCH_SIZE = 2_000_000
-DEFAULT_SPARK_WRITE_CHUNK = 5_000_000
+# With the per-slice cluster sort in _write_mapping_to_cassandra, slice count
+# mainly determines how often the hot cluster_id_group partitions are
+# re-appended (compaction debt); the ceiling is driver-JVM memory — every
+# slice streams through the driver as Arrow batches.
+DEFAULT_SPARK_WRITE_CHUNK = 10_000_000
 # Shuffle width for the Spark clustering job. The multi-input edge set is far
 # smaller than the full transaction table, so the default 200 shuffle
 # partitions just spawn hundreds of tiny tasks/stages across distinct/join/
@@ -724,42 +728,23 @@ def _write_mapping_to_cassandra(
         f"{'singletons + placeholder' if skip_singletons else 'placeholder'}) ──"
     )
 
-    def _write_slice(slice_df, table, cols, repartition_col=None):
-        df = slice_df.select(*cols)
-        # The mapping arrives ordered by address_id (Rust get_mapping iterates
-        # 0..=max_id), so fresh_address_cluster's address_id_group partition key is
-        # already contiguous per slice and batches well. fresh_cluster_addresses is
-        # keyed on cluster_id_group, whose values are SCATTERED across that ordering,
-        # so without a repartition each task touches many C* partitions and the
-        # connector's per-partition-key grouping buffer flushes near-empty batches.
-        # Repartitioning by the write key co-locates each cluster_id_group into one
-        # task — one extra shuffle of a cached slice, far cheaper than the RPC storm.
-        if repartition_col is not None:
-            df = df.repartition(F.col(repartition_col))
+    def _write_slice(slice_df, table, cols):
         (
-            df.write.format(cass_format)
+            slice_df.select(*cols)
+            .write.format(cass_format)
             .options(table=table, keyspace=transformed_keyspace)
             .mode("append")
             .save()
         )
 
-    t_build = 0.0
-    t_fa = 0.0
-    t_fc = 0.0
-    rows_written = 0
-    write_start = time.perf_counter()
-    slice_idx = 0
-    for offset in range(0, write_rows, write_chunk):
-        length = min(write_chunk, write_rows - offset)
-
-        bld0 = time.perf_counter()
+    def _slice_df(aid, cid):
         pdf = pd.DataFrame(
             {
-                "address_id": aid_w[offset : offset + length].astype(np.int64),
-                "cluster_id": cid_w[offset : offset + length].astype(np.int64),
+                "address_id": aid.astype(np.int64),
+                "cluster_id": cid.astype(np.int64),
             }
         )
-        sdf = (
+        return (
             spark.createDataFrame(pdf)
             .withColumn("address_id", F.col("address_id").cast("int"))
             .withColumn("cluster_id", F.col("cluster_id").cast("int"))
@@ -772,11 +757,29 @@ def _write_mapping_to_cassandra(
                 F.floor(F.col("cluster_id") / bucket_size).cast("int"),
             )
         )
+
+    t_build = 0.0
+    t_fa = 0.0
+    t_fc = 0.0
+    rows_written = 0
+    write_start = time.perf_counter()
+    slice_idx = 0
+    for offset in range(0, write_rows, write_chunk):
+        length = min(write_chunk, write_rows - offset)
+
+        aid = aid_w[offset : offset + length]
+        cid = cid_w[offset : offset + length]
+
+        bld0 = time.perf_counter()
+        sdf = _slice_df(aid, cid)
         sdf.persist()
-        slice_rows = sdf.count()  # build once so both writes read cache; timed here
+        slice_rows = sdf.count()  # materialize the cache the write reads; timed here
         build_s = time.perf_counter() - bld0
         t_build += build_s
 
+        # The mapping arrives ordered by address_id (Rust get_mapping iterates
+        # 0..=max_id), so fresh_address_cluster's address_id_group partition key
+        # is contiguous per slice and batches well as-is.
         f0 = time.perf_counter()
         _write_slice(
             sdf,
@@ -785,18 +788,29 @@ def _write_mapping_to_cassandra(
         )
         fa_s = time.perf_counter() - f0
         t_fa += fa_s
+        sdf.unpersist()
 
+        # fresh_cluster_addresses is keyed on cluster_id_group, whose values are
+        # SCATTERED across that ordering — each task spans far more distinct
+        # groups than the connector's grouping buffer (1000) holds, so it flushes
+        # near-empty batches (RPC storm). Feed it from a per-slice numpy argsort
+        # instead: createDataFrame preserves row order as contiguous-range
+        # partitions, so each task owns one contiguous cluster_id_group band —
+        # the co-location a repartition(cluster_id_group) shuffle used to buy,
+        # without the shuffle. Separate frame on purpose: sorting the shared one
+        # would scatter the fresh_address_cluster write in turn (a slice spans
+        # write_chunk/bucket_size address groups — at 10M/5000 twice the
+        # grouping buffer). The stable sort keeps address_id ascending within
+        # each cluster, i.e. rows land in clustering-key order.
         g0 = time.perf_counter()
+        order = np.argsort(cid, kind="stable")
         _write_slice(
-            sdf,
+            _slice_df(aid[order], cid[order]),
             "fresh_cluster_addresses",
             ["cluster_id_group", "cluster_id", "address_id"],
-            repartition_col="cluster_id_group",
         )
         fc_s = time.perf_counter() - g0
         t_fc += fc_s
-
-        sdf.unpersist()
         rows_written += slice_rows
         slice_idx += 1
         logger.info(
