@@ -1,8 +1,11 @@
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
 from eth_abi import decode
 from eth_utils import function_abi_to_4byte_selector, to_hex
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -99,7 +102,15 @@ class ERC20Decoder:
                     tx_hash=log.tx_hash,
                     log_index=log.log_index,
                 )
-            except Exception:  # TODO this is not good!
+            except Exception as e:
+                # A malformed / non-standard Transfer log is dropped rather than
+                # failing the whole block; log it so silent data loss is visible.
+                logger.warning(
+                    "Could not decode Transfer log (log_index=%s token=0x%s): %s",
+                    log.log_index,
+                    log.address.hex(),
+                    e,
+                )
                 return None  # cant be decoded
         else:
             return None  # not a transfer event
