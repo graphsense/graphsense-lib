@@ -86,7 +86,7 @@ Name | Type | Description  | Notes
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
 **400** | Invalid request. Causes: fewer than 2 distinct tx refs; a non-BTC network; combined inputs/outputs above the comparison work limit. |  -  |
-**404** | One of the transactions was not found. |  -  |
+**404** | One or more transactions were not found; the message names every missing hash. The analysis is all-or-nothing — there is no partial comparison. |  -  |
 **422** | Validation Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)

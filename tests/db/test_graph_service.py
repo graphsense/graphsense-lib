@@ -150,6 +150,9 @@ class TestBuildNetworkTxSummary:
         assert [n.code for n in block.notes] == ["fiat_totals_missing"]
 
     def test_coinbase_contributes_no_fee(self):
+        # Coinbase txs pay no fee, so an all-coinbase set has a KNOWN total
+        # of 0 — not None, which is reserved for "fee data unavailable" on
+        # account chains.
         txs = [
             make_tx(
                 inputs=[make_txvalue("coinbase", 0)],
@@ -161,7 +164,7 @@ class TestBuildNetworkTxSummary:
         ]
         block = build_network_tx_summary("btc", txs)
         assert block.total_value.value == 50_000
-        assert block.total_fee is None
+        assert block.total_fee == 0
 
     def test_fiat_sum_rounded_to_cents(self):
         # 0.1 + 0.2 must come out as 0.3, not 0.30000000000000004.
@@ -204,6 +207,16 @@ class TestBuildNetworkTxSummary:
     def test_account_fee_none_when_unavailable(self):
         txs = [
             make_account_tx(value=1, value_usd=1.0),
+            make_account_tx(value=2, value_usd=2.0),
+        ]
+        block = build_network_tx_summary("eth", txs)
+        assert block.total_fee is None
+
+    def test_account_fee_none_when_partially_unavailable(self):
+        # A partial sum would silently understate the total, so one base tx
+        # without fee data makes the whole total "unknown" (None).
+        txs = [
+            make_account_tx(value=1, value_usd=1.0, fee=21),
             make_account_tx(value=2, value_usd=2.0),
         ]
         block = build_network_tx_summary("eth", txs)

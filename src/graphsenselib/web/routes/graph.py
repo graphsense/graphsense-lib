@@ -107,7 +107,13 @@ async def graph_summary(
                 "comparison work limit."
             )
         },
-        404: {"description": "One of the transactions was not found."},
+        404: {
+            "description": (
+                "One or more transactions were not found; the message "
+                "names every missing hash. The analysis is all-or-nothing "
+                "— there is no partial comparison."
+            )
+        },
     },
 )
 async def graph_compare(

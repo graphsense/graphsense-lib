@@ -12,6 +12,16 @@ from graphsenselib.errors import AddressNotFoundException
 RATES = [{"code": "eur", "value": 0.9}, {"code": "usd", "value": 1.0}]
 
 
+def test_address_type_names_cover_every_ingest_value():
+    # The serving-side int -> name map must not drift from the ingest-side
+    # name -> int map: every address_type int the exporter can write needs
+    # a display name, or io_from_rows silently drops the classification.
+    from graphsenselib.ingest.utxo import _address_types
+    from graphsenselib.db.asynchronous.services.common import _ADDRESS_TYPE_NAMES
+
+    assert set(_address_types.values()) <= set(_ADDRESS_TYPE_NAMES)
+
+
 def test_map_rates_for_unpegged_token_returns_empty():
     # Unpegged / unknown / missing peg -> no fiat conversion (no exception).
     assert map_rates_for_peged_tokens(RATES, {"peg_currency": None}) == []

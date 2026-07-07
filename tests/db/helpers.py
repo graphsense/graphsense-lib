@@ -37,12 +37,14 @@ def make_txvalue(
     value: int,
     has_witness: bool | None = None,
     sequence: int | None = None,
+    script_type: str | None = None,
 ) -> TxValue:
     return TxValue(
         address=[address] if address else [],
         value=make_value(value),
         has_witness=has_witness,
         sequence=sequence,
+        script_type=script_type,
     )
 
 

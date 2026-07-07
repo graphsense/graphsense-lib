@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Optional, Union
 
-from graphsenselib.errors import BadUserInputException
+from graphsenselib.errors import (
+    BadUserInputException,
+    NotFoundException,
+    TransactionNotFoundException,
+)
 from graphsenselib.db.asynchronous.services.common import (
     cannonicalize_address,
     canonical_tx_hash,
     dedup_refs,
+    partition_not_found,
 )
 from graphsenselib.db.asynchronous.services.models import (
     ComparisonSignalInternal,
@@ -26,13 +31,21 @@ from graphsenselib.utils.bitcoin import is_rbf_signaled
 
 
 # ---------------------------------------------------------------------------
-# Script-type derivation from address strings
+# Script-type derivation
 # ---------------------------------------------------------------------------
 
-# Address-string-prefix table. Witness presence is heuristic for v1: P2SH
-# wraps may or may not carry witness data, so we mark it ambiguous and let
-# the witness_present signal return inconclusive for that case.
+# Primary source is the row-level ``TxValue.script_type`` (the ingest-time
+# address_type classification, mapped in common._ADDRESS_TYPE_NAMES). The
+# address-string-prefix inference below is only the fallback for keyspaces
+# ingested before that column existed. Witness presence stays ambiguous for
+# P2SH either way (wraps may or may not carry witness data); the
+# witness_present signal resolves it from per-input ground truth where
+# available and returns inconclusive otherwise.
 _SCRIPT_TYPE_UNKNOWN = "UNKNOWN"
+
+# Exact bech32 address lengths (hrp "bc"/"tb" + separator + data part).
+_P2WPKH_ADDR_LEN = 42
+_P2WSH_ADDR_LEN = 62
 
 
 def script_type_from_address(addr: str) -> str:
@@ -41,7 +54,11 @@ def script_type_from_address(addr: str) -> str:
     if addr == "coinbase":
         return "COINBASE"
     if addr.startswith("bc1q") or addr.startswith("tb1q"):
-        return "P2WSH" if len(addr) > 50 else "P2WPKH"
+        if len(addr) == _P2WPKH_ADDR_LEN:
+            return "P2WPKH"
+        if len(addr) == _P2WSH_ADDR_LEN:
+            return "P2WSH"
+        return _SCRIPT_TYPE_UNKNOWN
     if addr.startswith("bc1p") or addr.startswith("tb1p"):
         return "P2TR"
     if addr.startswith("1") or addr.startswith("m") or addr.startswith("n"):
@@ -53,13 +70,11 @@ def script_type_from_address(addr: str) -> str:
 
 def _has_witness_for_type(script_type: str) -> Optional[bool]:
     """True/False if determinable from script type alone, None if ambiguous."""
-    if script_type in {"P2WPKH", "P2WSH", "P2TR"}:
+    if script_type in {"P2WPKH", "P2WSH", "P2TR", "WITNESS_UNKNOWN"}:
         return True
-    if script_type == "P2PKH":
+    if script_type in {"P2PKH", "P2PK", "MULTISIG", "MULTISIG_PUBKEY"}:
         return False
-    if script_type == "P2SH":
-        return None
-    return None
+    return None  # P2SH (wrap ambiguity), UNKNOWN, NONSTANDARD, ...
 
 
 def _aggregate_inputs_have_witness(inputs: list, in_types: list[str]) -> Optional[bool]:
@@ -86,12 +101,18 @@ def _aggregate_inputs_have_witness(inputs: list, in_types: list[str]) -> Optiona
     return None
 
 
-def _unique_script_types(addrs_per_io: list[list[str]]) -> list[str]:
-    return list(
-        dict.fromkeys(
-            script_type_from_address(a) for addrs in addrs_per_io for a in addrs
-        )
-    )
+def _unique_script_types(ios: list) -> list[str]:
+    """Distinct script types across the given I/Os, first-seen order.
+    Row-level ``script_type`` (ingest ground truth) wins; address-prefix
+    inference is the fallback for keyspaces without the column."""
+    types: list[str] = []
+    for io in ios:
+        row_type = getattr(io, "script_type", None)
+        if row_type:
+            types.append(row_type)
+        else:
+            types.extend(script_type_from_address(a) for a in io.address or [])
+    return list(dict.fromkeys(types))
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +154,10 @@ def _canonical_input_addresses(currency: str, tx: TxUtxo) -> list[str]:
 def _bip69_outputs_sorted(outputs: list) -> Optional[bool]:
     """True if outputs are strictly ascending by amount (BIP69-compatible).
 
-    BIP69 ties on amount are broken by script_hex; the schema only stores
-    script_hex for OP_RETURNs, so any tied amounts force ``None``.
+    BIP69 ties on amount are broken by scriptPubKey. Raw v3 rows do store
+    the script per output (``TxValue.script_hex``, populated when
+    nonstandard I/Os are fetched), but the tie-break is not implemented
+    yet, so tied amounts force ``None``.
     """
     if len(outputs) < 2:
         return None
@@ -151,8 +174,8 @@ def _bip69_outputs_sorted(outputs: list) -> Optional[bool]:
 def extract_characteristics(tx: TxUtxo) -> TxCharacteristicsInternal:
     inputs = tx.inputs or []
     outputs = tx.outputs or []
-    in_types = _unique_script_types([i.address for i in inputs])
-    out_types = _unique_script_types([o.address for o in outputs])
+    in_types = _unique_script_types(inputs)
+    out_types = _unique_script_types(outputs)
     inputs_have_witness = _aggregate_inputs_have_witness(inputs, in_types)
     inputs_signal_rbf = _aggregate_inputs_signal_rbf(inputs)
     bip69_outputs_sorted = _bip69_outputs_sorted(outputs)
@@ -1013,10 +1036,12 @@ async def compare_txs(
         )
 
     # Enforce the work bound before the expensive fetch: the tx header row
-    # already carries the IO counts, so an oversized set is rejected (and a
-    # missing hash 404s) after cheap point reads, without materializing a
-    # single input/output or running the change/coinjoin heuristics.
-    headers: list[Union[TxUtxo, TxAccount]] = await asyncio.gather(
+    # already carries the IO counts, so an oversized set is rejected (and
+    # missing hashes 404) after cheap point reads, without materializing a
+    # single input/output or running the change/coinjoin heuristics. The
+    # 404 enumerates every missing hash — the analysis is all-or-nothing,
+    # so the client must be able to fix its request in one round.
+    results = await asyncio.gather(
         *[
             txs_service.get_tx(
                 currency,
@@ -1030,8 +1055,14 @@ async def compare_txs(
                 trace_account_chains=True,
             )
             for h in tx_hashes
-        ]
+        ],
+        return_exceptions=True,
     )
+    headers, missing = partition_not_found(
+        tx_hashes, results, TransactionNotFoundException
+    )
+    if missing:
+        raise NotFoundException("transactions not found: " + ", ".join(missing))
     total_ios = sum(
         t.no_inputs + t.no_outputs for t in headers if isinstance(t, TxUtxo)
     )
@@ -1043,6 +1074,9 @@ async def compare_txs(
 
     # Full fetch (IOs + heuristics); re-reads the header row, which is cheap
     # relative to the IO partitions and heuristic work it gates.
+    # include_nonstandard_io: address-less outputs (OP_RETURN & friends) are
+    # part of a tx's fingerprint, so they must reach the characteristics
+    # extraction instead of being filtered at the fetch layer.
     fetched: list[Union[TxUtxo, TxAccount]] = await asyncio.gather(
         *[
             txs_service.get_tx(
@@ -1050,7 +1084,7 @@ async def compare_txs(
                 h,
                 None,
                 include_io=True,
-                include_nonstandard_io=False,
+                include_nonstandard_io=True,
                 include_io_index=False,
                 include_heuristics=["all_coinjoin", "all_change"],
                 tagstore_groups=tagstore_groups,

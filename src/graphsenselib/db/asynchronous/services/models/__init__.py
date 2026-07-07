@@ -199,6 +199,10 @@ class TxValue(BaseModel):
     script_hex: Optional[str] = None  # Raw script hex for OP_RETURN outputs
     has_witness: Optional[bool] = None  # True if input carries witness data
     sequence: Optional[int] = None  # Per-input nSequence (BIP125 RBF signaling)
+    # Script type derived from the row's ingest-time address_type
+    # classification (see common._ADDRESS_TYPE_NAMES); None on keyspaces
+    # ingested before the column existed.
+    script_type: Optional[str] = None
 
 
 class TxRef(BaseModel):

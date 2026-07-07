@@ -125,7 +125,10 @@ class GraphTxNetworkSummary(APIModel):
     contributes its full output sum — change outputs included — and a set
     containing linked txs (e.g. a peel chain) counts the same coins once
     per hop, so this is not "net value moved". Account-chain contributions
-    are the native transfer values. ``total_fee`` stays in the native unit.
+    are the native transfer values. ``total_fee`` stays in the native unit;
+    for UTXO networks it is always known (``0`` for an all-coinbase set),
+    while on account chains ``null`` means fee data was unavailable for at
+    least one tx (a partial sum would silently understate).
     ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for
     account-model summaries. ``notes`` flags caveats. ``assets`` lists the
     distinct assets involved on this network (lowercase, native first then

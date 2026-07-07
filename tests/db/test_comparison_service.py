@@ -68,6 +68,7 @@ from graphsenselib.db.asynchronous.services.models import (
 )
 from graphsenselib.errors import (
     BadUserInputException,
+    NotFoundException,
     TransactionNotFoundException,
 )
 from tests.db.helpers import (
@@ -139,11 +140,14 @@ class TestScriptTypeFromAddress:
             # P2WPKH (bech32, short)
             ("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "P2WPKH"),
             ("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", "P2WPKH"),
-            # P2WSH (bech32, longer than 50 chars)
+            # P2WSH (bech32, exactly 62 chars)
             (
                 "bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3",
                 "P2WSH",
             ),
+            # bech32 v0 with a length that is neither P2WPKH (42) nor
+            # P2WSH (62): classify as unknown instead of guessing.
+            ("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4xxxx", "UNKNOWN"),
             # P2TR (bech32m)
             (
                 "bc1pmzfrwwndsqmk5yh69yjr5lfgfg4ev8c0tsc06e",
@@ -179,10 +183,15 @@ class TestHasWitnessForType:
             ("P2WPKH", True),
             ("P2WSH", True),
             ("P2TR", True),
+            ("WITNESS_UNKNOWN", True),
             ("P2PKH", False),
+            ("P2PK", False),
+            ("MULTISIG", False),
+            ("MULTISIG_PUBKEY", False),
             ("P2SH", None),  # ambiguous: could be wrapped SegWit
             ("COINBASE", None),
             ("UNKNOWN", None),
+            ("NONSTANDARD", None),
             ("anything-else", None),
         ],
     )
@@ -232,18 +241,38 @@ class TestAggregateInputsHaveWitness:
 
 class TestUniqueScriptTypes:
     def test_dedupes_in_order(self):
-        addrs_per_io = [
-            ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"],  # P2PKH
-            ["3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"],  # P2SH
-            ["1Q2bL5sHGc8j1xC9JkbY9G7gx7VfL3FqYZ"],  # P2PKH again
+        ios = [
+            make_txvalue("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", 1),  # P2PKH
+            make_txvalue("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", 1),  # P2SH
+            make_txvalue("1Q2bL5sHGc8j1xC9JkbY9G7gx7VfL3FqYZ", 1),  # P2PKH again
         ]
-        assert _unique_script_types(addrs_per_io) == ["P2PKH", "P2SH"]
+        assert _unique_script_types(ios) == ["P2PKH", "P2SH"]
 
     def test_empty_returns_empty(self):
         assert _unique_script_types([]) == []
 
     def test_unknown_addresses_kept_once(self):
-        assert _unique_script_types([[""], [""], ["zzz"]]) == ["UNKNOWN"]
+        ios = [make_txvalue("", 1), make_txvalue("", 1), make_txvalue("zzz", 1)]
+        assert _unique_script_types(ios) == ["UNKNOWN"]
+
+    def test_row_level_script_type_wins_over_prefix_inference(self):
+        # The ingest-time classification must beat the address heuristic:
+        # a "3..." address whose row says P2SH-embedded multisig-ish type
+        # is reported as the row type, not as prefix-derived P2SH.
+        ios = [
+            make_txvalue(
+                "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", 1, script_type="MULTISIG"
+            ),
+            # No row type: falls back to prefix inference.
+            make_txvalue("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", 1),
+        ]
+        assert _unique_script_types(ios) == ["MULTISIG", "P2PKH"]
+
+    def test_row_level_type_classifies_addressless_io(self):
+        # OP_RETURN outputs carry no address; the prefix fallback alone
+        # could never classify them, the row type can.
+        ios = [make_txvalue("", 0, script_type="OP_RETURN")]
+        assert _unique_script_types(ios) == ["OP_RETURN"]
 
 
 # ---------------------------------------------------------------------------
@@ -1753,11 +1782,12 @@ class TestCompareTxsOrchestration:
         # different chain and so is absent from this currency's keyspace) must
         # surface as not-found, not a partial summary over the hashes found.
         svc, hashes = self._make_two_linked_txs()
-        with pytest.raises(TransactionNotFoundException):
+        missing = "ff" * 32
+        with pytest.raises(NotFoundException, match=missing):
             await compare_txs(
                 svc,
                 CURRENCY,
-                [hashes[0], "ff" * 32],  # second hash is unknown
+                [hashes[0], missing],  # second hash is unknown
                 include_details=False,
                 include_characteristics=False,
                 include_signals=True,
@@ -1767,7 +1797,7 @@ class TestCompareTxsOrchestration:
     async def test_missing_tx_hash_rejected_in_full_analysis(self):
         # Same guarantee on the full-analysis path.
         svc, hashes = self._make_two_linked_txs()
-        with pytest.raises(TransactionNotFoundException):
+        with pytest.raises(NotFoundException, match="ff" * 32):
             await compare_txs(
                 svc,
                 CURRENCY,
@@ -1777,6 +1807,25 @@ class TestCompareTxsOrchestration:
                 include_signals=True,
                 tagstore_groups=[],
             )
+
+    async def test_all_missing_tx_hashes_enumerated_in_not_found(self):
+        # The 404 must name EVERY missing hash so the client fixes its
+        # request in one round instead of bisecting, and it must fire
+        # before any expensive per-io work runs.
+        svc, hashes = self._make_two_linked_txs()
+        m1, m2 = "ee" * 32, "ff" * 32
+        with pytest.raises(NotFoundException, match=f"{m1}, {m2}"):
+            await compare_txs(
+                svc,
+                CURRENCY,
+                [hashes[0], m1, m2],
+                include_details=False,
+                include_characteristics=True,
+                include_signals=True,
+                tagstore_groups=[],
+            )
+        assert not any(kw.get("include_io") for kw in svc.get_tx_calls)
+        assert svc.spending_calls == 0
 
     async def test_duplicate_hashes_collapse_to_one_rejected(self):
         # The same hash repeated is a single distinct tx; with nothing to

@@ -27,6 +27,7 @@ from graphsenselib.db.asynchronous.services.common import (
     canonical_tx_hash,
     dedup_refs,
     gather_bounded,
+    partition_not_found,
 )
 from graphsenselib.db.asynchronous.services.models import (
     Address,
@@ -121,6 +122,10 @@ def build_network_tx_summary(
         # contributes one fee per tx (no double count). A schema change adding
         # fees to token rows would break this invariant.
         fees = [t.fee.value for t in txs if t.fee is not None]
+        # Account fee data can be absent per tx; None marks "unknown" and a
+        # partial sum would silently understate, so only emit a total when
+        # every base tx carries its fee.
+        total_fee = sum(fees) if len(fees) == tx_count else None
         total_inputs = None
         total_outputs = None
         fiat_values, n_missing = _fiat_sums([t.value for t in txs])
@@ -144,6 +149,10 @@ def build_network_tx_summary(
         fees = [
             t.total_input.value - t.total_output.value for t in txs if not t.coinbase
         ]
+        # UTXO fees are always derivable and coinbase txs pay none, so the
+        # total is always known: 0 for an all-coinbase set, never None.
+        # (None is reserved for "fee data unavailable" on account chains.)
+        total_fee = sum(fees)
         total_inputs = sum(t.no_inputs for t in txs)
         total_outputs = sum(t.no_outputs for t in txs)
         fiat_values, n_missing = _fiat_sums([t.total_output for t in txs])
@@ -155,7 +164,7 @@ def build_network_tx_summary(
         network=network,
         tx_count=tx_count,
         total_value=Values(value=total_value, fiat_values=fiat_values),
-        total_fee=sum(fees) if fees else None,
+        total_fee=total_fee,
         total_inputs=total_inputs,
         total_outputs=total_outputs,
         block_min=min(t.height for t in txs),
@@ -310,20 +319,6 @@ def _group_by_network(refs, value) -> dict[str, list[str]]:
     return groups
 
 
-def _partition_not_found(keys, results, not_found_types):
-    """Split per-key gather results (``return_exceptions=True``) into found
-    values and not-found keys; any other exception is re-raised."""
-    found, missing = [], []
-    for key, res in zip(keys, results):
-        if isinstance(res, not_found_types):
-            missing.append(key)
-        elif isinstance(res, BaseException):
-            raise res
-        else:
-            found.append(res)
-    return found, missing
-
-
 def _nodes_not_found_note(
     network: str, missing: list[str], singular: str, plural: str
 ) -> GraphNoteInternal:
@@ -361,7 +356,7 @@ async def _fetch_network_txs(txs_service, network, hashes, tagstore_groups):
             ],
             return_exceptions=True,
         )
-        found, missing = _partition_not_found(
+        found, missing = partition_not_found(
             hashes, flow_lists, TransactionNotFoundException
         )
         return [leg for fl in found for leg in fl.txs], missing
@@ -383,7 +378,7 @@ async def _fetch_network_txs(txs_service, network, hashes, tagstore_groups):
         ],
         return_exceptions=True,
     )
-    return _partition_not_found(hashes, fetched, TransactionNotFoundException)
+    return partition_not_found(hashes, fetched, TransactionNotFoundException)
 
 
 async def summary(
@@ -504,7 +499,7 @@ async def summary(
                     tagstore_groups,
                 ),
             )
-            rows, missing = _partition_not_found(
+            rows, missing = partition_not_found(
                 addrs, results, AddressNotFoundException
             )
             # The tagstore is independent of Cassandra and may carry tags
