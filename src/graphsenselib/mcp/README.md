@@ -33,8 +33,8 @@ needs it.
 Every tool must earn its place by either **being structurally distinct**
 or by **collapsing a common chain**. Two corollaries:
 
-1. **Curate, don't auto-expose.** FastAPI has 44 routes; we surface 17
-   (18 when `search_neighbors` is configured). MCP tool schemas are
+1. **Curate, don't auto-expose.** FastAPI has 44 routes; we surface 18
+   (19 when `search_neighbors` is configured). MCP tool schemas are
    loaded into the LLM's tool-selection context in some clients; even
    where clients lazy-load (Claude Code does), a tighter surface reduces
    "which-tool-should-I-pick?" ambiguity.
@@ -88,7 +88,7 @@ Typical savings: ~40% of the response body for address / tx lookups
 where most fields are value conversions. fastmcp already serializes
 dicts to compact JSON (no whitespace), so that lever is free.
 
-## The 17-tool surface (18 when `search_neighbors` is configured)
+## The 18-tool surface (19 when `search_neighbors` is configured)
 
 ### Orientation (5)
 
@@ -121,6 +121,14 @@ account-model fan-out. Use `lookup_tx_details` first for the consolidated
 tx body and trace context; reach for `list_tx_flows` only when you need
 to walk every flow event in an account-model tx and the count isn't
 bounded.
+
+### Graph / aggregate (1)
+
+`graph_summary` — aggregate stats over a SET of transactions and/or
+addresses (2+ of each), chain-agnostic. Each item carries its own network,
+so the set may span chains. First POST passthrough; the auto-generated tool
+surfaces the request body's `txs` / `addresses` as parameters. Distinct from
+the per-item `lookup_tx_details` / `lookup_address`.
 
 ### Rates / actor metadata (2)
 
@@ -246,7 +254,7 @@ re-enable later.
 
 ## Context cost
 
-All 17 tool schemas (18 when `search_neighbors` is configured) fit in roughly
+All 18 tool schemas (19 when `search_neighbors` is configured) fit in roughly
 300–500 tokens when serialized for transport. Claude Code lazy-loads
 (only the tools the LLM picks get read into context), so the observed
 cost is usually a few hundred tokens total. Other clients vary —
