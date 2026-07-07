@@ -10,6 +10,7 @@ harvests the same id sets from the txs it already holds.
 """
 
 import logging
+import resource
 import time
 from typing import Dict, Iterator, List, Optional, Set
 
@@ -19,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BLOCK_CHUNK_SIZE = 1_000
 DEFAULT_CASSANDRA_CONCURRENCY = 100
+
+
+def _peak_rss_gb() -> float:
+    """High-water RSS of this process in GB (ru_maxrss is KB on Linux)."""
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
 
 
 def iter_multi_input_tx_inputs(
@@ -937,6 +943,7 @@ def run_clustering_spark(
         read_partitions,
         feed_batch_size,
     )
+    logger.info(f"  [mem] peak rss after read: {_peak_rss_gb():.1f} GB")
 
     # PHASE 2: pull the address→cluster mapping out of Rust (Arrow fast path needs
     # this conf for the createDataFrame in PHASE 3).
@@ -958,6 +965,7 @@ def run_clustering_spark(
     # aid_w/cid_w are filtered copies; drop the per-address batch before the
     # write slices allocate.
     del mapping_batch
+    logger.info(f"  [mem] peak rss after mapping: {_peak_rss_gb():.1f} GB")
 
     # PHASE 3: bulk write to fresh_address_cluster / fresh_cluster_addresses.
     write_secs, t_fa, t_fc, _rows = _write_mapping_to_cassandra(
@@ -971,6 +979,7 @@ def run_clustering_spark(
         skip_singletons,
         bucket_size,
     )
+    logger.info(f"  [mem] peak rss after write: {_peak_rss_gb():.1f} GB")
 
     # PHASE 4: full cluster stats — the same recompute the standalone
     # recompute-cluster-stats job runs, aggregating the just-written membership
@@ -998,4 +1007,7 @@ def run_clustering_spark(
         f"get_mapping {map_secs:.1f}s  |  write {write_secs:.1f}s "
         f"[fresh_address_cluster {t_fa:.1f} | fresh_cluster_addresses {t_fc:.1f}]"
     )
-    logger.info(f"  TOTAL {total_secs:.1f}s ({total_secs / 60:.1f} min)")
+    logger.info(
+        f"  TOTAL {total_secs:.1f}s ({total_secs / 60:.1f} min) | "
+        f"peak rss {_peak_rss_gb():.1f} GB"
+    )
