@@ -27,9 +27,10 @@ def parse_btcetl_txs(tx) -> List[FlowEvent]:
             else o["value"]
         )
         for a in o.get("addresses", []):
+            # outputs credit the receiving address -> incoming flow
             output.append(
                 FlowEvent(
-                    direction=FlowDirection.OUT,
+                    direction=FlowDirection.IN,
                     address=a,
                     value=v,
                     block=b,
