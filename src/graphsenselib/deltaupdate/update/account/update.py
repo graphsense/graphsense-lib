@@ -19,10 +19,12 @@ from graphsenselib.deltaupdate.update.account.createchanges import (
     prepare_entities_for_ingest,
     prepare_entity_txs_for_ingest,
     prepare_relations_for_ingest,
+    prepare_token_exchange_rates_for_ingest,
     prepare_txs_for_ingest,
 )
 from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_balance_deltas,
+    get_contract_creation_deltas_trace,
     get_entity_transaction_updates_trace_token,
     get_entity_transactions_updates_tx,
     get_entity_updates_trace_token,
@@ -185,6 +187,10 @@ class UpdateStrategyAccount(UpdateStrategy):
                 TABLE_NAME_DELTA_HISTORY,
                 truncate=False,
             )
+            # NOTE: token_exchange_rates is created via the schema migration
+            # (transformed_account_0_to_1) rather than ensure_table_exists_by_name,
+            # because the latter drops the `WITH CLUSTERING ORDER BY (block_id
+            # DESC)` clause that the serving nearest-/latest-rate queries rely on.
 
     def get_block_data(self, dt_connector: DeltaTableConnector, block_ids: List[int]):
         """Fetch block, transaction, trace, and log data sequentially."""
@@ -415,6 +421,37 @@ class UpdateStrategyAccount(UpdateStrategy):
                 f"Unknown application strategy {self.application_strategy}"
             )
 
+    def _load_token_rates(self, supported_tokens, token_transfers):
+        """Load per-block fiat rates for the unpegged tokens in this batch.
+
+        Returns {(asset, block_id): [eur, usd]}; empty when there are no
+        unpegged transfers or no fetched rates exist yet.
+        """
+        if (
+            not token_transfers
+            or supported_tokens is None
+            or len(supported_tokens) == 0
+        ):
+            return {}
+        peg = supported_tokens.set_index("currency_ticker")["peg_currency"]
+
+        def is_unpegged(asset):
+            if asset not in peg.index:
+                return False
+            p = peg.loc[asset]
+            return pd.isna(p) or (isinstance(p, str) and p.strip() == "")
+
+        unpegged_assets = sorted(
+            {tt.asset for tt in token_transfers if is_unpegged(tt.asset)}
+        )
+        if not unpegged_assets:
+            return {}
+        blocks = sorted({tt.block_id for tt in token_transfers})
+        rows = self._db.raw.get_token_exchange_rates_for_block_batch(
+            blocks, unpegged_assets
+        )
+        return {(r["asset"], r["block_id"]): r["fiat_values"] for r in rows}
+
     def get_changes(
         self,
         transactions: List[Transaction],
@@ -500,6 +537,18 @@ class UpdateStrategyAccount(UpdateStrategy):
             token_transfers = no_nones(
                 [tokendecoder.log_to_transfer(log) for log in logs]
             )
+
+        with LoggerScope.debug(logger, "Load per-block token exchange rates"):
+            # For unpegged tokens (no USD/EUR/ETH peg) fiat values come from a
+            # fetched per-token rate rather than the peg. Load the applicable
+            # daily rates for the (unpegged) tokens transferred in this batch and
+            # map them to blocks; missing rates -> zero fiat (handled downstream).
+            token_rates = self._load_token_rates(supported_tokens, token_transfers)
+            token_rates_for_write = {
+                (tt.asset, tt.block_id): token_rates[(tt.asset, tt.block_id)]
+                for tt in token_transfers
+                if (tt.asset, tt.block_id) in token_rates
+            }
 
         with LoggerScope.debug(logger, "Compute unique addresses in correct order"):
             if currency == "TRX":
@@ -654,6 +703,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 hash_to_id,
                 address_hash_to_id,
                 rates,
+                token_rates=token_rates,
             )
 
         with LoggerScope.debug(logger, "Get entity updates - traces and tokens"):
@@ -664,6 +714,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 hash_to_id,
                 currency,
                 rates,
+                token_rates=token_rates,
             )
 
         with LoggerScope.debug(logger, "Get relation updates - traces and tokens"):
@@ -672,7 +723,8 @@ class UpdateStrategyAccount(UpdateStrategy):
                 for trace in traces_s_filtered
             ]
             relation_updates_tokens = [
-                relationdelta_from_tokentransfer(tt, rates) for tt in token_transfers
+                relationdelta_from_tokentransfer(tt, rates, token_rates=token_rates)
+                for tt in token_transfers
             ]
             relation_updates = relation_updates_trace + relation_updates_tokens
 
@@ -696,6 +748,15 @@ class UpdateStrategyAccount(UpdateStrategy):
                 )
 
                 entity_deltas += entity_deltas_tx
+
+                # Factory-deployed contracts only appear as 'create' traces (the
+                # top-level tx is a TriggerSmartContract with no
+                # receipt_contract_address), so flag them from the unfiltered
+                # successful traces. Value/tx-count accounting stays on the call
+                # traces above; this only adds is_contract=True.
+                entity_deltas += get_contract_creation_deltas_trace(
+                    traces_s, hash_to_id, currency
+                )
 
                 relation_updates_tx = [
                     relationdelta_from_transaction(tx, rates, currency)
@@ -842,6 +903,9 @@ class UpdateStrategyAccount(UpdateStrategy):
                 block_bucket_size,
                 get_tx_prefix,
             )
+
+            """ Per-block token exchange rates (unpegged tokens) """
+            changes += prepare_token_exchange_rates_for_ingest(token_rates_for_write)
 
             """ Merging max secondary ID """
             changes += self.prepare_and_query_max_secondary_id(

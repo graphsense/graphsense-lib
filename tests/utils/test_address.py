@@ -17,6 +17,9 @@ from graphsenselib.utils.address import (
     validate_eth_address,
     validate_trx_address,
     AddressConverterBchWithNonstandardFallback,
+    recover_base58_case,
+    iter_base58_case_recovery,
+    count_base58_case_candidates,
 )
 from graphsenselib.utils.bch import (
     InvalidAddress as BCHInvalidAddress,
@@ -616,3 +619,56 @@ class TestAddressValidation:
         decoded = conv.to_str(encoded)
 
         assert decoded == btc_address_in_bch
+
+
+# A short, deterministically generated valid base58check string with only a
+# handful of case-ambiguous letters, so the brute-force search is instant in CI.
+# Built via base58.b58encode_check(b"\x00" + (25).to_bytes(3, "big")).
+_B58_CHECK_CANONICAL = "1113toD956"
+_B58_CHECK_LOWER = "1113tod956"
+_B58_CHECK_UPPER = "1113TOD956"
+
+
+def test_recover_base58_case_from_lower():
+    assert recover_base58_case(_B58_CHECK_LOWER) == _B58_CHECK_CANONICAL
+
+
+def test_recover_base58_case_from_upper():
+    assert recover_base58_case(_B58_CHECK_UPPER) == _B58_CHECK_CANONICAL
+
+
+def test_recover_base58_case_already_correct():
+    assert recover_base58_case(_B58_CHECK_CANONICAL) == _B58_CHECK_CANONICAL
+
+
+@pytest.mark.slow
+def test_recover_base58_case_real_trx_address():
+    # full-size (2^24 search space) real address, marked slow.
+    orig = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+    assert recover_base58_case(orig.lower()) == orig
+    assert recover_base58_case(orig.upper()) == orig
+
+
+def test_recover_base58_case_no_valid_casing_returns_none():
+    # base58 chars only, but a fixed digit is wrong so no casing validates.
+    assert recover_base58_case("1113tod957") is None
+
+
+def test_recover_base58_case_prunes_forced_chars():
+    # only 't' and 'D' are ambiguous here ('1','3','9','5','6' fixed; 'o' has no
+    # uppercase in base58), so exactly 2^2 = 4 variants are searched.
+    assert count_base58_case_candidates(_B58_CHECK_LOWER) == 4
+
+
+def test_recover_base58_case_rejects_non_base58_char():
+    with pytest.raises(ValueError):
+        recover_base58_case("1113tod95" + "0")  # '0' is not in the base58 alphabet
+
+
+def test_recover_base58_case_respects_max_candidates_guard():
+    with pytest.raises(ValueError):
+        recover_base58_case("a" * 40, max_candidates=1024)
+
+
+def test_iter_base58_case_recovery_yields_match():
+    assert list(iter_base58_case_recovery(_B58_CHECK_LOWER)) == [_B58_CHECK_CANONICAL]

@@ -216,6 +216,19 @@ class GSRestConfig(BaseSettings):
         default="https://www.iknaio.com/",
         description="Contact website shown in OpenAPI info.contact",
     )
+    docs_mcp_auth_note: Optional[str] = Field(
+        default=(
+            "**Authentication:** the MCP endpoint is protected by OAuth. "
+            "When adding the connector in your assistant, use the client ID "
+            "`iknaio-mcp`."
+        ),
+        description=(
+            "Authentication note appended to the 'AI assistant access (MCP)' "
+            "section of the API docs. Tells users the OAuth client ID needed "
+            "when adding the connector. Set to an empty string to omit it "
+            "(e.g. for deployments without OAuth or with a different client ID)."
+        ),
+    )
 
     plugins: List[str] = Field(
         default_factory=list, description="List of plugin modules to load"

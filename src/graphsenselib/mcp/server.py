@@ -74,6 +74,17 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     # (Slack/SMTP, set up in web/app.py:setup_logging) fire for MCP failures too.
     mcp.add_middleware(ErrorLoggingMiddleware())
 
+    # Consolidated tools receive (mcp, app, stack) but not the MCP config;
+    # tools that build Pathfinder deep links (build_pathfinder_file's
+    # `open_url`) read the base URL off app.state instead. None means the
+    # open-url feature is disabled: the tool then neither mints the link
+    # nor advertises it in its description.
+    app.state._graphsense_mcp_pathfinder_base_url = (
+        config.pathfinder_base_url.rstrip("/")
+        if config.pathfinder_open_url_enabled
+        else None
+    )
+
     stack = AsyncExitStack()
     register_custom_tools(mcp, app, curation, config, stack)
     return mcp, stack

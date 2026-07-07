@@ -63,6 +63,26 @@ class CassandraConfig(BaseSettings):
     list_address_txs_ordered_legacy: bool = Field(
         default=False, description="Use legacy address transaction ordering"
     )
+    fanout_bounding_and_links_precheck_enabled: bool = Field(
+        default=True,
+        description=(
+            "Master switch for the serving-path query optimizations that "
+            "trust precomputed aggregate data. (1) Token fan-out bounding: "
+            "address tx listings and links only query the tokens an address "
+            "actually used (derived from the address rows' "
+            "total_tokens_received/total_tokens_spent maps) instead of every "
+            "configured token. (2) Links pre-check: links queries point-look "
+            "up the directed edge in the relations tables to return "
+            "immediately when no edge exists and to stop paging once all of "
+            "the edge's no_transactions txs are found. Disable to restore "
+            "the previous unbounded/full-scan behavior if those aggregates "
+            "are suspected to be incomplete (token txs missing from "
+            "listings, links missing txs or coming back empty). Note that "
+            "tokens absent from token_configuration are never queried "
+            "regardless of this setting (a warning is logged when an "
+            "address used such tokens)."
+        ),
+    )
 
     cross_chain_pubkey_mapping_keyspace: Optional[Union[str, List[str]]] = Field(
         default="pubkey",

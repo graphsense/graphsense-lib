@@ -1267,7 +1267,12 @@ async def test_backend_5xx_logs_at_error_before_raising_tool_error(caplog):
                     "lookup_address", {"currency": "btc", "address": "abc"}
                 )
 
-    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    errors = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR
+        and r.name == "graphsenselib.mcp.tools.consolidated"
+    ]
     assert len(errors) == 1
     assert "HTTP 503" in errors[0].getMessage()
     assert "upstream cassandra timed out" in errors[0].getMessage()
@@ -1298,4 +1303,9 @@ async def test_backend_4xx_does_not_log_at_error(caplog):
                     "lookup_address", {"currency": "btc", "address": "abc"}
                 )
 
-    assert [r for r in caplog.records if r.levelno == logging.ERROR] == []
+    assert [
+        r
+        for r in caplog.records
+        if r.levelno == logging.ERROR
+        and r.name == "graphsenselib.mcp.tools.consolidated"
+    ] == []

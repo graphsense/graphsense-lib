@@ -596,6 +596,25 @@ def _run_exchange_rates_ingest(
         else:
             raise
 
+    # Refresh per-token rates for unpegged tokens alongside native rates.
+    # Best-effort: token rate issues must never abort block ingestion.
+    try:
+        from ..rates.token_rates import ingest_token_rates
+
+        ingest_token_rates(
+            env,
+            currency,
+            provider,
+            list(supported_fiat_currencies),
+            MIN_START,
+            prev_date,
+            False,  # force
+            False,  # dry_run
+            *api_key_args,
+        )
+    except Exception as e:
+        logger.warning(f"Token-rate pre-ingest ({provider}) failed: {e}")
+
 
 def _run_staleness_check(
     env: str,

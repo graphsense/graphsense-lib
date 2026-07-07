@@ -110,6 +110,19 @@ connector or tool source; the assistant then handles the rest.
 logger = logging.getLogger(__name__)
 
 
+def _build_api_description(config: GSRestConfig) -> str:
+    """API docs description with the MCP authentication note appended.
+
+    The MCP section is the last section of API_DESCRIPTION, so the
+    configurable `docs_mcp_auth_note` (e.g. the OAuth client ID) is appended
+    as a trailing paragraph. An empty note omits it entirely.
+    """
+    note = (config.docs_mcp_auth_note or "").strip()
+    if not note:
+        return API_DESCRIPTION
+    return f"{API_DESCRIPTION}\n{note}\n"
+
+
 def _to_snake_case(name: str) -> str:
     """Convert PascalCase or camelCase to snake_case.
 
@@ -1156,7 +1169,7 @@ def _setup_custom_openapi(app: FastAPI) -> None:
             "url": config.docs_contact_url,
         }
 
-        openapi_schema["info"]["description"] = API_DESCRIPTION
+        openapi_schema["info"]["description"] = _build_api_description(config)
         external_docs_url = config.docs_external_url
         if external_docs_url:
             openapi_schema["externalDocs"] = {

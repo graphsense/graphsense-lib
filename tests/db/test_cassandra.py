@@ -98,3 +98,57 @@ def test_cassandra_create_schema(gs_db_setup):
     with DbFactory().from_config("pytest", "btc") as db:
         c = db.raw.get_configuration()
         assert c.id == "pytest_btc_raw"
+
+
+class _FakeSession:
+    """Minimal session stand-in for exercising CassandraDb without a cluster."""
+
+    def __init__(self, keyspace=None, execute_side_effects=None):
+        self.keyspace = keyspace
+        self.set_keyspace_calls = []
+        self.execute_keyspaces = []
+        self._side_effects = list(execute_side_effects or [])
+
+    def set_keyspace(self, keyspace):
+        self.keyspace = keyspace
+        self.set_keyspace_calls.append(keyspace)
+
+    def execute(self, statement, parameters=None):
+        self.execute_keyspaces.append(self.keyspace)
+        if self._side_effects:
+            effect = self._side_effects.pop(0)
+            if isinstance(effect, Exception):
+                raise effect
+        return "result"
+
+
+def test_execute_with_backoff_retries_crc_mismatch(monkeypatch):
+    from cassandra.segment import CrcException
+
+    db = CassandraDb(["host-a"])
+    db.session = _FakeSession(
+        keyspace="ks", execute_side_effects=[CrcException("CRC mismatch on header")]
+    )
+    monkeypatch.setattr("graphsenselib.db.cassandra.time.sleep", lambda _: None)
+
+    assert db.execute("SELECT * FROM tbl") == "result"
+    assert len(db.session.execute_keyspaces) == 2
+
+
+def test_execute_switches_session_keyspace(monkeypatch):
+    db = CassandraDb(["host-a"])
+    db.session = _FakeSession(keyspace="current_ks")
+
+    assert db.execute("SELECT * FROM tbl", keyspace="target_ks") == "result"
+    # query ran with the requested keyspace active, then it was restored
+    assert db.session.execute_keyspaces == ["target_ks"]
+    assert db.session.set_keyspace_calls == ["target_ks", "current_ks"]
+    assert db.session.keyspace == "current_ks"
+
+
+def test_execute_keeps_matching_session_keyspace():
+    db = CassandraDb(["host-a"])
+    db.session = _FakeSession(keyspace="same_ks")
+
+    assert db.execute("SELECT * FROM tbl", keyspace="same_ks") == "result"
+    assert db.session.set_keyspace_calls == []

@@ -22,7 +22,9 @@ class TokensService:
                 token_config = TokenConfig(
                     ticker=k.lower(),
                     decimals=v["decimals"],
-                    peg_currency=v["peg_currency"].lower(),
+                    peg_currency=(
+                        v["peg_currency"].lower() if v["peg_currency"] else None
+                    ),
                     contract_address=address_to_user_format(
                         currency, v["token_address"]
                     ),

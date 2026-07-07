@@ -139,6 +139,16 @@ FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
 
+class _AddressIdNotFound(Exception):
+    """Internal sentinel raised on an address_id cache miss.
+
+    ``@alru_cache`` does not cache calls that raise, so raising here keeps
+    "address not found" out of the cache: an assigned ``address_id`` is
+    immutable and safe to cache forever, but a currently-unknown address may
+    be ingested later and must always be re-resolved.
+    """
+
+
 def account_calc_tx_fee(tx) -> Optional[int]:
     rgu = tx.get("receipt_gas_used", None)
     if rgu is None:
@@ -1278,6 +1288,36 @@ class Cassandra:
             return None
         return self.markup_rates(currency, result)
 
+    async def get_token_rate(self, currency, token, block_id):
+        """Per-block fiat rate for an unpegged token at or before `block_id`.
+
+        Returns a labeled rates list ([{code, value}, ...]) or None when no
+        rate exists (caller falls back to zero fiat). See the token_exchange_rates
+        table populated by the delta-update from fetched per-token prices.
+        """
+        query = (
+            "SELECT fiat_values FROM token_exchange_rates "
+            "WHERE asset = %s AND block_id <= %s LIMIT 1"
+        )
+        result = one(
+            await self.execute_async(
+                currency, "transformed", query, [token.upper(), block_id]
+            )
+        )
+        if result is None:
+            return None
+        return self.markup_values(currency, result["fiat_values"])
+
+    async def get_latest_token_rate(self, currency, token):
+        """Most recent per-block fiat rate for an unpegged token (for balances)."""
+        query = "SELECT fiat_values FROM token_exchange_rates WHERE asset = %s LIMIT 1"
+        result = one(
+            await self.execute_async(currency, "transformed", query, [token.upper()])
+        )
+        if result is None:
+            return None
+        return self.markup_values(currency, result["fiat_values"])
+
     # async def list_rates(self, currency, heights):
     #     result = await self.concurrent_with_args(
     #         currency, 'transformed',
@@ -1668,6 +1708,18 @@ class Cassandra:
         # reaches Cassandra, which rejects an empty partition key.
         if not address:
             return None
+        try:
+            # Cache hits only: address_ids are immutable once assigned, but a
+            # miss must never be cached (see _AddressIdNotFound). This resolver
+            # backs get_address, get_address_entity_id, list_address_txs_ordered
+            # and the links path, so the same address is otherwise re-resolved
+            # several times per request (and across requests for hot addresses).
+            return await self._get_address_id_cached(currency, address)
+        except _AddressIdNotFound:
+            return None
+
+    @alru_cache(maxsize=100_000)
+    async def _get_address_id_cached(self, currency, address):
         prefix = self.scrub_prefix(currency, address)
         if is_eth_like(currency):
             prefix = prefix.upper()
@@ -1681,7 +1733,7 @@ class Cassandra:
         )
         result = one(result)
         if not result:
-            return None
+            raise _AddressIdNotFound()
 
         return result["address_id"]
 
@@ -1892,6 +1944,56 @@ class Cassandra:
 
         return result
 
+    async def get_address_token_assets(self, currency, address, is_outgoing):
+        """Return the set of token tickers an address actually transacted in.
+
+        Derived from the address aggregate row's total_tokens_received /
+        total_tokens_spent maps, which record exactly the token `currency`
+        clustering values present in address_transactions for that address.
+        Used to bound the per-token query fan-out (see list_address_txs_ordered)
+        to only the tokens the address used instead of every supported token,
+        so query cost per request does not grow with the number of supported
+        tokens.
+
+        is_outgoing True -> spent tokens, False -> received, None -> union.
+        """
+        address_id, address_id_group = await self.get_address_id_id_group(
+            currency, address
+        )
+        query = (
+            "SELECT total_tokens_received, total_tokens_spent FROM address "
+            "WHERE address_id = %s AND address_id_group = %s"
+        )
+        result = one(
+            await self.execute_async(
+                currency, "transformed", query, [address_id, address_id_group]
+            )
+        )
+        if not result:
+            return set()
+        received = {k.upper() for k in (result["total_tokens_received"] or {})}
+        spent = {k.upper() for k in (result["total_tokens_spent"] or {})}
+        if is_outgoing is None:
+            return received | spent
+        return spent if is_outgoing else received
+
+    def _warn_unconfigured_tokens(
+        self, currency, configured_assets, used_assets, context
+    ):
+        """Warn when address aggregates reference tokens that are missing from
+        token_configuration. Transactions in such tokens can never be returned
+        by the per-token queries — with or without fan-out bounding — so this
+        points at a token_configuration gap, not at the bounding itself.
+        """
+        missing = set(used_assets) - {a.upper() for a in configured_assets}
+        missing.discard(currency.upper())
+        if missing and self.logger:
+            self.logger.warning(
+                f"{currency}: {context} used tokens missing from "
+                f"token_configuration: {sorted(missing)}; transactions in "
+                "these tokens are not included in results."
+            )
+
     @eth
     async def get_address_entity_id(self, currency, address):
         address_id, address_id_group = await self.get_address_id_id_group(
@@ -2027,7 +2129,21 @@ class Cassandra:
         else:
             if is_eth_like(currency):
                 token_config = self.get_token_configuration(currency)
-                include_assets = list(token_config.keys())
+                # Bound the fan-out to the tokens the "first" node (whose txs we
+                # list in results1) actually used in the queried direction,
+                # instead of every supported token.
+                if is_outgoing:
+                    used = src_node.get("total_tokens_spent") or {}
+                else:
+                    used = dst_node.get("total_tokens_received") or {}
+                used = {k.upper() for k in used}
+                self._warn_unconfigured_tokens(
+                    currency, token_config.keys(), used, f"links {id} -> {neighbor}"
+                )
+                if self.tconfig.fanout_bounding_and_links_precheck_enabled:
+                    include_assets = [a for a in token_config.keys() if a in used]
+                else:
+                    include_assets = list(token_config.keys())
                 include_assets.append(currency.upper())
             else:
                 include_assets = [currency.upper()]
@@ -2051,6 +2167,41 @@ class Cassandra:
         tx_id_upper_bound = min(
             tx_id_upper_bound or node_tx_id_upper_bound, node_tx_id_upper_bound
         )
+
+        # Point-lookup the directed edge (id -> neighbor) in the relations
+        # tables to bound this query. list_links otherwise walks the smaller
+        # node's entire tx history to (re)discover an edge whose exact tx count
+        # is already stored as no_transactions. This lets us (a) return
+        # immediately when no direct edge exists and (b) stop paging once every
+        # edge tx has been found (see the early-stop check in the loop below).
+        # The endpoint is directional (from_address == id, to_address ==
+        # neighbor), i.e. id's outgoing relation to neighbor.
+        # edge_tx_count None means the pre-check is disabled: no early return
+        # here and no early stop in the loop below (full history walk).
+        edge_tx_count = None
+        if self.tconfig.fanout_bounding_and_links_precheck_enabled:
+            if node_type == NodeType.ADDRESS:
+                neighbor_id = await self.get_address_id(currency, neighbor)
+            else:
+                neighbor_id = int(neighbor)
+
+            edge_tx_count = 0
+            if neighbor_id is not None:
+                edge_rows, _ = await self.list_neighbors(
+                    currency,
+                    id,
+                    True,
+                    node_type,
+                    targets=[neighbor_id],
+                    page=None,
+                    pagesize=None,
+                )
+                if edge_rows:
+                    edge_tx_count = sum(row["no_transactions"] for row in edge_rows)
+
+            if edge_tx_count == 0:
+                # No direct edge id -> neighbor: there can be no links.
+                return [], None
 
         final_results = []
         requested_pagesize = pagesize or SMALL_PAGE_SIZE
@@ -2083,12 +2234,24 @@ class Cassandra:
                 else [(row[tx_id], None) for row in results1_raw]
             )
 
-            assets = set([currency.upper()])
-            if is_eth_like(currency):
-                for row in results1_raw:
-                    assets.add(row["currency"])
+            if token_currency is not None:
+                # Token-filtered query: only the token's rows on the `second`
+                # side are relevant. Fetching the native asset (or others) here
+                # would (a) let non-token events leak into a token-filtered
+                # result — e.g. the native contract-call trace when `neighbor`
+                # is the token contract, which passes the address-only filter
+                # below but is not a token transfer — and (b) multiply the
+                # per-page fan-out against a possibly huge `second` partition.
+                # It never drops a genuine token link: a real token transfer
+                # id -> neighbor still produces a token row on the second side.
+                assets = [token_currency.upper()]
+            else:
+                assets = set([currency.upper()])
+                if is_eth_like(currency):
+                    for row in results1_raw:
+                        assets.add(row["currency"])
 
-            assets = list(assets)
+                assets = list(assets)
 
             results2, _, _ = await self.list_address_txs_ordered(
                 network=currency,
@@ -2218,6 +2381,17 @@ class Cassandra:
                         and await has_cluster_id_in_ios(neighbor, fr["outputs"])
                     ]
 
+            # Once every edge tx has been found there is nothing left to page
+            # for: results2 already expanded all asset rows for these tx ids,
+            # so counting distinct tx ids against the pair's (per-tx) count is a
+            # safe upper bound that can only over-scan, never truncate.
+            # edge_tx_count is None when the pre-check is disabled: never stop
+            # early then.
+            all_edge_found = (
+                edge_tx_count is not None
+                and len({row[tx_id] for row in final_results}) >= edge_tx_count
+            )
+
             # Check if we have enough results after all filtering
             if len(final_results) >= requested_pagesize:
                 # Truncate to exact requested size and get page token from last result
@@ -2241,6 +2415,13 @@ class Cassandra:
                 self.logger.debug(
                     f"early termination with {len(final_results)} results, page: {page}"
                 )
+                break
+
+            if all_edge_found:
+                # All edge txs found and they fit within one page: no more
+                # results exist, so there is no next page.
+                page = None
+                self.logger.debug(f"all {edge_tx_count} edge txs found; stopping scan")
                 break
 
             page = new_pages[-1] if new_pages else None
@@ -3094,26 +3275,24 @@ class Cassandra:
                 )
 
         if results is None:
-            # load results from gs database
+            # load results from gs database. currency is a clustering column of
+            # the balance table, so a single partition read returns every
+            # currency's balance at once - no per-token query fan-out.
             if "address_id_group" not in row:
                 row["address_id_group"] = self.get_id_group(currency, row["address_id"])
             query = (
-                "SELECT balance from balance where address_id=%s "
-                "and address_id_group=%s "
-                "and currency=%s"
+                "SELECT currency, balance FROM balance "
+                "WHERE address_id=%s AND address_id_group=%s"
             )
-
-            balance_tasks = [
-                self.execute_async(
-                    currency,
-                    "transformed",
-                    query,
-                    [row["address_id"], row["address_id_group"], c],
-                )
-                for c in balance_currencies
-            ]
-            balance_results = await asyncio.gather(*balance_tasks)
-            results = {c: one(r) for c, r in zip(balance_currencies, balance_results)}
+            balance_rows = await self.execute_async(
+                currency,
+                "transformed",
+                query,
+                [row["address_id"], row["address_id_group"]],
+                autopaging=True,
+            )
+            by_currency = {r["currency"]: r for r in balance_rows.current_rows}
+            results = {c: by_currency.get(c) for c in balance_currencies}
 
         if results[currency.upper()] is None:
             results[currency.upper()] = {
@@ -3140,6 +3319,33 @@ class Cassandra:
             if c in token_config and b is not None
         }
         row["token_balances"] = None if len(token_balances) == 0 else token_balances
+
+        # For unpegged tokens (no USD/EUR/ETH peg) the fiat value of a balance
+        # comes from the latest fetched per-token rate; resolve them here so the
+        # service layer can convert. Missing rate -> None -> zero fiat fallback.
+        row["token_balance_rates"] = await self._resolve_token_balance_rates(
+            currency, token_config, token_balances
+        )
+
+    async def _resolve_token_balance_rates(
+        self, currency, token_config, token_balances
+    ):
+        def is_unpegged(cfg):
+            peg = cfg["peg_currency"]
+            return peg is None or (isinstance(peg, str) and peg.strip() == "")
+
+        unpegged = [
+            c
+            for c in token_balances
+            if c in token_config and is_unpegged(token_config[c])
+        ]
+        if not unpegged:
+            return None
+        rates = await asyncio.gather(
+            *[self.get_latest_token_rate(currency, c) for c in unpegged]
+        )
+        resolved = {c: r for c, r in zip(unpegged, rates) if r is not None}
+        return resolved or None
 
     # ETH Variants
 
@@ -3595,9 +3801,22 @@ class Cassandra:
             node_type = NodeType.ADDRESS
             address = await self.get_address_by_address_id(currency, address)
 
+        is_outgoing = direction == "out" if direction is not None else None
+
         if not token_currency:
+            # Bound the per-token query fan-out to the tokens this address
+            # actually used (direction-aware), instead of every supported token.
             token_config = self.get_token_configuration(currency)
-            include_assets = list(token_config.keys())
+            address_assets = await self.get_address_token_assets(
+                currency, address, is_outgoing
+            )
+            self._warn_unconfigured_tokens(
+                currency, token_config.keys(), address_assets, f"address {address}"
+            )
+            if self.tconfig.fanout_bounding_and_links_precheck_enabled:
+                include_assets = [a for a in token_config.keys() if a in address_assets]
+            else:
+                include_assets = list(token_config.keys())
             include_assets.append(currency.upper())
         else:
             include_assets = [token_currency.upper()]
@@ -3614,7 +3833,7 @@ class Cassandra:
             id=address,
             tx_id_lower_bound=first_tx_id,
             tx_id_upper_bound=upper_bound,
-            is_outgoing=(direction == "out" if direction is not None else None),
+            is_outgoing=is_outgoing,
             include_assets=include_assets,
             ascending=ascending,
             page=page,
@@ -3661,6 +3880,11 @@ class Cassandra:
                 addr_tx["trace_index"] = addr_tx["tx_reference"].trace_index
 
             full_tx = full_txs[addr_tx["transaction_id"]]
+            if full_tx is None:
+                # tx id not yet resolvable to a hash (delta-updater in-flight,
+                # see list_txs_by_ids_eth); drop the row instead of failing
+                addr_tx["error"] = "transaction not yet resolvable to a hash"
+                continue
             contract_creation = full_tx.get("contract_creation", None)
 
             addr_tx["contract_creation"] = contract_creation
@@ -3765,9 +3989,73 @@ class Cassandra:
             await self.fix_timestamp(
                 currency, addr_tx, timestamp_col="timestamp", block_id_col="height"
             )
+        await self._attach_token_tx_rates(currency, txs)
         return [tx for tx in txs if "error" not in tx]  # remove errored txs
 
+    async def _check_unresolvable_tx_ids_tolerable(self, currency, missing_ids):
+        """Decide if tx ids missing in transaction_ids_by_transaction_id_group
+        are tolerable or a real inconsistency.
+
+        While the delta-updater persists a batch, its data writes are sharded
+        without cross-table ordering, so address_transactions rows can become
+        visible before the corresponding tx-id mapping. Summary statistics are
+        only committed after all data writes, therefore such in-flight txs
+        always lie in blocks above the last committed block. Misses at or
+        below it cannot be that race and raise instead of being masked.
+        """
+        stats = await self.get_currency_statistics(currency)
+        last_committed_block = stats["no_blocks"] - 1 if stats else -1
+        stale = [
+            id for id in missing_ids if get_block_from_tx_id(id) <= last_committed_block
+        ]
+        if stale:
+            raise DBInconsistencyException(
+                f"transaction ids {stale} in network {currency} not found in "
+                "transaction_ids_by_transaction_id_group although at or below "
+                f"the last committed block {last_committed_block}"
+            )
+        self.logger.warning(
+            f"Dropping {len(missing_ids)} txs of network {currency} not yet "
+            f"resolvable to hashes (ids {missing_ids}): above last committed "
+            f"block {last_committed_block}, delta-updater presumably in-flight."
+        )
+
+    async def _attach_token_tx_rates(self, currency, txs):
+        """Attach per-tx fetched fiat rates for unpegged token transfers.
+
+        Resolves get_token_rate(asset, block) for the distinct (asset, block)
+        pairs of unpegged erc20 rows (bounded by page size, not the token set)
+        and stores the labeled rate on each row for the service layer to price.
+        """
+        token_config = self.get_token_configuration(currency)
+        if not token_config:
+            return
+
+        def is_unpegged(ticker):
+            cfg = token_config.get(ticker) or token_config.get(ticker.upper())
+            if cfg is None:
+                return False
+            peg = cfg["peg_currency"]
+            return peg is None or (isinstance(peg, str) and peg.strip() == "")
+
+        pairs = {
+            (tx["currency"], tx["height"])
+            for tx in txs
+            if tx.get("type") == "erc20" and is_unpegged(tx.get("currency"))
+        }
+        if not pairs:
+            return
+        pairs = list(pairs)
+        rates = await asyncio.gather(
+            *[self.get_token_rate(currency, asset, block) for asset, block in pairs]
+        )
+        rate_map = {p: r for p, r in zip(pairs, rates)}
+        for tx in txs:
+            if tx.get("type") == "erc20":
+                tx["token_rate"] = rate_map.get((tx["currency"], tx["height"]))
+
     async def list_txs_by_ids_eth(self, currency, ids, include_token_txs=False):
+        ids = list(ids)
         params = [[self.get_tx_id_group(currency, id), id] for id in ids]
         statement = (
             "SELECT transaction from transaction_ids_by_transaction_id_group"
@@ -3777,11 +4065,23 @@ class Cassandra:
             currency, "transformed", statement, params, filter_empty=False
         )
 
-        return await self.list_txs_by_hashes(
+        any_missing = any(row is None for row in result)
+        if any_missing:
+            missing_ids = [id for id, row in zip(ids, result) if row is None]
+            await self._check_unresolvable_tx_ids_tolerable(currency, missing_ids)
+
+        found = await self.list_txs_by_hashes(
             currency,
-            [row["transaction"] for row in result],
+            [row["transaction"] for row in result if row is not None],
             include_token_txs=include_token_txs,
         )
+        if not any_missing or include_token_txs:
+            # with include_token_txs the result interleaves token txs and is
+            # never positionally aligned with ids, so missing ids are dropped
+            return found
+        # keep the result aligned with ids: None placeholder per missing id
+        found_iter = iter(found)
+        return [None if row is None else next(found_iter) for row in result]
 
     async def get_tx_by_id_eth(self, currency, id):
         params = [self.get_tx_id_group(currency, id), id]
@@ -3950,9 +4250,17 @@ class Cassandra:
         if not keys:
             return []
 
-        # Derive every pubkey to addresses and union the rows. Different
-        # encodings of the same key (legacy uncompressed vs new compressed)
-        # resolve to the same addresses, so dedupe on (currency, type, address).
+        # Derive every pubkey to addresses and union the rows. Two things can
+        # produce different strings for the *same* graph node:
+        #   * different encodings of the same key (legacy uncompressed vs new
+        #     compressed) resolve to the same addresses, and
+        #   * BCH is derived in the modern ``bitcoincash:`` CashAddr encoding,
+        #     while the rest of the graph keys BCH addresses by their legacy
+        #     base58 form (the materialised dataset still holds CashAddr rows).
+        # Normalise every derived address to its canonical user form (a no-op
+        # for networks already in canonical form; CashAddr -> legacy base58 for
+        # BCH) and dedupe on (currency, address) so the two encodings collapse
+        # to a single node instead of surfacing as duplicates.
         result = []
         seen_rows = set()
         for key in keys:
@@ -3961,13 +4269,18 @@ class Cassandra:
             )
             for cur, addressesInC in addresses.items():
                 for addr_type, addr in addressesInC.items():
-                    dedup = (cur, addr_type, addr)
+                    if addr_type == "error":
+                        continue
+                    norm_addr = address_to_user_format(
+                        cur, cannonicalize_address(cur, addr)
+                    )
+                    dedup = (cur, norm_addr)
                     if dedup in seen_rows:
                         continue
                     seen_rows.add(dedup)
                     result.append(
                         {
-                            "address": addr,
+                            "address": norm_addr,
                             "type": addr_type,
                             "currency": cur,
                             "pubkey": key,

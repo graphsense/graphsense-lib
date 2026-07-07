@@ -1,10 +1,11 @@
 import hashlib
+import itertools
 import math
 import re
 from abc import ABC, abstractmethod
 from collections import Counter
 from functools import reduce
-from typing import Optional, Union, List
+from typing import Callable, Iterator, Optional, Union, List
 
 from bitarray import bitarray
 from bitarray.util import ba2int
@@ -400,6 +401,83 @@ def base58_check_validate(s: str) -> bool:
         return False
 
 
+# Map each case-folded character to every base58 letter that folds to it.
+# base58 omits 'I', 'O' and 'l', so a few folds are single-valued: an 'i'/'o'
+# is always lower-case and an 'l' must be 'L'. Digits 1-9 fold to themselves.
+_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_BASE58_CASE_VARIANTS: dict = {}
+for _ch in _BASE58_ALPHABET:
+    _BASE58_CASE_VARIANTS.setdefault(_ch.lower(), []).append(_ch)
+
+
+def _base58_case_variants(s: str) -> List[List[str]]:
+    """Per-position list of base58 letters that could have produced each char."""
+    out = []
+    for c in s:
+        v = _BASE58_CASE_VARIANTS.get(c.lower())
+        if v is None:
+            raise ValueError(f"'{c}' is not a base58 character")
+        out.append(v)
+    return out
+
+
+def count_base58_case_candidates(s: str) -> int:
+    """Number of case variants ``recover_base58_case`` would have to test.
+
+    Only characters with an ambiguous case (i.e. both cases are valid base58)
+    branch; digits and the asymmetric 'i'/'o'/'l' are fixed.
+    """
+    n = 1
+    for v in _base58_case_variants(s):
+        n *= len(v)
+    return n
+
+
+def iter_base58_case_recovery(
+    s: str, validate: Callable[[str], bool] = base58_check_validate
+) -> Iterator[str]:
+    """Lazily yield every case variant of ``s`` that passes ``validate``."""
+    for combo in itertools.product(*_base58_case_variants(s)):
+        candidate = "".join(combo)
+        if validate(candidate):
+            yield candidate
+
+
+def recover_base58_case(
+    s: str,
+    validate: Callable[[str], bool] = base58_check_validate,
+    max_candidates: int = 1 << 28,
+) -> Optional[str]:
+    """Recover the original letter-casing of a base58check string whose case was
+    lost (e.g. it was upper- or lower-cased).
+
+    base58check carries a 4-byte SHA256d checksum, and SHA256 is not invertible,
+    so there is no algebraic shortcut: we enumerate the valid case variants of
+    each letter and return the first one whose checksum is intact. The search is
+    pruned to genuinely case-ambiguous characters (digits and 'i'/'o'/'l' are
+    fixed), and the 32-bit checksum makes a hit effectively unique, so returning
+    the first match is safe and roughly halves the average work.
+
+    For a typical 34-char address this is ~2^24..2^28 candidates (minutes of
+    pure-Python checking worst case). If the address is expected to live in a
+    dataset, a case-insensitive lookup there is far cheaper than this brute force.
+
+    Returns the recovered string, or ``None`` if no case variant validates
+    (e.g. the input is corrupted beyond just its casing).
+
+    Raises ``ValueError`` if the input contains a non-base58 character, or if the
+    case-variant search space exceeds ``max_candidates`` (raise the limit to
+    brute-force anyway).
+    """
+    total = count_base58_case_candidates(s)
+    if total > max_candidates:
+        raise ValueError(
+            f"case-variant search space ({total}) exceeds max_candidates "
+            f"({max_candidates}); raise the limit to brute-force anyway"
+        )
+    return next(iter_base58_case_recovery(s, validate=validate), None)
+
+
 def bech32_polymod(values):
     """Bech32 polymod function"""
     GEN = [0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3]
@@ -662,12 +740,31 @@ def validate_trx_address(address: str) -> bool:
     return base58_check_validate(address)
 
 
+def validate_xrp_address(address: str) -> bool:
+    """Validate an XRP classic (r...) address.
+
+    XRP uses base58check with the same SHA256d checksum as Bitcoin but a
+    different alphabet (the "ripple" dictionary), so we decode against that
+    alphabet and let ``b58decode_check`` verify the 4-byte checksum.
+    """
+    if not address or not address.startswith("r"):
+        return False
+
+    import base58
+
+    try:
+        base58.b58decode_check(address, alphabet=base58.RIPPLE_ALPHABET)
+        return True
+    except Exception:
+        return False
+
+
 def validate_address(currency: str, address: str) -> bool:
     """
     Validate cryptocurrency address for the given currency.
 
     Args:
-        currency: Currency code (btc, bch, ltc, zec, eth, trx)
+        currency: Currency code (btc, bch, ltc, zec, eth, trx, xrp)
         address: Address to validate
 
     Returns:
@@ -685,6 +782,7 @@ def validate_address(currency: str, address: str) -> bool:
         "zec": validate_zec_address,
         "eth": validate_eth_address,
         "trx": validate_trx_address,
+        "xrp": validate_xrp_address,
     }
 
     validator = validation_functions.get(currency)

@@ -35,7 +35,13 @@ def only_call_traces(traces: List) -> List:
 
 
 def get_prices(
-    value, decimals, block_rates, usd_equivalent, eur_equivalent, coin_equivalent
+    value,
+    decimals,
+    block_rates,
+    usd_equivalent,
+    eur_equivalent,
+    coin_equivalent,
+    token_rate=None,
 ) -> List[int]:
     euro_per_eth = block_rates[0]
     dollar_per_eth = block_rates[1]
@@ -53,12 +59,33 @@ def get_prices(
     elif coin_equivalent:
         dollar_value = value / 10**decimals * dollar_per_eth
         euro_value = dollar_value / dollar_per_euro
+    elif (
+        token_rate is not None
+        and token_rate[0] is not None
+        and token_rate[1] is not None
+    ):
+        # Unpegged token priced directly from its own per-block fiat rate
+        # (token_rate is positional [eur_per_token, usd_per_token], mirroring
+        # the native block_rates order).
+        euro_value = value / 10**decimals * token_rate[0]
+        dollar_value = value / 10**decimals * token_rate[1]
     else:
-        raise Exception(
-            "Unknown price type. only native coin and dollar equivalent supported atm"
-        )
+        # Unpegged token with no known rate: store zero fiat values.
+        euro_value = 0
+        dollar_value = 0
 
     return [euro_value, dollar_value]
+
+
+def _get_token_rate(token_rates, tokentransfer):
+    """Look up an unpegged token's per-block fiat rate for a transfer.
+
+    token_rates maps (asset, block_id) -> positional [eur, usd]; returns None
+    when absent so pricing falls back to zero fiat.
+    """
+    if not token_rates:
+        return None
+    return token_rates.get((tokentransfer.asset, tokentransfer.block_id))
 
 
 def get_prices_coin(value, currency, block_rates):
@@ -67,7 +94,12 @@ def get_prices_coin(value, currency, block_rates):
 
 
 def get_entitytx_from_tokentransfer(
-    tokentransfer: TokenTransfer, is_outgoing, rates, hash_to_id, address_hash_to_id
+    tokentransfer: TokenTransfer,
+    is_outgoing,
+    rates,
+    hash_to_id,
+    address_hash_to_id,
+    token_rates=None,
 ) -> RawEntityTxAccount:
     tx_id = hash_to_id[tokentransfer.tx_hash]
 
@@ -85,6 +117,7 @@ def get_entitytx_from_tokentransfer(
             tokentransfer.usd_equivalent,
             tokentransfer.eur_equivalent,
             tokentransfer.coin_equivalent,
+            token_rate=_get_token_rate(token_rates, tokentransfer),
         ),
     )
 
@@ -268,6 +301,7 @@ def get_entitydelta_from_tokentransfer(
     is_outgoing: bool,
     rates: Dict[int, Tuple[float, float]],
     hash_to_id: dict,
+    token_rates=None,
 ) -> EntityDeltaAccount:
     identifier = tokentransfer.from_address if is_outgoing else tokentransfer.to_address
 
@@ -278,6 +312,7 @@ def get_entitydelta_from_tokentransfer(
         tokentransfer.usd_equivalent,
         tokentransfer.eur_equivalent,
         tokentransfer.coin_equivalent,
+        token_rate=_get_token_rate(token_rates, tokentransfer),
     )
     dv = DeltaValue(tokentransfer.value, fiat_values)
 
@@ -323,10 +358,53 @@ def is_contract_transaction(tx: Transaction, currency: str) -> bool:
 def is_contract_trace(trace: Trace, currency: str) -> bool:
     if currency == "ETH":  # could improve this with the specific type of transaction
         return trace.trace_type == "create"
-    elif currency == "TRX":  # traces dont create contracts transactions do (in data)
-        return False
+    elif currency == "TRX":
+        # A top-level CreateSmartContract tx is handled in is_contract_transaction.
+        # Contracts deployed by a factory via an internal CREATE only show up as a
+        # 'create' trace (the TRX adapter remaps the internal-tx `note` field onto
+        # `call_type`), so detect those here.
+        return trace.call_type == "create"
     else:
         raise ValueError(f"Unknown currency {currency}")
+
+
+def get_contract_creation_deltas_trace(
+    traces: List[Trace],
+    hash_to_id: dict,
+    currency: str,
+) -> List[EntityDeltaAccount]:
+    """Flag addresses created by an internal CREATE trace as contracts.
+
+    On TRON a contract can be deployed by a factory contract: the top-level
+    transaction is a TriggerSmartContract (so it carries no
+    receipt_contract_address) and the new contract only appears as a 'create'
+    trace. The transaction-based detection in is_contract_transaction misses
+    these, so we emit a minimal, value-free entity delta that carries nothing
+    but is_contract=True for the created address. All value / tx-count / balance
+    accounting stays on the call traces (see only_call_traces), unaffected.
+    """
+    deltas = []
+    for trace in traces:
+        if trace.to_address is None or not is_contract_trace(trace, currency):
+            continue
+        tx_id = hash_to_id[trace.tx_hash]
+        deltas.append(
+            EntityDeltaAccount(
+                identifier=trace.to_address,
+                total_received=DeltaValue(0, [0, 0]),
+                total_spent=DeltaValue(0, [0, 0]),
+                total_tokens_received={},
+                total_tokens_spent={},
+                first_tx_id=tx_id,
+                last_tx_id=tx_id,
+                no_incoming_txs=0,
+                no_outgoing_txs=0,
+                no_incoming_txs_zero_value=0,
+                no_outgoing_txs_zero_value=0,
+                is_contract=True,
+            )
+        )
+    return deltas
 
 
 def get_entitydelta_from_transaction(
@@ -418,7 +496,9 @@ def relationdelta_from_transaction(
 
 
 def relationdelta_from_tokentransfer(
-    tokentransfer: TokenTransfer, rates: Dict[int, Tuple[float, float]]
+    tokentransfer: TokenTransfer,
+    rates: Dict[int, Tuple[float, float]],
+    token_rates=None,
 ) -> RelationDeltaAccount:
     iadr, oadr = tokentransfer.from_address, tokentransfer.to_address
     value = tokentransfer.value
@@ -429,6 +509,7 @@ def relationdelta_from_tokentransfer(
         tokentransfer.usd_equivalent,
         tokentransfer.eur_equivalent,
         tokentransfer.coin_equivalent,
+        token_rate=_get_token_rate(token_rates, tokentransfer),
     )
     value = DeltaValue(value, [dollar_value, euro_value])
 
@@ -561,6 +642,7 @@ def get_entity_transaction_updates_trace_token(
     hash_to_id: dict,
     address_hash_to_id: dict,
     rates: dict,
+    token_rates=None,
 ) -> List[RawEntityTxAccount]:
     trace_outgoing = [
         get_entitytx_from_trace(trace, True, hash_to_id, address_hash_to_id)
@@ -573,12 +655,14 @@ def get_entity_transaction_updates_trace_token(
     ]
 
     token_outgoing = [
-        get_entitytx_from_tokentransfer(tt, True, rates, hash_to_id, address_hash_to_id)
+        get_entitytx_from_tokentransfer(
+            tt, True, rates, hash_to_id, address_hash_to_id, token_rates=token_rates
+        )
         for tt in token_transfers
     ]
     token_incoming = [
         get_entitytx_from_tokentransfer(
-            tt, False, rates, hash_to_id, address_hash_to_id
+            tt, False, rates, hash_to_id, address_hash_to_id, token_rates=token_rates
         )
         for tt in token_transfers
     ]
@@ -596,6 +680,7 @@ def get_entity_updates_trace_token(
     hash_to_id: dict,
     currency: str,
     rates: dict,
+    token_rates=None,
 ):
     trace_outgoing = [
         get_entitydelta_from_trace(trace, True, rates, hash_to_id, currency)
@@ -608,12 +693,16 @@ def get_entity_updates_trace_token(
     ]
 
     token_outgoing = [
-        get_entitydelta_from_tokentransfer(tt, True, rates, hash_to_id)
+        get_entitydelta_from_tokentransfer(
+            tt, True, rates, hash_to_id, token_rates=token_rates
+        )
         for tt in token_transfers
     ]
 
     token_incoming = [
-        get_entitydelta_from_tokentransfer(tt, False, rates, hash_to_id)
+        get_entitydelta_from_tokentransfer(
+            tt, False, rates, hash_to_id, token_rates=token_rates
+        )
         for tt in token_transfers
     ]
 

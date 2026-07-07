@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,18 @@ from graphsenselib.web.config import LoggingConfig
 _DOCS_STATIC_URL = "/docs_assets"
 _DOCS_STATIC_DIR = "./docs/static"
 _DEFAULT_ICON_FILENAME = "favicon.png"
+
+# Feature-gated instructions block for the open-in-Pathfinder deep link
+# (see `pathfinder_open_url_enabled`). The block regex removes the whole
+# marked region including the markers; the marker regex removes only the
+# marker lines, keeping the content.
+_OPEN_URL_MARKER_RE = re.compile(r"[ \t]*<!-- /?feature:pathfinder-open-url -->\n?")
+_OPEN_URL_BLOCK_RE = re.compile(
+    r"[ \t]*<!-- feature:pathfinder-open-url -->\n?"
+    r".*?"
+    r"<!-- /feature:pathfinder-open-url -->\n?",
+    re.DOTALL,
+)
 
 
 class SearchNeighborsConfig(BaseSettings):
@@ -114,6 +127,20 @@ class GSMCPConfig(BaseSettings):
         ),
     )
 
+    pathfinder_open_url_enabled: bool = Field(
+        default=False,
+        description=(
+            "Feature flag for the open-in-Pathfinder deep link. When true, "
+            "build_pathfinder_file mints an `open_url` "
+            "(`{pathfinder_base_url}/pathfinder?import=<token>`) alongside "
+            "the download link and the feature is advertised in the tool "
+            "description and server instructions. Off by default; only "
+            "enable where the Pathfinder deployment fetches its imports "
+            "from this REST host (the `?import=` loader resolves the token "
+            "against the dashboard's configured REST URL)."
+        ),
+    )
+
     website_url: Optional[str] = Field(
         default="https://www.iknaio.com/",
         description=(
@@ -207,6 +234,12 @@ class GSMCPConfig(BaseSettings):
         `instructions_file`, then the bundled instructions.md.
         Returns None when the source file is missing, which tells
         FastMCP to send no instructions at all.
+
+        Feature-gated blocks: text wrapped in
+        ``<!-- feature:pathfinder-open-url -->`` /
+        ``<!-- /feature:pathfinder-open-url -->`` marker lines is kept
+        (markers stripped) when `pathfinder_open_url_enabled` is true and
+        removed entirely otherwise.
         """
         if self.instructions is not None:
             text = self.instructions or None
@@ -217,6 +250,11 @@ class GSMCPConfig(BaseSettings):
             text = path.read_text(encoding="utf-8").strip() or None
         if text is None:
             return None
+        if self.pathfinder_open_url_enabled:
+            text = _OPEN_URL_MARKER_RE.sub("", text)
+        else:
+            text = _OPEN_URL_BLOCK_RE.sub("", text)
+        text = text.strip()
         return text.replace(
             "{pathfinder_base_url}", self.pathfinder_base_url.rstrip("/")
         )

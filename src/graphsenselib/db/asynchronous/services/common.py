@@ -65,8 +65,12 @@ def catchNaN(v):
     return v
 
 
-def map_rates_for_peged_tokens(rates, token_config):
-    """Map rates for pegged tokens - handle both dict and RatesResponse types"""
+def map_rates_for_peged_tokens(rates, token_config, token_rate=None):
+    """Map rates for pegged tokens - handle both dict and RatesResponse types.
+
+    token_rate: optional labeled fiat-per-token rate for an unpegged token; when
+    provided it is used verbatim, otherwise unpegged tokens get empty fiat.
+    """
     if isinstance(rates, RatesResponse):
         rates_dict = rates.rates
     elif isinstance(rates, dict):
@@ -74,7 +78,8 @@ def map_rates_for_peged_tokens(rates, token_config):
     else:
         rates_dict = rates
 
-    peg = token_config["peg_currency"].lower()
+    peg = token_config["peg_currency"]
+    peg = peg.lower() if peg else ""
     if peg == "usd":
         if len(rates_dict) != 2:
             raise Exception(
@@ -100,19 +105,30 @@ def map_rates_for_peged_tokens(rates, token_config):
 
     elif is_eth_like(peg):
         return rates
+    elif token_rate is not None:
+        # Unpegged token priced from its own fetched per-block/latest rate
+        # (already a labeled [{code, value}, ...] fiat-per-token list).
+        return token_rate
     else:
-        raise Exception(
-            "Currently only tokens pegged to ether, euro or usd are supported"
-        )
+        # Unpegged token with no known rate: no fiat conversion. Return an empty
+        # rates list so the raw token amount passes through with empty fiat
+        # values instead of raising.
+        return []
 
 
-def convert_token_values_map(currency, value_map, rates, token_configs):
+def convert_token_values_map(
+    currency, value_map, rates, token_configs, token_rates=None
+):
     if value_map is None:
         return None
     else:
+        token_rates = token_rates or {}
         return {
             token_currency.lower(): convert_token_value(
-                value, rates, token_configs[token_currency]
+                value,
+                rates,
+                token_configs[token_currency],
+                token_rate=token_rates.get(token_currency),
             )
             for token_currency, value in value_map.items()
         }
@@ -136,8 +152,11 @@ def convert_value_impl(value, rates, factor):
     )
 
 
-def convert_token_value(value, rates, token_config):
-    """Convert token value using rates - handle both dict and RatesResponse types"""
+def convert_token_value(value, rates, token_config, token_rate=None):
+    """Convert token value using rates - handle both dict and RatesResponse types.
+
+    token_rate: optional labeled fiat-per-token rate for an unpegged token.
+    """
     if isinstance(rates, RatesResponse):
         rates_dict = rates.rates
     elif isinstance(rates, dict) and "rates" in rates:
@@ -147,7 +166,7 @@ def convert_token_value(value, rates, token_config):
 
     return convert_value_impl(
         value,
-        map_rates_for_peged_tokens(rates_dict, token_config),
+        map_rates_for_peged_tokens(rates_dict, token_config, token_rate=token_rate),
         1 / token_config["decimal_divisor"],
     )
 
@@ -360,7 +379,11 @@ def address_from_row(
         out_degree=row.get("out_degree", 0),
         balance=convert_value(currency, row["balance"], rates),
         token_balances=convert_token_values_map(
-            currency, row.get("token_balances"), rates, token_config
+            currency,
+            row.get("token_balances"),
+            rates,
+            token_config,
+            token_rates=row.get("token_balance_rates"),
         ),
         is_contract=row.get("is_contract"),
         actors=converted_actors,
@@ -439,7 +462,12 @@ async def _tx_account_from_row(
         contract_creation=row.get("contract_creation", None),
         value=convert_value(currency, row["value"], r)
         if "token_tx_id" not in row
-        else convert_token_value(row["value"], r, token_config[row["currency"]]),
+        else convert_token_value(
+            row["value"],
+            r,
+            token_config[row["currency"]],
+            token_rate=row.get("token_rate"),
+        ),
         fee=fee,
         is_external=is_external,
         input=input,

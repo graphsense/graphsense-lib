@@ -110,6 +110,33 @@ async def test_external_tool_registered_when_configured(monkeypatch):
     assert "search_neighbors" in names
 
 
+async def test_build_mcp_exposes_pathfinder_base_url_on_app_state(monkeypatch):
+    """build_mcp must stash the (trailing-slash-stripped) pathfinder base
+    URL on app.state when the open-url feature flag is on — and None when
+    it is off (the default). build_pathfinder_file reads it from there to
+    decide whether to mint and advertise its `open_url` deep link."""
+    monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__BASE_URL", raising=False)
+    monkeypatch.delenv("GS_MCP_SEARCH_NEIGHBORS__API_KEY_ENV", raising=False)
+
+    from graphsenselib.web.app import create_spec_app
+
+    app = create_spec_app()
+    cfg = GSMCPConfig(
+        pathfinder_base_url="https://pf.example.test/",
+        pathfinder_open_url_enabled=True,
+    )
+    mcp, stack = build_mcp(app, cfg)
+    async with stack:
+        assert (
+            app.state._graphsense_mcp_pathfinder_base_url == "https://pf.example.test"
+        )
+
+    app_off = create_spec_app()
+    mcp, stack = build_mcp(app_off, GSMCPConfig())
+    async with stack:
+        assert app_off.state._graphsense_mcp_pathfinder_base_url is None
+
+
 async def test_curated_descriptions_applied(bundled_mcp):
     async with Client(bundled_mcp) as c:
         tools = {t.name: t for t in await c.list_tools()}
