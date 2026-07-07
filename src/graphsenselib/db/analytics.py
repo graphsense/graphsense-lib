@@ -744,9 +744,14 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         one-off ``transformation cluster`` bootstrap. Table existence alone is
         no signal — migrations create the fresh_* tables empty everywhere.
         Missing state table (pre-migration keyspace) counts as inactive.
+
+        Must stay on the parameterized ``select_one_safe``: the plain
+        ``select_one`` interpolates values verbatim into CQL (placeholder
+        strings like ``?`` rely on that), so a string value produces unquoted,
+        syntactically invalid CQL.
         """
         try:
-            row = self.select_one(
+            row = self.select_one_safe(
                 STATE_TABLE, where={"key": FRESH_CLUSTERING_ACTIVE_KEY}
             )
         except InvalidRequest:
