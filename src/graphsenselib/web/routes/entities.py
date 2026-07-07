@@ -314,7 +314,9 @@ async def search_entity_neighbors(
     value: str = Query(
         ..., description="Comma separated search values", examples=["Miner"]
     ),
-    depth: int = Query(..., description="Search depth", examples=[2]),
+    depth: int = Query(
+        ..., ge=1, le=service.MAX_DEPTH, description="Search depth", examples=[2]
+    ),
     breadth: int = Query(..., description="Search breadth", examples=[16]),
     skip_num_addresses: Optional[int] = Query(
         None, description="Skip entities with more than N addresses"

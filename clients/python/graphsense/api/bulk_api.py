@@ -14,7 +14,7 @@ from pydantic import Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictInt, StrictStr
+from pydantic import Field, StrictStr
 from typing import Any, Dict
 from typing_extensions import Annotated
 
@@ -130,7 +130,7 @@ class BulkApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         operation: Annotated[StrictStr, Field(description="The operation to perform")],
-        num_pages: Annotated[StrictInt, Field(description="Number of pages to fetch")],
+        num_pages: Annotated[int, Field(le=100, strict=True, ge=1, description="Number of pages to fetch")],
         request_body: Dict[str, Any],
         _request_timeout: Union[
             None,
@@ -211,7 +211,7 @@ class BulkApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         operation: Annotated[StrictStr, Field(description="The operation to perform")],
-        num_pages: Annotated[StrictInt, Field(description="Number of pages to fetch")],
+        num_pages: Annotated[int, Field(le=100, strict=True, ge=1, description="Number of pages to fetch")],
         request_body: Dict[str, Any],
         _request_timeout: Union[
             None,
@@ -292,7 +292,7 @@ class BulkApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         operation: Annotated[StrictStr, Field(description="The operation to perform")],
-        num_pages: Annotated[StrictInt, Field(description="Number of pages to fetch")],
+        num_pages: Annotated[int, Field(le=100, strict=True, ge=1, description="Number of pages to fetch")],
         request_body: Dict[str, Any],
         _request_timeout: Union[
             None,
@@ -457,7 +457,7 @@ class BulkApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         operation: Annotated[StrictStr, Field(description="The operation to perform")],
-        num_pages: Annotated[StrictInt, Field(description="Number of pages to fetch")],
+        num_pages: Annotated[int, Field(le=100, strict=True, ge=1, description="Number of pages to fetch")],
         request_body: Dict[str, Any],
         _request_timeout: Union[
             None,
@@ -538,7 +538,7 @@ class BulkApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         operation: Annotated[StrictStr, Field(description="The operation to perform")],
-        num_pages: Annotated[StrictInt, Field(description="Number of pages to fetch")],
+        num_pages: Annotated[int, Field(le=100, strict=True, ge=1, description="Number of pages to fetch")],
         request_body: Dict[str, Any],
         _request_timeout: Union[
             None,
@@ -619,7 +619,7 @@ class BulkApi:
         self,
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         operation: Annotated[StrictStr, Field(description="The operation to perform")],
-        num_pages: Annotated[StrictInt, Field(description="Number of pages to fetch")],
+        num_pages: Annotated[int, Field(le=100, strict=True, ge=1, description="Number of pages to fetch")],
         request_body: Dict[str, Any],
         _request_timeout: Union[
             None,

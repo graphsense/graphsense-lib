@@ -362,7 +362,9 @@ async def bulk_csv(
     operation: str = Path(
         ..., description="The operation to perform", examples=["get_block"]
     ),
-    num_pages: int = Query(..., description="Number of pages to fetch", examples=[1]),
+    num_pages: int = Query(
+        ..., ge=1, le=100, description="Number of pages to fetch", examples=[1]
+    ),
     body: Dict[str, Any] = ...,
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),
@@ -416,7 +418,9 @@ async def bulk_json(
     operation: str = Path(
         ..., description="The operation to perform", examples=["get_block"]
     ),
-    num_pages: int = Query(..., description="Number of pages to fetch", examples=[1]),
+    num_pages: int = Query(
+        ..., ge=1, le=100, description="Number of pages to fetch", examples=[1]
+    ),
     body: Dict[str, Any] = ...,
     services: ServiceContainer = Depends(get_services),
     tagstore_groups: list[str] = Depends(get_tagstore_access_groups),

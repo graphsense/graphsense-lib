@@ -2003,7 +2003,7 @@ class TxsApi:
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2096,7 +2096,7 @@ class TxsApi:
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2189,7 +2189,7 @@ class TxsApi:
         only_token_txs: Annotated[Optional[StrictBool], Field(description="Only return token transactions")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],

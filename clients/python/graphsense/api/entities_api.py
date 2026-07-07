@@ -457,7 +457,7 @@ class EntitiesApi:
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -539,7 +539,7 @@ class EntitiesApi:
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -621,7 +621,7 @@ class EntitiesApi:
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -776,7 +776,7 @@ class EntitiesApi:
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -858,7 +858,7 @@ class EntitiesApi:
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -940,7 +940,7 @@ class EntitiesApi:
         currency: Annotated[StrictStr, Field(description="The cryptocurrency code (e.g., btc)")],
         entity: Annotated[StrictInt, Field(description="The entity ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1102,7 +1102,7 @@ class EntitiesApi:
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1212,7 +1212,7 @@ class EntitiesApi:
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1322,7 +1322,7 @@ class EntitiesApi:
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1536,7 +1536,7 @@ class EntitiesApi:
         only_ids: Annotated[Optional[StrictStr], Field(description="Restrict result to given set of comma separated IDs")] = None,
         include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels of first page of address tags")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         relations_only: Annotated[Optional[StrictBool], Field(description="Return only relations without entity details")] = None,
         exclude_best_address_tag: Annotated[Optional[StrictBool], Field(description="Whether to exclude best address tag")] = None,
         include_actors: Annotated[Optional[StrictBool], Field(description="Whether to include actor information")] = None,
@@ -1642,7 +1642,7 @@ class EntitiesApi:
         only_ids: Annotated[Optional[StrictStr], Field(description="Restrict result to given set of comma separated IDs")] = None,
         include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels of first page of address tags")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         relations_only: Annotated[Optional[StrictBool], Field(description="Return only relations without entity details")] = None,
         exclude_best_address_tag: Annotated[Optional[StrictBool], Field(description="Whether to exclude best address tag")] = None,
         include_actors: Annotated[Optional[StrictBool], Field(description="Whether to include actor information")] = None,
@@ -1748,7 +1748,7 @@ class EntitiesApi:
         only_ids: Annotated[Optional[StrictStr], Field(description="Restrict result to given set of comma separated IDs")] = None,
         include_labels: Annotated[Optional[StrictBool], Field(description="Whether to include labels of first page of address tags")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         relations_only: Annotated[Optional[StrictBool], Field(description="Return only relations without entity details")] = None,
         exclude_best_address_tag: Annotated[Optional[StrictBool], Field(description="Whether to exclude best address tag")] = None,
         include_actors: Annotated[Optional[StrictBool], Field(description="Whether to include actor information")] = None,
@@ -1961,7 +1961,7 @@ class EntitiesApi:
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2071,7 +2071,7 @@ class EntitiesApi:
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2181,7 +2181,7 @@ class EntitiesApi:
         order: Annotated[Optional[StrictStr], Field(description="Sorting order")] = None,
         token_currency: Annotated[Optional[StrictStr], Field(description="Return transactions of given token or base currency e.g. 'WETH'")] = None,
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -2394,7 +2394,7 @@ class EntitiesApi:
         direction: Annotated[StrictStr, Field(description="Incoming or outgoing neighbors")],
         key: Annotated[StrictStr, Field(description="Search key")],
         value: Annotated[StrictStr, Field(description="Comma separated search values")],
-        depth: Annotated[StrictInt, Field(description="Search depth")],
+        depth: Annotated[int, Field(le=7, strict=True, ge=1, description="Search depth")],
         breadth: Annotated[StrictInt, Field(description="Search breadth")],
         skip_num_addresses: Annotated[Optional[StrictInt], Field(description="Skip entities with more than N addresses")] = None,
         _request_timeout: Union[
@@ -2492,7 +2492,7 @@ class EntitiesApi:
         direction: Annotated[StrictStr, Field(description="Incoming or outgoing neighbors")],
         key: Annotated[StrictStr, Field(description="Search key")],
         value: Annotated[StrictStr, Field(description="Comma separated search values")],
-        depth: Annotated[StrictInt, Field(description="Search depth")],
+        depth: Annotated[int, Field(le=7, strict=True, ge=1, description="Search depth")],
         breadth: Annotated[StrictInt, Field(description="Search breadth")],
         skip_num_addresses: Annotated[Optional[StrictInt], Field(description="Skip entities with more than N addresses")] = None,
         _request_timeout: Union[
@@ -2590,7 +2590,7 @@ class EntitiesApi:
         direction: Annotated[StrictStr, Field(description="Incoming or outgoing neighbors")],
         key: Annotated[StrictStr, Field(description="Search key")],
         value: Annotated[StrictStr, Field(description="Comma separated search values")],
-        depth: Annotated[StrictInt, Field(description="Search depth")],
+        depth: Annotated[int, Field(le=7, strict=True, ge=1, description="Search depth")],
         breadth: Annotated[StrictInt, Field(description="Search breadth")],
         skip_num_addresses: Annotated[Optional[StrictInt], Field(description="Skip entities with more than N addresses")] = None,
         _request_timeout: Union[

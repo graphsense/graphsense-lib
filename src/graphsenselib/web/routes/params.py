@@ -49,10 +49,16 @@ PageQuery = Annotated[
     Query(description="Resumption token for retrieving the next page"),
 ]
 
+# Upper bound on client-requested page size. Matches the largest fetch size the
+# Cassandra layer will honour (BIG_PAGE_SIZE); without a cap a single request can
+# ask for an unbounded page and drive one-request resource exhaustion.
+MAX_PAGESIZE = 5000
+
 PagesizeQuery = Annotated[
     Optional[int],
     Query(
         ge=1,
+        le=MAX_PAGESIZE,
         description="Number of items returned in a single page",
         examples=[10],
     ),

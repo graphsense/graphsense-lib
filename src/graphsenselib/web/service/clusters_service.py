@@ -414,8 +414,9 @@ async def bfs(
                     matching_paths.append(new_path)
                     continue
 
-                # stop if max depth is reached
-                if len(new_path) == max_depth:
+                # stop if max depth is reached (>= so an out-of-range max_depth
+                # can never disable the depth stop and walk the whole graph)
+                if len(new_path) >= max_depth:
                     ctx.logger.debug("STOP | max depth")
                     continue
 
