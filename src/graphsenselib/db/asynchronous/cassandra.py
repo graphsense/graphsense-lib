@@ -3916,14 +3916,18 @@ class Cassandra:
                     )
                     addr_tx["error"] = e
 
-                addr_tx["from_address"] = trace["caller_address"]
-                addr_tx["to_address"] = (
-                    replace_tron_dummy_address_with_valid_null_address(
-                        trace["transferto_address"]
+                if "error" not in addr_tx:
+                    addr_tx["from_address"] = trace["caller_address"]
+                    addr_tx["to_address"] = (
+                        replace_tron_dummy_address_with_valid_null_address(
+                            trace["transferto_address"]
+                        )
                     )
-                )
-                addr_tx["type"] = "internal"
-                value = trace["call_value"]
+                    addr_tx["type"] = "internal"
+                    value = trace["call_value"]
+                else:
+                    value = 0
+                    addr_tx["type"] = "Error"
             elif currency == "eth" and addr_tx["trace_index"] is not None:
                 try:
                     trace = await self.fetch_transaction_trace(
