@@ -22,7 +22,14 @@ env:
 
 
 jobs:
+  # Gate: never publish an image from code that hasn't passed the test suite.
+  test:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/run_tests.yaml
+
   build:
+    needs: test
 
     runs-on: ubuntu-latest
     permissions:
