@@ -2718,8 +2718,12 @@ class Cassandra:
                 address_ids = [address["address"] for address in addresses]
                 self.log_missing(address_ids, ids, node_type, query, params)
 
-            for row, address in zip(results, addresses):
-                row[that + "_address"] = address["address"]
+            # Key by address_id instead of zipping: get_addresses_by_ids drops
+            # missing rows, so a positional zip would shift every subsequent
+            # neighbor onto the wrong address string once one row is absent.
+            addr_by_id = {a["address_id"]: a["address"] for a in addresses}
+            for row in results:
+                row[that + "_address"] = addr_by_id.get(row[that + "_address_id"])
 
         field = "value" if is_eth_like(currency) else "estimated_value"
         for neighbor in results:
