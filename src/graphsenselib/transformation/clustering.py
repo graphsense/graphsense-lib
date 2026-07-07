@@ -778,10 +778,11 @@ def _write_mapping_to_cassandra(
         aid = aid_w[offset : offset + length]
         cid = cid_w[offset : offset + length]
 
+        # No persist: since the cluster-ordered write builds its own frame, the
+        # address-ordered write is this frame's only consumer — caching it would
+        # just materialize every slice one extra time.
         bld0 = time.perf_counter()
         sdf = _slice_df(aid, cid)
-        sdf.persist()
-        slice_rows = sdf.count()  # materialize the cache the write reads; timed here
         build_s = time.perf_counter() - bld0
         t_build += build_s
 
@@ -796,7 +797,6 @@ def _write_mapping_to_cassandra(
         )
         fa_s = time.perf_counter() - f0
         t_fa += fa_s
-        sdf.unpersist()
 
         # fresh_cluster_addresses is keyed on cluster_id_group, whose values are
         # SCATTERED across that ordering — each task spans far more distinct
@@ -819,19 +819,19 @@ def _write_mapping_to_cassandra(
         )
         fc_s = time.perf_counter() - g0
         t_fc += fc_s
-        rows_written += slice_rows
+        rows_written += length
         slice_idx += 1
         logger.info(
             f"  [write] slice {slice_idx}: {offset + length:,}/{write_rows:,} "
             f"({100 * (offset + length) / write_rows:.1f}%) | "
-            f"build+count={build_s:.1f}s "
+            f"build={build_s:.1f}s "
             f"fresh_address_cluster={fa_s:.1f}s fresh_cluster_addresses={fc_s:.1f}s"
         )
 
     write_secs = time.perf_counter() - write_start
     logger.info(
         f"  [write] DONE: {rows_written:,} rows in {write_secs:.1f}s — "
-        f"build+count {t_build:.1f}s | "
+        f"build {t_build:.1f}s | "
         f"fresh_address_cluster {t_fa:.1f}s | fresh_cluster_addresses {t_fc:.1f}s"
     )
     return write_secs, t_fa, t_fc, rows_written
