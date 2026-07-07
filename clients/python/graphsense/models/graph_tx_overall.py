@@ -24,7 +24,7 @@ from typing_extensions import Self
 
 class GraphTxOverall(BaseModel):
     """
-    Network-agnostic rollup over all transactions in the set: fiat and timestamps only, since base units and block heights are not comparable across chains. Per-network notes carry their source network in ``network``.
+    Network-agnostic rollup over all transactions in the set: fiat and timestamps only, since base units and block heights are not comparable across chains. ``total_value_fiat`` inherits the per-network gross semantics (UTXO: full output sums including change; linked txs double-count). Per-network notes carry their source network in ``network``.
     """ # noqa: E501
     tx_count: StrictInt
     total_value_fiat: Optional[List[Rate]] = None

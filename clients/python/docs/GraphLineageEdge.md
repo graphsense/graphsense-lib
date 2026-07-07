@@ -1,6 +1,6 @@
 # GraphLineageEdge
 
-Direct on-chain relationship between two compared transactions.
+Direct on-chain relationship between two compared transactions. ``from_idx``/``to_idx`` are positions in the response's ``txs`` list (deduped canonical order), not the request's.
 
 ## Properties
 

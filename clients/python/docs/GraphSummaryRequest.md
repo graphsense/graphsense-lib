@@ -1,6 +1,6 @@
 # GraphSummaryRequest
 
-Request body for ``POST /graph/summary``.  The node set is defined by ``txs`` and/or ``addresses``; every item carries its own network, so the set may span chains. Each non-empty list must hold at least 2 distinct entries (keyed on network + hash); together they may hold at most 100. Fiat totals always carry every rate GraphSense stores (eur, usd).
+Request body for ``POST /graph/summary``.  The node set is defined by ``txs`` and/or ``addresses``; every item carries its own network, so the set may span chains. Each non-empty list must hold at least 2 distinct entries (keyed on network + canonical hash/address, so spelling variants of one node collapse and count once); together they may hold at most 100. Fiat totals always carry every rate GraphSense stores (eur, usd).
 
 ## Properties
 

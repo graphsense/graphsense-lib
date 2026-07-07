@@ -7,8 +7,9 @@ does not depend on Cassandra fixtures or DB-layer wiring. The real web
 service ``compare`` (network validation, include expansion, translation)
 runs unpatched.
 
-CRITICAL: tests do NOT pin specific values for `weight`, `confidence`,
-or `score_total`. Those are tentative and not yet calibrated.
+CRITICAL: tests do NOT pin specific values for `weight`. It is tentative
+and not yet calibrated — as are the internal `confidence`/`score_total`,
+which are backend-only and must not appear in responses at all.
 """
 
 import pytest
@@ -101,14 +102,14 @@ def _build_internal_response(
             ComparisonSignalInternal(
                 name="script_type",
                 kind="discriminator",
-                per_tx=["P2WPKH", "P2PKH,P2WPKH"],
+                per_tx=[["P2WPKH"], ["P2PKH", "P2WPKH"]],
                 verdict="mismatch",
                 weight=2,
             ),
             ComparisonSignalInternal(
                 name="shared_cluster",
                 kind="linkage",
-                per_tx=["42", "42"],
+                per_tx=[[42], [42]],
                 verdict="match",
                 weight=5,
             ),

@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -504,10 +504,21 @@ class TxCharacteristicsInternal(BaseModel):
     utxo_parent_indexes: List[int] = Field(default_factory=list)
 
 
+# A signal's per-tx observation; the concrete type depends on the signal:
+# bool flags (witness_present, rbf, bip69_outputs_sorted,
+# exchange_input_overlap), int (tx_version), categorical str buckets
+# (locktime_pattern, output_count_shape), str lists (script_type,
+# direct_input_overlap, change_chain, common_ancestor) and int lists
+# (utxo_linkage, shared_cluster). None = not derivable for that tx; an
+# empty list = computed but no items. The API model reuses this alias so
+# the wire union cannot drift from what the signals emit.
+SignalPerTxValue = Union[bool, int, str, List[str], List[int]]
+
+
 class ComparisonSignalInternal(BaseModel):
     name: str
     kind: str  # "discriminator" | "score" | "linkage"
-    per_tx: List[Optional[str]]
+    per_tx: List[Optional[SignalPerTxValue]]
     verdict: str  # "match" | "mismatch" | "inconclusive"
     weight: int = 0
 
@@ -530,14 +541,32 @@ class AddressRefInternal(BaseModel):
     address: str
 
 
+# Closed vocabulary of summary-note codes. The API model reuses this
+# Literal, so a new code lands in the OpenAPI schema automatically — and a
+# typo'd code fails at construction (caught by tests) instead of at
+# response translation.
+GraphNoteCode = Literal[
+    "fiat_totals_missing",
+    "fiat_totals_partial",
+    "token_value_excluded",
+    "token_holdings_excluded",
+    "usage_span_unavailable",
+    "nodes_not_found",
+]
+
+
 class GraphNoteInternal(BaseModel):
     """A machine-readable caveat on a summary block: stable ``code`` for
     clients to branch on, human ``message`` for display. ``network`` is set
-    on overall-rollup notes to attribute them to their source network."""
+    on overall-rollup notes to attribute them to their source network.
+    ``items`` carries the references a note applies to (e.g. the not-found
+    tx hashes / addresses of a ``nodes_not_found`` note), so clients never
+    have to parse ``message``."""
 
-    code: str
+    code: GraphNoteCode
     message: str
     network: Optional[str] = None
+    items: Optional[List[str]] = None
 
 
 class GraphTxNetworkSummaryInternal(BaseModel):
@@ -546,8 +575,12 @@ class GraphTxNetworkSummaryInternal(BaseModel):
     # total_value.value is the network's native base unit (satoshi for UTXO,
     # wei/sun for account chains) and sums native transfers only; its
     # fiat_values sum the fiat value per code (eur, usd) across all
-    # transfers (incl. tokens). notes flags caveats (partial fiat totals,
-    # excluded token transfers). total_fee stays a plain native amount.
+    # transfers (incl. tokens). Totals are gross: UTXO txs contribute their
+    # full output sum (change included), so linked txs double-count moved
+    # coins — documented on the API model, do not "fix" by subtracting
+    # change (that needs heuristics). notes flags caveats (partial fiat
+    # totals, excluded token transfers). total_fee stays a plain native
+    # amount.
     total_value: Values
     total_fee: Optional[int] = None
     # io counts are UTXO-only; None for account-model (ETH/TRX) summaries.
@@ -622,6 +655,11 @@ class GraphSummaryInternal(BaseModel):
 
 class ComparisonVerdictInternal(BaseModel):
     relation: str
+    # confidence and score_total are backend-only: their weights are not
+    # calibrated against ground-truth data, so the API verdict
+    # (GraphCompareVerdict) exposes only the categorical relation tier and
+    # the translator drops these fields. Promote them to the API model once
+    # calibrated.
     confidence: int
     cluster_verdict: str
     discriminator_hits: List[str] = Field(default_factory=list)

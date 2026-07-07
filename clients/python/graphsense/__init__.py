@@ -94,6 +94,7 @@ __all__ = [
     "NeighborEntities",
     "NeighborEntity",
     "OneTimeChangeHeuristic",
+    "PerTxInner",
     "Rate",
     "Rates",
     "RelatedAddress",
@@ -215,6 +216,7 @@ from graphsense.models.neighbor_clusters import NeighborClusters as NeighborClus
 from graphsense.models.neighbor_entities import NeighborEntities as NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity as NeighborEntity
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic as OneTimeChangeHeuristic
+from graphsense.models.per_tx_inner import PerTxInner as PerTxInner
 from graphsense.models.rate import Rate as Rate
 from graphsense.models.rates import Rates as Rates
 from graphsense.models.related_address import RelatedAddress as RelatedAddress

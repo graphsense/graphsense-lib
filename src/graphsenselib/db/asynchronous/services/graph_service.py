@@ -15,7 +15,12 @@ import asyncio
 from typing import Union
 
 from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
-from graphsenselib.errors import BadUserInputException, NotFoundException
+from graphsenselib.errors import (
+    AddressNotFoundException,
+    BadUserInputException,
+    NotFoundException,
+    TransactionNotFoundException,
+)
 from graphsenselib.tagstore.db import TagPublic
 from graphsenselib.db.asynchronous.services.common import (
     cannonicalize_address,
@@ -305,7 +310,40 @@ def _group_by_network(refs, value) -> dict[str, list[str]]:
     return groups
 
 
+def _partition_not_found(keys, results, not_found_types):
+    """Split per-key gather results (``return_exceptions=True``) into found
+    values and not-found keys; any other exception is re-raised."""
+    found, missing = [], []
+    for key, res in zip(keys, results):
+        if isinstance(res, not_found_types):
+            missing.append(key)
+        elif isinstance(res, BaseException):
+            raise res
+        else:
+            found.append(res)
+    return found, missing
+
+
+def _nodes_not_found_note(
+    network: str, missing: list[str], singular: str, plural: str
+) -> GraphNoteInternal:
+    word = singular if len(missing) == 1 else plural
+    return GraphNoteInternal(
+        code="nodes_not_found",
+        message=(
+            f"{len(missing)} requested {word} not found on {network}; "
+            "excluded from all totals"
+        ),
+        network=network,
+        items=sorted(missing),
+    )
+
+
 async def _fetch_network_txs(txs_service, network, hashes, tagstore_groups):
+    """Fetch one network's txs; unknown hashes are dropped and returned
+    separately instead of failing the request. Returns ``(legs, missing)``
+    where ``legs`` holds one entry per asset flow (account chains) or per
+    tx (UTXO chains)."""
     if is_eth_like(network):
         # Account chains: get_tx returns only the base/native transaction,
         # so its token-transfer legs (and their fiat) would be invisible to
@@ -320,12 +358,16 @@ async def _fetch_network_txs(txs_service, network, hashes, tagstore_groups):
                     include_base_transaction=True,
                 )
                 for h in hashes
-            ]
+            ],
+            return_exceptions=True,
         )
-        return [leg for fl in flow_lists for leg in fl.txs]
+        found, missing = _partition_not_found(
+            hashes, flow_lists, TransactionNotFoundException
+        )
+        return [leg for fl in found for leg in fl.txs], missing
     # UTXO chains: the tx header already carries the aggregate fields the
     # summary needs, so a header-only fetch is enough.
-    return await asyncio.gather(
+    fetched = await asyncio.gather(
         *[
             txs_service.get_tx(
                 network,
@@ -338,8 +380,10 @@ async def _fetch_network_txs(txs_service, network, hashes, tagstore_groups):
                 tagstore_groups=tagstore_groups,
             )
             for h in hashes
-        ]
+        ],
+        return_exceptions=True,
     )
+    return _partition_not_found(hashes, fetched, TransactionNotFoundException)
 
 
 async def summary(
@@ -355,9 +399,12 @@ async def summary(
     Each non-empty list must hold at least 2 distinct entries (distinctness
     keyed on (network, canonical hash/address), so spelling variants of one
     node count once); together at most MAX_GRAPH_NODES. Every ref's network
-    must be a supported currency (400 otherwise); unknown nodes fail the
-    whole request (404). Each block of the result is present iff its input
-    list was non-empty.
+    must be a supported currency (400 otherwise). Unknown nodes are dropped
+    and reported per network in a ``nodes_not_found`` note on the block's
+    overall rollup (``items`` carries the refs); the request fails with 404
+    only when fewer than 2 of a list's refs exist. Each block of the result
+    is present iff its input list was non-empty; a network whose refs are
+    all unknown gets no per-network block.
     """
     txs = dedup_refs(
         [
@@ -404,11 +451,28 @@ async def summary(
                 for net, hashes in tx_groups.items()
             ]
         )
+        missing_by_net = {
+            net: missing for net, (_, missing) in zip(tx_groups, fetched) if missing
+        }
+        n_missing = sum(len(m) for m in missing_by_net.values())
+        if len(txs) - n_missing < 2:
+            raise NotFoundException(
+                "fewer than 2 of the requested txs exist; not found: "
+                + ", ".join(
+                    f"{net}:{h}" for net, m in missing_by_net.items() for h in m
+                )
+            )
         blocks = [
             build_network_tx_summary(net, net_txs)
-            for net, net_txs in zip(tx_groups, fetched)
+            for net, (net_txs, _) in zip(tx_groups, fetched)
+            if net_txs
         ]
-        return GraphTxSummaryInternal(overall=build_tx_overall(blocks), networks=blocks)
+        overall = build_tx_overall(blocks)
+        overall.notes.extend(
+            _nodes_not_found_note(net, m, "tx", "txs")
+            for net, m in missing_by_net.items()
+        )
+        return GraphTxSummaryInternal(overall=overall, networks=blocks)
 
     async def _address_block():
         addr_groups = _group_by_network(addresses, lambda r: r.address)
@@ -416,10 +480,12 @@ async def summary(
         async def _rows_and_tags(net, addrs):
             # Header-level rows: no per-address actor query (actors come
             # from the batched tag query) and no new-address fallback, so an
-            # unknown address fails the request instead of contributing
-            # zeros. Rows and the batched tag query are independent, so
-            # they run concurrently.
-            rows, (tags, _) = await asyncio.gather(
+            # unknown address is dropped from the summary (reported via a
+            # nodes_not_found note) instead of contributing zeros. Rows and
+            # the batched tag query are independent, so they run
+            # concurrently; tag rows for dropped addresses simply don't
+            # exist.
+            results, (tags, _) = await asyncio.gather(
                 asyncio.gather(
                     *[
                         addresses_service.get_address(
@@ -430,23 +496,46 @@ async def summary(
                             new_address_fallback=False,
                         )
                         for a in addrs
-                    ]
+                    ],
+                    return_exceptions=True,
                 ),
                 tags_service.list_tags_by_addresses_raw(
                     [AddressTagQueryInput(network=net, address=a) for a in addrs],
                     tagstore_groups,
                 ),
             )
-            return rows, tags
+            rows, missing = _partition_not_found(
+                addrs, results, AddressNotFoundException
+            )
+            # The tagstore is independent of Cassandra and may carry tags
+            # for a dropped address; those must not leak into tag counts or
+            # actor lists of a summary that excludes the address itself.
+            missing_set = set(missing)
+            tags = [t for t in tags if t.identifier not in missing_set]
+            return rows, tags, missing
 
         per_net = await asyncio.gather(
             *[_rows_and_tags(net, addrs) for net, addrs in addr_groups.items()]
         )
+        missing_by_net = {
+            net: missing
+            for net, (_, _, missing) in zip(addr_groups, per_net)
+            if missing
+        }
+        n_missing = sum(len(m) for m in missing_by_net.values())
+        if len(addresses) - n_missing < 2:
+            raise NotFoundException(
+                "fewer than 2 of the requested addresses exist; not found: "
+                + ", ".join(
+                    f"{net}:{a}" for net, m in missing_by_net.items() for a in m
+                )
+            )
 
         # Resolve each distinct actor id once across all networks. Bound the
         # fan-out: each get_actor() opens a Postgres session via tagstore.
         actor_ids_per_net = [
-            list(dict.fromkeys(t.actor for t in tags if t.actor)) for _, tags in per_net
+            list(dict.fromkeys(t.actor for t in tags if t.actor))
+            for _, tags, _ in per_net
         ]
         all_actor_ids = list(
             dict.fromkeys(aid for ids in actor_ids_per_net for aid in ids)
@@ -477,13 +566,17 @@ async def summary(
                 tags,
                 [actor_by_id[aid] for aid in ids if aid in actor_by_id],
             )
-            for (net, _), (rows, tags), ids in zip(
+            for (net, _), (rows, tags, _), ids in zip(
                 addr_groups.items(), per_net, actor_ids_per_net
             )
+            if rows
         ]
-        return GraphAddressSummaryInternal(
-            overall=build_address_overall(blocks), networks=blocks
+        overall = build_address_overall(blocks)
+        overall.notes.extend(
+            _nodes_not_found_note(net, m, "address", "addresses")
+            for net, m in missing_by_net.items()
         )
+        return GraphAddressSummaryInternal(overall=overall, networks=blocks)
 
     async def _none():
         return None

@@ -1,6 +1,6 @@
 # GraphNote
 
-A caveat attached to a summary block. ``code`` is the stable machine-readable contract; ``message`` is display text and may be reworded without notice. ``network`` attributes overall-rollup notes to their source network.
+A caveat attached to a summary block. ``code`` is the stable machine-readable contract (closed vocabulary, shared with the internal model so new codes surface in the OpenAPI schema); ``message`` is display text and may be reworded without notice. ``network`` attributes overall-rollup notes to their source network. ``items`` carries the references a note applies to (e.g. the not-found tx hashes / addresses of a ``nodes_not_found`` note), so clients never have to parse ``message``.
 
 ## Properties
 
@@ -9,6 +9,7 @@ Name | Type | Description | Notes
 **code** | **str** |  | 
 **message** | **str** |  | 
 **network** | **str** |  | [optional] 
+**items** | **List[str]** |  | [optional] 
 
 ## Example
 

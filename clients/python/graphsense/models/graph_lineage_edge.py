@@ -22,7 +22,7 @@ from typing_extensions import Self
 
 class GraphLineageEdge(BaseModel):
     """
-    Direct on-chain relationship between two compared transactions.
+    Direct on-chain relationship between two compared transactions. ``from_idx``/``to_idx`` are positions in the response's ``txs`` list (deduped canonical order), not the request's.
     """ # noqa: E501
     from_idx: StrictInt
     to_idx: StrictInt

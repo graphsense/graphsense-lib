@@ -402,7 +402,7 @@ class TestSignalWitnessPresent:
         sig = signal_witness_present(chars)
         assert sig.kind == "score"
         assert sig.verdict == "match"
-        assert sig.per_tx == ["true", "true"]
+        assert sig.per_tx == [True, True]
 
     def test_match_all_false(self):
         chars = [
@@ -411,7 +411,7 @@ class TestSignalWitnessPresent:
         ]
         sig = signal_witness_present(chars)
         assert sig.verdict == "match"
-        assert sig.per_tx == ["false", "false"]
+        assert sig.per_tx == [False, False]
 
     def test_mismatch_when_distinct(self):
         chars = [
@@ -441,13 +441,13 @@ class TestSignalTxVersion:
         sig = signal_tx_version(chars)
         assert sig.kind == "discriminator"
         assert sig.verdict == "match"
-        assert sig.per_tx == ["v2", "v2"]
+        assert sig.per_tx == [2, 2]
 
     def test_mismatch_when_distinct(self):
         chars = [make_chars(tx_version=1), make_chars(tx_version=2)]
         sig = signal_tx_version(chars)
         assert sig.verdict == "mismatch"
-        assert sig.per_tx == ["v1", "v2"]
+        assert sig.per_tx == [1, 2]
 
     def test_inconclusive_when_any_missing(self):
         chars = [make_chars(tx_version=2), make_chars(tx_version=None)]
@@ -469,7 +469,7 @@ class TestSignalRbf:
         sig = signal_rbf(chars)
         assert sig.kind == "discriminator"
         assert sig.verdict == "match"
-        assert sig.per_tx == ["rbf", "rbf"]
+        assert sig.per_tx == [True, True]
 
     def test_match_all_final(self):
         chars = [
@@ -478,7 +478,7 @@ class TestSignalRbf:
         ]
         sig = signal_rbf(chars)
         assert sig.verdict == "match"
-        assert sig.per_tx == ["final", "final"]
+        assert sig.per_tx == [False, False]
 
     def test_mismatch_when_distinct(self):
         chars = [
@@ -600,7 +600,7 @@ class TestSignalBip69OutputsSorted:
         # Soft signal, kind="score" so mismatch doesn't flip strong verdicts.
         assert sig.kind == "score"
         assert sig.verdict == "match"
-        assert sig.per_tx == ["sorted", "sorted"]
+        assert sig.per_tx == [True, True]
 
     def test_match_when_all_unsorted(self):
         chars = [
@@ -609,7 +609,7 @@ class TestSignalBip69OutputsSorted:
         ]
         sig = signal_bip69_outputs_sorted(chars)
         assert sig.verdict == "match"
-        assert sig.per_tx == ["unsorted", "unsorted"]
+        assert sig.per_tx == [False, False]
 
     def test_mismatch_when_distinct(self):
         chars = [
@@ -675,7 +675,7 @@ class TestSignalDirectInputOverlap:
         assert sig.verdict == "match"
         assert sig.weight == 0
         # Each tx's per_tx column is the set of its inputs that show up in others.
-        assert sig.per_tx == ["B", "B"]
+        assert sig.per_tx == [["B"], ["B"]]
 
     def test_match_when_connected_via_chain(self):
         # 0-1 share A, 1-2 share C → connected via tx 1.
@@ -721,7 +721,7 @@ class TestSignalChangeChain:
         assert sig.verdict == "match"
         assert sig.weight == 0
         # Tx 0 has the consumed change; tx 1 has none of its own change consumed.
-        assert sig.per_tx == ["X", None]
+        assert sig.per_tx == [["X"], []]
 
     def test_mismatch_when_no_change_consumed(self):
         chars = [
@@ -755,7 +755,7 @@ class TestSignalCommonAncestor:
         assert sig.kind == "linkage"
         assert sig.verdict == "match"
         assert sig.weight == 0
-        assert sig.per_tx == ["P2", "P2"]
+        assert sig.per_tx == [["P2"], ["P2"]]
 
     def test_mismatch_when_disjoint_parents(self):
         chars = [
@@ -871,7 +871,7 @@ class TestSignalExchangeInputOverlap:
         assert sig.kind == "linkage"
         assert sig.verdict == "match"
         assert sig.weight == 0
-        assert sig.per_tx == ["exchange", "exchange"]
+        assert sig.per_tx == [True, True]
 
     def test_mismatch_when_some_not_exchange(self):
         chars = [
@@ -899,7 +899,7 @@ def _exchange_match() -> ComparisonSignalInternal:
     return ComparisonSignalInternal(
         name="exchange_input_overlap",
         kind="linkage",
-        per_tx=["exchange", "exchange"],
+        per_tx=[True, True],
         verdict="match",
         weight=0,
     )
@@ -1823,8 +1823,10 @@ class TestCompareTxsOrchestration:
             tagstore_groups=[],
         )
         assert len(result.txs) == 2
-        # Each distinct hash fetched exactly once (no duplicate DB work).
-        assert len(svc.get_tx_calls) == 2
+        # Each distinct hash fetched once per phase (header + full IO); the
+        # duplicate ref adds no DB work.
+        assert len(svc.get_tx_calls) == 4
+        assert sum(1 for kw in svc.get_tx_calls if kw.get("include_io")) == 2
 
     @pytest.mark.parametrize(
         "currency", ["eth", "trx", "ETH", "TRX", "bch", "ltc", "zec"]
@@ -1875,6 +1877,8 @@ class TestCompareTxsOrchestration:
                 include_signals=True,
                 tagstore_groups=[],
             )
-        # Rejection happens before any of the expensive prefetches run.
+        # Rejection happens on the header point reads, before the full
+        # IO/heuristics fetch and any of the expensive prefetches run.
+        assert not any(kw.get("include_io") for kw in svc.get_tx_calls)
         assert svc.spending_calls == 0
         svc.db.get_addresses_light.assert_not_awaited()

@@ -1,16 +1,14 @@
 # GraphCompareVerdict
 
-Aggregator's opinion. Sub-verdicts kept independent.  ``confidence`` and ``score_total`` are tentative, weights have not yet been calibrated against ground-truth data.
+Aggregator's opinion. Sub-verdicts kept independent.  Only the categorical tier (``relation``) is exposed. The internal aggregator also computes a numeric ``confidence`` and ``score_total`` (see ``ComparisonVerdictInternal``), but their weights have not been calibrated against ground-truth data, so they stay backend-only — consumers would inevitably treat them as probabilities. Add them here once calibrated.
 
 ## Properties
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **relation** | **str** |  | 
-**confidence** | **int** |  | 
 **cluster_verdict** | **str** |  | 
 **discriminator_hits** | **List[str]** |  | [optional] 
-**score_total** | **float** |  | [optional] [default to 0.0]
 **notes** | **List[str]** |  | [optional] 
 
 ## Example

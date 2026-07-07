@@ -862,14 +862,65 @@ class TestGraphSummary:
         with pytest.raises(BadUserInputException, match="unsupported network"):
             await summary(svc, None, None, refs, [], tagstore_groups=[])
 
-    async def test_missing_tx_raises_not_found(self):
+    async def test_missing_tx_below_minimum_raises_not_found(self):
+        # 2 refs, 1 unknown: only 1 known survivor is left, which is below
+        # the 2-node minimum, so the whole request 404s naming the missing.
         tx_map, h0, h1 = _btc_txs()
         svc = FakeTxsService(tx_map=tx_map)
+        missing = "ff" * 32
         refs = [
             TxRefInternal(network="btc", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash=missing),
+        ]
+        with pytest.raises(NotFoundException, match=f"fewer than 2.*btc:{missing}"):
+            await summary(svc, None, None, refs, [], tagstore_groups=[])
+
+    async def test_missing_tx_dropped_with_note(self):
+        # 3 refs, 1 unknown: the summary proceeds over the 2 known txs and
+        # reports the dropped ref in a machine-readable nodes_not_found
+        # note on the overall rollup.
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        missing = "ff" * 32
+        refs = [
+            TxRefInternal(network="btc", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash=h1),
+            TxRefInternal(network="btc", tx_hash=missing),
+        ]
+        result = await summary(svc, None, None, refs, [], tagstore_groups=[])
+        assert result.txs.overall.tx_count == 2
+        assert result.txs.networks[0].tx_count == 2
+        notes = [n for n in result.txs.overall.notes if n.code == "nodes_not_found"]
+        assert len(notes) == 1
+        assert notes[0].network == "btc"
+        assert notes[0].items == [missing]
+
+    async def test_network_with_only_missing_txs_gets_no_block(self):
+        # Both eth refs are unknown; the btc pair survives. The eth
+        # per-network block is absent and the drop is attributed to eth in
+        # the overall note.
+        tx_map, h0, h1 = _btc_txs()
+        svc = FakeTxsService(tx_map=tx_map)
+        missing = "ee" * 32
+        refs = [
+            TxRefInternal(network="btc", tx_hash=h0),
+            TxRefInternal(network="btc", tx_hash=h1),
+            TxRefInternal(network="eth", tx_hash=missing),
+        ]
+        result = await summary(svc, None, None, refs, [], tagstore_groups=[])
+        assert [b.network for b in result.txs.networks] == ["btc"]
+        notes = [n for n in result.txs.overall.notes if n.code == "nodes_not_found"]
+        assert len(notes) == 1
+        assert notes[0].network == "eth"
+        assert notes[0].items == [missing]
+
+    async def test_all_txs_missing_raises_not_found(self):
+        svc = FakeTxsService(tx_map={})
+        refs = [
+            TxRefInternal(network="btc", tx_hash="ee" * 32),
             TxRefInternal(network="btc", tx_hash="ff" * 32),
         ]
-        with pytest.raises(TransactionNotFoundException):
+        with pytest.raises(NotFoundException, match="fewer than 2"):
             await summary(svc, None, None, refs, [], tagstore_groups=[])
 
     async def test_failed_tx_phase_cancels_address_phase(self):
@@ -898,7 +949,7 @@ class TestGraphSummary:
             AddressRefInternal(network="btc", address="a1"),
             AddressRefInternal(network="btc", address="a2"),
         ]
-        with pytest.raises(TransactionNotFoundException):
+        with pytest.raises(NotFoundException):
             await summary(
                 svc,
                 HangingAddressesService(),
@@ -910,14 +961,14 @@ class TestGraphSummary:
         assert started.is_set()
         assert cancelled.is_set()
 
-    async def test_missing_account_tx_raises_not_found(self):
+    async def test_missing_account_tx_below_minimum_raises_not_found(self):
         e0, e1 = "cc" * 32, "dd" * 32
         svc = FakeTxsService(tx_map={e0: make_account_tx(tx_hash=e0)})
         refs = [
             TxRefInternal(network="eth", tx_hash=e0),
             TxRefInternal(network="eth", tx_hash=e1),
         ]
-        with pytest.raises(TransactionNotFoundException):
+        with pytest.raises(NotFoundException, match="fewer than 2"):
             await summary(svc, None, None, refs, [], tagstore_groups=[])
 
     async def test_malformed_bch_address_raises_bad_user_input(self):
@@ -1158,17 +1209,41 @@ class TestGraphSummaryAddresses:
                 tx_svc, addr_svc, FakeTagsService(), [], refs, tagstore_groups=[]
             )
 
-    async def test_unknown_address_fails_whole_request(self):
+    async def test_unknown_address_below_minimum_raises_not_found(self):
+        # 2 refs, 1 unknown: only 1 known survivor, below the 2-node
+        # minimum, so the whole request 404s naming the missing address.
         addr_svc = self._addr_setup()
         tx_svc = FakeTxsService(supported=["btc"])
         refs = [
             AddressRefInternal(network="btc", address="b1"),
             AddressRefInternal(network="btc", address="unknown"),
         ]
-        with pytest.raises(AddressNotFoundException):
+        with pytest.raises(NotFoundException, match="fewer than 2.*btc:unknown"):
             await summary(
                 tx_svc, addr_svc, FakeTagsService(), [], refs, tagstore_groups=[]
             )
+
+    async def test_unknown_address_dropped_with_note(self):
+        # 3 refs, 1 unknown: the summary proceeds over the 2 known
+        # addresses and reports the dropped ref in a nodes_not_found note.
+        addr_svc = self._addr_setup()
+        tx_svc = FakeTxsService(supported=["btc"])
+        refs = [
+            AddressRefInternal(network="btc", address="b1"),
+            AddressRefInternal(network="btc", address="b2"),
+            AddressRefInternal(network="btc", address="unknown"),
+        ]
+        result = await summary(
+            tx_svc, addr_svc, FakeTagsService(), [], refs, tagstore_groups=[]
+        )
+        assert result.addresses.overall.address_count == 2
+        assert result.addresses.networks[0].address_count == 2
+        notes = [
+            n for n in result.addresses.overall.notes if n.code == "nodes_not_found"
+        ]
+        assert len(notes) == 1
+        assert notes[0].network == "btc"
+        assert notes[0].items == ["unknown"]
 
     async def test_per_list_minimum_across_types(self):
         tx_map, h0, h1 = _btc_txs()

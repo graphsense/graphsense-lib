@@ -15,22 +15,20 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictFloat, StrictInt, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List, Optional, Union
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
 class GraphCompareVerdict(BaseModel):
     """
-    Aggregator's opinion. Sub-verdicts kept independent.  ``confidence`` and ``score_total`` are tentative, weights have not yet been calibrated against ground-truth data.
+    Aggregator's opinion. Sub-verdicts kept independent.  Only the categorical tier (``relation``) is exposed. The internal aggregator also computes a numeric ``confidence`` and ``score_total`` (see ``ComparisonVerdictInternal``), but their weights have not been calibrated against ground-truth data, so they stay backend-only — consumers would inevitably treat them as probabilities. Add them here once calibrated.
     """ # noqa: E501
     relation: StrictStr
-    confidence: StrictInt
     cluster_verdict: StrictStr
     discriminator_hits: Optional[List[StrictStr]] = None
-    score_total: Optional[Union[StrictFloat, StrictInt]] = 0.0
     notes: Optional[List[StrictStr]] = None
-    __properties: ClassVar[List[str]] = ["relation", "confidence", "cluster_verdict", "discriminator_hits", "score_total", "notes"]
+    __properties: ClassVar[List[str]] = ["relation", "cluster_verdict", "discriminator_hits", "notes"]
 
     @field_validator('relation')
     def relation_validate_enum(cls, value):
@@ -98,10 +96,8 @@ class GraphCompareVerdict(BaseModel):
 
         _obj = cls.model_validate({
             "relation": obj.get("relation"),
-            "confidence": obj.get("confidence"),
             "cluster_verdict": obj.get("cluster_verdict"),
             "discriminator_hits": obj.get("discriminator_hits"),
-            "score_total": obj.get("score_total") if obj.get("score_total") is not None else 0.0,
             "notes": obj.get("notes")
         })
         return _obj

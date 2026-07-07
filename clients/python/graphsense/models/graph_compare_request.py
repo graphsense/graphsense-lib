@@ -24,7 +24,7 @@ from typing_extensions import Self
 
 class GraphCompareRequest(BaseModel):
     """
-    Request body for ``POST /graph/compare``.  The fingerprinting analysis is BTC-only for now; every ref's network must be ``btc`` (400 otherwise). ``include`` selects response components; signals, lineage and verdict are always computed internally (the verdict depends on the signals), the list only controls what is returned. ``all`` expands to every component.
+    Request body for ``POST /graph/compare``.  The fingerprinting analysis is BTC-only for now; every ref's network must be ``btc`` (400 otherwise). Hashes are canonicalized (lowercase, no ``0x``) and duplicates collapsed, so the response's ``txs`` list — which every positional reference indexes into — may be shorter than this one. ``include`` selects response components; signals, lineage and verdict are always computed internally (the verdict depends on the signals), the list only controls what is returned. ``all`` expands to every component.
     """ # noqa: E501
     txs: Annotated[List[GraphTxRef], Field(min_length=2, max_length=100)]
     include: Optional[Annotated[List[StrictStr], Field(min_length=1)]] = None

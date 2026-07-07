@@ -17,16 +17,17 @@ import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.per_tx_inner import PerTxInner
 from typing import Optional, Set
 from typing_extensions import Self
 
 class GraphCompareSignal(BaseModel):
     """
-    One row of the pairwise comparison table; values stringified per tx.
+    One row of the pairwise comparison table.  ``per_tx`` holds one typed observation per compared tx, aligned with the response's ``txs`` order. The value type depends on the signal: booleans for flag signals (``witness_present``, ``rbf`` — true means BIP-125 signaled, ``bip69_outputs_sorted``, ``exchange_input_overlap`` — true means the tx has an exchange-tagged input); an integer for ``tx_version``; categorical snake_case strings for ``locktime_pattern`` (``zero``/``anti_sniping``/``other``) and ``output_count_shape`` (``single``/``pay_plus_change``/``many``); sorted string lists for ``script_type`` (the tx's distinct input script types), ``direct_input_overlap`` (input addresses shared with peer txs), ``change_chain`` (own change addresses spent by peer txs) and ``common_ancestor`` (parent tx hashes shared with peers); sorted integer lists for ``utxo_linkage`` (indexes of peer txs with a direct spend edge) and ``shared_cluster`` (the tx's own input cluster ids). ``null`` means the value was not derivable for that tx; an empty list means computed, but no items.
     """ # noqa: E501
     name: StrictStr
     kind: StrictStr
-    per_tx: List[Optional[StrictStr]]
+    per_tx: List[Optional[PerTxInner]]
     verdict: StrictStr
     weight: Optional[StrictInt] = 0
     __properties: ClassVar[List[str]] = ["name", "kind", "per_tx", "verdict", "weight"]
@@ -84,6 +85,13 @@ class GraphCompareSignal(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in per_tx (list)
+        _items = []
+        if self.per_tx:
+            for _item_per_tx in self.per_tx:
+                if _item_per_tx:
+                    _items.append(_item_per_tx.to_dict())
+            _dict['per_tx'] = _items
         return _dict
 
     @classmethod
@@ -98,7 +106,7 @@ class GraphCompareSignal(BaseModel):
         _obj = cls.model_validate({
             "name": obj.get("name"),
             "kind": obj.get("kind"),
-            "per_tx": obj.get("per_tx"),
+            "per_tx": [PerTxInner.from_dict(_item) for _item in obj["per_tx"]] if obj.get("per_tx") is not None else None,
             "verdict": obj.get("verdict"),
             "weight": obj.get("weight") if obj.get("weight") is not None else 0
         })

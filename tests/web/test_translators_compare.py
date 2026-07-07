@@ -127,14 +127,14 @@ def _make_full_internal(
             ComparisonSignalInternal(
                 name="script_type",
                 kind="discriminator",
-                per_tx=["P2WPKH", "P2PKH,P2WPKH"],
+                per_tx=[["P2WPKH"], ["P2PKH", "P2WPKH"]],
                 verdict="mismatch",
                 weight=2,
             ),
             ComparisonSignalInternal(
                 name="shared_cluster",
                 kind="linkage",
-                per_tx=["42", "42"],
+                per_tx=[[42], [42]],
                 verdict="match",
                 weight=5,
             ),
@@ -274,9 +274,10 @@ def test_to_api_transaction_comparison_include_details_false():
 
 
 def test_to_api_transaction_comparison_verdict_round_trip():
-    # Round-trip identity: whatever value is on the internal model must
-    # appear on the API model unchanged. We don't assert a specific
-    # number, just that it is preserved.
+    # Round-trip identity for the exposed fields: whatever value is on the
+    # internal model must appear on the API model unchanged. We don't
+    # assert specific values, just that they are preserved — and that the
+    # backend-only numerics are dropped.
     internal_verdict = _make_verdict(
         relation="inconclusive",
         confidence=42,
@@ -290,11 +291,13 @@ def test_to_api_transaction_comparison_verdict_round_trip():
     api = to_api_transaction_comparison(internal)
 
     assert api.verdict.relation == internal_verdict.relation
-    assert api.verdict.confidence == internal_verdict.confidence
     assert api.verdict.cluster_verdict == internal_verdict.cluster_verdict
     assert api.verdict.discriminator_hits == internal_verdict.discriminator_hits
-    assert api.verdict.score_total == internal_verdict.score_total
     assert api.verdict.notes == internal_verdict.notes
+    # confidence / score_total are backend-only until calibrated: the API
+    # model must not carry them.
+    assert not hasattr(api.verdict, "confidence")
+    assert not hasattr(api.verdict, "score_total")
 
     # categorical sanity
     assert api.verdict.relation in RELATIONS

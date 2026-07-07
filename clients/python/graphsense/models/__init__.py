@@ -69,6 +69,7 @@ from graphsense.models.neighbor_clusters import NeighborClusters
 from graphsense.models.neighbor_entities import NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic
+from graphsense.models.per_tx_inner import PerTxInner
 from graphsense.models.rate import Rate
 from graphsense.models.rates import Rates
 from graphsense.models.related_address import RelatedAddress

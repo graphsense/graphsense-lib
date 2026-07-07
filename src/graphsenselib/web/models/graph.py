@@ -12,7 +12,11 @@ from typing import Literal, Optional, Union
 
 from pydantic import Field, model_validator
 
-from graphsenselib.db.asynchronous.services.models import MAX_GRAPH_NODES
+from graphsenselib.db.asynchronous.services.models import (
+    MAX_GRAPH_NODES,
+    GraphNoteCode,
+    SignalPerTxValue,
+)
 from graphsenselib.web.models.base import APIModel
 from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.transactions import TxAccount, TxUtxo
@@ -42,9 +46,10 @@ class GraphSummaryRequest(APIModel):
 
     The node set is defined by ``txs`` and/or ``addresses``; every item
     carries its own network, so the set may span chains. Each non-empty
-    list must hold at least 2 distinct entries (keyed on network + hash);
-    together they may hold at most 100. Fiat totals always carry every
-    rate GraphSense stores (eur, usd)."""
+    list must hold at least 2 distinct entries (keyed on network +
+    canonical hash/address, so spelling variants of one node collapse and
+    count once); together they may hold at most 100. Fiat totals always
+    carry every rate GraphSense stores (eur, usd)."""
 
     txs: list[GraphTxRef] = Field(default_factory=list, max_length=MAX_GRAPH_NODES)
     addresses: list[GraphAddressRef] = Field(
@@ -64,10 +69,13 @@ class GraphCompareRequest(APIModel):
     """Request body for ``POST /graph/compare``.
 
     The fingerprinting analysis is BTC-only for now; every ref's network
-    must be ``btc`` (400 otherwise). ``include`` selects response
-    components; signals, lineage and verdict are always computed
-    internally (the verdict depends on the signals), the list only
-    controls what is returned. ``all`` expands to every component."""
+    must be ``btc`` (400 otherwise). Hashes are canonicalized (lowercase,
+    no ``0x``) and duplicates collapsed, so the response's ``txs`` list —
+    which every positional reference indexes into — may be shorter than
+    this one. ``include`` selects response components; signals, lineage
+    and verdict are always computed internally (the verdict depends on
+    the signals), the list only controls what is returned. ``all``
+    expands to every component."""
 
     txs: list[GraphTxRef] = Field(min_length=2, max_length=MAX_GRAPH_NODES)
     include: list[Union[Literal["all"], CompareComponent]] = Field(
@@ -78,19 +86,26 @@ class GraphCompareRequest(APIModel):
 
 class GraphNote(APIModel):
     """A caveat attached to a summary block. ``code`` is the stable
-    machine-readable contract; ``message`` is display text and may be
-    reworded without notice. ``network`` attributes overall-rollup notes to
-    their source network."""
+    machine-readable contract (closed vocabulary, shared with the internal
+    model so new codes surface in the OpenAPI schema); ``message`` is
+    display text and may be reworded without notice. ``network`` attributes
+    overall-rollup notes to their source network. ``items`` carries the
+    references a note applies to (e.g. the not-found tx hashes / addresses
+    of a ``nodes_not_found`` note), so clients never have to parse
+    ``message``."""
 
-    code: str
+    code: GraphNoteCode
     message: str
     network: Optional[str] = None
+    items: Optional[list[str]] = None
 
 
 class GraphTxOverall(APIModel):
     """Network-agnostic rollup over all transactions in the set: fiat and
     timestamps only, since base units and block heights are not comparable
-    across chains. Per-network notes carry their source network in
+    across chains. ``total_value_fiat`` inherits the per-network gross
+    semantics (UTXO: full output sums including change; linked txs
+    double-count). Per-network notes carry their source network in
     ``network``."""
 
     tx_count: int
@@ -106,7 +121,11 @@ class GraphTxNetworkSummary(APIModel):
     ``total_value.value`` is the network's native base unit (satoshi for
     UTXO, wei/sun for account chains) and sums native transfers only;
     ``total_value.fiat_values`` sum per fiat code across all transfers,
-    including tokens. ``total_fee`` stays in the native unit.
+    including tokens. Totals are *gross*: for UTXO networks each tx
+    contributes its full output sum — change outputs included — and a set
+    containing linked txs (e.g. a peel chain) counts the same coins once
+    per hop, so this is not "net value moved". Account-chain contributions
+    are the native transfer values. ``total_fee`` stays in the native unit.
     ``total_inputs`` / ``total_outputs`` are UTXO-only and omitted for
     account-model summaries. ``notes`` flags caveats. ``assets`` lists the
     distinct assets involved on this network (lowercase, native first then
@@ -230,17 +249,36 @@ class GraphTxCharacteristics(APIModel):
 
 
 class GraphCompareSignal(APIModel):
-    """One row of the pairwise comparison table; values stringified per tx."""
+    """One row of the pairwise comparison table.
+
+    ``per_tx`` holds one typed observation per compared tx, aligned with
+    the response's ``txs`` order. The value type depends on the signal:
+    booleans for flag signals (``witness_present``, ``rbf`` — true means
+    BIP-125 signaled, ``bip69_outputs_sorted``, ``exchange_input_overlap``
+    — true means the tx has an exchange-tagged input); an integer for
+    ``tx_version``; categorical snake_case strings for
+    ``locktime_pattern`` (``zero``/``anti_sniping``/``other``) and
+    ``output_count_shape`` (``single``/``pay_plus_change``/``many``);
+    sorted string lists for ``script_type`` (the tx's distinct input
+    script types), ``direct_input_overlap`` (input addresses shared with
+    peer txs), ``change_chain`` (own change addresses spent by peer txs)
+    and ``common_ancestor`` (parent tx hashes shared with peers); sorted
+    integer lists for ``utxo_linkage`` (indexes of peer txs with a direct
+    spend edge) and ``shared_cluster`` (the tx's own input cluster ids).
+    ``null`` means the value was not derivable for that tx; an empty list
+    means computed, but no items."""
 
     name: str
     kind: SignalKind
-    per_tx: list[Optional[str]]
+    per_tx: list[Optional[SignalPerTxValue]]
     verdict: SignalVerdict
     weight: int = 0
 
 
 class GraphLineageEdge(APIModel):
-    """Direct on-chain relationship between two compared transactions."""
+    """Direct on-chain relationship between two compared transactions.
+    ``from_idx``/``to_idx`` are positions in the response's ``txs`` list
+    (deduped canonical order), not the request's."""
 
     from_idx: int
     to_idx: int
@@ -252,15 +290,17 @@ class GraphLineageEdge(APIModel):
 class GraphCompareVerdict(APIModel):
     """Aggregator's opinion. Sub-verdicts kept independent.
 
-    ``confidence`` and ``score_total`` are tentative, weights have not yet
-    been calibrated against ground-truth data.
+    Only the categorical tier (``relation``) is exposed. The internal
+    aggregator also computes a numeric ``confidence`` and ``score_total``
+    (see ``ComparisonVerdictInternal``), but their weights have not been
+    calibrated against ground-truth data, so they stay backend-only —
+    consumers would inevitably treat them as probabilities. Add them here
+    once calibrated.
     """
 
     relation: ComparisonRelation
-    confidence: int
     cluster_verdict: ClusterVerdict
     discriminator_hits: list[str] = Field(default_factory=list)
-    score_total: float = 0.0
     notes: list[str] = Field(default_factory=list)
 
 

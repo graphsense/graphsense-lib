@@ -25,7 +25,7 @@ from typing_extensions import Self
 
 class GraphSummaryRequest(BaseModel):
     """
-    Request body for ``POST /graph/summary``.  The node set is defined by ``txs`` and/or ``addresses``; every item carries its own network, so the set may span chains. Each non-empty list must hold at least 2 distinct entries (keyed on network + hash); together they may hold at most 100. Fiat totals always carry every rate GraphSense stores (eur, usd).
+    Request body for ``POST /graph/summary``.  The node set is defined by ``txs`` and/or ``addresses``; every item carries its own network, so the set may span chains. Each non-empty list must hold at least 2 distinct entries (keyed on network + canonical hash/address, so spelling variants of one node collapse and count once); together they may hold at most 100. Fiat totals always carry every rate GraphSense stores (eur, usd).
     """ # noqa: E501
     txs: Optional[Annotated[List[GraphTxRef], Field(max_length=100)]] = None
     addresses: Optional[Annotated[List[GraphAddressRef], Field(max_length=100)]] = None

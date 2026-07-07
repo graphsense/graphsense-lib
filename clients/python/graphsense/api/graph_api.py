@@ -143,9 +143,9 @@ class GraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> GraphComparison:
-        """Compare multiple transactions
+        """Compare multiple transactions (beta)
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead.
+        **BETA**: this endpoint is new and its contract may still change without a deprecation cycle. Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead. Tx refs are canonicalized (hashes lowercased, 0x stripped) and duplicates collapsed; the response echoes the canonical hashes, and all positional references — signal per_tx entries and lineage from_idx/to_idx — index into the response's txs list, which may be shorter than the request's.
 
         :param graph_compare_request: (required)
         :type graph_compare_request: GraphCompareRequest
@@ -213,9 +213,9 @@ class GraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[GraphComparison]:
-        """Compare multiple transactions
+        """Compare multiple transactions (beta)
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead.
+        **BETA**: this endpoint is new and its contract may still change without a deprecation cycle. Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead. Tx refs are canonicalized (hashes lowercased, 0x stripped) and duplicates collapsed; the response echoes the canonical hashes, and all positional references — signal per_tx entries and lineage from_idx/to_idx — index into the response's txs list, which may be shorter than the request's.
 
         :param graph_compare_request: (required)
         :type graph_compare_request: GraphCompareRequest
@@ -283,9 +283,9 @@ class GraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Compare multiple transactions
+        """Compare multiple transactions (beta)
 
-        Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead.
+        **BETA**: this endpoint is new and its contract may still change without a deprecation cycle. Returns per-tx characteristics, pairwise similarity signals, and a rollup verdict on whether the supplied transactions are likely linked to the same actor. The fingerprinting analysis is BTC-only; every ref's network must be btc. For chain-agnostic aggregate stats over a node set use POST /graph/summary instead. Tx refs are canonicalized (hashes lowercased, 0x stripped) and duplicates collapsed; the response echoes the canonical hashes, and all positional references — signal per_tx entries and lineage from_idx/to_idx — index into the response's txs list, which may be shorter than the request's.
 
         :param graph_compare_request: (required)
         :type graph_compare_request: GraphCompareRequest
@@ -426,9 +426,9 @@ class GraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> GraphSummary:
-        """Summarize a set of transactions and/or addresses
+        """Summarize a set of transactions and/or addresses (beta)
 
-        Returns aggregate stats over the transactions and/or addresses in the request body. Every item carries its own network, so the set may span chains. Each node-type block holds a network-agnostic overall part (fiat totals per code, timestamp span) and one full per-network block (native base-unit values via the Values pattern) per network in the request. Each block is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
+        **BETA**: this endpoint is new and its contract may still change without a deprecation cycle. Returns aggregate stats over the transactions and/or addresses in the request body. Every item carries its own network, so the set may span chains. Each node-type block holds a network-agnostic overall part (fiat totals per code, timestamp span) and one full per-network block (native base-unit values via the Values pattern) per network in the request. Each block is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100. References are canonicalized before processing (tx hashes lowercased, 0x stripped; addresses network-canonicalized), and duplicates — including spelling variants of one node — are collapsed and counted once. Unknown references are dropped and reported per network in a nodes_not_found note (its items list carries the refs); the request only fails when fewer than 2 of a list's references exist. Value totals are gross: UTXO txs contribute their full output sum (change included), so sets containing linked txs (e.g. a peel chain) count the same coins once per hop.
 
         :param graph_summary_request: (required)
         :type graph_summary_request: GraphSummaryRequest
@@ -496,9 +496,9 @@ class GraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[GraphSummary]:
-        """Summarize a set of transactions and/or addresses
+        """Summarize a set of transactions and/or addresses (beta)
 
-        Returns aggregate stats over the transactions and/or addresses in the request body. Every item carries its own network, so the set may span chains. Each node-type block holds a network-agnostic overall part (fiat totals per code, timestamp span) and one full per-network block (native base-unit values via the Values pattern) per network in the request. Each block is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
+        **BETA**: this endpoint is new and its contract may still change without a deprecation cycle. Returns aggregate stats over the transactions and/or addresses in the request body. Every item carries its own network, so the set may span chains. Each node-type block holds a network-agnostic overall part (fiat totals per code, timestamp span) and one full per-network block (native base-unit values via the Values pattern) per network in the request. Each block is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100. References are canonicalized before processing (tx hashes lowercased, 0x stripped; addresses network-canonicalized), and duplicates — including spelling variants of one node — are collapsed and counted once. Unknown references are dropped and reported per network in a nodes_not_found note (its items list carries the refs); the request only fails when fewer than 2 of a list's references exist. Value totals are gross: UTXO txs contribute their full output sum (change included), so sets containing linked txs (e.g. a peel chain) count the same coins once per hop.
 
         :param graph_summary_request: (required)
         :type graph_summary_request: GraphSummaryRequest
@@ -566,9 +566,9 @@ class GraphApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Summarize a set of transactions and/or addresses
+        """Summarize a set of transactions and/or addresses (beta)
 
-        Returns aggregate stats over the transactions and/or addresses in the request body. Every item carries its own network, so the set may span chains. Each node-type block holds a network-agnostic overall part (fiat totals per code, timestamp span) and one full per-network block (native base-unit values via the Values pattern) per network in the request. Each block is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100.
+        **BETA**: this endpoint is new and its contract may still change without a deprecation cycle. Returns aggregate stats over the transactions and/or addresses in the request body. Every item carries its own network, so the set may span chains. Each node-type block holds a network-agnostic overall part (fiat totals per code, timestamp span) and one full per-network block (native base-unit values via the Values pattern) per network in the request. Each block is present iff the request carried that node type. Each non-empty list must hold at least 2 distinct entries; together they may hold at most 100. References are canonicalized before processing (tx hashes lowercased, 0x stripped; addresses network-canonicalized), and duplicates — including spelling variants of one node — are collapsed and counted once. Unknown references are dropped and reported per network in a nodes_not_found note (its items list carries the refs); the request only fails when fewer than 2 of a list's references exist. Value totals are gross: UTXO txs contribute their full output sum (change included), so sets containing linked txs (e.g. a peel chain) count the same coins once per hop.
 
         :param graph_summary_request: (required)
         :type graph_summary_request: GraphSummaryRequest

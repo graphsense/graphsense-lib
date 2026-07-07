@@ -15,19 +15,27 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
 class GraphNote(BaseModel):
     """
-    A caveat attached to a summary block. ``code`` is the stable machine-readable contract; ``message`` is display text and may be reworded without notice. ``network`` attributes overall-rollup notes to their source network.
+    A caveat attached to a summary block. ``code`` is the stable machine-readable contract (closed vocabulary, shared with the internal model so new codes surface in the OpenAPI schema); ``message`` is display text and may be reworded without notice. ``network`` attributes overall-rollup notes to their source network. ``items`` carries the references a note applies to (e.g. the not-found tx hashes / addresses of a ``nodes_not_found`` note), so clients never have to parse ``message``.
     """ # noqa: E501
     code: StrictStr
     message: StrictStr
     network: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["code", "message", "network"]
+    items: Optional[List[StrictStr]] = None
+    __properties: ClassVar[List[str]] = ["code", "message", "network", "items"]
+
+    @field_validator('code')
+    def code_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['fiat_totals_missing', 'fiat_totals_partial', 'token_value_excluded', 'token_holdings_excluded', 'usage_span_unavailable', 'nodes_not_found']):
+            raise ValueError("must be one of enum values ('fiat_totals_missing', 'fiat_totals_partial', 'token_value_excluded', 'token_holdings_excluded', 'usage_span_unavailable', 'nodes_not_found')")
+        return value
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -83,7 +91,8 @@ class GraphNote(BaseModel):
         _obj = cls.model_validate({
             "code": obj.get("code"),
             "message": obj.get("message"),
-            "network": obj.get("network")
+            "network": obj.get("network"),
+            "items": obj.get("items")
         })
         return _obj
 

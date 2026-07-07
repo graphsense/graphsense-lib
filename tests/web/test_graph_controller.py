@@ -221,10 +221,10 @@ def test_summary_notes_serialize_code_message_and_omit_null_network(
         txs_service, addresses_service, tags_service, *, txs, addresses, tagstore_groups
     ):
         per_network_note = GraphNoteInternal(
-            code="partial_fiat", message="Some transfers lack a fiat rate."
+            code="fiat_totals_partial", message="Some transfers lack a fiat rate."
         )
         rollup_note = GraphNoteInternal(
-            code="partial_fiat",
+            code="fiat_totals_partial",
             message="Some transfers lack a fiat rate.",
             network="eth",
         )
@@ -269,12 +269,12 @@ def test_summary_notes_serialize_code_message_and_omit_null_network(
     result = request_with_status(client, "/graph/summary", 200, body=body)
 
     rollup_note = result["txs"]["overall"]["notes"][0]
-    assert rollup_note["code"] == "partial_fiat"
+    assert rollup_note["code"] == "fiat_totals_partial"
     assert rollup_note["message"] == "Some transfers lack a fiat rate."
     assert rollup_note["network"] == "eth"
 
     per_network_note = result["txs"]["networks"][0]["notes"][0]
-    assert per_network_note["code"] == "partial_fiat"
+    assert per_network_note["code"] == "fiat_totals_partial"
     assert per_network_note["message"] == "Some transfers lack a fiat rate."
     assert "network" not in per_network_note  # response_model_exclude_none
 

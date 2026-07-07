@@ -195,10 +195,9 @@ def signal_script_type(
     chars: list[TxCharacteristicsInternal],
 ) -> ComparisonSignalInternal:
     per_tx = [
-        ",".join(sorted(c.inputs_script_types)) if c.inputs_script_types else None
-        for c in chars
+        sorted(c.inputs_script_types) if c.inputs_script_types else None for c in chars
     ]
-    distinct = {p for p in per_tx if p is not None}
+    distinct = {tuple(p) for p in per_tx if p is not None}
     if len(distinct) <= 1 and None not in per_tx:
         verdict, weight = "match", 5
     elif None in per_tx:
@@ -220,10 +219,9 @@ def signal_witness_present(
     """Score signal: True/False per tx based on whether any input carries
     witness data. ``inconclusive`` when any tx's witness status is
     unresolvable (P2SH inputs without ground-truth ``has_witness``)."""
-    per_tx_bool = [c.inputs_have_witness for c in chars]
-    per_tx = [None if v is None else ("true" if v else "false") for v in per_tx_bool]
-    distinct = {v for v in per_tx_bool if v is not None}
-    if None in per_tx_bool:
+    per_tx = [c.inputs_have_witness for c in chars]
+    distinct = {v for v in per_tx if v is not None}
+    if None in per_tx:
         verdict, weight = "inconclusive", 0
     elif len(distinct) <= 1:
         verdict, weight = "match", 3
@@ -241,7 +239,7 @@ def signal_witness_present(
 def signal_tx_version(
     chars: list[TxCharacteristicsInternal],
 ) -> ComparisonSignalInternal:
-    per_tx = [None if c.tx_version is None else f"v{c.tx_version}" for c in chars]
+    per_tx = [c.tx_version for c in chars]
     distinct = {v for v in per_tx if v is not None}
     if None in per_tx:
         verdict, weight = "inconclusive", 0
@@ -261,10 +259,9 @@ def signal_tx_version(
 def signal_rbf(
     chars: list[TxCharacteristicsInternal],
 ) -> ComparisonSignalInternal:
-    per_tx_bool = [c.inputs_signal_rbf for c in chars]
-    per_tx = [None if v is None else ("rbf" if v else "final") for v in per_tx_bool]
-    distinct = {v for v in per_tx_bool if v is not None}
-    if None in per_tx_bool:
+    per_tx = [c.inputs_signal_rbf for c in chars]
+    distinct = {v for v in per_tx if v is not None}
+    if None in per_tx:
         verdict, weight = "inconclusive", 0
     elif len(distinct) <= 1:
         verdict, weight = "match", 3
@@ -333,12 +330,9 @@ def signal_bip69_outputs_sorted(
     that happen to be ascending), and many wallets simply don't enforce it.
     A mismatch shouldn't flip the cluster=different row to ``unlinked``.
     """
-    per_tx_bool = [c.bip69_outputs_sorted for c in chars]
-    per_tx = [
-        None if v is None else ("sorted" if v else "unsorted") for v in per_tx_bool
-    ]
-    distinct = {v for v in per_tx_bool if v is not None}
-    if None in per_tx_bool:
+    per_tx = [c.bip69_outputs_sorted for c in chars]
+    distinct = {v for v in per_tx if v is not None}
+    if None in per_tx:
         verdict, weight = "inconclusive", 0
     elif len(distinct) <= 1:
         verdict, weight = "match", 2
@@ -364,14 +358,10 @@ def signal_exchange_input_overlap(
     ``weight=0`` because the signal is informational; its effect is
     expressed as a verdict demotion rather than a score contribution.
     """
-    per_tx_bool = [c.inputs_have_exchange for c in chars]
-    per_tx = [
-        None if v is None else ("exchange" if v else "non_exchange")
-        for v in per_tx_bool
-    ]
-    if any(v is None for v in per_tx_bool):
+    per_tx = [c.inputs_have_exchange for c in chars]
+    if any(v is None for v in per_tx):
         verdict = "inconclusive"
-    elif all(v for v in per_tx_bool):
+    elif all(per_tx):
         verdict = "match"
     else:
         verdict = "mismatch"
@@ -460,14 +450,14 @@ def signal_direct_input_overlap(
                 adj[i].add(j)
                 adj[j].add(i)
 
-    per_tx: list[Optional[str]] = []
+    per_tx: list[Optional[list[str]]] = []
     for i in range(n):
         shared = set()
         for j in range(n):
             if i == j:
                 continue
             shared |= sets[i] & sets[j]
-        per_tx.append(",".join(sorted(shared)) if shared else None)
+        per_tx.append(sorted(shared))
 
     verdict = "match" if n > 1 and _connected_components(adj) == 1 else "mismatch"
     return ComparisonSignalInternal(
@@ -503,7 +493,7 @@ def signal_change_chain(
         )
 
     has_edge = False
-    per_tx: list[Optional[str]] = []
+    per_tx: list[Optional[list[str]]] = []
     for i in range(n):
         consumed_by_others: set[str] = set()
         for j in range(n):
@@ -512,9 +502,7 @@ def signal_change_chain(
             consumed_by_others |= changes[i] & inputs[j]
         if consumed_by_others:
             has_edge = True
-        per_tx.append(
-            ",".join(sorted(consumed_by_others)) if consumed_by_others else None
-        )
+        per_tx.append(sorted(consumed_by_others))
 
     verdict = "match" if has_edge else "mismatch"
     return ComparisonSignalInternal(
@@ -546,7 +534,7 @@ def signal_common_ancestor(
         )
 
     has_edge = False
-    per_tx: list[Optional[str]] = []
+    per_tx: list[Optional[list[str]]] = []
     for i in range(n):
         shared = set()
         for j in range(n):
@@ -555,7 +543,7 @@ def signal_common_ancestor(
             shared |= parents[i] & parents[j]
         if shared:
             has_edge = True
-        per_tx.append(",".join(sorted(shared)) if shared else None)
+        per_tx.append(sorted(shared))
 
     verdict = "match" if has_edge else "mismatch"
     return ComparisonSignalInternal(
@@ -586,9 +574,7 @@ def signal_utxo_linkage(
             adj[i].add(j)
             adj[j].add(i)
 
-    per_tx = [
-        ",".join(str(j) for j in sorted(adj[i])) if adj[i] else None for i in range(n)
-    ]
+    per_tx = [sorted(adj[i]) for i in range(n)]
 
     verdict = "match" if _connected_components(adj) == 1 and n > 1 else "mismatch"
     return ComparisonSignalInternal(
@@ -608,10 +594,7 @@ def signal_shared_cluster(
     expressed via the verdict (match/mismatch/inconclusive); ``aggregate_verdict``
     consumes ``cluster_verdict`` directly to gate the ``linked`` tier."""
     per_tx = [
-        ",".join(str(cid) for cid in sorted(c.input_cluster_ids))
-        if c.input_cluster_ids
-        else None
-        for c in chars
+        sorted(c.input_cluster_ids) if c.input_cluster_ids else None for c in chars
     ]
     if cluster_verdict == "same":
         verdict = "match"
@@ -1029,6 +1012,37 @@ async def compare_txs(
             "Use /graph/summary for aggregate stats."
         )
 
+    # Enforce the work bound before the expensive fetch: the tx header row
+    # already carries the IO counts, so an oversized set is rejected (and a
+    # missing hash 404s) after cheap point reads, without materializing a
+    # single input/output or running the change/coinjoin heuristics.
+    headers: list[Union[TxUtxo, TxAccount]] = await asyncio.gather(
+        *[
+            txs_service.get_tx(
+                currency,
+                h,
+                None,
+                include_io=False,
+                include_nonstandard_io=False,
+                include_io_index=False,
+                include_heuristics=[],
+                tagstore_groups=tagstore_groups,
+                trace_account_chains=True,
+            )
+            for h in tx_hashes
+        ]
+    )
+    total_ios = sum(
+        t.no_inputs + t.no_outputs for t in headers if isinstance(t, TxUtxo)
+    )
+    if total_ios > _MAX_TOTAL_IOS:
+        raise BadUserInputException(
+            f"transaction set too large to compare: {total_ios} combined "
+            f"inputs and outputs exceed the limit of {_MAX_TOTAL_IOS}."
+        )
+
+    # Full fetch (IOs + heuristics); re-reads the header row, which is cheap
+    # relative to the IO partitions and heuristic work it gates.
     fetched: list[Union[TxUtxo, TxAccount]] = await asyncio.gather(
         *[
             txs_service.get_tx(
@@ -1045,15 +1059,6 @@ async def compare_txs(
             for h in tx_hashes
         ]
     )
-
-    total_ios = sum(
-        t.no_inputs + t.no_outputs for t in fetched if isinstance(t, TxUtxo)
-    )
-    if total_ios > _MAX_TOTAL_IOS:
-        raise BadUserInputException(
-            f"transaction set too large to compare: {total_ios} combined "
-            f"inputs and outputs exceed the limit of {_MAX_TOTAL_IOS}."
-        )
 
     # Exchange-flag lookup now needs the address→cluster map, so it can't run
     # in parallel with cluster resolution like the old digest-based path did.
