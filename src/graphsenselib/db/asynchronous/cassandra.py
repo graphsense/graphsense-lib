@@ -3867,10 +3867,13 @@ class Cassandra:
             )
         }
 
-        # they must be aligned so at least have the same number of results
+        # the resolver must return one row per requested (unique) tx id.
+        # Note: len(txs) can exceed len(tx_ids) when one tx contributes
+        # several rows to a page (e.g. multiple token transfers / traces in
+        # the same tx), so validate against the deduped id set, not row count.
         if self.tconfig.strict_data_validation:
-            assert len(full_txs) == len(txs), (
-                f"Expected {len(txs)} results, got {len(full_txs)}."
+            assert len(full_txs) == len(tx_ids), (
+                f"Expected {len(tx_ids)} results, got {len(full_txs)}."
             )
 
         for addr_tx in txs:
