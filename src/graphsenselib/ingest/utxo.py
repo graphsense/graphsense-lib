@@ -1,4 +1,3 @@
-import importlib.util
 import logging
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -18,12 +17,6 @@ from ..utils.bch import bch_address_to_legacy
 from ..utils.signals import graceful_ctlc_shutdown
 from .common import cassandra_ingest, write_to_sinks
 from .rpc_utxo import BtcBlockExporter
-
-# btcpy is an optional ingest dependency used only by the (legacy) btcpy
-# script-parser path. Detect it without importing (the parser imports it
-# locally when invoked); during the shadow window parse_script cross-checks the
-# native parser against it.
-_has_btcpy = importlib.util.find_spec("btcpy") is not None
 
 TX_HASH_PREFIX_LENGTH = 5
 TX_BUCKET_SIZE = 25_000
@@ -237,7 +230,7 @@ _address_types = {  # based on BlockSci values (type 0 .. 10)
 
 
 def addresstype_to_int(addr_type: str) -> int:
-    """Convert btcpy address types to integers
+    """Convert script/address type strings to integers
 
     Args:
         addr_type (str): Description
@@ -295,10 +288,10 @@ def tx_stats(tx):
     )
 
 
-# Output-script opcode for the native parser.
+# Output-script opcode for the script parser.
 _OP_CHECKMULTISIG = 0xAE
 
-# Per-network address params for the native script parser: ``p2pkh``/``p2sh``
+# Per-network address params for the script parser: ``p2pkh``/``p2sh``
 # are base58 version-byte prefixes, ``bech32_hrp`` is the native-segwit
 # human-readable part (``None`` for chains without segwit, e.g. ZEC — a
 # segwit-shaped script there is non-standard). BCH legacy addresses share BTC's
@@ -320,9 +313,10 @@ def _looks_like_pubkey(b: bytes) -> bool:
     )
 
 
-# The native parser below mirrors btcpy's ScriptParser token scan + templates
-# exactly (the shadow comparator demands bit-identical behaviour, quirks
-# included). Push tokens are (op, data) pairs modelled on btcpy's StackData:
+# The parser below mirrors the retired btcpy library's ScriptParser token scan
+# + templates exactly, quirks included (validated bit-identical against btcpy
+# in a month-long production shadow run before btcpy was dropped, 2026-07).
+# Push tokens are (op, data) pairs modelled on btcpy's StackData:
 # OP_0 and OP_1NEGATE/OP_1..OP_16 are pushes with empty payload; OP_RESERVED
 # (0x50) and everything above 0x60 are not pushes.
 
@@ -370,8 +364,8 @@ def _token_len(op: int, data: bytes) -> int:
 def _token_int(op: int, data: bytes) -> int:
     """btcpy StackData.__int__ (sign-magnitude little-endian).
 
-    Raises IndexError for a data push with empty payload — btcpy does too, and
-    the shadow comparator matches exception types.
+    Raises IndexError for a data push with empty payload — btcpy did too, and
+    the parser preserves that behaviour.
     """
     if op == 0x00:
         return 0
@@ -447,52 +441,28 @@ def _match_multisig(script: bytes) -> Optional[List[bytes]]:
     return [d for _, d in keys if _looks_like_pubkey(d)]
 
 
-def _parse_script_btcpy(s: str) -> Tuple[Optional[List[str]], str]:
-    """Legacy btcpy-based output-script parser (authoritative during shadow)."""
-    from btcpy.structs.address import P2pkhAddress
-    from btcpy.structs.script import ScriptBuilder
+def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str]:
+    """Parse output addresses + script type from a bitcoin-like locking script.
 
-    script = ScriptBuilder.identify(s)
+    Tries the same templates in the same order as the retired btcpy library's
+    ScriptBuilder, emitting the same ``type`` strings the downstream
+    ``_address_types`` map expects. Addresses are encoded with ``network``'s
+    version bytes (BTC mainnet by default, matching btcpy's hardcoded
+    ``mainnet=True``; ``zec`` yields t-addresses, etc.). Chains without segwit
+    (``bech32_hrp`` None, e.g. ZEC) treat segwit-shaped scripts as unknown.
+    Anything else raises ``UnknownScriptType`` — including scripts btcpy
+    classified as if/else, timelock, or hashlock.
 
-    if script.type == "p2pk":
-        try:
-            return [str(P2pkhAddress(script.pubkey.hash(), mainnet=True))], script.type
-        except Exception as e:
-            raise P2pkParserException(
-                f"ScriptParseError: cannot parse pubkey from {s}"
-                f" (of type {script.type}) --- {e}"
-            )
-    if script.type == "p2pkh":
-        return [str(P2pkhAddress(script.pubkeyhash, mainnet=True))], script.type
-    if script.type == "multisig":
-        return [
-            str(P2pkhAddress(k.hash(), mainnet=True))
-            for k in script.pubkeys
-            if hasattr(k, "hash")
-        ], script.type
-    if script.type in ["p2sh", "p2wpkhv0", "p2wshv0"]:
-        return [str(script.address(mainnet=True))], script.type
-    if script.type == "nulldata":
-        return None, script.type
-    raise UnknownScriptType(
-        f"ScriptParseError: not handling script type {script.type} at the moment."
-    )
+    Args:
+        s (str): script in binary hex format
+        network (str): chain code selecting the address version bytes
 
+    Returns:
+        Tuple[List[str], str]: address list and script type
 
-def _parse_script_native(
-    s: str, network: str = "btc"
-) -> Tuple[Optional[List[str]], str]:
-    """btcpy-free reimplementation of :func:`_parse_script_btcpy`.
-
-    Tries the same templates in the same order as btcpy's ScriptBuilder,
-    emitting the same ``type`` strings the downstream ``_address_types`` map
-    expects. Addresses are encoded with ``network``'s version bytes (BTC
-    mainnet by default, matching btcpy's hardcoded ``mainnet=True``; ``zec``
-    yields t-addresses, etc.). Chains without segwit (``bech32_hrp`` None, e.g.
-    ZEC) treat segwit-shaped scripts as unknown. Anything else raises
-    ``UnknownScriptType`` — including scripts btcpy classifies as if/else,
-    timelock, or hashlock (the legacy wrapper rejects those types too, and they
-    cannot shadow any template handled here).
+    Raises:
+        P2pkParserException: if a P2PK script can't be parsed
+        UnknownScriptType: on unknown script type
     """
     from graphsenselib.utils.pubkey_to_address import (
         base58check_encode,
@@ -551,74 +521,6 @@ def _parse_script_native(
     raise UnknownScriptType(
         f"ScriptParseError: not handling script type for {s} at the moment."
     )
-
-
-def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str]:
-    """Parse output addresses + script type from a bitcoin-like locking script.
-
-    Addresses are encoded for ``network`` (default ``btc``; ``zec`` yields
-    t-addresses, etc.).
-
-    SHADOW VALIDATION (temporary): runs both the legacy btcpy parser and the
-    native reimplementation and asserts they agree (btcpy authoritative). A
-    divergence raises ``AssertionError`` (logged first) — deliberately loud, so
-    any mismatch surfaces during the production validation window. Once this has
-    run without tripping for long enough, delete ``_parse_script_btcpy`` + the
-    btcpy dependency and rename ``_parse_script_native`` to ``parse_script``.
-    btcpy only encodes BTC-mainnet addresses, so the shadow runs only for
-    ``network == "btc"``; other networks (and a missing btcpy) use the native
-    parser directly.
-
-    Args:
-        s (str): script in binary hex format
-        network (str): chain code selecting the address version bytes
-
-    Returns:
-        Tuple[List[str], str]: address list and script type
-
-    Raises:
-        P2pkParserException: if a P2PK script can't be parsed
-        UnknownScriptType: on unknown script type
-        AssertionError: if the native and btcpy results diverge
-    """
-
-    def _run(fn, *args):
-        try:
-            return ("ok", fn(*args), None)
-        except Exception as e:  # noqa: BLE001 — capture to compare both paths
-            return ("err", None, e)
-
-    n_kind, n_val, n_exc = _run(_parse_script_native, s, network)
-
-    if not _has_btcpy or network != "btc":
-        if n_kind == "ok":
-            return n_val
-        raise n_exc
-
-    b_kind, b_val, b_exc = _run(_parse_script_btcpy, s)
-
-    matches = n_kind == b_kind and (
-        n_val == b_val if n_kind == "ok" else type(n_exc) is type(b_exc)
-    )
-    if not matches:
-        n_repr = n_val if n_kind == "ok" else f"{type(n_exc).__name__}: {n_exc}"
-        b_repr = b_val if b_kind == "ok" else f"{type(b_exc).__name__}: {b_exc}"
-        logger.error(
-            "parse_script divergence (btcpy vs native) for script %s: "
-            "btcpy=%r native=%r",
-            s,
-            b_repr,
-            n_repr,
-        )
-        raise AssertionError(
-            f"parse_script divergence for script {s!r}: btcpy={b_repr!r} "
-            f"native={n_repr!r}"
-        )
-
-    # btcpy authoritative during the shadow window.
-    if b_kind == "ok":
-        return b_val
-    raise b_exc
 
 
 def enrich_txs(

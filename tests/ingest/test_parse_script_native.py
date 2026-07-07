@@ -1,12 +1,10 @@
-"""Unit tests for the btcpy-free output-script parser (`_parse_script_native`).
+"""Unit tests for the output-script parser (`parse_script`).
 
-Vectors are lifted from btcpy's own `tests/data/scripts.json` /
-`unknownscripts.json`, with the expected outputs computed by btcpy — so the
-native parser is held byte-for-byte compatible with the implementation it
-replaces. These tests do NOT require btcpy at runtime (they validate the native
-parser standalone, i.e. the post-btcpy state); the final `test_native_matches_btcpy`
-re-checks equivalence against btcpy while it is still installed and auto-skips
-once it is removed.
+Vectors are lifted from the retired btcpy library's own `tests/data/scripts.json`
+/ `unknownscripts.json`, with the expected outputs computed by btcpy — so the
+parser stays byte-for-byte compatible with the implementation it replaced
+(validated in a month-long production shadow run before btcpy was dropped,
+2026-07).
 """
 
 import pytest
@@ -14,8 +12,7 @@ import pytest
 from graphsenselib.ingest.utxo import (
     P2pkParserException,
     UnknownScriptType,
-    _parse_script_btcpy,
-    _parse_script_native,
+    parse_script,
 )
 
 # (script_hex, expected_addresses_or_None, expected_type) — from scripts.json.
@@ -147,24 +144,24 @@ _UNPARSEABLE_P2PK = (
 
 
 @pytest.mark.parametrize("script_hex,addresses,script_type", _HANDLED)
-def test_native_parses_standard_scripts(script_hex, addresses, script_type):
-    assert _parse_script_native(script_hex) == (addresses, script_type)
+def test_parses_standard_scripts(script_hex, addresses, script_type):
+    assert parse_script(script_hex) == (addresses, script_type)
 
 
 @pytest.mark.parametrize("script_hex", _UNKNOWN)
-def test_native_rejects_unknown_scripts(script_hex):
+def test_rejects_unknown_scripts(script_hex):
     with pytest.raises(UnknownScriptType):
-        _parse_script_native(script_hex)
+        parse_script(script_hex)
 
 
-def test_native_unparseable_p2pk_raises():
+def test_unparseable_p2pk_raises():
     with pytest.raises(P2pkParserException):
-        _parse_script_native(_UNPARSEABLE_P2PK)
+        parse_script(_UNPARSEABLE_P2PK)
 
 
 # Multisig-shaped scripts whose N (or M) slot is a data push with an empty
-# payload: btcpy crashes with IndexError in StackData.__int__, and the shadow
-# comparator demands matching exception types.
+# payload: btcpy crashed with IndexError in StackData.__int__, and the parser
+# preserves that behaviour.
 _INT_OF_EMPTY_PUSH = [
     "21" + _PK + "21" + _PK + "4c00ae",  # N is an empty push
     "4c00" + "21" + _PK + "51ae",  # M is an empty push
@@ -172,24 +169,6 @@ _INT_OF_EMPTY_PUSH = [
 
 
 @pytest.mark.parametrize("script_hex", _INT_OF_EMPTY_PUSH)
-def test_native_replicates_btcpy_indexerror(script_hex):
+def test_replicates_btcpy_indexerror(script_hex):
     with pytest.raises(IndexError):
-        _parse_script_native(script_hex)
-
-
-@pytest.mark.parametrize(
-    "script_hex",
-    [h for h, _, _ in _HANDLED] + _UNKNOWN + [_UNPARSEABLE_P2PK] + _INT_OF_EMPTY_PUSH,
-)
-def test_native_matches_btcpy(script_hex):
-    """Equivalence to btcpy while it is still installed (skips after removal)."""
-    pytest.importorskip("btcpy")
-
-    def outcome(fn):
-        try:
-            addrs, script_type = fn(script_hex)
-            return ("ok", tuple(addrs) if addrs else None, script_type)
-        except Exception as e:  # noqa: BLE001 — compare outcome shape
-            return ("err", type(e).__name__)
-
-    assert outcome(_parse_script_native) == outcome(_parse_script_btcpy)
+        parse_script(script_hex)

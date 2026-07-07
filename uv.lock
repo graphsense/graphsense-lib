@@ -713,18 +713,6 @@ wheels = [
 ]
 
 [[package]]
-name = "chainside-btcpy"
-version = "0.6.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "ecdsa" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/10/30dc6a6f4790e9af6995faa9161023a8064d25a5bd88d2bf7f608e4a3f4f/chainside-btcpy-0.6.5.tar.gz", hash = "sha256:fc88cec6cc09ea8194c2389d5d336e32af86f2a1b25af815975b77eb24038999", size = 65285 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/ef/d13f834fa70c6ecc975e3ace4129c9b6d70b40e53128fa666bbc8ff4654c/chainside_btcpy-0.6.5-py3-none-any.whl", hash = "sha256:e727985f198bda91cb9dca0c158adff2021ba4019e72bc9e1abfe21b0a652081", size = 62290 },
-]
-
-[[package]]
 name = "charset-normalizer"
 version = "3.4.7"
 source = { registry = "https://pypi.org/simple" }
@@ -1453,11 +1441,14 @@ wheels = [
 
 [[package]]
 name = "ecdsa"
-version = "0.13"
+version = "0.19.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f9/e5/99ebb176e47f150ac115ffeda5fedb6a3dbb3c00c74a59fd84ddf12f5857/ecdsa-0.13.tar.gz", hash = "sha256:64cf1ee26d1cde3c73c6d7d107f835fed7c6a2904aef9eac223d57ad800c43fa", size = 55579 }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/25/ca/8de7744cb3bc966c85430ca2d0fcaeea872507c6a4cf6e007f7fe269ed9d/ecdsa-0.19.2.tar.gz", hash = "sha256:62635b0ac1ca2e027f82122b5b81cb706edc38cd91c63dda28e4f3455a2bf930", size = 202432 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/f4/73669d51825516ce8c43b816c0a6b64cd6eb71d08b99820c00792cb42222/ecdsa-0.13-py2.py3-none-any.whl", hash = "sha256:40d002cf360d0e035cf2cb985e1308d41aaa087cbfc135b2dc2d844296ea546c", size = 86911 },
+    { url = "https://files.pythonhosted.org/packages/51/79/119091c98e2bf49e24ed9f3ae69f816d715d2904aefa6a2baa039a2ba0b0/ecdsa-0.19.2-py2.py3-none-any.whl", hash = "sha256:840f5dc5e375c68f36c1a7a5b9caad28f95daa65185c9253c0c08dd952bb7399", size = 150818 },
 ]
 
 [[package]]
@@ -2290,7 +2281,6 @@ all = [
     { name = "anytree" },
     { name = "asgi-lifespan" },
     { name = "asyncpg" },
-    { name = "chainside-btcpy" },
     { name = "colorama" },
     { name = "deltalake" },
     { name = "duckdb" },
@@ -2331,7 +2321,6 @@ conversions = [
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 ingest = [
-    { name = "chainside-btcpy" },
     { name = "deltalake" },
     { name = "duckdb" },
     { name = "grpcio" },
@@ -2466,7 +2455,6 @@ requires-dist = [
     { name = "bech32", specifier = ">=1.2.0" },
     { name = "bitarray", specifier = ">=3.0" },
     { name = "cassandra-driver", specifier = ">=3.29" },
-    { name = "chainside-btcpy", marker = "extra == 'ingest'", specifier = ">=0.6" },
     { name = "click", specifier = ">=8.1" },
     { name = "coincurve", specifier = ">=21.0.0" },
     { name = "colorama", marker = "extra == 'tagstore'", specifier = ">=0.4.6" },
