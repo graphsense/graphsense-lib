@@ -666,12 +666,15 @@ def _get_acl_groups_statement():
 def _get_labels_by_clusterid_stmt(cluster_id: str, network: str, groups: List[str]):
     return (
         select(Tag.label)
+        # gs_cluster_id is only unique per network (PK is (address, network),
+        # index is (network, gs_cluster_id)), so the cluster->address resolution
+        # MUST be scoped to the requested network — otherwise cluster #N on every
+        # other chain is matched too and its addresses' labels leak in. Tag
+        # matching itself stays network-agnostic by design (a tag on a matching
+        # identifier applies regardless of the tag's own network).
         .where(AddressClusterMapping.gs_cluster_id == cluster_id)
+        .where(AddressClusterMapping.network == network)
         .where(AddressClusterMapping.address == Tag.identifier)
-        # constrain to the requested network, otherwise a numeric cluster id
-        # collides across chains and leaks (e.g.) an LTC label onto a BTC entity
-        .where(AddressClusterMapping.network == Tag.network)
-        .where(Tag.network == network)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .order_by(asc(Tag.label))
