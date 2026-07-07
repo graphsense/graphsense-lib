@@ -16,7 +16,6 @@ from .common import (
     convert_value,
     links_response,
     list_neighbors,
-    tagstore_cluster_id,
     to_values,
     to_values_tokens,
     txs_from_rows,
@@ -171,8 +170,8 @@ class EntitiesService:
         # calls — collapses 3 pool checkouts to 1 per get_entity request.
         async with self._tagstore_session() as ts:
             ts_kw = self._session_kwargs(ts)
-            # tagstore keys raw cluster ids; unshift public fresh ids
-            ts_cluster_id = tagstore_cluster_id(entity_id)
+            # the tagstore layer routes public ids itself (fresh -> *_v2)
+            ts_cluster_id = int(entity_id)
             if not exclude_best_address_tag:
                 tag = await self.tagstore.get_best_cluster_tag(
                     ts_cluster_id, currency.upper(), tagstore_groups, **ts_kw
@@ -444,7 +443,7 @@ class EntitiesService:
         assert page is None or isinstance(page, int)
 
         tags = await self.tagstore.get_tags_by_clusterid(
-            tagstore_cluster_id(entity_id),
+            int(entity_id),
             currency.upper(),
             page * (pagesize or 0),
             (pagesize + 1) if pagesize is not None else None,

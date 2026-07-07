@@ -13,7 +13,6 @@ from .config import (
     default_environments,
     get_config,
     get_reorg_backoff_blocks,
-    is_tagstore_fresh_clusters_enabled,
     keyspace_types,
     schema_types,
     supported_base_currencies,

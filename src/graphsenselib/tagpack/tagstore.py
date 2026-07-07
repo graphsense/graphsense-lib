@@ -19,7 +19,6 @@ from graphsenselib.tagpack import ValidationError
 from graphsenselib.tagpack.constants import KNOWN_NETWORKS
 from graphsenselib.tagpack.tagpack import TagPack
 from graphsenselib.tagpack.utils import get_github_repo_url
-from graphsenselib.config import is_tagstore_fresh_clusters_enabled
 import logging
 
 register_adapter(np.int64, AsIs)
@@ -27,25 +26,26 @@ register_adapter(np.int64, AsIs)
 logger = logging.getLogger(__name__)
 
 
-def _acm_table() -> str:
-    """Active address->cluster mapping table, switched by the env var.
+def _acm_table(fresh: bool) -> str:
+    """address->cluster mapping table of one clustering regime.
 
-    Fresh: ``address_cluster_mapping_v2`` (fed from the fresh-clustering tables).
-    Legacy: ``address_cluster_mapping``. The whole cluster-tag read path (both
-    MVs) sits on top of whichever this returns.
+    Legacy ids live in ``address_cluster_mapping``, raw fresh-clustering ids
+    in the parallel ``address_cluster_mapping_v2``. Both can be live at once
+    while networks migrate one at a time (the feeder dual-writes marked
+    networks); the REST read path routes between them per public id.
     """
-    return (
-        "address_cluster_mapping_v2"
-        if is_tagstore_fresh_clusters_enabled()
-        else "address_cluster_mapping"
-    )
+    return "address_cluster_mapping_v2" if fresh else "address_cluster_mapping"
 
 
-def _cluster_mv_names() -> tuple:
-    """The (tag_count, best_tag) cluster MV names for the active mapping."""
-    if is_tagstore_fresh_clusters_enabled():
-        return ("tag_count_by_cluster_v2", "best_cluster_tag_v2")
-    return ("tag_count_by_cluster", "best_cluster_tag")
+# Cluster MVs of both regimes: (tag_count, best_tag) pairs sitting on top of
+# the v1 and v2 mapping tables respectively. Refreshed together — with
+# per-network migration there is no single "active" pair.
+_CLUSTER_MVS = (
+    "tag_count_by_cluster",
+    "best_cluster_tag",
+    "tag_count_by_cluster_v2",
+    "best_cluster_tag_v2",
+)
 
 
 def _normalize_db_value(value):
@@ -710,9 +710,18 @@ class TagStore(object):
     def refresh_db(self):
         # self.cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY label")
         self.cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY statistics")
-        tag_count_mv, best_tag_mv = _cluster_mv_names()
-        self.cursor.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {tag_count_mv}")
-        self.cursor.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {best_tag_mv}")
+        for mv in _CLUSTER_MVS:
+            # The *_v2 relations only appear once `tagstore init` has run
+            # against this store; a not-yet-migrated tagstore simply has
+            # nothing to refresh for that regime.
+            self.cursor.execute("SELECT to_regclass(%s)", (mv,))
+            if self.cursor.fetchone()[0] is None:
+                logger.warning(
+                    f"Materialized view {mv} does not exist, skipping refresh "
+                    "(run `graphsense-cli tagstore init` to create it)"
+                )
+                continue
+            self.cursor.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
 
     def get_addresses(self, update_existing):
         if update_existing:
@@ -723,7 +732,17 @@ class TagStore(object):
         for record in self.cursor:
             yield record
 
-    def get_cluster_mapping_sample(self, limit_per_network, networks=None):
+    def cluster_mapping_table_exists(self, fresh=False):
+        """Whether the regime's mapping table exists.
+
+        The ``*_v2`` table is created by ``graphsense-cli tagstore init``;
+        callers use this to fail fast (writes) or skip a regime (staleness
+        sampling) on stores that have not been initialized yet.
+        """
+        self.cursor.execute("SELECT to_regclass(%s)", (_acm_table(fresh),))
+        return self.cursor.fetchone()[0] is not None
+
+    def get_cluster_mapping_sample(self, limit_per_network, networks=None, fresh=False):
         """Sample mapped addresses per network, biased toward large clusters.
 
         Used by the staleness check to compare stored gs_cluster_id against
@@ -735,8 +754,9 @@ class TagStore(object):
         Returns rows of (address, network, gs_cluster_id). Within each
         network the ordering is gs_cluster_no_addr DESC then address, so
         repeated runs sample the same heavy-hitter clusters first.
+        ``fresh`` selects which regime's mapping table to sample.
         """
-        acm = _acm_table()
+        acm = _acm_table(fresh)
         if networks:
             q = (
                 "SELECT address, network, gs_cluster_id FROM ("
@@ -789,9 +809,9 @@ class TagStore(object):
             yield record
 
     @auto_commit
-    def insert_cluster_mappings(self, clusters):
+    def insert_cluster_mappings(self, clusters, fresh=False):
         if not clusters.empty:
-            q = f"INSERT INTO {_acm_table()} (address, network, \
+            q = f"INSERT INTO {_acm_table(fresh)} (address, network, \
                 gs_cluster_id , gs_cluster_def_addr , gs_cluster_no_addr) \
                 VALUES (%s, %s, %s, %s, %s) ON CONFLICT (network, address) \
                 DO UPDATE SET gs_cluster_id = EXCLUDED.gs_cluster_id, \

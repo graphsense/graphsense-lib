@@ -79,28 +79,6 @@ VALID_CONSISTENCY_LEVELS = {
 VALID_SERIAL_CONSISTENCY_LEVELS = {"SERIAL", "LOCAL_SERIAL"}
 
 
-def is_tagstore_fresh_clusters_enabled() -> bool:
-    """Tagstore fresh-clustering switch — flips the whole cluster-tag path,
-    read **and** feed, to the ``*_v2`` relations in one move:
-
-    - REST reads resolve to ``address_cluster_mapping_v2`` / ``*_v2`` MVs;
-    - the tagpack ``sync`` feeder reads cluster membership from
-      ``fresh_address_cluster`` / ``fresh_cluster_stats`` (Cassandra) and writes
-      ``address_cluster_mapping_v2`` (Postgres), refreshing the ``*_v2`` MVs.
-
-    Exclusive switch: while on, the legacy ``address_cluster_mapping`` is no
-    longer maintained. Independent of the Cassandra write side (the delta
-    updater / one-off clustering job self-detect on the per-keyspace
-    ``fresh_clustering_active`` state marker). Flip on only after
-    ``address_cluster_mapping_v2`` has been populated by a full feeder rerun,
-    else cluster-tag reads come back empty."""
-    return os.environ.get("GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
-
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 )

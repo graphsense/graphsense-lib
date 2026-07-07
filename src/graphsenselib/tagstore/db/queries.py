@@ -14,7 +14,11 @@ from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from graphsenselib.config import is_tagstore_fresh_clusters_enabled
+from graphsenselib.utils.constants import (
+    FRESH_CLUSTER_ID_OFFSET,
+    is_fresh_cluster_id,
+    to_raw_fresh_cluster_id,
+)
 
 from .database import get_db_engine_async
 from .errors import TagAlreadyExistsException
@@ -345,14 +349,9 @@ def _get_tag_by_id_stmt(tag_id: int, groups: List[str]):
     )
 
 
-def _cluster_models():
-    """Active (mapping, best-tag view, count view) trio for cluster reads.
-
-    Resolved per-call so ``GRAPHSENSE_TAGSTORE_FRESH_CLUSTERS`` can flip the read
-    path between the legacy relations and the fresh-clustering ``*_v2`` ones at
-    runtime, no restart needed.
-    """
-    if is_tagstore_fresh_clusters_enabled():
+def _cluster_models(fresh: bool):
+    """(mapping, best-tag view, count view) trio for one clustering regime."""
+    if fresh:
         return (
             AddressClusterMappingV2,
             BestClusterTagViewV2,
@@ -361,8 +360,39 @@ def _cluster_models():
     return (AddressClusterMapping, BestClusterTagView, TagCountByClusterView)
 
 
+def _cluster_relations_for(cluster_id):
+    """Route a public cluster id to its relations: (trio..., raw id).
+
+    Public entity ids are self-describing: fresh-clustering ids are published
+    shifted by ``FRESH_CLUSTER_ID_OFFSET`` and their mappings live in the
+    parallel ``*_v2`` relations (keyed by the raw fresh id, root == min
+    address id); ids below the offset are legacy ids keyed in the legacy
+    relations. Routing on the id keeps reader and writer consistent per
+    request — a fresh id can never consult the legacy-keyed relations and
+    vice versa, which a global switch could not guarantee while networks
+    migrate one at a time.
+    """
+    cluster_id = int(cluster_id)
+    if is_fresh_cluster_id(cluster_id):
+        return (*_cluster_models(fresh=True), to_raw_fresh_cluster_id(cluster_id))
+    return (*_cluster_models(fresh=False), cluster_id)
+
+
+def _routed_id_batches(cluster_ids):
+    """Partition mixed public ids into one batch per relations set.
+
+    Mixed lists are legal (e.g. legacy neighbor clusters of a fresh entity).
+    Returns two triples ``(raw_ids, fresh, shift)`` where ``shift`` restores
+    the public id on result rows (``raw + shift == public``).
+    """
+    ids = [int(c) for c in cluster_ids]
+    legacy = [c for c in ids if not is_fresh_cluster_id(c)]
+    fresh_raw = [to_raw_fresh_cluster_id(c) for c in ids if is_fresh_cluster_id(c)]
+    return ((legacy, False, 0), (fresh_raw, True, FRESH_CLUSTER_ID_OFFSET))
+
+
 def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str]):
-    _, BestClusterTag, _ = _cluster_models()
+    _, BestClusterTag, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(Tag, TagPack, Confidence)
         .options(joinedload(Tag.confidence))
@@ -381,16 +411,17 @@ def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str])
 
 
 def _get_best_cluster_tag_winners_stmt(
-    cluster_ids: List[int], network: str, groups: List[str]
+    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
 ):
-    # Pick (cluster_id, winning_tag_id) per cluster at the DB layer using
-    # Postgres DISTINCT ON. The result-set size is at most
+    # Takes RAW ids of one regime (callers split mixed public id lists via
+    # _routed_id_batches). Picks (cluster_id, winning_tag_id) per cluster at
+    # the DB layer using Postgres DISTINCT ON. The result-set size is at most
     # len(cluster_ids), independent of how many cluster_definer tags any
     # single cluster carries — without this guard a heavily-tagged
     # cluster's tagset would be shipped back through the joinedloaded
     # relationships and Cartesian'd by Tag.concepts, observed at >5min on
     # a single cluster before this rewrite.
-    _, BestClusterTag, _ = _cluster_models()
+    _, BestClusterTag, _ = _cluster_models(fresh)
     return (
         select(BestClusterTag.cluster_id, Tag.id)
         .distinct(BestClusterTag.cluster_id)
@@ -451,7 +482,7 @@ def _get_tags_by_clusterid_stmt(
     groups: List[str],
     exclude_identifiers: Optional[List[str]],
 ):
-    AddressClusterMap, _, _ = _cluster_models()
+    AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
     q = (
         select(Tag, TagPack, AddressClusterMap, Confidence)
         .options(joinedload(Tag.confidence))
@@ -521,7 +552,7 @@ def _get_per_network_statistics_cached_stmt():
 
 
 def _get_count_by_cluster_stmt(cluster_id: int, network: str, groups: List[str]):
-    _, _, TagCountByCluster = _cluster_models()
+    _, _, TagCountByCluster, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(TagCountByCluster)
         .where(TagCountByCluster.network == network)
@@ -531,9 +562,10 @@ def _get_count_by_cluster_stmt(cluster_id: int, network: str, groups: List[str])
 
 
 def _get_count_by_clusters_batch_stmt(
-    cluster_ids: List[int], network: str, groups: List[str]
+    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
 ):
-    _, _, TagCountByCluster = _cluster_models()
+    # Raw ids of one regime; see _routed_id_batches.
+    _, _, TagCountByCluster = _cluster_models(fresh)
     return (
         select(
             TagCountByCluster.gs_cluster_id,
@@ -586,7 +618,7 @@ def _get_actors_for_subject_stmt(subject_id: str, groups: List[str]):
 
 
 def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[str]):
-    AddressClusterMap, _, _ = _cluster_models()
+    AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(Actor.id, Actor.label)
         .where(AddressClusterMap.gs_cluster_id == cluster_id)
@@ -602,9 +634,10 @@ def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[s
 
 
 def _get_actors_for_clusterids_batch_stmt(
-    cluster_ids: List[int], network: str, groups: List[str]
+    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
 ):
-    AddressClusterMap, _, _ = _cluster_models()
+    # Raw ids of one regime; see _routed_id_batches.
+    AddressClusterMap, _, _ = _cluster_models(fresh)
     return (
         select(AddressClusterMap.gs_cluster_id, Actor.id, Actor.label)
         .where(AddressClusterMap.gs_cluster_id.in_(cluster_ids))
@@ -651,7 +684,7 @@ def _get_acl_groups_statement():
 
 
 def _get_labels_by_clusterid_stmt(cluster_id: str, groups: List[str]):
-    AddressClusterMap, _, _ = _cluster_models()
+    AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(Tag.label)
         .where(AddressClusterMap.gs_cluster_id == cluster_id)
@@ -930,11 +963,16 @@ class TagstoreDbAsync:
             return {}
         # Step 1: pick (cluster_id -> winning tag_id) at the DB level. No
         # joinedloads here — the result set scales with len(cluster_ids),
-        # not with any single cluster's tag count.
-        winners = await session.exec(
-            _get_best_cluster_tag_winners_stmt(cluster_ids, network, groups)
-        )
-        cid_to_tag_id: Dict[int, int] = {cid: tid for cid, tid in winners}
+        # not with any single cluster's tag count. Ids route per regime and
+        # results are keyed by the public id the caller passed in.
+        cid_to_tag_id: Dict[int, int] = {}
+        for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
+            if not raw_ids:
+                continue
+            winners = await session.exec(
+                _get_best_cluster_tag_winners_stmt(raw_ids, network, groups, fresh)
+            )
+            cid_to_tag_id.update({cid + shift: tid for cid, tid in winners})
         if not cid_to_tag_id:
             return {}
 
@@ -967,10 +1005,15 @@ class TagstoreDbAsync:
     ) -> Dict[int, int]:
         if not cluster_ids:
             return {}
-        results = await session.exec(
-            _get_count_by_clusters_batch_stmt(cluster_ids, network, groups)
-        )
-        return {cid: int(total or 0) for cid, total in results}
+        out: Dict[int, int] = {}
+        for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
+            if not raw_ids:
+                continue
+            results = await session.exec(
+                _get_count_by_clusters_batch_stmt(raw_ids, network, groups, fresh)
+            )
+            out.update({cid + shift: int(total or 0) for cid, total in results})
+        return out
 
     @_inject_session
     async def get_actors_for_clusters(
@@ -982,12 +1025,17 @@ class TagstoreDbAsync:
     ) -> Dict[int, List[HumanReadableId]]:
         if not cluster_ids:
             return {}
-        results = await session.exec(
-            _get_actors_for_clusterids_batch_stmt(cluster_ids, network, groups)
-        )
         out: Dict[int, List[HumanReadableId]] = {}
-        for cid, idt, lbl in results:
-            out.setdefault(cid, []).append(HumanReadableId(id=idt, label=lbl))
+        for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
+            if not raw_ids:
+                continue
+            results = await session.exec(
+                _get_actors_for_clusterids_batch_stmt(raw_ids, network, groups, fresh)
+            )
+            for cid, idt, lbl in results:
+                out.setdefault(cid + shift, []).append(
+                    HumanReadableId(id=idt, label=lbl)
+                )
         return out
 
     # Actor

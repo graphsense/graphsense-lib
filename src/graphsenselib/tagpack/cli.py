@@ -1717,13 +1717,19 @@ def check_cluster_mapping_staleness(
 ):
     """Sample mapped addresses per network, compare stored vs. current cluster_id.
 
-    Each eligible network contributes up to `sample_size` rows, biased
-    toward heavy-hitter clusters. A global limit would be dominated by
+    Each regime's mapping table is compared against its own clustering: v1
+    rows against the legacy cluster ids and — for networks whose keyspace
+    carries the fresh-clustering marker — *_v2 rows against the fresh
+    membership (where delta-updater merges make drift a matter of course).
+
+    Each eligible network contributes up to `sample_size` rows per regime,
+    biased toward heavy-hitter clusters. A global limit would be dominated by
     BTC and hide drift on smaller chains.
 
-    Returns (overall_divergence_rate, per_network_stats). Skips eth-like
-    networks (ETH/TRX) — they have no real clustering, so cluster_id ==
-    address_id and drift is not possible.
+    Returns (overall_divergence_rate, per_network_stats); fresh-regime
+    entries are keyed ``<network>[fresh]``. Skips eth-like networks
+    (ETH/TRX) — they have no real clustering, so cluster_id == address_id
+    and drift is not possible.
     """
     args = ClusterMappingArgs(
         url,
@@ -1741,11 +1747,6 @@ def check_cluster_mapping_staleness(
         return 0.0, {}
 
     tagstore = TagStore(url, schema)
-    rows = tagstore.get_cluster_mapping_sample(sample_size, networks=eligible_networks)
-    if not rows:
-        return 0.0, {}
-
-    sample = pd.DataFrame(rows, columns=["address", "network", "stored_cluster_id"])
     gs = GraphSense(
         args.db_nodes,
         ks_mapping,
@@ -1753,37 +1754,59 @@ def check_cluster_mapping_staleness(
         password=args.cassandra_password,
     )
 
+    legs = [(eligible_networks, False)]
+    fresh_networks = [n for n in eligible_networks if gs.is_fresh_network(n)]
+    if fresh_networks:
+        if tagstore.cluster_mapping_table_exists(fresh=True):
+            legs.append((fresh_networks, True))
+        else:
+            logger.warning(
+                "Skipping fresh-mapping staleness check: tagstore lacks the "
+                "*_v2 relations (run `graphsense-cli tagstore init`)."
+            )
+
     per_network = {}
     total_checked = 0
     total_diverged = 0
-    for network_key, batch in sample.groupby("network"):
-        network = str(network_key)
-        if not gs.keyspace_for_network_exists(network):
-            logger.warning(f"Skipping staleness check for {network}: keyspace missing")
-            continue
-        current = gs.get_address_clusters(batch[["address"]].copy(), network)
-        if current.empty:
-            continue
-        merged = batch.merge(
-            current[["address", "cluster_id"]], on="address", how="inner"
+    for leg_networks, fresh in legs:
+        rows = tagstore.get_cluster_mapping_sample(
+            sample_size, networks=leg_networks, fresh=fresh
         )
-        if merged.empty:
+        if not rows:
             continue
-        diverged = (merged["stored_cluster_id"] != merged["cluster_id"]).sum()
-        checked = len(merged)
-        per_network[network] = {
-            "checked": int(checked),
-            "diverged": int(diverged),
-            "rate": float(diverged) / checked if checked else 0.0,
-        }
-        total_checked += checked
-        total_diverged += int(diverged)
+        sample = pd.DataFrame(rows, columns=["address", "network", "stored_cluster_id"])
+        for network_key, batch in sample.groupby("network"):
+            network = str(network_key)
+            if not gs.keyspace_for_network_exists(network):
+                logger.warning(
+                    f"Skipping staleness check for {network}: keyspace missing"
+                )
+                continue
+            current = gs.get_address_clusters(
+                batch[["address"]].copy(), network, fresh=fresh
+            )
+            if current.empty:
+                continue
+            merged = batch.merge(
+                current[["address", "cluster_id"]], on="address", how="inner"
+            )
+            if merged.empty:
+                continue
+            diverged = (merged["stored_cluster_id"] != merged["cluster_id"]).sum()
+            checked = len(merged)
+            per_network[f"{network}[fresh]" if fresh else network] = {
+                "checked": int(checked),
+                "diverged": int(diverged),
+                "rate": float(diverged) / checked if checked else 0.0,
+            }
+            total_checked += checked
+            total_diverged += int(diverged)
 
     overall = (total_diverged / total_checked) if total_checked else 0.0
     return overall, per_network
 
 
-def insert_cluster_mapping_wp(network, ks_mapping, args, batch):
+def insert_cluster_mapping_wp(network, ks_mapping, args, batch, fresh):
     tagstore = TagStore(args.url, args.schema)
     gs = GraphSense(
         args.db_nodes,
@@ -1792,9 +1815,17 @@ def insert_cluster_mapping_wp(network, ks_mapping, args, batch):
         password=args.cassandra_password,
     )
     if gs.keyspace_for_network_exists(network):
-        clusters = gs.get_address_clusters(batch, network)
+        clusters = gs.get_address_clusters(batch, network, fresh=False)
         clusters["network"] = network
-        tagstore.insert_cluster_mappings(clusters)
+        tagstore.insert_cluster_mappings(clusters, fresh=False)
+        if fresh:
+            # Dual-write during migration: fresh-marked networks map the same
+            # addresses against the fresh membership into the *_v2 relations,
+            # so legacy-id readers (v1) and fresh-id readers (v2) both stay
+            # current until the legacy cluster tables are retired.
+            fresh_clusters = gs.get_address_clusters(batch, network, fresh=True)
+            fresh_clusters["network"] = network
+            tagstore.insert_cluster_mappings(fresh_clusters, fresh=True)
     else:
         clusters = []
         logger.error(
@@ -1889,16 +1920,34 @@ def insert_cluster_mapping(
         password=args.cassandra_password,
     )
 
+    # Networks whose transformed keyspace carries the fresh-clustering marker
+    # get dual-written: legacy mapping into v1 plus fresh mapping into *_v2.
+    fresh_networks = {n for n in networks if gs.is_fresh_network(n)}
+    if fresh_networks and not tagstore.cluster_mapping_table_exists(fresh=True):
+        logger.error(
+            f"Networks {sorted(fresh_networks)} run fresh clustering but this "
+            "tagstore lacks the *_v2 relations; run `graphsense-cli tagstore "
+            "init` against it first."
+        )
+        sys.exit(1)
+
     workpackages = []
     for network, data in df.groupby("network"):
         if gs.contains_keyspace_mapping(network):
             for batch in _split_into_chunks(data, batch_size):
-                workpackages.append((network, ks_mapping, args, batch))
+                workpackages.append(
+                    (network, ks_mapping, args, batch, network in fresh_networks)
+                )
 
     nr_workers = int(cpu_count() / 2)
     logger.info(
         f"Processing {len(workpackages)} batches for "
         f"{len(networks)} networks on {nr_workers} workers."
+        + (
+            f" Dual-writing fresh mappings for {sorted(fresh_networks)}."
+            if fresh_networks
+            else ""
+        )
     )
 
     with Pool(processes=nr_workers, maxtasksperchild=1) as pool:
