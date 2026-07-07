@@ -27,7 +27,7 @@ class GraphComparedTx(BaseModel):
     Per-tx entry. ``characteristics`` and ``details`` are populated iff the request's ``include`` list names them (``details`` is off by default).
     """ # noqa: E501
     tx_hash: StrictStr
-    network: Optional[StrictStr] = 'btc'
+    network: StrictStr
     characteristics: Optional[GraphTxCharacteristics] = None
     details: Optional[Tx] = None
     __properties: ClassVar[List[str]] = ["tx_hash", "network", "characteristics", "details"]
@@ -91,7 +91,7 @@ class GraphComparedTx(BaseModel):
 
         _obj = cls.model_validate({
             "tx_hash": obj.get("tx_hash"),
-            "network": obj.get("network") if obj.get("network") is not None else 'btc',
+            "network": obj.get("network"),
             "characteristics": GraphTxCharacteristics.from_dict(obj["characteristics"]) if obj.get("characteristics") is not None else None,
             "details": Tx.from_dict(obj["details"]) if obj.get("details") is not None else None
         })

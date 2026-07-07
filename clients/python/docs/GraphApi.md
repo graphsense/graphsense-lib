@@ -85,7 +85,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (need 2+ distinct tx refs, a non-BTC network, or a transaction set whose combined inputs/outputs exceed the comparison work limit). |  -  |
+**400** | Invalid request. Causes: fewer than 2 distinct tx refs; a non-BTC network; combined inputs/outputs above the comparison work limit. |  -  |
 **404** | One of the transactions was not found. |  -  |
 **422** | Validation Error |  -  |
 
@@ -168,7 +168,7 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Successful Response |  -  |
-**400** | Invalid request (each non-empty list needs at least 2 distinct entries, networks must be supported). |  -  |
+**400** | Invalid request. Causes: both lists empty; a non-empty list with fewer than 2 distinct entries; more than 100 entries combined; an unsupported network. |  -  |
 **404** | One of the transactions or addresses was not found. |  -  |
 **422** | Validation Error |  -  |
 

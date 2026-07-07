@@ -7,7 +7,7 @@ Per-tx entry. ``characteristics`` and ``details`` are populated iff the request'
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **tx_hash** | **str** |  | 
-**network** | **str** |  | [optional] [default to 'btc']
+**network** | **str** |  | 
 **characteristics** | [**GraphTxCharacteristics**](GraphTxCharacteristics.md) |  | [optional] 
 **details** | [**Tx**](Tx.md) |  | [optional] 
 

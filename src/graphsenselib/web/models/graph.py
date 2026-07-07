@@ -71,7 +71,8 @@ class GraphCompareRequest(APIModel):
 
     txs: list[GraphTxRef] = Field(min_length=2, max_length=MAX_GRAPH_NODES)
     include: list[Union[Literal["all"], CompareComponent]] = Field(
-        default=["characteristics", "signals", "lineage", "verdict"]
+        default=["characteristics", "signals", "lineage", "verdict"],
+        min_length=1,
     )
 
 
@@ -269,7 +270,7 @@ class GraphComparedTx(APIModel):
     default)."""
 
     tx_hash: str
-    network: str = "btc"
+    network: str
     characteristics: Optional[GraphTxCharacteristics] = None
     details: Optional[Union[TxUtxo, TxAccount]] = None
 

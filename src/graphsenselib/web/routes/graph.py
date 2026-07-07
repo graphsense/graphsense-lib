@@ -41,8 +41,9 @@ router = APIRouter(route_class=PluginRoute)
     responses={
         400: {
             "description": (
-                "Invalid request (each non-empty list needs at least 2 "
-                "distinct entries, networks must be supported)."
+                "Invalid request. Causes: both lists empty; a non-empty list "
+                "with fewer than 2 distinct entries; more than "
+                f"{MAX_GRAPH_NODES} entries combined; an unsupported network."
             )
         },
         404: {"description": "One of the transactions or addresses was not found."},
@@ -73,9 +74,9 @@ async def graph_summary(
     responses={
         400: {
             "description": (
-                "Invalid request (need 2+ distinct tx refs, a non-BTC network, "
-                "or a transaction set whose combined inputs/outputs exceed "
-                "the comparison work limit)."
+                "Invalid request. Causes: fewer than 2 distinct tx refs; a "
+                "non-BTC network; combined inputs/outputs above the "
+                "comparison work limit."
             )
         },
         404: {"description": "One of the transactions was not found."},

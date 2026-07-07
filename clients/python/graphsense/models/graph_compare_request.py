@@ -27,7 +27,7 @@ class GraphCompareRequest(BaseModel):
     Request body for ``POST /graph/compare``.  The fingerprinting analysis is BTC-only for now; every ref's network must be ``btc`` (400 otherwise). ``include`` selects response components; signals, lineage and verdict are always computed internally (the verdict depends on the signals), the list only controls what is returned. ``all`` expands to every component.
     """ # noqa: E501
     txs: Annotated[List[GraphTxRef], Field(min_length=2, max_length=100)]
-    include: Optional[List[StrictStr]] = None
+    include: Optional[Annotated[List[StrictStr], Field(min_length=1)]] = None
     __properties: ClassVar[List[str]] = ["txs", "include"]
 
     @field_validator('include')
