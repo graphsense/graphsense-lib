@@ -21,6 +21,10 @@ from graphsenselib.utils.address import (
     iter_base58_case_recovery,
     count_base58_case_candidates,
 )
+from graphsenselib.utils.bch import (
+    InvalidAddress as BCHInvalidAddress,
+    bch_address_to_legacy,
+)
 
 from . import resources
 import importlib.resources
@@ -345,6 +349,22 @@ def test_address_conversions():
 
     with pytest.raises(ValueError):
         cannonicalize_address("eth", addr).hex()
+
+
+def test_short_cashaddr_payload_raises_invalid_address():
+    # Payload shorter than the checksum used to escape as a bare IndexError.
+    with pytest.raises(BCHInvalidAddress):
+        bch_address_to_legacy("bitcoincash:qq")
+
+
+def test_bch_invalid_address_is_value_error():
+    assert issubclass(BCHInvalidAddress, ValueError)
+    with pytest.raises(ValueError):
+        cannonicalize_address("bch", "bitcoincash:zz")
+
+
+def test_utils_invalid_address_is_value_error():
+    assert issubclass(InvalidAddress, ValueError)
 
 
 class TestAddressValidation:

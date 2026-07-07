@@ -43,6 +43,22 @@ include:
     description: "List transactions contained in a given block."
     tags: ["block-level", "transaction-level"]
 
+  graph_summary:
+    description: >
+      BETA (contract may change). Aggregate stats over a SET of
+      transactions and/or addresses, not a single item. Each item carries
+      its own network, so the set may span chains (btc + eth + ...).
+      Returns per-node-type blocks: a network-agnostic overall rollup
+      (fiat totals, timestamp span, tag overview) plus one per-network
+      block with native base-unit values. Totals are gross (UTXO output
+      sums incl. change; linked txs double-count). Unknown refs are
+      dropped and listed in a nodes_not_found note, so check notes before
+      quoting totals. Use for "summarize these N transactions/addresses
+      together"; for one item use lookup_tx_details / lookup_address
+      instead. Each non-empty list needs 2+ distinct entries; combined
+      max 100.
+    tags: ["transaction-level", "address-level", "aggregate"]
+
   list_tx_flows:
     description: >
       Paginated per-event value-flow listing for ONE transaction. The

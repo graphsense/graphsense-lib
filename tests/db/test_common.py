@@ -1,11 +1,25 @@
+import pytest
+
 from graphsenselib.db.asynchronous.services.common import function_call_from_row
 from graphsenselib.db.asynchronous.services.common import FunctionCall
 from graphsenselib.db.asynchronous.services.common import (
     convert_token_value,
+    get_address as get_address_common,
     map_rates_for_peged_tokens,
 )
+from graphsenselib.errors import AddressNotFoundException
 
 RATES = [{"code": "eur", "value": 0.9}, {"code": "usd", "value": 1.0}]
+
+
+def test_address_type_names_cover_every_ingest_value():
+    # The serving-side int -> name map must not drift from the ingest-side
+    # name -> int map: every address_type int the exporter can write needs
+    # a display name, or io_from_rows silently drops the classification.
+    from graphsenselib.ingest.utxo import _address_types
+    from graphsenselib.db.asynchronous.services.common import _ADDRESS_TYPE_NAMES
+
+    assert set(_address_types.values()) <= set(_ADDRESS_TYPE_NAMES)
 
 
 def test_map_rates_for_unpegged_token_returns_empty():
@@ -146,3 +160,24 @@ def test_real_function_call_from_row():
     assert result.function_definition.name == "swapEthForTokens"
     assert result.function_definition.selector == "0xff190b9f"
     assert result.function_definition.tags == ["swap", "weth"]
+
+
+async def test_get_address_without_fallback_propagates_not_found():
+    class FakeDb:
+        async def get_address(self, currency, address):
+            raise AddressNotFoundException(currency, address)
+
+        async def new_address(self, currency, address):
+            raise AssertionError("new_address fallback must not be used")
+
+    with pytest.raises(AddressNotFoundException):
+        await get_address_common(
+            FakeDb(),
+            None,  # tagstore unused: include_actors=False
+            None,  # rates_service unused: raises before conversion
+            "btc",
+            "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+            [],
+            include_actors=False,
+            new_address_fallback=False,
+        )

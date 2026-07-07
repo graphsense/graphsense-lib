@@ -288,6 +288,39 @@ def cannonicalize_address(currency: str, address: str) -> str:
         )
 
 
+def canonical_tx_hash(tx_hash: str) -> str:
+    """Canonical spelling of a tx hash: lowercase, no 0x prefix. The fetch
+    layer stores and returns lowercase hex, so every dedup key and index
+    map must use this form or spellings drift apart."""
+    return tx_hash.lower().removeprefix("0x")
+
+
+def dedup_refs(refs, key):
+    """Order-preserving dedup of refs by key(ref)."""
+    seen = set()
+    out = []
+    for r in refs:
+        k = key(r)
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
+def partition_not_found(keys, results, not_found_types):
+    """Split per-key gather results (``return_exceptions=True``) into found
+    values and not-found keys; any other exception is re-raised."""
+    found, missing = [], []
+    for key, res in zip(keys, results):
+        if isinstance(res, not_found_types):
+            missing.append(key)
+        elif isinstance(res, BaseException):
+            raise res
+        else:
+            found.append(res)
+    return found, missing
+
+
 async def try_get_cluster_id(
     db: DatabaseProtocol, network: str, address: str, cache=None
 ) -> Optional[int]:
@@ -494,6 +527,7 @@ async def get_address(
     address: str,
     tagstore_groups: List[str],
     include_actors: bool = True,
+    new_address_fallback: bool = True,
 ) -> Address:
     address_canonical = cannonicalize_address(currency, address)
 
@@ -505,6 +539,8 @@ async def get_address(
     try:
         result = await db.get_address(currency, address_canonical)
     except AddressNotFoundException:
+        if not new_address_fallback:
+            raise
         result = await db.new_address(currency, address_canonical)
 
     actors = None
@@ -638,6 +674,27 @@ async def links_response(
         return Links(links=link_results, next_page=next_page)
 
 
+# Display names for the ingest-time address_type classification stored on
+# every raw v3 tx input/output. Must mirror ingest/utxo.py:_address_types
+# (BlockSci-style ints); unknown/missing ints map to None so consumers fall
+# back to their own inference.
+_ADDRESS_TYPE_NAMES = {
+    1: "NONSTANDARD",
+    2: "P2PK",
+    3: "P2PKH",
+    4: "MULTISIG_PUBKEY",
+    5: "P2SH",
+    6: "MULTISIG",
+    7: "OP_RETURN",
+    8: "P2WPKH",
+    9: "P2WSH",
+    10: "WITNESS_UNKNOWN",
+    11: "P2TR",
+    12: "SHIELDED",
+    13: "ANCHOR",
+}
+
+
 def io_from_rows(
     currency: str,
     values: Dict[str, Any],
@@ -656,10 +713,18 @@ def io_from_rows(
 
     results = []
     for idx, i in enumerate(values[key]):
-        # Extract script_hex if available (for nonstandard outputs like OP_RETURN)
+        # Raw v3 rows carry script_hex for every I/O; only expose it when
+        # nonstandard I/Os were requested (its main consumer is OP_RETURN
+        # payload display) to keep standard responses lean.
         script_hex = None
         if include_nonstandard_io and hasattr(i, "script_hex") and i.script_hex:
             script_hex = i.script_hex.hex()  # Convert blob to hex string
+
+        witness = getattr(i, "txinwitness", None)
+        has_witness = bool(witness) if witness is not None else None
+        sequence = getattr(i, "sequence", None)
+        # Ingest-time classification; None on pre-v3 keyspaces or unknown ints.
+        script_type = _ADDRESS_TYPE_NAMES.get(getattr(i, "address_type", None))
 
         if i.address is not None:
             results.append(
@@ -668,6 +733,9 @@ def io_from_rows(
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
+                    has_witness=has_witness,
+                    sequence=sequence,
+                    script_type=script_type,
                 )
             )
         elif include_nonstandard_io:
@@ -677,6 +745,9 @@ def io_from_rows(
                     value=convert_value(currency, i.value, rates),
                     index=idx if include_io_index else None,
                     script_hex=script_hex,
+                    has_witness=has_witness,
+                    sequence=sequence,
+                    script_type=script_type,
                 )
             )
     return results
@@ -745,4 +816,6 @@ async def std_tx_from_row(
         total_input=total_input,
         total_output=total_output,
         heuristics=heuristics,
+        version=row.get("version"),
+        lock_time=row.get("lock_time"),
     )

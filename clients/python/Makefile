@@ -4,6 +4,15 @@ GENERATOR_VERSION ?= v7.19.0
 TEMPLATES_DIR ?= templates
 COMPAT_DIR ?= compat
 
+# Rootless podman (Fedora ships `docker` as a podman shim) maps the
+# container UID to a host *subuid*, so a plain `--user $(id -u):$(id -g)`
+# runs as a uid that cannot write the host-owned bind-mounted output tree
+# (AccessDenied on every generated file). `--userns=keep-id` maps the host
+# UID through unchanged so writes land as the invoking user. Real Docker
+# neither accepts nor needs this flag, so only add it for podman.
+DOCKER ?= docker
+USERNS_FLAG := $(shell $(DOCKER) --version 2>/dev/null | grep -qi podman && echo --userns=keep-id)
+
 
 # v7 generator with backward compatibility patches (offline - no server needed)
 generate-openapi-client:
@@ -15,9 +24,12 @@ generate-openapi-client:
 	jq '.servers[0].url = "https://api.iknaio.com"' openapi.json.30.tmp > openapi.json.modified
 	@API_VERSION=$$(jq -r '.info.version' openapi.json.30.tmp) && \
 	echo "Generating client with $(GENERATOR_VERSION) (API version: $$API_VERSION, package version: $$API_VERSION)..." && \
-	docker run --rm \
-		-v "${PWD}:/build:Z" \
-		-v "${PWD}/$(TEMPLATES_DIR):/templates:Z" \
+	$(DOCKER) run --rm \
+		--user $$(id -u):$$(id -g) \
+		$(USERNS_FLAG) \
+		--security-opt label=disable \
+		-v "${PWD}:/build" \
+		-v "${PWD}/$(TEMPLATES_DIR):/templates" \
 		openapitools/openapi-generator-cli:$(GENERATOR_VERSION) \
 		generate -i /build/openapi.json.modified \
 		-g python \

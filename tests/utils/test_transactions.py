@@ -45,3 +45,11 @@ def test_sub_tx_de_and_encoding():
         SubTransactionIdentifier.from_string(
             "0x76f4263391a7d72f66cb1f254e8643e37ca739ab2859b9e9cd5b5bda3194332b_Laaa"
         )
+
+
+def test_unknown_subtx_type_raises_value_error():
+    # An unknown type prefix must raise ValueError so service layers that
+    # translate ValueError into a 400 catch it (a bare Exception surfaced
+    # as a 500 to API clients).
+    with pytest.raises(ValueError, match="Unknown transaction type"):
+        SubTransactionIdentifier.from_string("aa" * 32 + "_Q1")
