@@ -492,15 +492,20 @@ def _get_tags_by_label_stmt(
     groups: List[str],
     network: Optional[str],
 ):
+    # Escape LIKE wildcards in user input so a bare "%" / "_" cannot turn the
+    # search into a full scan / match-everything pattern.
+    escaped = label.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     q = (
         select(Tag, TagPack)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(Tag.label.like(f"%{label}%"))
+        .where(Tag.label.like(f"%{escaped}%", escape="\\"))
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
+        # deterministic order so OFFSET/LIMIT pages don't overlap or drop rows
+        .order_by(Tag.id)
         .offset(offset)
         .limit(page_size)
     )
@@ -658,11 +663,15 @@ def _get_acl_groups_statement():
     return select(TagPack.acl_group).distinct()
 
 
-def _get_labels_by_clusterid_stmt(cluster_id: str, groups: List[str]):
+def _get_labels_by_clusterid_stmt(cluster_id: str, network: str, groups: List[str]):
     return (
         select(Tag.label)
         .where(AddressClusterMapping.gs_cluster_id == cluster_id)
         .where(AddressClusterMapping.address == Tag.identifier)
+        # constrain to the requested network, otherwise a numeric cluster id
+        # collides across chains and leaks (e.g.) an LTC label onto a BTC entity
+        .where(AddressClusterMapping.network == Tag.network)
+        .where(Tag.network == network)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .order_by(asc(Tag.label))
@@ -821,9 +830,11 @@ class TagstoreDbAsync:
 
     @_inject_session
     async def get_labels_by_clusterid(
-        self, cluster_id: str, groups: List[str], session=None
+        self, cluster_id: str, network: str, groups: List[str], session=None
     ) -> List[str]:
-        results = await session.exec(_get_labels_by_clusterid_stmt(cluster_id, groups))
+        results = await session.exec(
+            _get_labels_by_clusterid_stmt(cluster_id, network, groups)
+        )
         return [x for x in results]
 
     # Get Tags by Label

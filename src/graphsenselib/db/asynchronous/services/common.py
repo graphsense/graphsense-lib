@@ -214,7 +214,7 @@ class TagstoreProtocol(Protocol):
         self, subject_id: str, groups: List[str]
     ) -> List[str]: ...
     async def get_labels_by_clusterid(
-        self, cluster_id: str, groups: List[str]
+        self, cluster_id: str, network: str, groups: List[str]
     ) -> List[str]: ...
 
 
@@ -623,7 +623,9 @@ async def _add_labels(
         ]
     else:
         tstasks = [
-            tagstore.get_labels_by_clusterid(cluster_id, tagstore_groups)
+            tagstore.get_labels_by_clusterid(
+                cluster_id, currency.upper(), tagstore_groups
+            )
             for cluster_id in ids
         ]
 

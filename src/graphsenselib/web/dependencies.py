@@ -99,7 +99,7 @@ class MockTagstoreDb:
         return []
 
     async def get_labels_by_clusterid(
-        self, cluster_id: str, groups: list[str]
+        self, cluster_id: str, network: str, groups: list[str]
     ) -> list[str]:
         return []
 
