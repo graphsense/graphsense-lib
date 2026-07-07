@@ -18,6 +18,7 @@ from graphsenselib.errors import BadUserInputException, NotFoundException
 from graphsenselib.web.dependencies import ServiceContainer
 from graphsenselib.web.models import AddressTag, Entity, Values
 from graphsenselib.web.routes.base import (
+    apply_plugin_hooks,
     get_services,
     get_tagstore_access_groups,
     make_ctx,
@@ -91,6 +92,7 @@ def flatten(item, name="", flat_dict=None, format=None):
 
 
 async def wrap(
+    request,
     ctx,
     operation,
     currency,
@@ -117,6 +119,13 @@ async def wrap(
     except Exception as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         result = {error_field: "internal error"}
+    # Apply plugin response hooks (e.g. private-tag obfuscation) to the model
+    # object here, mirroring PluginRoute for non-streaming routes. StreamingResponse
+    # bypasses PluginRoute, so without this bulk would leak un-obfuscated tag data.
+    # Run on the model object before it is unwrapped/flattened below so the
+    # type-based dispatch in the hooks matches (e.g. AddressTags, Entity).
+    if not (isinstance(result, dict) and error_field in result):
+        apply_plugin_hooks(request, result)
     if isinstance(result, list):
         rows = result
         page_state = None
@@ -149,6 +158,7 @@ async def wrap(
     if num_pages > 0 and page_state:
         params["page"] = page_state
         more = await wrap(
+            request,
             ctx,
             operation,
             currency,
@@ -163,7 +173,7 @@ async def wrap(
     return flat
 
 
-def stack(ctx, currency, operation, body, num_pages, format):
+def stack(request, ctx, currency, operation, body, num_pages, format):
     operation_name = operation
     operation_func = None
     for api in apis:
@@ -216,7 +226,15 @@ def stack(ctx, currency, operation, body, num_pages, format):
         for k, v in keys.items():
             the_keys[k] = v[i]
         aw = wrap(
-            ctx, operation, currency, params, the_keys, num_pages, format, context
+            request,
+            ctx,
+            operation,
+            currency,
+            params,
+            the_keys,
+            num_pages,
+            format,
+            context,
         )
 
         aws.append(aw)
@@ -354,7 +372,7 @@ async def bulk_csv(
     ctx = make_ctx(request, services, tagstore_groups)
 
     try:
-        the_stack = stack(ctx, currency, operation, body, num_pages, "csv")
+        the_stack = stack(request, ctx, currency, operation, body, num_pages, "csv")
     except TypeError as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         text = (
@@ -408,7 +426,7 @@ async def bulk_json(
     ctx = make_ctx(request, services, tagstore_groups)
 
     try:
-        the_stack = stack(ctx, currency, operation, body, num_pages, "json")
+        the_stack = stack(request, ctx, currency, operation, body, num_pages, "json")
     except TypeError as e:
         traceback.print_exception(type(e), e, e.__traceback__)
         text = (
