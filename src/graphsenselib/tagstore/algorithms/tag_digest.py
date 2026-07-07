@@ -144,7 +144,10 @@ def compute_tag_digest(
             "creators": set(),
             "concepts": set(),
             "lastmod": 0,
-            "inherited": False,
+            # AND-folded across the label's tags below: stays True only if every
+            # tag contributing to this label is inherited. Must start True (the
+            # previous default of False made the flag permanently False).
+            "inherited": True,
         }
     )
 
@@ -254,15 +257,18 @@ def compute_tag_digest(
         )
 
     # create a relevance score, prefer items where similar labels exist.
+    # Precompute the recurring words once (the sum is order-independent), instead
+    # of re-sorting the whole word counter for every label.
+    frequent_words = [
+        (word, occurrence)
+        for word, occurrence in label_word_counter.most_common()
+        if occurrence > 1
+    ]
     sw_full_label_counter = wCounter()
     data = full_label_counter.most_common(weighted=True)
     for lbl, v in data:
         multiplier = sum(
-            [
-                occurrence
-                for word, occurrence in label_word_counter.most_common()
-                if word in lbl and occurrence > 1
-            ]
+            occurrence for word, occurrence in frequent_words if word in lbl
         )
         n = 1 + multiplier / total_words if total_words > 0 else 1
         sw_full_label_counter.add(lbl, v * n)
