@@ -3,7 +3,7 @@ import logging
 import random
 import time
 from functools import wraps
-from typing import Iterable, List, Optional, Sequence, Union
+from typing import Callable, Iterable, List, Optional, Sequence, TypeVar, Union
 
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import (
@@ -60,6 +60,8 @@ TRANSIENT_DB_ERRORS = (
 RIDE_OUT_MAX_RETRIES = 20
 RIDE_OUT_BASE_DELAY = 0.5
 RIDE_OUT_MAX_DELAY = 30
+
+_T = TypeVar("_T")
 
 # create logger
 logger = logging.getLogger(__name__)
@@ -537,24 +539,28 @@ class CassandraDb:
         except Exception as e:
             raise StorageError(f"Error when executing query: \n{query}") from e
 
-    def _execute_with_backoff(self, statement, parameters=None) -> Iterable:
-        """Run a read on the calling thread, riding out transient cluster-wide
-        stalls with exponential backoff + jitter.
+    def _retry_transient(self, produce: Callable[[], _T]) -> _T:
+        """Run ``produce()`` on the calling thread, riding out transient
+        cluster-wide stalls with exponential backoff + jitter.
 
         Backoff sleeps here (the application thread), never inside the driver
         retry policy which runs on the I/O reactor thread; sleeping there would
         stall connection heartbeats and defunct otherwise-healthy connections.
+
+        ``produce`` must FULLY MATERIALIZE its result (consume any generator /
+        resolve any future) so a transient error is raised here where it can be
+        retried, not later during lazy iteration by the caller. Only use for
+        idempotent work (reads, or writes with no counters / LWT) — a retry
+        re-runs the whole operation.
         """
         attempt = 0
         while True:
             try:
-                if parameters is None:
-                    return self.session.execute(statement)
-                return self.session.execute(statement, parameters)
+                return produce()
             except TRANSIENT_DB_ERRORS as exc:
                 if attempt >= RIDE_OUT_MAX_RETRIES:
                     logger.error(
-                        f"Read gave up after {attempt + 1} attempts "
+                        f"DB op gave up after {attempt + 1} attempts "
                         f"({type(exc).__name__}): {exc}"
                     )
                     raise
@@ -568,6 +574,15 @@ class CassandraDb:
                 )
                 time.sleep(delay)
                 attempt += 1
+
+    def _execute_with_backoff(self, statement, parameters=None) -> Iterable:
+        """Run a single-statement read on the calling thread, riding out
+        transient cluster-wide stalls (see ``_retry_transient``)."""
+        if parameters is None:
+            return self._retry_transient(lambda: self.session.execute(statement))
+        return self._retry_transient(
+            lambda: self.session.execute(statement, parameters)
+        )
 
     @needs_session
     def execute_safe(
@@ -642,12 +657,24 @@ class CassandraDb:
     def execute_statements_async(
         self, statements: List[BoundStatement], concurrency=100
     ):
-        return execute_concurrent(
-            self.session,
-            [(stmt, None) for stmt in statements],
-            raise_on_first_error=True,
-            concurrency=concurrency,
-            results_generator=True,
+        # Read/lookup helper (the delta-updater hot loop leans on it). Ride out
+        # transient cluster-wide stalls like the single-statement reads do — the
+        # write apply-path has its own retry, but this read path had none, so a
+        # single OperationTimedOut during a Spark stall aborted the whole run.
+        # The results generator is materialized inside the retry so the transient
+        # error raises here (where it can be retried) instead of during the
+        # caller's iteration; the returned list is order-preserving and iterates
+        # identically to the old generator.
+        return self._retry_transient(
+            lambda: list(
+                execute_concurrent(
+                    self.session,
+                    [(stmt, None) for stmt in statements],
+                    raise_on_first_error=True,
+                    concurrency=concurrency,
+                    results_generator=True,
+                )
+            )
         )
 
     @needs_session
@@ -671,10 +698,15 @@ class CassandraDb:
 
     @needs_session
     def execute_batch(self, stmt, params):
-        return [
-            (i, future.result())
-            for (i, future) in self.execute_batch_async(stmt, params)
-        ]
+        # Read helper: materialize (resolve the futures) inside the ride-out
+        # retry so a transient stall re-issues and re-resolves the whole batch
+        # rather than aborting the delta-updater run. Idempotent (reads / upserts).
+        return self._retry_transient(
+            lambda: [
+                (i, future.result())
+                for (i, future) in self.execute_batch_async(stmt, params)
+            ]
+        )
 
     def await_batch(self, futures):
         return [(i, future.result()) for (i, future) in futures]

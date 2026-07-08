@@ -135,6 +135,66 @@ def test_execute_with_backoff_retries_crc_mismatch(monkeypatch):
     assert len(db.session.execute_keyspaces) == 2
 
 
+def test_retry_transient_rides_out_then_returns(monkeypatch):
+    from cassandra import OperationTimedOut
+
+    db = CassandraDb(["host-a"])
+    monkeypatch.setattr("graphsenselib.db.cassandra.time.sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def produce():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise OperationTimedOut("stall")
+        return "ok"
+
+    assert db._retry_transient(produce) == "ok"
+    assert calls["n"] == 3
+
+
+def test_retry_transient_gives_up_after_max(monkeypatch):
+    from cassandra import OperationTimedOut
+
+    from graphsenselib.db.cassandra import RIDE_OUT_MAX_RETRIES
+
+    db = CassandraDb(["host-a"])
+    monkeypatch.setattr("graphsenselib.db.cassandra.time.sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def produce():
+        calls["n"] += 1
+        raise OperationTimedOut("stall")
+
+    with pytest.raises(OperationTimedOut):
+        db._retry_transient(produce)
+    assert calls["n"] == RIDE_OUT_MAX_RETRIES + 1
+
+
+def test_execute_statements_async_rides_out_transient(monkeypatch):
+    from cassandra import OperationTimedOut
+
+    db = CassandraDb(["host-a"])
+    db.session = _FakeSession(keyspace="ks")
+    monkeypatch.setattr("graphsenselib.db.cassandra.time.sleep", lambda _: None)
+
+    seq = [OperationTimedOut("stall"), [(True, "r1"), (True, "r2")]]
+
+    def fake_execute_concurrent(session, stmts, **kw):
+        effect = seq.pop(0)
+        if isinstance(effect, Exception):
+            raise effect
+        return effect
+
+    monkeypatch.setattr(
+        "graphsenselib.db.cassandra.execute_concurrent", fake_execute_concurrent
+    )
+    # transient error on the first attempt is ridden out; second attempt returns
+    assert list(db.execute_statements_async(["s1", "s2"])) == [
+        (True, "r1"),
+        (True, "r2"),
+    ]
+
+
 def test_execute_switches_session_keyspace(monkeypatch):
     db = CassandraDb(["host-a"])
     db.session = _FakeSession(keyspace="current_ks")
