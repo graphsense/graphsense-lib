@@ -659,67 +659,84 @@ class Cassandra:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
+    def _build_session(self):
+        """Create the Cluster + session. Raises NoHostAvailable if no host is up."""
+        # LOCAL_ONE is the recommended default for the read path: it tolerates
+        # any (RF - 1) replicas being down. LOCAL_QUORUM only adds value when
+        # RF >= 3 and read-after-write consistency is actually required.
+        cl = ConsistencyLevel.name_to_value.get(
+            self.config.get("consistency_level", "LOCAL_ONE"),
+            ConsistencyLevel.LOCAL_ONE,
+        )
+        retry_policy_cls = (
+            GraphsenseFallbackToLocalOneRetryPolicy
+            if self.config.get("consistency_level_fallback", False)
+            else GraphsenseRetryPolicy
+        )
+
+        exec_prof = ExecutionProfile(
+            request_timeout=60,
+            row_factory=dict_factory,
+            load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
+            consistency_level=cl,
+            retry_policy=retry_policy_cls(max_retries=3),
+            # For idempotent reads (all REST queries are SELECTs), fire a second
+            # attempt at another host after 200 ms to mask slow/dead replicas.
+            speculative_execution_policy=ConstantSpeculativeExecutionPolicy(
+                delay=0.2, max_attempts=2
+            ),
+        )
+
+        auth_provider = None
+        if "username" in self.config and self.config["username"] is not None:
+            auth_provider = PlainTextAuthProvider(
+                username=self.config["username"],
+                password=self.config.get("password", ""),
+            )
+
+        self.cluster = Cluster(
+            self.config["nodes"],
+            port=int(self.config.get("port", 9042)),
+            protocol_version=5,
+            connect_timeout=15,
+            execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
+            auth_provider=auth_provider,
+            reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
+        )
+        self.session = self.cluster.connect()
+        if self.logger:
+            self.logger.info(f"Connection ready. Using CL: {cl}")
+
     def connect(self):
-        try:
-            # LOCAL_ONE is the recommended default for the read path: it tolerates
-            # any (RF - 1) replicas being down. LOCAL_QUORUM only adds value when
-            # RF >= 3 and read-after-write consistency is actually required.
-            cl = ConsistencyLevel.name_to_value.get(
-                self.config.get("consistency_level", "LOCAL_ONE"),
-                ConsistencyLevel.LOCAL_ONE,
-            )
-            retry_policy_cls = (
-                GraphsenseFallbackToLocalOneRetryPolicy
-                if self.config.get("consistency_level_fallback", False)
-                else GraphsenseRetryPolicy
-            )
+        """(Re)establish the Cassandra cluster/session with a bounded, non-recursive
+        retry.
 
-            exec_prof = ExecutionProfile(
-                request_timeout=60,
-                row_factory=dict_factory,
-                load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
-                consistency_level=cl,
-                retry_policy=retry_policy_cls(max_retries=3),
-                # For idempotent reads (all REST queries are SELECTs), fire a second
-                # attempt at another host after 200 ms to mask slow/dead replicas.
-                speculative_execution_policy=ConstantSpeculativeExecutionPolicy(
-                    delay=0.2, max_attempts=2
-                ),
-            )
-
-            auth_provider = None
-            if "username" in self.config and self.config["username"] is not None:
-                auth_provider = PlainTextAuthProvider(
-                    username=self.config["username"],
-                    password=self.config.get("password", ""),
-                )
-
-            self.cluster = Cluster(
-                self.config["nodes"],
-                port=int(self.config.get("port", 9042)),
-                protocol_version=5,
-                connect_timeout=15,
-                execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
-                auth_provider=auth_provider,
-                reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
-            )
-            self.session = self.cluster.connect()
-            # self.session.row_factory = dict_factory
-            if self.logger:
-                self.logger.info(f"Connection ready. Using CL: {cl}")
-        except NoHostAvailable:
-            # TODO: this reconnect path blocks the event loop (time.sleep) and
-            # recurses without a depth limit; it is also called synchronously from
-            # async code paths (execute_async_lowlevel) which freezes REST workers
-            # during outages. Replace with a bounded, non-blocking reconnect helper
-            # and let the retry policy + reconnection policy handle transient
-            # failures instead.
-            retry = self.config.get("retry_interval", None)
-            retry = 5 if retry is None else retry
-            if self.logger:
-                self.logger.warning(f"Could not connect. Retrying in {retry} secs.")
-            time.sleep(retry)
-            self.connect()
+        Safe to call at startup — the blocking retry waits for a slow-starting
+        Cassandra. It must NOT be relied on to reconnect from the async serving
+        path: the driver's ``ExponentialReconnectionPolicy`` re-adds downed hosts
+        on its own, so the read paths let a transient ``NoHostAvailable`` propagate
+        instead of re-creating the cluster on the event loop (the old code did the
+        latter via ``time.sleep`` + unbounded recursion, freezing every in-flight
+        REST request during an outage).
+        """
+        retry = self.config.get("retry_interval", None)
+        retry = 5 if retry is None else retry
+        max_attempts = int(self.config.get("connect_max_attempts", 60))
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self._build_session()
+                return
+            except NoHostAvailable as e:
+                last_exc = e
+                if self.logger:
+                    self.logger.warning(
+                        f"Could not connect (attempt {attempt}/{max_attempts}); "
+                        f"retrying in {retry} secs."
+                    )
+                if attempt < max_attempts:
+                    time.sleep(retry)
+        raise last_exc
 
     def check_keyspace(self, keyspace):
         query = "SELECT * FROM system_schema.keyspaces where keyspace_name = %s"
@@ -971,19 +988,10 @@ class Cassandra:
         # self.logger.debug(f'{query} {params}')
         q = SimpleStatement(q, fetch_size=fetch_size)
 
-        try:
-            result = self.session.execute(q, params, paging_state=paging_state)
-        except NoHostAvailable:
-            self.connect()
-            result = self.execute(
-                currency,
-                keyspace_type,
-                query,
-                params=params,
-                paging_state=paging_state,
-                fetch_size=fetch_size,
-            )
-
+        # On NoHostAvailable let the error propagate: the driver's reconnection
+        # policy re-adds downed hosts on its own. The old behavior re-created the
+        # cluster (self.connect()) and recursed without bound.
+        result = self.session.execute(q, params, paging_state=paging_state)
         return result
 
     async def execute_async(
@@ -1140,24 +1148,17 @@ class Cassandra:
                     # self.logger.debug(pp.pformat(result.current_rows))
                     self.logger.debug(f"result size {len(result.current_rows)}")
 
-        try:
-            return self.execute_async_core(
-                q,
-                params=params,
-                fetch_size=fetch_size,
-                paging_state=paging_state,
-                success_callback=callback,
-            )
-        except NoHostAvailable:
-            self.connect()
-            return self.execute_async_lowlevel(
-                currency,
-                keyspace_type,
-                query,
-                params=params,
-                paging_state=paging_state,
-                fetch_size=fetch_size,
-            )
+        # On NoHostAvailable let the error propagate. Reconnecting here re-created
+        # the cluster on the event-loop thread (blocking time.sleep in connect())
+        # and recursed without bound, freezing every in-flight REST request during
+        # an outage. The driver's ExponentialReconnectionPolicy recovers hosts.
+        return self.execute_async_core(
+            q,
+            params=params,
+            fetch_size=fetch_size,
+            paging_state=paging_state,
+            success_callback=callback,
+        )
 
     async def concurrent_with_args(
         self,
