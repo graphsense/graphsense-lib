@@ -264,14 +264,26 @@ def _currency_sum_by(df, group_col: str, struct_col: str, out_name: str):
 
 
 def cluster_additive_stats(members_df, address_df):
-    """Per-cluster stats that are pure aggregates of member addresses.
+    """Per-cluster stats that are pure member sums of the address table.
 
     ``members_df`` = ``fresh_address_cluster`` (``address_id``, ``cluster_id``);
     ``address_df`` = ``address`` (``address_id``, ``total_received``,
-    ``total_spent``, ``first_tx_id``, ``last_tx_id``).  Returns one row per
-    ``cluster_id`` with ``no_addresses``, ``min_address_id`` (the canonical id),
-    ``first_tx_id`` (min), ``last_tx_id`` (max), ``total_received`` /
-    ``total_spent`` (element-wise currency sums).
+    ``total_spent``, ``first_tx_id``, ``last_tx_id``, ``no_incoming_txs``,
+    ``no_outgoing_txs``).  Returns one row per ``cluster_id`` with
+    ``no_addresses``, ``min_address_id`` (the canonical id), ``first_tx_id``
+    (min), ``last_tx_id`` (max), ``total_received`` / ``total_spent``
+    (element-wise currency sums) and ``no_incoming_txs`` / ``no_outgoing_txs``
+    (member sums).
+
+    The tx-counts are a plain SUM of the members' per-address counts — the same
+    semantics the incremental delta path maintains additively (see
+    ``update.py`` ``_plan_clustering_changes``) and the REST layer served on the
+    fly before. It OVERCOUNTS relative to a true cluster-level netting: an
+    intra-cluster change tx is counted once at the spending member (outgoing) and
+    once at the receiving member (incoming). A member sum is chosen because it is
+    the only definition maintainable incrementally in O(changes) — a re-netted
+    count would need to re-scan every merged cluster's transactions — so both
+    producers agree and the periodic recompute never flips a served value.
 
     Left-joins ``address`` onto membership so ``no_addresses`` counts every member
     even if its ``address`` row is missing (an orphan membership row) — a pure
@@ -286,59 +298,27 @@ def cluster_additive_stats(members_df, address_df):
         F.min("address_id").cast("int").alias("min_address_id"),
         F.min("first_tx_id").cast("bigint").alias("first_tx_id"),
         F.max("last_tx_id").cast("bigint").alias("last_tx_id"),
+        F.coalesce(F.sum("no_incoming_txs"), F.lit(0))
+        .cast("int")
+        .alias("no_incoming_txs"),
+        F.coalesce(F.sum("no_outgoing_txs"), F.lit(0))
+        .cast("int")
+        .alias("no_outgoing_txs"),
     )
     tr = _currency_sum_by(joined, "cluster_id", "total_received", "total_received")
     ts = _currency_sum_by(joined, "cluster_id", "total_spent", "total_spent")
     return base.join(tr, "cluster_id", "left").join(ts, "cluster_id", "left")
 
 
-def cluster_tx_counts(members_df, address_txs_df):
-    """Incoming/outgoing tx counts per cluster, re-netted at cluster granularity.
+def compute_fresh_cluster_stats(members_df, address_df):
+    """Per-cluster stat frame: pure member sums of the address-level table.
 
-    ``members_df`` = ``fresh_address_cluster`` (``address_id``, ``cluster_id``);
-    ``address_txs_df`` = ``address_transactions`` (``address_id``, ``tx_id``,
-    ``value`` — the SIGNED net value change of that address in that tx, negative
-    when the address is a net spender; ``is_outgoing`` is just ``value < 0``).
-    Inner-joins to membership (singletons are synthesized at REST read time from
-    the ``address`` row), sums the signed ``value`` across all member addresses
-    per ``(cluster, tx)``, and assigns each ``(cluster, tx)`` a SINGLE direction
-    from the sign of that cluster-level net: ``< 0`` outgoing, ``> 0`` incoming,
-    ``== 0`` neither.
-
-    This reproduces the legacy Scala ``computeClusterTransactions`` (union the
-    clustered inputs/outputs, ``sum(value)`` per ``(tx, cluster)``, direction from
-    the net sign) exactly — which is why it re-nets on the signed ``value`` rather
-    than counting the per-address ``is_outgoing`` flag. Two over-counts are
-    avoided by the cluster-level netting: a multi-input tx spanning N members
-    collapses to one row (so no distinct count is needed), and the ubiquitous
-    change pattern (spend from member A, change to a different member B of the
-    same cluster) is counted once in its true net direction instead of once in
-    each direction.
-    """
-    from pyspark.sql import functions as F
-
-    mapped = address_txs_df.join(
-        members_df.select("address_id", "cluster_id"), "address_id", "inner"
-    )
-    per_cluster_tx = mapped.groupBy("cluster_id", "tx_id").agg(
-        F.sum("value").alias("net_value")
-    )
-    return per_cluster_tx.groupBy("cluster_id").agg(
-        F.count(F.when(F.col("net_value") < 0, F.col("tx_id")))
-        .cast("int")
-        .alias("no_outgoing_txs"),
-        F.count(F.when(F.col("net_value") > 0, F.col("tx_id")))
-        .cast("int")
-        .alias("no_incoming_txs"),
-    )
-
-
-def compute_fresh_cluster_stats(members_df, address_df, address_txs_df):
-    """Per-cluster stat frame: additive stats + distinct tx-counts.
-
-    Left-joins :func:`cluster_tx_counts` (distinct tx-counts) onto
-    :func:`cluster_additive_stats` (additive carries every cluster; tx-counts
-    default to 0 for clusters with no txs).
+    Thin wrapper over :func:`cluster_additive_stats` — every column
+    (``no_addresses``, ``min_address_id``, first/last tx, totals and the
+    member-sum ``no_incoming_txs`` / ``no_outgoing_txs``) is an aggregate of the
+    cluster's member ``address`` rows, so the recompute reads only
+    ``fresh_address_cluster`` and ``address`` (no ``address_transactions`` scan)
+    and produces exactly what the incremental delta path maintains.
 
     Degrees and adjusted totals are deliberately absent (the columns are
     dropped from ``fresh_cluster_stats``): they were the only consumers of the
@@ -347,12 +327,7 @@ def compute_fresh_cluster_stats(members_df, address_df, address_txs_df):
     ``in_degree``/``out_degree`` from the legacy ``cluster`` table via the
     root-address hop (see ``_fresh_fill_degrees`` in the async Cassandra layer).
     """
-    base = cluster_additive_stats(members_df, address_df)
-    tx_counts = cluster_tx_counts(members_df, address_txs_df)
-    return base.join(tx_counts, "cluster_id", "left").fillna(
-        0,
-        subset=["no_incoming_txs", "no_outgoing_txs"],
-    )
+    return cluster_additive_stats(members_df, address_df)
 
 
 def recompute_fresh_cluster_stats(
@@ -360,9 +335,11 @@ def recompute_fresh_cluster_stats(
 ) -> int:
     """Recompute ``fresh_cluster_stats`` from the address-level tables.
 
-    Reads ``fresh_address_cluster`` (membership), ``address`` (per-address stats)
-    and ``address_transactions`` (for distinct tx-counts) via the Spark Cassandra
-    connector, aggregates with :func:`compute_fresh_cluster_stats`, and writes
+    Reads ``fresh_address_cluster`` (membership) and ``address`` (per-address
+    stats, including the per-address ``no_incoming_txs`` / ``no_outgoing_txs``
+    that the cluster tx-counts sum) via the Spark Cassandra connector — no
+    ``address_transactions`` scan — aggregates with
+    :func:`compute_fresh_cluster_stats`, and writes
     back to ``fresh_cluster_stats`` (append/upsert under the caller's keyspace
     lock, in place — no truncate, so a REST-served keyspace never goes empty
     mid-run). ``no_addresses`` and ``min_address_id`` are recomputed here too so
@@ -396,26 +373,32 @@ def recompute_fresh_cluster_stats(
             .load()
         )
 
-    # members feeds the additive and tx-count joins, which ReuseExchange cannot
-    # dedupe — persist once so fresh_address_cluster is scanned from Cassandra a
-    # single time instead of twice.
+    # members feeds the additive join once — persist so fresh_address_cluster is
+    # scanned from Cassandra a single time instead of twice.
     members = read("fresh_address_cluster").select("address_id", "cluster_id").persist()
-    # address feeds only the additive-stats join, but that join is consumed five
-    # times (the base aggregate plus two currency sums that each scan it twice)
-    # and ReuseExchange cannot dedupe the differently-projected branches — persist
-    # so the address table is scanned from Cassandra once, not five times. At BTC
+    # address feeds the additive-stats join, which is consumed five times (the
+    # base aggregate plus two currency sums that each scan it twice) and
+    # ReuseExchange cannot dedupe the differently-projected branches — persist so
+    # the address table is scanned from Cassandra once, not five times. At BTC
     # scale (~1.5e9 rows) that is four full connector scans saved per recompute.
+    # The tx-counts are member sums of these same rows, so address_transactions
+    # (billions of rows) is not read at all any more.
     address = (
         read("address")
         .select(
-            "address_id", "total_received", "total_spent", "first_tx_id", "last_tx_id"
+            "address_id",
+            "total_received",
+            "total_spent",
+            "first_tx_id",
+            "last_tx_id",
+            "no_incoming_txs",
+            "no_outgoing_txs",
         )
         .persist()
     )
-    address_txs = read("address_transactions").select("address_id", "tx_id", "value")
 
     stats = (
-        compute_fresh_cluster_stats(members, address, address_txs)
+        compute_fresh_cluster_stats(members, address)
         .select(
             "cluster_id",
             "no_addresses",
@@ -933,13 +916,13 @@ def run_clustering_spark(
 
     # PHASE 4: full cluster stats — the same recompute the standalone
     # recompute-cluster-stats job runs, aggregating the just-written membership
-    # (fresh_address_cluster) with the address + address_transactions tables into
-    # per-cluster size, root, totals, first/last tx and tx-counts (degrees and
-    # adjusted totals are not maintained for fresh clusters; REST serves degrees
-    # via the root address's legacy cluster). So a one-off bootstrap leaves
-    # fresh_cluster_stats complete, not just the size+root the incremental delta
-    # loop maintains live to elect a merge survivor (the rich columns then stay
-    # fresh via the periodic recompute job).
+    # (fresh_address_cluster) with the address table into per-cluster size, root,
+    # totals, first/last tx and member-sum tx-counts (degrees and adjusted totals
+    # are not maintained for fresh clusters; REST serves degrees via the root
+    # address's legacy cluster). So a one-off bootstrap leaves fresh_cluster_stats
+    # complete, not just the size+root the incremental delta loop maintains live
+    # to elect a merge survivor (the rich columns then stay fresh via the periodic
+    # recompute job).
     stats_start = time.perf_counter()
     n_stats = recompute_fresh_cluster_stats(
         spark, transformed_keyspace, bucket_size, delete_stale=delete_stale
