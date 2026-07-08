@@ -2337,27 +2337,28 @@ class Cassandra:
                     if tx["to_address"] == neighbor and tx["from_address"] == id
                 ]
                 self.logger.debug(f"pruned {before - len(results2)}")
-            final_results.extend(results2)
-
             if not is_eth_like(currency):
-                # make sure id is in inputs and neighbor in outputs
+                # Keep only rows where `id` is in the inputs and `neighbor` in the
+                # outputs. Filter the FRESH page (results2) BEFORE extending —
+                # the old code re-filtered the whole accumulated `final_results`
+                # on every while-loop iteration, re-running the per-address
+                # cluster-id lookups for already-accepted rows (10^5+ serial
+                # queries per request in the cluster case).
                 if node_type == NodeType.ADDRESS:
 
-                    async def has_address_in_ios(address, ios):
+                    def has_address_in_ios(address, ios):
                         if ios is None and address == "coinbase":
                             return True
                         if ios is None:
                             return False
-
                         addresses_io = sum([x.address or [] for x in ios], [])
-
                         return address in addresses_io
 
-                    final_results = [
-                        fr
-                        for fr in final_results
-                        if await has_address_in_ios(id, fr["inputs"])
-                        and await has_address_in_ios(neighbor, fr["outputs"])
+                    results2 = [
+                        r
+                        for r in results2
+                        if has_address_in_ios(id, r["inputs"])
+                        and has_address_in_ios(neighbor, r["outputs"])
                     ]
                 else:
 
@@ -2365,27 +2366,35 @@ class Cassandra:
                         address_wrapped = x.address
                         if address_wrapped is None:
                             return None
-
                         assert len(address_wrapped) == 1
                         return address_wrapped[0]
 
-                    async def has_cluster_id_in_ios(cluster_id, ios):
+                    async def cluster_ids_of(ios):
                         addresses_io = [get_address_from_io(x) for x in ios]
-                        addresses_io = [x for x in addresses_io if x is not None]
-                        # get cluster ids for all the addresses
-                        cluster_ids_io = [
-                            await self.get_address_entity_id(currency, address)
-                            for address in addresses_io
-                        ]
+                        addresses_io = [a for a in addresses_io if a is not None]
+                        # resolve the io addresses' cluster ids concurrently
+                        return set(
+                            await asyncio.gather(
+                                *[
+                                    self.get_address_entity_id(currency, a)
+                                    for a in addresses_io
+                                ]
+                            )
+                        )
 
-                        return cluster_id in cluster_ids_io
+                    async def cluster_row_matches(r):
+                        in_ids, out_ids = await asyncio.gather(
+                            cluster_ids_of(r["inputs"]),
+                            cluster_ids_of(r["outputs"]),
+                        )
+                        return id in in_ids and neighbor in out_ids
 
-                    final_results = [
-                        fr
-                        for fr in final_results
-                        if await has_cluster_id_in_ios(id, fr["inputs"])
-                        and await has_cluster_id_in_ios(neighbor, fr["outputs"])
-                    ]
+                    keep = await asyncio.gather(
+                        *[cluster_row_matches(r) for r in results2]
+                    )
+                    results2 = [r for r, k in zip(results2, keep) if k]
+
+            final_results.extend(results2)
 
             # Once every edge tx has been found there is nothing left to page
             # for: results2 already expanded all asset rows for these tx ids,
