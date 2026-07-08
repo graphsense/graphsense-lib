@@ -4,6 +4,9 @@ from io import StringIO
 import pytest
 import pandas as pd
 
+from graphsenselib.deltaupdate.update.account.createchanges import (
+    prepare_token_exchange_rates_for_ingest,
+)
 from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_sorted_unique_addresses,
     get_prices,
@@ -428,6 +431,98 @@ def test_token_with_eur_peg():
     assert float(euro_value) == 29.0
 
     assert decoded_transfer == check
+
+
+def test_get_prices_unpegged_with_token_rate():
+    # token_rate is positional [eur_per_token, usd_per_token]; value in smallest
+    # unit with 6 decimals -> 2.5 whole tokens.
+    euro, dollar = get_prices(
+        2_500_000, 6, [1.0, 1.2], False, False, False, token_rate=[2.0, 2.5]
+    )
+    assert euro == 5.0
+    assert dollar == 6.25
+
+
+def test_get_prices_unpegged_without_rate_is_zero():
+    assert get_prices(2_500_000, 6, [1.0, 1.2], False, False, False) == [0, 0]
+    # a partial (None) rate also falls back to zero
+    assert get_prices(
+        2_500_000, 6, [1.0, 1.2], False, False, False, token_rate=[None, 2.5]
+    ) == [0, 0]
+
+
+def test_prepare_token_exchange_rates_for_ingest():
+    token_rates = {("UNI", 100): [2.0, 2.5], ("FOO", 101): [0.1, 0.12]}
+    changes = prepare_token_exchange_rates_for_ingest(token_rates)
+    assert len(changes) == 2
+    assert all(c.table == "token_exchange_rates" for c in changes)
+    by_asset = {c.data["asset"]: c.data for c in changes}
+    assert by_asset["UNI"] == {
+        "asset": "UNI",
+        "block_id": 100,
+        "fiat_values": [2.0, 2.5],
+    }
+    assert by_asset["FOO"]["block_id"] == 101
+
+
+def test_token_with_no_peg_decodes_without_fiat():
+    pytest.importorskip("web3")
+    adapter = AccountLogAdapter()
+    # Same DEUR contract, but configured with an empty (unpegged) peg_currency.
+    unpegged_csv = (
+        "currency_ticker,assettype,decimals,token_address,peg_currency\n"
+        "DEUR,ERC20,6,0xba3f535bbcccca2a154b573ca6c5a49baae0a3ea,\n"
+    )
+    SUPPORTED_TOKENS = pd.read_csv(StringIO(unpegged_csv))
+    example_log = {
+        "log_index": 0,
+        "transaction_index": 1,
+        "block_hash": b"\x00\x00\x00\x00\x02\xfa\xf0\xe5A\xeab\x1d\xed\xc7%\x00\x074^"
+        b"\x10\xaa5\xe7\xbd\xb7\xa9\x1c\xee\x99\x0f96",
+        "address": bytes.fromhex("bA3f535bbCcCcA2A154b573Ca6c5A49BAAE0a3ea"),
+        "data": b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xba\x81@",
+        "topics": [
+            b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h"
+            b"\xfc7\x8d\xaa\x95+\xa7\xf1c\xc4\xa1"
+            b"\x16(\xf5ZM\xf5#\xb3\xef",
+            b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb3\xa8"da\xf0\xe6\xa9'
+            b"\xa1\x06?\xeb\xea\x88\xc6\xf6\xa5\xa0\x85~",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf0LT\xf6\xb6\xa2\x9a"
+            b'\xf0ZT\x95\x8cIt\xc3\x83\xb4\xd9"\xac',
+        ],
+        "tx_hash": b"\xe0}\xe10\xe5\xc2\xb1\xde\x13\xcd\x88\xee!\xfa\x1e\xca]e\xba\xbb"
+        b"\xecVG\xd3\x1c\xb7\x90\x1f\xc92wo",
+        "block_id": 50000101,
+        "block_id_group": 50000,
+        "partition": 500,
+        "topic0": b"\xdd\xf2R\xad\x1b\xe2\xc8\x9bi\xc2\xb0h\xfc7\x8d\xaa\x95+\xa7\xf1c"
+        b"\xc4\xa1\x16(\xf5ZM\xf5#\xb3\xef",
+    }
+
+    example_log = adapter.dict_to_dataclass(example_log)
+    decoder = ERC20Decoder("eth", SUPPORTED_TOKENS)
+
+    decoded_transfer = decoder.log_to_transfer(example_log)
+
+    # decodes fine, but carries no fiat equivalent
+    assert decoded_transfer is not None
+    assert decoded_transfer.asset == "DEUR"
+    assert decoded_transfer.value == 29000000
+    assert decoded_transfer.coin_equivalent == 0
+    assert decoded_transfer.usd_equivalent == 0
+    assert decoded_transfer.eur_equivalent == 0
+
+    euro_value, dollar_value = get_prices(
+        decoded_transfer.value,
+        decoded_transfer.decimals,
+        [1, 2],
+        decoded_transfer.usd_equivalent,
+        decoded_transfer.eur_equivalent,
+        decoded_transfer.coin_equivalent,
+    )
+    assert float(dollar_value) == 0.0
+    assert float(euro_value) == 0.0
 
 
 def test_trx_factory_contract_flagged_from_create_trace():

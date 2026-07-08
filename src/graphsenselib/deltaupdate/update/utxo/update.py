@@ -1788,7 +1788,6 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 patch_mode=self._patch_mode,
             )
         elif self.application_strategy == ApplicationStrategy.TX:
-            nr_new_address_relations, nr_new_cluster_relations, nr_new_tx = (0, 0, 0)
             last_tx = None
             last_recovery_hint = None
             if self.crash_recoverer.is_in_recovery_mode():
@@ -1850,19 +1849,20 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 collect_cluster_inputs=collect_cluster_inputs,
                             )
                             last_block_processed = tx.block_id
-                            nr_new_tx += 1
-                            nr_new_address_relations += nr_new_address_relations_tx
-                            nr_new_cluster_relations += nr_new_cluster_relations_tx
                             runtime_seconds = int(time.time() - self.batch_start_time)
+                            # get_bookkeeping_changes accumulates its deltas into
+                            # self._statistics in place, and it runs once per tx
+                            # here, so pass this tx's deltas — not a running total,
+                            # which would inflate the counters quadratically.
                             bookkeepin_changes = get_bookkeeping_changes(
                                 self._statistics,
                                 self._db.transformed.get_summary_statistics(),
                                 last_block_processed,
-                                nr_new_address_relations,
+                                nr_new_address_relations_tx,
                                 nr_new_addresses,
-                                nr_new_cluster_relations,
+                                nr_new_cluster_relations_tx,
                                 nr_new_clusters,
-                                nr_new_tx,
+                                1,
                                 self.highest_address_id,
                                 runtime_seconds,
                                 bts,

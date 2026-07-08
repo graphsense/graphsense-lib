@@ -29,7 +29,7 @@ _CASH_TO_LEGACY_VERSION = {0: 0, 8: 5, 11: 5}
 _PREFIX_LEN = len("bitcoincash:")
 
 
-class InvalidAddress(Exception):
+class InvalidAddress(ValueError):
     pass
 
 
@@ -95,6 +95,9 @@ def bch_address_to_legacy(address: str) -> str:
         if bits >= 8:
             bits -= 8
             result.append((acc >> bits) & 0xFF)
+
+    if not result:
+        raise InvalidAddress(f"Cashaddr payload too short in {address}")
 
     cash_version = result[0]
     hash_bytes = bytes(result[1:])

@@ -97,6 +97,12 @@ from graphsenselib.db.asynchronous.services.models import TxAccount as PydanticT
 from graphsenselib.db.asynchronous.services.models import Txs as PydanticTxs
 from graphsenselib.db.asynchronous.services.models import TxUtxo as PydanticTxUtxo
 from graphsenselib.db.asynchronous.services.models import Values as PydanticValues
+from graphsenselib.db.asynchronous.services.models import (
+    TransactionComparisonInternal as PydanticTransactionComparison,
+)
+from graphsenselib.db.asynchronous.services.models import (
+    GraphSummaryInternal as PydanticGraphSummary,
+)
 
 from graphsenselib.web.models import (
     Actor,
@@ -137,6 +143,15 @@ from graphsenselib.web.models import (
     TxUtxo,
     TxValue,
     Values,
+)
+from graphsenselib.web.models.graph import (
+    GraphCompareSignal,
+    GraphCompareVerdict,
+    GraphComparedTx,
+    GraphComparison,
+    GraphLineageEdge,
+    GraphSummary,
+    GraphTxCharacteristics,
 )
 from graphsenselib.web.models.heuristics import (
     AddressOutput as ApiHeuristicAddressOutput,
@@ -697,3 +712,76 @@ def pydantic_to_openapi(pydantic_obj: Any) -> Any:
         return converters[type_name](pydantic_obj)
 
     raise NotImplementedError(f"No converter found for type: {type_name}")
+
+
+def to_api_transaction_comparison(
+    pydantic_cmp: PydanticTransactionComparison,
+):
+    """Convert service-layer TransactionComparisonInternal to API GraphComparison.
+
+    ``GraphTxCharacteristics`` is built explicitly (script-type lists are
+    sorted for stable output); other sub-models map field-for-field.
+    """
+    items: list = []
+    for item in pydantic_cmp.txs:
+        details = None
+        if item.details is not None:
+            details = to_api_tx(item.details)
+        characteristics = None
+        if item.characteristics is not None:
+            c = item.characteristics
+            characteristics = GraphTxCharacteristics(
+                input_script_types=sorted(c.inputs_script_types),
+                output_script_types=sorted(c.outputs_script_types),
+                n_inputs=c.n_inputs,
+                n_outputs=c.n_outputs,
+                total_input_sat=c.total_input_sat,
+                total_output_sat=c.total_output_sat,
+                fee_sat=c.fee_sat,
+                tx_version=c.tx_version,
+                locktime=c.locktime,
+                input_cluster_ids=c.input_cluster_ids,
+                coinjoin_detected=c.coinjoin_detected,
+                coinjoin_protocol=c.coinjoin_protocol,
+            )
+        items.append(
+            GraphComparedTx(
+                tx_hash=item.tx_hash,
+                network=item.network,
+                characteristics=characteristics,
+                details=details,
+            )
+        )
+
+    return GraphComparison(
+        txs=items,
+        signals=(
+            [
+                GraphCompareSignal.model_validate(s.model_dump())
+                for s in pydantic_cmp.signals
+            ]
+            if pydantic_cmp.signals is not None
+            else None
+        ),
+        lineage=(
+            [
+                GraphLineageEdge.model_validate(e.model_dump())
+                for e in pydantic_cmp.lineage
+            ]
+            if pydantic_cmp.lineage is not None
+            else None
+        ),
+        verdict=(
+            GraphCompareVerdict.model_validate(pydantic_cmp.verdict.model_dump())
+            if pydantic_cmp.verdict is not None
+            else None
+        ),
+    )
+
+
+def to_api_graph_summary(
+    pydantic_summary: PydanticGraphSummary,
+) -> GraphSummary:
+    """Convert service-layer GraphSummaryInternal to API GraphSummary.
+    The two models share field names, so a flat round-trip is enough."""
+    return GraphSummary.model_validate(pydantic_summary.model_dump())

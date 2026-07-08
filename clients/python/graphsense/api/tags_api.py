@@ -400,7 +400,7 @@ class TagsApi:
         self,
         actor: Annotated[StrictStr, Field(description="The actor ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -476,7 +476,7 @@ class TagsApi:
         self,
         actor: Annotated[StrictStr, Field(description="The actor ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -552,7 +552,7 @@ class TagsApi:
         self,
         actor: Annotated[StrictStr, Field(description="The actor ID")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -698,7 +698,7 @@ class TagsApi:
         self,
         label: Annotated[StrictStr, Field(description="The label to search for")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -774,7 +774,7 @@ class TagsApi:
         self,
         label: Annotated[StrictStr, Field(description="The label to search for")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -850,7 +850,7 @@ class TagsApi:
         self,
         label: Annotated[StrictStr, Field(description="The label to search for")],
         page: Annotated[Optional[StrictStr], Field(description="Resumption token for retrieving the next page")] = None,
-        pagesize: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
+        pagesize: Annotated[Optional[Annotated[int, Field(le=5000, strict=True, ge=1)]], Field(description="Number of items returned in a single page")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],

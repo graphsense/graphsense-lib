@@ -72,7 +72,7 @@ def test_routed_id_batches_partitions_mixed_lists():
         lambda cid: q._get_count_by_cluster_stmt(cid, "LTC", ["public"]),
         lambda cid: q._get_tags_by_clusterid_stmt(cid, "LTC", 0, 10, ["public"], None),
         lambda cid: q._get_actors_for_clusterid_stmt(cid, "LTC", ["public"]),
-        lambda cid: q._get_labels_by_clusterid_stmt(cid, ["public"]),
+        lambda cid: q._get_labels_by_clusterid_stmt(cid, "LTC", ["public"]),
     ],
 )
 def test_single_id_builders_route_per_id(build):

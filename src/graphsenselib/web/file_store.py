@@ -159,7 +159,16 @@ class RedisFileStore:
             if self._base_url
             else f"{header_scheme}://{header_host}{path}"
         )
-        logger.warning(
+        # The token is a bearer capability for the download; never log it in
+        # full. Redact it while keeping the host/scheme derivation diagnostic.
+        redacted_token = f"{token[:6]}…" if token else ""
+        redacted_path = f"{self._download_path}/{redacted_token}"
+        redacted_url = (
+            f"{self._base_url}{redacted_path}"
+            if self._base_url
+            else f"{header_scheme}://{header_host}{redacted_path}"
+        )
+        logger.debug(
             "file_store url_for: "
             "xf-proto=%r xf-host=%r host=%r request.url.scheme=%r "
             "netloc=%r base_url=%r header_derived=%s://%s%s -> %s",
@@ -171,8 +180,8 @@ class RedisFileStore:
             self._base_url,
             header_scheme,
             header_host,
-            path,
-            final_url,
+            redacted_path,
+            redacted_url,
         )
         return final_url
 

@@ -142,7 +142,11 @@ class EntitiesService:
             out_degree=row["out_degree"],
             balance=convert_value(currency, row["balance"], rates),
             token_balances=convert_token_values_map(
-                currency, row.get("token_balances"), rates, token_config
+                currency,
+                row.get("token_balances"),
+                rates,
+                token_config,
+                token_rates=row.get("token_balance_rates"),
             ),
             best_address_tag=best_tag,
             no_address_tags=count,
@@ -366,23 +370,33 @@ class EntitiesService:
         token_currency: Optional[str] = None,
         page: Optional[str] = None,
         pagesize: Optional[int] = None,
+        request_timeout: Optional[float] = None,
     ) -> Links:
         min_b, max_b = await self.blocks_service.get_min_max_height(
             currency, min_height, max_height, min_date, max_date
         )
 
         # Get entity links from database
-        result = await self.db.list_entity_links(
-            currency,
-            entity_id,
-            neighbor_id,
-            min_height=min_b,
-            max_height=max_b,
-            order=order,
-            token_currency=token_currency,
-            page=page,
-            pagesize=pagesize,
-        )
+        try:
+            result = await asyncio.wait_for(
+                self.db.list_entity_links(
+                    currency,
+                    entity_id,
+                    neighbor_id,
+                    min_height=min_b,
+                    max_height=max_b,
+                    order=order,
+                    token_currency=token_currency,
+                    page=page,
+                    pagesize=pagesize,
+                ),
+                timeout=request_timeout,
+            )
+        except asyncio.TimeoutError:
+            raise Exception(
+                f"Timeout while fetching links for {currency}/{entity_id} "
+                f"to {neighbor_id}"
+            )
 
         return await links_response(
             currency,

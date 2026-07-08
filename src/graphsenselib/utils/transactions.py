@@ -40,7 +40,7 @@ class SubTransactionIdentifier(BaseModel):
                 if res is not None:
                     return res
 
-            raise Exception(f"Unknown transaction type {stringRep}")
+            raise ValueError(f"Unknown transaction type {stringRep}")
 
         else:
             return cls(

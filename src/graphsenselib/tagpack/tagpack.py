@@ -936,7 +936,10 @@ class Tag(object):
 
         # set default values for concepts field
         # make sure abuse and category are always part of the context
-        concepts = self.all_fields.get("concepts", [])
+        # NOTE: copy the list — when concepts are defined at tagpack-header
+        # level, all_fields aliases the shared header list, so appending in
+        # place would leak each tag's category/abuse into every other tag.
+        concepts = list(self.all_fields.get("concepts", []))
         category = self.all_fields.get("category", None)
         abuse = self.all_fields.get("abuse", None)
         if abuse and abuse not in concepts:

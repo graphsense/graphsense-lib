@@ -22,7 +22,7 @@ class JsonWatchpointProvider(WatchpointProvider):
                 email=d["email"],
                 on_outgoing=d["on_outgoing"],
                 on_incoming=d["on_incoming"],
-                value_gt=d.get("value_lgt", None),
+                value_gt=d.get("value_gt", d.get("value_lgt", None)),
             )
             if d
             else None

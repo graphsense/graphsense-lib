@@ -110,6 +110,32 @@ def test_get_actor_alias_mapping(db_setup):
     assert mapping["internetarchive"] == "internet_archive"
 
 
+def test_legacy_quality_queries_execute(db_setup):
+    """Regression: these sync-TagStore quality/actor queries referenced columns
+    that were dropped from the schema (tag.address, tag.category,
+    address_quality.address) and raised UndefinedColumn — two commands crashed,
+    two swallowed it into "Operation failed". They must execute cleanly against
+    the current schema (identifier / tag_concept / tag.actor)."""
+    ts = TagStore(db_setup["db_connection_string"], "public")
+
+    collisions = ts.addresses_with_actor_collisions()
+    assert isinstance(collisions, list)
+
+    actors = ts.list_address_actors(network="BTC")
+    assert isinstance(actors, list)
+    # id, label, identifier, category, actor_label
+    for row in actors:
+        assert len(row) == 5
+
+    assert isinstance(ts.top_labels_without_actor(), list)
+    # category filter now routes through tag_concept
+    assert isinstance(ts.top_labels_without_actor(category="organization"), list)
+
+    # address_quality may be empty (procedure not run), but the SQL must be valid
+    low_q = ts.low_quality_address_labels(th=0.5, network="BTC")
+    assert isinstance(low_q, dict)
+
+
 def test_db_consistency(db_setup):
     # this is all based on the tagpacks inserted in conftest.py
 

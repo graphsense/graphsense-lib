@@ -248,6 +248,18 @@ class TestCassandraConfig:
         assert new_config.currencies["btc"].raw == "btc_raw"  # ty: ignore[unresolved-attribute]
         assert new_config.nodes == ["127.0.0.1"]
 
+    def test_fanout_bounding_and_links_precheck_enabled_default(self):
+        """Fan-out bounding and the links pre-check are on by default."""
+        config = CassandraConfig(nodes=["127.0.0.1"])
+        assert config.fanout_bounding_and_links_precheck_enabled is True
+
+    def test_fanout_bounding_and_links_precheck_can_be_disabled(self):
+        """Both optimizations can be switched off via one config flag."""
+        config = CassandraConfig(
+            nodes=["127.0.0.1"], fanout_bounding_and_links_precheck_enabled=False
+        )
+        assert config.fanout_bounding_and_links_precheck_enabled is False
+
     def test_cross_chain_pubkey_keyspaces_default(self):
         """Default single-keyspace string normalises to a one-element list."""
         config = CassandraConfig(nodes=["127.0.0.1"])

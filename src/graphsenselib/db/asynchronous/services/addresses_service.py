@@ -355,6 +355,7 @@ class AddressesService:
         address: str,
         tagstore_groups: List[str],
         include_actors: bool = True,
+        new_address_fallback: bool = True,
     ) -> Address:
         return await get_address(
             self.db,
@@ -363,7 +364,8 @@ class AddressesService:
             currency,
             address,
             tagstore_groups,
-            include_actors,
+            include_actors=include_actors,
+            new_address_fallback=new_address_fallback,
         )
 
     async def list_tags_by_address(

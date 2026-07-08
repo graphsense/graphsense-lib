@@ -30,6 +30,15 @@ async def test_tool_surface_shape(bundled_mcp):
         tools = await c.list_tools()
         names = {t.name for t in tools}
 
+        # New POST passthrough: graph_summary (aggregate stats over a node set)
+        assert "graph_summary" in names
+
+        # The POST body fields must surface as tool parameters
+        summary_tool = next(t for t in tools if t.name == "graph_summary")
+        props = summary_tool.inputSchema.get("properties", {})
+        assert "txs" in props
+        assert "addresses" in props
+
     # Must-have auto-generated passthroughs
     assert "get_statistics" in names
     assert "get_block" in names

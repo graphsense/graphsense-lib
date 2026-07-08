@@ -577,13 +577,37 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         else:
             r = r - 1
 
-        if validate and r != -1:
-            # ers = self.get_exchange_rates_for_block_batch([r - 1, r, r + 1])
+        if validate and r != -1 and r > 0:
             ers = self.get_exchange_rates_for_block_batch([r - 1, r])
-            assert has_er_value(ers, i=0) and has_er_value(ers, i=1)
-            # if has_er_value(ers, i=2):
-            #     logger.warning(f"Found exchange-rate for "
-            # "not yet imported block {r+1}")
+            if not (has_er_value(ers, i=0) and has_er_value(ers, i=1)):
+                # Block timestamps are not strictly monotonic (miner clock
+                # skew up to ~2h), so right after a UTC day boundary a block
+                # below r can already map to a date without exchange rates
+                # while r itself still maps to the previous day. Lower the
+                # frontier to the highest block below which rates are
+                # contiguous, so callers (e.g. forward-fill) may treat every
+                # block <= r as covered.
+                skew_window = 200  # blocks; > 2h even on ~1min-block chains
+                lo = max(r - skew_window, 0)
+                ers = self.get_exchange_rates_for_block_batch(list(range(lo, r + 1)))
+                if not has_er_value(ers, i=0):
+                    raise ValueError(
+                        f"Exchange-rate gap at block {lo} is larger than "
+                        f"the timestamp-skew window ({skew_window} blocks "
+                        f"below {r}); this is not day-boundary clock skew. "
+                        f"Check the raw exchange_rates table for missing "
+                        f"dates and the block table for ingest holes."
+                    )
+                new_r = lo
+                while new_r < r and has_er_value(ers, i=new_r + 1 - lo):
+                    new_r += 1
+                logger.warning(
+                    f"Blocks between {new_r + 1} and {r} map to a date "
+                    f"without exchange rates yet (non-monotonic block "
+                    f"timestamps at the UTC day boundary); lowering the "
+                    f"exchange-rate frontier from {r} to {new_r}."
+                )
+                r = new_r
 
         return r
 
@@ -706,6 +730,62 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             for b in batch
         ]
         return [{"block_id": b, "fiat_values": get_values_list(er)} for b, er in ers]
+
+    def get_last_token_exchange_rate_date(self, asset) -> Optional[datetime]:
+        """Most recent date for which a per-token rate exists (fetch resume)."""
+        r = list(self.select("token_exchange_rates", where={"asset": asset}))
+        return max([datetime.fromisoformat(x.date) for x in r]) if len(r) > 0 else None
+
+    def get_token_exchange_rates_batch(self, assets: list[str], dates: list[datetime]):
+        """Fetch raw daily per-token rates for the given assets x dates.
+
+        Returns {(asset, date_str): row_or_None}.
+        """
+        stmt = self.select_stmt(
+            "token_exchange_rates", where={"asset": "?", "date": "?"}, limit=1
+        )
+        ds = list({date.strftime(DATE_FORMAT) for date in dates if date is not None})
+        params = [((a, d), [a, d]) for a in assets for d in ds]
+        results = self._db.execute_batch(stmt, params)
+
+        def get_result_item(r):
+            r = r.current_rows
+            return r[0] if len(r) > 0 else None
+
+        return {key: get_result_item(row) for (key, row) in results}
+
+    def get_token_exchange_rates_for_block_batch(
+        self, batch: list[int], assets: list[str]
+    ):
+        """Map raw daily per-token rates to per-block positional rows.
+
+        Mirrors get_exchange_rates_for_block_batch but with a token dimension.
+        Sparse: only emits a row where a rate exists for that (asset, block).
+        Returns [{"asset": a, "block_id": b, "fiat_values": [...]}].
+        """
+        if not assets:
+            return []
+        block_to_ts = self.get_block_timestamps_batch(batch)
+        rates = self.get_token_exchange_rates_batch(assets, block_to_ts.values())
+
+        def get_values_list(er):
+            return (
+                [er.fiat_values.get(x) for x in list(er.fiat_values.keys())]
+                if er is not None
+                else None
+            )
+
+        out = []
+        for b in batch:
+            ts = block_to_ts[b]
+            if ts is None:
+                continue
+            d = ts.strftime(DATE_FORMAT)
+            for a in assets:
+                vals = get_values_list(rates.get((a, d)))
+                if vals is not None:
+                    out.append({"asset": a, "block_id": b, "fiat_values": vals})
+        return out
 
 
 class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
@@ -1002,7 +1082,8 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             }
 
     def get_token_configuration(self):
-        stmt = self.select_stmt("token_configuration", limit=100)
+        # No limit: load every configured token (supports hundreds-thousands).
+        stmt = self.select_stmt("token_configuration")
         res = self._db.execute(stmt)
         df = pd.DataFrame(res)
         df["token_address"] = df["token_address"].apply(lambda x: "0x" + x.hex())

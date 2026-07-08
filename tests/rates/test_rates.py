@@ -248,3 +248,109 @@ def test_coingecko_forward_fills_weekend_fx_gap(monkeypatch):
         {"date": "2026-06-20", "USD": 475.79, "EUR": 475.79 * 0.90},
         {"date": "2026-06-21", "USD": 471.43, "EUR": 471.43 * 0.90},
     ]
+
+
+def _raise_no_fetch(*args, **kwargs):
+    raise AssertionError("no rates should be fetched when the DB is ahead")
+
+
+def test_cryptocompare_resume_past_end_is_noop(monkeypatch):
+    # Manual forward-fill can leave a rate for *today* in the DB while the
+    # fetch window ends *yesterday*; that is nothing-to-fetch, not an error.
+    monkeypatch.setattr(cryptocompare, "fetch_cryptocompare_rates", _raise_no_fetch)
+
+    df = fetch_impl(
+        DummyDb(datetime(2026, 7, 8)),
+        "BTC",
+        ["USD", "EUR"],
+        "2026-06-01T00:00:00.000000+00:00",
+        "2026-07-07T00:00:00.000000+00:00",
+        "exchange_rates",
+        False,
+        False,
+        True,
+        "api-key",
+    )
+
+    assert len(df) == 0
+    # the empty frame must survive the ingest() post-processing steps
+    df["fiat_values"] = df.drop("date", axis=1).to_dict(orient="records")
+    df.drop(["USD", "EUR"], axis=1, inplace=True)
+    assert df.to_dict("records") == []
+
+
+def test_coindesk_resume_past_end_is_noop(monkeypatch):
+    monkeypatch.setattr(coindesk, "fetch_exchange_rates", _raise_no_fetch)
+
+    df = coindesk.fetch_impl(
+        DummyDb(datetime(2026, 7, 8)),
+        "dev",
+        "BTC",
+        ["USD", "EUR"],
+        "2026-06-01T00:00:00.000000+00:00",
+        "2026-07-07T00:00:00.000000+00:00",
+        "exchange_rates",
+        False,
+        False,
+        True,
+    )
+
+    assert len(df) == 0
+
+
+def test_coingecko_resume_past_end_is_noop(monkeypatch):
+    monkeypatch.setattr(coingecko, "fetch_coingecko_rates", _raise_no_fetch)
+
+    df = coingecko.fetch_impl(
+        DummyDb(datetime(2026, 7, 8)),
+        "dev",
+        "ZEC",
+        ["USD", "EUR"],
+        "2026-06-01T00:00:00.000000+00:00",
+        "2026-07-07T00:00:00.000000+00:00",
+        "exchange_rates",
+        False,
+        False,
+        True,
+        "api-key",
+    )
+
+    assert len(df) == 0
+
+
+def test_coinmarketcap_resume_past_end_is_noop(monkeypatch):
+    monkeypatch.setattr(coinmarketcap, "fetch_cmc_rates", _raise_no_fetch)
+
+    df = coinmarketcap.fetch_impl(
+        DummyDb(datetime(2026, 7, 8)),
+        "dev",
+        "BTC",
+        ["USD", "EUR"],
+        "2026-06-01T00:00:00.000000+00:00",
+        "2026-07-07T00:00:00.000000+00:00",
+        "exchange_rates",
+        False,
+        False,
+        True,
+        "api-key",
+    )
+
+    assert len(df) == 0
+
+
+def test_explicit_start_after_end_still_errors():
+    # force=True skips the DB resume lookup: a user-supplied start date
+    # beyond the end date remains a hard error.
+    with pytest.raises(SystemExit):
+        fetch_impl(
+            None,
+            "BTC",
+            ["USD", "EUR"],
+            "2026-07-09T00:00:00.000000+00:00",
+            "2026-07-07T00:00:00.000000+00:00",
+            "exchange_rates",
+            True,
+            False,
+            True,
+            "api-key",
+        )

@@ -101,6 +101,8 @@ async def list_cluster_links(
     page=None,
     pagesize=None,
 ):
+    request_timeout = ctx.config.address_links_request_timeout
+
     pydantic_result = await ctx.services.entities_service.list_entity_links(
         currency,
         cluster,
@@ -113,6 +115,7 @@ async def list_cluster_links(
         token_currency,
         page,
         pagesize,
+        request_timeout,
     )
 
     return to_api_links(pydantic_result)
@@ -411,8 +414,9 @@ async def bfs(
                     matching_paths.append(new_path)
                     continue
 
-                # stop if max depth is reached
-                if len(new_path) == max_depth:
+                # stop if max depth is reached (>= so an out-of-range max_depth
+                # can never disable the depth stop and walk the whole graph)
+                if len(new_path) >= max_depth:
                     ctx.logger.debug("STOP | max depth")
                     continue
 

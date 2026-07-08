@@ -1,8 +1,13 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 from graphsenselib.db.asynchronous.services.heuristics import UtxoHeuristics
+
+# Combined cap on graph node sets (txs + addresses per request). Shared by
+# the API request models and the db-layer safety check so the two cannot
+# disagree.
+MAX_GRAPH_NODES = 100
 
 
 class SearchRequestConfig(BaseModel):
@@ -16,7 +21,7 @@ class SearchRequestConfig(BaseModel):
 class TokenConfig(BaseModel):
     ticker: str
     decimals: int
-    peg_currency: str
+    peg_currency: Optional[str] = None
     contract_address: str
 
 
@@ -193,6 +198,12 @@ class TxValue(BaseModel):
     value: Values
     index: Optional[int] = None
     script_hex: Optional[str] = None  # Raw script hex for OP_RETURN outputs
+    has_witness: Optional[bool] = None  # True if input carries witness data
+    sequence: Optional[int] = None  # Per-input nSequence (BIP125 RBF signaling)
+    # Script type derived from the row's ingest-time address_type
+    # classification (see common._ADDRESS_TYPE_NAMES); None on keyspaces
+    # ingested before the column existed.
+    script_type: Optional[str] = None
 
 
 class TxRef(BaseModel):
@@ -260,6 +271,8 @@ class TxUtxo(BaseModel):
     total_input: Values
     total_output: Values
     heuristics: Optional[UtxoHeuristics] = None
+    version: Optional[int] = None
+    lock_time: Optional[int] = None
 
 
 class Block(BaseModel):
@@ -439,6 +452,267 @@ class CrossChainPubkeyRelatedAddresses(BaseModel):
 class Txs(BaseModel):
     txs: List[Union[TxAccount, TxUtxo]] = Field(default_factory=list)
     next_page: Optional[int] = None
+
+
+# Comparison internal models. API counterparts (Graph* prefix) live in
+# web/models/graph.py; the translator at web/translators.py:
+# to_api_transaction_comparison maps between the two. To add a field that
+# should reach the API, update all three.
+
+
+class TxCharacteristicsInternal(BaseModel):
+    inputs_script_types: List[str] = Field(default_factory=list)
+    outputs_script_types: List[str] = Field(default_factory=list)
+    # True/False if every input agrees, None if mixed or unresolvable.
+    # Prefers row-level TxValue.has_witness; falls back to script-type
+    # inference (which leaves P2SH ambiguous).
+    inputs_have_witness: Optional[bool] = None
+    n_inputs: int
+    n_outputs: int
+    total_input_sat: int
+    total_output_sat: int
+    fee_sat: Optional[int] = None
+    tx_version: Optional[int] = None
+    locktime: Optional[int] = None
+    # True if any input signals BIP125 opt-in RBF (sequence < 0xfffffffe);
+    # None when no inputs are available or all sequences are missing.
+    inputs_signal_rbf: Optional[bool] = None
+    # Block height the tx was mined in. Anchor for height-relative signals
+    # like locktime anti-fee-sniping classification.
+    block_height: Optional[int] = None
+    # True if outputs are strictly ascending by amount (BIP69-compatible).
+    # None when fewer than two outputs exist or amount ties prevent a
+    # definitive call (the schema only stores script_hex for OP_RETURNs,
+    # so amount-tie tiebreaking by script is unavailable).
+    bip69_outputs_sorted: Optional[bool] = None
+    # True if any input address is tagged as an exchange (broad_category ==
+    # "exchange"). When tags are unavailable (no tag service or no
+    # resolvable address), this is None.
+    inputs_have_exchange: Optional[bool] = None
+    # Canonicalized input addresses across all inputs of this tx. Populated
+    # during compare_txs orchestration (canonicalization needs ``currency``)
+    # and used by signal_direct_input_overlap / signal_change_chain.
+    input_addresses_canon: List[str] = Field(default_factory=list)
+    # Canonicalized change-output addresses for this tx, taken from the
+    # consensus entries of the change heuristics. Empty when no consensus
+    # change was detected. Populated during compare_txs orchestration.
+    change_addresses_canon: List[str] = Field(default_factory=list)
+    # Tx hashes whose outputs this tx spends (i.e., one-hop ancestors).
+    # Populated during compare_txs orchestration via get_spending_txs.
+    parent_tx_hashes: List[str] = Field(default_factory=list)
+    input_cluster_ids: List[int] = Field(default_factory=list)
+    coinjoin_detected: bool = False
+    coinjoin_protocol: Optional[str] = None
+    # Internal-only: indexes of *compared* txs whose outputs this tx directly
+    # spends. Populated during compare_txs orchestration; not surfaced on the
+    # API characteristics model.
+    utxo_parent_indexes: List[int] = Field(default_factory=list)
+
+
+# A signal's per-tx observation; the concrete type depends on the signal:
+# bool flags (witness_present, rbf, bip69_outputs_sorted,
+# exchange_input_overlap), int (tx_version), categorical str buckets
+# (locktime_pattern, output_count_shape), str lists (script_type,
+# direct_input_overlap, change_chain, common_ancestor) and int lists
+# (utxo_linkage, shared_cluster). None = not derivable for that tx; an
+# empty list = computed but no items. The API model reuses this alias so
+# the wire union cannot drift from what the signals emit.
+SignalPerTxValue = Union[bool, int, str, List[str], List[int]]
+
+
+class ComparisonSignalInternal(BaseModel):
+    name: str
+    kind: str  # "discriminator" | "score" | "linkage"
+    per_tx: List[Optional[SignalPerTxValue]]
+    verdict: str  # "match" | "mismatch" | "inconclusive"
+    weight: int = 0
+
+
+class LineageEdgeInternal(BaseModel):
+    from_idx: int
+    to_idx: int
+    kind: str
+    out_index: Optional[int] = None
+    in_index: Optional[int] = None
+
+
+class TxRefInternal(BaseModel):
+    network: str
+    tx_hash: str
+
+
+class AddressRefInternal(BaseModel):
+    network: str
+    address: str
+
+
+# Closed vocabulary of summary-note codes. The API model reuses this
+# Literal, so a new code lands in the OpenAPI schema automatically — and a
+# typo'd code fails at construction (caught by tests) instead of at
+# response translation.
+GraphNoteCode = Literal[
+    "fiat_totals_missing",
+    "fiat_totals_partial",
+    "token_value_excluded",
+    "token_holdings_excluded",
+    "usage_span_unavailable",
+    "nodes_not_found",
+    "duplicates_collapsed",
+]
+
+
+class GraphNoteInternal(BaseModel):
+    """A machine-readable caveat on a summary block: stable ``code`` for
+    clients to branch on, human ``message`` for display. ``network`` is set
+    on overall-rollup notes to attribute them to their source network.
+    ``items`` carries the references a note applies to (e.g. the not-found
+    tx hashes / addresses of a ``nodes_not_found`` note), so clients never
+    have to parse ``message``."""
+
+    code: GraphNoteCode
+    message: str
+    network: Optional[str] = None
+    items: Optional[List[str]] = None
+
+
+class GraphTxNetworkSummaryInternal(BaseModel):
+    network: str
+    tx_count: int
+    # total_value.value is the network's native base unit (satoshi for UTXO,
+    # wei/sun for account chains) and sums native transfers only; its
+    # fiat_values sum the fiat value per code (eur, usd) across all
+    # transfers (incl. tokens). Totals are gross: UTXO txs contribute their
+    # full output sum (change included), so linked txs double-count moved
+    # coins — documented on the API model, do not "fix" by subtracting
+    # change (that needs heuristics). notes flags caveats (partial fiat
+    # totals, excluded token transfers). total_fee stays a plain native
+    # amount.
+    total_value: Values
+    total_fee: Optional[int] = None
+    # io counts are UTXO-only; None for account-model (ETH/TRX) summaries.
+    total_inputs: Optional[int] = None
+    total_outputs: Optional[int] = None
+    block_min: int
+    block_max: int
+    timestamp_min: int
+    timestamp_max: int
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
+    # Distinct assets involved on this network, lowercase, native asset
+    # first then tokens sorted. Native only for UTXO chains.
+    assets: List[str] = Field(default_factory=list)
+
+
+class GraphTxOverallInternal(BaseModel):
+    # Network-agnostic aggregate: fiat only (base units are not comparable
+    # across chains), timestamps only (block heights are not either).
+    tx_count: int
+    total_value_fiat: List[FiatValue] = Field(default_factory=list)
+    timestamp_min: int
+    timestamp_max: int
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
+
+
+class GraphTxSummaryInternal(BaseModel):
+    overall: GraphTxOverallInternal
+    networks: List[GraphTxNetworkSummaryInternal]
+
+
+class GraphAddressNetworkSummaryInternal(BaseModel):
+    network: str
+    address_count: int
+    # Native base-unit sums with per-code fiat sums; account-chain token
+    # holdings are not folded into the native values (noted).
+    total_received: Values
+    total_spent: Values
+    balance: Values
+    first_usage: Optional[int] = None
+    last_usage: Optional[int] = None
+    tagged_address_count: int = 0
+    actors: List[LabeledItemRef] = Field(default_factory=list)
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
+    # Distinct assets involved on this network, lowercase, native asset
+    # first then tokens sorted. Native only for UTXO chains.
+    assets: List[str] = Field(default_factory=list)
+
+
+class GraphAddressOverallInternal(BaseModel):
+    address_count: int
+    total_received_fiat: List[FiatValue] = Field(default_factory=list)
+    total_spent_fiat: List[FiatValue] = Field(default_factory=list)
+    balance_fiat: List[FiatValue] = Field(default_factory=list)
+    first_usage: Optional[int] = None
+    last_usage: Optional[int] = None
+    tagged_address_count: int = 0
+    # Distinct actors across all networks, deduped by id.
+    actors: List[LabeledItemRef] = Field(default_factory=list)
+    notes: List[GraphNoteInternal] = Field(default_factory=list)
+
+
+class GraphAddressSummaryInternal(BaseModel):
+    overall: GraphAddressOverallInternal
+    networks: List[GraphAddressNetworkSummaryInternal]
+
+
+class GraphSummaryInternal(BaseModel):
+    # Each block is present iff the request carried that node type.
+    txs: Optional[GraphTxSummaryInternal] = None
+    addresses: Optional[GraphAddressSummaryInternal] = None
+
+
+# Closed vocabulary of verdict-note codes; the API model reuses this
+# Literal (same pattern as GraphNoteCode) so every code lands in the
+# OpenAPI schema and a typo fails at construction.
+CompareNoteCode = Literal[
+    "coinjoin_detected",
+    "cluster_split_contradiction",
+    "exchange_overlap_demotion",
+    "shared_cluster_support",
+    "common_ancestor_support",
+    "cluster_merge_or_wallet_upgrade",
+    "onchain_linkage_support",
+]
+
+
+class CompareNoteInternal(BaseModel):
+    """A machine-readable annotation on the comparison verdict: stable
+    ``code`` for clients to branch on, human ``message`` for display."""
+
+    code: CompareNoteCode
+    message: str
+
+
+class ComparisonVerdictInternal(BaseModel):
+    relation: str
+    # confidence and score_total are backend-only: their weights are not
+    # calibrated against ground-truth data, so the API verdict
+    # (GraphCompareVerdict) exposes only the categorical relation tier and
+    # the translator drops these fields. Promote them to the API model once
+    # calibrated. (Per-signal ``weight`` is API-dropped for the same
+    # reason, see GraphCompareSignal.)
+    confidence: int
+    cluster_verdict: str
+    discriminator_hits: List[str] = Field(default_factory=list)
+    # Linkage gates that fired in favor of a connection (the positive
+    # counterpart of discriminator_hits), sorted.
+    linkage_hits: List[str] = Field(default_factory=list)
+    score_total: float = 0.0
+    notes: List[CompareNoteInternal] = Field(default_factory=list)
+
+
+class TxComparedItemInternal(BaseModel):
+    tx_hash: str
+    network: str = "btc"
+    characteristics: Optional[TxCharacteristicsInternal] = None
+    details: Optional[Union[TxUtxo, TxAccount]] = None
+
+
+class TransactionComparisonInternal(BaseModel):
+    txs: List[TxComparedItemInternal] = Field(default_factory=list)
+    # None when excluded from the include list; [] means computed but empty.
+    signals: Optional[List[ComparisonSignalInternal]] = None
+    lineage: Optional[List[LineageEdgeInternal]] = None
+    # None when the verdict is excluded from the include list.
+    verdict: Optional[ComparisonVerdictInternal] = None
 
 
 # Update forward references

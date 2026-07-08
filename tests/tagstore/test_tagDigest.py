@@ -135,6 +135,47 @@ def test_tag_digest_IA(tagsIA):
     ]
 
 
+def _mk_tag(label, inherited_from=None):
+    return TagPublic(
+        identifier="Abc",
+        label=label,
+        source="src",
+        creator="GraphSense Core Team",
+        confidence="ownership",
+        confidence_level=100,
+        tag_subject="address",
+        tag_type="actor",
+        actor="someactor",
+        primary_concept="exchange",
+        additional_concepts=[],
+        is_cluster_definer=True,
+        network="BTC",
+        lastmod=1642118400,
+        group="private",
+        inherited_from=inherited_from,
+        tagpack_title="Some Tagpack",
+        tagpack_uri="https://example.com/pack.yaml",
+        concepts=["exchange"],
+    )
+
+
+def test_tag_digest_inherited_from():
+    # "alpha": every contributing tag is inherited from cluster -> "cluster"
+    # "beta": at least one direct (non-inherited) tag -> None
+    from graphsenselib.tagstore.algorithms.tag_digest import InheritedFrom
+
+    tags = [
+        _mk_tag("alpha", inherited_from=InheritedFrom.CLUSTER),
+        _mk_tag("alpha", inherited_from=InheritedFrom.CLUSTER),
+        _mk_tag("beta", inherited_from=InheritedFrom.CLUSTER),
+        _mk_tag("beta", inherited_from=None),
+    ]
+    digest = compute_tag_digest(tags)
+
+    assert digest.label_digest["alpha"].inherited_from == "cluster"
+    assert digest.label_digest["beta"].inherited_from is None
+
+
 def test_tag_digest_exchange(tagsExchange):
     digest = compute_tag_digest(tagsExchange)
 

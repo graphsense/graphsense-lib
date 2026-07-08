@@ -1,8 +1,11 @@
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
 from eth_abi import decode
 from eth_utils import function_abi_to_4byte_selector, to_hex
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -77,7 +80,10 @@ class ERC20Decoder:
                     self.supported_tokens["token_address"] == "0x" + log.address.hex()
                 )
                 asset = self.supported_tokens[mask]["currency_ticker"].values[0]
-                peg = self.supported_tokens[mask]["peg_currency"].values[0].upper()
+                peg = self.supported_tokens[mask]["peg_currency"].values[0]
+                # Unpegged tokens (missing/empty peg, incl. pandas NaN) carry no
+                # fiat equivalent.
+                peg = "" if pd.isna(peg) else str(peg).upper()
                 coin_equivalent = peg == self.currency
                 usd_equivalent = peg == "USD"
                 eur_equivalent = peg == "EUR"
@@ -96,7 +102,15 @@ class ERC20Decoder:
                     tx_hash=log.tx_hash,
                     log_index=log.log_index,
                 )
-            except Exception:  # TODO this is not good!
+            except Exception as e:
+                # A malformed / non-standard Transfer log is dropped rather than
+                # failing the whole block; log it so silent data loss is visible.
+                logger.warning(
+                    "Could not decode Transfer log (log_index=%s token=0x%s): %s",
+                    log.log_index,
+                    log.address.hex(),
+                    e,
+                )
                 return None  # cant be decoded
         else:
             return None  # not a transfer event

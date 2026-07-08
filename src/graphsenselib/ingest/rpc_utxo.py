@@ -849,6 +849,25 @@ class BtcBlockExporter:
                 f"trimmed {excess} oldest entries"
             )
 
+        # Inputs still unresolved after all three phases keep value/addresses =
+        # None and the tx is written as-is; input_value/fee (summed over resolved
+        # inputs only, above) are then silently understated. Surface this rather
+        # than losing it quietly — typically a spent tx that predates txindex or a
+        # getrawtransaction failure logged in _batch_getrawtransaction.
+        n_unresolved = sum(
+            1
+            for tx in transactions
+            for inp in tx["inputs"]
+            if inp["value"] is None and inp["spent_transaction_hash"]
+        )
+        if n_unresolved:
+            logger.warning(
+                "%d spent input(s) could not be resolved after cache + "
+                "getrawtransaction; their value/addresses are left null and "
+                "input_value/fee are understated for the affected transactions.",
+                n_unresolved,
+            )
+
         logger.info(
             f"[source-timing] input resolution: {len(unresolved)} txs fetched "
             f"in {t_fetch:.2f}s, {n_resolved} inputs resolved, "

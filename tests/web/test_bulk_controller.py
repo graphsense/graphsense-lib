@@ -1,6 +1,88 @@
+import asyncio
+from types import SimpleNamespace
+
+from starlette.datastructures import Headers
+
+from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
+    ObfuscateTags,
+)
+from graphsenselib.web.models import AddressTag, AddressTags
+from graphsenselib.web.routes.bulk import wrap
 from tests.web.helpers import get_json, request_with_status
 from tests.web.testdata.blocks import block, block2
 from tests.web.testdata.bulk import block_path, error_bodies, headers
+
+
+def _make_addr_tag(is_public, label):
+    return AddressTag(
+        label=label,
+        category="exchange",
+        concepts=[],
+        actor="actorX",
+        abuse=None,
+        tagpack_uri="uriX",
+        source="sourceX",
+        lastmod=0,
+        tagpack_title="Title",
+        tagpack_is_public=is_public,
+        tagpack_creator="Creator",
+        is_cluster_definer=True,
+        confidence="ownership",
+        confidence_level=100,
+        tag_type="actor",
+        currency="btc",
+        address="addr",
+        entity=123,
+    )
+
+
+def _obfuscating_request():
+    """Fake request with the ObfuscateTags plugin registered and no caller
+    X-Consumer-Groups header, so the default-obfuscate path applies."""
+    module = ObfuscateTags.__module__
+    app = SimpleNamespace(
+        state=SimpleNamespace(plugins=[ObfuscateTags], plugin_contexts={module: {}})
+    )
+    # request.state deliberately has no plugin_state attribute (defaults to {})
+    return SimpleNamespace(app=app, state=SimpleNamespace(), headers=Headers({}))
+
+
+def test_bulk_wrap_obfuscates_private_tags():
+    """Regression: bulk streaming responses bypass PluginRoute, so wrap() must
+    apply the obfuscation hooks itself. Private tag fields must be blanked while
+    the row set (and thus counts) stays identical to the un-obfuscated result."""
+    public = _make_addr_tag(True, "PublicLabel")
+    private = _make_addr_tag(False, "PrivateLabel")
+
+    async def op(ctx, currency, **params):
+        return AddressTags(address_tags=[public, private], next_page=None)
+
+    flat = asyncio.run(
+        wrap(
+            _obfuscating_request(),
+            None,
+            op,
+            "btc",
+            {},
+            {"address": "addr"},
+            1,
+            "json",
+            asyncio.Semaphore(1),
+        )
+    )
+
+    # Both tags are still present (count preserved), only content is redacted.
+    assert len(flat) == 2
+    by_public = {row["tagpack_is_public"]: row for row in flat}
+
+    assert by_public[True]["label"] == "PublicLabel"
+    assert by_public[True]["source"] == "sourceX"
+    assert by_public[True]["tagpack_uri"] == "uriX"
+
+    assert by_public[False]["label"] == ""
+    assert by_public[False]["source"] == ""
+    assert by_public[False]["tagpack_uri"] == ""
+    assert by_public[False]["actor"] == ""
 
 
 def test_bulk_csv(client):

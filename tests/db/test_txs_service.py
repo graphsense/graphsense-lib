@@ -785,3 +785,51 @@ class TestTxsServiceHeuristicsRouting:
             )
             mock_heuristics.assert_not_called()
         assert not hasattr(result, "heuristics")
+
+
+def make_raw_trx_tx(block_id=BLOCK_ID, value=302_000_000, fee=1_406_000):
+    return {
+        "tx_hash": TX_HASH,
+        "block_id": block_id,
+        "block_timestamp": 123456789,
+        "from_address": b"\x41" + b"\x00" * 19,
+        "to_address": b"\x41" + b"\x01" * 19,
+        "value": value,
+        "fee": fee,
+    }
+
+
+class TestGetAssetFlowsWithinTxAccount:
+    """get_asset_flows_within_tx must not require a trace row for the base leg.
+
+    Regression: compare_txs orchestrates per-tx via
+    get_asset_flows_within_tx(include_internal_txs=False, include_token_txs=True,
+    include_base_transaction=True). The old path fetched trace[0] as the base,
+    which 404s on TRX plain transfers (their trace table is empty); the base
+    must come from the transaction row instead.
+    """
+
+    def make_service(self, raw_tx):
+        db = MagicMock()
+        db.get_tx = AsyncMock(return_value=raw_tx)
+        db.get_token_configuration = MagicMock(return_value={})
+        db.list_token_txs = AsyncMock(return_value=[])
+        db.fetch_transaction_trace = AsyncMock(
+            side_effect=AssertionError("trace path must not be hit for TRX base lookup")
+        )
+        return TxsService(db=db, rates_service=make_rates_service(), logger=MagicMock())
+
+    async def test_trx_plain_transfer_uses_tx_row_for_base(self):
+        raw_tx = make_raw_trx_tx()
+        svc = self.make_service(raw_tx)
+        result = await svc.get_asset_flows_within_tx(
+            "trx",
+            TX_HASH.hex(),
+            include_internal_txs=False,
+            include_token_txs=True,
+            include_base_transaction=True,
+        )
+        assert len(result.txs) == 1
+        leg = result.txs[0]
+        assert leg.value.value == 302_000_000
+        assert leg.is_external is True

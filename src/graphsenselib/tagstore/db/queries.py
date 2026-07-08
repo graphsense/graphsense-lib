@@ -8,7 +8,8 @@ from json import JSONDecodeError
 from typing import Dict, List, Optional, Set
 
 from pydantic import BaseModel, computed_field
-from sqlalchemy import asc, desc, distinct, func
+from sqlalchemy import BigInteger, String, asc, bindparam, desc, distinct, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
@@ -435,6 +436,41 @@ def _get_best_cluster_tag_winners_stmt(
     )
 
 
+def _get_clusters_with_concept_stmt(
+    cluster_ids: List[int], network: str, groups: List[str], concept_id: str
+):
+    # Existence-only check using a correlated EXISTS so Postgres can short-
+    # circuit at the first matching tag per cluster. A naive
+    # ``SELECT DISTINCT cluster_id ... WHERE concept_id = :concept_id``
+    # materializes the full join product (every matching tag in every input
+    # cluster) before deduplicating — for an exchange cluster carrying
+    # thousands of exchange-tagged cluster-definer tags, that was still
+    # ~1.6 s per request. Driving from ``unnest(cluster_ids)`` with EXISTS
+    # bounds the work to ``len(cluster_ids)`` per call.
+    return text(
+        """
+        SELECT t.cluster_id
+        FROM unnest(:cluster_ids) AS t(cluster_id)
+        WHERE EXISTS (
+            SELECT 1
+            FROM best_cluster_tag bct
+            JOIN tag tg ON bct.tag_id = tg.id
+            JOIN tag_concept tc ON tc.tag_id = tg.id
+            JOIN tagpack tp ON tg.tagpack = tp.id
+            WHERE bct.cluster_id = t.cluster_id
+              AND bct.network = :network
+              AND tc.concept_id = :concept_id
+              AND tp.acl_group = ANY(:groups)
+        )
+        """
+    ).bindparams(
+        bindparam("cluster_ids", value=cluster_ids, type_=ARRAY(BigInteger)),
+        bindparam("network", value=network),
+        bindparam("concept_id", value=concept_id),
+        bindparam("groups", value=groups, type_=ARRAY(String)),
+    )
+
+
 def _get_tags_with_joinedloads_by_ids_stmt(tag_ids: List[int]):
     return (
         select(Tag, TagPack, Confidence)
@@ -511,15 +547,20 @@ def _get_tags_by_label_stmt(
     groups: List[str],
     network: Optional[str],
 ):
+    # Escape LIKE wildcards in user input so a bare "%" / "_" cannot turn the
+    # search into a full scan / match-everything pattern.
+    escaped = label.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     q = (
         select(Tag, TagPack)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(Tag.label.like(f"%{label}%"))
+        .where(Tag.label.like(f"%{escaped}%", escape="\\"))
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
+        # deterministic order so OFFSET/LIMIT pages don't overlap or drop rows
+        .order_by(Tag.id)
         .offset(offset)
         .limit(page_size)
     )
@@ -683,11 +724,18 @@ def _get_acl_groups_statement():
     return select(TagPack.acl_group).distinct()
 
 
-def _get_labels_by_clusterid_stmt(cluster_id: str, groups: List[str]):
+def _get_labels_by_clusterid_stmt(cluster_id: str, network: str, groups: List[str]):
     AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(Tag.label)
+        # gs_cluster_id is only unique per network (PK is (address, network),
+        # index is (network, gs_cluster_id)), so the cluster->address resolution
+        # MUST be scoped to the requested network — otherwise cluster #N on every
+        # other chain is matched too and its addresses' labels leak in. Tag
+        # matching itself stays network-agnostic by design (a tag on a matching
+        # identifier applies regardless of the tag's own network).
         .where(AddressClusterMap.gs_cluster_id == cluster_id)
+        .where(AddressClusterMap.network == network)
         .where(AddressClusterMap.address == Tag.identifier)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
@@ -847,9 +895,11 @@ class TagstoreDbAsync:
 
     @_inject_session
     async def get_labels_by_clusterid(
-        self, cluster_id: str, groups: List[str], session=None
+        self, cluster_id: str, network: str, groups: List[str], session=None
     ) -> List[str]:
-        results = await session.exec(_get_labels_by_clusterid_stmt(cluster_id, groups))
+        results = await session.exec(
+            _get_labels_by_clusterid_stmt(cluster_id, network, groups)
+        )
         return [x for x in results]
 
     # Get Tags by Label
@@ -994,6 +1044,26 @@ class TagstoreDbAsync:
             t, tp = pair
             result[cid] = TagPublic.fromDB(t, tp, inherited_from=InheritedFrom.CLUSTER)
         return result
+
+    @_inject_session
+    async def get_clusters_with_concept(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        concept_id: str,
+        session=None,
+    ) -> Set[int]:
+        """Return the subset of ``cluster_ids`` that have at least one
+        cluster-definer tag with ``concept_id``. Single batched query,
+        cliff-free (cost is independent of per-cluster tag count)."""
+        if not cluster_ids:
+            return set()
+        rows = await session.exec(
+            _get_clusters_with_concept_stmt(cluster_ids, network, groups, concept_id)
+        )
+        # Raw text() result rows are Row tuples even for a single column.
+        return {cid for (cid,) in rows}
 
     @_inject_session
     async def get_nr_tags_for_clusters(
