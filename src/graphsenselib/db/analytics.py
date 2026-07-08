@@ -572,13 +572,37 @@ class RawDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         else:
             r = r - 1
 
-        if validate and r != -1:
-            # ers = self.get_exchange_rates_for_block_batch([r - 1, r, r + 1])
+        if validate and r != -1 and r > 0:
             ers = self.get_exchange_rates_for_block_batch([r - 1, r])
-            assert has_er_value(ers, i=0) and has_er_value(ers, i=1)
-            # if has_er_value(ers, i=2):
-            #     logger.warning(f"Found exchange-rate for "
-            # "not yet imported block {r+1}")
+            if not (has_er_value(ers, i=0) and has_er_value(ers, i=1)):
+                # Block timestamps are not strictly monotonic (miner clock
+                # skew up to ~2h), so right after a UTC day boundary a block
+                # below r can already map to a date without exchange rates
+                # while r itself still maps to the previous day. Lower the
+                # frontier to the highest block below which rates are
+                # contiguous, so callers (e.g. forward-fill) may treat every
+                # block <= r as covered.
+                skew_window = 200  # blocks; > 2h even on ~1min-block chains
+                lo = max(r - skew_window, 0)
+                ers = self.get_exchange_rates_for_block_batch(list(range(lo, r + 1)))
+                if not has_er_value(ers, i=0):
+                    raise ValueError(
+                        f"Exchange-rate gap at block {lo} is larger than "
+                        f"the timestamp-skew window ({skew_window} blocks "
+                        f"below {r}); this is not day-boundary clock skew. "
+                        f"Check the raw exchange_rates table for missing "
+                        f"dates and the block table for ingest holes."
+                    )
+                new_r = lo
+                while new_r < r and has_er_value(ers, i=new_r + 1 - lo):
+                    new_r += 1
+                logger.warning(
+                    f"Blocks between {new_r + 1} and {r} map to a date "
+                    f"without exchange rates yet (non-monotonic block "
+                    f"timestamps at the UTC day boundary); lowering the "
+                    f"exchange-rate frontier from {r} to {new_r}."
+                )
+                r = new_r
 
         return r
 
