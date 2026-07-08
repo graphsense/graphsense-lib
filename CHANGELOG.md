@@ -10,9 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [Unreleased]
-
-> Target release: **2.15.0** on both tracks — `v2.15.0` (Library) and `webapi-2.15.0` (Web API). This is a larger release (new `POST /graph/*` endpoints, per-token exchange rates, and broad ingest/serving correctness fixes); the Web API version is realigned to the library version.
+## [2.15.0] - unreleased
 
 ### Library
 
@@ -58,7 +56,7 @@ Use one changelog file, but separate entries by track in each release window.
 - **Cluster label lookups no longer bleed across networks.** `get_labels_by_clusterid` resolves a cluster to its addresses via `address_cluster_mapping`, whose `gs_cluster_id` is only unique per network, but applied no network predicate — so a numeric cluster id matched cluster #N on every chain and returned the labels of unrelated same-numbered clusters (and could not use the `(network, gs_cluster_id)` index). The cluster→address resolution is now scoped to the requested network; tag matching itself stays network-agnostic by design. Label search additionally escapes `%`/`_` wildcards in user input and paginates with a deterministic order.
 - **The file-store download token is no longer written to application logs.** `url_for` logged the full download URL (including the bearer token) at WARNING on every mint; the token is now redacted and the diagnostic lowered to DEBUG.
 
-### Web API + Python client
+### Web API + Python client (webapi-2.15.0)
 
 #### Added
 - **New currency-less `POST /graph/summary` (beta).** The request body carries a list of mixed-network references (`GraphTxRef`/`GraphAddressRef`, each naming its own `network`), so a single call can summarize transactions and addresses spanning several chains. Fiat is not selected by a request parameter: every monetary value is emitted for both `eur` and `usd` via the shared `Values`/`Rate` pattern. The response carries a `txs` and/or `addresses` block (one per requested reference type), each holding an `overall` rollup aggregating across all its references plus a `networks` list with one entry per distinct network. Unknown references do not fail the request: they are dropped and reported per network in a machine-readable `nodes_not_found` note (`items` carries the refs); 404 only when fewer than 2 of a list's references exist. Duplicate references (including spelling variants of one node) collapse and are reported per network in a `duplicates_collapsed` note; sub-transaction identifiers (`<hash>_T1`) are rejected with a 400 since their legs are aggregated under the base hash anyway. Value totals are gross (UTXO txs contribute their full output sum, change included), documented as such in the schema. `total_fee` is always known on UTXO networks (`0` for an all-coinbase set); on account chains `null` means fee data was unavailable for at least one tx (partial sums are never emitted). Marked **beta** (`x-beta` in the OpenAPI spec): the contract may still change without a deprecation cycle.
