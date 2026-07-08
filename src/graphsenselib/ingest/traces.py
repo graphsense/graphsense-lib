@@ -8,7 +8,6 @@ The output dict format is identical to ethereum-etl's trace_mapper.trace_to_dict
 """
 
 import logging
-import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -274,7 +273,7 @@ class TraceExporter:
         self.trace_batch_size = trace_batch_size
         self.max_workers = max_workers
 
-    def _fetch_traces_for_blocks(self, block_numbers, max_retries=15):
+    def _fetch_traces_for_blocks(self, block_numbers):
         """Fetch traces for a batch of blocks via a single batch JSON-RPC call.
 
         Returns dict mapping block_number -> list of trace dicts,
@@ -290,23 +289,11 @@ class TraceExporter:
             for bn in block_numbers
         ]
 
-        last_error: Exception = Exception("no retries attempted")
-        for attempt in range(max_retries):
-            try:
-                results = self.client.make_batch_request(rpc_requests)
-                break
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    wait = min(2**attempt, 30)
-                    logger.warning(
-                        f"Batch trace_block retry {attempt + 1}/{max_retries} "
-                        f"for blocks {block_numbers[0]}-{block_numbers[-1]}: {e}. "
-                        f"Waiting {wait}s."
-                    )
-                    time.sleep(wait)
-        else:
-            raise last_error
+        # make_batch_request already retries transient failures with exponential
+        # backoff (and resets the session on connection errors); do NOT wrap it in
+        # a second retry loop — that nests to max_retries^2 attempts (~225) and can
+        # hammer a dead endpoint for over an hour before failing.
+        results = self.client.make_batch_request(rpc_requests)
 
         if not isinstance(results, list):
             results = [results]
