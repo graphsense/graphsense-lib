@@ -365,6 +365,12 @@ def export_delta(
         # the abort-with-recovery-command path if catch-up exceeds the gap
         # limit or fails to align the heights afterwards.
         if write_mode == "append":
+            # Crash recovery: a prior run may have committed side tables past its
+            # reported highest_block (Delta writes `block` last). Remove those
+            # orphaned rows before resuming so re-ingest from highest+1 doesn't
+            # duplicate them. Runs under the ingest locks acquired above.
+            for sink in runner.sinks:
+                sink.discard_writes_after_highest_block()
             _catch_up_diverged_sinks(
                 runner,
                 source,
