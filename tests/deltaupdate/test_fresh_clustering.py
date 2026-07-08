@@ -1,18 +1,23 @@
 """Unit tests for the v2 incremental fresh-clustering classifier.
 
 ``_plan_clustering_changes`` is a pure function (no DB / no Rust): it takes
-pre-grouped components plus a cluster-stats dict and a member-reader callback,
-and plans the writes. These tests pin the new/join/merge classification, the
-size-chosen survivor rule, and the guarantee that membership is read only for
-the absorbed side of a merge.
+pre-grouped components, the stored :class:`_ClusterStats` of every existing
+cluster, and the one-member contribution of every newly-clustered address, and
+plans the writes. These tests pin the new/join/merge classification, the
+smaller-root survivor rule, the guarantee that membership is read only for the
+absorbed side of a merge, and — the member-sum maintenance — that every stat
+column of the upserted row is the additive fold of the surviving/absorbed
+clusters' aggregates plus the new addresses' contributions.
 """
 
 import pytest
 
 from graphsenselib.datatypes import DbChangeType
 from graphsenselib.db import DbChange
+from graphsenselib.deltaupdate.update.generic import DeltaValue
 from graphsenselib.deltaupdate.update.utxo.update import (
     ClusteringChanges,
+    _ClusterStats,
     _clustering_changes_to_db,
     _components_via_rust,
     _plan_clustering_changes,
@@ -22,6 +27,55 @@ from graphsenselib.utils.utxo import (
     multi_input_address_sets,
     resolve_address_id_sets,
 )
+
+
+# --------------------------------------------------------------------------- #
+# Stat helpers: a currency struct is a DeltaValue (value + per-fiat values);
+# fiat_values distinct per column ([v, 2v]) so an element-wise sum is exercised.
+# --------------------------------------------------------------------------- #
+def _cur(v):
+    return DeltaValue(value=v, fiat_values=[float(v), float(2 * v)])
+
+
+def _cs(no_addresses, min_id, first, last, no_in, no_out, recv, spent):
+    """An existing cluster's stored aggregate."""
+    return _ClusterStats(
+        no_addresses, min_id, first, last, no_in, no_out, _cur(recv), _cur(spent)
+    )
+
+
+def _addr_cs(addr_id, first, last, no_in, no_out, recv, spent):
+    """One new address's one-member contribution."""
+    return _ClusterStats(
+        1, addr_id, first, last, no_in, no_out, _cur(recv), _cur(spent)
+    )
+
+
+def _stats_row(cid, no_addresses, min_id, first, last, no_in, no_out, recv, spent):
+    """A fresh_cluster_stats row as the DB reader returns it (attribute access)."""
+    return MutableNamedTuple(
+        cluster_id=cid,
+        no_addresses=no_addresses,
+        min_address_id=min_id,
+        first_tx_id=first,
+        last_tx_id=last,
+        no_incoming_txs=no_in,
+        no_outgoing_txs=no_out,
+        total_received=_cur(recv),
+        total_spent=_cur(spent),
+    )
+
+
+def _addr_row(first, last, no_in, no_out, recv, spent):
+    """An ``address`` stat row as the DB reader returns it."""
+    return MutableNamedTuple(
+        first_tx_id=first,
+        last_tx_id=last,
+        no_incoming_txs=no_in,
+        no_outgoing_txs=no_out,
+        total_received=_cur(recv),
+        total_spent=_cur(spent),
+    )
 
 
 class _FakeMembers:
@@ -49,11 +103,19 @@ def test_new_cluster_two_addresses():
         components=[[20, 10]],
         addr_to_cluster={},
         stats={},
+        addr_stats={
+            20: _addr_cs(20, first=5, last=90, no_in=1, no_out=4, recv=2000, spent=200),
+            10: _addr_cs(
+                10, first=10, last=100, no_in=2, no_out=3, recv=1000, spent=100
+            ),
+        },
         get_members=_never,
     )
-    # cluster_id = min address (canonical)
+    # cluster_id = min address (canonical); stats are the member sum of 10 + 20
     assert sorted(cc.address_assignments) == [(10, 10), (20, 10)]
-    assert cc.stats_upserts == [(10, 2, 10)]
+    assert cc.stats_upserts == [
+        (10, _cs(2, 10, first=5, last=100, no_in=3, no_out=7, recv=3000, spent=300))
+    ]
     assert cc.member_deletes == []
     assert cc.stats_deletes == []
 
@@ -63,6 +125,7 @@ def test_new_cluster_singleton_skipped():
         components=[[42]],
         addr_to_cluster={},
         stats={},
+        addr_stats={42: _addr_cs(42, 1, 1, 1, 1, 1, 1)},
         get_members=_never,
     )
     assert cc.is_empty
@@ -75,11 +138,21 @@ def test_join_new_address_into_existing_cluster():
     cc = _plan_clustering_changes(
         components=[[10, 5]],  # 10 new, 5 already in cluster 100
         addr_to_cluster={5: 100},
-        stats={100: (3, 4)},  # size 3, min 4
+        stats={
+            100: _cs(3, 4, first=4, last=50, no_in=6, no_out=9, recv=5000, spent=500)
+        },
+        addr_stats={
+            10: _addr_cs(
+                10, first=10, last=60, no_in=1, no_out=2, recv=1000, spent=100
+            ),
+        },
         get_members=_never,  # must NOT read membership for a join
     )
     assert cc.address_assignments == [(10, 100)]  # only the new addr changes
-    assert cc.stats_upserts == [(100, 4, 4)]  # size 3+1, min(4, 10)=4
+    # size 3+1, min(4,10)=4, and every rich column += the joining address
+    assert cc.stats_upserts == [
+        (100, _cs(4, 4, first=4, last=60, no_in=7, no_out=11, recv=6000, spent=600))
+    ]
     assert cc.member_deletes == []
     assert cc.stats_deletes == []
 
@@ -89,7 +162,8 @@ def test_join_noop_when_no_new_addresses():
     cc = _plan_clustering_changes(
         components=[[5, 6]],
         addr_to_cluster={5: 100, 6: 100},
-        stats={100: (9, 1)},
+        stats={100: _cs(9, 1, 1, 9, 9, 9, 900, 90)},
+        addr_stats={},
         get_members=_never,
     )
     assert cc.is_empty
@@ -106,7 +180,13 @@ def test_merge_smaller_root_survives_reads_only_absorbed():
     cc = _plan_clustering_changes(
         components=[[3, 6, 99]],  # 3->C3, 6->C6, 99 new
         addr_to_cluster={3: 3, 6: 6},
-        stats={3: (10, 3), 6: (2, 6)},
+        stats={
+            3: _cs(10, 3, first=3, last=40, no_in=5, no_out=5, recv=3000, spent=300),
+            6: _cs(2, 6, first=6, last=30, no_in=2, no_out=1, recv=600, spent=60),
+        },
+        addr_stats={
+            99: _addr_cs(99, first=99, last=99, no_in=1, no_out=1, recv=99, spent=9),
+        },
         get_members=members,
     )
     # only the absorbed (higher-root) cluster's membership is read
@@ -116,8 +196,10 @@ def test_merge_smaller_root_survives_reads_only_absorbed():
     # the old reverse-index rows of the absorbed cluster are deleted (FM3)
     assert sorted(cc.member_deletes) == [(6, 6), (6, 7)]
     assert cc.stats_deletes == [6]
-    # survivor stats: size 10 + 2 + 1(new) = 13, root stays 3
-    assert cc.stats_upserts == [(3, 13, 3)]
+    # survivor stats: C3 + C6 + the new address, folded member-sum
+    assert cc.stats_upserts == [
+        (3, _cs(13, 3, first=3, last=99, no_in=8, no_out=7, recv=3699, spent=369))
+    ]
 
 
 def test_merge_larger_cluster_absorbed_when_root_is_higher():
@@ -128,14 +210,21 @@ def test_merge_larger_cluster_absorbed_when_root_is_higher():
     cc = _plan_clustering_changes(
         components=[[3, 6]],  # 3->C3 (small), 6->C6 (large)
         addr_to_cluster={3: 3, 6: 6},
-        stats={3: (2, 3), 6: (100, 6)},
+        stats={
+            3: _cs(2, 3, first=3, last=8, no_in=1, no_out=1, recv=30, spent=3),
+            6: _cs(100, 6, first=1, last=99, no_in=50, no_out=40, recv=9000, spent=900),
+        },
+        addr_stats={},
         get_members=members,
     )
     assert members.calls == [[6]]  # the large cluster is read & re-pointed
     assert cc.stats_deletes == [6]
     assert sorted(cc.address_assignments) == [(6, 3), (7, 3)]
     assert sorted(cc.member_deletes) == [(6, 6), (6, 7)]
-    assert cc.stats_upserts == [(3, 102, 3)]  # 2 + 100, root 3
+    # 2 + 100 members, root 3; first=min(3,1)=1, last=max(8,99)=99
+    assert cc.stats_upserts == [
+        (3, _cs(102, 3, first=1, last=99, no_in=51, no_out=41, recv=9030, spent=903))
+    ]
 
 
 def test_merge_three_clusters_absorbs_all_but_survivor():
@@ -144,7 +233,14 @@ def test_merge_three_clusters_absorbs_all_but_survivor():
     cc = _plan_clustering_changes(
         components=[[5, 15, 25]],  # 5->C5, 15->C15, 25->C25
         addr_to_cluster={5: 5, 15: 15, 25: 25},
-        stats={5: (2, 5), 15: (50, 15), 25: (4, 25)},
+        stats={
+            5: _cs(2, 5, first=5, last=6, no_in=1, no_out=1, recv=20, spent=2),
+            15: _cs(
+                50, 15, first=2, last=80, no_in=25, no_out=20, recv=5000, spent=500
+            ),
+            25: _cs(4, 25, first=25, last=40, no_in=3, no_out=2, recv=400, spent=40),
+        },
+        addr_stats={},
         get_members=members,
     )
     # both higher-root clusters absorbed in one read call
@@ -152,17 +248,20 @@ def test_merge_three_clusters_absorbs_all_but_survivor():
     assert cc.stats_deletes == [15, 25]
     assert sorted(cc.address_assignments) == [(15, 5), (25, 5)]
     assert sorted(cc.member_deletes) == [(15, 15), (25, 25)]
-    # 2 + 50 + 4 = 56, root 5
-    assert cc.stats_upserts == [(5, 56, 5)]
+    # 2 + 50 + 4 = 56, root 5; first=min(5,2,25)=2, last=max(6,80,40)=80
+    assert cc.stats_upserts == [
+        (5, _cs(56, 5, first=2, last=80, no_in=29, no_out=23, recv=5420, spent=542))
+    ]
 
 
 # --------------------------------------------------------------------------- #
 # _clustering_changes_to_db translation
 # --------------------------------------------------------------------------- #
 def test_changes_to_db_inserts_and_deletes():
+    st = _cs(5, 3, first=10, last=20, no_in=7, no_out=4, recv=500, spent=100)
     cc = ClusteringChanges(
         address_assignments=[(7, 100)],
-        stats_upserts=[(100, 5, 3)],
+        stats_upserts=[(100, st)],
         member_deletes=[(200, 7)],
         stats_deletes=[200],
     )
@@ -181,12 +280,19 @@ def test_changes_to_db_inserts_and_deletes():
     assert of("fresh_cluster_addresses", DbChangeType.NEW) == [
         {"cluster_id_group": 10, "cluster_id": 100, "address_id": 7}
     ]
+    # the stats row now carries every member-sum column, all non-null
     assert of("fresh_cluster_stats", DbChangeType.NEW) == [
         {
             "cluster_id_group": 10,
             "cluster_id": 100,
             "no_addresses": 5,
             "min_address_id": 3,
+            "first_tx_id": 10,
+            "last_tx_id": 20,
+            "no_incoming_txs": 7,
+            "no_outgoing_txs": 4,
+            "total_received": _cur(500),
+            "total_spent": _cur(100),
         }
     ]
     assert of("fresh_cluster_addresses", DbChangeType.DELETE) == [
@@ -226,10 +332,11 @@ def test_components_synthetic_preunion_merges_same_cluster():
 # an in-memory fake of db.transformed (no Cassandra, real Rust grouping).
 # --------------------------------------------------------------------------- #
 class _FakeTransformed:
-    def __init__(self, addr_to_cluster, stats, members_by_cluster):
+    def __init__(self, addr_to_cluster, stats_rows, members_by_cluster, address_rows):
         self._a2c = addr_to_cluster
-        self._stats = stats
+        self._stats = stats_rows
         self._members = members_by_cluster
+        self._addr = address_rows
         self.member_calls = []
 
     def get_fresh_clusters_for_addresses(self, address_ids):
@@ -237,6 +344,9 @@ class _FakeTransformed:
 
     def get_fresh_cluster_stats(self, cluster_ids):
         return {c: self._stats[c] for c in cluster_ids if c in self._stats}
+
+    def get_address_stats(self, address_ids):
+        return {a: self._addr[a] for a in address_ids if a in self._addr}
 
     def get_fresh_cluster_members(self, cluster_ids):
         self.member_calls.append(list(cluster_ids))
@@ -254,8 +364,12 @@ def test_run_incremental_clustering_merge_end_to_end():
 
     tdb = _FakeTransformed(
         addr_to_cluster={5: 100, 6: 200},
-        stats={100: (10, 3), 200: (2, 6)},
+        stats_rows={
+            100: _stats_row(100, 10, 3, 3, 50, 5, 5, 3000, 300),
+            200: _stats_row(200, 2, 6, 6, 40, 2, 1, 600, 60),
+        },
         members_by_cluster={100: [3, 5], 200: [6, 7]},
+        address_rows={},  # 5 and 6 are both already clustered -> no new addresses
     )
     cc = run_incremental_clustering(_FakeDb(tdb), [[5, 6]])
 
@@ -264,7 +378,10 @@ def test_run_incremental_clustering_merge_end_to_end():
     assert sorted(cc.address_assignments) == [(6, 100), (7, 100)]
     assert sorted(cc.member_deletes) == [(200, 6), (200, 7)]
     assert cc.stats_deletes == [200]
-    assert cc.stats_upserts == [(100, 12, 3)]  # 10+2, min(3,6)=3
+    # 10+2 members, min(3,6)=3, folded member-sum of C100 + C200
+    assert cc.stats_upserts == [
+        (100, _cs(12, 3, first=3, last=50, no_in=7, no_out=6, recv=3600, spent=360))
+    ]
 
 
 def test_run_incremental_clustering_guards_on_missing_stats():
@@ -274,8 +391,9 @@ def test_run_incremental_clustering_guards_on_missing_stats():
     # address 6 is in cluster 200 but 200 has no stats row -> must raise
     tdb = _FakeTransformed(
         addr_to_cluster={5: 100, 6: 200},
-        stats={100: (10, 3)},
+        stats_rows={100: _stats_row(100, 10, 3, 3, 50, 5, 5, 3000, 300)},
         members_by_cluster={},
+        address_rows={},
     )
     with pytest.raises(RuntimeError, match="fresh_cluster_stats missing"):
         run_incremental_clustering(_FakeDb(tdb), [[5, 6]])
@@ -377,14 +495,44 @@ def test_harvest_end_to_end():
 
 
 # --------------------------------------------------------------------------- #
-# One-off (all-at-once) vs incremental (batched) partition equivalence on a
-# manufactured edge set.  The one-off side uses the same Rust clustering the
-# PySpark one-off drives (process_transactions + get_mapping); the incremental
-# side runs the production run_incremental_clustering planner across batches,
-# with an in-memory model of the fresh_* tables standing in for Cassandra.  The
-# address-set partition must be identical for any batch size (cluster_id labels
-# may differ — that is why we compare memberships).
+# One-off (all-at-once) vs incremental (batched) equivalence on a manufactured
+# edge set.  The one-off side uses the same Rust clustering the PySpark one-off
+# drives (process_transactions + get_mapping); the incremental side runs the
+# production run_incremental_clustering planner across batches, with an in-memory
+# model of the fresh_* tables standing in for Cassandra.  Both the address-set
+# partition AND every stored cluster's member-sum stats must match the from-
+# scratch result for any batch size (cluster_id labels may differ — that is why
+# we compare memberships).
 # --------------------------------------------------------------------------- #
+
+# per-address stat rows for every address in EDGES (deliberately distinct so a
+# missed / double-counted member would change a sum).
+_ADDR_STATS = {
+    1: _addr_row(first=1, last=101, no_in=1, no_out=2, recv=100, spent=10),
+    2: _addr_row(first=2, last=102, no_in=2, no_out=3, recv=200, spent=20),
+    3: _addr_row(first=3, last=103, no_in=3, no_out=4, recv=300, spent=30),
+    5: _addr_row(first=5, last=105, no_in=5, no_out=6, recv=500, spent=50),
+    6: _addr_row(first=6, last=106, no_in=6, no_out=7, recv=600, spent=60),
+    10: _addr_row(first=10, last=110, no_in=10, no_out=11, recv=1000, spent=100),
+    11: _addr_row(first=11, last=111, no_in=11, no_out=12, recv=1100, spent=110),
+    20: _addr_row(first=20, last=120, no_in=20, no_out=21, recv=2000, spent=200),
+    21: _addr_row(first=21, last=121, no_in=21, no_out=22, recv=2100, spent=210),
+    22: _addr_row(first=22, last=122, no_in=22, no_out=23, recv=2200, spent=220),
+    99: _addr_row(first=99, last=199, no_in=99, no_out=100, recv=9900, spent=990),
+}
+
+EDGES = [
+    [1, 2],  # new {1,2}
+    [2, 3],  # join 3
+    [10, 11],  # new {10,11}
+    [3, 10],  # merge {1,2,3} + {10,11}
+    [20, 21, 22],  # new {20,21,22}
+    [5, 6],  # new {5,6}
+    [6, 20],  # merge {5,6} + {20,21,22}
+    [99, 1],  # join 99 into the big cluster
+]
+
+
 def _full_partition(edges, max_id):
     from gs_clustering import Clustering
 
@@ -401,14 +549,25 @@ def _full_partition(edges, max_id):
     return {frozenset(m) for m in clusters.values() if len(m) >= 2}
 
 
+def _expected_stats(members):
+    """The from-scratch member-sum of a set of addresses (all rows present)."""
+    it = iter(sorted(members))
+    first = next(it)
+    agg = _ClusterStats.from_address_row(first, _ADDR_STATS[first], 2)
+    for a in it:
+        agg = agg.merge(_ClusterStats.from_address_row(a, _ADDR_STATS[a], 2))
+    return agg
+
+
 class _FreshStore:
     """In-memory model of the fresh_* tables: serves the reads
-    run_incremental_clustering needs and applies the planned ClusteringChanges,
-    so we can drive the production planner across batches without Cassandra."""
+    run_incremental_clustering needs (including per-address stats) and applies
+    the planned ClusteringChanges, so we can drive the production planner across
+    batches without Cassandra."""
 
     def __init__(self):
         self.addr_to_cluster: dict = {}
-        self.stats: dict = {}
+        self.stats: dict = {}  # cluster_id -> _ClusterStats
         self.members: dict = {}
 
     # reads used by run_incremental_clustering
@@ -420,7 +579,15 @@ class _FreshStore:
         ]
 
     def get_fresh_cluster_stats(self, cluster_ids):
-        return {c: self.stats[c] for c in cluster_ids if c in self.stats}
+        # return the stored aggregate as a row (attribute access), as Cassandra would
+        return {
+            c: MutableNamedTuple(cluster_id=c, **self.stats[c]._asdict())
+            for c in cluster_ids
+            if c in self.stats
+        }
+
+    def get_address_stats(self, address_ids):
+        return {a: _ADDR_STATS[a] for a in address_ids if a in _ADDR_STATS}
 
     def get_fresh_cluster_members(self, cluster_ids):
         return [(c, a) for c in cluster_ids for a in self.members.get(c, ())]
@@ -435,8 +602,8 @@ class _FreshStore:
             self.members.setdefault(cluster_id, set()).add(address_id)
         for cluster_id, address_id in cc.member_deletes:
             self.members.get(cluster_id, set()).discard(address_id)
-        for cluster_id, size, min_aid in cc.stats_upserts:
-            self.stats[cluster_id] = (size, min_aid)
+        for cluster_id, st in cc.stats_upserts:
+            self.stats[cluster_id] = st
         for cluster_id in cc.stats_deletes:
             self.stats.pop(cluster_id, None)
             self.members.pop(cluster_id, None)
@@ -454,28 +621,26 @@ class _FreshStoreDb:
 
 
 @pytest.mark.parametrize("batch_size", [1, 2, 3, 100])
-def test_oneoff_vs_incremental_partition_equivalence(batch_size):
+def test_oneoff_vs_incremental_partition_and_stats(batch_size):
     pytest.importorskip("gs_clustering")
     from graphsenselib.deltaupdate.update.utxo.update import run_incremental_clustering
 
-    # manufactured edges exercising new / join / cross-batch merge
-    edges = [
-        [1, 2],  # new {1,2}
-        [2, 3],  # join 3
-        [10, 11],  # new {10,11}
-        [3, 10],  # merge {1,2,3} + {10,11}
-        [20, 21, 22],  # new {20,21,22}
-        [5, 6],  # new {5,6}
-        [6, 20],  # merge {5,6} + {20,21,22}
-        [99, 1],  # join 99 into the big cluster
-    ]
-    max_id = max(a for e in edges for a in e)
-
-    full = _full_partition(edges, max_id)
+    max_id = max(a for e in EDGES for a in e)
+    full = _full_partition(EDGES, max_id)
 
     store = _FreshStore()
-    for i in range(0, len(edges), batch_size):
-        cc = run_incremental_clustering(_FreshStoreDb(store), edges[i : i + batch_size])
+    for i in range(0, len(EDGES), batch_size):
+        cc = run_incremental_clustering(_FreshStoreDb(store), EDGES[i : i + batch_size])
         store.apply(cc)
 
+    # membership matches the from-scratch partition ...
     assert store.partition() == full
+
+    # ... and every stored cluster's stats are exactly the member sum of its
+    # addresses, additively maintained regardless of the batch split.
+    by_cid: dict = {}
+    for addr, cid in store.addr_to_cluster.items():
+        by_cid.setdefault(cid, set()).add(addr)
+    assert set(store.stats) == set(by_cid)
+    for cid, members in by_cid.items():
+        assert store.stats[cid] == _expected_stats(members), (cid, sorted(members))

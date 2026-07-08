@@ -870,13 +870,18 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         )
         return [(r.cluster_id, r.address_id) for r in rows]
 
-    def get_fresh_cluster_stats(self, cluster_ids) -> Dict[int, Tuple[int, int]]:
-        """Read (no_addresses, min_address_id) per cluster from fresh_cluster_stats.
+    def get_fresh_cluster_stats(self, cluster_ids) -> Dict[int, object]:
+        """Read the full stat row per cluster from fresh_cluster_stats.
 
-        One stat row per (cluster_id_group, cluster_id) read per-key concurrently
-        — cheap relative to get_fresh_cluster_members (which reads full membership
-        partitions). Used to pick the larger survivor on a merge without reading
-        either side's membership.
+        Returns ``{cluster_id: row}`` where each row carries ``no_addresses``,
+        ``min_address_id``, ``first_tx_id``, ``last_tx_id``, ``no_incoming_txs``,
+        ``no_outgoing_txs``, ``total_received`` and ``total_spent`` — the full
+        member-sum aggregate the incremental updater folds additively on a
+        new/join/merge (see ``update.py``). One stat row per (cluster_id_group,
+        cluster_id), read per-key concurrently — cheap relative to
+        get_fresh_cluster_members (which reads full membership partitions).
+        Rich columns are null on rows written by a pre-member-sum delta (or a
+        not-yet-recomputed keyspace); the caller coalesces those to zero.
         """
         if not cluster_ids:
             return {}
@@ -884,12 +889,38 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             self._keyspace,
             "fresh_cluster_stats",
             "cluster_id",
-            "cluster_id, no_addresses, min_address_id",
+            "cluster_id, no_addresses, min_address_id, first_tx_id, last_tx_id, "
+            "no_incoming_txs, no_outgoing_txs, total_received, total_spent",
             list(cluster_ids),
             group_column="cluster_id_group",
             bucket_size=self.get_cluster_id_bucket_size(),
         )
-        return {r.cluster_id: (r.no_addresses, r.min_address_id) for r in rows}
+        return {r.cluster_id: r for r in rows}
+
+    def get_address_stats(self, address_ids) -> Dict[int, object]:
+        """Read per-address stat columns from ``address`` for member-sum clustering.
+
+        Returns ``{address_id: row}`` with ``first_tx_id``, ``last_tx_id``,
+        ``no_incoming_txs``, ``no_outgoing_txs``, ``total_received`` and
+        ``total_spent`` — the per-member contribution the incremental updater
+        adds into a cluster's stats when an address is newly clustered. Addresses
+        with no row (not yet flushed for the current batch) are simply absent;
+        the caller treats a miss as a zero contribution (healed by the next
+        recompute), consistent with the member-sum's weekly-fresh semantics.
+        """
+        if not address_ids:
+            return {}
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "address",
+            "address_id",
+            "address_id, first_tx_id, last_tx_id, no_incoming_txs, "
+            "no_outgoing_txs, total_received, total_spent",
+            list(address_ids),
+            group_column="address_id_group",
+            bucket_size=self.get_address_id_bucket_size(),
+        )
+        return {r.address_id: r for r in rows}
 
     def get_exchange_rates_by_block(self, block) -> Iterable:
         return self.select_one("exchange_rates", where={"block_id": block})

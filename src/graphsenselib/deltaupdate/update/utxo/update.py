@@ -63,20 +63,123 @@ def _check_gs_clustering():
 LARGE_MERGE_WARNING_THRESHOLD = 100_000
 
 
+def _min_opt(a: Optional[int], b: Optional[int]) -> Optional[int]:
+    """min ignoring None (a null first_tx_id contributes nothing)."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return min(a, b)
+
+
+def _max_opt(a: Optional[int], b: Optional[int]) -> Optional[int]:
+    """max ignoring None (a null last_tx_id contributes nothing)."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return max(a, b)
+
+
+def _dv_from_currency(cur, num_fiat: int) -> DeltaValue:
+    """Build a DeltaValue from a Cassandra ``currency`` UDT (or a null one).
+
+    A null column (pre-member-sum row, or an address not yet flushed) becomes a
+    zero of the keyspace's fiat width so the additive merge never sees ``None``.
+    """
+    if cur is None:
+        return DeltaValue(value=0, fiat_values=[0] * num_fiat)
+    return DeltaValue(value=cur.value, fiat_values=list(cur.fiat_values))
+
+
+class _ClusterStats(NamedTuple):
+    """The additive member-sum aggregate of a fresh cluster's ``address`` rows.
+
+    Every column is the same member sum / extremum the one-off recompute
+    (``transformation.clustering.cluster_additive_stats``) and the read-time
+    fallback produced, so the delta can maintain them by folding contributions:
+    counts / currency values add, ``min_address_id`` / ``first_tx_id`` take the
+    min, ``last_tx_id`` the max. ``no_incoming_txs`` / ``no_outgoing_txs`` are
+    member sums and intentionally OVERCOUNT co-spends (accepted; the weekly
+    recompute is the backstop). Existing members that keep growing between
+    mutations are not re-summed here — that drift is what makes the columns
+    weekly-fresh rather than always-fresh.
+    """
+
+    no_addresses: int
+    min_address_id: int
+    first_tx_id: Optional[int]
+    last_tx_id: Optional[int]
+    no_incoming_txs: int
+    no_outgoing_txs: int
+    total_received: DeltaValue
+    total_spent: DeltaValue
+
+    def merge(self, other: "_ClusterStats") -> "_ClusterStats":
+        return _ClusterStats(
+            no_addresses=self.no_addresses + other.no_addresses,
+            min_address_id=min(self.min_address_id, other.min_address_id),
+            first_tx_id=_min_opt(self.first_tx_id, other.first_tx_id),
+            last_tx_id=_max_opt(self.last_tx_id, other.last_tx_id),
+            no_incoming_txs=self.no_incoming_txs + other.no_incoming_txs,
+            no_outgoing_txs=self.no_outgoing_txs + other.no_outgoing_txs,
+            total_received=self.total_received.merge(other.total_received),
+            total_spent=self.total_spent.merge(other.total_spent),
+        )
+
+    @classmethod
+    def from_stats_row(cls, row, num_fiat: int) -> "_ClusterStats":
+        """The stored aggregate of an existing cluster (fresh_cluster_stats row)."""
+        return cls(
+            no_addresses=row.no_addresses,
+            min_address_id=row.min_address_id,
+            first_tx_id=row.first_tx_id,
+            last_tx_id=row.last_tx_id,
+            no_incoming_txs=row.no_incoming_txs or 0,
+            no_outgoing_txs=row.no_outgoing_txs or 0,
+            total_received=_dv_from_currency(row.total_received, num_fiat),
+            total_spent=_dv_from_currency(row.total_spent, num_fiat),
+        )
+
+    @classmethod
+    def from_address_row(cls, address_id: int, row, num_fiat: int) -> "_ClusterStats":
+        """One newly-clustered address's contribution (its ``address`` row).
+
+        A missing row (``None``) still counts one address at ``address_id`` but
+        contributes nothing else — matching the one-off's left-join, which counts
+        every member yet coalesces an absent address to zero / null.
+        """
+        if row is None:
+            zero = DeltaValue(value=0, fiat_values=[0] * num_fiat)
+            return cls(1, address_id, None, None, 0, 0, zero, zero)
+        return cls(
+            no_addresses=1,
+            min_address_id=address_id,
+            first_tx_id=row.first_tx_id,
+            last_tx_id=row.last_tx_id,
+            no_incoming_txs=row.no_incoming_txs or 0,
+            no_outgoing_txs=row.no_outgoing_txs or 0,
+            total_received=_dv_from_currency(row.total_received, num_fiat),
+            total_spent=_dv_from_currency(row.total_spent, num_fiat),
+        )
+
+
 class ClusteringChanges(NamedTuple):
     """Planned writes for one incremental fresh-clustering step.
 
     address_assignments: (address_id, cluster_id) to (over)write in
         ``fresh_address_cluster`` and insert into ``fresh_cluster_addresses``.
-    stats_upserts: (cluster_id, no_addresses, min_address_id) for
-        ``fresh_cluster_stats`` of new / joined / surviving clusters.
+    stats_upserts: (cluster_id, :class:`_ClusterStats`) for ``fresh_cluster_stats``
+        of new / joined / surviving clusters — the full member-sum aggregate, so
+        every stat column is written non-null and the read path needs no
+        member-scan fallback.
     member_deletes: (cluster_id, address_id) reverse-index rows to delete from
         ``fresh_cluster_addresses`` for the absorbed side of a merge.
     stats_deletes: cluster_ids whose ``fresh_cluster_stats`` row to delete.
     """
 
     address_assignments: List[Tuple[int, int]]
-    stats_upserts: List[Tuple[int, int, int]]
+    stats_upserts: List[Tuple[int, "_ClusterStats"]]
     member_deletes: List[Tuple[int, int]]
     stats_deletes: List[int]
 
@@ -138,18 +241,24 @@ def _components_via_rust(
 def _plan_clustering_changes(
     components: List[List[int]],
     addr_to_cluster: Dict[int, int],
-    stats: Dict[int, Tuple[int, int]],
+    stats: Dict[int, "_ClusterStats"],
+    addr_stats: Dict[int, "_ClusterStats"],
     get_members: Callable[[List[int]], List[Tuple[int, int]]],
 ) -> ClusteringChanges:
     """Classify each component as new / join / merge and plan the writes.
 
-    Pure function (no DB or Rust). ``stats`` maps cluster_id -> (size,
-    min_address_id) for every existing cluster referenced by ``components``;
+    Pure function (no DB or Rust). ``stats`` maps cluster_id -> the stored
+    :class:`_ClusterStats` member-sum for every existing cluster referenced by
+    ``components``; ``addr_stats`` maps each newly-clustered address_id to its
+    one-member contribution. A cluster's new stats are the additive fold of the
+    surviving/joined clusters' aggregates plus every new address's contribution,
+    so ``no_addresses`` / ``min_address_id`` come out identical to the old
+    size/min bookkeeping while the rich columns become member sums.
     ``get_members(cluster_ids)`` returns (cluster_id, address_id) rows and is
     called only for the absorbed (non-survivor) side of a merge.
     """
     address_assignments: List[Tuple[int, int]] = []
-    stats_upserts: List[Tuple[int, int, int]] = []
+    stats_upserts: List[Tuple[int, "_ClusterStats"]] = []
     member_deletes: List[Tuple[int, int]] = []
     stats_deletes: List[int] = []
 
@@ -163,21 +272,23 @@ def _plan_clustering_changes(
             if len(members) < 2:
                 continue
             cid = min(members)
+            agg = addr_stats[members[0]]
+            for a in members[1:]:
+                agg = agg.merge(addr_stats[a])
             for a in members:
                 address_assignments.append((a, cid))
-            stats_upserts.append((cid, len(members), cid))
+            stats_upserts.append((cid, agg))
 
         elif len(existing) == 1:
             # JOIN — only the new addresses change; existing members keep their id.
             cid = next(iter(existing))
             if not new_addrs:
                 continue  # no-op (idempotent re-run)
+            agg = stats[cid]
             for a in new_addrs:
                 address_assignments.append((a, cid))
-            old_size, old_min = stats[cid]
-            stats_upserts.append(
-                (cid, old_size + len(new_addrs), min(old_min, min(new_addrs)))
-            )
+                agg = agg.merge(addr_stats[a])
+            stats_upserts.append((cid, agg))
 
         else:
             # MERGE — cluster_id == root == min(address_id) by invariant, so the
@@ -192,30 +303,43 @@ def _plan_clustering_changes(
             # cluster-stat recompute self-heals any stat drift.
             survivor = min(existing)
             absorbed = sorted(existing - {survivor})
-            new_size, new_min = stats[survivor]
+            agg = stats[survivor]
             for cid, address_id in get_members(absorbed):
                 address_assignments.append((address_id, survivor))
                 member_deletes.append((cid, address_id))
             for ac in absorbed:
-                ac_size, ac_min = stats[ac]
-                if ac_size > LARGE_MERGE_WARNING_THRESHOLD:
+                ac_stats = stats[ac]
+                if ac_stats.no_addresses > LARGE_MERGE_WARNING_THRESHOLD:
                     logger.warning(
-                        f"Merging large cluster {ac} ({ac_size:,} members) into "
-                        f"survivor {survivor}; reading its full membership."
+                        f"Merging large cluster {ac} ({ac_stats.no_addresses:,} "
+                        f"members) into survivor {survivor}; reading its full "
+                        "membership."
                     )
-                new_size += ac_size
-                new_min = min(new_min, ac_min)
+                agg = agg.merge(ac_stats)
                 stats_deletes.append(ac)
             for a in new_addrs:
                 address_assignments.append((a, survivor))
-            if new_addrs:
-                new_size += len(new_addrs)
-                new_min = min(new_min, min(new_addrs))
-            stats_upserts.append((survivor, new_size, new_min))
+                agg = agg.merge(addr_stats[a])
+            stats_upserts.append((survivor, agg))
 
     return ClusteringChanges(
         address_assignments, stats_upserts, member_deletes, stats_deletes
     )
+
+
+def _infer_num_fiat(stat_rows: Dict[int, object], addr_rows: Dict[int, object]) -> int:
+    """Fiat-value width for zero currencies, learned from any real currency in
+    the batch (keyspace-consistent). Falls back to the UTXO default of 2, the
+    same width the delta loop assumes when exchange rates are missing."""
+    for r in stat_rows.values():
+        cur = r.total_received
+        if cur is not None and cur.fiat_values is not None:
+            return len(cur.fiat_values)
+    for r in addr_rows.values():
+        cur = r.total_received
+        if cur is not None and cur.fiat_values is not None:
+            return len(cur.fiat_values)
+    return 2
 
 
 def run_incremental_clustering(
@@ -223,10 +347,13 @@ def run_incremental_clustering(
 ) -> ClusteringChanges:
     """Plan fresh-clustering writes for a batch of new multi-input txs.
 
-    Reads only ``address -> cluster`` for the touched addresses and
-    ``fresh_cluster_stats`` for the clusters they belong to; the full membership
-    (``fresh_cluster_addresses``) is read only for the absorbed side of an actual
-    merge.  See :func:`_plan_clustering_changes`.
+    Reads ``address -> cluster`` for the touched addresses, ``fresh_cluster_stats``
+    for the clusters they belong to, and the ``address`` stat rows of the newly
+    clustered addresses (so their stats fold into the cluster aggregate). The
+    full membership (``fresh_cluster_addresses``) is read only for the absorbed
+    side of an actual merge — the surviving/absorbed clusters contribute via
+    their stored aggregate, never a member re-scan.  See
+    :func:`_plan_clustering_changes`.
     """
     tdb = db.transformed
 
@@ -239,8 +366,8 @@ def run_incremental_clustering(
     components = _components_via_rust(new_tx_inputs, addr_to_cluster)
 
     existing_cluster_ids = set(addr_to_cluster.values())
-    stats = tdb.get_fresh_cluster_stats(existing_cluster_ids)
-    missing = existing_cluster_ids - stats.keys()
+    stat_rows = tdb.get_fresh_cluster_stats(existing_cluster_ids)
+    missing = existing_cluster_ids - stat_rows.keys()
     if missing:
         raise RuntimeError(
             f"fresh_cluster_stats missing {len(missing)} cluster rows "
@@ -248,8 +375,17 @@ def run_incremental_clustering(
             "before incremental clustering."
         )
 
+    fresh_ids = [a for comp in components for a in comp if a not in addr_to_cluster]
+    addr_rows = tdb.get_address_stats(fresh_ids)
+    num_fiat = _infer_num_fiat(stat_rows, addr_rows)
+    stats = {c: _ClusterStats.from_stats_row(r, num_fiat) for c, r in stat_rows.items()}
+    addr_stats = {
+        a: _ClusterStats.from_address_row(a, addr_rows.get(a), num_fiat)
+        for a in fresh_ids
+    }
+
     return _plan_clustering_changes(
-        components, addr_to_cluster, stats, tdb.get_fresh_cluster_members
+        components, addr_to_cluster, stats, addr_stats, tdb.get_fresh_cluster_members
     )
 
 
@@ -284,15 +420,21 @@ def _clustering_changes_to_db(
                 },
             )
         )
-    for cluster_id, no_addresses, min_address_id in cc.stats_upserts:
+    for cluster_id, st in cc.stats_upserts:
         changes.append(
             DbChange.new(
                 table="fresh_cluster_stats",
                 data={
                     "cluster_id_group": cluster_id // bucket_size,
                     "cluster_id": cluster_id,
-                    "no_addresses": no_addresses,
-                    "min_address_id": min_address_id,
+                    "no_addresses": st.no_addresses,
+                    "min_address_id": st.min_address_id,
+                    "first_tx_id": st.first_tx_id,
+                    "last_tx_id": st.last_tx_id,
+                    "no_incoming_txs": st.no_incoming_txs,
+                    "no_outgoing_txs": st.no_outgoing_txs,
+                    "total_received": st.total_received,
+                    "total_spent": st.total_spent,
                 },
             )
         )
