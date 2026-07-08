@@ -576,3 +576,73 @@ def test_trx_factory_contract_flagged_from_create_trace():
     assert delta.no_outgoing_txs == 0
     assert delta.total_received.value == 0
     assert delta.total_spent.value == 0
+
+
+def test_fee_only_sender_entity_delta_is_zero_stat():
+    """A fee-only sender (failed-tx-only) must materialize an address row with no
+    value flows, no tx participation, and the -1 tx sentinel — just enough to
+    anchor its fee balance debit."""
+    from graphsenselib.deltaupdate.update.account.createdeltas import (
+        get_entitydelta_from_fee_only_sender,
+    )
+
+    addr = b"\xab\xcd\xef"
+    eda = get_entitydelta_from_fee_only_sender(addr)
+
+    assert eda.identifier == addr
+    assert eda.first_tx_id == -1
+    assert eda.last_tx_id == -1
+    assert eda.total_received.value == 0
+    assert eda.total_spent.value == 0
+    assert eda.total_tokens_received == {}
+    assert eda.total_tokens_spent == {}
+    assert eda.no_incoming_txs == 0
+    assert eda.no_outgoing_txs == 0
+    assert eda.no_incoming_txs_zero_value == 0
+    assert eda.no_outgoing_txs_zero_value == 0
+    assert eda.is_contract is False
+
+
+def test_failed_only_sender_fee_debit_conserves_supply():
+    """ETH gas fee accounting must conserve supply: the miner is credited the
+    fee for every tx (incl. failed), so the payer must be debited too. A sender
+    that only appears in a failed tx is absent from the trace-derived address
+    set; unless it is added to address_hash_to_id its debit is dropped and the
+    fee is minted from nowhere. This is exactly what the fee-only-sender fix
+    ensures upstream."""
+    from graphsenselib.deltaupdate.update.account.createdeltas import (
+        get_balance_deltas,
+    )
+    from graphsenselib.deltaupdate.update.account.modelsraw import Block, Transaction
+
+    miner = b"\x11" * 20
+    sender = b"\x22" * 20  # appears ONLY in the failed tx
+    gas_used, gas_price = 21_000, 100
+
+    tx = Transaction(
+        transaction_index=0,
+        tx_hash=b"\xaa" * 32,
+        from_address=sender,
+        to_address=b"\x33" * 20,
+        value=0,
+        gas_price=gas_price,
+        transaction_type=0,
+        receipt_gas_used=gas_used,
+        receipt_status=0,  # failed
+        block_id=1,
+    )
+    block = Block(block_id=1, miner=miner, base_fee_per_gas=0, gas_used=gas_used)
+
+    def total_supply(deltas):
+        return sum(d.asset_balances.get("ETH").value for d in deltas)
+
+    # Fixed behavior: sender present in the map -> debit lands -> net zero.
+    fixed = get_balance_deltas(
+        [], [], [], [], [tx], [block], {miner: 1, sender: 2}, "ETH"
+    )
+    assert total_supply(fixed) == 0
+
+    # Old behavior: sender missing from the map -> only the miner credit remains,
+    # inflating supply by the full fee.
+    inflated = get_balance_deltas([], [], [], [], [tx], [block], {miner: 1}, "ETH")
+    assert total_supply(inflated) == gas_used * gas_price

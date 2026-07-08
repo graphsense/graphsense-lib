@@ -296,6 +296,34 @@ def get_entitydelta_from_trace(
     return eda
 
 
+def get_entitydelta_from_fee_only_sender(address: bytes) -> EntityDeltaAccount:
+    """Zero-stat entity delta for a sender that only appears in FAILED txs.
+
+    Such a sender pays the gas fee (a balance debit applied via ``txFeeCredits``
+    in :func:`get_balance_deltas`) but participates in no successful trace, so it
+    has no value flows and no transactions. We emit a zero-stat delta with the
+    ``-1`` tx sentinel (as for miner rewards) purely to materialize the address
+    row + address->id mapping, so the fee debit is not orphaned. Without it the
+    miner is credited the fee while the payer is never debited — inflating total
+    supply. ``first_tx_id`` is ``-1`` because a failed tx creates no relation and
+    is not part of the address's transaction list.
+    """
+    return EntityDeltaAccount(
+        identifier=address,
+        total_received=DeltaValue(0, [0, 0]),
+        total_spent=DeltaValue(0, [0, 0]),
+        total_tokens_received={},
+        total_tokens_spent={},
+        first_tx_id=-1,
+        last_tx_id=-1,
+        no_incoming_txs=0,
+        no_outgoing_txs=0,
+        no_incoming_txs_zero_value=0,
+        no_outgoing_txs_zero_value=0,
+        is_contract=False,
+    )
+
+
 def get_entitydelta_from_tokentransfer(
     tokentransfer: TokenTransfer,
     is_outgoing: bool,
