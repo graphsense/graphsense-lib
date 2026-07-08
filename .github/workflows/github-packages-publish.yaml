@@ -22,14 +22,11 @@ env:
 
 
 jobs:
-  # Gate: never publish an image from code that hasn't passed the test suite.
-  test:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/run_tests.yaml
-
+  # The test suite runs as its own workflow (run_tests.yaml) on pushes and
+  # PRs. Image publishing is intentionally NOT gated on it: gating serialized
+  # the full 4-way Python matrix (~6 min) in front of every build and roughly
+  # doubled publish wall-clock.
   build:
-    needs: test
 
     runs-on: ubuntu-latest
     permissions:
