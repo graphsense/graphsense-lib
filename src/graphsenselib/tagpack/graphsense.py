@@ -449,15 +449,50 @@ class GraphSense(object):
                 missing, "address"
             ]
         result["cluster_id"] = result["cluster_id"].astype(int)
-        # A resolved cluster_id can still lack a stats row: a dangling
-        # address.cluster_id -> cluster reference whose `cluster` /
-        # `fresh_cluster_stats` row is absent (e.g. a tip cluster whose stats
-        # write lagged behind the membership write). A single such row anywhere
-        # in a 5k-address batch used to abort the whole multiprocess run on this
-        # int cast (IntCastingNaNError). Keep the real cluster id and store the
-        # unknown size as NULL — not a fabricated 1, which the
-        # `gs_cluster_no_addr = 1` singleton branch of the cluster-tag views
-        # would then wrongly fold the cluster's tags into.
+
+        # A resolved cluster_id can still lack a stats row, leaving no_addresses
+        # NaN here. A single such row in a 5k batch used to abort the whole
+        # multiprocess run on the int cast below (IntCastingNaNError). Classify
+        # and log each so a full run reveals the mechanism: either the cluster
+        # table has no row for that id ("no_cluster_row"), or a row exists whose
+        # no_addresses column is NULL ("row_present_null_no_addresses").
+        size_missing = result["no_addresses"].isna()
+        if size_missing.any():
+            have_stats = (
+                set()
+                if df_address_clusters.empty
+                else set(df_address_clusters["cluster_id"].tolist())
+            )
+            n_no_row = n_null_col = 0
+            for r in result.loc[size_missing].itertuples(index=False):
+                cid = int(r.cluster_id)
+                row_present = cid in have_stats
+                n_null_col += row_present
+                n_no_row += not row_present
+                logger.warning(
+                    "cluster-mapping NULL size: network=%s address=%s "
+                    "address_id=%s cluster_id=%s self_ref=%s reason=%s",
+                    network,
+                    r.address,
+                    int(r.address_id),
+                    cid,
+                    int(r.address_id) == cid,
+                    "row_present_null_no_addresses"
+                    if row_present
+                    else "no_cluster_row",
+                )
+            logger.warning(
+                "cluster-mapping NULL size summary: network=%s count=%s "
+                "no_cluster_row=%s row_present_null_no_addresses=%s",
+                network,
+                int(size_missing.sum()),
+                n_no_row,
+                n_null_col,
+            )
+
+        # Keep the real cluster id and store the unknown size as NULL — not a
+        # fabricated 1, which the `gs_cluster_no_addr = 1` singleton branch of
+        # the cluster-tag views would then wrongly fold the cluster's tags into.
         result["no_addresses"] = pd.Series(
             [None if pd.isna(v) else int(v) for v in result["no_addresses"]],
             index=result.index,

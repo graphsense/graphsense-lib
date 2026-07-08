@@ -14,6 +14,7 @@ DB-free: the real ``get_address_clusters`` is bound to a fake self whose four
 sub-reads return controlled frames.
 """
 
+import logging
 from types import SimpleNamespace
 
 import pandas as pd
@@ -56,12 +57,19 @@ def _dangling_self():
     return ns
 
 
-def test_dangling_cluster_ref_maps_with_null_size():
+def test_dangling_cluster_ref_maps_with_null_size(caplog):
     ns = _dangling_self()
     df = pd.DataFrame({"address": ["A", "B"]})
 
     # must not raise IntCastingNaNError
-    result = ns.get_address_clusters(df, "LTC", fresh=False)
+    with caplog.at_level(logging.WARNING, logger="graphsenselib.tagpack.graphsense"):
+        result = ns.get_address_clusters(df, "LTC", fresh=False)
+
+    # the culprit is logged and classified: cluster 8 has no row in the cluster
+    # table (as opposed to a row whose no_addresses column is NULL)
+    assert "cluster_id=8" in caplog.text
+    assert "no_cluster_row" in caplog.text
+    assert "count=1 no_cluster_row=1 row_present_null_no_addresses=0" in caplog.text
 
     by_addr = {r.address_id: r for r in result.itertuples(index=False)}
 
