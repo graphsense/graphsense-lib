@@ -129,8 +129,21 @@ def fetch_impl(
     logger.info(f"Target fiat currencies: {fiat_currencies}")
 
     if start_dt > end_dt:
+        if most_recent_date is not None:
+            # The newest rate already in the DB lies beyond the fetch window
+            # (the end date defaults to yesterday, the last complete day),
+            # e.g. after a manual forward-fill of today's rate. Nothing to
+            # fetch is not an error; return an empty frame so ingest is a
+            # no-op.
+            logger.info(
+                f"Rates already available up to {start_date}, nothing to "
+                f"fetch until end date {end_date}."
+            )
+            return pd.DataFrame(
+                columns=["date", "USD"] + [f for f in fiat_currencies if f != "USD"]
+            )
         logger.error("Error: start date after end date.")
-        raise SystemExit
+        raise SystemExit(1)
 
     usd_rates = fetch_cryptocompare_rates(
         start_date, end_date, currency, "USD", api_key
