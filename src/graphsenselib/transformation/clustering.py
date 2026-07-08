@@ -400,8 +400,17 @@ def recompute_fresh_cluster_stats(
     # dedupe — persist once so fresh_address_cluster is scanned from Cassandra a
     # single time instead of twice.
     members = read("fresh_address_cluster").select("address_id", "cluster_id").persist()
-    address = read("address").select(
-        "address_id", "total_received", "total_spent", "first_tx_id", "last_tx_id"
+    # address feeds only the additive-stats join, but that join is consumed five
+    # times (the base aggregate plus two currency sums that each scan it twice)
+    # and ReuseExchange cannot dedupe the differently-projected branches — persist
+    # so the address table is scanned from Cassandra once, not five times. At BTC
+    # scale (~1.5e9 rows) that is four full connector scans saved per recompute.
+    address = (
+        read("address")
+        .select(
+            "address_id", "total_received", "total_spent", "first_tx_id", "last_tx_id"
+        )
+        .persist()
     )
     address_txs = read("address_transactions").select("address_id", "tx_id", "value")
 
@@ -445,6 +454,7 @@ def recompute_fresh_cluster_stats(
     )
     stats.unpersist()
     members.unpersist()
+    address.unpersist()
 
     if delete_stale is not None:
         if stale:
@@ -559,7 +569,11 @@ def _read_edges_into_unionfind(
     edge_df = edge_df.persist()
     total_known = edge_df.count()
     mat_secs = time.perf_counter() - mat_start
-    num_parts = read_partitions if read_partitions else edge_df.rdd.getNumPartitions()
+    # coalesce only ever REDUCES partitions, so on small inputs (tests, alt
+    # chains, a tight --end-block) the real count can be below read_partitions —
+    # read it back off the persisted rdd rather than trusting the request, or the
+    # progress/ETA log reports the wrong denominator.
+    num_parts = edge_df.rdd.getNumPartitions()
     logger.info(
         f"── PHASE 1/3: bulk read → multi-input edge sets "
         f"(streaming {num_parts} partitions) ──"
@@ -812,9 +826,11 @@ def run_clustering_spark(
         to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in
         ``write_chunk``-sized slices via the Spark Cassandra connector, then
         recomputes the full ``fresh_cluster_stats`` (size, root, totals, first/last
-        tx, degrees, tx-counts, adjusted totals) from the membership + address-level
-        tables via :func:`recompute_fresh_cluster_stats`, so a bootstrap leaves the
-        stats table complete (not just the size+root the delta loop maintains live).
+        tx, tx-counts) from the membership + address-level tables via
+        :func:`recompute_fresh_cluster_stats`, so a bootstrap leaves the stats
+        table complete (not just the size+root the delta loop maintains live).
+        Degrees and adjusted totals are not among them — those columns were
+        dropped in the transformed_utxo 4->5 migration.
 
     ``read_partitions`` sets the number of per-partition Arrow blobs streamed
     to the driver (the final edge-set DataFrame is coalesced to it): more
