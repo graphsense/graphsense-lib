@@ -436,6 +436,7 @@ class TronCombinedGrpcExporter:
                 # Running counters per block
                 block_log_index = 0
                 cumulative_gas_used = 0
+                fabricated_receipts = 0
 
                 # Extract transactions and types from BlockExtention
                 for tx_idx, tx_ext in enumerate(block_ext.transactions):
@@ -589,7 +590,12 @@ class TronCombinedGrpcExporter:
                             all_logs.append(log_dict)
                             block_log_index += 1
                     else:
-                        # No TransactionInfo for this tx — create minimal receipt
+                        # No TransactionInfo for this tx — create minimal receipt.
+                        # NOTE: this fabricates status=1 (success) and zero fee/
+                        # energy, and drops this tx's logs & traces. It is silent
+                        # data loss; count it and warn per block below so it is
+                        # visible rather than masquerading as a free, successful tx.
+                        fabricated_receipts += 1
                         receipt_dict = {
                             "type": "receipt",
                             "transaction_hash": tx_hash,
@@ -625,6 +631,15 @@ class TronCombinedGrpcExporter:
                             "result": 0,
                             "energy_penalty_total": 0,
                         })
+
+                if fabricated_receipts > 0:
+                    logger.warning(
+                        "Block %s: fabricated %d minimal receipt(s) with status=1 "
+                        "and zero fee for transactions missing TransactionInfo; "
+                        "their fee, logs and traces are absent.",
+                        block_num,
+                        fabricated_receipts,
+                    )
 
                 # Extract traces from TransactionInfoList
                 traces = decode_block_to_traces(block_num, tx_info_list)
