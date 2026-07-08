@@ -467,13 +467,14 @@ class TagStore(object):
 
     def addresses_with_actor_collisions(self) -> List[dict]:
         fields_output = ["address", "actors"]
+        # `tag` has no `address` column; the address is `identifier`.
         query = (
             "SELECT agg.address, agg.actors from "
             "(SELECT "
-            "   address, "
+            "   tag.identifier as address, "
             "   count(distinct tag.actor) as ac, "
             "   string_agg(tag.actor, ', ') as actors "
-            " from tag group by tag.address) as agg "
+            " from tag group by tag.identifier) as agg "
             "where agg.ac > 1"
         )
 
@@ -547,7 +548,11 @@ class TagStore(object):
         cat_clause = ""
         if len(category) > 0:
             params["category"] = category.strip()
-            cat_clause = "and tag.category = %(category)s "
+            # categories live in tag_concept now, not on the tag row
+            cat_clause = (
+                "and exists (select 1 from tag_concept tc "
+                "where tc.tag_id = tag.id and tc.concept_id = %(category)s) "
+            )
 
         query = (
             f"SELECT {fields_str}, "
@@ -619,12 +624,19 @@ class TagStore(object):
         except ValueError:
             raise ValidationError(msg)
 
+        # `tag`/`address_quality` key on `identifier` (no `address` column) and
+        # categories live in `tag_concept`. Join identifier AND network so an
+        # address shared across networks doesn't cross-match.
         q = "SELECT j.network, j.address, array_agg(j.label) labels \
             FROM ( \
-                SELECT q.network, q.address, t.label \
+                SELECT q.network, q.identifier as address, t.label \
                 FROM address_quality q, tag t \
-                WHERE t.category ILIKE %s \
-                    AND t.address=q.address \
+                WHERE exists ( \
+                        SELECT 1 FROM tag_concept tc \
+                        WHERE tc.tag_id = t.id AND tc.concept_id ILIKE %s \
+                    ) \
+                    AND t.identifier = q.identifier \
+                    AND t.network = q.network \
                     AND q.network LIKE %s \
                     AND q.quality <= %s \
             ) as j \
@@ -982,10 +994,16 @@ class TagStore(object):
     def list_address_actors(self, network=""):
         validate_network(network)
         network = network if network else "%"
+        # `tag` has no `address`/`category` column: the address is `identifier`,
+        # categories live in `tag_concept`, and the actor FK is `tag.actor`
+        # (the old `t.label = a.id` join was wrong).
         q = (
-            "SELECT t.id, t.label, t.address, t.category, a.label "
+            "SELECT t.id, t.label, t.identifier, "
+            "  (SELECT string_agg(tc.concept_id, ', ') "
+            "     FROM tag_concept tc WHERE tc.tag_id = t.id) as category, "
+            "  a.label "
             "FROM tag t, actor a "
-            "WHERE t.label = a.id "
+            "WHERE t.actor = a.id "
             "AND t.network LIKE %s"
         )
         v = (network,)
