@@ -14,7 +14,7 @@ import pytest
 
 from graphsenselib.datatypes import DbChangeType
 from graphsenselib.db import DbChange
-from graphsenselib.deltaupdate.update.generic import DeltaValue
+from graphsenselib.deltaupdate.update.generic import DeltaValue, EntityDelta
 from graphsenselib.deltaupdate.update.utxo.update import (
     ClusteringChanges,
     _ClusterStats,
@@ -644,3 +644,137 @@ def test_oneoff_vs_incremental_partition_and_stats(batch_size):
     assert set(store.stats) == set(by_cid)
     for cid, members in by_cid.items():
         assert store.stats[cid] == _expected_stats(members), (cid, sorted(members))
+
+
+# --------------------------------------------------------------------------- #
+# Activity propagation: members keep transacting BETWEEN structural mutations,
+# and newly-clustered members transact IN the same batch they are clustered.
+# The structural fold reads pre-batch `address` rows (the continuous delta
+# clusters before the batch's writes commit), so `touched_activity` must carry
+# each member's this-batch delta onto its cluster. Final cluster stats must equal
+# the from-scratch member sum of the FINAL `address` rows — i.e. no drift.
+# --------------------------------------------------------------------------- #
+def _ed(aid, first, last, no_in, no_out, recv, spent):
+    """One address's per-batch activity, as the delta loop's EntityDelta."""
+    return EntityDelta(
+        identifier=aid,
+        total_received=_cur(recv),
+        total_spent=_cur(spent),
+        first_tx_id=first,
+        last_tx_id=last,
+        no_incoming_txs=no_in,
+        no_outgoing_txs=no_out,
+    )
+
+
+class _GrowthStore(_FreshStore):
+    """Fresh_* model whose `address` table GROWS: get_address_stats serves the
+    accumulated per-address delta as it stood BEFORE the current batch's writes
+    (mirroring the real ordering — clustering reads, then address rows commit)."""
+
+    def __init__(self):
+        super().__init__()
+        self.address_table: dict = {}  # address_id -> accumulated EntityDelta
+
+    def get_address_stats(self, address_ids):
+        return {
+            a: self.address_table[a] for a in address_ids if a in self.address_table
+        }
+
+    def commit_activity(self, activity):
+        """Apply the batch's deferred `address`-row writes, AFTER clustering read."""
+        for a, delta in activity.items():
+            prev = self.address_table.get(a)
+            self.address_table[a] = delta if prev is None else prev.merge(delta)
+
+
+def _expected_from_rows(members, table):
+    """From-scratch member sum of the FINAL address rows (a missing row counts a
+    member with zero activity, exactly like the one-off's left join)."""
+    it = iter(sorted(members))
+    first = next(it)
+    agg = _ClusterStats.from_address_row(first, table.get(first), 2)
+    for a in it:
+        agg = agg.merge(_ClusterStats.from_address_row(a, table.get(a), 2))
+    return agg
+
+
+def test_delta_matches_oneoff_with_activity_between_mutations():
+    pytest.importorskip("gs_clustering")
+    from graphsenselib.deltaupdate.update.utxo.update import run_incremental_clustering
+
+    # (co-spend edges, {address_id: this-batch EntityDelta}). Exercises: new
+    # cluster w/ brand-new members' own-batch activity; an activity-only batch
+    # (no co-spend); a merge with activity on both sides; a join of a brand-new
+    # member alongside an existing member transacting.
+    batches = [
+        ([[1, 2]], {1: _ed(1, 1, 10, 1, 1, 100, 10), 2: _ed(2, 2, 12, 1, 1, 200, 20)}),
+        (
+            [[10, 11]],
+            {10: _ed(10, 3, 13, 1, 1, 300, 30), 11: _ed(11, 4, 14, 1, 1, 400, 40)},
+        ),
+        ([], {1: _ed(1, 15, 25, 2, 2, 500, 50), 10: _ed(10, 16, 26, 2, 2, 600, 60)}),
+        (
+            [[2, 10]],
+            {2: _ed(2, 27, 37, 3, 3, 700, 70), 10: _ed(10, 28, 38, 3, 3, 800, 80)},
+        ),
+        (
+            [[1, 99]],
+            {99: _ed(99, 40, 50, 4, 4, 900, 90), 11: _ed(11, 41, 51, 4, 4, 1000, 100)},
+        ),
+    ]
+
+    store = _GrowthStore()
+    db = _FreshStoreDb(store)
+    for edges, activity in batches:
+        cc = run_incremental_clustering(db, edges, touched_activity=activity)
+        store.apply(cc)
+        store.commit_activity(activity)  # deferred address writes land AFTER
+
+    # everything collapses into one cluster ...
+    by_cid: dict = {}
+    for addr, cid in store.addr_to_cluster.items():
+        by_cid.setdefault(cid, set()).add(addr)
+    assert {frozenset(m) for m in by_cid.values()} == {frozenset({1, 2, 10, 11, 99})}
+
+    # ... and its stats equal the member sum of the FINAL address rows: the
+    # structural fold captured pre-cluster history, propagation captured every
+    # batch's activity, and the two telescope to the from-scratch total.
+    assert set(store.stats) == set(by_cid)
+    for cid, members in by_cid.items():
+        assert store.stats[cid] == _expected_from_rows(members, store.address_table), (
+            cid,
+            sorted(members),
+        )
+
+
+def test_activity_only_batch_updates_cluster_without_structural_change():
+    """A single-input spend by an existing member (no co-spend) still refreshes
+    its cluster — the case that used to drift until the weekly recompute."""
+    pytest.importorskip("gs_clustering")
+    from graphsenselib.deltaupdate.update.utxo.update import run_incremental_clustering
+
+    store = _GrowthStore()
+    db = _FreshStoreDb(store)
+    # form cluster {1,2} with initial activity
+    a = {1: _ed(1, 1, 10, 1, 1, 100, 10), 2: _ed(2, 2, 12, 1, 1, 200, 20)}
+    store.apply(run_incremental_clustering(db, [[1, 2]], touched_activity=a))
+    store.commit_activity(a)
+    cid = next(iter(store.stats))
+    before = store.stats[cid]
+
+    # member 1 transacts alone, no co-spend edge
+    b = {1: _ed(1, 20, 30, 5, 6, 700, 70)}
+    store.apply(run_incremental_clustering(db, [], touched_activity=b))
+    store.commit_activity(b)
+
+    after = store.stats[cid]
+    # membership/root unchanged, activity columns advanced by exactly the delta
+    assert after.no_addresses == before.no_addresses == 2
+    assert after.min_address_id == before.min_address_id
+    assert after.no_incoming_txs == before.no_incoming_txs + 5
+    assert after.no_outgoing_txs == before.no_outgoing_txs + 6
+    assert after.last_tx_id == 30
+    assert after.total_received.value == before.total_received.value + 700
+    # and it still equals the from-scratch member sum
+    assert after == _expected_from_rows({1, 2}, store.address_table)

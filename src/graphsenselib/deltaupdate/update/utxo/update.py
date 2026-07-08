@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -100,10 +101,17 @@ class _ClusterStats(NamedTuple):
     fallback produced, so the delta can maintain them by folding contributions:
     counts / currency values add, ``min_address_id`` / ``first_tx_id`` take the
     min, ``last_tx_id`` the max. ``no_incoming_txs`` / ``no_outgoing_txs`` are
-    member sums and intentionally OVERCOUNT co-spends (accepted; the weekly
-    recompute is the backstop). Existing members that keep growing between
-    mutations are not re-summed here — that drift is what makes the columns
-    weekly-fresh rather than always-fresh.
+    member sums and intentionally OVERCOUNT co-spends (accepted; the recompute
+    keeps the same convention, so delta and recompute still agree).
+
+    The structural fold seeds a cluster from its members' *pre-batch* ``address``
+    rows — the continuous (BATCH) delta clusters before the batch's address
+    writes commit — so it captures each member's history only up to, not
+    including, the current batch. This batch's own activity for every touched
+    member is folded on separately by :func:`_apply_activity_propagation` (as a
+    membership-neutral :meth:`from_activity_delta` contribution). Pre-batch fold
+    + this-batch propagation == the from-scratch member sum, so every column is
+    always-fresh and the weekly recompute is only an optional backstop.
     """
 
     no_addresses: int
@@ -161,6 +169,29 @@ class _ClusterStats(NamedTuple):
             no_outgoing_txs=row.no_outgoing_txs or 0,
             total_received=_dv_from_currency(row.total_received, num_fiat),
             total_spent=_dv_from_currency(row.total_spent, num_fiat),
+        )
+
+    @classmethod
+    def from_activity_delta(cls, delta: "EntityDelta") -> "_ClusterStats":
+        """One touched member's *this-batch* activity as a membership-neutral fold.
+
+        The structural fold seeds a cluster from members' pre-batch ``address``
+        rows, so the batch's own activity for every touched member is added here
+        instead. ``no_addresses`` is 0 and ``min_address_id`` a sentinel so
+        membership and root are untouched — only the money / tx-count / last_tx
+        columns move. ``delta`` is the per-address :class:`EntityDelta` the batch
+        already computed for the legacy path (counts / currency are batch sums,
+        first/last are the batch min/max).
+        """
+        return cls(
+            no_addresses=0,
+            min_address_id=sys.maxsize,
+            first_tx_id=delta.first_tx_id,
+            last_tx_id=delta.last_tx_id,
+            no_incoming_txs=delta.no_incoming_txs,
+            no_outgoing_txs=delta.no_outgoing_txs,
+            total_received=delta.total_received,
+            total_spent=delta.total_spent,
         )
 
 
@@ -342,32 +373,113 @@ def _infer_num_fiat(stat_rows: Dict[int, object], addr_rows: Dict[int, object]) 
     return 2
 
 
-def run_incremental_clustering(
-    db: AnalyticsDb, new_tx_inputs: List[List[int]]
+def _apply_activity_propagation(
+    cc: ClusteringChanges,
+    addr_to_cluster_pre: Dict[int, int],
+    activity: Dict[int, EntityDelta],
+    stored: Dict[int, "_ClusterStats"],
 ) -> ClusteringChanges:
-    """Plan fresh-clustering writes for a batch of new multi-input txs.
+    """Fold every touched member's this-batch activity onto its cluster's stats.
 
-    Reads ``address -> cluster`` for the touched addresses, ``fresh_cluster_stats``
-    for the clusters they belong to, and the ``address`` stat rows of the newly
-    clustered addresses (so their stats fold into the cluster aggregate). The
-    full membership (``fresh_cluster_addresses``) is read only for the absorbed
-    side of an actual merge — the surviving/absorbed clusters contribute via
-    their stored aggregate, never a member re-scan.  See
-    :func:`_plan_clustering_changes`.
+    ``activity`` maps address_id -> the batch's per-address ``EntityDelta``. Each
+    address is routed to its *post-batch* cluster (pre-batch membership plus this
+    batch's assignments), so a member just clustered this batch gets its activity
+    on the new cluster. Singletons (no cluster) are skipped: their pre-join
+    history is folded structurally when they later join, so propagating their
+    singleton activity would double count. The contribution is membership-neutral
+    (``no_addresses`` 0, sentinel ``min_address_id``), so only the money /
+    tx-count / last_tx columns move.
+
+    Merged into the same per-cluster ``stats_upserts`` the structural plan emits
+    (fresh_cluster_stats is one absolute row), reading a stored aggregate only
+    for clusters that had activity but no structural change.
+    """
+    post = dict(addr_to_cluster_pre)
+    for address_id, cluster_id in cc.address_assignments:
+        post[address_id] = cluster_id
+
+    per_cluster: Dict[int, "_ClusterStats"] = {}
+    for address_id, delta in activity.items():
+        cluster_id = post.get(address_id)
+        if cluster_id is None:
+            continue  # singleton — folded structurally on a future join
+        contrib = _ClusterStats.from_activity_delta(delta)
+        cur = per_cluster.get(cluster_id)
+        per_cluster[cluster_id] = contrib if cur is None else cur.merge(contrib)
+
+    if not per_cluster:
+        return cc
+
+    # A cluster absorbed by a merge this batch is deleted and its members are
+    # re-pointed to the survivor, so consistent post-mapping never routes here;
+    # guard anyway so a membership inconsistency drops the activity rather than
+    # resurrecting a just-deleted stats row.
+    deleted = set(cc.stats_deletes)
+    upserts = dict(cc.stats_upserts)
+    for cluster_id, act in per_cluster.items():
+        if cluster_id in deleted:
+            continue
+        base = upserts.get(cluster_id) or stored.get(cluster_id)
+        if base is None:
+            # Activity for a cluster with no stats row — a dangling membership
+            # the bootstrap backfill must heal. Skip rather than abort the batch.
+            logger.warning(
+                "fresh clustering: activity for cluster %s has no stats row; "
+                "skipping its propagation",
+                cluster_id,
+            )
+            continue
+        upserts[cluster_id] = base.merge(act)
+
+    return cc._replace(stats_upserts=list(upserts.items()))
+
+
+def run_incremental_clustering(
+    db: AnalyticsDb,
+    new_tx_inputs: List[List[int]],
+    touched_activity: Optional[Dict[int, EntityDelta]] = None,
+) -> ClusteringChanges:
+    """Plan fresh-clustering writes for one batch. Two concerns, one write path:
+
+    * **Structural** — the batch's multi-input co-spends (``new_tx_inputs``)
+      create / join / merge clusters. Each newly-clustered address folds its
+      *pre-batch* ``address`` row into the cluster aggregate; the full membership
+      (``fresh_cluster_addresses``) is read only for the absorbed side of a
+      merge. See :func:`_plan_clustering_changes`.
+    * **Activity** — ``touched_activity`` (address_id -> the batch's per-address
+      ``EntityDelta``, for *every* address the batch moved, not only co-spends)
+      is folded onto each member's cluster by :func:`_apply_activity_propagation`.
+      The structural fold read pre-batch rows, so this restores the batch's own
+      activity and keeps the money / tx columns always-fresh. Passed only by the
+      continuous delta; the standalone backfill re-reads committed rows and needs
+      none.
     """
     tdb = db.transformed
+    activity = touched_activity or {}
 
     new_address_ids = {a for tx in new_tx_inputs for a in tx}
-    if not new_address_ids:
+    if not new_address_ids and not activity:
         return ClusteringChanges([], [], [], [])
 
-    addr_to_cluster = dict(tdb.get_fresh_clusters_for_addresses(list(new_address_ids)))
+    # One membership read over every touched address: the co-spend inputs (whose
+    # clustering may change) plus every address whose activity we must propagate.
+    touched_ids = sorted(new_address_ids | activity.keys())
+    a2c = dict(tdb.get_fresh_clusters_for_addresses(touched_ids))
+    addr_to_cluster = {a: a2c[a] for a in new_address_ids if a in a2c}
 
-    components = _components_via_rust(new_tx_inputs, addr_to_cluster)
+    components = (
+        _components_via_rust(new_tx_inputs, addr_to_cluster) if new_tx_inputs else []
+    )
 
-    existing_cluster_ids = set(addr_to_cluster.values())
-    stat_rows = tdb.get_fresh_cluster_stats(existing_cluster_ids)
-    missing = existing_cluster_ids - stat_rows.keys()
+    # Stored aggregate of every cluster a touched address already belongs to:
+    # co-spend clusters need it for the structural fold, activity-only clusters
+    # for the propagation base.
+    pre_cluster_ids = set(a2c.values())
+    stat_rows = tdb.get_fresh_cluster_stats(pre_cluster_ids)
+    # A co-spend input's cluster MUST have a stats row (structural correctness);
+    # a missing one is a real inconsistency the bootstrap backfill has to fix.
+    # Activity-only clusters missing a row are tolerated in propagation (skipped).
+    missing = set(addr_to_cluster.values()) - stat_rows.keys()
     if missing:
         raise RuntimeError(
             f"fresh_cluster_stats missing {len(missing)} cluster rows "
@@ -384,9 +496,13 @@ def run_incremental_clustering(
         for a in fresh_ids
     }
 
-    return _plan_clustering_changes(
+    cc = _plan_clustering_changes(
         components, addr_to_cluster, stats, addr_stats, tdb.get_fresh_cluster_members
     )
+
+    if activity:
+        cc = _apply_activity_propagation(cc, a2c, activity, stats)
+    return cc
 
 
 def _clustering_changes_to_db(
@@ -596,7 +712,7 @@ def get_transaction_changes(
     collect_cluster_inputs: bool = False,
     timings: Optional[Dict[str, float]] = None,
     pool=None,
-) -> Tuple[List[DbChange], int, int, int, int, List[List[int]]]:
+) -> Tuple[List[DbChange], int, int, int, int, List[List[int]], Dict[int, EntityDelta]]:
     """Main function to transform a list of transactions from the raw
     keyspace to changes to the transformed db.
 
@@ -1011,6 +1127,22 @@ def get_transaction_changes(
         lambda a: addresses_with_cluster[a][0] if a in addresses_with_cluster else None,
     )
 
+    # Per-address activity for fresh-clustering propagation: this batch's delta
+    # for every touched address, keyed by address_id. Folded onto each member's
+    # fresh cluster (see _apply_activity_propagation) so the money / tx columns
+    # stay fresh even when a member transacts without a co-spend. Only built when
+    # clustering is active.
+    touched_activity: Dict[int, EntityDelta] = {}
+    if collect_cluster_inputs:
+        for u in address_delta.entity_updates:
+            aid = (
+                addresses_with_cluster[u.identifier][0]
+                if u.identifier in addresses_with_cluster
+                else None
+            )
+            if aid is not None:
+                touched_activity[aid] = u
+
     return (
         changes,
         nr_new_entities_created[EntityType.ADDRESS],
@@ -1018,6 +1150,7 @@ def get_transaction_changes(
         nr_new_relations[EntityType.ADDRESS],
         nr_new_relations[EntityType.CLUSTER],
         cluster_inputs,
+        touched_activity,
     )
 
 
@@ -1733,33 +1866,42 @@ class UpdateStrategyUtxo(UpdateStrategy):
             )
 
     def _clustering_changes_for(
-        self, cluster_inputs: List[List[int]]
+        self,
+        cluster_inputs: List[List[int]],
+        touched_activity: Optional[Dict[int, EntityDelta]] = None,
     ) -> List[DbChange]:
         """Plan the fresh-clustering ``DbChange`` writes for the given multi-input
-        id sets (reads only the affected clusters; no write).  Empty list when
-        nothing changes.  Used both to apply clustering on its own (BATCH /
-        run_fresh_clustering) and to fold it into the same atomic per-tx write as
-        the tx's bookkeeping (TX mode), so clustering can never lag
-        ``last_synced_block``.
+        id sets and per-address activity (reads only the affected clusters; no
+        write).  Empty list when nothing changes.  ``touched_activity`` folds each
+        touched member's this-batch delta onto its cluster so the money / tx
+        columns stay always-fresh; it is passed by the in-loop BATCH delta and
+        omitted by the standalone backfill (which re-reads committed rows).
         """
-        if not cluster_inputs:
+        if not cluster_inputs and not touched_activity:
             return []
-        cc = run_incremental_clustering(self._db, cluster_inputs)
+        cc = run_incremental_clustering(
+            self._db, cluster_inputs, touched_activity=touched_activity
+        )
         if cc.is_empty:
             return []
         return _clustering_changes_to_db(
             cc, self._db.transformed.get_cluster_id_bucket_size()
         )
 
-    def _apply_clustering_inputs(self, cluster_inputs: List[List[int]]) -> int:
+    def _apply_clustering_inputs(
+        self,
+        cluster_inputs: List[List[int]],
+        touched_activity: Optional[Dict[int, EntityDelta]] = None,
+    ) -> int:
         """Run incremental fresh clustering for the given multi-input id sets and
-        write the resulting diff to the ``fresh_*`` tables.
+        per-address activity, and write the resulting diff to the ``fresh_*``
+        tables.
 
-        Shared by the in-loop BATCH delta path (fed from harvested ids) and
-        :meth:`run_fresh_clustering` (fed from a raw re-read).  Returns the number
-        of db changes written.
+        Shared by the in-loop BATCH delta path (fed from harvested ids +
+        activity) and :meth:`run_fresh_clustering` (fed from a raw re-read, no
+        activity).  Returns the number of db changes written.
         """
-        changes = self._clustering_changes_for(cluster_inputs)
+        changes = self._clustering_changes_for(cluster_inputs, touched_activity)
         if not changes:
             return 0
         apply_changes(self._db, changes, self._pedantic, try_atomic_writes=False)
@@ -1884,6 +2026,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
             self._fresh_clustering_active() and _check_gs_clustering()
         )
         cluster_inputs: List[List[int]] = []
+        touched_activity: Dict[int, EntityDelta] = {}
 
         if self.application_strategy == ApplicationStrategy.BATCH:
             if self.crash_recoverer.is_in_recovery_mode():
@@ -1895,6 +2038,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                 nr_new_address_relations,
                 nr_new_cluster_relations,
                 cluster_inputs,
+                touched_activity,
             ) = get_transaction_changes(
                 self._db,
                 txs,
@@ -1982,6 +2126,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                                 nr_new_address_relations_tx,
                                 nr_new_cluster_relations_tx,
                                 tx_cluster_inputs,
+                                tx_touched_activity,
                             ) = get_transaction_changes(
                                 self._db,
                                 [tx],
@@ -2018,7 +2163,7 @@ class UpdateStrategyUtxo(UpdateStrategy):
                             # and clustering can never lag the persisted height. (In
                             # BATCH mode clustering is applied once after the loop.)
                             clustering_changes = self._clustering_changes_for(
-                                tx_cluster_inputs
+                                tx_cluster_inputs, tx_touched_activity
                             )
                             apply_changes(
                                 self._db,
@@ -2049,11 +2194,13 @@ class UpdateStrategyUtxo(UpdateStrategy):
         # idempotently (address_ids are reassigned deterministically). TX mode does
         # NOT reach here with edges: it folds each tx's clustering into that tx's
         # own atomic commit above (cluster_inputs stays empty in TX mode).
-        if cluster_inputs:
-            n_changes = self._apply_clustering_inputs(cluster_inputs)
+        # touched_activity also fires this when a batch only refreshes existing
+        # members' stats (activity but no co-spend).
+        if cluster_inputs or touched_activity:
+            n_changes = self._apply_clustering_inputs(cluster_inputs, touched_activity)
             logger.debug(
-                f"Fresh clustering: {len(cluster_inputs)} multi-input txs -> "
-                f"{n_changes} db changes"
+                f"Fresh clustering: {len(cluster_inputs)} multi-input txs, "
+                f"{len(touched_activity)} touched addresses -> {n_changes} db changes"
             )
 
         self._timing_cassandra_read += timings.get("cassandra_read", 0.0)
