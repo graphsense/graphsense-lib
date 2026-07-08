@@ -13,8 +13,8 @@ Name | Type | Description | Notes
 **balance** | [**Values**](Values.md) |  | 
 **total_received** | [**Values**](Values.md) |  | 
 **total_spent** | [**Values**](Values.md) |  | 
-**first_tx** | [**TxSummary**](TxSummary.md) |  | 
-**last_tx** | [**TxSummary**](TxSummary.md) |  | 
+**first_tx** | [**TxSummary**](TxSummary.md) |  | [optional] 
+**last_tx** | [**TxSummary**](TxSummary.md) |  | [optional] 
 **in_degree** | **int** |  | 
 **out_degree** | **int** |  | 
 **no_incoming_txs** | **int** |  | 

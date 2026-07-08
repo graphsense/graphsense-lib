@@ -3201,11 +3201,23 @@ class Cassandra:
             return row
 
         balance_task = self.add_balance(currency, row)
+        dirty_task = self.is_address_dirty(currency, row["address"])
+
+        # first_tx_id == -1 is the sentinel for "address has no transactions of
+        # its own" (e.g. an account address that only paid a failed-tx gas fee, or
+        # a coinbase/miner-reward-only address). Don't try to resolve it — that
+        # would find nothing and trip the inconsistency guard below.
+        if row["first_tx_id"] is None or row["first_tx_id"] == -1:
+            _, is_dirty = await asyncio.gather(balance_task, dirty_task)
+            row["first_tx"] = None
+            row["last_tx"] = None
+            row["status"] = "dirty" if is_dirty else "clean"
+            return row
+
         tx_tasks = [
             self.get_tx_by_id(currency, id)
             for id in [row["first_tx_id"], row["last_tx_id"]]
         ]
-        dirty_task = self.is_address_dirty(currency, row["address"])
 
         results = await asyncio.gather(balance_task, *tx_tasks, dirty_task)
         tx1, tx2, is_dirty = results[1], results[2], results[3]
