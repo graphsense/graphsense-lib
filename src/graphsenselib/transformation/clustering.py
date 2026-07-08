@@ -192,12 +192,31 @@ def run_clustering_one_off_from_cassandra(
     c = Clustering(max_address_id=max_address_id)
 
     total_multi_input = 0
+    dropped_txs = 0
     feed_start = time.perf_counter()
     for tx_input_ids in iter_multi_input_tx_inputs(
         db, start_block, end_block, chunk_size=chunk_size, concurrency=concurrency
     ):
-        c.process_transactions(tx_input_ids)
-        total_multi_input += len(tx_input_ids)
+        # Defensive: never feed an address id beyond the union-find's size — the
+        # Rust engine indexes its node array directly and panics on an
+        # out-of-bounds id. With the transformed-keyspace lock held this should
+        # not happen (no concurrent id growth), but a stale snapshot or a raw
+        # end_block ahead of the transformed data could still surface ids
+        # > max_address_id; drop those txs and warn rather than crash.
+        safe = [ids for ids in tx_input_ids if max(ids, default=0) <= max_address_id]
+        dropped_txs += len(tx_input_ids) - len(safe)
+        if safe:
+            c.process_transactions(safe)
+            total_multi_input += len(safe)
+
+    if dropped_txs:
+        logger.warning(
+            "Dropped %d multi-input tx(s) with address ids beyond the union-find "
+            "size (max_address_id=%d) — snapshot stale or end_block ahead of the "
+            "transformed data.",
+            dropped_txs,
+            max_address_id,
+        )
 
     feed_secs = time.perf_counter() - feed_start
     logger.info(

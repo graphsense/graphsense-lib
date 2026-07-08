@@ -1452,6 +1452,7 @@ def run_clustering(
     from graphsenselib.transformation.clustering import (
         run_clustering_one_off_from_cassandra,
     )
+    from graphsenselib.utils.locking import create_lock
 
     if not is_fresh_clustering_enabled():
         raise click.ClickException(
@@ -1478,13 +1479,21 @@ def run_clustering(
             f"concurrency={concurrency}"
         )
 
-        run_clustering_one_off_from_cassandra(
-            db,
-            start_block=start_block,
-            end_block=end_block,
-            chunk_size=chunk_size,
-            concurrency=concurrency,
-            write_chunk=write_chunk,
-        )
+        # Hold the transformed-keyspace lock for the whole one-off run so it
+        # cannot overlap the delta updater (which also locks the transformed
+        # keyspace) or a Spark transform. A concurrent updater mints new
+        # address ids beyond the bootstrap snapshot — panicking the Rust
+        # union-find sized from that snapshot — and its last-write-wins upserts
+        # would corrupt the fresh_* cluster tables this run rewrites.
+        transformed_keyspace = db.transformed.get_keyspace()
+        with create_lock(transformed_keyspace):
+            run_clustering_one_off_from_cassandra(
+                db,
+                start_block=start_block,
+                end_block=end_block,
+                chunk_size=chunk_size,
+                concurrency=concurrency,
+                write_chunk=write_chunk,
+            )
 
     logger.info("One-off clustering complete.")
