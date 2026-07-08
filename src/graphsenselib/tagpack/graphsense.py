@@ -449,7 +449,20 @@ class GraphSense(object):
                 missing, "address"
             ]
         result["cluster_id"] = result["cluster_id"].astype(int)
-        result["no_addresses"] = result["no_addresses"].astype(int)
+        # A resolved cluster_id can still lack a stats row: a dangling
+        # address.cluster_id -> cluster reference whose `cluster` /
+        # `fresh_cluster_stats` row is absent (e.g. a tip cluster whose stats
+        # write lagged behind the membership write). A single such row anywhere
+        # in a 5k-address batch used to abort the whole multiprocess run on this
+        # int cast (IntCastingNaNError). Keep the real cluster id and store the
+        # unknown size as NULL — not a fabricated 1, which the
+        # `gs_cluster_no_addr = 1` singleton branch of the cluster-tag views
+        # would then wrongly fold the cluster's tags into.
+        result["no_addresses"] = pd.Series(
+            [None if pd.isna(v) else int(v) for v in result["no_addresses"]],
+            index=result.index,
+            dtype=object,
+        )
 
         return result
 
