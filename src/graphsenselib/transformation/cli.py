@@ -1463,6 +1463,7 @@ def run_clustering(env, currency, local, read_partitions, end_block):
     from graphsenselib.schema.schema import GraphsenseSchemas
     from graphsenselib.transformation.clustering import run_clustering_spark
     from graphsenselib.transformation.spark import create_spark_session
+    from graphsenselib.utils.locking import create_lock
 
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
 
@@ -1483,52 +1484,62 @@ def run_clustering(env, currency, local, read_partitions, end_block):
 
         logger.info(
             f"Starting Spark clustering: env={env}, currency={currency}, "
-            f"raw={raw_keyspace}, transformed={transformed_keyspace}"
+            f"raw={raw_keyspace}, transformed={transformed_keyspace} "
+            "(acquiring keyspace lock)"
         )
-        # NOTE: the fresh_* tables are written append/upsert with no truncate, on
-        # purpose — a live keyspace keeps serving the previous mapping throughout the
-        # (multi-hour) run instead of going empty. The trade-off is that a re-run over
-        # CHANGED data can leave phantom cluster_id-keyed rows (cluster_id ==
-        # min(address_id) shrinks when a smaller address merges a cluster);
-        # fresh_address_cluster self-heals per-address, fresh_cluster_stats
-        # phantoms are deleted post-upsert (delete_stale below), and a first
-        # cold-start bootstrap on empty tables is clean. Only fresh_cluster_addresses
-        # phantoms need out-of-band cleanup if a re-run's phantoms matter.
-        spark_session = create_spark_session(
-            app_name=f"graphsense-clustering-{currency}-{env}",
-            local=local,
-            cassandra_nodes=env_config.cassandra_nodes,
-            cassandra_username=env_config.username,
-            cassandra_password=env_config.password,
-            spark_config=config.get_spark_config(),
-            spark_packages=config.get_spark_packages(),
-        )
-        try:
-            spark_kwargs = {}
-            if read_partitions is not None:
-                spark_kwargs["read_partitions"] = read_partitions
-            run_clustering_spark(
-                spark_session,
-                raw_keyspace=raw_keyspace,
-                transformed_keyspace=transformed_keyspace,
-                max_address_id=max_address_id,
-                bucket_size=db.transformed.get_cluster_id_bucket_size(),
-                end_block=end_block,
-                delete_stale=lambda keys: _delete_fresh_cluster_stats_rows(
-                    db.transformed, keys
-                ),
-                **spark_kwargs,
+        # Hold the transformed-keyspace lock — the same lock the delta updater and
+        # the recompute-cluster-stats job take — for the whole run. Once the marker
+        # is active (set at the end of the first bootstrap) the delta updater
+        # maintains the fresh_* tables live; a re-run over changed data would
+        # otherwise interleave its bulk writes with those incremental merges across
+        # three tables Cassandra gives no cross-table atomicity for. Fails fast
+        # (LockAcquisitionError, exit 911) if a delta batch currently holds it.
+        with create_lock(transformed_keyspace):
+            # NOTE: the fresh_* tables are written append/upsert with no truncate,
+            # on purpose — a live keyspace keeps serving the previous mapping
+            # throughout the (multi-hour) run instead of going empty. The trade-off
+            # is that a re-run over CHANGED data can leave phantom cluster_id-keyed
+            # rows (cluster_id == min(address_id) shrinks when a smaller address
+            # merges a cluster); fresh_address_cluster self-heals per-address,
+            # fresh_cluster_stats phantoms are deleted post-upsert (delete_stale
+            # below), and a first cold-start bootstrap on empty tables is clean.
+            # Only fresh_cluster_addresses phantoms need out-of-band cleanup if a
+            # re-run's phantoms matter.
+            spark_session = create_spark_session(
+                app_name=f"graphsense-clustering-{currency}-{env}",
+                local=local,
+                cassandra_nodes=env_config.cassandra_nodes,
+                cassandra_username=env_config.username,
+                cassandra_password=env_config.password,
+                spark_config=config.get_spark_config(),
+                spark_packages=config.get_spark_packages(),
             )
-        finally:
-            spark_session.stop()
-            logger.info("SparkSession stopped.")
-        # Enable switch: the marker makes the delta updater maintain the
-        # fresh_* tables and REST fill fresh_cluster_id from here on.
-        mark_fresh_clustering_active(db)
-        logger.info(
-            "One-off clustering complete; fresh clustering marked active on "
-            f"{transformed_keyspace}."
-        )
+            try:
+                spark_kwargs = {}
+                if read_partitions is not None:
+                    spark_kwargs["read_partitions"] = read_partitions
+                run_clustering_spark(
+                    spark_session,
+                    raw_keyspace=raw_keyspace,
+                    transformed_keyspace=transformed_keyspace,
+                    max_address_id=max_address_id,
+                    bucket_size=db.transformed.get_cluster_id_bucket_size(),
+                    end_block=end_block,
+                    delete_stale=lambda keys: _delete_fresh_cluster_stats_rows(
+                        db.transformed, keys
+                    ),
+                    **spark_kwargs,
+                )
+            finally:
+                spark_session.stop()
+                logger.info("SparkSession stopped.")
+            # Enable switch: the marker makes the delta updater maintain the
+            # fresh_* tables and REST fill fresh_cluster_id from here on.
+            mark_fresh_clustering_active(db)
+            logger.info(
+                "One-off clustering complete; fresh clustering marked active on "
+                f"{transformed_keyspace}."
+            )
 
 
 @transformation.command(
@@ -1545,12 +1556,17 @@ def run_clustering(env, currency, local, read_partitions, end_block):
 def recompute_cluster_stats(env, currency, local):
     """Recompute the full ``fresh_cluster_stats`` from the address-level tables.
 
-    Aggregates ``address`` + ``address_incoming/outgoing_relations`` through the
-    fresh ``address -> cluster`` membership into per-cluster size, totals,
-    first/last tx, degrees and tx-counts, and rewrites ``fresh_cluster_stats``.
+    Aggregates ``address`` + ``address_transactions`` through the fresh
+    ``address -> cluster`` membership into per-cluster size, totals, first/last
+    tx and (cluster-netted) tx-counts, and rewrites ``fresh_cluster_stats``.
     Membership (``fresh_address_cluster`` / ``fresh_cluster_addresses``) is NOT
     touched. The delta loop keeps only size + root live, so the full
     cluster-level stats lag behind and this job refreshes them in one pass.
+
+    Degrees and ``total_*_adj`` are deliberately absent — those columns were
+    dropped from ``fresh_cluster_stats`` in the transformed_utxo 4->5 migration,
+    so the (expensive) address-relations tables are never scanned here; REST
+    serves in/out-degree from the legacy ``cluster`` table via the root address.
 
     Holds the transformed-keyspace lock (the same lock the delta updater takes) so
     it never races a delta merge, and upserts ``fresh_cluster_stats`` in place
@@ -1559,9 +1575,6 @@ def recompute_cluster_stats(env, currency, local):
     keyed by cluster_ids that are no longer roots (the root shrinks when a
     smaller address merges a cluster) are deleted after the upsert and the count
     logged, so the table ends the run phantom-free without ever being empty.
-    ``total_received_adj`` / ``total_spent_adj`` are the cluster totals minus
-    intra-cluster flows (summed external-relation ``estimated_value``); validate
-    against a real keyspace before REST reads them.
     \f
     """
     from graphsenselib.config import get_config
