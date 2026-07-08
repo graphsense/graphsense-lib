@@ -138,6 +138,11 @@ MAX_HEX_STRING_LENGTH = 64
 FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
+# Bound on concurrent per-row trace/log/timestamp lookups in
+# normalize_address_transactions — turns up to `pagesize` sequential round-trips
+# per page into bounded-concurrent ones on the hottest (address-txs) endpoint.
+MAX_ROW_LOOKUP_CONCURRENCY = 100
+
 
 class _AddressIdNotFound(Exception):
     """Internal sentinel raised on an address_id cache miss.
@@ -3893,7 +3898,7 @@ class Cassandra:
                 f"Expected {len(tx_ids)} results, got {len(full_txs)}."
             )
 
-        for addr_tx in txs:
+        async def _normalize_one(addr_tx):
             # fix log index field with new tx_refstruct
             if not use_legacy_log_index:
                 addr_tx["log_index"] = addr_tx["tx_reference"].log_index
@@ -3904,7 +3909,7 @@ class Cassandra:
                 # tx id not yet resolvable to a hash (delta-updater in-flight,
                 # see list_txs_by_ids_eth); drop the row instead of failing
                 addr_tx["error"] = "transaction not yet resolvable to a hash"
-                continue
+                return
             contract_creation = full_tx.get("contract_creation", None)
 
             addr_tx["contract_creation"] = contract_creation
@@ -4013,6 +4018,21 @@ class Cassandra:
             await self.fix_timestamp(
                 currency, addr_tx, timestamp_col="timestamp", block_id_col="height"
             )
+
+        # Process rows concurrently (bounded) rather than one sequential round-trip
+        # per row: this hot endpoint issued up to `pagesize` serial trace/log/
+        # timestamp lookups per page. Each row mutates only its own dict and
+        # `full_txs` is read-only, so ordering is preserved and results identical.
+        # A row that raises (e.g. trace-not-found without ignore) still propagates
+        # via gather, exactly as the sequential loop did.
+        sem = asyncio.Semaphore(MAX_ROW_LOOKUP_CONCURRENCY)
+
+        async def _bounded(addr_tx):
+            async with sem:
+                await _normalize_one(addr_tx)
+
+        await asyncio.gather(*(_bounded(addr_tx) for addr_tx in txs))
+
         await self._attach_token_tx_rates(currency, txs)
         return [tx for tx in txs if "error" not in tx]  # remove errored txs
 
