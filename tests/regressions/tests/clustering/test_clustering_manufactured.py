@@ -70,6 +70,25 @@ G = "1GkQmKAmHtNfnD3LHhTkewJxKHVSta4m2a"
 H = "16cou7Ht6WjTzuFyDBnht9hmvXytg6XdVT"
 ADDR_TO_ID = {A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8}
 
+# Per-address stat columns seeded into the transformed ``address`` table so both
+# paths derive real (non-zero) member-sum ``fresh_cluster_stats``: the one-off
+# recompute reads ``address`` in Spark, the incremental delta reads it via
+# get_address_stats. Values are deliberately distinct (and first/last chosen so a
+# cluster's min/max is not any single member's) — a missed or double-counted
+# member would change a sum. Tuple = (no_incoming_txs, no_outgoing_txs,
+# first_tx_id, last_tx_id, total_received.value, total_spent.value); fiat_values
+# are [value, 2*value] on both currency structs.
+ADDRESS_STATS = {
+    1: (1, 2, 10, 50, 100, 10),
+    2: (2, 3, 5, 60, 200, 20),
+    3: (3, 4, 20, 40, 300, 30),
+    4: (1, 1, 15, 55, 40, 4),
+    5: (3, 2, 25, 35, 50, 5),
+    6: (1, 1, 30, 70, 60, 6),
+    7: (2, 2, 45, 65, 700, 70),
+    8: (4, 1, 12, 48, 800, 80),
+}
+
 # Manufactured transactions in tx_id order (tx_id assigned in block order).
 # Exercises: chain (A-B then B-C), a separate cluster (D-E), a cross-block merge
 # of two already-committed clusters (C-D merges {A,B,C} and {D,E} — see the batch
@@ -105,6 +124,7 @@ bbs, tbs, apl = a["block_bucket_size"], a["tx_bucket_size"], a["address_prefix_l
 abks = a["address_bucket_size"]
 addr_to_id = a["addr_to_id"]
 txs = a["txs"]
+address_stats = a["address_stats"]
 
 with Cluster([host], port=port) as cluster:
     s = cluster.connect()
@@ -168,6 +188,25 @@ try:
                 f"INSERT INTO {raw_ks}.block_transactions "
                 f"(block_id_group, block_id, txs) "
                 f"VALUES ({bid // bbs}, {bid}, {txs_lit})"
+            )
+
+        # transformed `address` stat rows: the source of the member-sum
+        # fresh_cluster_stats for both the one-off recompute and the delta.
+        for aid_str, st in address_stats.items():
+            aid = int(aid_str)
+            no_in, no_out, first, last, recv, spent = st
+            recv_cur = "{value: %d, fiat_values: [%s, %s]}" % (
+                recv, float(recv), float(2 * recv)
+            )
+            spent_cur = "{value: %d, fiat_values: [%s, %s]}" % (
+                spent, float(spent), float(2 * spent)
+            )
+            s.execute(
+                f"INSERT INTO {tks}.address (address_id_group, address_id, "
+                f"no_incoming_txs, no_outgoing_txs, first_tx_id, last_tx_id, "
+                f"total_received, total_spent) VALUES "
+                f"({aid // abks}, {aid}, {no_in}, {no_out}, {first}, {last}, "
+                f"{recv_cur}, {spent_cur})"
             )
 finally:
     db.close()
@@ -290,6 +329,39 @@ def _truncate_fresh(cassandra_host: str, cassandra_port: int, keyspace: str):
             session.execute(f"TRUNCATE {keyspace}.{table}")  # noqa: S608
 
 
+def _read_fresh_cluster_stats(cassandra_host: str, cassandra_port: int, keyspace: str):
+    """Read fresh_cluster_stats -> {cluster_id: (all 8 stat columns)}.
+
+    Currency structs are flattened to ``(value, tuple(fiat_values))`` so two reads
+    compare by value regardless of the driver's UDT row type.
+    """
+    from cassandra.cluster import Cluster
+
+    def _cur(c):
+        return None if c is None else (c.value, tuple(c.fiat_values))
+
+    with Cluster([cassandra_host], port=cassandra_port) as cluster:
+        session = cluster.connect()
+        rows = session.execute(
+            f"SELECT cluster_id, no_addresses, min_address_id, first_tx_id, "  # noqa: S608
+            f"last_tx_id, no_incoming_txs, no_outgoing_txs, total_received, "
+            f"total_spent FROM {keyspace}.fresh_cluster_stats"
+        )
+        return {
+            r.cluster_id: (
+                r.no_addresses,
+                r.min_address_id,
+                r.first_tx_id,
+                r.last_tx_id,
+                r.no_incoming_txs,
+                r.no_outgoing_txs,
+                _cur(r.total_received),
+                _cur(r.total_spent),
+            )
+            for r in rows
+        }
+
+
 class TestClusteringManufactured:
     """PySpark one-off and incremental clustering must agree on a crafted set."""
 
@@ -316,6 +388,7 @@ class TestClusteringManufactured:
             address_bucket_size=ADDRESS_BUCKET_SIZE,
             addr_to_id=ADDR_TO_ID,
             txs=MANUFACTURED_TXS,
+            address_stats={str(k): list(v) for k, v in ADDRESS_STATS.items()},
         )
         _run_in_venv(current_venv, _SEED_HELPER, seed_args)
 
@@ -334,6 +407,8 @@ class TestClusteringManufactured:
         )
         oneoff_mapping = _read_fresh_address_cluster(host, port, tks)
         assert oneoff_mapping, "PySpark one-off wrote no fresh_address_cluster rows"
+        oneoff_stats = _read_fresh_cluster_stats(host, port, tks)
+        assert oneoff_stats, "PySpark one-off wrote no fresh_cluster_stats rows"
 
         # --- incremental from empty, in batches, exercising a real two-cluster
         # merge: {D,E} is committed alone in batch (2,2) before the C-D edge in
@@ -357,6 +432,15 @@ class TestClusteringManufactured:
         incr_mapping = _read_fresh_address_cluster(host, port, tks)
         assert incr_mapping, (
             "incremental clustering wrote no fresh_address_cluster rows"
+        )
+        # the incremental delta must maintain fresh_cluster_stats identically to
+        # the one-off Spark recompute (both are member sums over the same seeded
+        # address rows) — every stat column, keyed by the canonical cluster_id.
+        incr_stats = _read_fresh_cluster_stats(host, port, tks)
+        assert oneoff_stats == incr_stats, (
+            "one-off recompute vs incremental delta fresh_cluster_stats mismatch:\n"
+            f"  one-off:     {oneoff_stats}\n"
+            f"  incremental: {incr_stats}"
         )
 
         # --- partition equivalence + canonical-label invariant ---
@@ -420,6 +504,7 @@ class TestClusteringManufactured:
                 address_bucket_size=ADDRESS_BUCKET_SIZE,
                 addr_to_id=ADDR_TO_ID,
                 txs=MANUFACTURED_TXS,
+                address_stats={str(k): list(v) for k, v in ADDRESS_STATS.items()},
             ),
         )
 
@@ -441,6 +526,8 @@ class TestClusteringManufactured:
         assert oneoff_mapping, (
             "capped PySpark one-off wrote no fresh_address_cluster rows"
         )
+        oneoff_stats = _read_fresh_cluster_stats(host, port, tks)
+        assert oneoff_stats, "capped PySpark one-off wrote no fresh_cluster_stats rows"
 
         # --- incremental from empty, only over [0, end_block] ---
         _truncate_fresh(host, port, tks)
@@ -459,6 +546,13 @@ class TestClusteringManufactured:
         incr_mapping = _read_fresh_address_cluster(host, port, tks)
         assert incr_mapping, (
             "incremental clustering wrote no fresh_address_cluster rows"
+        )
+        incr_stats = _read_fresh_cluster_stats(host, port, tks)
+        assert oneoff_stats == incr_stats, (
+            "capped one-off recompute vs incremental delta fresh_cluster_stats "
+            "mismatch:\n"
+            f"  one-off:     {oneoff_stats}\n"
+            f"  incremental: {incr_stats}"
         )
 
         oneoff_clusters: dict[int, set[int]] = {}
