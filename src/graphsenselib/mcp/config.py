@@ -1,10 +1,10 @@
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from graphsenselib.web.config import LoggingConfig
 
@@ -90,6 +90,32 @@ class GSMCPConfig(BaseSettings):
             "server-initiated stream), so the default is True."
         ),
     )
+
+    # NoDecode: keep pydantic-settings from JSON-decoding the env value so the
+    # validator below can accept a plain comma/space-separated string.
+    allowed_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["*.iknaio.com", "*.ikna.io"],
+        description=(
+            "Host header values the MCP endpoint accepts (in addition to "
+            "localhost). FastMCP >= 3.4.3 validates the request Host against an "
+            "allowlist (DNS-rebinding protection) and returns 421 Misdirected "
+            "Request for anything not listed. Behind a reverse proxy the Host is "
+            "the public domain, not localhost, so this must include the public "
+            "host(s) the MCP is reached at or the endpoint 421s on every request. "
+            "Defaults to the iknaio deployment domains ('*.iknaio.com', "
+            "'*.ikna.io') so prod/test work out of the box; override "
+            "(comma- or space-separated) for other deployments. Ignored on "
+            "FastMCP <= 3.4.2, which does not validate the Host."
+        ),
+    )
+
+    @field_validator("allowed_hosts", mode="before")
+    @classmethod
+    def _split_allowed_hosts(cls, v):
+        # accept a comma/space-separated string from the env var as well as a list
+        if isinstance(v, str):
+            return [h.strip() for h in re.split(r"[,\s]+", v) if h.strip()]
+        return v
 
     curation_file: Optional[Path] = Field(
         default=None,
