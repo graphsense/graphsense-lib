@@ -28,6 +28,16 @@ our tools need server-initiated push notifications, so stateless is the
 right default. Flip with `GS_MCP_STATELESS_HTTP=false` if a future tool
 needs it.
 
+**Host validation behind a proxy** (`GS_MCP_ALLOWED_HOSTS`): FastMCP ≥ 3.4.3
+enables DNS-rebinding protection — it validates the request `Host` against an
+allowlist that defaults to localhost only and returns `421 Misdirected
+Request` for anything else. Served behind a reverse proxy the `Host` is the
+public domain, so set `GS_MCP_ALLOWED_HOSTS` to the host(s) the MCP is reached
+at (comma/space-separated; FastMCP matches with `fnmatch`, so `*` and
+`*.example.com` wildcards work). Defaults to `*.iknaio.com,*.ikna.io` so the
+hosted deployments work without an override. On FastMCP ≤ 3.4.2 (no Host
+validation) the setting is a harmless no-op.
+
 ## Design principles
 
 Every tool must earn its place by either **being structurally distinct**
