@@ -1,10 +1,10 @@
-"""Stats-pending fresh cluster rows must be served, not 500.
+"""Fresh cluster entities are served from complete stats rows.
 
-Delta-update clustering writes ``fresh_cluster_stats`` rows with only
-``no_addresses``/``min_address_id``; the value columns stay null until the
-next recompute-cluster-stats run. REST synthesizes those entities from the
-member address rows: money columns and first/last tx exactly, tx counts and
-degrees as member sums (a documented over-count healed by recompute).
+The incremental updater and the recompute both write every ``fresh_cluster_stats``
+stat column (member sums), so REST no longer re-derives money / tx-count columns
+from member address rows on read — the ``_fresh_entity_from_members`` fallback was
+removed. A stored full row is served as-is (degrees still come from the legacy
+hop, tested in ``test_fresh_degree_legacy_hop``). Legacy ids are untouched.
 
 DB-free: real ``Cassandra`` methods bound to a fake self.
 """
@@ -28,20 +28,9 @@ class _Result:
         return self.current_rows[0] if self.current_rows else None
 
 
-def _address_row(address_id, received, spent, first, last, txs=1, deg=1):
-    return {
-        "address_id": address_id,
-        "no_incoming_txs": txs,
-        "no_outgoing_txs": txs,
-        "in_degree": deg,
-        "out_degree": deg,
-        "first_tx_id": first,
-        "last_tx_id": last,
-        "total_received": Values(received, [received / 10.0, received / 100.0]),
-        "total_spent": Values(spent, [spent / 10.0, spent / 100.0]),
-    }
-
-
+# A stats-pending row (rich columns null) — the shape a pre-member-sum delta or a
+# not-yet-recomputed keyspace can still hold. It is served as stored now, never
+# synthesized; the legacy id space below asserts the same pass-through.
 _PENDING_ROW = {
     "cluster_id": 100,
     "no_addresses": 2,
@@ -71,25 +60,13 @@ _FULL_ROW = {
 }
 
 
-def _make_self(stats_rows_by_id, membership_by_id, address_rows_by_id):
+def _make_self(stats_rows_by_id):
     async def execute_async(
         currency, keyspace, query, params, paging_state=None, fetch_size=None
     ):
-        if "fresh_cluster_addresses" in query or "cluster_addresses" in query:
-            cluster_id = params[1]
-            return _Result(
-                [{"address_id": a} for a in membership_by_id.get(cluster_id, [])]
-            )
         cluster_id = params[1]
         row = stats_rows_by_id.get(cluster_id)
         return _Result([dict(row)] if row else [])
-
-    async def concurrent_with_args(currency, keyspace, query, params):
-        return [
-            dict(address_rows_by_id[address_id])
-            for _, address_id in params
-            if address_id in address_rows_by_id
-        ]
 
     async def finish_entities(currency, rows, with_txs=True):
         return list(rows)
@@ -98,14 +75,10 @@ def _make_self(stats_rows_by_id, membership_by_id, address_rows_by_id):
         parameters={"ltc": {"fiat_currencies": ["EUR", "USD"]}},
         get_id_group=lambda keyspace, id_: 0,
         execute_async=execute_async,
-        concurrent_with_args=concurrent_with_args,
         finish_entities=finish_entities,
         _fresh_singleton_entity=lambda currency, id_: _never(),
     )
-    ns._sum_currency = Cassandra._sum_currency.__get__(ns)
     ns._zero_values = Cassandra._zero_values.__get__(ns)
-    ns._fresh_entity_from_members = Cassandra._fresh_entity_from_members.__get__(ns)
-    ns._fresh_heal_pending_entities = Cassandra._fresh_heal_pending_entities.__get__(ns)
     ns._get_fresh_entity = Cassandra._get_fresh_entity.__get__(ns)
     return ns
 
@@ -114,53 +87,23 @@ async def _never():
     raise AssertionError("must not be called")
 
 
-_MEMBERS = {
-    100: [100, 101],
-}
-_ADDRESSES = {
-    100: _address_row(100, received=1000, spent=300, first=50, last=90, txs=4, deg=2),
-    101: _address_row(101, received=200, spent=0, first=40, last=60, txs=1, deg=1),
-}
-
-
-def test_pending_entity_synthesized_from_members():
-    s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
-    entity = asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + 100))
-    assert entity["no_addresses"] == 2
-    assert entity["total_received"] == Values(1200, [120.0, 12.0])
-    assert entity["total_spent"] == Values(300, [30.0, 3.0])
-    assert entity["first_tx_id"] == 40
-    assert entity["last_tx_id"] == 90
-    # member sums, documented over-count until recompute
-    assert entity["no_incoming_txs"] == 5
-    assert entity["in_degree"] == 3
-
-
 def test_full_row_served_untouched():
-    s = _make_self({200: _FULL_ROW}, {}, {})
+    s = _make_self({200: _FULL_ROW})
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", _OFF + 200))
     assert entity["total_received"] == Values(500, [50.0, 5.0])
     assert entity["no_incoming_txs"] == 7
 
 
 def test_no_synthesis_for_legacy_ids():
-    # legacy id space serves the cluster row as stored — healing is a
-    # fresh-table concern only
-    s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
+    # legacy id space serves the cluster row as stored — the fresh tables are a
+    # separate id regime and are not consulted here
+    s = _make_self({100: _PENDING_ROW})
     entity = asyncio.run(Cassandra.get_entity(s, "ltc", 100))
     assert entity["total_received"] is None
 
 
-def test_bulk_list_heals_only_pending_rows():
-    s = _make_self({100: _PENDING_ROW}, _MEMBERS, _ADDRESSES)
-    rows = [dict(_FULL_ROW), dict(_PENDING_ROW)]
-    healed = asyncio.run(s._fresh_heal_pending_entities("ltc", rows))
-    assert healed[0] == _FULL_ROW
-    assert healed[1]["total_received"] == Values(1200, [120.0, 12.0])
-
-
 def test_finish_address_backstop_zero_fills():
-    s = _make_self({}, {}, {})
+    s = _make_self({})
     s.markup_currency = Cassandra.markup_currency.__get__(s)
     s.markup_values = Cassandra.markup_values.__get__(s)
 

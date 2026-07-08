@@ -47,21 +47,6 @@ def _stats_row(cluster_id, **extra):
     }
 
 
-_PENDING_ROW = {
-    "cluster_id": 300,
-    "no_addresses": 2,
-    "min_address_id": 300,
-    "no_incoming_txs": None,
-    "no_outgoing_txs": None,
-    "in_degree": None,
-    "out_degree": None,
-    "first_tx_id": None,
-    "last_tx_id": None,
-    "total_received": None,
-    "total_spent": None,
-}
-
-
 def _make_self(
     stats_rows_by_id,
     address_rows_by_id,
@@ -107,9 +92,7 @@ def _make_self(
         concurrent_with_args=concurrent_with_args,
         finish_entities=finish_entities,
     )
-    ns._sum_currency = Cassandra._sum_currency.__get__(ns)
     ns._fresh_fill_degrees = Cassandra._fresh_fill_degrees.__get__(ns)
-    ns._fresh_entity_from_members = Cassandra._fresh_entity_from_members.__get__(ns)
     ns._fresh_heal_pending_entities = Cassandra._fresh_heal_pending_entities.__get__(ns)
     ns._get_fresh_entity = Cassandra._get_fresh_entity.__get__(ns)
     return ns
@@ -154,31 +137,6 @@ def test_member_sum_fallback_without_legacy_row():
     assert entity["out_degree"] == 5
 
 
-def test_fully_pending_row_uses_member_synthesis():
-    member = {
-        "address_id": 300,
-        "cluster_id": 555,
-        "no_incoming_txs": 1,
-        "no_outgoing_txs": 1,
-        "in_degree": 1,
-        "out_degree": 1,
-        "first_tx_id": 5,
-        "last_tx_id": 6,
-        "total_received": Values(10, [1.0, 0.1]),
-        "total_spent": Values(0, [0.0, 0.0]),
-    }
-    s = _make_self(
-        stats_rows_by_id={300: _PENDING_ROW},
-        address_rows_by_id={300: member},
-        legacy_cluster_rows_by_id={555: {"in_degree": 99, "out_degree": 99}},
-        membership_by_id={300: [300]},
-    )
-    entity = _get(s, 300)
-    # member synthesis, not the legacy hop
-    assert entity["in_degree"] == 1
-    assert entity["total_received"] == Values(10, [1.0, 0.1])
-
-
 def test_null_degree_columns_also_trigger_hop():
     # pre-migration keyspace: columns still exist, values null
     s = _make_self(
@@ -219,7 +177,7 @@ def test_no_hop_for_legacy_ids():
     assert entity["in_degree"] is None
 
 
-def test_bulk_heal_mixes_synthesis_and_degree_fill():
+def test_bulk_heal_fills_degrees():
     s = _make_self(
         stats_rows_by_id={},
         address_rows_by_id={100: {"address_id": 100, "cluster_id": 555}},

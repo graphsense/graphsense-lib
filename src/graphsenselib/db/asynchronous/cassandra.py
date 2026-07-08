@@ -146,15 +146,6 @@ FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
 
-def _fresh_stats_pending(row) -> bool:
-    """A fresh_cluster_stats row whose stat columns are still null.
-
-    Delta-update clustering writes only ``no_addresses``/``min_address_id``;
-    everything else stays null until the next recompute-cluster-stats run.
-    """
-    return "total_received" in row and row["total_received"] is None
-
-
 def _fresh_degrees_pending(row) -> bool:
     """A fresh_cluster_stats row lacking degrees.
 
@@ -2663,10 +2654,6 @@ class Cassandra:
             result = await self._fresh_singleton_entity(currency, raw)
             if result is None:
                 raise ClusterNotFoundException(currency, entity)
-        elif _fresh_stats_pending(result):
-            result = await self._fresh_entity_from_members(currency, result)
-            if result is None:
-                raise ClusterNotFoundException(currency, entity)
         elif _fresh_degrees_pending(result):
             result = await self._fresh_fill_degrees(currency, result)
         finished = (await self.finish_entities(currency, [result]))[0]
@@ -2711,67 +2698,6 @@ class Cassandra:
             value=0,
             fiat_values=[0.0 for _ in self.parameters[currency]["fiat_currencies"]],
         )
-
-    def _sum_currency(self, currency, values_list):
-        """Sum currency structs (value + per-fiat values) across address rows."""
-        Values = namedtuple("Values", ["value", "fiat_values"])
-        fiat = [0.0 for _ in self.parameters[currency]["fiat_currencies"]]
-        total = 0
-        for v in values_list:
-            if v is None:
-                continue
-            total += v.value
-            for i, f in enumerate(v.fiat_values or []):
-                fiat[i] += f
-        return Values(value=total, fiat_values=fiat)
-
-    async def _fresh_entity_from_members(self, currency, row):
-        """Fill a stats-pending fresh cluster row from its member address rows.
-
-        Delta-update clustering writes only ``no_addresses``/``min_address_id``;
-        the remaining columns stay null until the next recompute-cluster-stats
-        run. Money columns and first/last tx are exact (plain sums / extrema
-        over members). Tx counts and degrees are member sums and OVERCOUNT: a
-        co-spend tx is counted once per participating member, and intra-cluster
-        edges / shared counterparties inflate degrees. Exact netting needs tx
-        identity and counterparty->cluster resolution — too expensive per
-        request — so serve the upper bound until recompute replaces the tx
-        counts (degrees are never recomputed; the legacy hop serves them once
-        the cluster has a legacy root). Returns ``None`` when no member
-        address exists.
-        """
-        cluster_id = row["cluster_id"]
-        cluster_id_group = self.get_id_group(currency, cluster_id)
-        query = (
-            "SELECT address_id FROM fresh_cluster_addresses "
-            "WHERE cluster_id_group = %s AND cluster_id = %s"
-        )
-        members = await self.execute_async(
-            currency, "transformed", query, [cluster_id_group, cluster_id]
-        )
-        member_ids = [r["address_id"] for r in members.current_rows] or [cluster_id]
-        params = [(self.get_id_group(currency, id), id) for id in member_ids]
-        query = "SELECT * FROM address WHERE address_id_group = %s AND address_id = %s"
-        addrs = await self.concurrent_with_args(currency, "transformed", query, params)
-        if not addrs:
-            return None
-        total_received = self._sum_currency(
-            currency, [a["total_received"] for a in addrs]
-        )
-        total_spent = self._sum_currency(currency, [a["total_spent"] for a in addrs])
-        return {
-            "cluster_id": cluster_id,
-            "no_addresses": row["no_addresses"],
-            "min_address_id": row.get("min_address_id"),
-            "no_incoming_txs": sum(a["no_incoming_txs"] for a in addrs),
-            "no_outgoing_txs": sum(a["no_outgoing_txs"] for a in addrs),
-            "in_degree": sum(a["in_degree"] for a in addrs),
-            "out_degree": sum(a["out_degree"] for a in addrs),
-            "first_tx_id": min(a["first_tx_id"] for a in addrs),
-            "last_tx_id": max(a["last_tx_id"] for a in addrs),
-            "total_received": total_received,
-            "total_spent": total_spent,
-        }
 
     async def _legacy_relations_cluster_id(self, currency, entity):
         """Map a public entity id to the id keyed in the legacy relations tables.
@@ -2867,16 +2793,15 @@ class Cassandra:
         return row
 
     async def _fresh_heal_pending_entities(self, currency, rows):
-        """Heal incomplete rows in a bulk entity result; drop unhealable.
+        """Fill legacy degrees on rows in a bulk entity result.
 
-        Fully-pending rows (delta-created, all stat columns null) are
-        synthesized from their members; rows with stats but null degrees get
-        the legacy degree fill.
+        ``fresh_cluster_stats`` never carries degrees, so every stored row needs
+        the legacy degree fill. The stat columns themselves are written complete
+        by the incremental updater (member sums) and the recompute, so no
+        member-synthesis is needed here anymore.
         """
 
         async def heal(row):
-            if _fresh_stats_pending(row):
-                return await self._fresh_entity_from_members(currency, row)
             if _fresh_degrees_pending(row):
                 return await self._fresh_fill_degrees(currency, row)
             return row
