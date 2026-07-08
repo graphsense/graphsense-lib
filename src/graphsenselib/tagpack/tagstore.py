@@ -792,8 +792,18 @@ class TagStore(object):
 
     @auto_commit
     def finish_mappings_update(self, keys):
-        q = "UPDATE address SET is_mapped=true WHERE NOT is_mapped \
-                AND network IN %s"
+        # Only flag addresses that actually received a cluster mapping. The old
+        # blanket UPDATE marked every not-yet-mapped address in these networks as
+        # is_mapped=true even when its mapping was skipped/failed (e.g. the address
+        # is not yet present in the graph keyspace), permanently excluding it from
+        # future incremental cluster-mapping runs. The join self-heals: such an
+        # address stays is_mapped=false and is retried once its mapping exists.
+        q = "UPDATE address a SET is_mapped=true \
+                FROM address_cluster_mapping m \
+                WHERE NOT a.is_mapped \
+                    AND a.network = m.network \
+                    AND a.address = m.address \
+                    AND a.network IN %s"
         self.cursor.execute(q, (tuple(keys),))
 
     def get_ingested_tagpacks(self) -> Dict[str, datetime]:
