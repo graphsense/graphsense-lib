@@ -44,6 +44,18 @@ BASELINE_SERVER = os.environ.get("BASELINE_SERVER", "http://localhost:9001")
 CURRENT_AUTH = os.environ.get("CURRENT_AUTH")
 BASELINE_AUTH = os.environ.get("BASELINE_AUTH")
 
+# Extra per-server request headers, as a JSON object. A deployment behind an API
+# gateway sees headers the gateway injects (e.g. X-Consumer-Groups, which drives
+# tag obfuscation). A bare server does not, so comparing the two reports
+# differences that are pure deployment context. Set CURRENT_HEADERS to replay
+# them onto the current server.
+CURRENT_HEADERS = json.loads(os.environ.get("CURRENT_HEADERS") or "{}")
+BASELINE_HEADERS = json.loads(os.environ.get("BASELINE_HEADERS") or "{}")
+
+
+def extra_headers_for(base_url: str) -> dict:
+    return BASELINE_HEADERS if base_url == BASELINE_SERVER else CURRENT_HEADERS
+
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
 AUTHENTICATED_HEADERS = {
@@ -95,7 +107,7 @@ def get_response(
     """Get response from an endpoint, returning (data, status_code, elapsed_time)."""
     url = urljoin(base_url + "/", endpoint.lstrip("/"))
     base_headers = AUTHENTICATED_HEADERS if authenticated else HEADERS
-    headers = {**base_headers, "Authorization": auth}
+    headers = {**base_headers, "Authorization": auth, **extra_headers_for(base_url)}
 
     start = time.time()
     response = requests.get(url, headers=headers, timeout=30)
@@ -119,7 +131,7 @@ def post_response(
     """POST request to an endpoint, returning (data, status_code, elapsed_time)."""
     url = urljoin(base_url + "/", endpoint.lstrip("/"))
     base_headers = AUTHENTICATED_HEADERS if authenticated else HEADERS
-    headers = {**base_headers, "Authorization": auth}
+    headers = {**base_headers, "Authorization": auth, **extra_headers_for(base_url)}
 
     start = time.time()
     response = requests.post(url, headers=headers, json=body, timeout=60)

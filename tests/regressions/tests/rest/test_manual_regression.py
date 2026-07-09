@@ -18,6 +18,7 @@ Usage:
     BASELINE_VERSION=v25.11.16 make test-rest-manual
 """
 
+import json
 import logging
 import os
 import time
@@ -45,6 +46,11 @@ AUTHENTICATED_HEADERS = {
 CURRENT_AUTH = os.environ.get("CURRENT_AUTH")
 BASELINE_AUTH = os.environ.get("BASELINE_AUTH")
 
+# Extra per-server headers (JSON), to replay what an API gateway injects in front
+# of the baseline. See test_baseline_regression for the rationale.
+CURRENT_HEADERS = json.loads(os.environ.get("CURRENT_HEADERS") or "{}")
+BASELINE_HEADERS = json.loads(os.environ.get("BASELINE_HEADERS") or "{}")
+
 
 def headers_for(base_url: str, authenticated: bool) -> Dict[str, str]:
     """Headers for a request, carrying the API key of the server being addressed.
@@ -58,6 +64,9 @@ def headers_for(base_url: str, authenticated: bool) -> Dict[str, str]:
         key = BASELINE_AUTH if base_url == BASELINE_SERVER else CURRENT_AUTH
         if key:
             request_headers["Authorization"] = key
+        request_headers.update(
+            BASELINE_HEADERS if base_url == BASELINE_SERVER else CURRENT_HEADERS
+        )
     return request_headers
 
 
