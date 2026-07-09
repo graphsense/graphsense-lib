@@ -11,3 +11,31 @@ def replace_tron_dummy_address_with_valid_null_address(
     if address == TRON_DUMMY_REPLACEMENT_ADDRESS or (address == b"" and replace_empty):
         return NULL_ADDRESS_ACCOUNT_BYTES
     return address
+
+
+# Fresh-clustering public id space.
+#
+# Fresh cluster ids are stored raw in the fresh_* Cassandra tables
+# (cluster_id == min(address_id) of the cluster), which numerically collides
+# with legacy cluster ids. Everywhere outside those tables — REST responses,
+# incoming entity ids, the tagstore address_cluster_mapping_v2 — a fresh
+# cluster id is shifted by this offset so any id is self-describing:
+# id >= offset -> fresh (raw id = id - offset), id < offset -> legacy.
+# Safe: the largest legacy id space (BTC, ~1.5e9 addresses in 2026) is far
+# below 2**32, and shifted ids stay far below the 2**53 JS-safe-integer limit.
+FRESH_CLUSTER_ID_OFFSET = 2**32
+
+
+def is_fresh_cluster_id(entity_id: int) -> bool:
+    """True if the (public) entity id addresses the fresh cluster id space."""
+    return entity_id >= FRESH_CLUSTER_ID_OFFSET
+
+
+def to_public_fresh_cluster_id(raw_cluster_id: int) -> int:
+    """Raw fresh cluster id (== root/min address id) -> public API id."""
+    return raw_cluster_id + FRESH_CLUSTER_ID_OFFSET
+
+
+def to_raw_fresh_cluster_id(entity_id: int) -> int:
+    """Public fresh entity id -> raw cluster id in the fresh_* tables."""
+    return entity_id - FRESH_CLUSTER_ID_OFFSET

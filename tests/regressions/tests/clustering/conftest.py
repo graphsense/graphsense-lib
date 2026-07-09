@@ -113,6 +113,39 @@ def current_venv():
             )
         print(f"gs_clustering built and installed into {venv_dir}", flush=True)
 
+    # The PySpark one-off clustering path runs in this same venv, so it needs
+    # the `transformation` extra (pyspark). The base venv only carries `ingest`.
+    check_spark = subprocess.run(
+        [str(python_bin), "-c", "import pyspark"],
+        capture_output=True,
+    )
+    if check_spark.returncode != 0:
+        print(f"\nInstalling pyspark into {venv_dir} ...", flush=True)
+        result = subprocess.run(
+            ["uv", "pip", "install", f"{gslib_path}[transformation]",
+             "--python", str(python_bin)],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to install pyspark (exit {result.returncode}):\n"
+                f"stdout: {result.stdout[-3000:]}\n"
+                f"stderr: {result.stderr[-3000:]}"
+            )
+        verify = subprocess.run(
+            [str(python_bin), "-c", "import pyspark"],
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode != 0:
+            raise RuntimeError(
+                f"pyspark still not importable after install:\n"
+                f"stderr: {verify.stderr}"
+            )
+        print(f"pyspark installed into {venv_dir}", flush=True)
+
     return venv_dir
 
 

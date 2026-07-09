@@ -79,14 +79,6 @@ VALID_CONSISTENCY_LEVELS = {
 VALID_SERIAL_CONSISTENCY_LEVELS = {"SERIAL", "LOCAL_SERIAL"}
 
 
-def is_fresh_clustering_enabled() -> bool:
-    return os.environ.get("GRAPHSENSE_FRESH_CLUSTERING_ENABLED", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
-
 CASSANDRA_DEFAULT_REPLICATION_CONFIG = (
     "{'class': 'SimpleStrategy', 'replication_factor': 1}"
 )

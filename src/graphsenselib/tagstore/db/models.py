@@ -296,3 +296,38 @@ class NetworkStatisticsView(SQLModel, tabel=True):
     nr_identifiers_implicit: int
     nr_labels: int
     nr_tags: int
+
+
+# Fresh-clustering (v2) parallel objects. Same shape as the legacy mapping/views
+# above, but keyed on the canonical fresh cluster id (cluster root = min address
+# id) and sourced from the separate ``address_cluster_mapping_v2`` table. Kept in
+# parallel so reads can be switched per keyspace and rolled back by simply
+# pointing back at the legacy relations (or dropping these).
+
+
+class AddressClusterMappingV2(SQLModel, table=True):
+    __tablename__ = "address_cluster_mapping_v2"
+    __table_args__ = (
+        Index("acm_v2_gs_cluster_id_index", "network", "gs_cluster_id"),
+        _SHARED_TABLE_ARGS,
+    )
+    address: str = Field(primary_key=True)
+    network: str = Field(primary_key=True)
+    gs_cluster_id: int
+    gs_cluster_def_addr: str
+    gs_cluster_no_addr: Optional[int]
+
+
+class BestClusterTagViewV2(SQLModel, table=True):
+    __tablename__ = "best_cluster_tag_v2"
+    cluster_id: int = Field(primary_key=True)
+    network: str = Field(primary_key=True)
+    tag_id: int = Field(primary_key=True)
+
+
+class TagCountByClusterViewV2(SQLModel, table=True):
+    __tablename__ = "tag_count_by_cluster_v2"
+    gs_cluster_id: int = Field(primary_key=True)
+    network: str = Field(primary_key=True)
+    acl_group: str = Field(primary_key=True)
+    count: int

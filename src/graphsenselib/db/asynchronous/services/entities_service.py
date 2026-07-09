@@ -174,9 +174,11 @@ class EntitiesService:
         # calls — collapses 3 pool checkouts to 1 per get_entity request.
         async with self._tagstore_session() as ts:
             ts_kw = self._session_kwargs(ts)
+            # the tagstore layer routes public ids itself (fresh -> *_v2)
+            ts_cluster_id = int(entity_id)
             if not exclude_best_address_tag:
                 tag = await self.tagstore.get_best_cluster_tag(
-                    int(entity_id), currency.upper(), tagstore_groups, **ts_kw
+                    ts_cluster_id, currency.upper(), tagstore_groups, **ts_kw
                 )
 
                 if tag is not None:
@@ -185,12 +187,12 @@ class EntitiesService:
                     )
 
             count = await self.tagstore.get_nr_tags_by_clusterid(
-                int(entity_id), currency.upper(), tagstore_groups, **ts_kw
+                ts_cluster_id, currency.upper(), tagstore_groups, **ts_kw
             )
 
             if include_actors:
                 actor_res = await self.tagstore.get_actors_by_clusterid(
-                    int(entity_id), currency.upper(), tagstore_groups, **ts_kw
+                    ts_cluster_id, currency.upper(), tagstore_groups, **ts_kw
                 )
                 actors = [LabeledItemRef(id=a.id, label=a.label) for a in actor_res]
 
@@ -455,7 +457,7 @@ class EntitiesService:
         assert page is None or isinstance(page, int)
 
         tags = await self.tagstore.get_tags_by_clusterid(
-            entity_id,
+            int(entity_id),
             currency.upper(),
             page * (pagesize or 0),
             (pagesize + 1) if pagesize is not None else None,

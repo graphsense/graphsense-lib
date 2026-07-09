@@ -36,18 +36,25 @@ class UpdaterFactory:
         is_account_v2 = (
             schema_type == "account" or schema_type == "account_trx"
         ) and version == 2
-        if parallel_pool is not None and not is_account_v2:
+        is_utxo_v2 = schema_type == "utxo" and version == 2
+        if parallel_pool is not None and not (is_account_v2 or is_utxo_v2):
             logger.warning(
                 "--parallel-workers is only supported for the account "
-                f"updater v2; ignoring it for {schema_type} v{version}."
+                f"and utxo updaters v2; ignoring it for {schema_type} v{version}."
             )
             parallel_pool = None
         if schema_type == "utxo" and version == 1:
             return UpdateStrategyUtxoLegacy(db, currency, write_new, write_dirty)
-        if schema_type == "utxo" and version == 2:
+        if is_utxo_v2:
             app_strat = (
                 ApplicationStrategy.BATCH if write_batch > 1 else ApplicationStrategy.TX
             )
+            if parallel_pool is not None and app_strat == ApplicationStrategy.TX:
+                logger.warning(
+                    "--parallel-workers has no effect in TX mode "
+                    "(write-batch-size 1); running single-process."
+                )
+                parallel_pool = None
             return UpdateStrategyUtxo(
                 db,
                 currency,
@@ -55,6 +62,7 @@ class UpdaterFactory:
                 app_strat,
                 patch_mode,
                 forward_fill_rates=forward_fill_rates,
+                parallel_pool=parallel_pool,
                 wal_enabled=wal_enabled,
             )
         if (schema_type == "account" or schema_type == "account_trx") and version == 1:

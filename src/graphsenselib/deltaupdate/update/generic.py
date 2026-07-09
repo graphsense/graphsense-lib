@@ -376,6 +376,9 @@ def prepare_relations_for_ingest(
     partition keys are derivable from the address/cluster ids. Both tables are
     still written; Cassandra UPSERT covers the (asserted-impossible) case
     where an outgoing row is missing for an existing incoming row.
+
+    inrelations maps (src_identifier, dst_identifier) to the resolved
+    incoming-relations row, or None if the edge does not exist yet.
     """
     new_relations_in = defaultdict(int)
     new_relations_out = defaultdict(int)
@@ -386,7 +389,7 @@ def prepare_relations_for_ingest(
     for relations_update in delta:
         inr = inrelations[
             (relations_update.src_identifier, relations_update.dst_identifier)
-        ].result_or_exc.one()
+        ]
 
         id_src = resolve_identifier(relations_update.src_identifier)
         id_dst = resolve_identifier(relations_update.dst_identifier)

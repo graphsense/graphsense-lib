@@ -1,6 +1,7 @@
 """Run ingest, Scala transformation, and Rust clustering for regression tests."""
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,18 @@ from tests.lib.ingest import (
     run_cli_ingest,
 )
 from tests.clustering.config import ClusteringConfig
+
+_CREATE_RE = re.compile(r"CREATE (TABLE|TYPE)( IF NOT EXISTS)? ")
+
+
+def _qualify_create(stmt: str, keyspace: str) -> str:
+    """Prefix the keyspace onto a CREATE TABLE/TYPE identifier.
+
+    Handles the optional ``IF NOT EXISTS`` clause, which a naive
+    ``str.replace("CREATE TYPE ", ...)`` would split mid-statement into the
+    invalid ``CREATE TYPE <ks>.IF NOT EXISTS ...``.
+    """
+    return _CREATE_RE.sub(rf"CREATE \1\2 {keyspace}.", stmt, count=1)
 
 
 def _block_bucket_size(currency: str) -> int:
@@ -128,10 +141,7 @@ def _create_transformed_keyspace(cassandra_host: str, cassandra_port: int, keysp
             if not stmt or stmt.upper().startswith("CREATE KEYSPACE") or stmt.upper().startswith("USE "):
                 continue
             # Prepend keyspace to CREATE TABLE/TYPE statements
-            stmt = stmt.replace("CREATE TABLE ", f"CREATE TABLE {keyspace}.")
-            stmt = stmt.replace("CREATE TYPE ", f"CREATE TYPE {keyspace}.")
-            stmt = stmt.replace("CREATE TABLE IF NOT EXISTS ", f"CREATE TABLE IF NOT EXISTS {keyspace}.")
-            stmt = stmt.replace("CREATE TYPE IF NOT EXISTS ", f"CREATE TYPE IF NOT EXISTS {keyspace}.")
+            stmt = _qualify_create(stmt, keyspace)
             session.execute(stmt)
 
 
@@ -404,26 +414,55 @@ def write_fresh_clustering_to_cassandra(
     transformed_keyspace: str,
     mapping: dict[int, int],
 ) -> None:
-    """Write address_id -> cluster_id mapping to fresh_address_cluster and
-    fresh_cluster_addresses tables in Cassandra.
+    """Write address_id -> cluster_id mapping to fresh_address_cluster,
+    fresh_cluster_addresses and fresh_cluster_stats tables in Cassandra.
 
-    This seeds the state that run_incremental_clustering reads from.
+    This seeds the state that run_incremental_clustering reads from. The stats
+    rows (no_addresses, min_address_id per cluster) are required by the v2
+    incremental clustering, which picks the larger survivor on a merge from them.
+    All three tables are partition-bucketed (``id_group = id // bucket_size``);
+    the bucket size is read from the keyspace's ``configuration`` so the seed
+    matches what the production reads compute.
     """
     from cassandra.cluster import Cluster
 
+    sizes: dict[int, int] = {}
+    mins: dict[int, int] = {}
+    for address_id, cluster_id in mapping.items():
+        sizes[cluster_id] = sizes.get(cluster_id, 0) + 1
+        prev = mins.get(cluster_id)
+        mins[cluster_id] = address_id if prev is None else min(prev, address_id)
+
     with Cluster([cassandra_host], port=cassandra_port) as cluster:
         session = cluster.connect()
+        bucket_size = session.execute(
+            f"SELECT bucket_size FROM {transformed_keyspace}.configuration"  # noqa: S608
+        ).one().bucket_size
         prep_ac = session.prepare(
             f"INSERT INTO {transformed_keyspace}.fresh_address_cluster "
-            f"(address_id, cluster_id) VALUES (?, ?)"
+            f"(address_id_group, address_id, cluster_id) VALUES (?, ?, ?)"
         )
         prep_ca = session.prepare(
             f"INSERT INTO {transformed_keyspace}.fresh_cluster_addresses "
-            f"(cluster_id, address_id) VALUES (?, ?)"
+            f"(cluster_id_group, cluster_id, address_id) VALUES (?, ?, ?)"
+        )
+        prep_cs = session.prepare(
+            f"INSERT INTO {transformed_keyspace}.fresh_cluster_stats "
+            f"(cluster_id_group, cluster_id, no_addresses, min_address_id) "
+            f"VALUES (?, ?, ?, ?)"
         )
         for address_id, cluster_id in mapping.items():
-            session.execute(prep_ac, (address_id, cluster_id))
-            session.execute(prep_ca, (cluster_id, address_id))
+            session.execute(
+                prep_ac, (address_id // bucket_size, address_id, cluster_id)
+            )
+            session.execute(
+                prep_ca, (cluster_id // bucket_size, cluster_id, address_id)
+            )
+        for cluster_id, size in sizes.items():
+            session.execute(
+                prep_cs,
+                (cluster_id // bucket_size, cluster_id, size, mins[cluster_id]),
+            )
 
 
 # Helper script that runs inside current_venv (which has graphsenselib installed

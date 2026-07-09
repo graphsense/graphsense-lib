@@ -9,25 +9,43 @@ from graphsenselib.tagpack.cli import check_cluster_mapping_staleness
 
 
 class _FakeTagStore:
-    def __init__(self, sample):
-        self._sample = sample
+    def __init__(self, sample, fresh_sample=None, v2_exists=True):
+        self._sample = {False: sample, True: fresh_sample or []}
+        self._v2_exists = v2_exists
 
-    def get_cluster_mapping_sample(self, limit, networks=None):
+    def cluster_mapping_table_exists(self, fresh=False):
+        return self._v2_exists if fresh else True
+
+    def get_cluster_mapping_sample(self, limit, networks=None, fresh=False):
+        rows = self._sample[fresh]
         if networks is not None:
-            return [r for r in self._sample if r[1] in networks][:limit]
-        return self._sample[:limit]
+            return [r for r in rows if r[1] in networks][:limit]
+        return rows[:limit]
 
 
 class _FakeGS:
-    def __init__(self, current_by_network, missing_keyspaces=None):
-        self._current = current_by_network
+    def __init__(
+        self,
+        current_by_network,
+        missing_keyspaces=None,
+        fresh_networks=None,
+        fresh_current_by_network=None,
+    ):
+        self._current = {
+            False: current_by_network,
+            True: fresh_current_by_network or {},
+        }
         self._missing = set(missing_keyspaces or [])
+        self._fresh = set(fresh_networks or [])
 
     def keyspace_for_network_exists(self, network):
         return network not in self._missing
 
-    def get_address_clusters(self, df, network):
-        rows = self._current.get(network, [])
+    def is_fresh_network(self, network):
+        return network in self._fresh
+
+    def get_address_clusters(self, df, network, fresh=False):
+        rows = self._current[fresh].get(network, [])
         return pd.DataFrame(rows, columns=["address", "cluster_id"])
 
 
@@ -121,3 +139,37 @@ def test_address_not_found_in_graph():
     assert overall == 0.0
     assert per_net["BTC"]["checked"] == 1
     assert per_net["BTC"]["diverged"] == 0
+
+
+def test_fresh_marked_network_checks_both_regimes():
+    # v1 rows compare against legacy clustering (clean here); the *_v2 rows of
+    # a fresh-marked network compare against the fresh membership, where one
+    # of two sampled addresses drifted (delta-updater merge).
+    sample = [("a1", "LTC", 100), ("a2", "LTC", 200)]
+    fresh_sample = [("a1", "LTC", 100), ("a2", "LTC", 200)]
+    current = {"LTC": [("a1", 100), ("a2", 200)]}
+    fresh_current = {"LTC": [("a1", 100), ("a2", 150)]}
+    overall, per_net = _run(
+        _FakeTagStore(sample, fresh_sample=fresh_sample),
+        _FakeGS(
+            current, fresh_networks=["LTC"], fresh_current_by_network=fresh_current
+        ),
+        {"LTC": {}},
+    )
+    assert per_net["LTC"]["diverged"] == 0
+    assert per_net["LTC[fresh]"]["diverged"] == 1
+    assert per_net["LTC[fresh]"]["checked"] == 2
+    assert overall == 0.25
+
+
+def test_fresh_leg_skipped_without_v2_relations():
+    sample = [("a1", "LTC", 100)]
+    fresh_sample = [("a1", "LTC", 100)]
+    current = {"LTC": [("a1", 100)]}
+    overall, per_net = _run(
+        _FakeTagStore(sample, fresh_sample=fresh_sample, v2_exists=False),
+        _FakeGS(current, fresh_networks=["LTC"], fresh_current_by_network={}),
+        {"LTC": {}},
+    )
+    assert "LTC" in per_net
+    assert "LTC[fresh]" not in per_net
