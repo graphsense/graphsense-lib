@@ -40,6 +40,26 @@ AUTHENTICATED_HEADERS = {
     "Accept": "application/json",
 }
 
+# Per-server API keys, needed once BASELINE_SERVER points at a deployment whose
+# gateway validates them (e.g. https://api.iknaio.com). See test_baseline_regression.
+CURRENT_AUTH = os.environ.get("CURRENT_AUTH")
+BASELINE_AUTH = os.environ.get("BASELINE_AUTH")
+
+
+def headers_for(base_url: str, authenticated: bool) -> Dict[str, str]:
+    """Headers for a request, carrying the API key of the server being addressed.
+
+    Anonymous requests omit the key on purpose — the tag-obfuscation tests depend
+    on it — and are only ever sent to the current server, which is not fronted by
+    a validating gateway.
+    """
+    request_headers = dict(AUTHENTICATED_HEADERS if authenticated else HEADERS)
+    if authenticated:
+        key = BASELINE_AUTH if base_url == BASELINE_SERVER else CURRENT_AUTH
+        if key:
+            request_headers["Authorization"] = key
+    return request_headers
+
 
 def get_data_from_endpoint(
     base_url: str, endpoint: str, authenticated: bool = True
@@ -47,8 +67,7 @@ def get_data_from_endpoint(
     """Get data from an endpoint."""
     now = time.time()
     url = urljoin(base_url + "/", endpoint.lstrip("/"))
-    request_headers = AUTHENTICATED_HEADERS if authenticated else HEADERS
-    response = requests.get(url, headers=request_headers)
+    response = requests.get(url, headers=headers_for(base_url, authenticated))
     response.raise_for_status()
     elapsed = time.time() - now
     return response.json(), elapsed

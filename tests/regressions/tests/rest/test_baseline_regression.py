@@ -37,6 +37,13 @@ logger = logging.getLogger(__name__)
 CURRENT_SERVER = os.environ.get("CURRENT_SERVER", "http://localhost:9000")
 BASELINE_SERVER = os.environ.get("BASELINE_SERVER", "http://localhost:9001")
 
+# Per-server API keys. The default setup runs two throwaway containers that
+# share a key namespace, so one key works for both. When BASELINE_SERVER points
+# at a real deployment (e.g. https://api.iknaio.com) its gateway validates keys,
+# so that side needs its own. Unset -> whatever the caller passed.
+CURRENT_AUTH = os.environ.get("CURRENT_AUTH")
+BASELINE_AUTH = os.environ.get("BASELINE_AUTH")
+
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
 AUTHENTICATED_HEADERS = {
@@ -238,10 +245,10 @@ class BaselineRegressionTestBase:
     def compare_endpoint(self, endpoint: str, auth: str = "test") -> dict:
         """Compare an endpoint between baseline and current servers."""
         baseline_data, baseline_status, baseline_time = get_response(
-            self.baseline_url, endpoint, auth
+            self.baseline_url, endpoint, BASELINE_AUTH or auth
         )
         current_data, current_status, current_time = get_response(
-            CURRENT_SERVER, endpoint, auth
+            CURRENT_SERVER, endpoint, CURRENT_AUTH or auth
         )
 
         result = {
@@ -272,10 +279,10 @@ class BaselineRegressionTestBase:
     ) -> dict:
         """Compare a POST endpoint between baseline and current servers."""
         baseline_data, baseline_status, baseline_time = post_response(
-            self.baseline_url, endpoint, body, auth
+            self.baseline_url, endpoint, body, BASELINE_AUTH or auth
         )
         current_data, current_status, current_time = post_response(
-            CURRENT_SERVER, endpoint, body, auth
+            CURRENT_SERVER, endpoint, body, CURRENT_AUTH or auth
         )
 
         result = {
