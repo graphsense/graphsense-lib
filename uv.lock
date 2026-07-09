@@ -2307,6 +2307,7 @@ all = [
     { name = "rapidfuzz" },
     { name = "rapidyaml" },
     { name = "redis" },
+    { name = "setuptools" },
     { name = "sqlmodel" },
     { name = "tabulate" },
     { name = "uvicorn", extra = ["standard"] },
@@ -2391,6 +2392,7 @@ tagstore = [
 ]
 transformation = [
     { name = "pyspark" },
+    { name = "setuptools" },
 ]
 web = [
     { name = "anytree" },
@@ -2512,6 +2514,7 @@ requires-dist = [
     { name = "redis", marker = "extra == 'web'", specifier = ">=5.0.0" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "rich", specifier = ">=13.9" },
+    { name = "setuptools", marker = "extra == 'transformation'", specifier = ">=80.0.0" },
     { name = "simplejson", specifier = ">=3.19" },
     { name = "sqlmodel", marker = "extra == 'tagstore'", specifier = ">=0.0.22" },
     { name = "tabulate", marker = "extra == 'tagstore'", specifier = ">=0.9.0" },
