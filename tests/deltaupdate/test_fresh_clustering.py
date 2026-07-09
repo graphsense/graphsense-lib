@@ -10,6 +10,7 @@ column of the upserted row is the additive fold of the surviving/absorbed
 clusters' aggregates plus the new addresses' contributions.
 """
 
+import random
 import time
 
 import pytest
@@ -780,6 +781,173 @@ def test_activity_only_batch_updates_cluster_without_structural_change():
     assert after.total_received.value == before.total_received.value + 700
     # and it still equals the from-scratch member sum
     assert after == _expected_from_rows({1, 2}, store.address_table)
+
+
+# --------------------------------------------------------------------------- #
+# Fold math. The identity the incremental path rests on is
+#
+#     pre-batch structural fold + this-batch activity propagation
+#         == from-scratch member sum of the FINAL address rows
+#
+# for every one of the eight `fresh_cluster_stats` columns. The tests above pin
+# the individual moves; these pin the identity itself, on the folds that are
+# easiest to get wrong: a member that is absorbed by a merge in the same batch
+# it transacts, a chain merge that collapses three clusters at once, an address
+# whose pre-join history propagation deliberately skipped because it was still a
+# singleton. Every batch runs in production order — clustering plans against the
+# pre-batch `address` rows, then the batch's address rows commit.
+# --------------------------------------------------------------------------- #
+def _clusters_by_id(store):
+    by_cid: dict = {}
+    for addr, cid in store.addr_to_cluster.items():
+        by_cid.setdefault(cid, set()).add(addr)
+    return by_cid
+
+
+def _assert_member_sums(store, label):
+    """Every stored cluster equals the from-scratch member sum of its addresses,
+    and a stats row exists for exactly the clusters that have members."""
+    by_cid = _clusters_by_id(store)
+    assert set(store.stats) == set(by_cid), label
+    for cid, members in by_cid.items():
+        assert store.stats[cid] == _expected_from_rows(members, store.address_table), (
+            label,
+            cid,
+            sorted(members),
+        )
+
+
+def _fold_batch(store, edges, activity):
+    """One production-ordered batch: plan against the pre-batch rows, apply the
+    planned diff, then land the deferred `address`-row writes."""
+    from graphsenselib.deltaupdate.update.utxo.update import run_incremental_clustering
+
+    cc = run_incremental_clustering(
+        _FreshStoreDb(store), edges, touched_activity=activity
+    )
+    store.apply(cc)
+    store.commit_activity(activity)
+
+
+def test_fold_new_cluster_with_same_batch_activity():
+    """Both members are brand new and transact in the very batch that clusters
+    them, so the structural fold finds no prior address row: the whole cluster's
+    money has to arrive through activity propagation."""
+    pytest.importorskip("gs_clustering")
+    store = _GrowthStore()
+    _fold_batch(
+        store,
+        [[1, 2]],
+        {1: _ed(1, 1, 4, 1, 1, 100, 10), 2: _ed(2, 2, 5, 1, 1, 200, 20)},
+    )
+    _assert_member_sums(store, "new+activity-same-batch")
+
+
+def test_fold_singleton_history_then_join_and_activity():
+    """Address 3 transacts while still a singleton — propagation skips it,
+    because a singleton has no cluster row to fold onto. When it later joins 4,
+    that pre-join history must arrive via the structural fold of its address
+    row, and the joining batch's own delta via propagation, with neither counted
+    twice."""
+    pytest.importorskip("gs_clustering")
+    store = _GrowthStore()
+    store.commit_activity({3: _ed(3, 1, 1, 1, 0, 500, 0)})  # no cluster yet
+    _fold_batch(
+        store,
+        [[3, 4]],
+        {3: _ed(3, 7, 7, 0, 1, 0, 60), 4: _ed(4, 8, 8, 1, 0, 90, 0)},
+    )
+    _assert_member_sums(store, "singleton-history+join+activity")
+
+
+def test_fold_merge_with_activity_on_the_absorbed_member():
+    """{3,4} is absorbed into {1,2} in the same batch that member 3 transacts.
+    The merge folds the two *stored* aggregates and re-points 3 and 4 without
+    re-adding their address rows; propagation then adds 3's delta to the
+    survivor. Folding 3's address row a second time would show up here."""
+    pytest.importorskip("gs_clustering")
+    store = _GrowthStore()
+    _fold_batch(store, [[1, 2]], {1: _ed(1, 1, 2, 1, 0, 100, 0)})
+    _fold_batch(store, [[3, 4]], {3: _ed(3, 3, 4, 1, 0, 300, 0)})
+    _fold_batch(store, [[2, 3]], {3: _ed(3, 9, 9, 0, 1, 0, 70)})
+
+    assert _clusters_by_id(store) == {1: {1, 2, 3, 4}}
+    _assert_member_sums(store, "merge+activity-on-absorbed")
+
+
+def test_fold_chain_merge_in_one_batch_with_activity():
+    """A single batch carries two co-spends that chain three existing clusters
+    into one ({10,11}+{12,13}, then {12,13}+{14,15}) while two members transact.
+    The survivor must land on the member sum of all six addresses."""
+    pytest.importorskip("gs_clustering")
+    store = _GrowthStore()
+    _fold_batch(store, [[10, 11]], {10: _ed(10, 1, 1, 1, 0, 10, 0)})
+    _fold_batch(store, [[12, 13]], {12: _ed(12, 2, 2, 1, 0, 20, 0)})
+    _fold_batch(store, [[14, 15]], {14: _ed(14, 3, 3, 1, 0, 30, 0)})
+    _fold_batch(
+        store,
+        [[11, 12], [13, 14]],
+        {11: _ed(11, 5, 5, 0, 1, 0, 5), 13: _ed(13, 6, 6, 1, 0, 60, 0)},
+    )
+
+    assert _clusters_by_id(store) == {10: {10, 11, 12, 13, 14, 15}}
+    _assert_member_sums(store, "chain-merge-one-batch+activity")
+
+
+def test_fold_activity_only_batch_matches_member_sum():
+    """A batch with no co-spend at all: nothing structural happens, both members
+    transact, and the cluster still equals the member sum afterwards."""
+    pytest.importorskip("gs_clustering")
+    store = _GrowthStore()
+    _fold_batch(store, [[1, 2]], {1: _ed(1, 1, 2, 1, 0, 100, 0)})
+    _fold_batch(
+        store, [], {1: _ed(1, 5, 6, 1, 1, 700, 70), 2: _ed(2, 7, 7, 1, 0, 5, 0)}
+    )
+    _assert_member_sums(store, "activity-only")
+
+
+def test_fold_member_without_address_row():
+    """Address 2 is clustered but never transacts, so it has no `address` row.
+    ``from_address_row(None)`` must still count it as one member carrying zero
+    money — which is what the one-off's left join does."""
+    pytest.importorskip("gs_clustering")
+    store = _GrowthStore()
+    _fold_batch(store, [[1, 2]], {1: _ed(1, 1, 2, 1, 0, 100, 0)})
+
+    assert 2 not in store.address_table
+    assert store.stats[1].no_addresses == 2
+    _assert_member_sums(store, "member-without-address-row")
+
+
+@pytest.mark.parametrize("seed", [20260709, 1, 42])
+def test_fold_identity_holds_under_random_batches(seed):
+    """Seeded fuzz over random co-spends and random activity. After every batch
+    — not just at the end — each stored cluster must equal the from-scratch
+    member sum, so a fold error is caught in the batch that introduces it."""
+    pytest.importorskip("gs_clustering")
+    rng = random.Random(seed)
+    addrs = list(range(1, 11))
+    store = _GrowthStore()
+    tx = 0
+
+    for b in range(6):
+        edges = [rng.sample(addrs, rng.randint(2, 3)) for _ in range(rng.randint(0, 2))]
+        # every co-spend input moved coins, plus some unrelated addresses
+        touched = {a for e in edges for a in e}
+        activity = {}
+        for a in sorted(touched | set(rng.sample(addrs, rng.randint(0, 3)))):
+            tx += 1
+            activity[a] = _ed(
+                a,
+                tx,
+                tx + rng.randint(0, 2),
+                rng.randint(0, 2),
+                rng.randint(0, 2),
+                rng.randint(0, 999),
+                rng.randint(0, 999),
+            )
+        _fold_batch(store, edges, activity)
+        _assert_member_sums(store, f"seed={seed} batch={b}")
 
 
 # --------------------------------------------------------------------------- #
