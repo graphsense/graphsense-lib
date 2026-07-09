@@ -10,6 +10,7 @@ from graphsenselib.cli.common import (
     require_environment,
     spark_profile_option,
 )
+from graphsenselib.config import supported_fiat_currencies
 from graphsenselib.schema import GraphsenseSchemas
 
 logger = logging.getLogger(__name__)
@@ -1119,6 +1120,173 @@ def run_pubkey_detect_command(
             s3_credentials=s3_credentials,
             spark_config=spark_config,
         )
+
+
+@transformation.command(
+    "top-untagged-addresses",
+    short_help="[ALPHA] Rank the most active addresses that carry no tag yet.",
+)
+@require_environment()
+@require_currency()
+@click.option(
+    "--out-path",
+    type=str,
+    required=True,
+    help="Output path for the result (local dir, or s3:// with --s3-config).",
+)
+@click.option(
+    "--format",
+    "out_format",
+    type=click.Choice(["csv", "parquet"]),
+    default="csv",
+    help="Output format. Overwrites --out-path.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=1000,
+    help="Number of untagged addresses to emit.",
+)
+@click.option(
+    "--sort-by",
+    type=click.Choice(["txs", "value", "degree"]),
+    default="txs",
+    help=(
+        "Activity metric to rank by: 'txs' = no_incoming_txs + no_outgoing_txs, "
+        "'value' = total_received in fiat, 'degree' = in_degree + out_degree. "
+        "All three are written to the output regardless."
+    ),
+)
+@click.option(
+    "--min-txs",
+    type=int,
+    default=0,
+    help="Drop addresses with fewer than this many total transactions.",
+)
+@click.option(
+    "--fiat-currency",
+    type=click.Choice(supported_fiat_currencies, case_sensitive=False),
+    default=supported_fiat_currencies[0],
+    help="Fiat currency for the total_received_fiat column.",
+)
+@click.option(
+    "--candidate-multiplier",
+    type=int,
+    default=50,
+    help=(
+        "Rank limit * multiplier addresses before removing the tagged ones. "
+        "If more than that many top addresses are already tagged, the run emits "
+        "fewer than --limit rows and logs a warning; raise this to widen the pool."
+    ),
+)
+@click.option(
+    "--tagstore-db-url",
+    type=str,
+    default=None,
+    help="Tagstore Postgres URL. Defaults to the GS_TAGSTORE_DB_URL setting.",
+)
+@click.option(
+    "--tagstore-schema",
+    type=str,
+    default=None,
+    help="Postgres schema holding the tagstore tables.",
+)
+@click.option(
+    "--s3-config",
+    "s3_config_name",
+    type=str,
+    default=None,
+    help="Name of the s3_configs entry to use when --out-path is on s3://.",
+)
+@click.option("--local", is_flag=True, help="Run Spark in local mode with local[*].")
+@spark_profile_option
+def run_top_untagged_addresses(
+    env,
+    currency,
+    out_path,
+    out_format,
+    limit,
+    sort_by,
+    min_txs,
+    fiat_currency,
+    candidate_multiplier,
+    tagstore_db_url,
+    tagstore_schema,
+    s3_config_name,
+    local,
+    spark_profile,
+):
+    """Rank the most active addresses of ``currency`` that carry no tag yet.
+
+    Scans the transformed keyspace ``address`` table, removes every address the
+    tagstore already has a tag for, and writes the top ``--limit`` remaining
+    addresses ranked by ``--sort-by``. For UTXO currencies each row also carries
+    a ``cluster_tagged`` flag telling you whether the address's cluster is
+    tagged even though the address itself is not — a strong hint that the
+    address is a known entity in disguise.
+
+    ALPHA: not yet validated in production; the interface may change.
+    """
+    _warn_alpha("transformation top-untagged-addresses")
+    from graphsenselib.config import (
+        currency_to_public_schema_type,
+        get_config,
+    )
+    from graphsenselib.tagpack.constants import DEFAULT_SCHEMA
+    from graphsenselib.tagstore.config import TagstoreSettings
+    from graphsenselib.untagged.factory import run_top_untagged
+
+    if limit < 1:
+        raise click.UsageError("--limit must be >= 1.")
+    if candidate_multiplier < 1:
+        raise click.UsageError("--candidate-multiplier must be >= 1.")
+
+    config = get_config()
+    env_config = config.get_environment(env)
+    ks_config = config.get_keyspace_config(env, currency)
+
+    if out_path.startswith("s3://") or out_path.startswith("s3a://"):
+        if s3_config_name is None:
+            available = sorted(config.s3_configs.keys())
+            raise click.UsageError(
+                "An S3 --out-path was given but --s3-config was not provided. "
+                f"Available s3_configs: {', '.join(available) or 'none'}."
+            )
+    s3_credentials = config.get_s3_credentials(s3_config_name)
+    spark_config = config.get_spark_config(spark_profile)
+
+    tagstore_db_url = tagstore_db_url or TagstoreSettings().db_url
+    tagstore_schema = tagstore_schema or DEFAULT_SCHEMA
+
+    logger.info(
+        "Reading %s.address on [%s]; tagstore %s (schema %s).",
+        ks_config.transformed_keyspace_name,
+        ", ".join(env_config.cassandra_nodes),
+        tagstore_db_url.rsplit("@", 1)[-1],
+        tagstore_schema,
+    )
+
+    run_top_untagged(
+        env=env,
+        currency=currency,
+        schema_type=currency_to_public_schema_type[currency],
+        transformed_keyspace=ks_config.transformed_keyspace_name,
+        tagstore_db_url=tagstore_db_url,
+        tagstore_schema=tagstore_schema,
+        out_path=out_path,
+        out_format=out_format,
+        limit=limit,
+        sort_by=sort_by,
+        min_txs=min_txs,
+        fiat_index=supported_fiat_currencies.index(fiat_currency.upper()),
+        candidate_multiplier=candidate_multiplier,
+        cassandra_nodes=env_config.cassandra_nodes,
+        cassandra_username=env_config.username,
+        cassandra_password=env_config.password,
+        local=local,
+        s3_credentials=s3_credentials,
+        spark_config=spark_config,
+    )
 
 
 def _expected_transformed_ks(currency, suffix, no_date):
