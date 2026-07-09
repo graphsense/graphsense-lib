@@ -220,9 +220,14 @@ def create_upper_bound(s, is_string_not_hex=False):
 
 
 def is_hexadecimal(s):
-    """Check if a string is a valid hexadecimal number."""
+    """Check if a string is a valid hexadecimal number.
+
+    ascii-strict on purpose: str.upper() applies full unicode case mapping
+    (the ligature "ﬀ" U+FB00 expands to "FF"), which would accept strings
+    that int(s, 16) / bytes.fromhex later reject.
+    """
     s = strip_0x(s)
-    return all(c in HEX_ALPHABET for c in s.upper())
+    return all(c in "0123456789abcdefABCDEF" for c in s)
 
 
 def getDateFromKeyspaceName(x):
@@ -2543,6 +2548,13 @@ class Cassandra:
 
         expression = postprocess_address(expression)
 
+        if is_eth_like(currency):
+            # fold unicode to ascii ("ﬀ" U+FB00 -> "ff") before prefix/bound
+            # derivation; base58 is case-sensitive so utxo stays as typed
+            expression = expression.casefold()
+            if postfix is not None:
+                postfix = postfix.casefold()
+
         if (
             currency == "eth"
             and len(strip_0x(expression)) == (prefix_lengths["address"] - 1)
@@ -3287,6 +3299,11 @@ class Cassandra:
         # so 0x should never be content. For base58 encoded btc adresses
         # there also no 0 character used.
         expression = strip_0x(expression)
+
+        # fold unicode to ascii before prefix/bound derivation: pdf
+        # copy-paste renders "ff" as the ligature "ﬀ" (U+FB00), which
+        # casefold maps back; is_hexadecimal is ascii-strict
+        expression = expression.casefold()
 
         if not is_hexadecimal(expression):
             return []
