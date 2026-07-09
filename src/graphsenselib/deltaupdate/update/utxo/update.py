@@ -1801,11 +1801,15 @@ class UpdateStrategyUtxo(UpdateStrategy):
             t_start = time.time()
             atomic = ApplicationStrategy.TX == self.application_strategy
             bookkeeping = self.bookkeeping_changes or []
-            # In BATCH mode self.changes carries the data changes and
-            # self.bookkeeping_changes the summary/history rows; stage both
-            # durably before applying so a torn batch is replayed, not
-            # recomputed, on the next run. (TX mode applies per-tx atomically
-            # inside process_batch and reaches here with self.changes == None.)
+            # In BATCH mode self.changes carries the data changes (address /
+            # cluster / relations rows plus the batch's fresh_* clustering
+            # writes) and self.bookkeeping_changes the summary/history rows;
+            # stage both durably before applying so a torn batch is replayed, not
+            # recomputed, on the next run. Replay matters most for
+            # fresh_cluster_stats, whose rows are folded from their own stored
+            # value and would double-count if the batch were recomputed after a
+            # partial commit. (TX mode applies per-tx atomically inside
+            # process_batch and reaches here with self.changes == None.)
             # No-op when the WAL is disabled.
             self._stage_wal(self.changes, bookkeeping)
             if self._parallel_pool is not None and not atomic:
@@ -1895,11 +1899,14 @@ class UpdateStrategyUtxo(UpdateStrategy):
     ) -> int:
         """Run incremental fresh clustering for the given multi-input id sets and
         per-address activity, and write the resulting diff to the ``fresh_*``
-        tables.
+        tables immediately.
 
-        Shared by the in-loop BATCH delta path (fed from harvested ids +
-        activity) and :meth:`run_fresh_clustering` (fed from a raw re-read, no
-        activity).  Returns the number of db changes written.
+        Used only by :meth:`run_fresh_clustering` (the standalone backfill, fed
+        from a raw re-read, no activity), which re-reads committed rows per chunk
+        and so may commit each chunk on its own.  The continuous delta must not
+        use this: its clustering writes ride the batch's commit (see
+        :meth:`_clustering_changes_for` and the staging in
+        ``process_batch_impl_hook``).  Returns the number of db changes written.
         """
         changes = self._clustering_changes_for(cluster_inputs, touched_activity)
         if not changes:
@@ -2189,18 +2196,30 @@ class UpdateStrategyUtxo(UpdateStrategy):
             )
 
         # BATCH mode only: the whole batch's harvested edges are clustered once
-        # here, before persist_updater_progress applies self.changes and advances
-        # last_synced_block — so a crash redoes the batch and re-clusters
-        # idempotently (address_ids are reassigned deterministically). TX mode does
-        # NOT reach here with edges: it folds each tx's clustering into that tx's
-        # own atomic commit above (cluster_inputs stays empty in TX mode).
-        # touched_activity also fires this when a batch only refreshes existing
-        # members' stats (activity but no co-spend).
+        # here, planned against the pre-batch `address` / `fresh_*` rows (nothing
+        # of this batch is committed yet), and the writes are STAGED into
+        # self.changes — never applied here. `fresh_cluster_stats` is an absolute
+        # row folded as `stored + this batch's activity`, a read-modify-write of
+        # its own table, so committing it ahead of the batch's commit point lets a
+        # crash-and-replay fold the same activity onto itself twice. (The
+        # structural writes alone were replay-safe: on a redo the members are
+        # already assigned and the join no-ops. Activity propagation has no such
+        # guard.) Staging puts them in the same WAL record and the same commit as
+        # the address rows and the bookkeeping that advances last_synced_block.
+        #
+        # TX mode does NOT reach here: it folds each tx's clustering into that
+        # tx's own atomic commit above (cluster_inputs and touched_activity stay
+        # empty in TX mode). touched_activity also fires this when a batch only
+        # refreshes existing members' stats (activity but no co-spend).
         if cluster_inputs or touched_activity:
-            n_changes = self._apply_clustering_inputs(cluster_inputs, touched_activity)
+            clustering_changes = self._clustering_changes_for(
+                cluster_inputs, touched_activity
+            )
+            self.changes.extend(clustering_changes)
             logger.debug(
                 f"Fresh clustering: {len(cluster_inputs)} multi-input txs, "
-                f"{len(touched_activity)} touched addresses -> {n_changes} db changes"
+                f"{len(touched_activity)} touched addresses -> "
+                f"{len(clustering_changes)} db changes staged"
             )
 
         self._timing_cassandra_read += timings.get("cassandra_read", 0.0)

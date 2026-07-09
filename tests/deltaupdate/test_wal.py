@@ -271,6 +271,35 @@ def test_truncate_rejected():
         encode_changes([DbChange.truncate(table="t")])
 
 
+def test_codec_roundtrip_fresh_clustering_changes():
+    """The batch's fresh_* clustering writes are staged in the same WAL record as
+    the address rows, so the codec must carry their currency structs and their
+    deletes (a merge drops the absorbed cluster's stats and membership rows)."""
+    from graphsenselib.deltaupdate.update.utxo.update import (
+        ClusteringChanges,
+        _ClusterStats,
+        _clustering_changes_to_db,
+    )
+
+    dv = DeltaValue(value=2**40, fiat_values=[1.5, 2.5])
+    stats = _ClusterStats(2, 7, 10, 99, 3, 4, dv, dv)
+    changes = _clustering_changes_to_db(
+        ClusteringChanges([(9, 7)], [(7, stats)], [(8, 9)], [8]), bucket_size=5000
+    )
+    back = decode_changes(encode_changes(changes))
+
+    assert [(c.action, c.table) for c in back] == [(c.action, c.table) for c in changes]
+    assert {c.table for c in back} == {
+        "fresh_address_cluster",
+        "fresh_cluster_addresses",
+        "fresh_cluster_stats",
+    }
+    assert any(c.action == DbChangeType.DELETE for c in back)
+    upsert = next(c for c in back if c.table == "fresh_cluster_stats" and c.data)
+    assert upsert.data["total_received"].value == 2**40
+    assert upsert.data["total_spent"].fiat_values == [1.5, 2.5]
+
+
 # --------------------------------------------------------------------------
 # DeltaWal lifecycle
 # --------------------------------------------------------------------------

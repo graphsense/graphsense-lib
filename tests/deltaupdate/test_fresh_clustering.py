@@ -10,6 +10,8 @@ column of the upserted row is the additive fold of the surviving/absorbed
 clusters' aggregates plus the new addresses' contributions.
 """
 
+import time
+
 import pytest
 
 from graphsenselib.datatypes import DbChangeType
@@ -778,3 +780,157 @@ def test_activity_only_batch_updates_cluster_without_structural_change():
     assert after.total_received.value == before.total_received.value + 700
     # and it still equals the from-scratch member sum
     assert after == _expected_from_rows({1, 2}, store.address_table)
+
+
+# --------------------------------------------------------------------------- #
+# Commit boundary. `fresh_cluster_stats` is an absolute row folded from its own
+# stored value (`stored + this batch's activity`), so the batch's fresh_* writes
+# must be committed together with the address rows, never ahead of them: a crash
+# between the two commits replays the batch, and the fold would re-add activity
+# that the stored row already carries. (The structural writes are replay-safe on
+# their own — the redo finds the members assigned and the join no-ops — which is
+# why this only became reachable once activity propagation was added.)
+# --------------------------------------------------------------------------- #
+def test_early_fresh_commit_double_counts_when_the_batch_is_replayed():
+    """Guards the *reason* for staging: committing the fresh writes before the
+    address rows makes a replayed batch fold the same activity twice."""
+    pytest.importorskip("gs_clustering")
+    from graphsenselib.deltaupdate.update.utxo.update import run_incremental_clustering
+
+    store = _GrowthStore()
+    db = _FreshStoreDb(store)
+    a = {1: _ed(1, 1, 10, 1, 1, 100, 10), 2: _ed(2, 2, 12, 1, 1, 200, 20)}
+    store.apply(run_incremental_clustering(db, [[1, 2]], touched_activity=a))
+    store.commit_activity(a)
+    cid = next(iter(store.stats))
+
+    # batch: activity only. Fresh rows commit ... then the process dies before
+    # the address rows land, so the next run recomputes the whole batch.
+    b = {1: _ed(1, 20, 30, 5, 6, 700, 70)}
+    store.apply(run_incremental_clustering(db, [], touched_activity=b))
+    store.apply(run_incremental_clustering(db, [], touched_activity=b))  # replay
+    store.commit_activity(b)
+
+    member_sum = _expected_from_rows({1, 2}, store.address_table)
+    assert store.stats[cid].total_received.value == 1700
+    assert member_sum.total_received.value == 1000  # 100 + 700 + 200
+
+
+def test_replayed_batch_is_exact_when_fresh_writes_ride_the_batch_commit():
+    """The staged ordering: nothing of a torn batch is committed, so the redo
+    plans against untouched rows and lands on the exact member sum."""
+    pytest.importorskip("gs_clustering")
+    from graphsenselib.deltaupdate.update.utxo.update import run_incremental_clustering
+
+    store = _GrowthStore()
+    db = _FreshStoreDb(store)
+    a = {1: _ed(1, 1, 10, 1, 1, 100, 10), 2: _ed(2, 2, 12, 1, 1, 200, 20)}
+    store.apply(run_incremental_clustering(db, [[1, 2]], touched_activity=a))
+    store.commit_activity(a)
+    cid = next(iter(store.stats))
+
+    # batch: planned, then the process dies before persist -> nothing committed.
+    b = {1: _ed(1, 20, 30, 5, 6, 700, 70)}
+    run_incremental_clustering(db, [], touched_activity=b)
+    # redo: plan again against the untouched rows, then commit fresh + address
+    # rows together, as persist_updater_progress does.
+    store.apply(run_incremental_clustering(db, [], touched_activity=b))
+    store.commit_activity(b)
+
+    assert store.stats[cid] == _expected_from_rows({1, 2}, store.address_table)
+    assert store.stats[cid].total_received.value == 1000
+
+
+def _run_batch_hook(monkeypatch, cluster_inputs, activity):
+    """Drive the real BATCH ``process_batch_impl_hook`` with its collaborators
+    stubbed.  Returns (strategy, changes committed inline, args the hook passed
+    to ``_clustering_changes_for``)."""
+    import graphsenselib.deltaupdate.update.utxo.update as upd
+    from graphsenselib.deltaupdate.update.generic import ApplicationStrategy
+
+    addr_change = DbChange.new(table="address", data={"address_id": 1})
+    fresh_change = DbChange.new(table="fresh_cluster_stats", data={"cluster_id": 1})
+
+    monkeypatch.setattr(
+        upd.parallelio, "fetch_block_transactions", lambda *a, **k: iter(())
+    )
+    monkeypatch.setattr(
+        upd,
+        "get_transaction_changes",
+        lambda *a, **k: ([addr_change], 0, 0, 0, 0, cluster_inputs, activity),
+    )
+    monkeypatch.setattr(upd, "get_bookkeeping_changes", lambda *a, **k: [])
+    monkeypatch.setattr(upd, "_check_gs_clustering", lambda: True)
+    committed = []
+    monkeypatch.setattr(upd, "apply_changes", lambda *a, **k: committed.append(a))
+
+    s = object.__new__(upd.UpdateStrategyUtxo)
+    s.application_strategy = ApplicationStrategy.BATCH
+    s.crash_recoverer = MutableNamedTuple(is_in_recovery_mode=lambda: False)
+    s._db = MutableNamedTuple(
+        raw=MutableNamedTuple(get_block_timestamp=lambda b: 0),
+        transformed=MutableNamedTuple(
+            get_exchange_rates_by_block=lambda b: MutableNamedTuple(fiat_values=[1.0]),
+            get_summary_statistics=lambda: None,
+        ),
+    )
+    s._parallel_pool = None
+    s._patch_mode = False
+    s._statistics = None
+    s._batch_start_time = time.time()
+    s._highest_address_id = 0
+    s._timing_cassandra_read = s._timing_transform = s._timing_persist = 0.0
+    s._fresh_clustering_active = lambda: True
+
+    seen = []
+
+    def _plan(ci, ta):
+        seen.append((ci, ta))
+        return [fresh_change]
+
+    s._clustering_changes_for = _plan
+    s.process_batch_impl_hook([100])
+    return s, committed, seen, addr_change, fresh_change
+
+
+def test_batch_hook_stages_clustering_changes_instead_of_committing(monkeypatch):
+    """The BATCH delta must append its fresh_* writes to ``self.changes`` (one
+    commit with the address rows + bookkeeping, one WAL record) and must not
+    write them inline."""
+    activity = {7: _ed(7, 1, 2, 1, 0, 5, 0)}
+    s, committed, seen, addr_change, fresh_change = _run_batch_hook(
+        monkeypatch, [[1, 2]], activity
+    )
+
+    assert s.changes == [addr_change, fresh_change]
+    assert committed == [], "clustering changes must be staged, not committed inline"
+    # the batch's activity must reach the planner, not just the co-spend edges
+    assert seen == [([[1, 2]], activity)]
+
+
+def test_batch_hook_stages_activity_only_batch(monkeypatch):
+    """A batch with activity but no multi-input co-spend must STILL plan and
+    stage its fresh_* writes.
+
+    This is the common case: members keep transacting between structural
+    mutations. If the hook only fired on ``cluster_inputs`` the money columns
+    would silently go stale again — exactly the production drift that activity
+    propagation exists to eliminate — while every other test stayed green.
+    """
+    activity = {7: _ed(7, 1, 2, 1, 0, 5, 0)}
+    s, committed, seen, addr_change, fresh_change = _run_batch_hook(
+        monkeypatch, [], activity
+    )
+
+    assert s.changes == [addr_change, fresh_change]
+    assert committed == []
+    assert seen == [([], activity)]
+
+
+def test_batch_hook_skips_clustering_when_nothing_touched(monkeypatch):
+    """No co-spends and no activity: nothing to plan, nothing to stage."""
+    s, committed, seen, addr_change, _ = _run_batch_hook(monkeypatch, [], {})
+
+    assert s.changes == [addr_change]
+    assert committed == []
+    assert seen == [], "planner must not run for an untouched batch"
