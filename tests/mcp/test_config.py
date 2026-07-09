@@ -21,6 +21,29 @@ def test_defaults(monkeypatch):
     assert cfg.resolved_curation_path().name == "tools.yaml"
 
 
+def test_allowed_hosts_default_covers_iknaio(monkeypatch):
+    monkeypatch.delenv("GS_MCP_ALLOWED_HOSTS", raising=False)
+    cfg = GSMCPConfig()
+    # default lets prod/test work without an override (FastMCP matches these
+    # with fnmatch, so the wildcards cover api./app./api.test. etc.)
+    assert cfg.allowed_hosts == ["*.iknaio.com", "*.ikna.io"]
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("api.example.com", ["api.example.com"]),
+        ("a.com, b.com", ["a.com", "b.com"]),
+        ("a.com  b.com", ["a.com", "b.com"]),
+        (" a.com , b.com ,", ["a.com", "b.com"]),
+        ("*", ["*"]),
+    ],
+)
+def test_allowed_hosts_env_parsing(monkeypatch, raw, expected):
+    monkeypatch.setenv("GS_MCP_ALLOWED_HOSTS", raw)
+    assert GSMCPConfig().allowed_hosts == expected
+
+
 def test_stateless_http_toggle_via_env(monkeypatch):
     monkeypatch.setenv("GS_MCP_STATELESS_HTTP", "false")
     cfg = GSMCPConfig()

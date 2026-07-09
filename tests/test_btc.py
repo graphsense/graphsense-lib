@@ -2,6 +2,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from graphsenselib.ingest.rpc_utxo import (
     BtcBlockExporter,
     _btc_to_satoshi,
@@ -640,7 +642,54 @@ class TestResolveUnresolvedInputs:
             exp = BtcBlockExporter.__new__(BtcBlockExporter)
             exp.max_workers = 2
             exp._output_cache = {}
+            exp.fail_on_unresolved_inputs = True
             return exp
+
+    def _tx_with_unresolvable_input(self):
+        return [
+            {
+                "hash": "tx_x",
+                "is_coinbase": False,
+                "inputs": [
+                    {
+                        "spent_transaction_hash": "missing_tx",
+                        "spent_output_index": 0,
+                        "value": None,
+                        "addresses": [],
+                        "type": None,
+                    },
+                ],
+                "outputs": [
+                    {"index": 0, "value": 10, "addresses": ["a"], "type": "p2pkh"},
+                ],
+                "input_value": 0,
+                "output_value": 10,
+                "fee": -10,
+            },
+        ]
+
+    def test_unresolved_input_raises_by_default(self):
+        """A spent input that can't be resolved aborts ingest by default,
+        rather than silently writing a null-value/null-address input."""
+        exp = self._make_exporter()
+        transactions = self._tx_with_unresolvable_input()
+
+        with patch.object(exp, "_batch_getrawtransaction", return_value={}):
+            with pytest.raises(RuntimeError, match="could not be resolved"):
+                exp._resolve_unresolved_inputs(transactions)
+
+    def test_unresolved_input_warns_when_disabled(self):
+        """With fail_on_unresolved_inputs=False the input is written null."""
+        exp = self._make_exporter()
+        exp.fail_on_unresolved_inputs = False
+        transactions = self._tx_with_unresolvable_input()
+
+        with patch.object(exp, "_batch_getrawtransaction", return_value={}):
+            exp._resolve_unresolved_inputs(transactions)  # must not raise
+
+        inp = transactions[0]["inputs"][0]
+        assert inp["value"] is None
+        assert inp["addresses"] == []
 
     def test_within_batch_resolution(self):
         """Inputs spending outputs from the same batch are resolved without RPC."""

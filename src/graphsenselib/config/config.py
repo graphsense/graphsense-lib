@@ -637,6 +637,19 @@ class AppConfig(GoodConf):
         ),
     )
 
+    fail_on_unresolved_inputs: bool = Field(
+        default=True,
+        description=(
+            "Abort the RPC UTXO ingest when a spent input cannot be resolved to a "
+            "value/address after the output cache and getrawtransaction. Such inputs "
+            "would otherwise be written with null value/addresses, silently corrupting "
+            "fees, balances, address relations and clustering downstream. Default true "
+            "(fail fast — the node is almost always missing txindex=1 or is pruned). "
+            "Set false to fall back to the previous behavior (warn and write the null "
+            "inputs). Superseded by fill_unresolved_inputs, which fills dummies instead."
+        ),
+    )
+
     use_redis_locks: bool = Field(
         default=False,
         description="Use Redis for distributed locking instead of file locks.",

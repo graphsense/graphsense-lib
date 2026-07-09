@@ -635,11 +635,13 @@ class BtcBlockExporter:
         verbosity=2,
         resolve_inputs=True,
         network="btc",
+        fail_on_unresolved_inputs=True,
     ):
         self.client = BatchRpcClient(provider_uri, timeout=timeout)
         self.max_workers = max_workers
         self.verbosity = verbosity
         self.resolve_inputs = resolve_inputs
+        self.fail_on_unresolved_inputs = fail_on_unresolved_inputs
         # Network code (btc/ltc/bch/zec) selects address version bytes when a
         # node omits the address for a P2PK output (see _p2pk_address_from_script).
         self.network = network
@@ -850,22 +852,36 @@ class BtcBlockExporter:
             )
 
         # Inputs still unresolved after all three phases keep value/addresses =
-        # None and the tx is written as-is; input_value/fee (summed over resolved
-        # inputs only, above) are then silently understated. Surface this rather
-        # than losing it quietly — typically a spent tx that predates txindex or a
-        # getrawtransaction failure logged in _batch_getrawtransaction.
-        n_unresolved = sum(
-            1
+        # None. Writing them null silently corrupts fees, balances, address
+        # relations and clustering downstream, so fail fast by default (see
+        # fail_on_unresolved_inputs). A null input almost always means the node is
+        # missing txindex=1 or is pruned. Typically the underlying getrawtransaction
+        # failure was already logged in _batch_getrawtransaction.
+        unresolved_inputs = [
+            (tx["hash"], inp["spent_transaction_hash"], inp["spent_output_index"])
             for tx in transactions
             for inp in tx["inputs"]
             if inp["value"] is None and inp["spent_transaction_hash"]
-        )
-        if n_unresolved:
+        ]
+        if unresolved_inputs:
+            tx_hash, sth, idx = unresolved_inputs[0]
+            detail = (
+                f"{len(unresolved_inputs)} spent input(s) could not be resolved "
+                f"after cache + getrawtransaction (e.g. tx {tx_hash} "
+                f"spends {sth}:{idx})"
+            )
+            if self.fail_on_unresolved_inputs:
+                raise RuntimeError(
+                    f"{detail}. Their value/addresses would be null, corrupting "
+                    "fees/balances/relations/clustering downstream. The node is "
+                    "likely missing txindex=1 or is pruned. Set config "
+                    "fail_on_unresolved_inputs=false to write null inputs anyway, "
+                    "or fill_unresolved_inputs=true to fill dummy values."
+                )
             logger.warning(
-                "%d spent input(s) could not be resolved after cache + "
-                "getrawtransaction; their value/addresses are left null and "
-                "input_value/fee are understated for the affected transactions.",
-                n_unresolved,
+                "%s; writing them with null value/addresses "
+                "(input_value/fee understated).",
+                detail,
             )
 
         logger.info(

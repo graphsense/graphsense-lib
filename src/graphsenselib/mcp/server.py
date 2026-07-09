@@ -109,7 +109,35 @@ def attach_to_fastapi(app, config: GSMCPConfig) -> None:
     app.state._graphsense_mcp_internal_base_url = config.internal_base_url
 
     mcp, stack = build_mcp(app, config)
-    mcp_asgi = mcp.http_app(path="/", stateless_http=config.stateless_http)
+
+    # FastMCP >= 3.4.3 validates the request Host against an allowlist
+    # (DNS-rebinding protection) and returns 421 for anything but localhost.
+    # Behind a reverse proxy the Host is the public domain, so pass the
+    # configured allowed hosts through. Done version-safely: FastMCP <= 3.4.2
+    # neither validates the Host nor accepts the kwarg, so we fall back cleanly.
+    if config.allowed_hosts:
+        try:
+            # allowed_hosts is only accepted by FastMCP >= 3.4.3; the pinned
+            # (older) version doesn't declare it, hence the type-ignore + the
+            # TypeError fallback below.
+            mcp_asgi = mcp.http_app(
+                path="/",
+                stateless_http=config.stateless_http,
+                allowed_hosts=config.allowed_hosts,  # ty: ignore[unknown-argument]
+            )
+        except TypeError:
+            # FastMCP <= 3.4.2 doesn't accept the kwarg — but it also doesn't
+            # validate the Host at all, so there's nothing to enforce and the
+            # fallback is harmless. (On >= 3.4.3 the kwarg is honoured above.)
+            logger.info(
+                "Installed FastMCP does not accept allowed_hosts (needs "
+                ">= 3.4.3); it does not validate the request Host either, so "
+                "GS_MCP_ALLOWED_HOSTS=%s is not needed and not applied.",
+                config.allowed_hosts,
+            )
+            mcp_asgi = mcp.http_app(path="/", stateless_http=config.stateless_http)
+    else:
+        mcp_asgi = mcp.http_app(path="/", stateless_http=config.stateless_http)
 
     existing_lifespan = app.router.lifespan_context
 

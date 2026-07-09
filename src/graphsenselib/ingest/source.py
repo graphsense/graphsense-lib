@@ -302,6 +302,7 @@ class SourceUTXO(Source):
         verbosity=2,
         resolve_inputs=True,
         max_workers=None,
+        fail_on_unresolved_inputs=True,
     ):
         self.fast_exporter = BtcBlockExporter(
             provider_uri=provider_uri,
@@ -310,6 +311,7 @@ class SourceUTXO(Source):
             verbosity=verbosity,
             resolve_inputs=resolve_inputs,
             network=network,
+            fail_on_unresolved_inputs=fail_on_unresolved_inputs,
         )
         # Keep legacy adapter for get_last_synced_block (uses getblockcount)
         self._provider_uri = provider_uri

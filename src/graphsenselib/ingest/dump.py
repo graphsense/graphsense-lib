@@ -90,6 +90,11 @@ def _create_utxo(
     use_cassandra_resolver = config.resolve_inputs_via_cassandra
     verbosity = 2 if use_cassandra_resolver else _DEFAULT_VERBOSITY[currency]
     resolve_inputs = not use_cassandra_resolver
+    # Fail on unresolved inputs unless the operator opted into filling dummies
+    # (fill_unresolved_inputs), which is handled later in the transformer.
+    fail_on_unresolved_inputs = (
+        config.fail_on_unresolved_inputs and not config.fill_unresolved_inputs
+    )
 
     source = SourceUTXO(
         provider_uri=provider_uri,
@@ -98,6 +103,7 @@ def _create_utxo(
         verbosity=verbosity,
         resolve_inputs=resolve_inputs,
         max_workers=source_max_workers,
+        fail_on_unresolved_inputs=fail_on_unresolved_inputs,
     )
     transformer = TransformerUTXO(
         partition_batch_size,
