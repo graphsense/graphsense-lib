@@ -1528,6 +1528,7 @@ def run_clustering(env, currency, local, read_partitions, end_block):
                     delete_stale=lambda keys: _delete_fresh_cluster_stats_rows(
                         db.transformed, keys
                     ),
+                    exclude_coinjoin=db.transformed.get_coinjoin_filtering(),
                     **spark_kwargs,
                 )
             finally:

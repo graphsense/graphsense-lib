@@ -758,8 +758,13 @@ def get_transaction_changes(
 
     # Harvest each multi-input tx's input-address set now, while txs are alive
     # (they are freed below, before the new address_ids are assigned); these are
-    # resolved to address_ids just before return.
-    input_address_sets = multi_input_address_sets(txs) if collect_cluster_inputs else []
+    # resolved to address_ids just before return. Coinjoin edges are excluded
+    # per the keyspace's configuration.coinjoin_filtering, like the Scala job.
+    input_address_sets = (
+        multi_input_address_sets(txs, tdb.get_coinjoin_filtering())
+        if collect_cluster_inputs
+        else []
+    )
 
     """
         Build dict of unique addresses in the batch.

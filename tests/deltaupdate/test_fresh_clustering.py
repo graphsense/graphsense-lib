@@ -406,15 +406,16 @@ def test_run_incremental_clustering_guards_on_missing_stats():
 # In-loop harvest: multi_input_address_sets / resolve_address_id_sets
 # (utils.utxo, shared with the driver path and mirrored by the Spark one-off's
 # multi_input_address_id_sets). Same Union-Find edges, harvested from the txs the
-# delta loop already holds. Semantics: >= 2 distinct input addresses.
+# delta loop already holds. Semantics: >= 2 distinct input addresses of a
+# non-coinjoin tx (a coinjoin's co-spend is deliberately not an ownership edge).
 # --------------------------------------------------------------------------- #
 def _inp(addresses):
     """A raw-tx input whose `address` is a list (multisig => more than one)."""
     return MutableNamedTuple(address=addresses)
 
 
-def _tx(coinbase=False, inputs=None):
-    return MutableNamedTuple(coinbase=coinbase, inputs=inputs)
+def _tx(coinbase=False, inputs=None, coinjoin=False):
+    return MutableNamedTuple(coinbase=coinbase, inputs=inputs, coinjoin=coinjoin)
 
 
 def test_extract_multi_input():
@@ -452,6 +453,24 @@ def test_extract_skips_none_and_empty_addresses():
 def test_extract_inputs_none_skipped():
     txs = [_tx(coinbase=False, inputs=None)]
     assert multi_input_address_sets(txs) == []
+
+
+def test_extract_coinjoin_excluded_by_default():
+    # co-spending inside a coinjoin is not evidence of common ownership; the
+    # legacy Scala clustering filters these and the fresh path must too
+    txs = [_tx(inputs=[_inp(["A"]), _inp(["B"])], coinjoin=True)]
+    assert multi_input_address_sets(txs) == []
+
+
+def test_extract_coinjoin_kept_when_filtering_disabled():
+    txs = [_tx(inputs=[_inp(["A"]), _inp(["B"])], coinjoin=True)]
+    assert multi_input_address_sets(txs, exclude_coinjoin=False) == [{"A", "B"}]
+
+
+def test_extract_coinjoin_null_counts_as_not_coinjoin():
+    # raw keyspaces ingested before the flag existed carry NULL: keep the edge
+    txs = [_tx(inputs=[_inp(["A"]), _inp(["B"])], coinjoin=None)]
+    assert multi_input_address_sets(txs) == [{"A", "B"}]
 
 
 def test_resolve_keeps_two_distinct_ids():
@@ -492,9 +511,26 @@ def test_harvest_end_to_end():
         _tx(inputs=[_inp(["A"]), _inp(["B"])]),  # {10, 20}
         _tx(inputs=[_inp(["B", "C", "D"])]),  # multisig {20, 30, 40}
         _tx(inputs=[_inp(["A"]), _inp(["E"])]),  # both id 10 -> drop
+        _tx(inputs=[_inp(["C"]), _inp(["D"])], coinjoin=True),  # coinjoin -> drop
     ]
     edges = resolve_address_id_sets(multi_input_address_sets(txs), a2i.get)
     assert sorted(sorted(e) for e in edges) == [[10, 20], [20, 30, 40]]
+
+
+def test_get_coinjoin_filtering_reads_configuration():
+    # the flag the harvest paths pass as exclude_coinjoin comes from the
+    # transformed keyspace's configuration row (written by the Scala job);
+    # a NULL column means unset -> the schema/legacy default of True
+    from graphsenselib.db.utxo import TransformedDbUtxo
+
+    def with_config(row):
+        tdb = object.__new__(TransformedDbUtxo)
+        tdb._db_config = row
+        return tdb.get_coinjoin_filtering()
+
+    assert with_config(MutableNamedTuple(coinjoin_filtering=True)) is True
+    assert with_config(MutableNamedTuple(coinjoin_filtering=False)) is False
+    assert with_config(MutableNamedTuple(coinjoin_filtering=None)) is True
 
 
 # --------------------------------------------------------------------------- #

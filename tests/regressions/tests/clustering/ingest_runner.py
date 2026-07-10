@@ -316,17 +316,22 @@ def read_raw_tx_inputs(
 
     Returns: list of transactions, each transaction is a list of input address strings.
     Only includes transactions with >1 unique input address (multi-input heuristic).
+    Coinjoin-flagged transactions are skipped — the Scala reference clusters with
+    coinjoin filtering on (its default, stored in configuration.coinjoin_filtering),
+    and the production paths this seed feeds read that same flag.
     """
     from cassandra.cluster import Cluster
 
     with Cluster([cassandra_host], port=cassandra_port) as cluster:
         session = cluster.connect()
         rows = session.execute(
-            f"SELECT block_id, coinbase, inputs FROM {raw_keyspace}.transaction"  # noqa: S608
+            f"SELECT block_id, coinbase, coinjoin, inputs FROM {raw_keyspace}.transaction"  # noqa: S608
         )
         tx_inputs = []
         for row in rows:
             if row.coinbase:
+                continue
+            if row.coinjoin:
                 continue
             if row.block_id < min_block_id:
                 continue

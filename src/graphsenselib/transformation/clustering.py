@@ -59,13 +59,14 @@ def iter_multi_input_tx_inputs(
     raw_ks = rdb.get_keyspace()
     block_bucket_size = rdb.get_block_bucket_size()
     tx_bucket_size = rdb.get_tx_bucket_size()
+    exclude_coinjoin = tdb.get_coinjoin_filtering()
 
     bt_prep = rdb._db.get_prepared_statement(
         f"SELECT txs FROM {raw_ks}.block_transactions "
         "WHERE block_id_group=:block_id_group AND block_id=:block_id"
     )
     tx_prep = rdb._db.get_prepared_statement(
-        f"SELECT coinbase, inputs FROM {raw_ks}.transaction "
+        f"SELECT coinbase, coinjoin, inputs FROM {raw_ks}.transaction "
         "WHERE tx_id_group=:tx_id_group "
         "AND tx_id>:tx_id_lower AND tx_id<=:tx_id_upper"
     )
@@ -125,7 +126,7 @@ def iter_multi_input_tx_inputs(
                     f"[{chunk_start},{chunk_end}]: {result}"
                 )
             for row in result:
-                addrs = multi_input_address_set(row)
+                addrs = multi_input_address_set(row, exclude_coinjoin)
                 if addrs is None:
                     continue
                 tx_input_addr_sets.append(addrs)
@@ -168,7 +169,12 @@ DEFAULT_SPARK_WRITE_CHUNK = 10_000_000
 DEFAULT_READ_PARTITIONS = 64
 
 
-def multi_input_address_id_sets(tx_df, address_ids_df, end_block: Optional[int] = None):
+def multi_input_address_id_sets(
+    tx_df,
+    address_ids_df,
+    end_block: Optional[int] = None,
+    exclude_coinjoin: bool = True,
+):
     """Derive each multi-input transaction's distinct input ``address_id`` set.
 
     Pure DataFrame transform (no Cassandra I/O) so it can be unit-tested with
@@ -179,10 +185,13 @@ def multi_input_address_id_sets(tx_df, address_ids_df, end_block: Optional[int] 
 
       * ``tx_df`` has the ``raw.transaction`` shape: ``tx_id``, ``block_id``,
         ``coinbase``, and ``inputs`` = ``array<struct<address: array<string>,
-        ...>>``;
+        ...>>`` (plus ``coinjoin`` when ``exclude_coinjoin`` is set);
       * if ``end_block`` is given, only transactions with ``block_id <=
         end_block`` are considered (cluster the chain as of that height);
       * coinbase transactions and null addresses are dropped;
+      * with ``exclude_coinjoin`` (the platform default, mirroring the legacy
+        Scala clustering's ``removeCoinJoin``), coinjoin-flagged transactions
+        are dropped too; a NULL flag counts as not-coinjoin and is kept;
       * input addresses are taken as a DISTINCT set per transaction, resolved
         to ``address_id`` via ``address_ids_df`` (``address``, ``address_id``);
       * only transactions with >= 2 distinct resolved ``address_id`` s survive.
@@ -194,6 +203,9 @@ def multi_input_address_id_sets(tx_df, address_ids_df, end_block: Optional[int] 
 
     if end_block is not None:
         tx_df = tx_df.filter(F.col("block_id") <= end_block)
+
+    if exclude_coinjoin:
+        tx_df = tx_df.filter(~F.coalesce(F.col("coinjoin"), F.lit(False)))
 
     tx_address = (
         tx_df.select("tx_id", "coinbase", "inputs")
@@ -512,6 +524,7 @@ def _read_edges_into_unionfind(
     end_block: Optional[int],
     read_partitions: int,
     feed_batch_size: int,
+    exclude_coinjoin: bool = True,
 ) -> Dict[str, float]:
     """PHASE 1: bulk-read the multi-input edge sets and feed them to the in-process
     Rust Union-Find ``c``, streaming one Spark partition at a time as Arrow IPC.
@@ -547,7 +560,9 @@ def _read_edges_into_unionfind(
         .options(table="address_ids_by_address_prefix", keyspace=transformed_keyspace)
         .load()
     )
-    edge_df = multi_input_address_id_sets(tx, address_ids, end_block=end_block)
+    edge_df = multi_input_address_id_sets(
+        tx, address_ids, end_block=end_block, exclude_coinjoin=exclude_coinjoin
+    )
     if read_partitions:
         edge_df = edge_df.coalesce(read_partitions)
 
@@ -825,6 +840,7 @@ def run_clustering_spark(
     skip_singletons: bool = True,
     end_block: Optional[int] = None,
     delete_stale=None,
+    exclude_coinjoin: bool = True,
 ):
     """Full one-off UTXO clustering with PySpark bulk read and bulk write.
 
@@ -915,6 +931,7 @@ def run_clustering_spark(
         end_block,
         read_partitions,
         feed_batch_size,
+        exclude_coinjoin=exclude_coinjoin,
     )
     logger.info(f"  [mem] peak rss after read: {_peak_rss_gb():.1f} GB")
 

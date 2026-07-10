@@ -103,7 +103,7 @@ def get_slim_tx_from_transaction(transaction) -> Iterable[SlimTx]:
     ]
 
 
-def multi_input_address_set(tx) -> Optional[Set[str]]:
+def multi_input_address_set(tx, exclude_coinjoin: bool = True) -> Optional[Set[str]]:
     """Distinct input addresses of ``tx`` IF it is a multi-input clustering edge.
 
     The single source of truth for the multi-input clustering heuristic at the
@@ -114,6 +114,15 @@ def multi_input_address_set(tx) -> Optional[Set[str]]:
     txs with no inputs, and txs that resolve to ``< 2`` distinct addresses (not
     edges).
 
+    With ``exclude_coinjoin`` (the platform default, mirroring the legacy Scala
+    clustering's ``removeCoinJoin``), transactions whose raw ``coinjoin`` flag is
+    set yield no edge either — co-spending inside a coinjoin is deliberately not
+    treated as evidence of common ownership. A NULL flag counts as not-coinjoin
+    (unlike Scala's ``=== false`` filter, which drops NULL-flag txs); callers
+    source the switch from the transformed keyspace's
+    ``configuration.coinjoin_filtering`` via
+    ``TransformedDb.get_coinjoin_filtering``.
+
     Note this deliberately does NOT use :func:`filter_inoutputs` (which keeps only
     single-address inputs): clustering unions the full address set, multisig
     included. The Spark transform
@@ -122,6 +131,8 @@ def multi_input_address_set(tx) -> Optional[Set[str]]:
     sync.
     """
     if tx.coinbase:
+        return None
+    if exclude_coinjoin and tx.coinjoin:
         return None
     addrs: Set[str] = set()
     if tx.inputs:
@@ -133,9 +144,13 @@ def multi_input_address_set(tx) -> Optional[Set[str]]:
     return addrs
 
 
-def multi_input_address_sets(txs) -> List[Set[str]]:
+def multi_input_address_sets(txs, exclude_coinjoin: bool = True) -> List[Set[str]]:
     """Per-transaction multi-input address edges (see :func:`multi_input_address_set`)."""
-    return [s for s in (multi_input_address_set(tx) for tx in txs) if s is not None]
+    return [
+        s
+        for s in (multi_input_address_set(tx, exclude_coinjoin) for tx in txs)
+        if s is not None
+    ]
 
 
 def resolve_address_id_sets(

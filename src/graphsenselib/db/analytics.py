@@ -944,6 +944,17 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
     def get_cluster_id_bucket_size(self) -> Optional[int]:
         return self.get_address_id_bucket_size()
 
+    def get_coinjoin_filtering(self) -> bool:
+        """Whether multi-input clustering excludes coinjoin-flagged transactions.
+
+        Read from the keyspace's ``configuration`` row (written by the Scala
+        transformation); a missing row/column or NULL value means unset and
+        falls back to True, the schema and legacy-job default.
+        """
+        config = self.get_configuration()
+        value = getattr(config, "coinjoin_filtering", None)
+        return True if value is None else bool(value)
+
     def get_configuration(self) -> Optional[object]:
         if self._db_config is None:
             self._db_config = self._get_only_row_from_table("configuration")
