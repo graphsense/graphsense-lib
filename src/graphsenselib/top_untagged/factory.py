@@ -30,7 +30,7 @@ def run_top_untagged(
     import os
 
     from graphsenselib.transformation.spark import create_spark_session
-    from graphsenselib.untagged.job import TopUntaggedAddresses
+    from graphsenselib.top_untagged.job import TopUntaggedAddresses
 
     if not cassandra_nodes:
         raise ValueError(

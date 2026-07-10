@@ -1240,7 +1240,7 @@ def run_top_untagged_addresses(
     )
     from graphsenselib.tagpack.constants import DEFAULT_SCHEMA
     from graphsenselib.tagstore.config import TagstoreSettings
-    from graphsenselib.untagged.factory import run_top_untagged
+    from graphsenselib.top_untagged.factory import run_top_untagged
 
     if limit < 1:
         raise click.UsageError("--limit must be >= 1.")

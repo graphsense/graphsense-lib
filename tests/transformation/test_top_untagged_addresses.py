@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from graphsenselib.untagged.job import (
+from graphsenselib.top_untagged.job import (
     check_writable,
     TopUntaggedAddresses,
     is_remote_path,
@@ -178,7 +178,7 @@ def test_dsn_without_database_is_rejected():
 
 
 def test_probe_chunks_large_inputs_and_unions_results(utxo_job, monkeypatch):
-    import graphsenselib.untagged.job as job_module
+    import graphsenselib.top_untagged.job as job_module
 
     monkeypatch.setattr(job_module, "PROBE_CHUNK_SIZE", 3)
     addresses = [f"addr{i}" for i in range(10)]
@@ -324,6 +324,38 @@ def test_account_model_never_probes_the_cluster_view(spark, tmp_path):
     job = _make_job(spark, "eth", "account", _account_addresses(spark), [], [])
     job.run(out_path=str(tmp_path / "out"), limit=5, sort_by="txs")
     assert all("best_cluster_tag" not in q for q, _ in job.executed)
+
+
+def test_run_reports_tag_coverage_of_the_candidate_pool(utxo_job, tmp_path):
+    # Pool = all 5 fixture addresses; 1 tagged directly, clusters {10,11,12,13}
+    # of which cluster 10 is tagged.
+    stats = utxo_job().run(out_path=str(tmp_path / "out"), limit=10, sort_by="txs")
+
+    assert stats.candidates == 5
+    assert stats.tagged == 1
+    assert stats.untagged == 4
+    assert stats.tagged_share == pytest.approx(20.0)
+    assert stats.clusters == 4
+    assert stats.tagged_clusters == 1
+    assert stats.tagged_cluster_share == pytest.approx(25.0)
+    assert stats.emitted == 4
+
+
+def test_account_run_reports_no_cluster_coverage(spark, tmp_path):
+    job = _make_job(spark, "eth", "account", _account_addresses(spark), [], [])
+    stats = job.run(out_path=str(tmp_path / "out"), limit=10, sort_by="txs")
+
+    assert stats.candidates == 2
+    assert stats.tagged == 0
+    assert (stats.clusters, stats.tagged_clusters) == (0, 0)
+    assert stats.tagged_cluster_share == 0.0  # no ZeroDivisionError
+
+
+def test_tag_coverage_is_logged(utxo_job, tmp_path, caplog):
+    with caplog.at_level("INFO"):
+        utxo_job().run(out_path=str(tmp_path / "out"), limit=10, sort_by="txs")
+    assert "Tag coverage of the candidate pool" in caplog.text
+    assert "Cluster coverage" in caplog.text
 
 
 def test_distutils_is_importable_for_pyspark():

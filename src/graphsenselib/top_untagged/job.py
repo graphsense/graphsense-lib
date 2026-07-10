@@ -49,6 +49,7 @@ bigger driver.
 import csv
 import logging
 import os
+from dataclasses import dataclass
 from typing import Iterable, List, Sequence, Set
 from urllib.parse import urlparse
 
@@ -152,6 +153,57 @@ def _csv_cell(value):
     if isinstance(value, bool):
         return "true" if value else "false"
     return value
+
+
+def _percent(part: int, whole: int) -> float:
+    return 100.0 * part / whole if whole else 0.0
+
+
+@dataclass
+class TagCoverage:
+    """How much of the candidate pool the tagstore already knows about.
+
+    Measured over the *candidate pool* (the top `limit * candidate_multiplier`
+    by the chosen metric), not the whole address table — so `tagged_share` reads
+    as "how well tagged are the most active addresses", which is the number
+    worth watching. It is not an estimate of overall tagging coverage.
+    """
+
+    candidates: int = 0
+    tagged: int = 0
+    clusters: int = 0  # UTXO only; account keyspaces have no clustering
+    tagged_clusters: int = 0
+    emitted: int = 0
+
+    @property
+    def untagged(self) -> int:
+        return self.candidates - self.tagged
+
+    @property
+    def tagged_share(self) -> float:
+        return _percent(self.tagged, self.candidates)
+
+    @property
+    def tagged_cluster_share(self) -> float:
+        return _percent(self.tagged_clusters, self.clusters)
+
+    def log(self, is_utxo: bool) -> None:
+        logger.info(
+            "Tag coverage of the candidate pool: %d addresses, %d tagged "
+            "(%.1f%%), %d untagged.",
+            self.candidates,
+            self.tagged,
+            self.tagged_share,
+            self.untagged,
+        )
+        if is_utxo:
+            logger.info(
+                "Cluster coverage: %d distinct clusters, %d with a tag (%.1f%%).",
+                self.clusters,
+                self.tagged_clusters,
+                self.tagged_cluster_share,
+            )
+        logger.info("Emitted %d rows.", self.emitted)
 
 
 def _chunks(values: Sequence, size: int) -> Iterable[Sequence]:
@@ -307,7 +359,7 @@ class TopUntaggedAddresses:
         min_txs: int = 0,
         fiat_index: int = 0,
         candidate_multiplier: int = 50,
-    ) -> None:
+    ) -> TagCoverage:
         from pyspark.sql import functions as F
 
         if out_format not in OUTPUT_FORMATS:
@@ -352,16 +404,21 @@ class TopUntaggedAddresses:
             .cache()
         )
 
-        tagged = self.probe_tagged_identifiers(
-            self._distinct_column(candidates, "address")
-        )
+        candidate_addresses = self._distinct_column(candidates, "address")
+        tagged = self.probe_tagged_identifiers(candidate_addresses)
         untagged = self._exclude(candidates, "address", tagged)
 
+        stats = TagCoverage(
+            candidates=len(candidate_addresses),
+            tagged=len(tagged),
+        )
+
         if self.is_utxo:
-            tagged_clusters = self.probe_tagged_clusters(
-                self._distinct_column(candidates, "cluster_id")
-            )
+            candidate_clusters = self._distinct_column(candidates, "cluster_id")
+            tagged_clusters = self.probe_tagged_clusters(candidate_clusters)
             untagged = self._flag_tagged_clusters(untagged, tagged_clusters)
+            stats.clusters = len(candidate_clusters)
+            stats.tagged_clusters = len(tagged_clusters)
         else:
             # Account-model keyspaces have no clustering, so nothing to report.
             untagged = untagged.withColumn(
@@ -402,6 +459,9 @@ class TopUntaggedAddresses:
         logger.info(
             "Wrote %d rows to %s (%s).", min(found, limit), out_path, out_format
         )
+        stats.emitted = min(found, limit)
+        stats.log(self.is_utxo)
+        return stats
 
     def _write(self, df, out_path: str, out_format: str) -> None:
         """Write the result: one file on the driver, or via Spark for remote paths.
