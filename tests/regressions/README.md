@@ -1,142 +1,70 @@
-# iknaio-tests-nightly
+# Regression tests
 
-Nightly regression tests for GraphSense REST API.
+Regression suites for graphsense-lib. Two families:
 
-## Overview
+- **Ingest / pipeline suites** (`tests/cassandra`, `tests/deltalake`,
+  `tests/sink_consistency`, `tests/sink_catchup`, `tests/continuation`,
+  `tests/transformation`, `tests/clustering`, `tests/delta_update`) — spin up
+  testcontainers and compare current code against a reference release or a
+  second code path. See `make help` for the `test-ingest-*` targets.
+- **REST API suites** (`tests/rest`) — compare two API servers
+  endpoint-by-endpoint.
 
-This repository contains automated regression tests that compare different versions of the GraphSense REST API to ensure backward compatibility and catch regressions.
+This directory is its own uv project; run everything from here.
 
-## Quick Start
+## Quick start (REST)
 
 ```bash
-# Install dependencies
 make install
 
-# Build and test current HEAD against previous stable release
-make regression-quick
+# compare production against your working tree, quick pass
+make rest REF=api.iknaio.com CUR=local SIZE=small
 ```
 
-## Usage
+`make rest` without arguments prints the full help, including what `REF`/`CUR`
+accept (git tag/branch/commit, `local`, `api.iknaio.com`, `api.test.iknaio.com`,
+any http(s) URL) and expected runtimes per size:
 
-### Building Docker Images
+| SIZE | Suites | Calls | Runtime |
+|------|--------|-------|---------|
+| `small` | manual (hand-written edge cases) | ~40 | ~1–2 min |
+| `medium` | small + fuzz (endpoint family sweep) | ~85 | ~3–5 min |
+| `large` | medium + loki (replayed production requests) | ~14k | ~2–4 h |
 
-Build from any version (tag, branch, or commit hash):
+Sides given as git refs or `local` are built into Docker images
+(`gslib-rest:<sha>`) and served locally on ports 19100/19101; images and
+running servers are reused across runs. `*.iknaio.com` sides need `GS_API_KEY`
+in the environment. Stop local servers with `make rest-stop`.
 
-```bash
-# Build current version (HEAD of local repo)
-make build-current
+Lower-level REST targets (`test-rest-manual`, `test-rest-fuzz`,
+`test-rest-loki`, `rest-build*`, `rest-serve`) still exist for the fixed
+current-vs-baseline docker pair; `make help` lists them.
 
-# Build baseline version (auto-detected previous stable tag)
-make build-baseline
+`make generate-loki` regenerates `tests/rest/test_loki_generated.py` from
+production Loki logs (requires `LOKI_URL`).
 
-# Build both
-make build-both
-
-# Build specific versions
-make build-current CURRENT_VERSION=feature/new-api
-make build-baseline BASELINE_VERSION=v25.11.16
-
-# Build from a specific commit
-make build-version VERSION=abc1234 IMAGE_TAG=test
-```
-
-### Running Servers
-
-```bash
-# Start both servers (requires config.yaml)
-make serve-both
-
-# Start individually
-make serve-current   # port 9000
-make serve-baseline  # port 9001
-
-# Stop servers
-make stop-all
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-make test
-
-# Run regression tests (requires servers running)
-make serve-both
-make test-regression
-make stop-all
-
-# Full automated workflow: build → serve → test → stop
-make regression-full
-
-# Quick test using registry images (no build for baseline)
-make regression-quick
-```
-
-### Configuration
+## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CURRENT_VERSION` | HEAD | Version for current server |
-| `BASELINE_VERSION` | Previous stable tag | Version for baseline server |
-| `CONFIG_FILE` | ./config.yaml | Path to server config |
-| `CURRENT_PORT` | 9000 | Port for current server |
-| `BASELINE_PORT` | 9001 | Port for baseline server |
-| `GRAPHSENSE_LIB_LOCAL` | /home/tom/Documents/GitHub/graphsense/graphsense-lib | Local graphsense-lib path |
+| `REST_CONFIG_FILE` | `../../instance/config.yaml` | Config mounted into locally served sides |
+| `REST_CURRENT_PORT` | 19100 | Port for a locally served current side |
+| `REST_BASELINE_PORT` | 19101 | Port for a locally served reference side |
+| `GS_API_KEY` | — | API key for hosted `*.iknaio.com` sides |
+| `TAGSTORE_URL` | — | Used to derive the tagstore DSN for local sides |
+| `REBUILD` | — | `1` forces a docker rebuild of git-ref/local sides |
 
-### Example config.yaml
+The pytest layer itself is driven by `CURRENT_SERVER` / `BASELINE_SERVER`
+(plus `*_AUTH` and `*_HEADERS` as JSON) — `scripts/rest_suite.sh` sets these
+for you; export them yourself only when bypassing it.
 
-```yaml
-logging:
-  level: INFO
-
-database:
-  driver: cassandra
-  port: 9042
-  nodes:
-    - cassandra.example.com
-  currencies:
-    btc:
-      raw: btc_raw
-      transformed: btc_transformed
-    eth:
-      raw: eth_raw
-      transformed: eth_transformed
-
-gs-tagstore:
-  url: postgresql+asyncpg://user:pass@postgres.example.com/tagstore
-```
-
-## Test Structure
-
-```
-tests/
-└── rest/
-    ├── conftest.py              # Fixtures (server setup, timing reports)
-    ├── version_utils.py         # Version detection utilities
-    └── test_baseline_regression.py  # Regression tests
-```
-
-## CI/CD Integration
-
-For nightly CI runs:
-
-```yaml
-# GitHub Actions example
-- name: Run regression tests
-  run: |
-    make pull-image-baseline  # Use cached baseline from registry
-    make build-current
-    make serve-both
-    make test-regression
-    make stop-all
-  env:
-    CONFIG_FILE: ${{ secrets.CONFIG_PATH }}
-    BASELINE_VERSION: v25.11.17
-```
+Deployment-context caveats when one side is a hosted deployment (gateway
+headers, obfuscation plugin, timezone, tagstore DSN) are handled by the
+runner / `instance/config.yaml`; details in
+`tests/rest/test_baseline_regression.py` comments.
 
 ## Reports
 
-After running tests, timing reports are saved to `reports/regression_timing_report.json` with:
-- Per-endpoint timing comparisons
-- Speedup/slowdown analysis
-- Pattern-based grouping
+Every REST run writes `reports/regression_timing_report.json` with
+per-endpoint timing comparisons, speedup/slowdown analysis, and
+pattern-based grouping.

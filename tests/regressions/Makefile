@@ -179,6 +179,17 @@ REST_BASELINE_PORT ?= 19101
 # Config file for REST servers
 REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 
+# Main entry point: compare any two API versions/deployments.
+#   make rest REF=<reference> CUR=<current> SIZE=<small|medium|large>
+# REF/CUR: git tag/branch/commit, 'local' (working tree), api.iknaio.com,
+# api.test.iknaio.com, or any http(s) URL. Run without args for full help.
+rest: ## Compare two REST versions: make rest REF=.. CUR=.. SIZE=small|medium|large (no args = help)
+ifeq ($(and $(REF),$(CUR),$(SIZE)),)
+	@./scripts/rest_suite.sh --help
+else
+	@REST_CONFIG_FILE="$(REST_CONFIG_FILE)" ./scripts/rest_suite.sh "$(REF)" "$(CUR)" "$(SIZE)"
+endif
+
 test-rest-fuzz: rest-ensure-servers ## REST API: fuzz regression (auto-generated endpoint comparison)
 	CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
 	BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
@@ -282,7 +293,7 @@ rest-ensure-servers: rest-ensure-baseline
 
 rest-serve: rest-ensure-servers ## Start both REST servers
 rest-stop: ## Stop REST server containers
-	-docker stop gs-current gs-baseline 2>/dev/null || true
+	-docker stop gs-current gs-baseline gs-rest-current gs-rest-baseline 2>/dev/null || true
 
 rest-info: ## Show REST server status
 	@echo "========================================================================"
@@ -317,7 +328,7 @@ clean: clean-rest clean-venvs ## Remove all test artifacts
 	test-ingest-deltalake-cross-version test-ingest-deltalake-performance \
 	test-ingest-sink-consistency test-ingest-split-continuation test-ingest-transformation \
 	test-delta-update \
-	test-rest test-rest-fuzz test-rest-manual test-rest-loki \
+	rest test-rest test-rest-fuzz test-rest-manual test-rest-loki \
 	generate-loki \
 	rest-build rest-build-current rest-build-baseline \
 	rest-ensure-servers rest-ensure-baseline rest-serve rest-stop rest-info \
