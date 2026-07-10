@@ -11,11 +11,11 @@ For auto-generated regression tests, see test_baseline_regression.py.
 For Loki log-derived tests, see test_loki_generated.py.
 
 Usage:
-    # Run all manual regression tests
-    make test-rest-manual
+    # Run all manual regression tests (quick depth = manual suite only)
+    make rest REF=api.iknaio.com CUR=local DEPTH=quick
 
-    # Run with specific baseline version
-    BASELINE_VERSION=v25.11.16 make test-rest-manual
+    # Or against a specific baseline version served locally
+    make rest REF=v25.11.16 CUR=local DEPTH=quick
 """
 
 import json

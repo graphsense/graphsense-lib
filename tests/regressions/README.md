@@ -36,12 +36,11 @@ Sides given as git refs or `local` are built into Docker images
 running servers are reused across runs. `*.iknaio.com` sides need `GS_API_KEY`
 in the environment. Stop local servers with `make rest-stop`.
 
-Lower-level REST targets (`test-rest-manual`, `test-rest-fuzz`,
-`test-rest-loki`, `rest-build*`, `rest-serve`) still exist for the fixed
-current-vs-baseline docker pair; `make help` lists them.
-
 `make generate-loki` regenerates `tests/rest/test_loki_generated.py` from
-production Loki logs (requires `LOKI_URL`).
+production Loki logs (requires `LOKI_URL`); the file is gitignored, so a
+fresh checkout needs this once before `DEPTH=full`. To run a single suite
+directly, invoke pytest with the `CURRENT_SERVER`/`BASELINE_SERVER` env vars
+described below.
 
 ## Configuration
 

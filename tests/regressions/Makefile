@@ -4,7 +4,6 @@ SHELL := /bin/bash
 # Shared configuration
 # ============================================================================
 
-GSLIB_REPO := https://github.com/graphsense/graphsense-lib.git
 GSLIB_PATH := $(shell cd ../.. && pwd)
 
 # Stable reference version for cross-version tests (cassandra, deltalake).
@@ -165,18 +164,11 @@ test-ingest: ## Run all ingest regression tests
 # REST API regression tests
 # ============================================================================
 
-# Baseline version: tag, branch, or commit hash (required for build targets)
-REST_BASELINE ?=
-
-# Docker image names
-IMAGE_CURRENT := gslib-test:current
-IMAGE_BASELINE := gslib-test:baseline
-
-# Ports
+# Ports for locally served sides
 REST_CURRENT_PORT ?= 19100
 REST_BASELINE_PORT ?= 19101
 
-# Config file for REST servers
+# Config file for locally served sides
 REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 
 # Main entry point: compare any two API versions/deployments.
@@ -187,124 +179,17 @@ rest: ## Compare two REST versions: make rest REF=.. CUR=.. DEPTH=quick|standard
 ifeq ($(and $(REF),$(CUR),$(DEPTH)),)
 	@./scripts/rest_suite.sh --help
 else
-	@REST_CONFIG_FILE="$(REST_CONFIG_FILE)" ./scripts/rest_suite.sh "$(REF)" "$(CUR)" "$(DEPTH)"
+	@REST_CONFIG_FILE="$(REST_CONFIG_FILE)" \
+	REST_CURRENT_PORT="$(REST_CURRENT_PORT)" \
+	REST_BASELINE_PORT="$(REST_BASELINE_PORT)" \
+	./scripts/rest_suite.sh "$(REF)" "$(CUR)" "$(DEPTH)"
 endif
 
-test-rest-fuzz: rest-ensure-servers ## REST API: fuzz regression (auto-generated endpoint comparison)
-	CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
-	BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
-	uv run pytest tests/rest/test_baseline_regression.py -v -m regression
-
-test-rest-manual: rest-ensure-servers ## REST API: manual regression (hand-written edge cases)
-	CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
-	BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
-	uv run pytest tests/rest/test_manual_regression.py -v -m regression
-
-test-rest-loki: rest-ensure-servers ## REST API: Loki-generated tests (from production logs)
-	@if [ -f tests/rest/test_loki_generated.py ]; then \
-		CURRENT_SERVER=http://localhost:$(REST_CURRENT_PORT) \
-		BASELINE_SERVER=http://localhost:$(REST_BASELINE_PORT) \
-		uv run pytest tests/rest/test_loki_generated.py -v -m loki_generated; \
-	else \
-		echo "Skipping: run 'make generate-loki' first to generate test file"; \
-	fi
-
-test-rest: rest-ensure-servers ## REST API: run all REST regression tests
-	@ret=0; \
-	$(MAKE) test-rest-fuzz || ret=1; \
-	$(MAKE) test-rest-manual || ret=1; \
-	$(MAKE) test-rest-loki || ret=1; \
-	exit $$ret
+rest-stop: ## Stop REST server containers
+	-docker stop gs-rest-current gs-rest-baseline 2>/dev/null || true
 
 generate-loki: ## Generate Loki test file from production logs (requires LOKI_URL)
 	uv run scripts/generate_loki_tests.py
-
-# --- REST infrastructure (build, serve, stop) ---
-
-rest-build: ## Build both REST Docker images (REST_BASELINE= required)
-	@$(MAKE) rest-build-current
-	@$(MAKE) rest-build-baseline
-
-rest-build-current: ## Build current REST image from local repo
-	@echo "Building current from: $(GSLIB_PATH)"
-	docker build -t $(IMAGE_CURRENT) $(GSLIB_PATH)
-
-rest-build-baseline: ## Build baseline REST image (REST_BASELINE= required)
-	@if [ -z "$(REST_BASELINE)" ]; then \
-		echo "Error: REST_BASELINE not set. Usage: make rest-build-baseline REST_BASELINE=v26.01.0"; \
-		exit 1; \
-	fi
-	@echo "Building baseline: $(REST_BASELINE)"
-	@rm -rf /tmp/gslib-baseline && \
-	git clone $(GSLIB_REPO) /tmp/gslib-baseline && \
-	cd /tmp/gslib-baseline && git checkout $(REST_BASELINE) && \
-	docker build -t $(IMAGE_BASELINE) /tmp/gslib-baseline
-
-rest-ensure-baseline:
-	@if ! docker image inspect $(IMAGE_BASELINE) >/dev/null 2>&1; then \
-		if [ -z "$(REST_BASELINE)" ]; then \
-			echo "Error: No baseline image found. Build one first:"; \
-			echo "  make rest-build-baseline REST_BASELINE=v26.01.0"; \
-			exit 1; \
-		fi; \
-		$(MAKE) rest-build-baseline; \
-	fi
-
-rest-ensure-servers: rest-ensure-baseline
-	@if [ ! -f "$(REST_CONFIG_FILE)" ] && [ ! -L "$(REST_CONFIG_FILE)" ]; then \
-		echo "Error: REST_CONFIG_FILE not found at $(REST_CONFIG_FILE)"; \
-		exit 1; \
-	fi
-	@REAL_CONFIG=$$(readlink -f "$(REST_CONFIG_FILE)") && \
-	if ! docker ps --format '{{.Names}}' | grep -q '^gs-current$$'; then \
-		echo "Starting current server on port $(REST_CURRENT_PORT)..."; \
-		docker run -d --name gs-current --rm --network=host \
-			-v "$$REAL_CONFIG:/srv/graphsense-rest/instance/config.yaml:ro" \
-			-e CONFIG_FILE=/srv/graphsense-rest/instance/config.yaml -e NUM_WORKERS=1 -e NUM_THREADS=1 \
-			$(IMAGE_CURRENT) \
-			sh -c 'gunicorn -c /opt/gunicorn-conf.py --bind 0.0.0.0:$(REST_CURRENT_PORT) "graphsenselib.web.app:create_app(\"$$CONFIG_FILE\")" --worker-class uvicorn.workers.UvicornWorker'; \
-	fi && \
-	if ! docker ps --format '{{.Names}}' | grep -q '^gs-baseline$$'; then \
-		echo "Starting baseline server on port $(REST_BASELINE_PORT)..."; \
-		docker run -d --name gs-baseline --rm --network=host \
-			-v "$$REAL_CONFIG:/config.yaml:ro" \
-			-e CONFIG_FILE=/config.yaml -e NUM_WORKERS=1 -e NUM_THREADS=1 \
-			$(IMAGE_BASELINE) \
-			sh -c 'gunicorn -c /opt/gunicorn-conf.py --bind 0.0.0.0:$(REST_BASELINE_PORT) "graphsenselib.web.app:create_app(\"$$CONFIG_FILE\")" --worker-class uvicorn.workers.UvicornWorker'; \
-	fi
-	@echo "Waiting for servers to be ready..."
-	@ready=0; \
-	for i in $$(seq 1 60); do \
-		if curl -s http://localhost:$(REST_CURRENT_PORT)/stats >/dev/null 2>&1 && \
-		   curl -s http://localhost:$(REST_BASELINE_PORT)/stats >/dev/null 2>&1; then \
-			ready=1; break; \
-		fi; \
-		sleep 2; \
-	done; \
-	if [ "$$ready" -ne 1 ]; then \
-		echo "Error: servers did not become ready in time."; \
-		echo "--- current logs ---"; docker logs gs-current 2>&1 | tail -20; \
-		echo "--- baseline logs ---"; docker logs gs-baseline 2>&1 | tail -20; \
-		$(MAKE) rest-stop; \
-		exit 1; \
-	fi
-	@echo "Current:  http://localhost:$(REST_CURRENT_PORT)"
-	@echo "Baseline: http://localhost:$(REST_BASELINE_PORT)"
-
-rest-serve: rest-ensure-servers ## Start both REST servers
-rest-stop: ## Stop REST server containers
-	-docker stop gs-current gs-baseline gs-rest-current gs-rest-baseline 2>/dev/null || true
-
-rest-info: ## Show REST server status
-	@echo "========================================================================"
-	@echo "  REST API regression servers"
-	@echo "========================================================================"
-	@echo "  Current image:    $(IMAGE_CURRENT) ($$(docker inspect --format='{{.Id}}' $(IMAGE_CURRENT) 2>/dev/null | cut -c8-19 || echo 'not built'))"
-	@echo "  Baseline image:   $(IMAGE_BASELINE) ($$(docker inspect --format='{{.Id}}' $(IMAGE_BASELINE) 2>/dev/null | cut -c8-19 || echo 'not built'))"
-	@echo "  Current server:   http://localhost:$(REST_CURRENT_PORT) ($$(docker ps --format '{{.Status}}' -f name=gs-current 2>/dev/null || echo 'stopped'))"
-	@echo "  Baseline server:  http://localhost:$(REST_BASELINE_PORT) ($$(docker ps --format '{{.Status}}' -f name=gs-baseline 2>/dev/null || echo 'stopped'))"
-	@echo "  Config file:      $(REST_CONFIG_FILE)"
-	@echo "========================================================================"
 
 # ============================================================================
 # Cleanup
@@ -313,9 +198,8 @@ rest-info: ## Show REST server status
 clean-venvs: ## Remove cached test virtual environments
 	rm -rf /tmp/gslib-deltalake-testvenvs
 
-clean-rest: rest-stop ## Remove REST Docker images and temp clones
-	-docker rmi $(IMAGE_CURRENT) $(IMAGE_BASELINE) 2>/dev/null || true
-	-rm -rf /tmp/gslib-baseline
+clean-rest: rest-stop ## Remove REST Docker images
+	-docker images -q 'gslib-rest' | xargs -r docker rmi 2>/dev/null || true
 
 clean: clean-rest clean-venvs ## Remove all test artifacts
 
@@ -328,8 +212,5 @@ clean: clean-rest clean-venvs ## Remove all test artifacts
 	test-ingest-deltalake-cross-version test-ingest-deltalake-performance \
 	test-ingest-sink-consistency test-ingest-split-continuation test-ingest-transformation \
 	test-delta-update \
-	rest test-rest test-rest-fuzz test-rest-manual test-rest-loki \
-	generate-loki \
-	rest-build rest-build-current rest-build-baseline \
-	rest-ensure-servers rest-ensure-baseline rest-serve rest-stop rest-info \
+	rest rest-stop generate-loki \
 	clean-venvs clean-rest clean
