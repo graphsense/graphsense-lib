@@ -197,6 +197,27 @@ def try_partial_tron_to_partial_evm(addr_prefix):
         return ""
 
 
+def utxo_net_flows(inputs, outputs) -> dict:
+    """Net flow per address over a UTXO tx's single-address ios.
+
+    Mirrors regularize_inoutputs + get_regflow in the delta updater and
+    computeAddressTransactions in graphsense-spark: multi-address (multisig)
+    ios are ignored, values are summed per address with inputs negative and
+    outputs positive. Negative net = net sender, positive net = net receiver;
+    relations only connect net senders to net receivers.
+    """
+    flows: dict = {}
+    for x in inputs or []:
+        if x.address is not None and len(x.address) == 1:
+            adr = x.address[0]
+            flows[adr] = flows.get(adr, 0) - x.value
+    for x in outputs or []:
+        if x.address is not None and len(x.address) == 1:
+            adr = x.address[0]
+            flows[adr] = flows.get(adr, 0) + x.value
+    return flows
+
+
 def create_upper_bound(s, is_string_not_hex=False):
     """Create upper bound for range query by incrementing last character"""
     if not s:
@@ -2334,18 +2355,27 @@ class Cassandra:
 
                 assets = list(assets)
 
+            # A link is a transaction of the directed relation id -> neighbor.
+            # UTXO relations connect net senders to net receivers (flows are
+            # netted per (tx, address) in the transform), and address_transactions
+            # rows carry exactly that net direction, so for ADDRESS queries the
+            # second node's rows can be restricted to the opposite direction of
+            # the first's. For CLUSTER queries the cluster-netted row direction
+            # can differ from the member-level nets that relations are built
+            # from, and for eth-like there is no netting and the from/to filter
+            # below decides — fetch both directions there.
+            second_is_outgoing = (
+                not is_outgoing
+                if node_type == NodeType.ADDRESS and not is_eth_like(currency)
+                else None
+            )
             results2, _, _ = await self.list_address_txs_ordered(
                 network=currency,
                 node_type=node_type,
                 id=second,
                 tx_id_lower_bound=None,
                 tx_id_upper_bound=None,
-                # is_outgoing=not is_outgoing,
-                # fetch both directions regardless, this is needed since for
-                # some transactions the total flow is an inflow but it is an
-                # outflowat the same time. If we would not fetch both
-                # directions we would miss these transactions.
-                is_outgoing=None,
+                is_outgoing=second_is_outgoing,
                 include_assets=assets,
                 ascending=ascending,
                 tx_ids=first_tx_ids,  # limit second set by tx ids of first set
@@ -2413,54 +2443,46 @@ class Cassandra:
                 ]
                 self.logger.debug(f"pruned {before - len(results2)}")
             if not is_eth_like(currency):
-                # Keep only rows where `id` is in the inputs and `neighbor` in the
-                # outputs. Filter the FRESH page (results2) BEFORE extending —
-                # the old code re-filtered the whole accumulated `final_results`
-                # on every while-loop iteration, re-running the per-address
-                # cluster-id lookups for already-accepted rows (10^5+ serial
-                # queries per request in the cluster case).
+                # Keep only txs of the directed relation id -> neighbor.
+                # Relations pair NET senders with NET receivers (the transform
+                # nets flows per (tx, address) over single-address ios before
+                # deriving relations), so raw io membership is not enough: an
+                # address that appears in the outputs but nets to an outflow is
+                # a net sender and has no incoming relation edge for this tx.
+                # Filter the FRESH page (results2) BEFORE extending —
+                # re-filtering the whole accumulated `final_results` on every
+                # while-loop iteration would re-run the per-address cluster-id
+                # lookups for already-accepted rows (10^5+ serial queries per
+                # request in the cluster case).
+
                 if node_type == NodeType.ADDRESS:
 
-                    def has_address_in_ios(address, ios):
-                        if ios is None and address == "coinbase":
-                            return True
-                        if ios is None:
-                            return False
-                        addresses_io = sum([x.address or [] for x in ios], [])
-                        return address in addresses_io
+                    def address_row_matches(r):
+                        flows = utxo_net_flows(r["inputs"], r["outputs"])
+                        sends = flows.get(id, 0) < 0 or (
+                            id == "coinbase" and r["inputs"] is None
+                        )
+                        return sends and flows.get(neighbor, 0) > 0
 
-                    results2 = [
-                        r
-                        for r in results2
-                        if has_address_in_ios(id, r["inputs"])
-                        and has_address_in_ios(neighbor, r["outputs"])
-                    ]
+                    results2 = [r for r in results2 if address_row_matches(r)]
                 else:
 
-                    def get_address_from_io(x):
-                        address_wrapped = x.address
-                        if address_wrapped is None:
-                            return None
-                        assert len(address_wrapped) == 1
-                        return address_wrapped[0]
-
-                    async def cluster_ids_of(ios):
-                        addresses_io = [get_address_from_io(x) for x in ios]
-                        addresses_io = [a for a in addresses_io if a is not None]
-                        # resolve the io addresses' cluster ids concurrently
+                    async def cluster_ids_of(addresses):
+                        # resolve the addresses' cluster ids concurrently
                         return set(
                             await asyncio.gather(
                                 *[
                                     self.get_address_entity_id(currency, a)
-                                    for a in addresses_io
+                                    for a in addresses
                                 ]
                             )
                         )
 
                     async def cluster_row_matches(r):
+                        flows = utxo_net_flows(r["inputs"], r["outputs"])
                         in_ids, out_ids = await asyncio.gather(
-                            cluster_ids_of(r["inputs"]),
-                            cluster_ids_of(r["outputs"]),
+                            cluster_ids_of([a for a, f in flows.items() if f < 0]),
+                            cluster_ids_of([a for a, f in flows.items() if f > 0]),
                         )
                         return id in in_ids and neighbor in out_ids
 
@@ -2472,9 +2494,13 @@ class Cassandra:
             final_results.extend(results2)
 
             # Once every edge tx has been found there is nothing left to page
-            # for: results2 already expanded all asset rows for these tx ids,
-            # so counting distinct tx ids against the pair's (per-tx) count is a
-            # safe upper bound that can only over-scan, never truncate.
+            # for. no_transactions is an upper bound on the number of link txs:
+            # for UTXO it counts exactly the txs pairing this net sender with
+            # this net receiver — the predicate the filter above enforces —
+            # (rows written by pre-netting delta-updater versions can only
+            # over-count); for eth-like it counts transfer rows (native txs
+            # plus token transfers), which is >= their distinct tx ids. So the
+            # early stop can only over-scan, never truncate.
             # edge_tx_count is None when the pre-check is disabled: never stop
             # early then.
             all_edge_found = (
