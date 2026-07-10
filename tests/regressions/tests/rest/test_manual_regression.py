@@ -362,6 +362,56 @@ class TestManualRegressionLinks(ManualRegressionTestBase):
             "trx/addresses/TCz47XgC9TjCeF4UzfB6qZbM9LTF9s1tG7/links?neighbor=TT8oWoMeoziArGXsPej6EYF5TN4WSUhvfu&order=desc&pagesize=2"
         )
 
+    @pytest.mark.regression
+    def test_links_utxo_net_sender_in_outputs_not_linked(self):
+        """A net sender appearing in the outputs is not a link.
+
+        btc tx 18fc9830...: bc1q3ng... is an input (2300) AND an output (1951),
+        netting to an outflow of 349, so it is a net sender of the tx. UTXO
+        relations pair net senders with net receivers, so there is no relation
+        edge 1oUWFer... -> bc1q3ng... and /links must be empty — consistent
+        with /neighbors, which never contained that edge. The pre-netting
+        /links filtered on raw io membership and returned the tx, disagreeing
+        with the relations pre-check (which correctly returned empty).
+
+        Current-server invariant, not a baseline comparison: a baseline
+        running the pre-netting code returns 1 link here.
+        """
+        pair = (
+            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/links"
+            "?neighbor=bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm&pagesize=10"
+        )
+        data, _ = get_data_from_endpoint(self.current_url, pair)
+        assert data.get("links") == [], (
+            "net sender in outputs must not produce a link (no relation edge)"
+        )
+
+        # the premise: the neighbor list agrees there is no edge
+        nb, _ = get_data_from_endpoint(
+            self.current_url,
+            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/neighbors"
+            "?direction=out&pagesize=10",
+        )
+        neighbor_addresses = {
+            (n.get("address") or {}).get("address") for n in nb.get("neighbors", [])
+        }
+        assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" not in neighbor_addresses, (
+            "premise broken: relation edge exists, links may not be empty"
+        )
+
+    @pytest.mark.regression
+    def test_links_utxo_net_receiver_of_same_tx_is_linked(self):
+        """Positive control for the netting case: the same tx 18fc9830...
+
+        bc1qfuys... is a pure output (net receiver), so the relation
+        1oUWFer... -> bc1qfuys... exists and the tx is a link under both the
+        netted and the pre-netting semantics — safe as a baseline comparison.
+        """
+        self.assert_call_equal(
+            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/links"
+            "?neighbor=bc1qfuyscyyxqyzuu6pd7fwqtv5kxwalp6ajd3h7xu&pagesize=10"
+        )
+
 
 # =============================================================================
 # Transaction list endpoint tests (with filters)
