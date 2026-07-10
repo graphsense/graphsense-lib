@@ -604,6 +604,12 @@ def get_table_abbrev(table_name: str) -> str:
 def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
     """Create a DbDelta instance form a transaction
 
+    Flows are netted per (tx, address) before deriving stats and relations,
+    mirroring the graphsense-spark transform (``computeAddressTransactions``
+    followed by ``splitTransactions``): an address appearing on both sides of
+    a tx counts only on the side of its net flow, net-zero addresses count on
+    neither side, and relations connect net senders to net receivers.
+
     Args:
         tx (dict): transaction to build the delta from
         rates (List[int]): convertion rates to use.
@@ -617,6 +623,8 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
 
     reginput_sum = sum([v for _, v in reg_in.items()])
     flows = {adr: get_regflow(reg_in, reg_out, adr) for adr in tx_adrs}
+    net_senders = {adr: -f for adr, f in flows.items() if f < 0}
+    net_receivers = {adr: f for adr, f in flows.items() if f > 0}
     input_flows_sum = sum([f for adr, f in flows.items() if adr in reg_in and f <= 0])
     """
         reginput_sum == -input_flows_sum,
@@ -630,35 +638,23 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
     new_entity_transactions = []
     relations_updates = []
 
-    for adr, value in reg_in.items():
+    for adr in tx_adrs:
+        flow = flows[adr]
+        spent = -flow if flow < 0 else 0
+        received = flow if flow > 0 else 0
         entity_updates.append(
             EntityDelta(
                 identifier=adr,
                 total_spent=DeltaValue(
-                    value=value, fiat_values=convert_to_fiat(value, rates)
+                    value=spent, fiat_values=convert_to_fiat(spent, rates)
                 ),
                 total_received=DeltaValue(
-                    value=0, fiat_values=convert_to_fiat(0, rates)
+                    value=received, fiat_values=convert_to_fiat(received, rates)
                 ),
                 first_tx_id=tx.tx_id,
                 last_tx_id=tx.tx_id,
-                no_incoming_txs=0,
-                no_outgoing_txs=1,
-            )
-        )
-
-    for adr, value in reg_out.items():
-        entity_updates.append(
-            EntityDelta(
-                identifier=adr,
-                total_spent=DeltaValue(value=0, fiat_values=convert_to_fiat(0, rates)),
-                total_received=DeltaValue(
-                    value=value, fiat_values=convert_to_fiat(value, rates)
-                ),
-                first_tx_id=tx.tx_id,
-                last_tx_id=tx.tx_id,
-                no_incoming_txs=1,
-                no_outgoing_txs=0,
+                no_incoming_txs=int(flow > 0),
+                no_outgoing_txs=int(flow < 0),
             )
         )
 
@@ -670,21 +666,16 @@ def dbdelta_from_utxo_transaction(tx: dict, rates: List[int]) -> DbDelta:
             )
         )
 
-    for iadr, _ in reg_in.items():
-        for oadr, _ in reg_out.items():
-            if iadr == oadr:
-                continue
-
-            iflow = flows[iadr]
-            oflow = flows[oadr]
+    for iadr, ivalue in net_senders.items():
+        for oadr, ovalue in net_receivers.items():
             if reduced_input_sum == 0:
                 # This can happen for txs with zero value and
                 # zero fees. eg. in btc
                 # c1e0db6368a43f5589352ed44aa1ff9af33410e4a9fd9be0f6ac42d9e4117151
                 v = 0
             else:
-                v = abs(round((iflow / reduced_input_sum) * oflow))
-            assert v <= max(abs(iflow), abs(oflow))
+                v = round((ivalue / reduced_input_sum) * ovalue)
+            assert v <= max(ivalue, ovalue)
             relations_updates.append(
                 RelationDelta(
                     src_identifier=iadr,
