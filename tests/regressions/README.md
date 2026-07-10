@@ -18,18 +18,18 @@ This directory is its own uv project; run everything from here.
 make install
 
 # compare production against your working tree, quick pass
-make rest REF=api.iknaio.com CUR=local SIZE=small
+make rest REF=api.iknaio.com CUR=local DEPTH=quick
 ```
 
 `make rest` without arguments prints the full help, including what `REF`/`CUR`
 accept (git tag/branch/commit, `local`, `api.iknaio.com`, `api.test.iknaio.com`,
-any http(s) URL) and expected runtimes per size:
+any http(s) URL) and expected runtimes per depth:
 
-| SIZE | Suites | Calls | Runtime |
-|------|--------|-------|---------|
-| `small` | manual (hand-written edge cases) | ~40 | ~1–2 min |
-| `medium` | small + fuzz (endpoint family sweep) | ~85 | ~3–5 min |
-| `large` | medium + loki (replayed production requests) | ~14k | ~2–4 h |
+| DEPTH | Suites | Calls | Runtime |
+|-------|--------|-------|---------|
+| `quick` | manual (hand-written edge cases) | ~40 | ~1–2 min |
+| `standard` | quick + fuzz (endpoint family sweep) | ~85 | ~3–5 min |
+| `full` | standard + loki (replayed production requests, `LOKI_WORKERS` parallel, default 8) | ~14k | ~15–30 min |
 
 Sides given as git refs or `local` are built into Docker images
 (`gslib-rest:<sha>`) and served locally on ports 19100/19101; images and

@@ -180,14 +180,14 @@ REST_BASELINE_PORT ?= 19101
 REST_CONFIG_FILE ?= $(PWD)/../../instance/config.yaml
 
 # Main entry point: compare any two API versions/deployments.
-#   make rest REF=<reference> CUR=<current> SIZE=<small|medium|large>
+#   make rest REF=<reference> CUR=<current> DEPTH=<quick|standard|full>
 # REF/CUR: git tag/branch/commit, 'local' (working tree), api.iknaio.com,
 # api.test.iknaio.com, or any http(s) URL. Run without args for full help.
-rest: ## Compare two REST versions: make rest REF=.. CUR=.. SIZE=small|medium|large (no args = help)
-ifeq ($(and $(REF),$(CUR),$(SIZE)),)
+rest: ## Compare two REST versions: make rest REF=.. CUR=.. DEPTH=quick|standard|full (no args = help)
+ifeq ($(and $(REF),$(CUR),$(DEPTH)),)
 	@./scripts/rest_suite.sh --help
 else
-	@REST_CONFIG_FILE="$(REST_CONFIG_FILE)" ./scripts/rest_suite.sh "$(REF)" "$(CUR)" "$(SIZE)"
+	@REST_CONFIG_FILE="$(REST_CONFIG_FILE)" ./scripts/rest_suite.sh "$(REF)" "$(CUR)" "$(DEPTH)"
 endif
 
 test-rest-fuzz: rest-ensure-servers ## REST API: fuzz regression (auto-generated endpoint comparison)

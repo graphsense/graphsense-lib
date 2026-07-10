@@ -5,8 +5,8 @@
 # either a hosted deployment (URL) or a version of this repo (git ref /
 # working tree) that gets built into a Docker image and served locally.
 #
-# Invoked by `make rest REF=... CUR=... SIZE=...` or directly:
-#   scripts/rest_suite.sh <reference> <current> <size>
+# Invoked by `make rest REF=... CUR=... DEPTH=...` or directly:
+#   scripts/rest_suite.sh <reference> <current> <depth>
 
 set -u -o pipefail
 
@@ -21,8 +21,8 @@ CONFIG_FILE="${REST_CONFIG_FILE:-$REPO_ROOT/instance/config.yaml}"
 
 usage() {
     cat <<'EOF'
-Usage: make rest REF=<reference> CUR=<current> SIZE=<small|medium|large>
-       scripts/rest_suite.sh <reference> <current> <size>
+Usage: make rest REF=<reference> CUR=<current> DEPTH=<quick|standard|full>
+       scripts/rest_suite.sh <reference> <current> <depth>
 
 Compares two versions of the GraphSense REST API endpoint-by-endpoint.
 REFERENCE is the trusted side (baseline), CURRENT is the side under test.
@@ -38,10 +38,12 @@ REFERENCE / CURRENT accept any of:
   <tag|branch|commit>     e.g. v25.11.18, master, 837b88df
                           (built into a Docker image, served locally)
 
-SIZE selects which suites run (cumulative):
-  small    manual suite (hand-written edge cases)   ~40 calls     ~1-2 min
-  medium   small + fuzz (endpoint families sweep)   ~85 calls     ~3-5 min
-  large    medium + loki (replayed prod requests)   ~14k calls    ~2-4 h
+DEPTH selects which suites run (cumulative):
+  quick     manual suite (hand-written edge cases)   ~40 calls     ~1-2 min
+  standard  quick + fuzz (endpoint families sweep)   ~85 calls     ~3-5 min
+  full      standard + loki (replayed prod calls)    ~14k calls    ~15-30 min
+            (loki runs with LOKI_WORKERS parallel pytest workers, default 8;
+            the timing report only covers part of the calls in that mode)
 
   Estimates assume warm servers; add ~10-15 min once per git-ref/local side
   for a cold Docker image build (seconds when the layer cache is warm).
@@ -54,12 +56,13 @@ Environment overrides:
   GS_API_KEY           API key for *.iknaio.com sides
   TAGSTORE_URL         used to derive the tagstore DSN for local sides
   REBUILD=1            force docker rebuild even if the image exists
+  LOKI_WORKERS         parallel pytest workers for the loki suite (default 8)
 
 Examples:
-  make rest REF=api.iknaio.com CUR=local SIZE=small
-  make rest REF=v25.11.18 CUR=local SIZE=medium
-  make rest REF=api.iknaio.com CUR=api.test.iknaio.com SIZE=large
-  make rest REF=837b88df CUR=feature/clustering2 SIZE=small
+  make rest REF=api.iknaio.com CUR=local DEPTH=quick
+  make rest REF=v25.11.18 CUR=local DEPTH=standard
+  make rest REF=api.iknaio.com CUR=api.test.iknaio.com DEPTH=full
+  make rest REF=837b88df CUR=feature/clustering2 DEPTH=quick
 
 Notes:
   - CUR=api.iknaio.com fails the tag-obfuscation test by design: it sends
@@ -86,15 +89,18 @@ fi
 
 REF_SPEC="$1"
 CUR_SPEC="$2"
-SIZE="$3"
+DEPTH="$3"
 
-case "$SIZE" in
-    small|medium|large) ;;
-    *) usage; die "SIZE must be small, medium or large (got '$SIZE')" ;;
+case "$DEPTH" in
+    quick|standard|full) ;;
+    small) DEPTH=quick ;;
+    medium) DEPTH=standard ;;
+    large) DEPTH=full ;;
+    *) usage; die "DEPTH must be quick, standard or full (got '$DEPTH')" ;;
 esac
 
-if [ "$SIZE" = "large" ] && [ ! -f "$REGRESSIONS_DIR/tests/rest/test_loki_generated.py" ]; then
-    die "SIZE=large needs tests/rest/test_loki_generated.py — run 'make generate-loki' first"
+if [ "$DEPTH" = "full" ] && [ ! -f "$REGRESSIONS_DIR/tests/rest/test_loki_generated.py" ]; then
+    die "DEPTH=full needs tests/rest/test_loki_generated.py — run 'make generate-loki' first"
 fi
 
 # ---------------------------------------------------------------------------
@@ -280,7 +286,7 @@ export BASELINE_HEADERS="${BASELINE_HEADERS:-$REF_HDRS}" CURRENT_HEADERS="${CURR
 
 log "reference (baseline): $REF_SPEC -> $REF_URL"
 log "current  (under test): $CUR_SPEC -> $CUR_URL"
-log "size: $SIZE"
+log "depth: $DEPTH"
 
 run_suite() { # <label> <pytest args...>
     local label="$1"; shift
@@ -297,15 +303,15 @@ run_suite() { # <label> <pytest args...>
 RESULTS=()
 RET=0
 run_suite manual tests/rest/test_manual_regression.py -v -m regression
-if [ "$SIZE" = "medium" ] || [ "$SIZE" = "large" ]; then
+if [ "$DEPTH" = "standard" ] || [ "$DEPTH" = "full" ]; then
     run_suite fuzz tests/rest/test_baseline_regression.py -v -m regression
 fi
-if [ "$SIZE" = "large" ]; then
-    run_suite loki tests/rest/test_loki_generated.py -m loki_generated
+if [ "$DEPTH" = "full" ]; then
+    run_suite loki tests/rest/test_loki_generated.py -m loki_generated -n "${LOKI_WORKERS:-8}"
 fi
 
 echo
-log "=== summary ($REF_SPEC vs $CUR_SPEC, $SIZE) ==="
+log "=== summary ($REF_SPEC vs $CUR_SPEC, $DEPTH) ==="
 for r in "${RESULTS[@]}"; do log "  $r"; done
 log "timing report: $REGRESSIONS_DIR/reports/regression_timing_report.json"
 if docker ps --format '{{.Names}}' | grep -q '^gs-rest-'; then
