@@ -326,6 +326,18 @@ def test_account_model_never_probes_the_cluster_view(spark, tmp_path):
     assert all("best_cluster_tag" not in q for q, _ in job.executed)
 
 
+def test_distutils_is_importable_for_pyspark():
+    """pyspark 3.5 does `from distutils.version import LooseVersion` at runtime.
+
+    Python >= 3.12 ships no distutils; it exists only through setuptools'
+    distutils-precedence.pth shim. Hence `setuptools` in the `transformation`
+    extra next to pyspark — without it, account-model Spark jobs (whose address
+    UDF makes executors spawn a Python worker) die with ModuleNotFoundError.
+    Drop this test, and the dependency, once pyspark >= 4.
+    """
+    import distutils.version  # noqa: F401
+
+
 def test_parquet_output(utxo_job, spark, tmp_path):
     out = str(tmp_path / "out")
     utxo_job().run(out_path=out, out_format="parquet", limit=2, sort_by="txs")

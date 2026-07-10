@@ -246,6 +246,8 @@ class TopUntaggedAddresses:
 
         @F.udf(returnType=T.StringType())
         def render(address):
+            # Imported inside the UDF: this body is pickled to the executors,
+            # which import it in a fresh Python worker.
             from graphsenselib.utils.address import address_to_user_format
 
             if address is None:
