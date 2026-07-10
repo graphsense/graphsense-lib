@@ -1149,12 +1149,14 @@ def run_pubkey_detect_command(
 )
 @click.option(
     "--sort-by",
-    type=click.Choice(["txs", "value", "degree"]),
+    type=click.Choice(["txs", "value", "fiat", "degree"]),
     default="txs",
     help=(
         "Activity metric to rank by: 'txs' = no_incoming_txs + no_outgoing_txs, "
-        "'value' = total_received in fiat, 'degree' = in_degree + out_degree. "
-        "All three are written to the output regardless."
+        "'value' = total_received in the chain's native smallest unit "
+        "(satoshi/wei/sun), 'fiat' = total_received converted with --fiat-currency, "
+        "'degree' = in_degree + out_degree. All are written to the output "
+        "regardless of which one is ranked on."
     ),
 )
 @click.option(

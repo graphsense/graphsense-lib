@@ -42,10 +42,12 @@ def _utxo_addresses(spark):
             T.StructField("total_received", _currency_type()),
         ]
     )
+    # `1ClusterTagged` holds the most native value but not the most fiat, so
+    # --sort-by value and --sort-by fiat cannot agree by accident.
     rows = [
         (1, "1TaggedBusy", 10, 900, 100, 50, 50, (1000, [9000.0, 8000.0])),
         (2, "1UntaggedTop", 11, 500, 100, 10, 10, (500, [500.0, 450.0])),
-        (3, "1ClusterTagged", 10, 400, 50, 300, 300, (99, [99.0, 90.0])),
+        (3, "1ClusterTagged", 10, 400, 50, 300, 300, (900, [99.0, 90.0])),
         (4, "1Small", 12, 1, 0, 1, 1, (1, [1.0, 0.9])),
         (5, "1NullMetrics", 13, None, 7, None, None, (7, None)),
     ]
@@ -236,12 +238,26 @@ def test_no_tagged_addresses_excludes_nothing(utxo_job, tmp_path):
 
 @pytest.mark.parametrize(
     "sort_by,expected",
-    [("txs", "1UntaggedTop"), ("degree", "1ClusterTagged"), ("value", "1UntaggedTop")],
+    [
+        ("txs", "1UntaggedTop"),
+        ("degree", "1ClusterTagged"),
+        ("value", "1ClusterTagged"),
+        ("fiat", "1UntaggedTop"),
+    ],
 )
 def test_sort_by_selects_the_metric(utxo_job, tmp_path, sort_by, expected):
     out = str(tmp_path / "out")
     utxo_job().run(out_path=out, limit=1, sort_by=sort_by, candidate_multiplier=10)
     assert _read_csv(out)[0]["address"] == expected
+
+
+def test_native_and_fiat_value_are_both_emitted(utxo_job, tmp_path):
+    out = str(tmp_path / "out")
+    utxo_job().run(out_path=out, limit=3, sort_by="txs", candidate_multiplier=10)
+
+    row = {r["address"]: r for r in _read_csv(out)}["1UntaggedTop"]
+    assert row["total_received_value"] == "500"
+    assert row["total_received_fiat"] == "500.0"
 
 
 def test_fiat_index_selects_the_currency(utxo_job, tmp_path):

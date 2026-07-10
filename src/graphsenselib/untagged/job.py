@@ -2,7 +2,8 @@
 
 Reads the transformed keyspace ``address`` table from Cassandra, checks the
 candidates against the tagstore (Postgres) and emits the top-N addresses that
-have no tag of their own, ranked by transaction count, received value or degree.
+have no tag of their own, ranked by transaction count, received value (native
+or fiat) or degree.
 
 The tagstore is *probed*, not scanned. `tag` holds ~8e7 rows / ~6e7 distinct
 identifiers, so pulling the identifier set into Spark to anti-join it would ship
@@ -27,7 +28,8 @@ logger = logging.getLogger(__name__)
 # CLI sort key -> output column carrying the metric.
 SORT_COLUMNS = {
     "txs": "no_txs",
-    "value": "total_received_fiat",
+    "value": "total_received_value",
+    "fiat": "total_received_fiat",
     "degree": "degree",
 }
 OUTPUT_FORMATS = ("csv", "parquet")
@@ -173,6 +175,9 @@ class TopUntaggedAddresses:
                 F.coalesce(F.col("in_degree"), F.lit(0))
                 + F.coalesce(F.col("out_degree"), F.lit(0))
             ).alias("degree"),
+            # Native units of the chain's smallest denomination (satoshi, wei,
+            # sun); bigint for UTXO, varint -> Decimal(38,0) for account.
+            F.col("total_received").getField("value").alias("total_received_value"),
             F.col("total_received")
             .getField("fiat_values")
             .getItem(fiat_index)
@@ -270,7 +275,11 @@ class TopUntaggedAddresses:
         select_columns = ["address", "address_id", "no_txs", "degree"]
         if self.is_utxo:
             select_columns.append("cluster_id")
-        select_columns += ["total_received_fiat", "cluster_tagged"]
+        select_columns += [
+            "total_received_value",
+            "total_received_fiat",
+            "cluster_tagged",
+        ]
 
         result = (
             untagged.select(*select_columns)
