@@ -11,6 +11,7 @@ import os
 import pytest
 
 from graphsenselib.untagged.job import (
+    check_writable,
     TopUntaggedAddresses,
     is_remote_path,
     local_path,
@@ -349,6 +350,41 @@ def test_file_scheme_is_treated_as_driver_local(tmp_path):
 @pytest.mark.parametrize("path", ["s3://bucket/k", "s3a://bucket/k", "hdfs://nn/k"])
 def test_distributed_schemes_go_through_the_spark_writer(path):
     assert is_remote_path(path)
+
+
+def test_check_writable_creates_missing_parents(tmp_path):
+    check_writable(str(tmp_path / "a" / "b" / "out.csv"))
+    assert (tmp_path / "a" / "b").is_dir()
+
+
+def test_check_writable_leaves_no_probe_file_behind(tmp_path):
+    check_writable(str(tmp_path / "out.csv"))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_check_writable_skips_remote_paths():
+    # No credentials in this process; the executors own that write.
+    check_writable("s3://bucket/does-not-exist")
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses directory permissions")
+def test_check_writable_rejects_an_unwritable_directory(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    with pytest.raises(ValueError, match="chown 1000:1000"):
+        check_writable(str(locked / "out.csv"))
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses directory permissions")
+def test_unwritable_output_fails_before_the_table_is_read(utxo_job, tmp_path):
+    """The scan is the expensive part; a bad --out-path must not reach it."""
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    job = utxo_job()
+    job._read_addresses = lambda: pytest.fail("scanned before checking the sink")
+
+    with pytest.raises(ValueError, match="Cannot write to"):
+        job.run(out_path=str(locked / "out.csv"), limit=3)
 
 
 def test_invalid_arguments_are_rejected(utxo_job, tmp_path):

@@ -111,6 +111,35 @@ def local_path(path: str) -> str:
     return parts.path if parts.scheme == "file" else path
 
 
+def check_writable(out_path: str) -> None:
+    """Fail before the scan if the driver cannot write `out_path` afterwards.
+
+    The write is the last step of a job that reads ~1e9 rows, so an unwritable
+    output directory must not be discovered at the end. Probes by actually
+    creating a file — `os.access` lies under uid 0 and on some mounts.
+
+    Remote paths are not checked: their credentials live in the Spark/Hadoop
+    config and the executors, not this process.
+    """
+    if is_remote_path(out_path):
+        return
+
+    path = local_path(out_path)
+    parent = os.path.dirname(os.path.abspath(path)) or "."
+    try:
+        os.makedirs(parent, exist_ok=True)
+        probe = os.path.join(parent, f".{os.path.basename(path)}.writetest")
+        with open(probe, "w"):
+            pass
+        os.unlink(probe)
+    except OSError as error:
+        raise ValueError(
+            f"Cannot write to {parent!r} as uid {os.getuid()}: {error}. "
+            f"In Docker the image runs as uid 1000, so a bind-mounted output "
+            f"directory must be writable by it (chown 1000:1000 <dir>)."
+        ) from error
+
+
 def _csv_cell(value):
     """Render one value the way Spark's CSV writer would.
 
@@ -284,6 +313,7 @@ class TopUntaggedAddresses:
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"sort_by must be one of {sorted(SORT_COLUMNS)}")
         sort_column = SORT_COLUMNS[sort_by]
+        check_writable(out_path)
 
         candidate_limit = limit * candidate_multiplier
         if candidate_limit > MAX_CANDIDATES:
@@ -413,11 +443,8 @@ class TopUntaggedAddresses:
             writer.save(out_path)
             return
 
+        # The parent dir exists and is writable: `run()` called check_writable().
         path = local_path(out_path)
-        parent = os.path.dirname(os.path.abspath(path))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-
         columns = df.columns
         rows = df.collect()
         if out_format == "csv":
