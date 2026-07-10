@@ -21,9 +21,12 @@ def replace_tron_dummy_address_with_valid_null_address(
 # incoming entity ids, the tagstore address_cluster_mapping_v2 — a fresh
 # cluster id is shifted by this offset so any id is self-describing:
 # id >= offset -> fresh (raw id = id - offset), id < offset -> legacy.
-# Safe: the largest legacy id space (BTC, ~1.5e9 addresses in 2026) is far
-# below 2**32, and shifted ids stay far below the 2**53 JS-safe-integer limit.
-FRESH_CLUSTER_ID_OFFSET = 2**32
+# The offset must stay above every raw id ever handed out: cluster ids are
+# derived from address ids (root == min address id), and BTC is already at
+# ~0.7 * 2**32 unique addresses in 2026, so 2**32 would collide within its
+# remaining headroom. 2**33 doubles the runway while shifted ids stay far
+# below the 2**53 JS-safe-integer limit.
+FRESH_CLUSTER_ID_OFFSET = 2**33
 
 
 def is_fresh_cluster_id(entity_id: int) -> bool:
