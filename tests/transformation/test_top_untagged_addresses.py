@@ -351,11 +351,67 @@ def test_account_run_reports_no_cluster_coverage(spark, tmp_path):
     assert stats.tagged_cluster_share == 0.0  # no ZeroDivisionError
 
 
+def test_run_records_the_pool_metric_range(utxo_job, tmp_path):
+    stats = utxo_job().run(out_path=str(tmp_path / "out"), limit=10, sort_by="txs")
+
+    # no_txs over all 5 fixture rows: 7, 1, 450, 600, 1000
+    assert (stats.pool_floor, stats.pool_ceiling) == (1, 1000)
+    assert stats.sort_by == "txs"
+    # 1TaggedBusy (1000) is excluded, so the best emitted is 1UntaggedTop (600)
+    assert stats.emitted_max == 600
+
+
+def test_pool_invariant_rejects_rows_from_outside_the_pool():
+    """The check that would have caught the account-chain UDF corruption.
+
+    Emitted rows are drawn from the pool, so the best emitted metric can never
+    be below the pool's floor. When it is, the rows written came from a
+    different, re-planned candidate set.
+    """
+    from graphsenselib.top_untagged.job import TagCoverage
+
+    healthy = TagCoverage(
+        sort_by="value", pool_floor=100, pool_ceiling=999, emitted_max=250
+    )
+    healthy.check_pool_invariant()  # does not raise
+
+    # The real eth numbers: pool floor 1.235e22, emitted top 6.78e20.
+    corrupted = TagCoverage(
+        sort_by="value",
+        pool_floor=12352389537916742385492,
+        pool_ceiling=782285216342477471844257832,
+        emitted_max=677999580000000000000,
+    )
+    with pytest.raises(RuntimeError, match="Candidate pool was not preserved"):
+        corrupted.check_pool_invariant()
+
+
+def test_pool_invariant_tolerates_an_empty_or_all_null_metric():
+    from graphsenselib.top_untagged.job import TagCoverage
+
+    TagCoverage(sort_by="fiat").check_pool_invariant()  # nothing emitted
+    TagCoverage(sort_by="fiat", pool_floor=5).check_pool_invariant()  # no rows out
+
+
+def test_summary_lines_cover_the_numbers_a_reader_needs(utxo_job, tmp_path):
+    stats = utxo_job().run(out_path=str(tmp_path / "out"), limit=10, sort_by="txs")
+    text = "\n".join(stats.summary_lines(is_utxo=True))
+
+    assert "candidate pool" in text
+    assert "metric range" in text  # the line that makes a bad pool obvious
+    assert "already tagged" in text
+    assert "tagged clusters" in text
+    assert "rows written" in text
+
+    account = "\n".join(stats.summary_lines(is_utxo=False))
+    assert "tagged clusters" not in account
+
+
 def test_tag_coverage_is_logged(utxo_job, tmp_path, caplog):
     with caplog.at_level("INFO"):
         utxo_job().run(out_path=str(tmp_path / "out"), limit=10, sort_by="txs")
-    assert "Tag coverage of the candidate pool" in caplog.text
-    assert "Cluster coverage" in caplog.text
+    assert "candidate pool" in caplog.text
+    assert "tagged clusters" in caplog.text
 
 
 @pytest.mark.parametrize("currency", ["eth", "trx"])

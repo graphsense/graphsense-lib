@@ -26,11 +26,11 @@ def run_top_untagged(
     local: bool = False,
     s3_credentials=None,
     spark_config=None,
-) -> None:
+) -> "TagCoverage":  # noqa: F821
     import os
 
-    from graphsenselib.transformation.spark import create_spark_session
     from graphsenselib.top_untagged.job import TopUntaggedAddresses
+    from graphsenselib.transformation.spark import create_spark_session
 
     if not cassandra_nodes:
         raise ValueError(
@@ -58,7 +58,7 @@ def run_top_untagged(
         spark_config=job_spark_config,
     )
     try:
-        TopUntaggedAddresses(
+        return TopUntaggedAddresses(
             spark=spark,
             currency=currency,
             schema_type=schema_type,

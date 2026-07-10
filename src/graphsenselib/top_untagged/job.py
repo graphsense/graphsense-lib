@@ -57,7 +57,8 @@ import csv
 import logging
 import os
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence, Set
+from decimal import Decimal
+from typing import Iterable, List, Optional, Sequence, Set
 from urllib.parse import urlparse
 
 from graphsenselib.utils.address import address_to_user_format
@@ -170,12 +171,17 @@ def _percent(part: int, whole: int) -> float:
 
 @dataclass
 class TagCoverage:
-    """How much of the candidate pool the tagstore already knows about.
+    """What the run did: pool size, how much of it the tagstore already knows.
 
-    Measured over the *candidate pool* (the top `limit * candidate_multiplier`
-    by the chosen metric), not the whole address table — so `tagged_share` reads
-    as "how well tagged are the most active addresses", which is the number
-    worth watching. It is not an estimate of overall tagging coverage.
+    Coverage is measured over the *candidate pool* (the top
+    `limit * candidate_multiplier` by the chosen metric), not the whole address
+    table — so `tagged_share` reads as "how well tagged are the most active
+    addresses", which is the number worth watching. It is not an estimate of
+    overall tagging coverage.
+
+    `pool_floor` / `pool_ceiling` are the sort key's range over the pool *as
+    ranked*, and `emitted_max` is its maximum over the rows actually written.
+    They exist to be compared: see `check_pool_invariant`.
     """
 
     candidates: int = 0
@@ -183,6 +189,10 @@ class TagCoverage:
     clusters: int = 0  # UTXO only; account keyspaces have no clustering
     tagged_clusters: int = 0
     emitted: int = 0
+    sort_by: str = ""
+    pool_floor: Optional[Decimal] = None
+    pool_ceiling: Optional[Decimal] = None
+    emitted_max: Optional[Decimal] = None
 
     @property
     def untagged(self) -> int:
@@ -196,23 +206,57 @@ class TagCoverage:
     def tagged_cluster_share(self) -> float:
         return _percent(self.tagged_clusters, self.clusters)
 
-    def log(self, is_utxo: bool) -> None:
-        logger.info(
-            "Tag coverage of the candidate pool: %d addresses, %d tagged "
-            "(%.1f%%), %d untagged.",
-            self.candidates,
-            self.tagged,
-            self.tagged_share,
-            self.untagged,
-        )
-        if is_utxo:
-            logger.info(
-                "Cluster coverage: %d distinct clusters, %d with a tag (%.1f%%).",
-                self.clusters,
-                self.tagged_clusters,
-                self.tagged_cluster_share,
+    def check_pool_invariant(self) -> None:
+        """Every emitted row came from the pool, so its metric is >= the floor.
+
+        Violating this means the rows written were not drawn from the pool that
+        was ranked — the two were measured on different DataFrames, so a
+        downstream operator re-planned the `orderBy(...).limit(n)` and silently
+        swapped the candidate set. That is not a hypothetical: a Python UDF
+        appended to the ranked pool did exactly this on eth/trx, and every other
+        signal (row count, tag counts, monotonic output) looked healthy. This is
+        the one check that catches it.
+        """
+        if self.pool_floor is None or self.emitted_max is None:
+            return  # nothing emitted, or an all-null metric
+        if self.emitted_max < self.pool_floor:
+            raise RuntimeError(
+                f"Candidate pool was not preserved: the highest emitted "
+                f"{self.sort_by} is {self.emitted_max}, below the pool's floor "
+                f"of {self.pool_floor}. Every emitted row must come from the "
+                f"pool, so the rows written were drawn from a different, "
+                f"re-planned candidate set. Refusing to write a wrong ranking."
             )
-        logger.info("Emitted %d rows.", self.emitted)
+
+    def summary_lines(self, is_utxo: bool) -> List[str]:
+        """The run's numbers, for a caller that always shows them to the user.
+
+        A job that scans ~1e9 rows and reports nothing cannot be sanity-checked.
+        The pool range in particular is what makes a bad ranking obvious at a
+        glance: a floor far below what the metric's distribution implies means
+        the pool is not the head of the table.
+        """
+        lines = [
+            f"ranked by       : {self.sort_by}",
+            f"candidate pool  : {self.candidates} addresses",
+            f"  metric range  : {self.pool_floor} .. {self.pool_ceiling}",
+            f"already tagged  : {self.tagged} ({self.tagged_share:.1f}%)",
+            f"untagged        : {self.untagged}",
+        ]
+        if is_utxo:
+            lines.append(
+                f"tagged clusters : {self.tagged_clusters} of {self.clusters} "
+                f"({self.tagged_cluster_share:.1f}%)"
+            )
+        lines += [
+            f"rows written    : {self.emitted}",
+            f"  highest {self.sort_by:<7}: {self.emitted_max}",
+        ]
+        return lines
+
+    def log(self, is_utxo: bool) -> None:
+        for line in self.summary_lines(is_utxo):
+            logger.info(line)
 
 
 def _chunks(values: Sequence, size: int) -> Iterable[Sequence]:
@@ -435,6 +479,12 @@ class TopUntaggedAddresses:
             .cache()
         )
 
+        # Measure the sort key's range on the pool *as ranked*, before anything
+        # downstream can re-plan it. Compared against the emitted maximum below.
+        pool_range = ranked.agg(
+            F.min(sort_column).alias("floor"), F.max(sort_column).alias("ceiling")
+        ).first()
+
         # One collect serves three purposes: rendering, the tagstore probe, and
         # the lookup table joined back on. Account addresses arrive as bytearray.
         raw_values = self._distinct_column(ranked, "raw_address")
@@ -447,6 +497,9 @@ class TopUntaggedAddresses:
         stats = TagCoverage(
             candidates=len(candidate_addresses),
             tagged=len(tagged),
+            sort_by=sort_by,
+            pool_floor=pool_range["floor"],
+            pool_ceiling=pool_range["ceiling"],
         )
 
         if self.is_utxo:
@@ -487,15 +540,22 @@ class TopUntaggedAddresses:
             untagged.select(*select_columns)
             .orderBy(F.desc_nulls_last(sort_column))
             .limit(limit)
+            .cache()
         )
 
+        stats.emitted = min(found, limit)
+        stats.emitted_max = result.agg(F.max(sort_column)).first()[0]
+        # Before writing: did the rows we are about to emit come from the pool
+        # we ranked? Raises if not.
+        stats.check_pool_invariant()
+
         self._write(result, out_path, out_format)
+        result.unpersist()
         untagged.unpersist()
         ranked.unpersist()
         logger.info(
             "Wrote %d rows to %s (%s).", min(found, limit), out_path, out_format
         )
-        stats.emitted = min(found, limit)
         stats.log(self.is_utxo)
         return stats
 

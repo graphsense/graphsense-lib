@@ -1272,10 +1272,11 @@ def run_top_untagged_addresses(
         tagstore_schema,
     )
 
-    run_top_untagged(
+    schema_type = currency_to_public_schema_type[currency]
+    stats = run_top_untagged(
         env=env,
         currency=currency,
-        schema_type=currency_to_public_schema_type[currency],
+        schema_type=schema_type,
         transformed_keyspace=ks_config.transformed_keyspace_name,
         tagstore_db_url=tagstore_db_url,
         tagstore_schema=tagstore_schema,
@@ -1293,6 +1294,14 @@ def run_top_untagged_addresses(
         s3_credentials=s3_credentials,
         spark_config=spark_config,
     )
+
+    # Always shown, not gated behind -v: a job that scans the whole address
+    # table and reports nothing cannot be sanity-checked. The pool's metric
+    # range is what makes a bad ranking obvious without re-reading the output.
+    click.secho(f"\ntop-untagged-addresses summary ({currency}):", bold=True, err=True)
+    for line in stats.summary_lines(schema_type == "utxo"):
+        click.echo(f"  {line}", err=True)
+    click.echo(f"  written to      : {out_path}", err=True)
 
 
 def _expected_transformed_ks(currency, suffix, no_date):
