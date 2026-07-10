@@ -18,6 +18,32 @@ Tag matching is deliberately network-agnostic (``tag.identifier`` only, no
 and a tag on any network means the address is not "unknown". The cluster-level
 ``cluster_tagged`` column, in contrast, IS network-scoped, because
 ``gs_cluster_id`` is only meaningful within one network.
+
+What crosses to the driver
+--------------------------
+The ``address`` table has up to ~1e9 rows and is never collected. Three points
+*do* pull rows into the driver, and every one of them is bounded on purpose —
+if you add a fourth, bound it too:
+
+1. ``_distinct_column(candidates, "address")`` — the candidate addresses, to
+   probe Postgres with.
+2. ``_distinct_column(candidates, "cluster_id")`` — ditto for the cluster flag.
+   Both are capped at ``limit * candidate_multiplier``, which ``run()`` checks
+   against ``MAX_CANDIDATES`` up front so an over-wide pool fails fast with a
+   clear message instead of walking the driver into ``spark.driver.maxResultSize``
+   (1 GB by default; the driver aborts the job when collected results exceed it).
+3. ``_write`` — the final ranked slice, capped at ``limit``.
+
+``.orderBy(...).limit(n)`` is what keeps (1) and (2) cheap: Catalyst compiles it
+to ``TakeOrderedAndProjectExec``, so each partition keeps only a bounded
+priority queue of its local top-n and the driver merges those. No global sort,
+and the driver never sees more than ``numPartitions * n`` rows even mid-rank.
+
+Note that ``collect()`` is not streaming — the driver materialises every row in
+the JVM heap, then again as pickled batches in the Python process (PySpark ships
+them over a local socket rather than through py4j). A ``--limit`` large enough
+to matter would need ``toLocalIterator()`` or a remote ``--out-path``, not a
+bigger driver.
 """
 
 import csv
@@ -51,8 +77,10 @@ UTXO_SCHEMA_TYPES = ("utxo",)
 # enough that the planner keeps choosing an index scan over a full scan.
 PROBE_CHUNK_SIZE = 10_000
 
-# The candidate pool is collected to the driver. Guard against a
-# --candidate-multiplier that would pull an unreasonable number of rows.
+# The candidate pool is collected to the driver (twice: addresses and cluster
+# ids). Checked against `limit * candidate_multiplier` before the scan starts,
+# so an over-wide pool fails with a clear message rather than as an OOM or a
+# `spark.driver.maxResultSize` abort halfway through a long run.
 MAX_CANDIDATES = 2_000_000
 
 
@@ -68,7 +96,12 @@ def psycopg2_dsn(db_url: str) -> str:
 
 
 def is_remote_path(path: str) -> bool:
-    """Is `path` on a filesystem the Spark executors can write to?"""
+    """Is `path` on a filesystem every Spark executor can reach?
+
+    Decides who performs the write; see `TopUntaggedAddresses._write`. A bare
+    path and an explicit `file://` are both driver-local: they name a different
+    directory on every node, so only the driver may write them.
+    """
     return urlparse(path).scheme in REMOTE_SCHEMES
 
 
@@ -79,7 +112,12 @@ def local_path(path: str) -> str:
 
 
 def _csv_cell(value):
-    """Render one value the way Spark's CSV writer would."""
+    """Render one value the way Spark's CSV writer would.
+
+    Keeps the driver-written file byte-compatible with a Spark-written one:
+    lowercase booleans, empty string for null. Python's default `str()` would
+    give `True` and `None`/``.
+    """
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -221,6 +259,11 @@ class TopUntaggedAddresses:
         return metrics
 
     def _distinct_column(self, df, column: str) -> List:
+        """Collect the distinct non-null values of `column` to the driver.
+
+        Only ever called on the candidate pool, which `run()` has already capped
+        at `MAX_CANDIDATES`. Do not point this at an uncapped DataFrame.
+        """
         rows = df.select(column).distinct().collect()
         return [row[0] for row in rows if row[0] is not None]
 
@@ -263,6 +306,11 @@ class TopUntaggedAddresses:
         # narrowing to a candidate pool keeps the address-rendering UDF off all
         # but a few tens of thousands of them, and keeps the pool small enough
         # to probe the tagstore by index instead of scanning it.
+        #
+        # The cost is that a pool made entirely of tagged addresses yields fewer
+        # than `limit` rows — the warning below tells the user to widen it. The
+        # orderBy+limit compiles to TakeOrderedAndProjectExec (per-partition
+        # bounded queues, merged on the driver), not a global sort.
         candidates = (
             self._metrics(min_txs, fiat_index)
             .orderBy(F.desc_nulls_last(sort_column))
@@ -324,13 +372,39 @@ class TopUntaggedAddresses:
         )
 
     def _write(self, df, out_path: str, out_format: str) -> None:
-        """Write the (small) result: one file on the driver, or via Spark on s3 etc.
+        """Write the result: one file on the driver, or via Spark for remote paths.
 
-        The result is at most `limit` rows, so a local path is written straight
-        from the driver as a single file. Handing it to Spark's writer instead
-        would stage it through `_temporary` on whichever *executor* ran the
-        write task — which for a scheme-less path means that node's own local
-        disk, not the driver's.
+        `df.write.save(path)` is a *distributed* action: the write becomes a
+        task, the scheduler assigns it to an executor, and that executor creates
+        the file. Only sound when every executor can reach `path`.
+
+        A scheme-less path cannot be. Hadoop resolves it against `fs.defaultFS`,
+        which on our cluster is the local filesystem, so `/out/x` becomes
+        `file:/out/x` — "local to whichever machine evaluates this", i.e. the
+        executor, not the driver. The driver's `-v ./out:/out` bind mount does
+        not exist there, and the write dies with
+
+            java.io.IOException: Mkdirs failed to create
+            file:/out/.../_temporary/0/_temporary/attempt_...
+            (exists=false, cwd=file:/var/data/nvme4/spark/work/app-.../7)
+
+        `.coalesce(1)` does not rescue this: one write task is still one task on
+        one executor. It only narrows the failure from every node to one.
+
+        So local paths bypass Spark's writer entirely — `collect()` brings the
+        (at most `limit`) rows to the driver and we write them with plain file
+        IO, inside whatever container the driver runs in. Remote paths keep the
+        distributed writer, because there the executors *can* all reach the
+        destination and parallel writes are the point.
+
+        Both branches emit the same bytes: `_csv_cell` reproduces the Spark CSV
+        writer's rendering of booleans and nulls, so a local file and an s3 part
+        file parse identically.
+
+        `toPandas()` would be the obvious way to do the local write, but PySpark
+        drives it through a pandas API that warns twice on pandas 3 (`distutils`
+        `LooseVersion`, and a removed `copy=` kwarg). Those land in production
+        logs and fail the suite under `-W error`. `collect()` skips that bridge.
         """
         if is_remote_path(out_path):
             writer = df.coalesce(1).write.mode("overwrite").format(out_format)
@@ -358,6 +432,8 @@ class TopUntaggedAddresses:
             table = (
                 pa.Table.from_pylist([row.asDict() for row in rows])
                 if rows
+                # from_pylist([]) yields a table with no columns at all; keep
+                # the schema so an empty result is still a readable parquet file.
                 else pa.table({column: [] for column in columns})
             )
             pq.write_table(table, path)
