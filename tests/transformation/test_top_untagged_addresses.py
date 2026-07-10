@@ -6,12 +6,16 @@ probe path (chunking, parameter order, network scoping) is exercised.
 """
 
 import csv
-import glob
 import os
 
 import pytest
 
-from graphsenselib.untagged.job import TopUntaggedAddresses, psycopg2_dsn
+from graphsenselib.untagged.job import (
+    TopUntaggedAddresses,
+    is_remote_path,
+    local_path,
+    psycopg2_dsn,
+)
 
 pyspark = pytest.importorskip("pyspark")
 
@@ -139,7 +143,7 @@ def _make_job(spark, currency, schema_type, addresses, tagged, tagged_clusters):
 
 
 def _read_csv(path):
-    with open(glob.glob(os.path.join(path, "*.csv"))[0]) as fh:
+    with open(path) as fh:
         return list(csv.DictReader(fh))
 
 
@@ -325,6 +329,26 @@ def test_parquet_output(utxo_job, spark, tmp_path):
     out = str(tmp_path / "out")
     utxo_job().run(out_path=out, out_format="parquet", limit=2, sort_by="txs")
     assert spark.read.parquet(out).count() == 2
+
+
+def test_local_output_is_a_single_file_not_a_spark_directory(utxo_job, tmp_path):
+    out = str(tmp_path / "out")
+    utxo_job().run(out_path=out, limit=3, sort_by="txs")
+    assert os.path.isfile(out)
+
+
+def test_file_scheme_is_treated_as_driver_local(tmp_path):
+    # A bare or file:// path resolves per-node under Hadoop, so it must never
+    # reach the Spark writer: executors would stage it on their own disks.
+    assert not is_remote_path(str(tmp_path / "out"))
+    assert not is_remote_path("file:///out/btc-untagged")
+    assert local_path("file:///out/btc-untagged") == "/out/btc-untagged"
+    assert local_path("/out/btc-untagged") == "/out/btc-untagged"
+
+
+@pytest.mark.parametrize("path", ["s3://bucket/k", "s3a://bucket/k", "hdfs://nn/k"])
+def test_distributed_schemes_go_through_the_spark_writer(path):
+    assert is_remote_path(path)
 
 
 def test_invalid_arguments_are_rejected(utxo_job, tmp_path):

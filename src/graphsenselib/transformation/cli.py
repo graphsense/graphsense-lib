@@ -1132,7 +1132,11 @@ def run_pubkey_detect_command(
     "--out-path",
     type=str,
     required=True,
-    help="Output path for the result (local dir, or s3:// with --s3-config).",
+    help=(
+        "Output path. A local path is written from the driver as a single "
+        "file; an s3:// path (with --s3-config) is written by Spark as a "
+        "directory of part files."
+    ),
 )
 @click.option(
     "--format",

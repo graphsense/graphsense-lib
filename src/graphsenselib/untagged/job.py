@@ -20,10 +20,19 @@ and a tag on any network means the address is not "unknown". The cluster-level
 ``gs_cluster_id`` is only meaningful within one network.
 """
 
+import csv
 import logging
+import os
 from typing import Iterable, List, Sequence, Set
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+# Schemes every executor can reach. Anything else (including a bare path, which
+# Hadoop reads as `file:` on whichever node runs the task) is driver-local.
+REMOTE_SCHEMES = frozenset(
+    {"s3", "s3a", "s3n", "hdfs", "gs", "abfs", "abfss", "wasb", "wasbs"}
+)
 
 # CLI sort key -> output column carrying the metric.
 SORT_COLUMNS = {
@@ -56,6 +65,26 @@ def psycopg2_dsn(db_url: str) -> str:
         raise ValueError(f"Tagstore URL has no database component: {db_url}")
     # psycopg2 rejects the SQLAlchemy driver suffix (postgresql+asyncpg://).
     return url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+
+def is_remote_path(path: str) -> bool:
+    """Is `path` on a filesystem the Spark executors can write to?"""
+    return urlparse(path).scheme in REMOTE_SCHEMES
+
+
+def local_path(path: str) -> str:
+    """Strip a `file://` scheme, leaving a plain filesystem path."""
+    parts = urlparse(path)
+    return parts.path if parts.scheme == "file" else path
+
+
+def _csv_cell(value):
+    """Render one value the way Spark's CSV writer would."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return value
 
 
 def _chunks(values: Sequence, size: int) -> Iterable[Sequence]:
@@ -285,18 +314,53 @@ class TopUntaggedAddresses:
             untagged.select(*select_columns)
             .orderBy(F.desc_nulls_last(sort_column))
             .limit(limit)
-            .coalesce(1)
         )
 
-        writer = result.write.mode("overwrite").format(out_format)
-        if out_format == "csv":
-            writer = writer.option("header", "true")
-        writer.save(out_path)
+        self._write(result, out_path, out_format)
         untagged.unpersist()
         candidates.unpersist()
         logger.info(
             "Wrote %d rows to %s (%s).", min(found, limit), out_path, out_format
         )
+
+    def _write(self, df, out_path: str, out_format: str) -> None:
+        """Write the (small) result: one file on the driver, or via Spark on s3 etc.
+
+        The result is at most `limit` rows, so a local path is written straight
+        from the driver as a single file. Handing it to Spark's writer instead
+        would stage it through `_temporary` on whichever *executor* ran the
+        write task — which for a scheme-less path means that node's own local
+        disk, not the driver's.
+        """
+        if is_remote_path(out_path):
+            writer = df.coalesce(1).write.mode("overwrite").format(out_format)
+            if out_format == "csv":
+                writer = writer.option("header", "true")
+            writer.save(out_path)
+            return
+
+        path = local_path(out_path)
+        parent = os.path.dirname(os.path.abspath(path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+        columns = df.columns
+        rows = df.collect()
+        if out_format == "csv":
+            with open(path, "w", newline="") as fh:
+                out = csv.writer(fh)
+                out.writerow(columns)
+                out.writerows([_csv_cell(value) for value in row] for row in rows)
+        else:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            table = (
+                pa.Table.from_pylist([row.asDict() for row in rows])
+                if rows
+                else pa.table({column: [] for column in columns})
+            )
+            pq.write_table(table, path)
 
     def _exclude(self, df, column: str, excluded: Set[str]):
         """Drop rows whose `column` is in `excluded` (a driver-side set)."""
