@@ -358,6 +358,33 @@ def test_tag_coverage_is_logged(utxo_job, tmp_path, caplog):
     assert "Cluster coverage" in caplog.text
 
 
+@pytest.mark.parametrize("currency", ["eth", "trx"])
+def test_account_rendering_registers_no_python_udf(
+    spark, tmp_path, currency, monkeypatch
+):
+    """A Python UDF on the ranked pool silently corrupts it.
+
+    Appending `.withColumn("address", udf(...))` to `orderBy(...).limit(n)` made
+    Catalyst re-plan the limit. Measured against eth_transformed, the identical
+    pool went from [1.235e22 .. 7.82e26] wei to [6.84e19 .. 1.001e21] — a
+    different 50 000 rows, with the Decimal(38,0) sort key degraded to float64.
+    The job then ranked that wrong pool perfectly, so the output looked sane.
+
+    Only account chains hit it (`is_utxo` never attached the UDF), which is why
+    the btc/bch/ltc/zec outputs were valid and eth/trx were not. Blob addresses
+    must be rendered on the driver.
+    """
+    from pyspark.sql import functions as F
+
+    def explode(*args, **kwargs):
+        pytest.fail("job registered a Python UDF; it must render on the driver")
+
+    monkeypatch.setattr(F, "udf", explode)
+
+    job = _make_job(spark, currency, "account", _account_addresses(spark), [], [])
+    job.run(out_path=str(tmp_path / "out"), limit=5, sort_by="txs")
+
+
 def test_distutils_is_importable_for_pyspark():
     """pyspark 3.5 does `from distutils.version import LooseVersion` at runtime.
 

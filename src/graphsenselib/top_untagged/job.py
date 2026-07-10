@@ -25,14 +25,21 @@ The ``address`` table has up to ~1e9 rows and is never collected. Three points
 *do* pull rows into the driver, and every one of them is bounded on purpose —
 if you add a fourth, bound it too:
 
-1. ``_distinct_column(candidates, "address")`` — the candidate addresses, to
-   probe Postgres with.
-2. ``_distinct_column(candidates, "cluster_id")`` — ditto for the cluster flag.
+1. ``_distinct_column(ranked, "raw_address")`` — the candidate addresses, which
+   are rendered to identifier form on the driver (never in a UDF — see
+   ``_user_addresses``) and used both to probe Postgres and to build the
+   lookup table joined back on.
+2. ``_distinct_column(ranked, "cluster_id")`` — ditto for the cluster flag.
    Both are capped at ``limit * candidate_multiplier``, which ``run()`` checks
    against ``MAX_CANDIDATES`` up front so an over-wide pool fails fast with a
    clear message instead of walking the driver into ``spark.driver.maxResultSize``
    (1 GB by default; the driver aborts the job when collected results exceed it).
 3. ``_write`` — the final ranked slice, capped at ``limit``.
+
+Consequently the job runs **no Python on the executors**: no UDF, so no Python
+worker. That is a correctness requirement, not a preference — a UDF appended to
+the ranked pool made Catalyst re-plan the limit and silently swap in a different
+50 000 rows. See ``_user_addresses``.
 
 ``.orderBy(...).limit(n)`` is what keeps (1) and (2) cheap: Catalyst compiles it
 to ``TakeOrderedAndProjectExec``, so each partition keeps only a bounded
@@ -52,6 +59,8 @@ import os
 from dataclasses import dataclass
 from typing import Iterable, List, Sequence, Set
 from urllib.parse import urlparse
+
+from graphsenselib.utils.address import address_to_user_format
 
 logger = logging.getLogger(__name__)
 
@@ -286,27 +295,48 @@ class TopUntaggedAddresses:
             .load()
         )
 
-    def _address_to_user_format(self, column):
-        """Render the raw `address` column into the tagstore's identifier form."""
+    def _user_addresses(self, raw_values: Sequence) -> List[str]:
+        """Render raw addresses to the tagstore's identifier form, on the driver.
+
+        UTXO keyspaces store `address text` and need no work. Account keyspaces
+        store `address blob`, which `address_to_user_format` turns into `0x…`
+        (eth) or base58 (trx).
+
+        This MUST NOT become a Spark UDF. Appending a Python UDF projection on
+        top of `orderBy(...).limit(n)` made Catalyst re-plan the limit: measured
+        against eth_transformed, the identical pool went from
+        [1.235e22 .. 7.82e26] wei to [6.84e19 .. 1.001e21] — a different 50 000
+        rows, capped three orders of magnitude too low, with the exact
+        `Decimal(38,0)` sort key degraded to float64 (1001e18 came back as
+        1000999999999999967232). The job then ranked and tag-filtered that wrong
+        pool perfectly, so the output looked plausible: monotonic, dense, and
+        drawn from the middle of the distribution. Only the account chains were
+        affected, because `is_utxo` never attached the UDF.
+
+        Rendering on the driver also costs nothing: these values are the
+        candidate pool, already bounded by `MAX_CANDIDATES`, and they must come
+        to the driver anyway to probe the tagstore. As a bonus the job now runs
+        no Python on the executors at all, so it does not care which interpreter
+        the cluster nodes expose as `PYSPARK_PYTHON`.
+        """
+        if self.is_utxo:
+            return list(raw_values)
+        return [address_to_user_format(self.currency, bytes(raw)) for raw in raw_values]
+
+    def _with_user_addresses(self, df, raw_values: Sequence, addresses: Sequence[str]):
+        """Attach the rendered `address` column, replacing `raw_address`.
+
+        A broadcast join against a pool-sized lookup table. Plain Catalyst
+        expressions only — see `_user_addresses` for why no UDF may appear here.
+        """
         from pyspark.sql import functions as F
-        from pyspark.sql import types as T
 
         if self.is_utxo:
-            return column
+            return df.withColumnRenamed("raw_address", "address")
 
-        currency = self.currency  # capture a plain str, not `self`, for pickling
-
-        @F.udf(returnType=T.StringType())
-        def render(address):
-            # Imported inside the UDF: this body is pickled to the executors,
-            # which import it in a fresh Python worker.
-            from graphsenselib.utils.address import address_to_user_format
-
-            if address is None:
-                return None
-            return address_to_user_format(currency, bytes(address))
-
-        return render(column)
+        pairs = [(bytes(raw), address) for raw, address in zip(raw_values, addresses)]
+        lookup = self.spark.createDataFrame(pairs, "raw_address binary, address string")
+        return df.join(F.broadcast(lookup), on="raw_address").drop("raw_address")
 
     def _metrics(self, min_txs: int, fiat_index: int):
         """Project the address table down to the ranking metrics."""
@@ -387,24 +417,30 @@ class TopUntaggedAddresses:
         )
 
         # Rank first, filter tags second. The address table has up to ~1e9 rows;
-        # narrowing to a candidate pool keeps the address-rendering UDF off all
-        # but a few tens of thousands of them, and keeps the pool small enough
-        # to probe the tagstore by index instead of scanning it.
+        # narrowing to a candidate pool keeps it small enough to render and to
+        # probe the tagstore by index instead of scanning it.
         #
         # The cost is that a pool made entirely of tagged addresses yields fewer
         # than `limit` rows — the warning below tells the user to widen it. The
         # orderBy+limit compiles to TakeOrderedAndProjectExec (per-partition
         # bounded queues, merged on the driver), not a global sort.
-        candidates = (
+        #
+        # Nothing may be appended to this chain that forces Catalyst to re-plan
+        # the limit — a Python UDF here silently returned a different 50 000
+        # rows. See `_user_addresses`.
+        ranked = (
             self._metrics(min_txs, fiat_index)
             .orderBy(F.desc_nulls_last(sort_column))
             .limit(candidate_limit)
-            .withColumn("address", self._address_to_user_format(F.col("raw_address")))
-            .drop("raw_address")
             .cache()
         )
 
-        candidate_addresses = self._distinct_column(candidates, "address")
+        # One collect serves three purposes: rendering, the tagstore probe, and
+        # the lookup table joined back on. Account addresses arrive as bytearray.
+        raw_values = self._distinct_column(ranked, "raw_address")
+        candidate_addresses = self._user_addresses(raw_values)
+        candidates = self._with_user_addresses(ranked, raw_values, candidate_addresses)
+
         tagged = self.probe_tagged_identifiers(candidate_addresses)
         untagged = self._exclude(candidates, "address", tagged)
 
@@ -414,7 +450,7 @@ class TopUntaggedAddresses:
         )
 
         if self.is_utxo:
-            candidate_clusters = self._distinct_column(candidates, "cluster_id")
+            candidate_clusters = self._distinct_column(ranked, "cluster_id")
             tagged_clusters = self.probe_tagged_clusters(candidate_clusters)
             untagged = self._flag_tagged_clusters(untagged, tagged_clusters)
             stats.clusters = len(candidate_clusters)
@@ -455,7 +491,7 @@ class TopUntaggedAddresses:
 
         self._write(result, out_path, out_format)
         untagged.unpersist()
-        candidates.unpersist()
+        ranked.unpersist()
         logger.info(
             "Wrote %d rows to %s (%s).", min(found, limit), out_path, out_format
         )
