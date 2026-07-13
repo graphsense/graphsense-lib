@@ -186,7 +186,7 @@ else
 endif
 
 rest-stop: ## Stop REST server containers
-	-docker stop gs-rest-current gs-rest-baseline 2>/dev/null || true
+	-docker rm -f gs-rest-current gs-rest-baseline 2>/dev/null || true
 
 generate-loki: ## Generate Loki test file from production logs (requires LOKI_URL)
 	uv run scripts/generate_loki_tests.py
