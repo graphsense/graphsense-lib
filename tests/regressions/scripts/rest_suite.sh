@@ -52,7 +52,9 @@ DEPTH selects which suites run (cumulative):
 
 Environment overrides:
   REST_CURRENT_PORT / REST_BASELINE_PORT   local server ports (19100/19101)
-  REST_CONFIG_FILE     config for locally served sides (instance/config.yaml)
+  REST_CONFIG_FILE     config for locally served sides (instance/config.yaml;
+                       if that is absent, the web: section of ~/.graphsense.yaml
+                       or $GRAPHSENSE_CONFIG_YAML is used)
   GS_API_KEY           API key for *.iknaio.com sides
   TAGSTORE_URL         used to derive the tagstore DSN for local sides
   REBUILD=1            force docker rebuild even if the image exists
@@ -174,6 +176,33 @@ tagstore_async_url() {
     fi
 }
 
+# The web: section of the graphsense-lib config has the same shape as a full
+# instance config (see resolve_rest_config in graphsenselib.web.app), so it
+# can be extracted into a standalone file and served as-is.
+RESOLVED_CONFIG=""
+resolve_config() { # sets RESOLVED_CONFIG for locally served sides
+    [ -n "$RESOLVED_CONFIG" ] && return 0
+    if [ -f "$CONFIG_FILE" ] || [ -L "$CONFIG_FILE" ]; then
+        RESOLVED_CONFIG=$(readlink -f "$CONFIG_FILE")
+        return 0
+    fi
+    local gslib_yaml="${GRAPHSENSE_CONFIG_YAML:-$HOME/.graphsense.yaml}"
+    if [ -z "${REST_CONFIG_FILE:-}" ] && [ -f "$gslib_yaml" ]; then
+        local extracted
+        extracted=$(mktemp /tmp/gs-rest-suite-webconf-XXXXXX.yaml)
+        if (cd "$REGRESSIONS_DIR" && uv run python -c \
+            'import sys, yaml; web = (yaml.safe_load(open(sys.argv[1])) or {}).get("web") or sys.exit(1); yaml.safe_dump(web, sys.stdout)' \
+            "$gslib_yaml" > "$extracted"); then
+            log "$CONFIG_FILE not found — serving with the web: section of $gslib_yaml"
+            RESOLVED_CONFIG="$extracted"
+            return 0
+        fi
+        rm -f "$extracted"
+        die "config not found at $CONFIG_FILE and $gslib_yaml has no web: section (set REST_CONFIG_FILE)"
+    fi
+    die "config not found at $CONFIG_FILE (set REST_CONFIG_FILE)"
+}
+
 ensure_server() { # <role: current|baseline> <port> <image>
     local role="$1" port="$2" image="$3"
     local name="gs-rest-$role"
@@ -197,10 +226,9 @@ ensure_server() { # <role: current|baseline> <port> <image>
     if port_in_use "$port"; then
         die "port $port is already in use by something other than $name — stop that process or set REST_CURRENT_PORT / REST_BASELINE_PORT to a free port"
     fi
-    [ -f "$CONFIG_FILE" ] || [ -L "$CONFIG_FILE" ] || die "config not found at $CONFIG_FILE (set REST_CONFIG_FILE)"
+    resolve_config
 
-    local real_config tagstore_dsn
-    real_config=$(readlink -f "$CONFIG_FILE")
+    local tagstore_dsn
     tagstore_dsn=$(tagstore_async_url)
     local extra_env=()
     [ -n "$tagstore_dsn" ] && extra_env+=(-e "GS_TAGSTORE_ASYNC_URL=$tagstore_dsn")
@@ -208,7 +236,7 @@ ensure_server() { # <role: current|baseline> <port> <image>
     log "starting $name ($image) on port $port..."
     docker run -d --name "$name" --rm --network=host \
         --label "gs-rest-port=$port" \
-        -v "$real_config:/srv/graphsense-rest/instance/config.yaml:ro" \
+        -v "$RESOLVED_CONFIG:/srv/graphsense-rest/instance/config.yaml:ro" \
         -e CONFIG_FILE=/srv/graphsense-rest/instance/config.yaml \
         -e NUM_WORKERS=1 -e NUM_THREADS=1 -e TZ=UTC \
         "${extra_env[@]}" \
