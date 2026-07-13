@@ -123,11 +123,15 @@ class _FakeSession:
 
 
 def test_execute_with_backoff_retries_crc_mismatch(monkeypatch):
-    from cassandra.segment import CrcException
+    # A segment CRC failure never reaches the caller as a CrcException: the driver
+    # defuncts the connection and error_all_requests() re-wraps the cause, so what
+    # we must ride out is a ConnectionShutdown carrying the CRC message.
+    from cassandra.connection import ConnectionShutdown
 
     db = CassandraDb(["host-a"])
     db.session = _FakeSession(
-        keyspace="ks", execute_side_effects=[CrcException("CRC mismatch on header")]
+        keyspace="ks",
+        execute_side_effects=[ConnectionShutdown("CRC mismatch on header f637c1d504")],
     )
     monkeypatch.setattr("graphsenselib.db.cassandra.time.sleep", lambda _: None)
 

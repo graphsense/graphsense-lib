@@ -23,7 +23,7 @@ from cassandra.policies import (
 )
 from cassandra.cluster import NoHostAvailable
 from cassandra import OperationTimedOut, ReadTimeout, WriteTimeout
-from cassandra.segment import CrcException
+from cassandra.connection import ConnectionShutdown
 
 from cassandra.query import (
     UNSET_VALUE,
@@ -42,16 +42,20 @@ DEFAULT_SERIAL_CONSISTENCY_LEVEL = "LOCAL_SERIAL"
 # Transient driver errors that indicate a temporary cluster-wide stall (e.g.
 # nodes starved of CPU by a concurrent Spark run) rather than a permanent fault.
 # Safe to ride out with application-level backoff on the calling thread.
-# CrcException is the client-side protocol-v5 segment checksum failure
-# (CASSANDRA-19971): the driver defuncts the affected connection, so the retry
-# runs on a fresh one and typically succeeds immediately. Retrying it here is
-# no more ambiguous than the existing WriteTimeout retry.
+# ConnectionShutdown is what the caller actually sees when the driver defuncts a
+# connection: Connection.error_all_requests() re-wraps the underlying cause and
+# fails *every* in-flight request on that connection with it. It is not a
+# CrcException — that one is raised on the reactor thread and never reaches us —
+# so it must be listed here to be ridden out. The retry runs on a fresh
+# connection and typically succeeds immediately. Retrying it is no more ambiguous
+# than the existing WriteTimeout retry: every write we issue is a plain upsert
+# (no LWTs, no counters), so re-applying one is idempotent.
 TRANSIENT_DB_ERRORS = (
     NoHostAvailable,
     OperationTimedOut,
     ReadTimeout,
     WriteTimeout,
-    CrcException,
+    ConnectionShutdown,
 )
 
 # Application-level ride-out backoff for synchronous reads. The backoff sleeps on
@@ -493,7 +497,18 @@ class CassandraDb:
             # retry — query ride-out happens in _execute_with_backoff. Start at 1s,
             # cap at 60s so a recovered node is re-added within ~a minute.
             reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
-            # protocol_version=6,
+            # Pin v4. Left to negotiate, the driver picks v5, which frames responses
+            # in checksummed segments; that decode path desyncs under load and reads
+            # a segment header at the wrong offset (CASSANDRA-19971 / PYTHON-1337,
+            # still open), surfacing as "CRC mismatch on header" — which defuncts the
+            # connection and fails every in-flight request on it. Checksummed framing
+            # is v5-only, so v4 removes the failure mode; do not unpin it. Disabling
+            # compression is NOT an equivalent fix: the header CRC is checked before
+            # any decompression, and the segment-framing code is shared by both
+            # codecs. v4 still compresses, at the frame level. Nothing here needs v5:
+            # the one v5-ism we relied on, statement-level keyspace, is handled for
+            # v4 in execute() below.
+            protocol_version=4,
             compression="lz4",
             auth_provider=auth_provider,
         )

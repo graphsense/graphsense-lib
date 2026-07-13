@@ -697,7 +697,15 @@ class Cassandra:
             self.cluster = Cluster(
                 self.config["nodes"],
                 port=int(self.config.get("port", 9042)),
-                protocol_version=5,
+                # Pin v4, for the same reason as the synchronous driver: v5's
+                # checksummed segment framing desyncs under load and reads a segment
+                # header at the wrong offset (CASSANDRA-19971 / PYTHON-1337, still
+                # open), surfacing as "CRC mismatch on header" and defuncting the
+                # connection — which fails every in-flight request on it. Framing is
+                # v5-only. Queries here carry their keyspace in the CQL itself (see
+                # replaceFrom), so the v5-only statement-level keyspace flag is not
+                # relied on. See db/cassandra.py:connect for the full rationale.
+                protocol_version=4,
                 connect_timeout=15,
                 execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
                 auth_provider=auth_provider,
