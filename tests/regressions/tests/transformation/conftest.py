@@ -79,15 +79,36 @@ def transformation_image():
     if not dockerfile.exists():
         pytest.fail(f"Dockerfile not found at {dockerfile}")
 
-    print(f"\nBuilding transformation Docker image from {gslib_path}...")
+    # setuptools_scm fails inside the docker build when the working tree has
+    # uncommitted changes or the COPY'd tree lacks usable git metadata. Resolve
+    # the version on the host and pass it through as a build-arg, matching the
+    # top-level Makefile's build-docker target.
+    scm_proc = subprocess.run(
+        ["uv", "run", "--frozen", "python", "-m", "setuptools_scm"],
+        cwd=str(gslib_path),
+        capture_output=True, text=True, timeout=120,
+    )
+    if scm_proc.returncode != 0:
+        raise RuntimeError(
+            f"setuptools_scm failed (exit {scm_proc.returncode}):\n"
+            f"stderr: {scm_proc.stderr[-1000:]}"
+        )
+    scm_version = scm_proc.stdout.strip()
+
+    print(
+        f"\nBuilding transformation Docker image from {gslib_path} "
+        f"(version {scm_version})..."
+    )
     result = subprocess.run(
         [
             "docker", "build",
             "-f", str(dockerfile),
+            "--build-arg",
+            f"SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB={scm_version}",
             "-t", TRANSFORMATION_IMAGE_NAME,
             str(gslib_path),
         ],
-        capture_output=True, text=True, timeout=600,
+        capture_output=True, text=True, timeout=900,
     )
     if result.returncode != 0:
         raise RuntimeError(

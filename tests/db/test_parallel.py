@@ -110,6 +110,27 @@ def test_plain_rows_equal_when_data_equal():
     assert a == b
 
 
+def test_plainrow_replace_overrides_field_and_keeps_others():
+    # The UTXO updater calls tx._replace(inputs=...) on coinbase rows, so
+    # flattened rows must mirror namedtuple._replace semantics.
+    flat = flatten_value(
+        AddressRow(
+            address_id=1, address=b"\x00", total_received=None, token_values=None
+        )
+    )
+    replaced = flat._replace(address_id=9)
+    assert isinstance(replaced, PlainRow)
+    assert replaced.address_id == 9
+    assert replaced.address == b"\x00"
+    assert flat.address_id == 1
+
+
+def test_plainrow_replace_rejects_unknown_field():
+    flat = flatten_value(CurrencyUdt(value=1, fiat_values=[]))
+    with pytest.raises(ValueError):
+        flat._replace(does_not_exist=5)
+
+
 # --- ParallelDbPool machinery -------------------------------------------
 # Worker functions must be module-level so the spawn context can import
 # them by qualified name in the child process.
@@ -206,6 +227,42 @@ def test_worker_survives_signal_when_init_ignores_it():
     ) as pool:
         result = pool.map_chunked(_signal_self_then_return_chunk, list(range(20)))
     assert result == [x + 1 for x in range(20)]
+
+
+def _get_signal_dispositions_chunk(chunk):
+    import signal
+
+    return [
+        (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM))
+        for _ in chunk
+    ]
+
+
+def test_pool_workers_ignore_termination_signals():
+    # Terminal Ctrl-C signals the whole foreground process group. Workers
+    # must ignore SIGINT/SIGTERM so the parent's graceful flag-based
+    # shutdown can finish the batch instead of dying on BrokenProcessPool
+    # mid-write; workers only stop via pool shutdown.
+    import signal
+
+    from graphsenselib.db.parallel import ParallelDbPool
+
+    with ParallelDbPool(
+        num_workers=1, initializer=_init_test_worker, initargs=("m",)
+    ) as pool:
+        [(sigint, sigterm)] = pool.map_chunked(_get_signal_dispositions_chunk, [1])
+    assert sigint == signal.SIG_IGN
+    assert sigterm == signal.SIG_IGN
+
+
+def test_pool_still_runs_caller_initializer_with_signal_guard():
+    from graphsenselib.db.parallel import ParallelDbPool
+
+    with ParallelDbPool(
+        num_workers=1, initializer=_init_test_worker, initargs=("guarded",)
+    ) as pool:
+        result = pool.map_chunked(_read_marker_chunk, [1])
+    assert result == ["guarded"]
 
 
 def test_plainrow_serializes_identically_to_driver_udt_value():

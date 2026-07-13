@@ -544,6 +544,53 @@ class DeltaDumpWriter(Sink):
         logger.info(f"Highest block: {highest_block}")
         return highest_block
 
+    def discard_writes_after_highest_block(self) -> None:
+        """Append-mode crash recovery. ``write()`` commits each table separately
+        with ``block`` written last, so a crash after a side table commits but
+        before ``block`` does leaves orphaned side rows above the ``block``
+        table's max block. Resuming from max+1 would then re-append them as
+        duplicates. Delete those rows once, before resuming. Blockindep tables
+        are overwrite-mode (rewritten each run), so they can't accumulate
+        duplicates and are skipped.
+        """
+        if self.write_mode != "append":
+            return
+        highest = delta_lake_highest_block(self.directory, self.s3_credentials)
+        if highest is None:
+            return  # block table empty / fresh ingest — nothing committed yet
+
+        if self.s3_credentials:
+            storage_options = {
+                "AWS_ALLOW_HTTP": "true",
+                "AWS_S3_ALLOW_UNSAFE_RENAME": "false",
+                "AWS_CONDITIONAL_PUT": "etag",
+                "AWS_EC2_METADATA_DISABLED": "true",
+            }
+            storage_options.update(self.s3_credentials)
+        else:
+            storage_options = {}
+
+        for cfg in self.db_write_config.table_configs:
+            if cfg.blockindep or cfg.table_name == "block":
+                continue
+            table_path = f"{self.directory}/{cfg.table_name}"
+            try:
+                table = DeltaTable(table_path, storage_options=storage_options)
+            except Exception:
+                continue  # table not created yet — nothing to reconcile
+            metrics = table.delete(f"block_id > {highest}")
+            n = 0
+            if isinstance(metrics, dict):
+                n = int(metrics.get("num_deleted_rows", 0) or 0)
+            if n:
+                logger.warning(
+                    "Append resume: removed %d orphaned row(s) with block_id > %d "
+                    "from table '%s' (partial write from a prior crash).",
+                    n,
+                    highest,
+                    cfg.table_name,
+                )
+
 
 CONFIG_MAP = {
     "trx": TRX_DBWRITE_CONFIG,

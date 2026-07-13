@@ -37,6 +37,12 @@ def create_spark_session(
     """
     from pyspark.sql import SparkSession
 
+    # py4j's clientserver logs every Python<->JVM command/answer at DEBUG, which
+    # floods -vvv output for every Spark job (it is a PySpark-wide concern, not
+    # specific to any one job). Mute it to WARNING so our own DEBUG lines remain
+    # readable.
+    logging.getLogger("py4j").setLevel(logging.WARNING)
+
     builder = SparkSession.builder.appName(app_name)
 
     if local:
@@ -53,6 +59,15 @@ def create_spark_session(
             builder.master("local[*]")
             .config("spark.driver.memory", driver_memory)
             .config("spark.sql.shuffle.partitions", "8")
+            # Local mode has no periodic revive timer — resource offers happen
+            # only on task events. A taskset mixing PROCESS_LOCAL preferences
+            # (cached blocks) with host preferences that can never match the
+            # executor (Cassandra-connector scans prefer the contact point,
+            # while the executor registers under the machine's LAN address)
+            # can then starve forever: the last task completion lands inside
+            # spark.locality.wait, launches nothing, and no further event ever
+            # re-offers. Delay scheduling buys nothing on one machine anyway.
+            .config("spark.locality.wait", "0")
         )
 
     # Merge per-package overrides from config over the defaults, then select

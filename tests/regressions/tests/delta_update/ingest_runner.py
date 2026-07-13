@@ -266,8 +266,12 @@ def run_delta_update(
     minio_secret_key: str,
     write_batch_size: int = 10,
     label: str = "delta-update",
+    parallel_workers: int = 1,
 ) -> tuple[float, list[tuple[str, float, int]]]:
     """Run ``graphsense-cli delta-update update`` with timing.
+
+    parallel_workers > 1 appends ``--parallel-workers N``; only pass it for
+    graphsense-lib versions that know the flag (baselines before v2.14 don't).
 
     Always uses ``--updater-version 2`` because the perf-targeted commit
     modifies the v2 (full) UTXO updater. ``--create-schema`` is set so each
@@ -334,6 +338,8 @@ def run_delta_update(
         "--no-pedantic",
         "--disable-safety-checks",
     ]
+    if parallel_workers > 1:
+        cmd += ["--parallel-workers", str(parallel_workers)]
 
     t0 = time.perf_counter()
     try:

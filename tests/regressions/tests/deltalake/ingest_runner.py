@@ -28,6 +28,9 @@ def run_ingest(
         minio_endpoint=minio_endpoint,
         minio_access_key=minio_access_key,
         minio_secret_key=minio_secret_key,
+        # This config is also fed to the reference venv, whose AppConfig
+        # rejects the s3_configs key (extra=forbid on <= v25.11.18).
+        include_s3_configs=False,
     )
 
     cmd_args = [

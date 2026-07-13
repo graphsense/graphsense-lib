@@ -16,7 +16,12 @@ from functools import lru_cache, partial
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import pandas as pd
-from cassandra import OperationTimedOut, Unavailable, WriteTimeout
+from cassandra import InvalidRequest, OperationTimedOut, Unavailable, WriteTimeout
+
+from graphsenselib.db.state import (
+    FRESH_CLUSTERING_ACTIVE_KEY,
+    STATE_TABLE,
+)
 from cassandra.cluster import NoHostAvailable
 from tenacity import (
     Retrying,
@@ -812,17 +817,41 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
             return None
         return self._get_only_row_from_table("summary_statistics")
 
+    def is_fresh_clustering_active(self) -> bool:
+        """True iff the fresh-clustering bootstrap marker is set on this keyspace.
+
+        The marker (state table, ``fresh_clustering_active``) is written by the
+        one-off ``transformation cluster`` bootstrap. Table existence alone is
+        no signal — migrations create the fresh_* tables empty everywhere.
+        Missing state table (pre-migration keyspace) counts as inactive.
+
+        Must stay on the parameterized ``select_one_safe``: the plain
+        ``select_one`` interpolates values verbatim into CQL (placeholder
+        strings like ``?`` rely on that), so a string value produces unquoted,
+        syntactically invalid CQL.
+        """
+        try:
+            row = self.select_one_safe(
+                STATE_TABLE, where={"key": FRESH_CLUSTERING_ACTIVE_KEY}
+            )
+        except InvalidRequest:
+            return False
+        return row is not None
+
     def get_fresh_clusters_for_addresses(
         self, address_ids: List[int]
     ) -> List[Tuple[int, int]]:
         """Look up (address_id, cluster_id) from fresh_address_cluster for given IDs."""
         if not address_ids:
             return []
-        id_list = ",".join(str(a) for a in address_ids)
-        rows = self.execute_raw_cql(
-            f"SELECT address_id, cluster_id FROM "
-            f"{self._keyspace}.fresh_address_cluster "
-            f"WHERE address_id IN ({id_list})"
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "fresh_address_cluster",
+            "address_id",
+            "address_id, cluster_id",
+            list(address_ids),
+            group_column="address_id_group",
+            bucket_size=self.get_address_id_bucket_size(),
         )
         return [(r.address_id, r.cluster_id) for r in rows]
 
@@ -830,22 +859,68 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
         """Read (cluster_id, address_id) from fresh_cluster_addresses for given clusters."""
         if not cluster_ids:
             return []
-        id_list = ",".join(str(c) for c in cluster_ids)
-        rows = self.execute_raw_cql(
-            f"SELECT cluster_id, address_id FROM "
-            f"{self._keyspace}.fresh_cluster_addresses "
-            f"WHERE cluster_id IN ({id_list})"
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "fresh_cluster_addresses",
+            "cluster_id",
+            "cluster_id, address_id",
+            list(cluster_ids),
+            group_column="cluster_id_group",
+            bucket_size=self.get_cluster_id_bucket_size(),
         )
         return [(r.cluster_id, r.address_id) for r in rows]
 
-    def is_fresh_clustering_empty(self) -> bool:
-        """Check if the fresh_address_cluster table has any rows."""
-        rows = list(
-            self.execute_raw_cql(
-                f"SELECT address_id FROM {self._keyspace}.fresh_address_cluster LIMIT 1"
-            )
+    def get_fresh_cluster_stats(self, cluster_ids) -> Dict[int, object]:
+        """Read the full stat row per cluster from fresh_cluster_stats.
+
+        Returns ``{cluster_id: row}`` where each row carries ``no_addresses``,
+        ``min_address_id``, ``first_tx_id``, ``last_tx_id``, ``no_incoming_txs``,
+        ``no_outgoing_txs``, ``total_received`` and ``total_spent`` — the full
+        member-sum aggregate the incremental updater folds additively on a
+        new/join/merge (see ``update.py``). One stat row per (cluster_id_group,
+        cluster_id), read per-key concurrently — cheap relative to
+        get_fresh_cluster_members (which reads full membership partitions).
+        Rich columns are null on rows written by a pre-member-sum delta (or a
+        not-yet-recomputed keyspace); the caller coalesces those to zero.
+        """
+        if not cluster_ids:
+            return {}
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "fresh_cluster_stats",
+            "cluster_id",
+            "cluster_id, no_addresses, min_address_id, first_tx_id, last_tx_id, "
+            "no_incoming_txs, no_outgoing_txs, total_received, total_spent",
+            list(cluster_ids),
+            group_column="cluster_id_group",
+            bucket_size=self.get_cluster_id_bucket_size(),
         )
-        return len(rows) == 0
+        return {r.cluster_id: r for r in rows}
+
+    def get_address_stats(self, address_ids) -> Dict[int, object]:
+        """Read per-address stat columns from ``address`` for member-sum clustering.
+
+        Returns ``{address_id: row}`` with ``first_tx_id``, ``last_tx_id``,
+        ``no_incoming_txs``, ``no_outgoing_txs``, ``total_received`` and
+        ``total_spent`` — the per-member contribution the incremental updater
+        adds into a cluster's stats when an address is newly clustered. Addresses
+        with no row (not yet flushed for the current batch) are simply absent;
+        the caller treats a miss as a zero contribution (healed by the next
+        recompute), consistent with the member-sum's weekly-fresh semantics.
+        """
+        if not address_ids:
+            return {}
+        rows = self._db.read_partitions_concurrent(
+            self._keyspace,
+            "address",
+            "address_id",
+            "address_id, first_tx_id, last_tx_id, no_incoming_txs, "
+            "no_outgoing_txs, total_received, total_spent",
+            list(address_ids),
+            group_column="address_id_group",
+            bucket_size=self.get_address_id_bucket_size(),
+        )
+        return {r.address_id: r for r in rows}
 
     def get_exchange_rates_by_block(self, block) -> Iterable:
         return self.select_one("exchange_rates", where={"block_id": block})
@@ -868,6 +943,17 @@ class TransformedDb(ABC, WithinKeyspace, DbReaderMixin, DbWriterMixin):
 
     def get_cluster_id_bucket_size(self) -> Optional[int]:
         return self.get_address_id_bucket_size()
+
+    def get_coinjoin_filtering(self) -> bool:
+        """Whether multi-input clustering excludes coinjoin-flagged transactions.
+
+        Read from the keyspace's ``configuration`` row (written by the Scala
+        transformation); a missing row/column or NULL value means unset and
+        falls back to True, the schema and legacy-job default.
+        """
+        config = self.get_configuration()
+        value = getattr(config, "coinjoin_filtering", None)
+        return True if value is None else bool(value)
 
     def get_configuration(self) -> Optional[object]:
         if self._db_config is None:

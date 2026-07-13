@@ -34,17 +34,31 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /opt/graphsense/lib/
+
+# --- Rust clustering wheel FIRST. It depends only on ./rust, so a change to
+# the Python sources (./src) no longer invalidates this expensive layer (a
+# full release compile of the arrow/pyo3/rayon dependency tree ≈ the single
+# biggest step in the build). The cargo registry, git and target dirs are
+# BuildKit cache mounts, so those dependencies are compiled once and reused
+# across builds rather than recompiled from scratch each time. Cache mounts
+# are ephemeral (not part of the image layer), so the finished wheel is
+# copied out to /wheels, which IS persisted for the runtime stage to grab.
+ADD ./rust/ ./rust
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/opt/graphsense/lib/rust/gs_clustering/target \
+    uv pip install --no-cache maturin --system \
+    && (cd rust/gs_clustering && maturin build --release) \
+    && mkdir -p /wheels \
+    && cp rust/gs_clustering/target/wheels/graphsense_clustering-*.whl /wheels/
+
+# --- Python wheel second. Depends on ./src + project metadata; the version is
+# set via SETUPTOOLS_SCM_PRETEND_VERSION_*.
 ADD ./src/ ./src
 ADD ./Makefile ./
 ADD ./pyproject.toml ./
 ADD ./uv.lock ./
-ADD ./rust/ ./rust
-
-# Build the Python wheel (sets the version via SETUPTOOLS_SCM_PRETEND_VERSION_*)
-# and the Rust clustering wheel via maturin.
-RUN make build \
-    && uv pip install --no-cache maturin --system \
-    && (cd rust/gs_clustering && maturin build --release)
+RUN make build
 
 # =============================================================================
 # Stage 2: runtime — fresh slim base, only the wheels and runtime OS deps.
@@ -88,7 +102,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pull the two wheels out of the builder stage. Globs work in COPY.
 COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/wheels/
-COPY --from=builder /opt/graphsense/lib/rust/gs_clustering/target/wheels/graphsense_clustering-*manylinux*.whl /tmp/wheels/
+COPY --from=builder /wheels/graphsense_clustering-*.whl /tmp/wheels/
 
 # Install the wheels with all required extras, set up duckdb httpfs, then
 # drop bytecode caches. We deliberately don't run `strip` on the installed

@@ -29,6 +29,7 @@ Requires:
 """
 
 import hashlib
+import os
 from collections import defaultdict
 
 import pytest
@@ -42,6 +43,11 @@ from tests.delta_update.ingest_runner import (
 )
 
 pytestmark = pytest.mark.delta_update
+
+# Worker processes for the CURRENT side's delta-update run. The baseline
+# CLI predates the flag, so it always runs single-process; with workers > 1
+# a passing comparison therefore also proves pooled == single-process output.
+PARALLEL_WORKERS_CURRENT = int(os.environ.get("GS_REGRESSION_PARALLEL_WORKERS", "1"))
 
 
 # Tables whose content legitimately differs across runs/versions.
@@ -228,7 +234,8 @@ class TestDeltaUpdateRegression:
         # ------------------------------------------------------------------
         # Step 4: delta-update update (current)
         # ------------------------------------------------------------------
-        print("  [4/5] delta-update update (current) ...",
+        print(f"  [4/5] delta-update update (current, "
+              f"workers={PARALLEL_WORKERS_CURRENT}) ...",
               end=" ", flush=True)
         current_secs, current_timings = run_delta_update(
             venv_dir=current_venv,
@@ -240,6 +247,7 @@ class TestDeltaUpdateRegression:
             delta_directory=delta_path,
             **minio_kw,
             label="delta-update[current]",
+            parallel_workers=PARALLEL_WORKERS_CURRENT,
         )
         current_bps = delta_update_config.num_blocks / current_secs
         print(

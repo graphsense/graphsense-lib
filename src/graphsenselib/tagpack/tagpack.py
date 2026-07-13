@@ -177,12 +177,13 @@ def get_uri_for_tagpack(
         try:
             tree_name = repo.active_branch.name
         except TypeError:
-            # needed if a tags is checked out eg. in ci
-            # tree_name = repo.git.describe()
+            # Detached HEAD (e.g. CI checks out a tag or a PR merge commit).
+            # Prefer a tag pointing at HEAD; otherwise fall back to the
+            # commit sha, which is equally valid in a /tree/<name>/ URL.
             tag = next(
                 (tag for tag in repo.tags if tag.commit == repo.head.commit), None
             )
-            tree_name = tag.name
+            tree_name = tag.name if tag is not None else repo.head.commit.hexsha
 
         res = f"{g}/tree/{tree_name}/{rel_path}"
 

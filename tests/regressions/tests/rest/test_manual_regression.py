@@ -11,13 +11,14 @@ For auto-generated regression tests, see test_baseline_regression.py.
 For Loki log-derived tests, see test_loki_generated.py.
 
 Usage:
-    # Run all manual regression tests
-    make test-rest-manual
+    # Run all manual regression tests (quick depth = manual suite only)
+    make rest REF=api.iknaio.com CUR=local DEPTH=quick
 
-    # Run with specific baseline version
-    BASELINE_VERSION=v25.11.16 make test-rest-manual
+    # Or against a specific baseline version served locally
+    make rest REF=v25.11.16 CUR=local DEPTH=quick
 """
 
+import json
 import logging
 import os
 import time
@@ -40,6 +41,34 @@ AUTHENTICATED_HEADERS = {
     "Accept": "application/json",
 }
 
+# Per-server API keys, needed once BASELINE_SERVER points at a deployment whose
+# gateway validates them (e.g. https://api.iknaio.com). See test_baseline_regression.
+CURRENT_AUTH = os.environ.get("CURRENT_AUTH")
+BASELINE_AUTH = os.environ.get("BASELINE_AUTH")
+
+# Extra per-server headers (JSON), to replay what an API gateway injects in front
+# of the baseline. See test_baseline_regression for the rationale.
+CURRENT_HEADERS = json.loads(os.environ.get("CURRENT_HEADERS") or "{}")
+BASELINE_HEADERS = json.loads(os.environ.get("BASELINE_HEADERS") or "{}")
+
+
+def headers_for(base_url: str, authenticated: bool) -> Dict[str, str]:
+    """Headers for a request, carrying the API key of the server being addressed.
+
+    Anonymous requests omit the key on purpose — the tag-obfuscation tests depend
+    on it — and are only ever sent to the current server, which is not fronted by
+    a validating gateway.
+    """
+    request_headers = dict(AUTHENTICATED_HEADERS if authenticated else HEADERS)
+    if authenticated:
+        key = BASELINE_AUTH if base_url == BASELINE_SERVER else CURRENT_AUTH
+        if key:
+            request_headers["Authorization"] = key
+        request_headers.update(
+            BASELINE_HEADERS if base_url == BASELINE_SERVER else CURRENT_HEADERS
+        )
+    return request_headers
+
 
 def get_data_from_endpoint(
     base_url: str, endpoint: str, authenticated: bool = True
@@ -47,8 +76,7 @@ def get_data_from_endpoint(
     """Get data from an endpoint."""
     now = time.time()
     url = urljoin(base_url + "/", endpoint.lstrip("/"))
-    request_headers = AUTHENTICATED_HEADERS if authenticated else HEADERS
-    response = requests.get(url, headers=request_headers)
+    response = requests.get(url, headers=headers_for(base_url, authenticated))
     response.raise_for_status()
     elapsed = time.time() - now
     return response.json(), elapsed
@@ -334,6 +362,44 @@ class TestManualRegressionLinks(ManualRegressionTestBase):
             "trx/addresses/TCz47XgC9TjCeF4UzfB6qZbM9LTF9s1tG7/links?neighbor=TT8oWoMeoziArGXsPej6EYF5TN4WSUhvfu&order=desc&pagesize=2"
         )
 
+    @pytest.mark.regression
+    def test_links_utxo_net_sender_in_outputs_is_linked(self):
+        """A net sender appearing in the outputs still produces a link.
+
+        btc tx 18fc9830...: bc1q3ng... is an input AND an output, netting to
+        an outflow of 349 sat. Links deliberately keep RAW io membership
+        semantics (id in inputs, neighbor in outputs), so the tx IS a link
+        1oUWFer... -> bc1q3ng... even though the netted relations contain no
+        such edge (the relations side of this tx is pinned by
+        TestUtxoNettingLitmus). A baseline built from the short-lived netted
+        /links code returns 0 links here; prod and everything else return 1.
+        """
+        pair = (
+            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/links"
+            "?neighbor=bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm&pagesize=10"
+        )
+        self.assert_call_equal(pair)
+
+        data, _ = get_data_from_endpoint(self.current_url, pair)
+        tx_hashes = {link.get("tx_hash") for link in data.get("links", [])}
+        assert (
+            "18fc98305665ece27f44912dca54a75a91c270e838b5972e80646c27eccc2224"
+            in tx_hashes
+        ), "raw io membership: both-sides output address must be linked"
+
+    @pytest.mark.regression
+    def test_links_utxo_net_receiver_of_same_tx_is_linked(self):
+        """Positive control for the netting case: the same tx 18fc9830...
+
+        bc1qfuys... is a pure output (net receiver), so the relation
+        1oUWFer... -> bc1qfuys... exists and the tx is a link under both the
+        netted and the pre-netting semantics — safe as a baseline comparison.
+        """
+        self.assert_call_equal(
+            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/links"
+            "?neighbor=bc1qfuyscyyxqyzuu6pd7fwqtv5kxwalp6ajd3h7xu&pagesize=10"
+        )
+
 
 # =============================================================================
 # Transaction list endpoint tests (with filters)
@@ -520,3 +586,47 @@ class TestManualRegressionRelatedAddresses(ManualRegressionTestBase):
             assert bch_member in cluster, (
                 f"BCH missing from related addresses when querying from {currency}"
             )
+
+
+# =============================================================================
+# Semantics litmus tests (current server only — assert DESIRED semantics)
+# =============================================================================
+
+
+class TestUtxoNettingLitmus:
+    """Indicator for the UTXO relations netting semantics.
+
+    Relations are currently derived from per-(tx, address) NETTED flows
+    (net senders x net receivers, graphsense-spark splitTransactions +
+    the delta updater's dbdelta_from_utxo_transaction). Netting drops real
+    output receipt whenever an address appears on both sides of a tx and
+    loses value overall — bad semantics for relations.
+
+    btc tx 18fc98305665ece27f44912dca54a75a91c270e838b5972e80646c27eccc2224:
+    1oUWFer... is an input; the outputs pay bc1qfuysc... AND bc1q3ng...
+    (the latter is also an input and nets to -349 sat). The outgoing
+    relations of 1oUWFer... should list BOTH output addresses, but netting
+    drops bc1q3ng....
+
+    strict xfail: once the transform's netting is fixed and the keyspaces
+    re-transformed, this XPASSes and fails the suite — remove the marker
+    then. /links deliberately keeps raw io membership semantics and already
+    returns the tx for both pairs (list_links in
+    graphsenselib.db.asynchronous.cassandra).
+    """
+
+    @pytest.mark.regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="UTXO relations net flows per (tx, address); the netted-away "
+        "output receipt of bc1q3ng... is missing from outgoing relations",
+    )
+    def test_outgoing_relations_list_raw_output_addresses(self):
+        data, _ = get_data_from_endpoint(
+            CURRENT_SERVER,
+            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/neighbors"
+            "?direction=out&pagesize=100",
+        )
+        neighbors = {n["address"]["address"] for n in data.get("neighbors") or []}
+        assert "bc1qfuyscyyxqyzuu6pd7fwqtv5kxwalp6ajd3h7xu" in neighbors
+        assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" in neighbors

@@ -1,6 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable, List, Set
+from typing import Callable, Iterable, List, Optional, Set
 
 from ..datatypes import FlowDirection
 from .generic import flatten
@@ -101,6 +101,80 @@ def get_slim_tx_from_transaction(transaction) -> Iterable[SlimTx]:
         )
         for addr, direction in addresses
     ]
+
+
+def multi_input_address_set(tx, exclude_coinjoin: bool = True) -> Optional[Set[str]]:
+    """Distinct input addresses of ``tx`` IF it is a multi-input clustering edge.
+
+    The single source of truth for the multi-input clustering heuristic at the
+    address level: a non-coinbase transaction whose inputs together reference
+    ``>= 2`` distinct addresses is one Union-Find edge over that address set. The
+    ``address`` list of every input is unioned, so a multi-address (multisig)
+    input contributes all of its addresses. Returns ``None`` for coinbase txs,
+    txs with no inputs, and txs that resolve to ``< 2`` distinct addresses (not
+    edges).
+
+    With ``exclude_coinjoin`` (the platform default, mirroring the legacy Scala
+    clustering's ``removeCoinJoin``), transactions whose raw ``coinjoin`` flag is
+    set yield no edge either — co-spending inside a coinjoin is deliberately not
+    treated as evidence of common ownership. A NULL flag counts as not-coinjoin
+    (unlike Scala's ``=== false`` filter, which drops NULL-flag txs); callers
+    source the switch from the transformed keyspace's
+    ``configuration.coinjoin_filtering`` via
+    ``TransformedDb.get_coinjoin_filtering``.
+
+    Note this deliberately does NOT use :func:`filter_inoutputs` (which keeps only
+    single-address inputs): clustering unions the full address set, multisig
+    included. The Spark transform
+    ``transformation.clustering.multi_input_address_id_sets`` expresses this same
+    rule as DataFrame ops over the distributed transaction table — keep the two in
+    sync.
+    """
+    if tx.coinbase:
+        return None
+    if exclude_coinjoin and tx.coinjoin:
+        return None
+    addrs: Set[str] = set()
+    if tx.inputs:
+        for inp in tx.inputs:
+            if inp.address:
+                addrs.update(inp.address)
+    if len(addrs) < 2:
+        return None
+    return addrs
+
+
+def multi_input_address_sets(txs, exclude_coinjoin: bool = True) -> List[Set[str]]:
+    """Per-transaction multi-input address edges (see :func:`multi_input_address_set`)."""
+    return [
+        s
+        for s in (multi_input_address_set(tx, exclude_coinjoin) for tx in txs)
+        if s is not None
+    ]
+
+
+def resolve_address_id_sets(
+    address_sets: Iterable[Set[str]], resolve: Callable[[str], Optional[int]]
+) -> List[List[int]]:
+    """Resolve harvested address-edge sets to distinct ``address_id`` edge lists.
+
+    ``resolve(address)`` returns the ``address_id`` or ``None`` when the address
+    has none — e.g. multi-address / multisig inputs, which the rest of the
+    pipeline does not assign ids to. Unresolvable addresses are dropped; only sets
+    that still have ``>= 2`` distinct ids survive as Union-Find edges. Passing a
+    raising resolver (``dict.__getitem__``) would crash on such addresses, so use
+    a ``None``-returning one (``dict.get``).
+    """
+    id_sets: List[List[int]] = []
+    for addrs in address_sets:
+        ids = set()
+        for a in addrs:
+            aid = resolve(a)
+            if aid is not None:
+                ids.add(aid)
+        if len(ids) >= 2:
+            id_sets.append(list(ids))
+    return id_sets
 
 
 def get_slim_tx_from_transactions(transactions) -> Iterable[SlimTx]:

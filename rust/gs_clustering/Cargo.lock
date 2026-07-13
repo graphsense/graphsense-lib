@@ -449,12 +449,11 @@ dependencies = [
 
 [[package]]
 name = "gs_clustering"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrow",
  "pyo3",
  "rayon",
- "uf_rush",
 ]
 
 [[package]]
@@ -970,12 +969,6 @@ checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
 ]
-
-[[package]]
-name = "uf_rush"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde3fc3c012a03d5e25f6f5dbbb0240ad4fb5c749dbaa6614c138319670d2d20"
 
 [[package]]
 name = "unicode-ident"

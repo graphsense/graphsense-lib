@@ -9,7 +9,13 @@ pytest.importorskip("pyarrow")
 import pandas as pd
 import pyarrow as pa
 
-from graphsenselib.ingest.delta.sink import DeltaTableWriter, read_table
+from types import SimpleNamespace
+
+from graphsenselib.ingest.delta.sink import (
+    DeltaDumpWriter,
+    DeltaTableWriter,
+    read_table,
+)
 from graphsenselib.schema.resources.parquet.utxo import UTXO_SCHEMA_RAW
 
 tempfolder = "tests/ingest/temp"
@@ -32,6 +38,54 @@ def uses_ephemeral_testfolder(func):
         shutil.rmtree(tempfolder)
 
     return wrapper
+
+
+@uses_ephemeral_testfolder
+def test_discard_writes_after_highest_block_removes_orphaned_side_rows():
+    # Simulate a crash that committed a side table past the `block` table's max:
+    # block up to 10, transaction up to 15. Resume must drop the orphaned 11..15
+    # so a re-ingest from 11 doesn't duplicate them.
+    schema = pa.schema(
+        {"partition": pa.int64(), "block_id": pa.int64(), "v": pa.string()}
+    )
+    blk = DeltaTableWriter(
+        path=tempfolder,
+        table_name="block",
+        schema=schema,
+        partition_cols=("partition",),
+        mode="append",
+    )
+    blk.write_delta([{"partition": 0, "block_id": i, "v": "b"} for i in range(0, 11)])
+
+    tx = DeltaTableWriter(
+        path=tempfolder,
+        table_name="transaction",
+        schema=schema,
+        partition_cols=("partition",),
+        mode="append",
+    )
+    tx.write_delta([{"partition": 0, "block_id": i, "v": "t"} for i in range(0, 16)])
+
+    assert read_table(tempfolder, "transaction")["block_id"].max() == 15
+
+    writer = DeltaDumpWriter.__new__(DeltaDumpWriter)
+    writer.directory = tempfolder
+    writer.s3_credentials = None
+    writer.write_mode = "append"
+    writer.db_write_config = SimpleNamespace(
+        table_configs=[
+            SimpleNamespace(table_name="block", blockindep=False),
+            SimpleNamespace(table_name="transaction", blockindep=False),
+        ]
+    )
+
+    writer.discard_writes_after_highest_block()
+
+    tx_df = read_table(tempfolder, "transaction")
+    assert tx_df["block_id"].max() == 10  # orphaned 11..15 removed
+    assert len(tx_df) == 11
+    # block table untouched
+    assert read_table(tempfolder, "block")["block_id"].max() == 10
 
 
 @uses_ephemeral_testfolder

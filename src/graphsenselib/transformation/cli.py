@@ -1578,96 +1578,284 @@ def run_full_transform(
     logger.info(f"Full transform complete: {currency} -> {target_keyspace}")
 
 
+def _delete_fresh_cluster_stats_rows(transformed_db, keys):
+    """Delete stale ``fresh_cluster_stats`` rows.
+
+    ``keys`` is a list of ``(cluster_id_group, cluster_id)`` tuples; deletes are
+    issued per partition (single ``cluster_id_group``) in bounded ``IN`` chunks.
+    """
+    from collections import defaultdict
+
+    by_group = defaultdict(list)
+    for group, cluster_id in keys:
+        by_group[group].append(cluster_id)
+    for group, cluster_ids in by_group.items():
+        for i in range(0, len(cluster_ids), 500):
+            ids = ",".join(str(c) for c in cluster_ids[i : i + 500])
+            transformed_db.execute_raw_cql(
+                f"DELETE FROM fresh_cluster_stats "
+                f"WHERE cluster_id_group = {group} AND cluster_id IN ({ids})"
+            )
+
+
 @transformation.command("cluster", short_help="Run one-off UTXO address clustering.")
 @require_environment()
 @require_currency()
 @click.option(
-    "--start-block",
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode (local[*]) instead of submitting to the cluster.",
+)
+@click.option(
+    "--read-partitions",
     type=int,
-    default=0,
-    show_default=True,
-    help="Start block (inclusive).",
+    default=None,
+    help=(
+        "Partitions the edge-set DataFrame is coalesced to before streaming to the "
+        "driver (one Arrow blob each). Raise it if a partition exceeds "
+        "spark.driver.maxResultSize or executor memory is tight on large chains "
+        "(default 64). Does NOT control join parallelism."
+    ),
 )
 @click.option(
     "--end-block",
     type=int,
     default=None,
-    help="End block (inclusive). If omitted, auto-detected from the raw keyspace.",
+    help=(
+        "Cluster the chain only up to this block (inclusive); transactions in "
+        "later blocks are ignored. Omit to cluster the whole transaction table. "
+        "There is no start bound — clustering is transitive over full history. "
+        "Refused below the delta updater's last synced block — see "
+        "--disable-safety-checks for why."
+    ),
 )
 @click.option(
-    "--chunk-size",
-    type=int,
-    default=1000,
-    show_default=True,
-    help="Block-range chunk size for the Cassandra read/feed loop.",
-)
-@click.option(
-    "--concurrency",
-    type=int,
-    default=100,
-    show_default=True,
-    help="Max in-flight Cassandra statements per chunk.",
-)
-@click.option(
-    "--write-chunk",
-    type=int,
-    default=100_000,
-    show_default=True,
-    help="Number of mapping rows per Cassandra write slice.",
+    "--disable-safety-checks",
+    is_flag=True,
+    help=(
+        "Allow --end-block below the delta updater's last synced block. Only "
+        "for disposable/research keyspaces: the skipped blocks' co-spend "
+        "merges are then either never derived by any path (first bootstrap — "
+        "the delta updater only harvests above its watermark) or actively "
+        "rolled back by the bulk upsert (re-run — memberships regress to "
+        "pre-merge roots)."
+    ),
 )
 def run_clustering(
-    env, currency, start_block, end_block, chunk_size, concurrency, write_chunk
+    env, currency, local, read_partitions, end_block, disable_safety_checks
 ):
-    """Run one-off UTXO address clustering directly from the raw Cassandra keyspace.
+    """Run one-off UTXO address clustering with PySpark.
 
-    Reads transactions via point/range queries in ``--chunk-size``-block chunks,
-    feeds them to the Rust clustering engine, and streams the resulting mapping
-    back to ``fresh_address_cluster`` / ``fresh_cluster_addresses`` in the
-    transformed keyspace.  No PySpark dependency.
+    Bulk-reads raw.transaction and address_ids_by_address_prefix via parallel
+    token-range scans, clusters multi-input transactions with the Rust Union-Find,
+    and bulk-writes fresh_address_cluster / fresh_cluster_addresses /
+    fresh_cluster_stats via the Spark Cassandra connector. Clusters the whole
+    transaction table, or only blocks up to --end-block when given.
 
-    The transformed keyspace must already be seeded by the Scala transformation
-    (or a prior run) so that ``summary_statistics.no_addresses`` is populated.
+    The transformed keyspace must already be seeded (Scala transformation or a
+    prior run) so summary_statistics.no_addresses is populated.
     \f
     """
-    from graphsenselib.config import is_fresh_clustering_enabled
+    from graphsenselib.config import get_config
     from graphsenselib.db.factory import DbFactory
+    from graphsenselib.db.state import mark_fresh_clustering_active
     from graphsenselib.schema.schema import GraphsenseSchemas
-    from graphsenselib.transformation.clustering import (
-        run_clustering_one_off_from_cassandra,
-    )
+    from graphsenselib.transformation.clustering import run_clustering_spark
+    from graphsenselib.transformation.spark import create_spark_session
+    from graphsenselib.utils.locking import create_lock
 
-    if not is_fresh_clustering_enabled():
-        raise click.ClickException(
-            "Fresh clustering is disabled. Set "
-            "GRAPHSENSE_FRESH_CLUSTERING_ENABLED=true to enable."
-        )
-
-    # Ensure transformed keyspace schema is up to date
     GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
 
     with DbFactory().from_config(env, currency) as db:
-        if end_block is None:
-            end_block = db.raw.get_highest_block()
-            if end_block is None:
-                raise click.ClickException(
-                    f"Cannot auto-detect end_block: raw keyspace for "
-                    f"{currency} in environment {env} appears empty."
-                )
-            logger.info(f"Auto-detected end_block={end_block} from raw keyspace.")
+        config = get_config()
+        env_config = config.get_environment(env)
+        ks_config = config.get_keyspace_config(env, currency)
+        raw_keyspace = ks_config.raw_keyspace_name
+        transformed_keyspace = ks_config.transformed_keyspace_name
 
         logger.info(
-            f"Starting clustering: env={env}, currency={currency}, "
-            f"blocks={start_block}-{end_block}, chunk_size={chunk_size}, "
-            f"concurrency={concurrency}"
+            f"Starting Spark clustering: env={env}, currency={currency}, "
+            f"raw={raw_keyspace}, transformed={transformed_keyspace} "
+            "(acquiring keyspace lock)"
         )
+        # Hold the transformed-keyspace lock — the same lock the delta updater and
+        # the recompute-cluster-stats job take — for the whole run. Once the marker
+        # is active (set at the end of the first bootstrap) the delta updater
+        # maintains the fresh_* tables live; a re-run over changed data would
+        # otherwise interleave its bulk writes with those incremental merges across
+        # three tables Cassandra gives no cross-table atomicity for. Fails fast
+        # (LockAcquisitionError, exit 911) if a delta batch currently holds it.
+        with create_lock(transformed_keyspace):
+            # Read summary_statistics only under the lock: a delta run commits
+            # new addresses right up until it releases the lock, so a
+            # no_addresses read before acquisition can be stale. The union-find
+            # bound then drops every multi-input tx touching a newer id — and on
+            # a first bootstrap those txs' blocks were already delta-processed
+            # without co-spend harvesting (marker off), so the dropped merges
+            # would be silently lost until the next full re-cluster.
+            stats = db.transformed.get_summary_statistics()
+            if stats is None or getattr(stats, "no_addresses", None) is None:
+                raise click.ClickException(
+                    f"{transformed_keyspace}.summary_statistics.no_addresses is "
+                    "missing — seed the transformed keyspace before clustering."
+                )
+            max_address_id = int(stats.no_addresses)
 
-        run_clustering_one_off_from_cassandra(
-            db,
-            start_block=start_block,
-            end_block=end_block,
-            chunk_size=chunk_size,
-            concurrency=concurrency,
-            write_chunk=write_chunk,
+            if end_block is not None and not disable_safety_checks:
+                # An --end-block below the transformed keyspace's synced height
+                # loses co-spend merges either way, so refuse it with the
+                # regime-specific reason instead of silently under-clustering.
+                watermark = db.transformed.get_highest_block_delta_updater(
+                    sanity_check=False
+                )
+                if watermark is not None and end_block < watermark:
+                    if db.transformed.is_fresh_clustering_active():
+                        reason = (
+                            "fresh clustering is active, so the incremental "
+                            "path has already merged co-spends up to that "
+                            "block; the bulk upsert would overwrite those "
+                            "memberships with the pre-merge roots of the "
+                            f"as-of-{end_block} union-find (merges from blocks "
+                            f"{end_block + 1}..{watermark} regress)."
+                        )
+                    else:
+                        reason = (
+                            "on a first bootstrap the delta updater harvests "
+                            "co-spends only above its watermark, so "
+                            "multi-input transactions in blocks "
+                            f"{end_block + 1}..{watermark} would never be "
+                            "clustered by any path — a permanent, silent "
+                            "under-merge."
+                        )
+                    raise click.ClickException(
+                        f"--end-block {end_block} is below the delta updater's "
+                        f"last synced block {watermark}: {reason} Omit "
+                        "--end-block to cluster everything present, or pass "
+                        "--disable-safety-checks if this keyspace is "
+                        "disposable."
+                    )
+
+            # NOTE: the fresh_* tables are written append/upsert with no truncate,
+            # on purpose — a live keyspace keeps serving the previous mapping
+            # throughout the (multi-hour) run instead of going empty. The trade-off
+            # is that a re-run over CHANGED data can leave phantom cluster_id-keyed
+            # rows (cluster_id == min(address_id) shrinks when a smaller address
+            # merges a cluster); fresh_address_cluster self-heals per-address,
+            # fresh_cluster_stats phantoms are deleted post-upsert (delete_stale
+            # below), and a first cold-start bootstrap on empty tables is clean.
+            # Only fresh_cluster_addresses phantoms need out-of-band cleanup if a
+            # re-run's phantoms matter.
+            spark_session = create_spark_session(
+                app_name=f"graphsense-clustering-{currency}-{env}",
+                local=local,
+                cassandra_nodes=env_config.cassandra_nodes,
+                cassandra_username=env_config.username,
+                cassandra_password=env_config.password,
+                spark_config=config.get_spark_config(),
+                spark_packages=config.get_spark_packages(),
+            )
+            try:
+                spark_kwargs = {}
+                if read_partitions is not None:
+                    spark_kwargs["read_partitions"] = read_partitions
+                run_clustering_spark(
+                    spark_session,
+                    raw_keyspace=raw_keyspace,
+                    transformed_keyspace=transformed_keyspace,
+                    max_address_id=max_address_id,
+                    bucket_size=db.transformed.get_cluster_id_bucket_size(),
+                    end_block=end_block,
+                    delete_stale=lambda keys: _delete_fresh_cluster_stats_rows(
+                        db.transformed, keys
+                    ),
+                    exclude_coinjoin=db.transformed.get_coinjoin_filtering(),
+                    **spark_kwargs,
+                )
+            finally:
+                spark_session.stop()
+                logger.info("SparkSession stopped.")
+            # Enable switch: the marker makes the delta updater maintain the
+            # fresh_* tables and REST fill fresh_cluster_id from here on.
+            mark_fresh_clustering_active(db)
+            logger.info(
+                "One-off clustering complete; fresh clustering marked active on "
+                f"{transformed_keyspace}."
+            )
+
+
+@transformation.command(
+    "recompute-cluster-stats",
+    short_help="Recompute fresh_cluster_stats from address-level tables.",
+)
+@require_environment()
+@require_currency()
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Run Spark in local mode (local[*]) instead of submitting to the cluster.",
+)
+def recompute_cluster_stats(env, currency, local):
+    """Recompute the full ``fresh_cluster_stats`` from the address-level tables.
+
+    Aggregates ``address`` + ``address_transactions`` through the fresh
+    ``address -> cluster`` membership into per-cluster size, totals, first/last
+    tx and (cluster-netted) tx-counts, and rewrites ``fresh_cluster_stats``.
+    Membership (``fresh_address_cluster`` / ``fresh_cluster_addresses``) is NOT
+    touched. The delta loop keeps only size + root live, so the full
+    cluster-level stats lag behind and this job refreshes them in one pass.
+
+    Degrees and ``total_*_adj`` are deliberately absent — those columns were
+    dropped from ``fresh_cluster_stats`` in the transformed_utxo 4->5 migration,
+    so the (expensive) address-relations tables are never scanned here; REST
+    serves in/out-degree from the legacy ``cluster`` table via the root address.
+
+    Holds the transformed-keyspace lock (the same lock the delta updater takes) so
+    it never races a delta merge, and upserts ``fresh_cluster_stats`` in place
+    (append/upsert, no truncate) so a REST-served keyspace keeps serving the
+    previous stats throughout the multi-hour run instead of going empty. Rows
+    keyed by cluster_ids that are no longer roots (the root shrinks when a
+    smaller address merges a cluster) are deleted after the upsert and the count
+    logged, so the table ends the run phantom-free without ever being empty.
+    \f
+    """
+    from graphsenselib.config import get_config
+    from graphsenselib.db.factory import DbFactory
+    from graphsenselib.schema.schema import GraphsenseSchemas
+    from graphsenselib.transformation.clustering import recompute_fresh_cluster_stats
+    from graphsenselib.transformation.spark import create_spark_session
+    from graphsenselib.utils.locking import create_lock
+
+    GraphsenseSchemas().apply_migrations(env, currency, keyspace_type="transformed")
+
+    with DbFactory().from_config(env, currency) as db:
+        config = get_config()
+        env_config = config.get_environment(env)
+        transformed_keyspace = db.transformed.get_keyspace()
+
+        logger.info(
+            f"Recomputing cluster stats: env={env}, currency={currency}, "
+            f"transformed={transformed_keyspace} (acquiring keyspace lock)"
         )
-
-    logger.info("One-off clustering complete.")
+        with create_lock(transformed_keyspace):
+            spark_session = create_spark_session(
+                app_name=f"graphsense-cluster-stats-{currency}-{env}",
+                local=local,
+                cassandra_nodes=env_config.cassandra_nodes,
+                cassandra_username=env_config.username,
+                cassandra_password=env_config.password,
+                spark_config=config.get_spark_config(),
+                spark_packages=config.get_spark_packages(),
+            )
+            try:
+                n = recompute_fresh_cluster_stats(
+                    spark_session,
+                    transformed_keyspace,
+                    db.transformed.get_cluster_id_bucket_size(),
+                    delete_stale=lambda keys: _delete_fresh_cluster_stats_rows(
+                        db.transformed, keys
+                    ),
+                )
+            finally:
+                spark_session.stop()
+                logger.info("SparkSession stopped.")
+        logger.info(f"Cluster-stat recompute complete: {n} clusters.")

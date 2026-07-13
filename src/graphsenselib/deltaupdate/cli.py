@@ -77,8 +77,8 @@ def delta():
     show_default=True,
     default=1,
     help="Nr. of worker processes for the batch reads and writes "
-    "(account model only). The driver work is client-CPU-bound, so "
-    "values above 1 parallelize it across processes; 1 keeps the "
+    "(account and utxo updaters v2). The driver work is client-CPU-bound, "
+    "so values above 1 parallelize it across processes; 1 keeps the "
     "single-process behavior.",
 )
 @click.option(
