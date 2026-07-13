@@ -24,13 +24,22 @@ pyspark = pytest.importorskip("pyspark")
 # exception machinery promotes to PytestUnraisableExceptionWarning. Harmless;
 # mute via per-item marker (markers override the CLI -W error used by the
 # pre-commit hook, which `filterwarnings` in pyproject.toml does not).
+#
+# `toPandas()` additionally makes pyspark version-check pandas through
+# distutils.LooseVersion, which deprecation-warns on 3.12+. Also pyspark's, not
+# ours.
+PYSPARK_WARNING_FILTERS = (
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore:distutils Version classes are deprecated:DeprecationWarning",
+)
+
+
 def pytest_collection_modifyitems(config, items):
-    marker = pytest.mark.filterwarnings(
-        "ignore::pytest.PytestUnraisableExceptionWarning"
-    )
+    markers = [pytest.mark.filterwarnings(f) for f in PYSPARK_WARNING_FILTERS]
     for item in items:
         if item.module.__name__.startswith("tests.transformation."):
-            item.add_marker(marker)
+            for marker in markers:
+                item.add_marker(marker)
 
 
 @pytest.fixture(scope="session")

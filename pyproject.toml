@@ -148,6 +148,14 @@ web = [
 
 transformation = [
     "pyspark>=3.5.0,<4.0.0",
+    # Needed in Spark jobs: pyspark 3.5 does `from distutils.version import
+    # LooseVersion` at runtime (sql/pandas/utils.py, hit by every
+    # createDataFrame(pandas_df)); on Python >= 3.12 distutils only exists
+    # through setuptools' distutils-precedence.pth shim. Without this, Spark
+    # transformation jobs crash with ModuleNotFoundError: No module named
+    # 'distutils' in the Docker image (dev/testing installs get setuptools
+    # via the dependency groups). Remove when pyspark >= 4.
+    "setuptools>=80.0.0",
 ]
 
 clustering = [
