@@ -1134,8 +1134,9 @@ def run_pubkey_detect_command(
     required=True,
     help=(
         "Output path. A local path is written from the driver as a single "
-        "file; an s3:// path (with --s3-config) is written by Spark as a "
-        "directory of part files."
+        "file and gains the format's extension if it has none (/out/btc -> "
+        "/out/btc.csv); an s3:// path (with --s3-config) is written by Spark "
+        "as a directory of part files and is used verbatim."
     ),
 )
 @click.option(
@@ -1301,7 +1302,6 @@ def run_top_untagged_addresses(
     click.secho(f"\ntop-untagged-addresses summary ({currency}):", bold=True, err=True)
     for line in stats.summary_lines(schema_type == "utxo"):
         click.echo(f"  {line}", err=True)
-    click.echo(f"  written to      : {out_path}", err=True)
 
 
 def _expected_transformed_ks(currency, suffix, no_date):

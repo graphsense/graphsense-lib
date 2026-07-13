@@ -122,6 +122,26 @@ def local_path(path: str) -> str:
     return parts.path if parts.scheme == "file" else path
 
 
+def output_path(out_path: str, out_format: str) -> str:
+    """Give the driver-written file the extension of its format.
+
+    Driver-local writes produce one real file, so `/out/btc-untagged` is named
+    `/out/btc-untagged.csv` — a file called after its format is what every tool
+    downstream expects, and the CLI's `--out-path` is otherwise easy to hand a
+    bare stem.
+
+    Remote paths are left alone: there Spark's writer creates a *directory* of
+    part files, and calling a directory `.csv` would be a lie. An extension the
+    caller already supplied is also left alone.
+    """
+    if is_remote_path(out_path):
+        return out_path
+    suffix = f".{out_format}"
+    if out_path.lower().endswith(suffix):
+        return out_path
+    return out_path + suffix
+
+
 def check_writable(out_path: str) -> None:
     """Fail before the scan if the driver cannot write `out_path` afterwards.
 
@@ -193,6 +213,9 @@ class TagCoverage:
     pool_floor: Optional[Decimal] = None
     pool_ceiling: Optional[Decimal] = None
     emitted_max: Optional[Decimal] = None
+    # The path actually written, which is not the one the caller passed: a local
+    # `--out-path` gains the format's extension. See `output_path`.
+    out_path: str = ""
 
     @property
     def untagged(self) -> int:
@@ -251,6 +274,7 @@ class TagCoverage:
         lines += [
             f"rows written    : {self.emitted}",
             f"  highest {self.sort_by:<7}: {self.emitted_max}",
+            f"written to      : {self.out_path}",
         ]
         return lines
 
@@ -441,6 +465,7 @@ class TopUntaggedAddresses:
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"sort_by must be one of {sorted(SORT_COLUMNS)}")
         sort_column = SORT_COLUMNS[sort_by]
+        out_path = output_path(out_path, out_format)
         check_writable(out_path)
 
         candidate_limit = limit * candidate_multiplier
@@ -500,6 +525,7 @@ class TopUntaggedAddresses:
             sort_by=sort_by,
             pool_floor=pool_range["floor"],
             pool_ceiling=pool_range["ceiling"],
+            out_path=out_path,
         )
 
         if self.is_utxo:

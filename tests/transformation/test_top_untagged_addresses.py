@@ -15,6 +15,7 @@ from graphsenselib.top_untagged.job import (
     TopUntaggedAddresses,
     is_remote_path,
     local_path,
+    output_path,
     psycopg2_dsn,
 )
 
@@ -144,7 +145,9 @@ def _make_job(spark, currency, schema_type, addresses, tagged, tagged_clusters):
 
 
 def _read_csv(path):
-    with open(path) as fh:
+    # `run()` resolves the caller's --out-path to the file it actually writes,
+    # which for a local csv run means appending the extension.
+    with open(output_path(path, "csv")) as fh:
         return list(csv.DictReader(fh))
 
 
@@ -402,6 +405,8 @@ def test_summary_lines_cover_the_numbers_a_reader_needs(utxo_job, tmp_path):
     assert "already tagged" in text
     assert "tagged clusters" in text
     assert "rows written" in text
+    # The resolved path, not the one passed in — that is the file to go open.
+    assert str(tmp_path / "out.csv") in text
 
     account = "\n".join(stats.summary_lines(is_utxo=False))
     assert "tagged clusters" not in account
@@ -456,13 +461,47 @@ def test_distutils_is_importable_for_pyspark():
 def test_parquet_output(utxo_job, spark, tmp_path):
     out = str(tmp_path / "out")
     utxo_job().run(out_path=out, out_format="parquet", limit=2, sort_by="txs")
-    assert spark.read.parquet(out).count() == 2
+    assert spark.read.parquet(out + ".parquet").count() == 2
 
 
 def test_local_output_is_a_single_file_not_a_spark_directory(utxo_job, tmp_path):
     out = str(tmp_path / "out")
     utxo_job().run(out_path=out, limit=3, sort_by="txs")
-    assert os.path.isfile(out)
+    assert os.path.isfile(out + ".csv")
+
+
+def test_local_output_is_named_after_its_format(utxo_job, tmp_path):
+    stats = utxo_job().run(out_path=str(tmp_path / "btc-untagged"), limit=3)
+    assert stats.out_path == str(tmp_path / "btc-untagged.csv")
+    assert (tmp_path / "btc-untagged.csv").is_file()
+    # ...and the bare stem the caller passed is not also left lying around.
+    assert not (tmp_path / "btc-untagged").exists()
+
+
+def test_an_extension_the_caller_supplied_is_not_doubled(utxo_job, tmp_path):
+    stats = utxo_job().run(out_path=str(tmp_path / "out.csv"), limit=3)
+    assert stats.out_path == str(tmp_path / "out.csv")
+    assert not (tmp_path / "out.csv.csv").exists()
+
+
+def test_output_path_leaves_remote_paths_alone():
+    # Spark's writer makes a *directory* of part files there; naming a directory
+    # `.csv` would misdescribe it.
+    assert output_path("s3://bucket/btc-untagged", "csv") == "s3://bucket/btc-untagged"
+
+
+@pytest.mark.parametrize(
+    "path, out_format, expected",
+    [
+        ("/out/btc", "csv", "/out/btc.csv"),
+        ("/out/btc", "parquet", "/out/btc.parquet"),
+        ("/out/btc.csv", "csv", "/out/btc.csv"),
+        ("/out/BTC.CSV", "csv", "/out/BTC.CSV"),
+        ("file:///out/btc", "csv", "file:///out/btc.csv"),
+    ],
+)
+def test_output_path_cases(path, out_format, expected):
+    assert output_path(path, out_format) == expected
 
 
 def test_file_scheme_is_treated_as_driver_local(tmp_path):
