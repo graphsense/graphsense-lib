@@ -1441,10 +1441,26 @@ def _delete_fresh_cluster_stats_rows(transformed_db, keys):
     help=(
         "Cluster the chain only up to this block (inclusive); transactions in "
         "later blocks are ignored. Omit to cluster the whole transaction table. "
-        "There is no start bound — clustering is transitive over full history."
+        "There is no start bound — clustering is transitive over full history. "
+        "Refused below the delta updater's last synced block — see "
+        "--disable-safety-checks for why."
     ),
 )
-def run_clustering(env, currency, local, read_partitions, end_block):
+@click.option(
+    "--disable-safety-checks",
+    is_flag=True,
+    help=(
+        "Allow --end-block below the delta updater's last synced block. Only "
+        "for disposable/research keyspaces: the skipped blocks' co-spend "
+        "merges are then either never derived by any path (first bootstrap — "
+        "the delta updater only harvests above its watermark) or actively "
+        "rolled back by the bulk upsert (re-run — memberships regress to "
+        "pre-merge roots)."
+    ),
+)
+def run_clustering(
+    env, currency, local, read_partitions, end_block, disable_safety_checks
+):
     """Run one-off UTXO address clustering with PySpark.
 
     Bulk-reads raw.transaction and address_ids_by_address_prefix via parallel
@@ -1474,14 +1490,6 @@ def run_clustering(env, currency, local, read_partitions, end_block):
         raw_keyspace = ks_config.raw_keyspace_name
         transformed_keyspace = ks_config.transformed_keyspace_name
 
-        stats = db.transformed.get_summary_statistics()
-        if stats is None or getattr(stats, "no_addresses", None) is None:
-            raise click.ClickException(
-                f"{transformed_keyspace}.summary_statistics.no_addresses is "
-                "missing — seed the transformed keyspace before clustering."
-            )
-        max_address_id = int(stats.no_addresses)
-
         logger.info(
             f"Starting Spark clustering: env={env}, currency={currency}, "
             f"raw={raw_keyspace}, transformed={transformed_keyspace} "
@@ -1495,6 +1503,55 @@ def run_clustering(env, currency, local, read_partitions, end_block):
         # three tables Cassandra gives no cross-table atomicity for. Fails fast
         # (LockAcquisitionError, exit 911) if a delta batch currently holds it.
         with create_lock(transformed_keyspace):
+            # Read summary_statistics only under the lock: a delta run commits
+            # new addresses right up until it releases the lock, so a
+            # no_addresses read before acquisition can be stale. The union-find
+            # bound then drops every multi-input tx touching a newer id — and on
+            # a first bootstrap those txs' blocks were already delta-processed
+            # without co-spend harvesting (marker off), so the dropped merges
+            # would be silently lost until the next full re-cluster.
+            stats = db.transformed.get_summary_statistics()
+            if stats is None or getattr(stats, "no_addresses", None) is None:
+                raise click.ClickException(
+                    f"{transformed_keyspace}.summary_statistics.no_addresses is "
+                    "missing — seed the transformed keyspace before clustering."
+                )
+            max_address_id = int(stats.no_addresses)
+
+            if end_block is not None and not disable_safety_checks:
+                # An --end-block below the transformed keyspace's synced height
+                # loses co-spend merges either way, so refuse it with the
+                # regime-specific reason instead of silently under-clustering.
+                watermark = db.transformed.get_highest_block_delta_updater(
+                    sanity_check=False
+                )
+                if watermark is not None and end_block < watermark:
+                    if db.transformed.is_fresh_clustering_active():
+                        reason = (
+                            "fresh clustering is active, so the incremental "
+                            "path has already merged co-spends up to that "
+                            "block; the bulk upsert would overwrite those "
+                            "memberships with the pre-merge roots of the "
+                            f"as-of-{end_block} union-find (merges from blocks "
+                            f"{end_block + 1}..{watermark} regress)."
+                        )
+                    else:
+                        reason = (
+                            "on a first bootstrap the delta updater harvests "
+                            "co-spends only above its watermark, so "
+                            "multi-input transactions in blocks "
+                            f"{end_block + 1}..{watermark} would never be "
+                            "clustered by any path — a permanent, silent "
+                            "under-merge."
+                        )
+                    raise click.ClickException(
+                        f"--end-block {end_block} is below the delta updater's "
+                        f"last synced block {watermark}: {reason} Omit "
+                        "--end-block to cluster everything present, or pass "
+                        "--disable-safety-checks if this keyspace is "
+                        "disposable."
+                    )
+
             # NOTE: the fresh_* tables are written append/upsert with no truncate,
             # on purpose — a live keyspace keeps serving the previous mapping
             # throughout the (multi-hour) run instead of going empty. The trade-off
