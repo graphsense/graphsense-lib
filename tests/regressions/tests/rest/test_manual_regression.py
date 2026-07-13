@@ -598,3 +598,47 @@ class TestManualRegressionRelatedAddresses(ManualRegressionTestBase):
             assert bch_member in cluster, (
                 f"BCH missing from related addresses when querying from {currency}"
             )
+
+
+# =============================================================================
+# Semantics litmus tests (current server only — assert DESIRED semantics)
+# =============================================================================
+
+
+class TestUtxoNettingLitmus:
+    """Indicator for the UTXO relations netting semantics.
+
+    Relations are currently derived from per-(tx, address) NETTED flows
+    (net senders x net receivers, graphsense-spark splitTransactions +
+    the delta updater's dbdelta_from_utxo_transaction). Netting drops real
+    output receipt whenever an address appears on both sides of a tx and
+    loses value overall — bad semantics for relations.
+
+    btc tx 18fc98305665ece27f44912dca54a75a91c270e838b5972e80646c27eccc2224:
+    1oUWFer... is an input; the outputs pay bc1qfuysc... AND bc1q3ng...
+    (the latter is also an input and nets to -349 sat). The outgoing
+    relations of 1oUWFer... should list BOTH output addresses, but netting
+    drops bc1q3ng....
+
+    strict xfail: once the transform's netting is fixed and the keyspaces
+    re-transformed, this XPASSes and fails the suite — remove the marker
+    then. /links deliberately keeps raw io membership semantics and already
+    returns the tx for both pairs (list_links in
+    graphsenselib.db.asynchronous.cassandra).
+    """
+
+    @pytest.mark.regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="UTXO relations net flows per (tx, address); the netted-away "
+        "output receipt of bc1q3ng... is missing from outgoing relations",
+    )
+    def test_outgoing_relations_list_raw_output_addresses(self):
+        data, _ = get_data_from_endpoint(
+            CURRENT_SERVER,
+            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/neighbors"
+            "?direction=out&pagesize=100",
+        )
+        neighbors = {n["address"]["address"] for n in data.get("neighbors") or []}
+        assert "bc1qfuyscyyxqyzuu6pd7fwqtv5kxwalp6ajd3h7xu" in neighbors
+        assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" in neighbors
