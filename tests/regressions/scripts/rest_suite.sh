@@ -178,15 +178,19 @@ ensure_server() { # <role: current|baseline> <port> <image>
     local role="$1" port="$2" image="$3"
     local name="gs-rest-$role"
 
-    local running_image running_port
-    running_image=$(docker inspect --format '{{.Config.Image}}' "$name" 2>/dev/null || true)
+    # Compare image IDs, not tag strings: after a rebuild the tag (e.g.
+    # gslib-rest:local) points at a new image while the running container
+    # keeps the old one — a tag comparison would silently reuse stale code.
+    local running_image_id running_port desired_image_id
+    running_image_id=$(docker inspect --format '{{.Image}}' "$name" 2>/dev/null || true)
     running_port=$(docker inspect --format '{{index .Config.Labels "gs-rest-port"}}' "$name" 2>/dev/null || true)
-    if [ -n "$running_image" ]; then
-        if [ "$running_image" = "$image" ] && [ "$running_port" = "$port" ]; then
+    if [ -n "$running_image_id" ]; then
+        desired_image_id=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || true)
+        if [ "$running_image_id" = "$desired_image_id" ] && [ "$running_port" = "$port" ]; then
             log "reusing running $name ($image on :$port)"
             return 0
         fi
-        log "replacing $name ($running_image on :$running_port -> $image on :$port)"
+        log "replacing $name (stale image or port -> $image on :$port)"
         docker rm -f "$name" >/dev/null 2>&1
     fi
 
