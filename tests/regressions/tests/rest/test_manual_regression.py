@@ -363,41 +363,29 @@ class TestManualRegressionLinks(ManualRegressionTestBase):
         )
 
     @pytest.mark.regression
-    def test_links_utxo_net_sender_in_outputs_not_linked(self):
-        """A net sender appearing in the outputs is not a link.
+    def test_links_utxo_net_sender_in_outputs_is_linked(self):
+        """A net sender appearing in the outputs still produces a link.
 
-        btc tx 18fc9830...: bc1q3ng... is an input (2300) AND an output (1951),
-        netting to an outflow of 349, so it is a net sender of the tx. UTXO
-        relations pair net senders with net receivers, so there is no relation
-        edge 1oUWFer... -> bc1q3ng... and /links must be empty — consistent
-        with /neighbors, which never contained that edge. The pre-netting
-        /links filtered on raw io membership and returned the tx, disagreeing
-        with the relations pre-check (which correctly returned empty).
-
-        Current-server invariant, not a baseline comparison: a baseline
-        running the pre-netting code returns 1 link here.
+        btc tx 18fc9830...: bc1q3ng... is an input AND an output, netting to
+        an outflow of 349 sat. Links deliberately keep RAW io membership
+        semantics (id in inputs, neighbor in outputs), so the tx IS a link
+        1oUWFer... -> bc1q3ng... even though the netted relations contain no
+        such edge (the relations side of this tx is pinned by
+        TestUtxoNettingLitmus). A baseline built from the short-lived netted
+        /links code returns 0 links here; prod and everything else return 1.
         """
         pair = (
             "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/links"
             "?neighbor=bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm&pagesize=10"
         )
-        data, _ = get_data_from_endpoint(self.current_url, pair)
-        assert data.get("links") == [], (
-            "net sender in outputs must not produce a link (no relation edge)"
-        )
+        self.assert_call_equal(pair)
 
-        # the premise: the neighbor list agrees there is no edge
-        nb, _ = get_data_from_endpoint(
-            self.current_url,
-            "btc/addresses/1oUWFer56GT7RUkMs26Az6kmnGyySmdAA/neighbors"
-            "?direction=out&pagesize=10",
-        )
-        neighbor_addresses = {
-            (n.get("address") or {}).get("address") for n in nb.get("neighbors", [])
-        }
-        assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" not in neighbor_addresses, (
-            "premise broken: relation edge exists, links may not be empty"
-        )
+        data, _ = get_data_from_endpoint(self.current_url, pair)
+        tx_hashes = {link.get("tx_hash") for link in data.get("links", [])}
+        assert (
+            "18fc98305665ece27f44912dca54a75a91c270e838b5972e80646c27eccc2224"
+            in tx_hashes
+        ), "raw io membership: both-sides output address must be linked"
 
     @pytest.mark.regression
     def test_links_utxo_net_receiver_of_same_tx_is_linked(self):
