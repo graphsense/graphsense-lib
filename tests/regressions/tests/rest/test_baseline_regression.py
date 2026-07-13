@@ -37,6 +37,25 @@ logger = logging.getLogger(__name__)
 CURRENT_SERVER = os.environ.get("CURRENT_SERVER", "http://localhost:9000")
 BASELINE_SERVER = os.environ.get("BASELINE_SERVER", "http://localhost:9001")
 
+# Per-server API keys. The default setup runs two throwaway containers that
+# share a key namespace, so one key works for both. When BASELINE_SERVER points
+# at a real deployment (e.g. https://api.iknaio.com) its gateway validates keys,
+# so that side needs its own. Unset -> whatever the caller passed.
+CURRENT_AUTH = os.environ.get("CURRENT_AUTH")
+BASELINE_AUTH = os.environ.get("BASELINE_AUTH")
+
+# Extra per-server request headers, as a JSON object. A deployment behind an API
+# gateway sees headers the gateway injects (e.g. X-Consumer-Groups, which drives
+# tag obfuscation). A bare server does not, so comparing the two reports
+# differences that are pure deployment context. Set CURRENT_HEADERS to replay
+# them onto the current server.
+CURRENT_HEADERS = json.loads(os.environ.get("CURRENT_HEADERS") or "{}")
+BASELINE_HEADERS = json.loads(os.environ.get("BASELINE_HEADERS") or "{}")
+
+
+def extra_headers_for(base_url: str) -> dict:
+    return BASELINE_HEADERS if base_url == BASELINE_SERVER else CURRENT_HEADERS
+
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 
 AUTHENTICATED_HEADERS = {
@@ -88,10 +107,13 @@ def get_response(
     """Get response from an endpoint, returning (data, status_code, elapsed_time)."""
     url = urljoin(base_url + "/", endpoint.lstrip("/"))
     base_headers = AUTHENTICATED_HEADERS if authenticated else HEADERS
-    headers = {**base_headers, "Authorization": auth}
+    headers = {**base_headers, "Authorization": auth, **extra_headers_for(base_url)}
 
     start = time.time()
-    response = requests.get(url, headers=headers, timeout=30)
+    # generous read timeout: heavyweight endpoints (large-entity neighbors with
+    # include_labels) legitimately take 50-75s on both sides; a short timeout
+    # turns them into permanent flakes instead of comparisons
+    response = requests.get(url, headers=headers, timeout=(30, 120))
     elapsed = time.time() - start
 
     try:
@@ -112,7 +134,7 @@ def post_response(
     """POST request to an endpoint, returning (data, status_code, elapsed_time)."""
     url = urljoin(base_url + "/", endpoint.lstrip("/"))
     base_headers = AUTHENTICATED_HEADERS if authenticated else HEADERS
-    headers = {**base_headers, "Authorization": auth}
+    headers = {**base_headers, "Authorization": auth, **extra_headers_for(base_url)}
 
     start = time.time()
     response = requests.post(url, headers=headers, json=body, timeout=60)
@@ -148,7 +170,9 @@ UNORDERED_LIST_KEYS = {
 }
 
 # Keys to ignore in comparison
-IGNORED_KEYS = {"version"}
+# request_timestamp is the server-side "now" of each response; the two sides
+# are queried sequentially, so it differs whenever the calls straddle a second.
+IGNORED_KEYS = {"version", "request_timestamp"}
 
 
 def get_sort_key(item: Any) -> Any:
@@ -238,10 +262,10 @@ class BaselineRegressionTestBase:
     def compare_endpoint(self, endpoint: str, auth: str = "test") -> dict:
         """Compare an endpoint between baseline and current servers."""
         baseline_data, baseline_status, baseline_time = get_response(
-            self.baseline_url, endpoint, auth
+            self.baseline_url, endpoint, BASELINE_AUTH or auth
         )
         current_data, current_status, current_time = get_response(
-            CURRENT_SERVER, endpoint, auth
+            CURRENT_SERVER, endpoint, CURRENT_AUTH or auth
         )
 
         result = {
@@ -272,10 +296,10 @@ class BaselineRegressionTestBase:
     ) -> dict:
         """Compare a POST endpoint between baseline and current servers."""
         baseline_data, baseline_status, baseline_time = post_response(
-            self.baseline_url, endpoint, body, auth
+            self.baseline_url, endpoint, body, BASELINE_AUTH or auth
         )
         current_data, current_status, current_time = post_response(
-            CURRENT_SERVER, endpoint, body, auth
+            CURRENT_SERVER, endpoint, body, CURRENT_AUTH or auth
         )
 
         result = {

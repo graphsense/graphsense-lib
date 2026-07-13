@@ -2,7 +2,6 @@ import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 import graphsenselib.utils.address
-from graphsenselib.config import is_fresh_clustering_enabled
 from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.db.asynchronous.cassandra import get_tx_identifier
@@ -548,9 +547,11 @@ async def get_address(
         actor_res = await tagstore.get_actors_by_subjectid(address, tagstore_groups)
         actors = [labeled_item_ref_from_actor(a) for a in actor_res]
 
-    # Look up fresh cluster ID if available (UTXO only)
+    # Fresh cluster id (UTXO only): populated whenever the fresh tables
+    # exist, independent of the fresh read switch, so clients can discover
+    # the fresh id while all legacy-id lookups keep working unchanged.
     fresh_cluster_id = None
-    if is_fresh_clustering_enabled() and result and not is_eth_like(currency):
+    if result and not is_eth_like(currency):
         address_id = result.get("address_id")
         if address_id is not None:
             fresh_cluster_id = await db.get_fresh_cluster_id(currency, address_id)

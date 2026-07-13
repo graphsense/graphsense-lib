@@ -15,18 +15,27 @@ from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from graphsenselib.utils.constants import (
+    FRESH_CLUSTER_ID_OFFSET,
+    is_fresh_cluster_id,
+    to_raw_fresh_cluster_id,
+)
+
 from .database import get_db_engine_async
 from .errors import TagAlreadyExistsException
 from .models import (
     Actor,
     AddressClusterMapping,
+    AddressClusterMappingV2,
     BestClusterTagView,
+    BestClusterTagViewV2,
     Concept,
     Confidence,
     Country,
     Tag,
     TagConcept,
     TagCountByClusterView,
+    TagCountByClusterViewV2,
     TagPack,
     TagSubject,
     TagType,
@@ -341,17 +350,60 @@ def _get_tag_by_id_stmt(tag_id: int, groups: List[str]):
     )
 
 
+def _cluster_models(fresh: bool):
+    """(mapping, best-tag view, count view) trio for one clustering regime."""
+    if fresh:
+        return (
+            AddressClusterMappingV2,
+            BestClusterTagViewV2,
+            TagCountByClusterViewV2,
+        )
+    return (AddressClusterMapping, BestClusterTagView, TagCountByClusterView)
+
+
+def _cluster_relations_for(cluster_id):
+    """Route a public cluster id to its relations: (trio..., raw id).
+
+    Public entity ids are self-describing: fresh-clustering ids are published
+    shifted by ``FRESH_CLUSTER_ID_OFFSET`` and their mappings live in the
+    parallel ``*_v2`` relations (keyed by the raw fresh id, root == min
+    address id); ids below the offset are legacy ids keyed in the legacy
+    relations. Routing on the id keeps reader and writer consistent per
+    request — a fresh id can never consult the legacy-keyed relations and
+    vice versa, which a global switch could not guarantee while networks
+    migrate one at a time.
+    """
+    cluster_id = int(cluster_id)
+    if is_fresh_cluster_id(cluster_id):
+        return (*_cluster_models(fresh=True), to_raw_fresh_cluster_id(cluster_id))
+    return (*_cluster_models(fresh=False), cluster_id)
+
+
+def _routed_id_batches(cluster_ids):
+    """Partition mixed public ids into one batch per relations set.
+
+    Mixed lists are legal (e.g. legacy neighbor clusters of a fresh entity).
+    Returns two triples ``(raw_ids, fresh, shift)`` where ``shift`` restores
+    the public id on result rows (``raw + shift == public``).
+    """
+    ids = [int(c) for c in cluster_ids]
+    legacy = [c for c in ids if not is_fresh_cluster_id(c)]
+    fresh_raw = [to_raw_fresh_cluster_id(c) for c in ids if is_fresh_cluster_id(c)]
+    return ((legacy, False, 0), (fresh_raw, True, FRESH_CLUSTER_ID_OFFSET))
+
+
 def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str]):
+    _, BestClusterTag, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(Tag, TagPack, Confidence)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(BestClusterTagView.cluster_id == cluster_id)
-        .where(BestClusterTagView.network == network)
+        .where(BestClusterTag.cluster_id == cluster_id)
+        .where(BestClusterTag.network == network)
         .where(Tag.tagpack_id == TagPack.id)
-        .where(BestClusterTagView.tag_id == Tag.id)
+        .where(BestClusterTag.tag_id == Tag.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
         .order_by(Confidence.level.desc())
@@ -360,25 +412,27 @@ def _get_best_cluster_tag_stmt(cluster_id: int, network: str, groups: List[str])
 
 
 def _get_best_cluster_tag_winners_stmt(
-    cluster_ids: List[int], network: str, groups: List[str]
+    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
 ):
-    # Pick (cluster_id, winning_tag_id) per cluster at the DB layer using
-    # Postgres DISTINCT ON. The result-set size is at most
+    # Takes RAW ids of one regime (callers split mixed public id lists via
+    # _routed_id_batches). Picks (cluster_id, winning_tag_id) per cluster at
+    # the DB layer using Postgres DISTINCT ON. The result-set size is at most
     # len(cluster_ids), independent of how many cluster_definer tags any
     # single cluster carries — without this guard a heavily-tagged
     # cluster's tagset would be shipped back through the joinedloaded
     # relationships and Cartesian'd by Tag.concepts, observed at >5min on
     # a single cluster before this rewrite.
+    _, BestClusterTag, _ = _cluster_models(fresh)
     return (
-        select(BestClusterTagView.cluster_id, Tag.id)
-        .distinct(BestClusterTagView.cluster_id)
-        .where(BestClusterTagView.cluster_id.in_(cluster_ids))
-        .where(BestClusterTagView.network == network)
-        .where(BestClusterTagView.tag_id == Tag.id)
+        select(BestClusterTag.cluster_id, Tag.id)
+        .distinct(BestClusterTag.cluster_id)
+        .where(BestClusterTag.cluster_id.in_(cluster_ids))
+        .where(BestClusterTag.network == network)
+        .where(BestClusterTag.tag_id == Tag.id)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .where(Confidence.id == Tag.confidence_id)
-        .order_by(BestClusterTagView.cluster_id, Confidence.level.desc())
+        .order_by(BestClusterTag.cluster_id, Confidence.level.desc())
     )
 
 
@@ -464,15 +518,16 @@ def _get_tags_by_clusterid_stmt(
     groups: List[str],
     exclude_identifiers: Optional[List[str]],
 ):
+    AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
     q = (
-        select(Tag, TagPack, AddressClusterMapping, Confidence)
+        select(Tag, TagPack, AddressClusterMap, Confidence)
         .options(joinedload(Tag.confidence))
         .options(joinedload(Tag.concepts))
         .options(joinedload(Tag.tag_type))
         .options(joinedload(Tag.tag_subject))
-        .where(AddressClusterMapping.gs_cluster_id == cluster_id)
-        .where(AddressClusterMapping.address == Tag.identifier)
-        .where(AddressClusterMapping.network == Tag.network)
+        .where(AddressClusterMap.gs_cluster_id == cluster_id)
+        .where(AddressClusterMap.address == Tag.identifier)
+        .where(AddressClusterMap.network == Tag.network)
         .where(Tag.network == network)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
@@ -538,26 +593,29 @@ def _get_per_network_statistics_cached_stmt():
 
 
 def _get_count_by_cluster_stmt(cluster_id: int, network: str, groups: List[str]):
+    _, _, TagCountByCluster, cluster_id = _cluster_relations_for(cluster_id)
     return (
-        select(TagCountByClusterView)
-        .where(TagCountByClusterView.network == network)
-        .where(TagCountByClusterView.gs_cluster_id == cluster_id)
-        .where(TagCountByClusterView.acl_group.in_(groups))
+        select(TagCountByCluster)
+        .where(TagCountByCluster.network == network)
+        .where(TagCountByCluster.gs_cluster_id == cluster_id)
+        .where(TagCountByCluster.acl_group.in_(groups))
     )
 
 
 def _get_count_by_clusters_batch_stmt(
-    cluster_ids: List[int], network: str, groups: List[str]
+    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
 ):
+    # Raw ids of one regime; see _routed_id_batches.
+    _, _, TagCountByCluster = _cluster_models(fresh)
     return (
         select(
-            TagCountByClusterView.gs_cluster_id,
-            func.sum(TagCountByClusterView.count).label("total"),
+            TagCountByCluster.gs_cluster_id,
+            func.sum(TagCountByCluster.count).label("total"),
         )
-        .where(TagCountByClusterView.network == network)
-        .where(TagCountByClusterView.gs_cluster_id.in_(cluster_ids))
-        .where(TagCountByClusterView.acl_group.in_(groups))
-        .group_by(TagCountByClusterView.gs_cluster_id)
+        .where(TagCountByCluster.network == network)
+        .where(TagCountByCluster.gs_cluster_id.in_(cluster_ids))
+        .where(TagCountByCluster.acl_group.in_(groups))
+        .group_by(TagCountByCluster.gs_cluster_id)
     )
 
 
@@ -601,11 +659,12 @@ def _get_actors_for_subject_stmt(subject_id: str, groups: List[str]):
 
 
 def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[str]):
+    AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(Actor.id, Actor.label)
-        .where(AddressClusterMapping.gs_cluster_id == cluster_id)
-        .where(AddressClusterMapping.address == Tag.identifier)
-        .where(AddressClusterMapping.network == network)
+        .where(AddressClusterMap.gs_cluster_id == cluster_id)
+        .where(AddressClusterMap.address == Tag.identifier)
+        .where(AddressClusterMap.network == network)
         .where(Actor.id.isnot(None))
         .where(Actor.id == Tag.actor_id)
         .where(Tag.tagpack_id == TagPack.id)
@@ -616,18 +675,20 @@ def _get_actors_for_clusterid_stmt(cluster_id: int, network: int, groups: List[s
 
 
 def _get_actors_for_clusterids_batch_stmt(
-    cluster_ids: List[int], network: str, groups: List[str]
+    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
 ):
+    # Raw ids of one regime; see _routed_id_batches.
+    AddressClusterMap, _, _ = _cluster_models(fresh)
     return (
-        select(AddressClusterMapping.gs_cluster_id, Actor.id, Actor.label)
-        .where(AddressClusterMapping.gs_cluster_id.in_(cluster_ids))
-        .where(AddressClusterMapping.address == Tag.identifier)
-        .where(AddressClusterMapping.network == network)
+        select(AddressClusterMap.gs_cluster_id, Actor.id, Actor.label)
+        .where(AddressClusterMap.gs_cluster_id.in_(cluster_ids))
+        .where(AddressClusterMap.address == Tag.identifier)
+        .where(AddressClusterMap.network == network)
         .where(Actor.id.isnot(None))
         .where(Actor.id == Tag.actor_id)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
-        .order_by(AddressClusterMapping.gs_cluster_id, Actor.label)
+        .order_by(AddressClusterMap.gs_cluster_id, Actor.label)
         .distinct()
     )
 
@@ -664,6 +725,7 @@ def _get_acl_groups_statement():
 
 
 def _get_labels_by_clusterid_stmt(cluster_id: str, network: str, groups: List[str]):
+    AddressClusterMap, _, _, cluster_id = _cluster_relations_for(cluster_id)
     return (
         select(Tag.label)
         # gs_cluster_id is only unique per network (PK is (address, network),
@@ -672,9 +734,9 @@ def _get_labels_by_clusterid_stmt(cluster_id: str, network: str, groups: List[st
         # other chain is matched too and its addresses' labels leak in. Tag
         # matching itself stays network-agnostic by design (a tag on a matching
         # identifier applies regardless of the tag's own network).
-        .where(AddressClusterMapping.gs_cluster_id == cluster_id)
-        .where(AddressClusterMapping.network == network)
-        .where(AddressClusterMapping.address == Tag.identifier)
+        .where(AddressClusterMap.gs_cluster_id == cluster_id)
+        .where(AddressClusterMap.network == network)
+        .where(AddressClusterMap.address == Tag.identifier)
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .order_by(asc(Tag.label))
@@ -951,11 +1013,16 @@ class TagstoreDbAsync:
             return {}
         # Step 1: pick (cluster_id -> winning tag_id) at the DB level. No
         # joinedloads here — the result set scales with len(cluster_ids),
-        # not with any single cluster's tag count.
-        winners = await session.exec(
-            _get_best_cluster_tag_winners_stmt(cluster_ids, network, groups)
-        )
-        cid_to_tag_id: Dict[int, int] = {cid: tid for cid, tid in winners}
+        # not with any single cluster's tag count. Ids route per regime and
+        # results are keyed by the public id the caller passed in.
+        cid_to_tag_id: Dict[int, int] = {}
+        for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
+            if not raw_ids:
+                continue
+            winners = await session.exec(
+                _get_best_cluster_tag_winners_stmt(raw_ids, network, groups, fresh)
+            )
+            cid_to_tag_id.update({cid + shift: tid for cid, tid in winners})
         if not cid_to_tag_id:
             return {}
 
@@ -1008,10 +1075,15 @@ class TagstoreDbAsync:
     ) -> Dict[int, int]:
         if not cluster_ids:
             return {}
-        results = await session.exec(
-            _get_count_by_clusters_batch_stmt(cluster_ids, network, groups)
-        )
-        return {cid: int(total or 0) for cid, total in results}
+        out: Dict[int, int] = {}
+        for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
+            if not raw_ids:
+                continue
+            results = await session.exec(
+                _get_count_by_clusters_batch_stmt(raw_ids, network, groups, fresh)
+            )
+            out.update({cid + shift: int(total or 0) for cid, total in results})
+        return out
 
     @_inject_session
     async def get_actors_for_clusters(
@@ -1023,12 +1095,17 @@ class TagstoreDbAsync:
     ) -> Dict[int, List[HumanReadableId]]:
         if not cluster_ids:
             return {}
-        results = await session.exec(
-            _get_actors_for_clusterids_batch_stmt(cluster_ids, network, groups)
-        )
         out: Dict[int, List[HumanReadableId]] = {}
-        for cid, idt, lbl in results:
-            out.setdefault(cid, []).append(HumanReadableId(id=idt, label=lbl))
+        for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
+            if not raw_ids:
+                continue
+            results = await session.exec(
+                _get_actors_for_clusterids_batch_stmt(raw_ids, network, groups, fresh)
+            )
+            for cid, idt, lbl in results:
+                out.setdefault(cid + shift, []).append(
+                    HumanReadableId(id=idt, label=lbl)
+                )
         return out
 
     # Actor

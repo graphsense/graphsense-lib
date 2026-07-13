@@ -125,6 +125,86 @@ CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr ON best_cluster_tag (cluster_id
 CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr_and_network ON best_cluster_tag (network, cluster_id);
 CREATE UNIQUE INDEX IF NOT EXISTS cluster_tag_unique ON best_cluster_tag (network, cluster_id, tag_id);
 
+-- # FRESH CLUSTERING (v2) MATERIALIZED VIEWS
+--
+-- Parallel copies of the cluster-tag rollups, keyed on the canonical fresh
+-- cluster id (cluster root = min address id) and sourced from
+-- address_cluster_mapping_v2. Fully additive: the legacy mapping and the views
+-- above are untouched, so a rollback is just pointing REST reads back at the
+-- legacy relations; `DROP TABLE address_cluster_mapping_v2 CASCADE` removes
+-- these views along with the mapping.
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS tag_count_by_cluster_v2 AS
+    SELECT
+        t.network,
+        acm.gs_cluster_id,
+        tp.acl_group,
+        count(t.identifier) as count
+    FROM
+        tag t,
+        tagpack tp,
+        address_cluster_mapping_v2 acm
+    WHERE
+        acm.address=t.identifier
+        AND acm.network=t.network
+        AND t.tagpack=tp.id
+    GROUP BY
+        t.network,
+        acm.gs_cluster_id,
+        tp.acl_group;
+
+CREATE UNIQUE INDEX IF NOT EXISTS tag_count_curr_cluster_v2_index ON tag_count_by_cluster_v2 (network, gs_cluster_id, acl_group);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS best_cluster_tag_v2 AS
+    SELECT
+        acm.gs_cluster_id as cluster_id,
+        t.network as network,
+        t.id as tag_id
+    FROM
+        tag t,
+        address_cluster_mapping_v2 acm,
+        confidence c,
+        tagpack tp
+    WHERE
+        acm.address=t.identifier
+        AND acm.network=t.network
+        AND t.is_cluster_definer=true
+        AND t.confidence=c.id
+        AND tp.id=t.tagpack
+    GROUP BY
+        c.level,
+        t.id,
+        t.network,
+        acm.gs_cluster_id,
+        tp.acl_group
+    UNION
+        SELECT
+            acm.gs_cluster_id as cluster_id,
+            t.network as network,
+            t.id as tag_id
+        FROM
+            address_cluster_mapping_v2 acm,
+            tag t,
+            confidence c,
+            tagpack tp
+        WHERE
+            c.id=t.confidence
+            and tp.id=t.tagpack
+            and t.identifier=acm.address
+            and t.network=acm.network
+            and acm.gs_cluster_no_addr = 1
+        GROUP BY
+            t.id,
+            t.network,
+            acm.gs_cluster_id,
+            tp.acl_group
+        HAVING
+            every(t.is_cluster_definer=false or t.is_cluster_definer is null);
+
+CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr_v2 ON best_cluster_tag_v2 (cluster_id);
+CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr_and_network_v2 ON best_cluster_tag_v2 (network, cluster_id);
+CREATE UNIQUE INDEX IF NOT EXISTS cluster_tag_unique_v2 ON best_cluster_tag_v2 (network, cluster_id, tag_id);
+
 -- Quality measures
 
 DROP TABLE IF EXISTS address_quality;

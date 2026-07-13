@@ -29,6 +29,7 @@ from graphsenselib.deltaupdate.update.account.createdeltas import (
     get_entity_transactions_updates_tx,
     get_entity_updates_trace_token,
     get_entity_updates_tx,
+    get_entitydelta_from_fee_only_sender,
     get_sorted_unique_addresses,
     is_contract_transaction,
     only_call_traces,
@@ -99,7 +100,8 @@ class UpdateStrategyAccount(UpdateStrategy):
         db,
         du_config: DeltaUpdaterConfig,
         pedantic: bool,
-        application_strategy: ApplicationStrategy = ApplicationStrategy.TX,
+        # BATCH is the only strategy process_batch_impl_hook implements.
+        application_strategy: ApplicationStrategy = ApplicationStrategy.BATCH,
         patch_mode: bool = False,
         forward_fill_rates: bool = False,
         parallel_pool=None,
@@ -596,6 +598,34 @@ class UpdateStrategyAccount(UpdateStrategy):
                 transactions_for_addresses,
                 blocks,
             )
+
+            # ETH: a sender that appears ONLY in failed transactions
+            # (receipt_status == 0) is absent from the successful-trace address
+            # set above, so its gas-fee debit (txFeeCredits) would be dropped
+            # while the miner is still credited the fee — inflating total supply.
+            # Append such fee-only senders here so they get an address id + row;
+            # the debit then lands (they are now in address_hash_to_id) and a
+            # zero-stat entity delta is emitted below. Appended after the sorted
+            # set so existing addresses' id assignment is left unchanged.
+            fee_only_senders: List[bytes] = []
+            if currency == "ETH":
+                present = set(addresses)
+                seen = set()
+                for tx in transactions:
+                    frm = tx.from_address
+                    if (
+                        tx.receipt_status == 0
+                        and frm is not None
+                        and frm not in present
+                        and frm not in seen
+                    ):
+                        seen.add(frm)
+                        fee_only_senders.append(frm)
+                if fee_only_senders:
+                    addresses = pd.concat(
+                        [addresses, pd.Series(fee_only_senders)], ignore_index=True
+                    )
+
             len_addr = len(addresses)
             overlap_pct = (
                 ((sum_unique_per_block - len_addr) / sum_unique_per_block * 100)
@@ -716,6 +746,16 @@ class UpdateStrategyAccount(UpdateStrategy):
                 rates,
                 token_rates=token_rates,
             )
+
+            # Materialize zero-stat address rows for ETH fee-only senders
+            # (failed-tx senders absent from every successful trace) so their
+            # gas-fee balance debit is not orphaned. See the address-set
+            # construction above for the full rationale.
+            if fee_only_senders:
+                entity_deltas += [
+                    get_entitydelta_from_fee_only_sender(addr)
+                    for addr in fee_only_senders
+                ]
 
         with LoggerScope.debug(logger, "Get relation updates - traces and tokens"):
             relation_updates_trace = [

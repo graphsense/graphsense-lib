@@ -196,3 +196,14 @@ class Sink(ABC):
         """Return the highest block already written, or None when this sink
         does not track resume state (or has no data yet)."""
         return None
+
+    def discard_writes_after_highest_block(self) -> None:
+        """Append-mode crash-recovery hook, called once before resuming.
+
+        A crash mid-chunk can leave a sink partially written above the block it
+        reports as highest_block(); resuming from there would duplicate those
+        rows. Sinks that can leave such orphans (e.g. Delta append) override this
+        to remove them. No-op for idempotent sinks (Cassandra UPSERT) and those
+        with nothing to clean.
+        """
+        return None

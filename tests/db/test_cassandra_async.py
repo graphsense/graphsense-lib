@@ -1,12 +1,48 @@
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+from cassandra.cluster import NoHostAvailable
 
 from graphsenselib.db.asynchronous.cassandra import (
     Cassandra,
     check_height_bounds_impossible,
 )
+
+
+class TestConnectBoundedRetry:
+    """connect() must retry a bounded number of times and never recurse
+    unbounded / block the event loop indefinitely (regression guard)."""
+
+    def _bare(self, max_attempts):
+        c = Cassandra.__new__(Cassandra)  # bypass __init__ (which calls connect)
+        c.logger = None
+        c.config = {"retry_interval": 0, "connect_max_attempts": max_attempts}
+        return c
+
+    def test_retries_bounded_then_raises(self):
+        c = self._bare(max_attempts=3)
+        with (
+            patch.object(
+                Cassandra, "_build_session", side_effect=NoHostAvailable("down", {})
+            ) as build,
+            patch("graphsenselib.db.asynchronous.cassandra.time.sleep") as sleep,
+        ):
+            with pytest.raises(NoHostAvailable):
+                c.connect()
+        assert build.call_count == 3  # bounded, not infinite
+        assert sleep.call_count == 2  # between attempts, not after the last
+
+    def test_succeeds_first_try_without_sleeping(self):
+        c = self._bare(max_attempts=3)
+        with (
+            patch.object(Cassandra, "_build_session", return_value=None) as build,
+            patch("graphsenselib.db.asynchronous.cassandra.time.sleep") as sleep,
+        ):
+            c.connect()
+        assert build.call_count == 1
+        assert sleep.call_count == 0
 
 
 class TestCheckHeightBoundsImpossible:

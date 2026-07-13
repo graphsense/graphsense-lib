@@ -35,8 +35,8 @@ class Address(BaseModel):
     balance: Values
     total_received: Values
     total_spent: Values
-    first_tx: TxSummary
-    last_tx: TxSummary
+    first_tx: Optional[TxSummary] = None
+    last_tx: Optional[TxSummary] = None
     in_degree: StrictInt
     out_degree: StrictInt
     no_incoming_txs: StrictInt

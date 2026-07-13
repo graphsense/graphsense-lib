@@ -31,13 +31,20 @@ from cassandra.query import SimpleStatement, ValueSequence, dict_factory
 from graphsenselib.db.cassandra import GraphsenseRetryPolicy
 from graphsenselib.utils.accountmodel import hex_to_bytes
 from graphsenselib.config.cassandra_async_config import CassandraConfig
-from graphsenselib.db.state import INGEST_COMPLETE_KEY, STATE_TABLE
+from graphsenselib.db.state import (
+    FRESH_CLUSTERING_ACTIVE_KEY,
+    INGEST_COMPLETE_KEY,
+    STATE_TABLE,
+)
 from graphsenselib.datatypes.abi import decode_logs_db
 from graphsenselib.utils.account import calculate_id_group_with_overflow
 from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, strip_0x
 from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
 from graphsenselib.utils.constants import (
+    is_fresh_cluster_id,
     replace_tron_dummy_address_with_valid_null_address,
+    to_public_fresh_cluster_id,
+    to_raw_fresh_cluster_id,
 )
 from graphsenselib.utils.function_call_parser import (
     parse_function_call,
@@ -138,6 +145,26 @@ MAX_HEX_STRING_LENGTH = 64
 FETCH_SIZE_MIN = 100
 HEX_ALPHABET = "0123456789ABCDEF"
 
+# Bound on concurrent per-row trace/log/timestamp lookups in
+# normalize_address_transactions — turns up to `pagesize` sequential round-trips
+# per page into bounded-concurrent ones on the hottest (address-txs) endpoint.
+MAX_ROW_LOOKUP_CONCURRENCY = 100
+
+
+def _fresh_degrees_pending(row) -> bool:
+    """A fresh_cluster_stats row lacking degrees.
+
+    ``fresh_cluster_stats`` no longer carries ``in_degree``/``out_degree``
+    (dropped in transformed_utxo migration 4->5; the recompute never derives
+    them), so rows miss the keys entirely — or carry nulls on a
+    not-yet-migrated keyspace. The API requires non-null ints, filled via the
+    legacy hop. Guarded on ``total_received`` so field-subset lookups do not
+    trigger fills.
+    """
+    return "total_received" in row and (
+        row.get("in_degree") is None or row.get("out_degree") is None
+    )
+
 
 class _AddressIdNotFound(Exception):
     """Internal sentinel raised on an address_id cache miss.
@@ -198,9 +225,14 @@ def create_upper_bound(s, is_string_not_hex=False):
 
 
 def is_hexadecimal(s):
-    """Check if a string is a valid hexadecimal number."""
+    """Check if a string is a valid hexadecimal number.
+
+    ascii-strict on purpose: str.upper() applies full unicode case mapping
+    (the ligature "ﬀ" U+FB00 expands to "FF"), which would accept strings
+    that int(s, 16) / bytes.fromhex later reject.
+    """
     s = strip_0x(s)
-    return all(c in HEX_ALPHABET for c in s.upper())
+    return all(c in "0123456789abcdefABCDEF" for c in s)
 
 
 def getDateFromKeyspaceName(x):
@@ -659,75 +691,92 @@ class Cassandra:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
+    def _build_session(self):
+        """Create the Cluster + session. Raises NoHostAvailable if no host is up."""
+        # LOCAL_ONE is the recommended default for the read path: it tolerates
+        # any (RF - 1) replicas being down. LOCAL_QUORUM only adds value when
+        # RF >= 3 and read-after-write consistency is actually required.
+        cl = ConsistencyLevel.name_to_value.get(
+            self.config.get("consistency_level", "LOCAL_ONE"),
+            ConsistencyLevel.LOCAL_ONE,
+        )
+        retry_policy_cls = (
+            GraphsenseFallbackToLocalOneRetryPolicy
+            if self.config.get("consistency_level_fallback", False)
+            else GraphsenseRetryPolicy
+        )
+
+        exec_prof = ExecutionProfile(
+            request_timeout=60,
+            row_factory=dict_factory,
+            load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
+            consistency_level=cl,
+            retry_policy=retry_policy_cls(max_retries=3),
+            # For idempotent reads (all REST queries are SELECTs), fire a second
+            # attempt at another host after 200 ms to mask slow/dead replicas.
+            speculative_execution_policy=ConstantSpeculativeExecutionPolicy(
+                delay=0.2, max_attempts=2
+            ),
+        )
+
+        auth_provider = None
+        if "username" in self.config and self.config["username"] is not None:
+            auth_provider = PlainTextAuthProvider(
+                username=self.config["username"],
+                password=self.config.get("password", ""),
+            )
+
+        self.cluster = Cluster(
+            self.config["nodes"],
+            port=int(self.config.get("port", 9042)),
+            # Pin v4, for the same reason as the synchronous driver: v5's
+            # checksummed segment framing desyncs under load and reads a segment
+            # header at the wrong offset (CASSANDRA-19971 / PYTHON-1337, still
+            # open), surfacing as "CRC mismatch on header" and defuncting the
+            # connection — which fails every in-flight request on it. Framing is
+            # v5-only. Queries here carry their keyspace in the CQL itself (see
+            # replaceFrom), so the v5-only statement-level keyspace flag is not
+            # relied on. See db/cassandra.py:connect for the full rationale.
+            protocol_version=4,
+            connect_timeout=15,
+            execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
+            auth_provider=auth_provider,
+            reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
+        )
+        self.session = self.cluster.connect()
+        if self.logger:
+            self.logger.info(f"Connection ready. Using CL: {cl}")
+
     def connect(self):
-        try:
-            # LOCAL_ONE is the recommended default for the read path: it tolerates
-            # any (RF - 1) replicas being down. LOCAL_QUORUM only adds value when
-            # RF >= 3 and read-after-write consistency is actually required.
-            cl = ConsistencyLevel.name_to_value.get(
-                self.config.get("consistency_level", "LOCAL_ONE"),
-                ConsistencyLevel.LOCAL_ONE,
-            )
-            retry_policy_cls = (
-                GraphsenseFallbackToLocalOneRetryPolicy
-                if self.config.get("consistency_level_fallback", False)
-                else GraphsenseRetryPolicy
-            )
+        """(Re)establish the Cassandra cluster/session with a bounded, non-recursive
+        retry.
 
-            exec_prof = ExecutionProfile(
-                request_timeout=60,
-                row_factory=dict_factory,
-                load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
-                consistency_level=cl,
-                retry_policy=retry_policy_cls(max_retries=3),
-                # For idempotent reads (all REST queries are SELECTs), fire a second
-                # attempt at another host after 200 ms to mask slow/dead replicas.
-                speculative_execution_policy=ConstantSpeculativeExecutionPolicy(
-                    delay=0.2, max_attempts=2
-                ),
-            )
-
-            auth_provider = None
-            if "username" in self.config and self.config["username"] is not None:
-                auth_provider = PlainTextAuthProvider(
-                    username=self.config["username"],
-                    password=self.config.get("password", ""),
-                )
-
-            self.cluster = Cluster(
-                self.config["nodes"],
-                port=int(self.config.get("port", 9042)),
-                # Pin v4, for the same reason as the synchronous driver: v5's
-                # checksummed segment framing desyncs under load and reads a segment
-                # header at the wrong offset (CASSANDRA-19971 / PYTHON-1337, still
-                # open), surfacing as "CRC mismatch on header" and defuncting the
-                # connection — which fails every in-flight request on it. Framing is
-                # v5-only. Queries here carry their keyspace in the CQL itself (see
-                # replaceFrom), so the v5-only statement-level keyspace flag is not
-                # relied on. See db/cassandra.py:connect for the full rationale.
-                protocol_version=4,
-                connect_timeout=15,
-                execution_profiles={EXEC_PROFILE_DEFAULT: exec_prof},
-                auth_provider=auth_provider,
-                reconnection_policy=ExponentialReconnectionPolicy(1.0, 60.0),
-            )
-            self.session = self.cluster.connect()
-            # self.session.row_factory = dict_factory
-            if self.logger:
-                self.logger.info(f"Connection ready. Using CL: {cl}")
-        except NoHostAvailable:
-            # TODO: this reconnect path blocks the event loop (time.sleep) and
-            # recurses without a depth limit; it is also called synchronously from
-            # async code paths (execute_async_lowlevel) which freezes REST workers
-            # during outages. Replace with a bounded, non-blocking reconnect helper
-            # and let the retry policy + reconnection policy handle transient
-            # failures instead.
-            retry = self.config.get("retry_interval", None)
-            retry = 5 if retry is None else retry
-            if self.logger:
-                self.logger.warning(f"Could not connect. Retrying in {retry} secs.")
-            time.sleep(retry)
-            self.connect()
+        Safe to call at startup — the blocking retry waits for a slow-starting
+        Cassandra. It must NOT be relied on to reconnect from the async serving
+        path: the driver's ``ExponentialReconnectionPolicy`` re-adds downed hosts
+        on its own, so the read paths let a transient ``NoHostAvailable`` propagate
+        instead of re-creating the cluster on the event loop (the old code did the
+        latter via ``time.sleep`` + unbounded recursion, freezing every in-flight
+        REST request during an outage).
+        """
+        retry = self.config.get("retry_interval", None)
+        retry = 5 if retry is None else retry
+        max_attempts = int(self.config.get("connect_max_attempts", 60))
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self._build_session()
+                return
+            except NoHostAvailable as e:
+                last_exc = e
+                if self.logger:
+                    self.logger.warning(
+                        f"Could not connect (attempt {attempt}/{max_attempts}); "
+                        f"retrying in {retry} secs."
+                    )
+                if attempt < max_attempts:
+                    time.sleep(retry)
+        raise last_exc
 
     def check_keyspace(self, keyspace):
         query = "SELECT * FROM system_schema.keyspaces where keyspace_name = %s"
@@ -979,19 +1028,10 @@ class Cassandra:
         # self.logger.debug(f'{query} {params}')
         q = SimpleStatement(q, fetch_size=fetch_size)
 
-        try:
-            result = self.session.execute(q, params, paging_state=paging_state)
-        except NoHostAvailable:
-            self.connect()
-            result = self.execute(
-                currency,
-                keyspace_type,
-                query,
-                params=params,
-                paging_state=paging_state,
-                fetch_size=fetch_size,
-            )
-
+        # On NoHostAvailable let the error propagate: the driver's reconnection
+        # policy re-adds downed hosts on its own. The old behavior re-created the
+        # cluster (self.connect()) and recursed without bound.
+        result = self.session.execute(q, params, paging_state=paging_state)
         return result
 
     async def execute_async(
@@ -1148,24 +1188,17 @@ class Cassandra:
                     # self.logger.debug(pp.pformat(result.current_rows))
                     self.logger.debug(f"result size {len(result.current_rows)}")
 
-        try:
-            return self.execute_async_core(
-                q,
-                params=params,
-                fetch_size=fetch_size,
-                paging_state=paging_state,
-                success_callback=callback,
-            )
-        except NoHostAvailable:
-            self.connect()
-            return self.execute_async_lowlevel(
-                currency,
-                keyspace_type,
-                query,
-                params=params,
-                paging_state=paging_state,
-                fetch_size=fetch_size,
-            )
+        # On NoHostAvailable let the error propagate. Reconnecting here re-created
+        # the cluster on the event-loop thread (blocking time.sleep in connect())
+        # and recursed without bound, freezing every in-flight REST request during
+        # an outage. The driver's ExponentialReconnectionPolicy recovers hosts.
+        return self.execute_async_core(
+            q,
+            params=params,
+            fetch_size=fetch_size,
+            paging_state=paging_state,
+            success_callback=callback,
+        )
 
     async def concurrent_with_args(
         self,
@@ -2008,6 +2041,10 @@ class Cassandra:
             currency, address
         )
 
+        # Always the legacy cluster id: entity ids are self-describing
+        # (fresh ids live above FRESH_CLUSTER_ID_OFFSET), and the fresh id of
+        # an address is discoverable via the fresh_cluster_id field on address
+        # responses, so this legacy resolution needs no switch.
         query = (
             "SELECT cluster_id FROM address WHERE "
             "address_id_group = %s AND address_id = %s "
@@ -2024,20 +2061,64 @@ class Cassandra:
             )
         return result["cluster_id"]
 
-    async def get_fresh_cluster_id(self, currency, address_id):
-        """Look up fresh_cluster_id for an address_id. Returns None if not found."""
-        query = "SELECT cluster_id FROM fresh_address_cluster WHERE address_id = %s"
+    async def _fresh_clustering_active(self, currency) -> bool:
+        """Cached (60s TTL) read of the keyspace's fresh-clustering marker.
+
+        The one-off bootstrap writes the ``fresh_clustering_active`` state row
+        as its last step. The fill below must gate on it — the fresh_* tables
+        exist empty on every migrated keyspace, and treating every address as
+        an implicit singleton on an un-bootstrapped keyspace would be wrong.
+        Missing state table (pre-migration keyspace) counts as inactive.
+        """
+        cache = getattr(self, "_fresh_active_cache", None)
+        if cache is None:
+            cache = self._fresh_active_cache = {}
+        hit = cache.get(currency)
+        now = time.monotonic()
+        if hit is not None and now - hit[1] < 60.0:
+            return hit[0]
         try:
             result = await self.execute_async(
-                currency, "transformed", query, [address_id]
+                currency,
+                "transformed",
+                f"SELECT key FROM {STATE_TABLE} WHERE key = %s",
+                [FRESH_CLUSTERING_ACTIVE_KEY],
+            )
+            active = one(result) is not None
+        except InvalidRequest:
+            active = False
+        cache[currency] = (active, now)
+        return active
+
+    async def get_fresh_cluster_id(self, currency, address_id):
+        """Resolve an address's public (shifted) fresh cluster id.
+
+        Fresh clustering stores only multi-member clusters, so an address
+        without a ``fresh_address_cluster`` row is its own singleton
+        (``cluster_id == address_id``). The raw table id is translated to the
+        public id space (``+ FRESH_CLUSTER_ID_OFFSET``) so callers can hand it
+        straight to the self-routing entity endpoints. Returns None only when
+        fresh clustering is not active on this keyspace (bootstrap marker
+        absent or fresh tables unavailable).
+        """
+        if not await self._fresh_clustering_active(currency):
+            return None
+        address_id_group = self.get_id_group(currency, address_id)
+        query = (
+            "SELECT cluster_id FROM fresh_address_cluster "
+            "WHERE address_id_group = %s AND address_id = %s"
+        )
+        try:
+            result = await self.execute_async(
+                currency, "transformed", query, [address_id_group, address_id]
             )
         except InvalidRequest:
             # Table may not exist if fresh clustering has not been run yet
             return None
         result = one(result)
         if not result:
-            return None
-        return result["cluster_id"]
+            return to_public_fresh_cluster_id(address_id)
+        return to_public_fresh_cluster_id(result["cluster_id"])
 
     async def list_address_links(
         self,
@@ -2184,10 +2265,16 @@ class Cassandra:
         # edge tx has been found (see the early-stop check in the loop below).
         # The endpoint is directional (from_address == id, to_address ==
         # neighbor), i.e. id's outgoing relation to neighbor.
-        # edge_tx_count None means the pre-check is disabled: no early return
-        # here and no early stop in the loop below (full history walk).
+        # eth-like only: UTXO relations net flows per (tx, address) while links
+        # keep raw io membership semantics (see the filter below), so the
+        # netted edge row is neither a validity gate nor a tx-count bound for
+        # UTXO links.
+        # edge_tx_count None means the pre-check does not apply: no early
+        # return here and no early stop in the loop below (full history walk).
         edge_tx_count = None
-        if self.tconfig.fanout_bounding_and_links_precheck_enabled:
+        if self.tconfig.fanout_bounding_and_links_precheck_enabled and is_eth_like(
+            currency
+        ):
             if node_type == NodeType.ADDRESS:
                 neighbor_id = await self.get_address_id(currency, neighbor)
             else:
@@ -2267,10 +2354,10 @@ class Cassandra:
                 id=second,
                 tx_id_lower_bound=None,
                 tx_id_upper_bound=None,
-                # is_outgoing=not is_outgoing,
                 # fetch both directions regardless, this is needed since for
                 # some transactions the total flow is an inflow but it is an
-                # outflowat the same time. If we would not fetch both
+                # outflow at the same time (UTXO address_transactions rows
+                # carry only the net direction). If we would not fetch both
                 # directions we would miss these transactions.
                 is_outgoing=None,
                 include_assets=assets,
@@ -2339,27 +2426,37 @@ class Cassandra:
                     if tx["to_address"] == neighbor and tx["from_address"] == id
                 ]
                 self.logger.debug(f"pruned {before - len(results2)}")
-            final_results.extend(results2)
-
             if not is_eth_like(currency):
-                # make sure id is in inputs and neighbor in outputs
+                # Keep only rows where `id` is in the inputs and `neighbor` in
+                # the outputs — RAW io membership, deliberately NOT the netted
+                # sender/receiver pairing that relations are built from. The
+                # per-(tx, address) netting hides real output receipt for
+                # addresses appearing on both sides of a tx; that is considered
+                # wrong semantics (see the netting litmus test in
+                # tests/regressions) and links must not propagate it. Until the
+                # transform's netting is fixed, /links can therefore list txs
+                # for pairs that have no netted relation edge — which is also
+                # why the relations pre-check above is eth-only.
+                # Filter the FRESH page (results2) BEFORE extending —
+                # re-filtering the whole accumulated `final_results` on every
+                # while-loop iteration would re-run the per-address cluster-id
+                # lookups for already-accepted rows (10^5+ serial queries per
+                # request in the cluster case).
                 if node_type == NodeType.ADDRESS:
 
-                    async def has_address_in_ios(address, ios):
+                    def has_address_in_ios(address, ios):
                         if ios is None and address == "coinbase":
                             return True
                         if ios is None:
                             return False
-
                         addresses_io = sum([x.address or [] for x in ios], [])
-
                         return address in addresses_io
 
-                    final_results = [
-                        fr
-                        for fr in final_results
-                        if await has_address_in_ios(id, fr["inputs"])
-                        and await has_address_in_ios(neighbor, fr["outputs"])
+                    results2 = [
+                        r
+                        for r in results2
+                        if has_address_in_ios(id, r["inputs"])
+                        and has_address_in_ios(neighbor, r["outputs"])
                     ]
                 else:
 
@@ -2367,34 +2464,44 @@ class Cassandra:
                         address_wrapped = x.address
                         if address_wrapped is None:
                             return None
-
                         assert len(address_wrapped) == 1
                         return address_wrapped[0]
 
-                    async def has_cluster_id_in_ios(cluster_id, ios):
+                    async def cluster_ids_of(ios):
                         addresses_io = [get_address_from_io(x) for x in ios]
-                        addresses_io = [x for x in addresses_io if x is not None]
-                        # get cluster ids for all the addresses
-                        cluster_ids_io = [
-                            await self.get_address_entity_id(currency, address)
-                            for address in addresses_io
-                        ]
+                        addresses_io = [a for a in addresses_io if a is not None]
+                        # resolve the io addresses' cluster ids concurrently
+                        return set(
+                            await asyncio.gather(
+                                *[
+                                    self.get_address_entity_id(currency, a)
+                                    for a in addresses_io
+                                ]
+                            )
+                        )
 
-                        return cluster_id in cluster_ids_io
+                    async def cluster_row_matches(r):
+                        in_ids, out_ids = await asyncio.gather(
+                            cluster_ids_of(r["inputs"]),
+                            cluster_ids_of(r["outputs"]),
+                        )
+                        return id in in_ids and neighbor in out_ids
 
-                    final_results = [
-                        fr
-                        for fr in final_results
-                        if await has_cluster_id_in_ios(id, fr["inputs"])
-                        and await has_cluster_id_in_ios(neighbor, fr["outputs"])
-                    ]
+                    keep = await asyncio.gather(
+                        *[cluster_row_matches(r) for r in results2]
+                    )
+                    results2 = [r for r, k in zip(results2, keep) if k]
+
+            final_results.extend(results2)
 
             # Once every edge tx has been found there is nothing left to page
-            # for: results2 already expanded all asset rows for these tx ids,
-            # so counting distinct tx ids against the pair's (per-tx) count is a
-            # safe upper bound that can only over-scan, never truncate.
-            # edge_tx_count is None when the pre-check is disabled: never stop
-            # early then.
+            # for. Only eth-like queries carry a non-None edge_tx_count (the
+            # pre-check above is eth-only): there no_transactions counts
+            # transfer rows (native txs plus token transfers), which is >=
+            # their distinct tx ids, so the early stop can only over-scan,
+            # never truncate. For UTXO the raw links are not bounded by the
+            # netted relation row, so edge_tx_count stays None and the scan
+            # always walks the full overlap window.
             all_edge_found = (
                 edge_tx_count is not None
                 and len({row[tx_id] for row in final_results}) >= edge_tx_count
@@ -2481,6 +2588,13 @@ class Cassandra:
 
         expression = postprocess_address(expression)
 
+        if is_eth_like(currency):
+            # fold unicode to ascii ("ﬀ" U+FB00 -> "ff") before prefix/bound
+            # derivation; base58 is case-sensitive so utxo stays as typed
+            expression = expression.casefold()
+            if postfix is not None:
+                postfix = postfix.casefold()
+
         if (
             currency == "eth"
             and len(strip_0x(expression)) == (prefix_lengths["address"] - 1)
@@ -2559,8 +2673,10 @@ class Cassandra:
 
     @eth
     async def get_entity(self, currency, entity):
-        entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
+        if is_fresh_cluster_id(entity):
+            return await self._get_fresh_entity(currency, entity)
+        entity_id_group = self.get_id_group(currency, entity)
         query = "SELECT * FROM cluster WHERE cluster_id_group = %s AND cluster_id = %s "
         result = await self.execute_async(
             currency, "transformed", query, [entity_id_group, entity]
@@ -2570,32 +2686,280 @@ class Cassandra:
             raise ClusterNotFoundException(currency, entity)
         return (await self.finish_entities(currency, [result]))[0]
 
+    async def _get_fresh_entity(self, currency, entity):
+        """Serve an entity from the fresh tables (public id >= offset).
+
+        Works on the raw table id internally (root resolution and membership
+        are keyed by it) and shifts ``cluster_id`` back to the public id space
+        on the finished row.
+        """
+        raw = to_raw_fresh_cluster_id(entity)
+        query = (
+            "SELECT * FROM fresh_cluster_stats "
+            "WHERE cluster_id_group = %s AND cluster_id = %s "
+        )
+        result = await self.execute_async(
+            currency, "transformed", query, [self.get_id_group(currency, raw), raw]
+        )
+        result = one(result)
+        if not result:
+            result = await self._fresh_singleton_entity(currency, raw)
+            if result is None:
+                raise ClusterNotFoundException(currency, entity)
+        elif _fresh_degrees_pending(result):
+            result = await self._fresh_fill_degrees(currency, result)
+        finished = (await self.finish_entities(currency, [result]))[0]
+        finished["cluster_id"] = to_public_fresh_cluster_id(finished["cluster_id"])
+        return finished
+
+    async def _fresh_singleton_entity(self, currency, cluster_id):
+        """Synthesize a one-address entity for a fresh-clustering singleton.
+
+        Fresh clustering stores only multi-member clusters, so a cluster id with
+        no ``fresh_cluster_stats`` row is its own singleton
+        (``cluster_id == address_id``). Shape that address's row as a
+        single-member cluster-stats row. Returns ``None`` when no such address
+        exists (a genuinely unknown id).
+        """
+        address_id_group = self.get_id_group(currency, cluster_id)
+        query = "SELECT * FROM address WHERE address_id_group = %s AND address_id = %s"
+        row = one(
+            await self.execute_async(
+                currency, "transformed", query, [address_id_group, cluster_id]
+            )
+        )
+        if not row:
+            return None
+        return {
+            "cluster_id": cluster_id,
+            "no_addresses": 1,
+            "min_address_id": cluster_id,
+            "no_incoming_txs": row["no_incoming_txs"],
+            "no_outgoing_txs": row["no_outgoing_txs"],
+            "in_degree": row["in_degree"],
+            "out_degree": row["out_degree"],
+            "first_tx_id": row["first_tx_id"],
+            "last_tx_id": row["last_tx_id"],
+            "total_received": row["total_received"],
+            "total_spent": row["total_spent"],
+        }
+
+    def _zero_values(self, currency):
+        Values = namedtuple("Values", ["value", "fiat_values"])
+        return Values(
+            value=0,
+            fiat_values=[0.0 for _ in self.parameters[currency]["fiat_currencies"]],
+        )
+
+    async def _legacy_relations_cluster_id(self, currency, entity):
+        """Map a public entity id to the id keyed in the legacy relations tables.
+
+        The fresh tables carry no cluster relations (neighbors / cluster
+        transactions / links), so fresh ids are served from the legacy tables
+        via the root-address hop: the fresh root (raw id == min address id)
+        still carries its legacy cluster id on its address row. This is the
+        same hop that fills degrees, so listed neighbors always match the
+        degrees served on the entity. Where fresh merged several legacy
+        clusters this is the root's fragment and understates. Returns None
+        when the root has no legacy cluster (postdates the last full
+        transform) — callers serve an empty result then.
+        """
+        if not is_fresh_cluster_id(entity):
+            return entity
+        raw = to_raw_fresh_cluster_id(entity)
+        addr = one(
+            await self.execute_async(
+                currency,
+                "transformed",
+                "SELECT cluster_id FROM address "
+                "WHERE address_id_group = %s AND address_id = %s",
+                [self.get_id_group(currency, raw), raw],
+            )
+        )
+        if addr and addr.get("cluster_id") is not None:
+            return addr["cluster_id"]
+        return None
+
+    async def _fresh_fill_degrees(self, currency, row):
+        """Fill missing cluster degrees from the legacy ``cluster`` table.
+
+        ``fresh_cluster_stats`` does not carry degrees (deriving them required
+        scanning the address-relations tables). The fresh root address
+        (``cluster_id == min(address_id)``) still carries its LEGACY cluster id
+        on its address row, so serve that legacy cluster's degrees. Where fresh merged several
+        legacy clusters this is the root's fragment and UNDERSTATES — which
+        fails open for degree-threshold consumers (gssearch prunes on
+        ``degree > N``, so an understated degree never hides results).
+
+        No legacy id/row means the root postdates the last full transform, so
+        the whole cluster is post-transform and small: fall back to
+        member-summed address degrees, an OVERCOUNT (intra-cluster edges and
+        shared counterparties count once per member). Coalesce to 0 — the API
+        requires non-null ints.
+        """
+        cluster_id = row["cluster_id"]
+        addr = one(
+            await self.execute_async(
+                currency,
+                "transformed",
+                "SELECT cluster_id FROM address "
+                "WHERE address_id_group = %s AND address_id = %s",
+                [self.get_id_group(currency, cluster_id), cluster_id],
+            )
+        )
+        legacy = None
+        if addr and addr.get("cluster_id") is not None:
+            legacy_id = addr["cluster_id"]
+            legacy = one(
+                await self.execute_async(
+                    currency,
+                    "transformed",
+                    "SELECT in_degree, out_degree FROM cluster "
+                    "WHERE cluster_id_group = %s AND cluster_id = %s",
+                    [self.get_id_group(currency, legacy_id), legacy_id],
+                )
+            )
+        if legacy:
+            row["in_degree"] = legacy["in_degree"] or 0
+            row["out_degree"] = legacy["out_degree"] or 0
+            return row
+        query = (
+            "SELECT address_id FROM fresh_cluster_addresses "
+            "WHERE cluster_id_group = %s AND cluster_id = %s"
+        )
+        members = await self.execute_async(
+            currency,
+            "transformed",
+            query,
+            [self.get_id_group(currency, cluster_id), cluster_id],
+        )
+        member_ids = [r["address_id"] for r in members.current_rows] or [cluster_id]
+        params = [(self.get_id_group(currency, id), id) for id in member_ids]
+        query = (
+            "SELECT in_degree, out_degree FROM address "
+            "WHERE address_id_group = %s AND address_id = %s"
+        )
+        addrs = await self.concurrent_with_args(currency, "transformed", query, params)
+        row["in_degree"] = sum(a["in_degree"] or 0 for a in addrs)
+        row["out_degree"] = sum(a["out_degree"] or 0 for a in addrs)
+        return row
+
+    async def _fresh_heal_pending_entities(self, currency, rows):
+        """Fill legacy degrees on rows in a bulk entity result.
+
+        ``fresh_cluster_stats`` never carries degrees, so every stored row needs
+        the legacy degree fill. The stat columns themselves are written complete
+        by the incremental updater (member sums) and the recompute, so no
+        member-synthesis is needed here anymore.
+        """
+
+        async def heal(row):
+            if _fresh_degrees_pending(row):
+                return await self._fresh_fill_degrees(currency, row)
+            return row
+
+        healed = await asyncio.gather(*[heal(row) for row in rows])
+        return [row for row in healed if row is not None]
+
+    async def _fresh_fill_singleton_entities(self, currency, ids, rows):
+        """Restore singletons dropped from a fresh bulk entity lookup.
+
+        ``list_entities`` reads ``fresh_cluster_stats``, which holds only
+        multi-member clusters, so singleton ids return no row. Legacy returned
+        one row per stored cluster id, so mirror that by synthesizing the
+        one-address entity for each requested id missing from ``rows``,
+        preserving input order and dropping only genuinely unknown ids (no
+        address) — exactly the ids legacy would also have omitted.
+        """
+        found = {row["cluster_id"]: row for row in rows if "cluster_id" in row}
+        missing = [int(id) for id in ids if int(id) not in found]
+        synthesized = await asyncio.gather(
+            *[self._fresh_singleton_entity(currency, id) for id in missing]
+        )
+        singletons = {
+            id: entity for id, entity in zip(missing, synthesized) if entity is not None
+        }
+        result = []
+        for id in ids:
+            id = int(id)
+            if id in found:
+                result.append(found[id])
+            elif id in singletons:
+                result.append(singletons[id])
+        return result
+
     @eth
     async def list_entities(
         self, currency, ids, page=None, pagesize=None, fields=["*"]
     ):
+        """List entities by id (mixed legacy/fresh) or page the legacy table.
+
+        Explicit ids are routed per id: ids >= FRESH_CLUSTER_ID_OFFSET are
+        served from the fresh tables (with singleton synthesis and pending
+        healing), the rest from the legacy ``cluster`` table; input order is
+        preserved. The id-less paging form enumerates the legacy table only —
+        fresh clusters are not enumerable through this endpoint.
+        """
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
         paging_state = page_from_hex(page)
         flds = ",".join(fields)
-        query = f"SELECT {flds} FROM cluster"
         has_ids = isinstance(ids, list)
         if has_ids:
-            query += " WHERE cluster_id_group = %s AND cluster_id = %s"
-            params = [[self.get_id_group(currency, id), id] for id in ids]
-            result = await self.concurrent_with_args(
-                currency, "transformed", query, params
+            ids = [int(id) for id in ids]
+            fresh_raw = [
+                to_raw_fresh_cluster_id(id) for id in ids if is_fresh_cluster_id(id)
+            ]
+            legacy_ids = [id for id in ids if not is_fresh_cluster_id(id)]
+            with_txs = (
+                "*" in fields or "first_tx_id" in fields or "last_tx_id" in fields
             )
-            paging_state = None
-        else:
-            result = await self.execute_async(
-                currency,
-                "transformed",
-                query,
-                paging_state=paging_state,
-                fetch_size=fetch_size,
-            )
-            paging_state = result.paging_state
-            result = result.current_rows
+            by_public_id = {}
+            if legacy_ids:
+                query = (
+                    f"SELECT {flds} FROM cluster"
+                    " WHERE cluster_id_group = %s AND cluster_id = %s"
+                )
+                params = [[self.get_id_group(currency, id), id] for id in legacy_ids]
+                rows = await self.concurrent_with_args(
+                    currency, "transformed", query, params
+                )
+                rows = await self.finish_entities(currency, rows, with_txs)
+                by_public_id.update(
+                    {row["cluster_id"]: row for row in rows if "cluster_id" in row}
+                )
+            if fresh_raw:
+                query = (
+                    f"SELECT {flds} FROM fresh_cluster_stats"
+                    " WHERE cluster_id_group = %s AND cluster_id = %s"
+                )
+                params = [[self.get_id_group(currency, id), id] for id in fresh_raw]
+                rows = await self.concurrent_with_args(
+                    currency, "transformed", query, params
+                )
+                rows = await self._fresh_fill_singleton_entities(
+                    currency, fresh_raw, rows
+                )
+                rows = await self._fresh_heal_pending_entities(currency, rows)
+                # finish on raw ids (root resolution), publish shifted ids
+                rows = await self.finish_entities(currency, rows, with_txs)
+                for row in rows:
+                    row["cluster_id"] = to_public_fresh_cluster_id(row["cluster_id"])
+                by_public_id.update(
+                    {row["cluster_id"]: row for row in rows if "cluster_id" in row}
+                )
+            result = [by_public_id[id] for id in ids if id in by_public_id]
+            return result, to_hex(None)
+
+        query = f"SELECT {flds} FROM cluster"
+        rows = await self.execute_async(
+            currency,
+            "transformed",
+            query,
+            paging_state=paging_state,
+            fetch_size=fetch_size,
+        )
+        paging_state = rows.paging_state
+        result = rows.current_rows
 
         with_txs = "*" in fields or "first_tx_id" in fields or "last_tx_id" in fields
         return await self.finish_entities(currency, result, with_txs), to_hex(
@@ -2605,10 +2969,14 @@ class Cassandra:
     @eth
     async def list_entity_addresses(self, currency, entity, page=None, pagesize=None):
         paging_state = page_from_hex(page)
-        entity_id_group = self.get_id_group(currency, entity)
         entity = int(entity)
+        fresh = is_fresh_cluster_id(entity)
+        if fresh:
+            entity = to_raw_fresh_cluster_id(entity)
+        entity_id_group = self.get_id_group(currency, entity)
+        table = "fresh_cluster_addresses" if fresh else "cluster_addresses"
         query = (
-            "SELECT address_id FROM cluster_addresses "
+            f"SELECT address_id FROM {table} "
             "WHERE cluster_id_group = %s AND cluster_id = %s"
         )
         fetch_size = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
@@ -2627,6 +2995,13 @@ class Cassandra:
             (self.get_id_group(currency, row["address_id"]), row["address_id"])
             for row in results.current_rows
         ]
+        if not params and page is None and fresh:
+            # Fresh clustering stores only multi-member clusters, so a cluster
+            # id with no membership rows is its own singleton (cluster_id ==
+            # address_id). Legacy cluster_addresses had a row for singletons
+            # too, so serve that one address; an unknown id still yields an
+            # empty result, matching legacy.
+            params = [(entity_id_group, entity)]
         query = "SELECT * FROM address WHERE address_id_group = %s and address_id = %s"
         result = await self.concurrent_with_args(currency, "transformed", query, params)
 
@@ -2653,6 +3028,10 @@ class Cassandra:
             id = int(id)
             if is_eth_like(currency):
                 node_type = NodeType.ADDRESS
+            else:
+                id = await self._legacy_relations_cluster_id(currency, id)
+                if id is None:
+                    return [], None
 
         if is_outgoing:
             direction, this, that = ("outgoing", "src", "dst")
@@ -2961,6 +3340,11 @@ class Cassandra:
         # there also no 0 character used.
         expression = strip_0x(expression)
 
+        # fold unicode to ascii before prefix/bound derivation: pdf
+        # copy-paste renders "ff" as the ligature "ﬀ" (U+FB00), which
+        # casefold maps back; is_hexadecimal is ascii-strict
+        expression = expression.casefold()
+
         if not is_hexadecimal(expression):
             return []
 
@@ -3147,6 +3531,12 @@ class Cassandra:
 
     @eth
     async def finish_address(self, currency, row, with_txs=True):
+        # Backstop for stats-pending fresh cluster rows that slipped past
+        # synthesis: zero-fill instead of 500ing on values._fields.
+        if row["total_received"] is None:
+            row["total_received"] = self._zero_values(currency)
+        if row["total_spent"] is None:
+            row["total_spent"] = self._zero_values(currency)
         row["total_received"] = self.markup_currency(currency, row["total_received"])
         row["total_spent"] = self.markup_currency(currency, row["total_spent"])
 
@@ -3209,11 +3599,23 @@ class Cassandra:
             return row
 
         balance_task = self.add_balance(currency, row)
+        dirty_task = self.is_address_dirty(currency, row["address"])
+
+        # first_tx_id == -1 is the sentinel for "address has no transactions of
+        # its own" (e.g. an account address that only paid a failed-tx gas fee, or
+        # a coinbase/miner-reward-only address). Don't try to resolve it — that
+        # would find nothing and trip the inconsistency guard below.
+        if row["first_tx_id"] is None or row["first_tx_id"] == -1:
+            _, is_dirty = await asyncio.gather(balance_task, dirty_task)
+            row["first_tx"] = None
+            row["last_tx"] = None
+            row["status"] = "dirty" if is_dirty else "clean"
+            return row
+
         tx_tasks = [
             self.get_tx_by_id(currency, id)
             for id in [row["first_tx_id"], row["last_tx_id"]]
         ]
-        dirty_task = self.is_address_dirty(currency, row["address"])
 
         results = await asyncio.gather(balance_task, *tx_tasks, dirty_task)
         tx1, tx2, is_dirty = results[1], results[2], results[3]
@@ -3532,8 +3934,12 @@ class Cassandra:
         else:
             if is_eth_like(network):
                 node_type = NodeType.ADDRESS
-            item_id = id
-            item_id_group = self.get_id_group(network, id)
+                item_id = id
+            else:
+                item_id = await self._legacy_relations_cluster_id(network, int(id))
+                if item_id is None:
+                    return [], [], True
+            item_id_group = self.get_id_group(network, item_id)
 
         item_id_secondary_group = [0]
         if is_eth_like(network):
@@ -3888,7 +4294,7 @@ class Cassandra:
                 f"Expected {len(tx_ids)} results, got {len(full_txs)}."
             )
 
-        for addr_tx in txs:
+        async def _normalize_one(addr_tx):
             # fix log index field with new tx_refstruct
             if not use_legacy_log_index:
                 addr_tx["log_index"] = addr_tx["tx_reference"].log_index
@@ -3899,7 +4305,7 @@ class Cassandra:
                 # tx id not yet resolvable to a hash (delta-updater in-flight,
                 # see list_txs_by_ids_eth); drop the row instead of failing
                 addr_tx["error"] = "transaction not yet resolvable to a hash"
-                continue
+                return
             contract_creation = full_tx.get("contract_creation", None)
 
             addr_tx["contract_creation"] = contract_creation
@@ -4008,6 +4414,21 @@ class Cassandra:
             await self.fix_timestamp(
                 currency, addr_tx, timestamp_col="timestamp", block_id_col="height"
             )
+
+        # Process rows concurrently (bounded) rather than one sequential round-trip
+        # per row: this hot endpoint issued up to `pagesize` serial trace/log/
+        # timestamp lookups per page. Each row mutates only its own dict and
+        # `full_txs` is read-only, so ordering is preserved and results identical.
+        # A row that raises (e.g. trace-not-found without ignore) still propagates
+        # via gather, exactly as the sequential loop did.
+        sem = asyncio.Semaphore(MAX_ROW_LOOKUP_CONCURRENCY)
+
+        async def _bounded(addr_tx):
+            async with sem:
+                await _normalize_one(addr_tx)
+
+        await asyncio.gather(*(_bounded(addr_tx) for addr_tx in txs))
+
         await self._attach_token_tx_rates(currency, txs)
         return [tx for tx in txs if "error" not in tx]  # remove errored txs
 

@@ -116,3 +116,103 @@ def test_unique_addresses_in_tx():
         "3Fkx2TFdcHoab4xGgSjhAVh5YBPvbBWjNL",
         "1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB",
     }
+
+
+# Netting semantics: flows are netted per (tx, address) before deriving stats
+# and relations, mirroring graphsense-spark (computeAddressTransactions +
+# splitTransactions). An address on both sides of a tx counts only on the side
+# of its net flow and can only be a relation endpoint on that side.
+
+# btc 18fc98305665ece27f44912dca54a75a91c270e838b5972e80646c27eccc2224
+# (block 926059) reduced to its shape: `both` is an input AND an output with a
+# net outflow of 349, so it is a net sender despite appearing in the outputs.
+both_sides_tx = preprocess_inputs(
+    """
+{"txId": 7, "txHash": "18fc9830", "coinbase": false, "coinjoin": false, "blockId": 926059, "inputs": [{"address": ["other_input"], "value": 2300}, {"address": ["both"], "value": 2300}], "outputs": [{"address": ["pure_output"], "value": 3902}, {"address": ["both"], "value": 1951}], "timestamp": 1764626417, "totalInput": 4600, "totalOutput": 5853}
+"""
+)
+
+
+def test_net_sender_is_no_relation_dst():
+    rates = {926059: [500, 498.18]}
+    tx = dict_to_dataobject(both_sides_tx[0])
+    cngset = dbdelta_from_utxo_transaction(tx, rates[tx.block_id])
+
+    pairs = {(r.src_identifier, r.dst_identifier) for r in cngset.relation_updates}
+    assert pairs == {
+        ("other_input", "pure_output"),
+        ("both", "pure_output"),
+    }
+
+
+def test_net_sender_stats_count_net_flow_once():
+    rates = {926059: [500, 498.18]}
+    tx = dict_to_dataobject(both_sides_tx[0])
+    cngset = dbdelta_from_utxo_transaction(tx, rates[tx.block_id])
+
+    deltas = [e for e in cngset.entity_updates if e.identifier == "both"]
+    merged = deltas[0]
+    for d in deltas[1:]:
+        merged = merged.merge(d)
+    assert merged.no_outgoing_txs == 1
+    assert merged.no_incoming_txs == 0
+    assert merged.total_spent.value == 349
+    assert merged.total_received.value == 0
+
+
+def test_net_receiver_is_no_relation_src():
+    # test_tx: 8l2d spends 331979681 but receives 365507683 in the same tx,
+    # so it is a net receiver and must not be the src of any relation.
+    rates = {844317: [500, 498.18]}
+    tx = dict_to_dataobject(test_tx[0])
+    cngset = dbdelta_from_utxo_transaction(tx, rates[tx.block_id])
+
+    both = "bc1quhruqrghgcca950rvhtrg7cpd7u8k6svpzgzmrjy8xyukacl5lkq0r8l2d"
+    srcs = {r.src_identifier for r in cngset.relation_updates}
+    dsts = {r.dst_identifier for r in cngset.relation_updates}
+    assert both not in srcs
+    assert both in dsts
+    # 3 net senders x 8 net receivers
+    assert len(cngset.relation_updates) == 24
+
+    deltas = [e for e in cngset.entity_updates if e.identifier == both]
+    merged = deltas[0]
+    for d in deltas[1:]:
+        merged = merged.merge(d)
+    assert merged.no_incoming_txs == 1
+    assert merged.no_outgoing_txs == 0
+    assert merged.total_received.value == 365507683 - 331979681
+    assert merged.total_spent.value == 0
+
+
+zero_flow_tx = preprocess_inputs(
+    """
+{"txId": 8, "txHash": "aa00", "coinbase": false, "coinjoin": false, "blockId": 926059, "inputs": [{"address": ["payer"], "value": 1000}, {"address": ["balanced"], "value": 500}], "outputs": [{"address": ["balanced"], "value": 500}, {"address": ["receiver"], "value": 900}], "timestamp": 1764626417, "totalInput": 1500, "totalOutput": 1400}
+"""
+)
+
+
+def test_zero_net_flow_counts_on_neither_side():
+    rates = {926059: [500, 498.18]}
+    tx = dict_to_dataobject(zero_flow_tx[0])
+    cngset = dbdelta_from_utxo_transaction(tx, rates[tx.block_id])
+
+    pairs = {(r.src_identifier, r.dst_identifier) for r in cngset.relation_updates}
+    assert pairs == {("payer", "receiver")}
+
+    deltas = [e for e in cngset.entity_updates if e.identifier == "balanced"]
+    merged = deltas[0]
+    for d in deltas[1:]:
+        merged = merged.merge(d)
+    assert merged.no_incoming_txs == 0
+    assert merged.no_outgoing_txs == 0
+    assert merged.total_received.value == 0
+    assert merged.total_spent.value == 0
+    # the address row still gets created and first/last tx tracked
+    assert merged.first_tx_id == tx.tx_id
+    assert merged.last_tx_id == tx.tx_id
+
+    rows = [x for x in cngset.new_entity_txs if x.identifier == "balanced"]
+    assert len(rows) == 1
+    assert rows[0].value == 0
+    assert not rows[0].is_outgoing

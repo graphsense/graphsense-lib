@@ -45,8 +45,11 @@ class Address(APIModel):
     balance: Values
     total_received: Values
     total_spent: Values
-    first_tx: TxSummary
-    last_tx: TxSummary
+    # None when the address has no transactions of its own (first_tx_id == -1),
+    # e.g. an account address that only ever paid a failed-tx gas fee or only
+    # received a coinbase/miner reward.
+    first_tx: Optional[TxSummary] = None
+    last_tx: Optional[TxSummary] = None
     in_degree: int
     out_degree: int
     no_incoming_txs: int

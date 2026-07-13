@@ -17,11 +17,46 @@ from tenacity import (
 )
 from tenacity.wait import wait_exponential
 
+from cassandra import InvalidRequest
+
 from graphsenselib.utils.tron import tron_address_to_evm, evm_to_tron_address_string
 from graphsenselib.utils.rest_utils import is_eth_like
+from graphsenselib.db.state import FRESH_CLUSTERING_ACTIVE_KEY, STATE_TABLE
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _cluster_id_query(fresh: bool) -> str:
+    """address_id -> cluster_id lookup for one clustering regime.
+
+    Fresh: membership lives in ``fresh_address_cluster`` (same
+    ``(address_id_group, address_id)`` key as ``address``). Legacy: the Scala
+    ``address.cluster_id`` column.
+    """
+    if fresh:
+        return (
+            "SELECT address_id, cluster_id "
+            "FROM fresh_address_cluster WHERE address_id_group=? and address_id=?"
+        )
+    return (
+        "SELECT address_id, cluster_id "
+        "FROM address WHERE address_id_group=? and address_id=?"
+    )
+
+
+def _cluster_stats_query(fresh: bool) -> str:
+    """cluster_id -> no_addresses lookup for one clustering regime.
+
+    Fresh: ``fresh_cluster_stats`` (only ``no_addresses`` is needed downstream).
+    Legacy: the Scala ``cluster`` table.
+    """
+    if fresh:
+        return (
+            "SELECT cluster_id, no_addresses FROM fresh_cluster_stats "
+            "WHERE cluster_id_group=? and cluster_id=?"
+        )
+    return "SELECT * FROM cluster WHERE cluster_id_group=? and cluster_id=?"
 
 
 def try_convert_tron_to_eth(x):
@@ -83,6 +118,7 @@ class GraphSense(object):
     ):
         self.hosts = hosts
         self.ks_map = ks_map
+        self._fresh_network_cache = {}
 
         auth_provider = None
         if username is not None:
@@ -133,6 +169,34 @@ class GraphSense(object):
 
     def contains_keyspace_mapping(self, network: str) -> bool:
         return network in self.ks_map
+
+    def is_fresh_network(self, network: str) -> bool:
+        """Whether the network's transformed keyspace runs fresh clustering.
+
+        The clustering bootstrap writes the ``fresh_clustering_active`` row
+        into the keyspace's ``state`` table as its final step; that marker —
+        not table existence (migrations create the fresh tables empty
+        everywhere) — signals that the fresh membership tables are
+        authoritative. A missing ``state`` table (pre-migration keyspace)
+        counts as inactive. Mirrors
+        ``db.analytics.TransformedDb.is_fresh_clustering_active``.
+        """
+        if is_eth_like(network) or not self.contains_keyspace_mapping(network):
+            return False
+        cached = self._fresh_network_cache.get(network)
+        if cached is not None:
+            return cached
+        keyspace = self.ks_map[network]["transformed"]
+        try:
+            result = self.session.execute(
+                f"SELECT key FROM {keyspace}.{STATE_TABLE} WHERE key = %s",
+                [FRESH_CLUSTERING_ACTIVE_KEY],
+            )
+            active = result.one() is not None
+        except InvalidRequest:
+            active = False
+        self._fresh_network_cache[network] = active
+        return active
 
     def _check_passed_params(self, df: DataFrame, network: str, req_column: str):
         if df.empty:
@@ -237,7 +301,9 @@ class GraphSense(object):
 
         return result
 
-    def get_cluster_ids(self, df: DataFrame, network: str) -> DataFrame:
+    def get_cluster_ids(
+        self, df: DataFrame, network: str, fresh: bool = False
+    ) -> DataFrame:
         """Get cluster ids for all passed address ids"""
         self._check_passed_params(df, network, "address_id")
 
@@ -254,16 +320,15 @@ class GraphSense(object):
             df_temp["address_id"] / ks_config["bucket_size"]
         ).astype(int)
 
-        query = (
-            "SELECT address_id, cluster_id "
-            + "FROM address WHERE address_id_group=? and address_id=?"
-        )
+        query = _cluster_id_query(fresh)
         statement = self.session.prepare(query)
         parameters = df_temp[["address_id_group", "address_id"]].to_records(index=False)
 
         return self._execute_query(statement, parameters)
 
-    def get_clusters(self, df: DataFrame, network: str) -> DataFrame:
+    def get_clusters(
+        self, df: DataFrame, network: str, fresh: bool = False
+    ) -> DataFrame:
         """Get clusters for all passed cluster ids"""
         self._check_passed_params(df, network, "cluster_id")
 
@@ -280,7 +345,7 @@ class GraphSense(object):
             df_temp["cluster_id"] / ks_config["bucket_size"]
         ).astype(int)
 
-        query = "SELECT * FROM cluster " + "WHERE cluster_id_group=? and cluster_id=?"
+        query = _cluster_stats_query(fresh)
         statement = self.session.prepare(query)
         parameters = df_temp[["cluster_id_group", "cluster_id"]].to_records(index=False)
 
@@ -308,7 +373,16 @@ class GraphSense(object):
 
         return self._execute_query(statement, parameters)
 
-    def get_address_clusters(self, df: DataFrame, network: str) -> DataFrame:
+    def get_address_clusters(
+        self, df: DataFrame, network: str, fresh: bool = False
+    ) -> DataFrame:
+        """Resolve tagged addresses to their clusters in one regime.
+
+        ``fresh=False`` reads the legacy ``address.cluster_id`` / ``cluster``
+        tables, ``fresh=True`` the ``fresh_address_cluster`` /
+        ``fresh_cluster_stats`` ones. Callers dual-write marked networks by
+        invoking this once per regime — see ``insert_cluster_mapping_wp``.
+        """
         self._check_passed_params(df, network, "address")
 
         addresses = df.copy()
@@ -340,13 +414,19 @@ class GraphSense(object):
 
             return result
 
-        df_cluster_ids = self.get_cluster_ids(df_address_ids, network)
+        df_cluster_ids = self.get_cluster_ids(df_address_ids, network, fresh=fresh)
         if len(df_cluster_ids) == 0:
+            # Fresh clustering stores only multi-member clusters, so an empty
+            # result means every address in this batch is a singleton — map each
+            # to itself instead of dropping the batch. Legacy always has a
+            # cluster row, so there an empty result genuinely means "not found".
+            if fresh:
+                return self._as_singleton_clusters(df_address_ids)
             return DataFrame()
 
         df_cluster_definers = self._get_cluster_definers(df_cluster_ids, network)
 
-        df_address_clusters = self.get_clusters(df_cluster_ids, network)
+        df_address_clusters = self.get_clusters(df_cluster_ids, network, fresh=fresh)
         if len(df_address_clusters) == 0:
             return DataFrame()
 
@@ -356,4 +436,81 @@ class GraphSense(object):
             .merge(df_cluster_definers, on="cluster_id", how="left")
         )
 
+        # Fresh clustering persists only multi-member clusters, so an address
+        # with no fresh_address_cluster row is its own singleton cluster:
+        # cluster_id == address_id, one member, self-defining. Mirrors the
+        # account-model branch above. In the legacy scheme address.cluster_id
+        # is always set, so this is a no-op there.
+        missing = result["cluster_id"].isna()
+        if missing.any():
+            result.loc[missing, "cluster_id"] = result.loc[missing, "address_id"]
+            result.loc[missing, "no_addresses"] = 1
+            result.loc[missing, "cluster_defining_address"] = result.loc[
+                missing, "address"
+            ]
+        result["cluster_id"] = result["cluster_id"].astype(int)
+
+        # A resolved cluster_id can still lack a stats row, leaving no_addresses
+        # NaN here. A single such row in a 5k batch used to abort the whole
+        # multiprocess run on the int cast below (IntCastingNaNError). Classify
+        # and log each so a full run reveals the mechanism: either the cluster
+        # table has no row for that id ("no_cluster_row"), or a row exists whose
+        # no_addresses column is NULL ("row_present_null_no_addresses").
+        size_missing = result["no_addresses"].isna()
+        if size_missing.any():
+            have_stats = (
+                set()
+                if df_address_clusters.empty
+                else set(df_address_clusters["cluster_id"].tolist())
+            )
+            n_no_row = n_null_col = 0
+            for r in result.loc[size_missing].itertuples(index=False):
+                cid = int(r.cluster_id)
+                row_present = cid in have_stats
+                n_null_col += row_present
+                n_no_row += not row_present
+                logger.warning(
+                    "cluster-mapping NULL size: network=%s address=%s "
+                    "address_id=%s cluster_id=%s self_ref=%s reason=%s",
+                    network,
+                    r.address,
+                    int(r.address_id),
+                    cid,
+                    int(r.address_id) == cid,
+                    "row_present_null_no_addresses"
+                    if row_present
+                    else "no_cluster_row",
+                )
+            logger.warning(
+                "cluster-mapping NULL size summary: network=%s count=%s "
+                "no_cluster_row=%s row_present_null_no_addresses=%s",
+                network,
+                int(size_missing.sum()),
+                n_no_row,
+                n_null_col,
+            )
+
+        # Keep the real cluster id and store the unknown size as NULL — not a
+        # fabricated 1, which the `gs_cluster_no_addr = 1` singleton branch of
+        # the cluster-tag views would then wrongly fold the cluster's tags into.
+        result["no_addresses"] = pd.Series(
+            [None if pd.isna(v) else int(v) for v in result["no_addresses"]],
+            index=result.index,
+            dtype=object,
+        )
+
+        return result
+
+    def _as_singleton_clusters(self, df_address_ids: DataFrame) -> DataFrame:
+        """Map every passed address to its own singleton cluster.
+
+        Used in fresh-clustering mode when no multi-member membership is found:
+        cluster_id == address_id, one member, self-defining. Mirrors the shape
+        of the normal ``get_address_clusters`` result (address, address_id,
+        cluster_id, no_addresses, cluster_defining_address).
+        """
+        result = df_address_ids.copy()
+        result["cluster_id"] = result["address_id"].astype(int)
+        result["no_addresses"] = 1
+        result["cluster_defining_address"] = result["address"]
         return result

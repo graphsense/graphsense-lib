@@ -14,6 +14,7 @@ dependencies = [
     "testcontainers>=4.0.0",
     "cassandra-driver>=3.28.0",
     "graphsense-lib[ingest]",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.uv.sources]

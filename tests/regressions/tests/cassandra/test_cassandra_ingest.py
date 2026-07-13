@@ -29,6 +29,9 @@ pytestmark = pytest.mark.cassandra
 # Set of (currency, table_name) tuples.
 KNOWN_CONTENT_DIVERGENCES: set[tuple[str, str]] = {
     ("trx", "fee"),  # energy_penalty_total was mapped to net_fee, now correct
+    # P2PK output addresses are derived network-aware since c103323c;
+    # the reference encoded LTC P2PK pubkeys with the BTC version byte.
+    ("ltc", "transaction"),
 }
 
 # Columns added in the current version that the reference version lacks.
