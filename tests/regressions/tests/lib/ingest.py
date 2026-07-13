@@ -35,6 +35,7 @@ def build_gs_config(
     minio_endpoint: str | None = None,
     minio_access_key: str | None = None,
     minio_secret_key: str | None = None,
+    include_s3_configs: bool = True,
 ) -> dict:
     """Build a .graphsense.yaml config dict for ingest commands.
 
@@ -103,7 +104,10 @@ def build_gs_config(
             "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
         }
         gs_config["s3_credentials"] = creds
-        gs_config["s3_configs"] = {"minio": creds}
+        # s3_configs is an extra=forbid violation on graphsense-lib
+        # <= v25.11.18; callers that feed a reference venv must opt out.
+        if include_s3_configs:
+            gs_config["s3_configs"] = {"minio": creds}
 
     return gs_config
 
