@@ -110,7 +110,10 @@ def get_response(
     headers = {**base_headers, "Authorization": auth, **extra_headers_for(base_url)}
 
     start = time.time()
-    response = requests.get(url, headers=headers, timeout=30)
+    # generous read timeout: heavyweight endpoints (large-entity neighbors with
+    # include_labels) legitimately take 50-75s on both sides; a short timeout
+    # turns them into permanent flakes instead of comparisons
+    response = requests.get(url, headers=headers, timeout=(30, 120))
     elapsed = time.time() - start
 
     try:
@@ -167,7 +170,9 @@ UNORDERED_LIST_KEYS = {
 }
 
 # Keys to ignore in comparison
-IGNORED_KEYS = {"version"}
+# request_timestamp is the server-side "now" of each response; the two sides
+# are queried sequentially, so it differs whenever the calls straddle a second.
+IGNORED_KEYS = {"version", "request_timestamp"}
 
 
 def get_sort_key(item: Any) -> Any:
