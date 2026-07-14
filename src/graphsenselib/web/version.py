@@ -4,4 +4,4 @@ This version is independent from the library release version.
 Manage it via `make update-api-version WEBAPISEM=vX.Y.Z`.
 """
 
-__api_version__ = "2.15.0-rc.3"
+__api_version__ = "2.15.0"
