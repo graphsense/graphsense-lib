@@ -69,6 +69,9 @@ def _build_service(
         db.get_address_entity_id = AsyncMock(return_value=cluster_id)
     else:
         db.get_address_entity_id = AsyncMock(return_value=None)
+    # fresh clustering inactive: tag lookups fall back to the legacy id
+    db.get_address_id_id_group = AsyncMock(return_value=(cluster_id or 0, 0))
+    db.get_fresh_cluster_id = AsyncMock(return_value=None)
 
     return TagsService(
         db=db,

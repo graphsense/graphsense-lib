@@ -118,7 +118,9 @@ def get_response(
 
     try:
         data = response.json()
-    except json.JSONDecodeError:
+    # requests raises its own JSONDecodeError (simplejson-based when simplejson
+    # is installed), which is NOT a subclass of stdlib json.JSONDecodeError
+    except requests.exceptions.JSONDecodeError:
         data = {"_raw": response.text}
 
     return data, response.status_code, elapsed
@@ -142,7 +144,9 @@ def post_response(
 
     try:
         data = response.json()
-    except json.JSONDecodeError:
+    # requests raises its own JSONDecodeError (simplejson-based when simplejson
+    # is installed), which is NOT a subclass of stdlib json.JSONDecodeError
+    except requests.exceptions.JSONDecodeError:
         data = {"_raw": response.text}
 
     return data, response.status_code, elapsed

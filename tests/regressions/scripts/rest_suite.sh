@@ -56,9 +56,10 @@ Environment overrides:
                        if that is absent, the web: section of ~/.graphsense.yaml
                        or $GRAPHSENSE_CONFIG_YAML is used)
   GS_API_KEY           API key for *.iknaio.com sides
-  BASELINE_AUTH / CURRENT_AUTH   per-side key overrides when the two sides
-                       need different keys (e.g. REF=prod, CUR=test:
-                       BASELINE_AUTH=$GS_API_KEY CURRENT_AUTH=$GS_API_KEY_TEST)
+  REF_AUTH / CUR_AUTH  per-side key overrides when the two sides need
+                       different keys (e.g. REF=prod, CUR=test:
+                       REF_AUTH=$GS_API_KEY CUR_AUTH=$GS_API_KEY_TEST);
+                       BASELINE_AUTH / CURRENT_AUTH work as aliases
   TAGSTORE_URL         used to derive the tagstore DSN for local sides
   REBUILD=1            force docker rebuild even if the image exists
   LOKI_WORKERS         parallel pytest workers for the loki suite (default 8)
@@ -70,8 +71,9 @@ Examples:
   make rest REF=837b88df CUR=feature/clustering2 DEPTH=quick
 
 Notes:
-  - CUR=api.iknaio.com fails the tag-obfuscation test by design: it sends
-    an anonymous request, which the production gateway rejects.
+  - the tag-obfuscation test sends an anonymous request, which hosted
+    gateways reject with 401 — it is skipped whenever CUR is an
+    iknaio.com side (it only works against a bare local server).
   - Suites run against live keyspaces; results depend on the configured
     Cassandra data being reachable from both sides.
 EOF
@@ -288,20 +290,26 @@ setup_side() { # <role: current|baseline> <spec> <port>; sets <ROLE>_URL/_AUTH/_
             ;;
     esac
 
+    # per-side key overrides, named after the REF=/CUR= arguments
+    # (BASELINE_AUTH / CURRENT_AUTH kept as aliases — the pytest layer
+    # uses baseline/current naming)
+    local preset
+    if [ "$role" = "current" ]; then
+        preset="${CUR_AUTH:-${CURRENT_AUTH:-}}"
+    else
+        preset="${REF_AUTH:-${BASELINE_AUTH:-}}"
+    fi
+
     if [[ "$url" == *"iknaio.com"* ]]; then
-        # per-side keys (BASELINE_AUTH / CURRENT_AUTH) win over the shared
-        # GS_API_KEY — test and prod gateways validate different key sets
-        if [ "$role" = "current" ]; then
-            auth="${CURRENT_AUTH:-${GS_API_KEY:-}}"
-        else
-            auth="${BASELINE_AUTH:-${GS_API_KEY:-}}"
-        fi
-        [ -n "$auth" ] || die "$role=$spec needs GS_API_KEY (or BASELINE_AUTH/CURRENT_AUTH) in the environment"
+        # per-side keys win over the shared GS_API_KEY — test and prod
+        # gateways validate different key sets
+        auth="${preset:-${GS_API_KEY:-}}"
+        [ -n "$auth" ] || die "$role=$spec needs GS_API_KEY (or REF_AUTH/CUR_AUTH) in the environment"
         hdrs="{}"
     else
         # replay what the production API gateway injects, so tag visibility
         # matches a hosted deployment
-        auth="test"
+        auth="${preset:-test}"
         hdrs='{"X-Consumer-Groups":"tags-private"}'
     fi
 
@@ -330,7 +338,7 @@ if [ -z "${GRAPHSENSE_CONFIG_YAML:-}" ]; then
 fi
 
 export BASELINE_SERVER="$REF_URL" CURRENT_SERVER="$CUR_URL"
-export BASELINE_AUTH="${BASELINE_AUTH:-$REF_AUTH}" CURRENT_AUTH="${CURRENT_AUTH:-$CUR_AUTH}"
+export BASELINE_AUTH="$REF_AUTH" CURRENT_AUTH="$CUR_AUTH"
 export BASELINE_HEADERS="${BASELINE_HEADERS:-$REF_HDRS}" CURRENT_HEADERS="${CURRENT_HEADERS:-$CUR_HDRS}"
 
 log "reference (baseline): $REF_SPEC -> $REF_URL"

@@ -13,6 +13,7 @@ from graphsenselib.utils.slack import send_message_to_slack
 from .common import (
     cannonicalize_address,
     try_get_cluster_id,
+    try_get_tag_cluster_id,
 )
 from ....utils.rest_utils import is_eth_like
 from .models import (
@@ -306,7 +307,7 @@ class TagsService:
             and not is_page_full
         ):
             # make sure cluster definer is only added in last page.
-            cluster_id = await try_get_cluster_id(self.db, currency, address, cache)
+            cluster_id = await try_get_tag_cluster_id(self.db, currency, address, cache)
             if cluster_id:
                 _, best_cluster_tag = await self._get_best_cluster_tag_raw(
                     currency, address, cluster_id, tagstore_groups, cache or {}
@@ -471,7 +472,10 @@ class TagsService:
         if include_best_cluster_tag and not is_eth_like(network):
             t_cassandra = time.perf_counter()
             cluster_ids = await asyncio.gather(
-                *[try_get_cluster_id(self.db, network, addr) for addr in unique_canon]
+                *[
+                    try_get_tag_cluster_id(self.db, network, addr)
+                    for addr in unique_canon
+                ]
             )
             d_cassandra = time.perf_counter() - t_cassandra
 

@@ -124,6 +124,15 @@ class FakeDB:
             raise AddressNotFoundException(currency, address)
         return cid
 
+    async def get_address_id_id_group(self, currency: str, address: str):
+        if self.cluster_id_by_address.get(address) is None:
+            raise AddressNotFoundException(currency, address)
+        return self.cluster_id_by_address[address], 0
+
+    async def get_fresh_cluster_id(self, currency: str, address_id: int):
+        # fresh clustering inactive: tag lookups fall back to the legacy id
+        return None
+
 
 def _build_service(
     tags_by_subject: Dict[str, List[TagPublic]],

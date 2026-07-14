@@ -440,6 +440,11 @@ class TestManualRegressionObfuscation(ManualRegressionTestBase):
     """Manual regression tests for tag obfuscation."""
 
     @pytest.mark.regression
+    @pytest.mark.skipif(
+        "iknaio.com" in CURRENT_SERVER,
+        reason="hosted gateways 401 anonymous requests before the obfuscation "
+        "middleware runs — only testable against a bare (local) server",
+    )
     def test_obfuscation_anonymous_gets_obfuscated_tags(self):
         """Test that anonymous users get obfuscated tags (not zero tags).
 
@@ -630,3 +635,64 @@ class TestUtxoNettingLitmus:
         neighbors = {n["address"]["address"] for n in data.get("neighbors") or []}
         assert "bc1qfuyscyyxqyzuu6pd7fwqtv5kxwalp6ajd3h7xu" in neighbors
         assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" in neighbors
+
+
+# =============================================================================
+# Tag summary / inherited cluster tag tests
+# =============================================================================
+
+
+class TestManualRegressionTagSummary:
+    """Inherited cluster tags must resolve via the FRESH cluster id.
+
+    3Q1CZNKeFGcch3vGzPwWZsRL17N7pjvyky is a Kraken deposit address first
+    seen 2026-06-29, after the last full BTC transform. The legacy
+    delta-update path assigns every new address its own cluster id (it does
+    no co-spend clustering), so legacy-side the address is an unmerged
+    singleton with nothing to inherit, while fresh clustering merged it
+    into the Kraken cluster (raw id 319038931) via its 81-input sweep
+    co-spends. tag_summary used to resolve the inherited cluster tag with
+    the LEGACY id and returned an empty summary — fresh-aware frontends
+    rendered the address as "possible service" although its cluster is
+    Kraken.
+
+    Current-server invariant, not a baseline comparison: deployed prod has
+    exactly this defect (no actor for this address). Premises asserted
+    alongside: the address has no direct tags (the actor can only arrive
+    via cluster inheritance) and the fresh entity itself carries the kraken
+    tag. Skipped when the current server exposes no fresh cluster id — on a
+    legacy-only instance the singleton resolution is correct until the next
+    full transform.
+    """
+
+    ADDRESS = "3Q1CZNKeFGcch3vGzPwWZsRL17N7pjvyky"
+
+    @pytest.mark.regression
+    def test_tag_summary_inherits_fresh_cluster_actor(self):
+        address, _ = get_data_from_endpoint(
+            CURRENT_SERVER, f"btc/addresses/{self.ADDRESS}"
+        )
+        if address.get("fresh_cluster_id") is None:
+            pytest.skip("fresh clustering not active on current server")
+
+        direct, _ = get_data_from_endpoint(
+            CURRENT_SERVER, f"btc/addresses/{self.ADDRESS}/tags"
+        )
+        assert not (direct.get("address_tags") or []), (
+            "premise broken: address has direct tags now, the case no "
+            "longer isolates cluster-tag inheritance"
+        )
+
+        entity, _ = get_data_from_endpoint(
+            CURRENT_SERVER, f"btc/entities/{address['fresh_cluster_id']}"
+        )
+        assert (entity.get("best_address_tag") or {}).get("actor") == "kraken", (
+            "premise broken: fresh cluster no longer carries the kraken tag"
+        )
+
+        summary, _ = get_data_from_endpoint(
+            CURRENT_SERVER,
+            f"btc/addresses/{self.ADDRESS}/tag_summary"
+            "?include_best_cluster_tag=true",
+        )
+        assert summary.get("best_actor") == "kraken"
