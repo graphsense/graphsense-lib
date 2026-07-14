@@ -56,6 +56,9 @@ Environment overrides:
                        if that is absent, the web: section of ~/.graphsense.yaml
                        or $GRAPHSENSE_CONFIG_YAML is used)
   GS_API_KEY           API key for *.iknaio.com sides
+  BASELINE_AUTH / CURRENT_AUTH   per-side key overrides when the two sides
+                       need different keys (e.g. REF=prod, CUR=test:
+                       BASELINE_AUTH=$GS_API_KEY CURRENT_AUTH=$GS_API_KEY_TEST)
   TAGSTORE_URL         used to derive the tagstore DSN for local sides
   REBUILD=1            force docker rebuild even if the image exists
   LOKI_WORKERS         parallel pytest workers for the loki suite (default 8)
@@ -286,8 +289,14 @@ setup_side() { # <role: current|baseline> <spec> <port>; sets <ROLE>_URL/_AUTH/_
     esac
 
     if [[ "$url" == *"iknaio.com"* ]]; then
-        [ -n "${GS_API_KEY:-}" ] || die "$role=$spec needs GS_API_KEY in the environment"
-        auth="$GS_API_KEY"
+        # per-side keys (BASELINE_AUTH / CURRENT_AUTH) win over the shared
+        # GS_API_KEY — test and prod gateways validate different key sets
+        if [ "$role" = "current" ]; then
+            auth="${CURRENT_AUTH:-${GS_API_KEY:-}}"
+        else
+            auth="${BASELINE_AUTH:-${GS_API_KEY:-}}"
+        fi
+        [ -n "$auth" ] || die "$role=$spec needs GS_API_KEY (or BASELINE_AUTH/CURRENT_AUTH) in the environment"
         hdrs="{}"
     else
         # replay what the production API gateway injects, so tag visibility
