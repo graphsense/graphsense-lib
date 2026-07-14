@@ -210,16 +210,18 @@ ensure_server() { # <role: current|baseline> <port> <image>
     # Compare image IDs, not tag strings: after a rebuild the tag (e.g.
     # gslib-rest:local) points at a new image while the running container
     # keeps the old one — a tag comparison would silently reuse stale code.
-    local running_image_id running_port desired_image_id
+    local running_image_id running_port running_state desired_image_id
     running_image_id=$(docker inspect --format '{{.Image}}' "$name" 2>/dev/null || true)
     running_port=$(docker inspect --format '{{index .Config.Labels "gs-rest-port"}}' "$name" 2>/dev/null || true)
+    running_state=$(docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null || true)
     if [ -n "$running_image_id" ]; then
         desired_image_id=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || true)
-        if [ "$running_image_id" = "$desired_image_id" ] && [ "$running_port" = "$port" ]; then
+        if [ "$running_state" = "true" ] && [ "$running_image_id" = "$desired_image_id" ] \
+            && [ "$running_port" = "$port" ]; then
             log "reusing running $name ($image on :$port)"
             return 0
         fi
-        log "replacing $name (stale image or port -> $image on :$port)"
+        log "replacing $name (stopped, or stale image/port -> $image on :$port)"
         docker rm -f "$name" >/dev/null 2>&1
     fi
 
@@ -234,9 +236,11 @@ ensure_server() { # <role: current|baseline> <port> <image>
     [ -n "$tagstore_dsn" ] && extra_env+=(-e "GS_TAGSTORE_ASYNC_URL=$tagstore_dsn")
 
     log "starting $name ($image) on port $port..."
-    docker run -d --name "$name" --rm --network=host \
+    # ,z relabels the config for container access — required under SELinux
+    # (Fedora/podman), no-op on hosts without it.
+    docker run -d --name "$name" --network=host \
         --label "gs-rest-port=$port" \
-        -v "$RESOLVED_CONFIG:/srv/graphsense-rest/instance/config.yaml:ro" \
+        -v "$RESOLVED_CONFIG:/srv/graphsense-rest/instance/config.yaml:ro,z" \
         -e CONFIG_FILE=/srv/graphsense-rest/instance/config.yaml \
         -e NUM_WORKERS=1 -e NUM_THREADS=1 -e TZ=UTC \
         "${extra_env[@]}" \
@@ -244,16 +248,20 @@ ensure_server() { # <role: current|baseline> <port> <image>
         sh -c "gunicorn -c /opt/gunicorn-conf.py --bind 0.0.0.0:$port 'graphsenselib.web.app:create_app(\"/srv/graphsense-rest/instance/config.yaml\")' --worker-class uvicorn.workers.UvicornWorker" \
         >/dev/null || die "docker run of $name failed"
 
-    local i
+    local i reason="did not become ready within 120s"
     for i in $(seq 1 60); do
         if curl -s -o /dev/null "http://localhost:$port/stats"; then
             return 0
+        fi
+        if [ "$(docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null)" != "true" ]; then
+            reason="exited with code $(docker inspect --format '{{.State.ExitCode}}' "$name" 2>/dev/null)"
+            break
         fi
         sleep 2
     done
     echo "--- $name logs ---" >&2
     docker logs "$name" 2>&1 | tail -20 >&2
-    die "$name did not become ready within 120s"
+    die "$name $reason"
 }
 
 # ---------------------------------------------------------------------------
