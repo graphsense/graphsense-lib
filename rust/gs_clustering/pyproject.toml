@@ -12,7 +12,7 @@ authors = [
     { name = "Iknaio Cryptoasset Analytics GmbH", email = "contact@iknaio.com" },
 ]
 requires-python = ">=3.10"
-keywords = ["graphsense", "clustering", "union-find", "utxo", "bitcoin"]
+keywords = ["graphsense", "clustering", "union-find", "utxo", "bitcoin", "multi-input heuristic", "co-spend heuristic"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
