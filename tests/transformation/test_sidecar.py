@@ -87,7 +87,11 @@ def test_spark_properties_augment_java_options():
     for key in ("spark.driver.extraJavaOptions", "spark.executor.extraJavaOptions"):
         assert "--add-opens java.base/sun.nio.ch=ALL-UNNAMED" in props[key]
         assert "-Djava.io.tmpdir=/data/tmp" in props[key]
-        assert "-Dvertx.cacheDirBase=/data/tmp" in props[key]
+        # Vert.x creates the cache dir as a SIBLING of cacheDirBase
+        # (`<base>-<uuid>`); the base must carry a subpath so the sibling
+        # lands inside spark.local.dir, not next to it in a possibly
+        # read-only parent.
+        assert "-Dvertx.cacheDirBase=/data/tmp/vertx-cache" in props[key]
     assert props["spark.executor.extraJavaOptions"].startswith("-Xss4m ")
 
 
@@ -96,7 +100,10 @@ def test_spark_properties_use_first_of_local_dir_list():
     # a single path
     props = sidecar_spark_properties({"spark.local.dir": "/data1/tmp,/data2/tmp"})
     assert "-Djava.io.tmpdir=/data1/tmp " in props["spark.driver.extraJavaOptions"]
-    assert "-Dvertx.cacheDirBase=/data1/tmp" in props["spark.driver.extraJavaOptions"]
+    assert (
+        "-Dvertx.cacheDirBase=/data1/tmp/vertx-cache"
+        in props["spark.driver.extraJavaOptions"]
+    )
 
 
 def test_spark_properties_do_not_mutate_input():

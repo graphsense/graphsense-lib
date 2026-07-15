@@ -50,9 +50,14 @@ def sidecar_spark_properties(spark_props: Dict[str, str]) -> Dict[str, str]:
     # spark.local.dir may be a comma-separated list; java.io.tmpdir needs one
     tmp_dir = local_dir.split(",")[0]
     props = dict(spark_props)
+    # Vert.x creates its cache dir as `<cacheDirBase>-<uuid>` — a SIBLING of
+    # the given path, not inside it. Point the base at a subpath so the
+    # sibling lands inside spark.local.dir; the bare dir would need a
+    # writable PARENT, which e.g. a docker mountpoint's root-owned parent
+    # is not (observed as AccessDeniedException at the first bulk write).
     jvm = (
         f"{_SIDECAR_MODULE_FLAGS} -Djava.io.tmpdir={tmp_dir} "
-        f"-Dvertx.cacheDirBase={tmp_dir}"
+        f"-Dvertx.cacheDirBase={tmp_dir}/vertx-cache"
     )
     for key in ("spark.driver.extraJavaOptions", "spark.executor.extraJavaOptions"):
         existing = props.get(key, "").strip()
