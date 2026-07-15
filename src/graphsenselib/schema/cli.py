@@ -91,7 +91,21 @@ def shows(schema, keyspace_type):
 @require_environment()
 @require_currency()
 @keyspace_types_option
-def create(env, currency, keyspace_type):
+@click.option(
+    "--keyspace-name",
+    type=str,
+    required=False,
+    help="Create under this keyspace name instead of the configured one "
+    "(e.g. a new keyspace for a rebuild). Requires --keyspace-type.",
+)
+@click.option(
+    "--replication-config",
+    type=str,
+    required=False,
+    help="Replication config for the new keyspace, overriding the configured "
+    "one, e.g. \"{'class': 'NetworkTopologyStrategy', 'DC1': '2'}\".",
+)
+def create(env, currency, keyspace_type, keyspace_name, replication_config):
     """Summary
         Creates the necessary graphsense tables in Cassandra if they don't exist.
         \f
@@ -99,13 +113,26 @@ def create(env, currency, keyspace_type):
         env (str): Environment to work on
         currency (str): currency to work on
     """
+    if keyspace_name is not None and keyspace_type is None:
+        raise click.UsageError("--keyspace-name requires --keyspace-type.")
     if keyspace_type is None:
         GraphsenseSchemas().create_keyspaces_if_not_exist(env, currency)
     else:
         GraphsenseSchemas().create_keyspace_if_not_exist(
-            env, currency, keyspace_type=keyspace_type
+            env,
+            currency,
+            keyspace_type=keyspace_type,
+            keyspace_name_override=keyspace_name,
+            replication_config_override=replication_config,
         )
 
+    if keyspace_name is not None:
+        # the report validates the YAML-configured keyspaces, not the override
+        click.echo(
+            f"Created {keyspace_name}; skipping schema validation report "
+            "(it only covers the configured keyspaces)."
+        )
+        return
     click.echo("// ######### Validating deployed schema")
     print_schema_validation_report(env, currency)
 
