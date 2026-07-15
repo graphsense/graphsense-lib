@@ -7,6 +7,8 @@ from graphsenselib.ingest.utxo import (
     TX_BUCKET_SIZE as UTXO_TX_BUCKET_SIZE,
     TX_HASH_PREFIX_LENGTH as UTXO_TX_HASH_PREFIX_LEN,
     _address_types as ADDRESS_TYPE_MAP,
+    _NETWORK_SCRIPT_PARAMS,
+    normalize_base58_p2pkh,
 )
 from graphsenselib.transformation.account import _write_ingest_complete_marker
 
@@ -43,6 +45,7 @@ class UtxoTransformation:
         spark,
         delta_lake_path,
         raw_keyspace,
+        network,
         block_bucket_size=UTXO_BLOCK_BUCKET_SIZE,
         tx_bucket_size=UTXO_TX_BUCKET_SIZE,
         tx_hash_prefix_len=UTXO_TX_HASH_PREFIX_LEN,
@@ -52,6 +55,7 @@ class UtxoTransformation:
         # Spark/Hadoop uses s3a:// not s3://
         self.delta_lake_path = delta_lake_path.rstrip("/").replace("s3://", "s3a://")
         self.raw_keyspace = raw_keyspace
+        self.network = network
         self.block_bucket_size = block_bucket_size
         self.tx_bucket_size = tx_bucket_size
         self.tx_hash_prefix_len = tx_hash_prefix_len
@@ -206,6 +210,49 @@ class UtxoTransformation:
         self._tx_df_cache_range = (start_block, end_block)
         return range_df
 
+    def _normalize_io_addresses(self, tx_df):
+        """Heal base58 P2PKH addresses stored with BTC's version byte.
+
+        Pre-2.14.4 ingests derived fallback addresses with BTC's version byte
+        (leading ``1``) on every network, and the Delta lake stores derived
+        address strings — so a rebuild re-imports them unless this runs the
+        same normalizer as node ingest (see ingest.utxo.enrich_txs). Rewrites
+        ``inputs[].addresses`` and ``outputs[].addresses``; networks where the
+        normalizer is a no-op (unknown, or native version byte 0x00) skip the
+        UDF pass entirely.
+        """
+        params = _NETWORK_SCRIPT_PARAMS.get(self.network)
+        if params is None or params["p2pkh"] == b"\x00":
+            return tx_df
+
+        from pyspark.sql import functions as F
+
+        network = self.network
+        for col_name in ("inputs", "outputs"):
+            dtype = tx_df.schema[col_name].dataType
+            field_names = [f.name for f in dtype.elementType.fields]
+            addr_idx = field_names.index("addresses")
+
+            def normalize_ios(ios, addr_idx=addr_idx):
+                if ios is None:
+                    return ios
+                fixed = []
+                for io in ios:
+                    addrs = io[addr_idx]
+                    if addrs:
+                        vals = list(io)
+                        vals[addr_idx] = [
+                            normalize_base58_p2pkh(a, network) for a in addrs
+                        ]
+                        io = tuple(vals)
+                    fixed.append(io)
+                return fixed
+
+            tx_df = tx_df.withColumn(
+                col_name, F.udf(normalize_ios, dtype)(F.col(col_name))
+            )
+        return tx_df
+
     def _address_type_map_expr(self):
         """Build a Spark SQL map expression for address type string → int."""
         from pyspark.sql import functions as F
@@ -233,6 +280,7 @@ class UtxoTransformation:
         from pyspark.sql.types import ArrayType, BinaryType
 
         tx_df = self._get_tx_df_with_ids(start_block, end_block)
+        tx_df = self._normalize_io_addresses(tx_df)
         type_map = self._address_type_map_expr()
 
         def null_type_cond(t):

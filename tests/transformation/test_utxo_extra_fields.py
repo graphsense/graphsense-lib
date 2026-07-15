@@ -20,6 +20,7 @@ def transformer(spark, install_harness):
             spark=spark,
             delta_lake_path="s3a://unused",
             raw_keyspace="test_btc_raw",
+            network="btc",
         )
     )
 

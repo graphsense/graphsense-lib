@@ -72,6 +72,7 @@ def run(
             spark=spark,
             delta_lake_path=delta_lake_path,
             raw_keyspace=raw_keyspace,
+            network=currency,
             debug_write_audit=debug_write_audit,
         )
     else:
