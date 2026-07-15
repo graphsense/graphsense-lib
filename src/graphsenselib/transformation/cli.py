@@ -31,6 +31,40 @@ def transformation_cli():
     pass
 
 
+def _cassandra_cluster(cassandra_nodes, username, password):
+    """Driver-side Cassandra cluster for pre-Spark checks and small copies."""
+    from cassandra.cluster import Cluster as CassCluster
+
+    host, _, port = cassandra_nodes[0].partition(":")
+    cass_port = int(port) if port else 9042
+    auth_provider = None
+    if username and password:
+        from cassandra.auth import PlainTextAuthProvider
+
+        auth_provider = PlainTextAuthProvider(username=username, password=password)
+    return CassCluster([host], port=cass_port, auth_provider=auth_provider)
+
+
+def copy_exchange_rates(session, source_keyspace, target_keyspace):
+    """Copy all exchange_rates rows from one raw keyspace into another.
+
+    Driver-side, row by row: the table holds one row per day, so a full
+    LTC/BTC history is a few thousand rows. Returns the row count.
+    """
+    rows = session.execute(
+        f"SELECT date, fiat_values FROM {source_keyspace}.exchange_rates"  # noqa: S608
+    )
+    insert = session.prepare(
+        f"INSERT INTO {target_keyspace}.exchange_rates "  # noqa: S608
+        "(date, fiat_values) VALUES (?, ?)"
+    )
+    count = 0
+    for row in rows:
+        session.execute(insert, (row.date, row.fiat_values))
+        count += 1
+    return count
+
+
 @transformation_cli.group("transformation")
 def transformation():
     """Transform Delta Lake tables into Cassandra raw keyspace via PySpark."""
@@ -51,6 +85,8 @@ def _log_startup_banner(
     top_block,
     local,
     patch=False,
+    writer="cassandra",
+    exchange_rates_from=None,
 ):
     from urllib.parse import urlparse
 
@@ -84,6 +120,8 @@ def _log_startup_banner(
     lines += [
         f"  target keyspace  : {keyspace_label}",
         f"  cassandra nodes  : {', '.join(cassandra_nodes)}",
+        f"  writer           : {writer}",
+        f"  exchange rates   : {exchange_rates_from or '(not copied)'}",
         f"  start block      : {start_block}",
         f"  end block        : {end_block}",
         f"  top block        : {top_block}",
@@ -170,6 +208,27 @@ def _log_startup_banner(
         "window-local."
     ),
 )
+@click.option(
+    "--writer",
+    type=click.Choice(["cassandra", "sidecar"]),
+    default=None,
+    help=(
+        "Cassandra write path (default: from config "
+        "full_transform_args.sidecar.enabled). 'sidecar' bulk-writes SSTables "
+        "through the Cassandra Sidecar service; UTXO chains only for now."
+    ),
+)
+@click.option(
+    "--exchange-rates-from",
+    "exchange_rates_from",
+    type=str,
+    default=None,
+    help=(
+        "Copy the exchange_rates table from this (existing) raw keyspace into "
+        "the target keyspace before the Spark run — the Delta lake carries no "
+        "exchange rates."
+    ),
+)
 @spark_profile_option
 def run_transformation(
     env,
@@ -183,6 +242,8 @@ def run_transformation(
     local,
     debug_write_audit,
     patch,
+    writer,
+    exchange_rates_from,
     spark_profile,
 ):
     """Run PySpark transformation from Delta Lake to Cassandra raw keyspace.
@@ -209,6 +270,25 @@ def run_transformation(
             f"the full block range loaded by Spark; a partial rerun would "
             f"silently miss spend links whose two endpoints straddle the "
             f"window boundary. Re-run from a fresh keyspace instead."
+        )
+
+    # Sidecar bulk-write path: explicit --writer wins; otherwise the config
+    # default applies to the chains that support it. An explicit request on
+    # an unsupported chain is an error, a config default silently stays on
+    # the CQL connector there.
+    sidecar_cfg = config.get_full_transform_args().sidecar
+    if writer == "sidecar" and schema_type != "utxo":
+        raise click.UsageError(
+            f"--writer sidecar is only implemented for UTXO chains "
+            f"(got {currency}, schema_type={schema_type})."
+        )
+    use_sidecar = writer == "sidecar" or (
+        writer is None and sidecar_cfg.enabled and schema_type == "utxo"
+    )
+    if use_sidecar and not sidecar_cfg.contact_points:
+        raise click.UsageError(
+            "sidecar writer needs full_transform_args.sidecar.contact_points "
+            "set in the graphsense config."
         )
 
     # Resolve delta path from config if not overridden. S3 credentials are
@@ -269,19 +349,8 @@ def run_transformation(
     # to prevent accidental data corruption from mixing sources. Skipped
     # when --patch is set (account chains only — guarded above).
     if not patch:
-        from cassandra.cluster import Cluster as CassCluster
-
-        host, _, port = cassandra_nodes[0].partition(":")
-        cass_port = int(port) if port else 9042
-        auth_provider = None
-        if cassandra_username and cassandra_password:
-            from cassandra.auth import PlainTextAuthProvider
-
-            auth_provider = PlainTextAuthProvider(
-                username=cassandra_username, password=cassandra_password
-            )
-        with CassCluster(
-            [host], port=cass_port, auth_provider=auth_provider
+        with _cassandra_cluster(
+            cassandra_nodes, cassandra_username, cassandra_password
         ) as cluster:
             session = cluster.connect()
             rows = list(
@@ -304,6 +373,26 @@ def run_transformation(
                         f"overwrite the requested block range (account "
                         f"chains only)."
                     )
+
+    # The Delta lake carries no exchange rates; seed the target keyspace from
+    # the previous raw keyspace before the Spark run so the finished keyspace
+    # is complete the moment the ingest_complete marker lands.
+    if exchange_rates_from:
+        with _cassandra_cluster(
+            cassandra_nodes, cassandra_username, cassandra_password
+        ) as cluster:
+            copied = copy_exchange_rates(
+                cluster.connect(), exchange_rates_from, raw_keyspace
+            )
+        if copied == 0:
+            raise click.ClickException(
+                f"{exchange_rates_from}.exchange_rates is empty — wrong "
+                "source keyspace?"
+            )
+        logger.info(
+            f"Copied {copied} exchange_rates rows from {exchange_rates_from} "
+            f"to {raw_keyspace}."
+        )
 
     from graphsenselib.ingest.delta.sink import delta_lake_highest_block
     from graphsenselib.utils.locking import create_lock, delta_ingest_lock_name
@@ -337,6 +426,8 @@ def run_transformation(
         top_block=top_block,
         local=local,
         patch=patch,
+        writer="sidecar" if use_sidecar else "cassandra",
+        exchange_rates_from=exchange_rates_from,
     )
 
     # Deferred PySpark import
@@ -362,6 +453,10 @@ def run_transformation(
             spark_config=spark_config,
             spark_packages=spark_packages,
             debug_write_audit=debug_write_audit,
+            writer="sidecar" if use_sidecar else "cassandra",
+            sidecar_contact_points=sidecar_cfg.contact_points,
+            sidecar_local_dc=sidecar_cfg.local_dc,
+            sidecar_consistency_level=sidecar_cfg.consistency_level,
         )
 
 
