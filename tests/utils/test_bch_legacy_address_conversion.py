@@ -1,6 +1,43 @@
 import pytest
 
+from graphsenselib.utils.address import cannonicalize_address
 from graphsenselib.utils.bch import InvalidAddress, bch_address_to_legacy
+
+
+def test_request_path_canonicalizes_cashaddr_to_legacy():
+    """Closes #59: a CashAddr entered in a query is converted to legacy.
+
+    ``cannonicalize_address`` is the normalization applied to every user-supplied
+    address in the address/neighbor/txs request path (see
+    ``db/asynchronous/services/addresses_service.py``), so exercising it proves a
+    CashAddr entered in the REST layer resolves to the legacy address the backend
+    stores. Vectors from the BCH CashAddr spec.
+    """
+    assert (
+        cannonicalize_address(
+            "bch", "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        )
+        == "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu"
+    )
+    assert (
+        cannonicalize_address(
+            "bch", "bitcoincash:ppm2qsznhks23z7629mms6s4cwef74vcwvn0h829pq"
+        )
+        == "3CWFddi6m4ndiGyKqzYvsFYagqDLPVMTzC"
+    )
+
+    # A legacy address is already canonical and passes through unchanged.
+    assert (
+        cannonicalize_address("bch", "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu")
+        == "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu"
+    )
+
+    # Known caveat: only the ``bitcoincash:``-prefixed form is converted; a
+    # prefixless CashAddr is passed through as-is.
+    assert (
+        cannonicalize_address("bch", "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a")
+        == "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+    )
 
 
 def test_P2SH32():
