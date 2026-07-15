@@ -111,7 +111,11 @@ async def list_cluster_addresses(
     summary="List neighboring clusters",
     description=(
         "Returns neighboring clusters connected to the given cluster in the "
-        "cluster graph."
+        "cluster graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the "
+        "value transferred and number of transactions between the queried cluster "
+        "and that neighbor), while the embedded cluster object carries the "
+        "neighbor's own **lifetime** attributes, not relative to the queried "
+        "cluster."
     ),
     operation_id="list_cluster_neighbors",
     deprecated=True,

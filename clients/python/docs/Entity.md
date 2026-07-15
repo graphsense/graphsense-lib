@@ -1,6 +1,6 @@
 # Entity
 
-Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release.
+Deprecated alias of `cluster`. Use `cluster` instead; this field is retained for backwards compatibility and will be removed in a future release. When expanded to an object, these are the neighbor cluster's own lifetime attributes, NOT relative to the queried cluster or the edge between them.
 
 ## Properties
 

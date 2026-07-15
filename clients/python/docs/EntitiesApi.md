@@ -380,7 +380,7 @@ Name | Type | Description  | Notes
 
 List neighboring entities
 
-Returns neighboring entities connected to the given entity in the entity graph.
+Returns neighboring entities connected to the given entity in the entity graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the value transferred and number of transactions between the queried entity and that neighbor), while the embedded entity/cluster object carries the neighbor's own **lifetime** attributes, not relative to the queried entity.
 
 ### Example
 

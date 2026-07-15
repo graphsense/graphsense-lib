@@ -13,8 +13,8 @@ Name | Type | Description | Notes
 **balance** | [**Values**](Values.md) |  | 
 **total_received** | [**Values**](Values.md) |  | 
 **total_spent** | [**Values**](Values.md) |  | 
-**first_tx** | [**TxSummary**](TxSummary.md) |  | [optional] 
-**last_tx** | [**TxSummary**](TxSummary.md) |  | [optional] 
+**first_tx** | [**TxSummary**](TxSummary.md) | First transaction in which this address appears, over its entire history — independent of any neighbor, direction, or date filter. Null if the address has no transactions of its own. | [optional] 
+**last_tx** | [**TxSummary**](TxSummary.md) | Last transaction in which this address appears, over its entire history — independent of any neighbor, direction, or date filter. Null if the address has no transactions of its own. | [optional] 
 **in_degree** | **int** |  | 
 **out_degree** | **int** |  | 
 **no_incoming_txs** | **int** |  | 

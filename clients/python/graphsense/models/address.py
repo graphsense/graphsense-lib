@@ -35,8 +35,8 @@ class Address(BaseModel):
     balance: Values
     total_received: Values
     total_spent: Values
-    first_tx: Optional[TxSummary] = None
-    last_tx: Optional[TxSummary] = None
+    first_tx: Optional[TxSummary] = Field(default=None, description="First transaction in which this address appears, over its entire history — independent of any neighbor, direction, or date filter. Null if the address has no transactions of its own.")
+    last_tx: Optional[TxSummary] = Field(default=None, description="Last transaction in which this address appears, over its entire history — independent of any neighbor, direction, or date filter. Null if the address has no transactions of its own.")
     in_degree: StrictInt
     out_degree: StrictInt
     no_incoming_txs: StrictInt

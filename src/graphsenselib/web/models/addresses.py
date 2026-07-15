@@ -48,8 +48,18 @@ class Address(APIModel):
     # None when the address has no transactions of its own (first_tx_id == -1),
     # e.g. an account address that only ever paid a failed-tx gas fee or only
     # received a coinbase/miner reward.
-    first_tx: Optional[TxSummary] = None
-    last_tx: Optional[TxSummary] = None
+    first_tx: Optional[TxSummary] = Field(
+        default=None,
+        description="First transaction in which this address appears, over its "
+        "entire history — independent of any neighbor, direction, or date "
+        "filter. Null if the address has no transactions of its own.",
+    )
+    last_tx: Optional[TxSummary] = Field(
+        default=None,
+        description="Last transaction in which this address appears, over its "
+        "entire history — independent of any neighbor, direction, or date "
+        "filter. Null if the address has no transactions of its own.",
+    )
     in_degree: int
     out_degree: int
     no_incoming_txs: int
@@ -95,11 +105,27 @@ class NeighborAddress(APIModel):
         }
     )
 
-    value: Values
-    no_txs: int
-    address: Address
+    value: Values = Field(
+        description="Total value transferred on the edge between the queried "
+        "address and this neighbor (edge-scoped, not the neighbor's lifetime "
+        "total)."
+    )
+    no_txs: int = Field(
+        description="Number of transactions on the edge between the queried "
+        "address and this neighbor (edge-scoped, not the neighbor's lifetime "
+        "transaction count)."
+    )
+    address: Address = Field(
+        description="The neighbor address with its own address-level attributes. "
+        "These are the neighbor's lifetime values (its own balance, degrees, "
+        "first_tx/last_tx, …), NOT relative to the queried address or the edge "
+        "between them."
+    )
     labels: Optional[list[str]] = None
-    token_values: Optional[dict[str, Values]] = None
+    token_values: Optional[dict[str, Values]] = Field(
+        default=None,
+        description="Per-token value transferred on this edge (edge-scoped).",
+    )
 
 
 class NeighborAddresses(APIModel):

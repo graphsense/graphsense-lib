@@ -246,7 +246,11 @@ async def list_address_txs(
     summary="List neighboring addresses",
     description=(
         "Returns neighboring addresses connected to the given address in the "
-        "transaction graph."
+        "transaction graph. Per neighbor, `value` and `no_txs` are **edge-scoped** "
+        "(the value transferred and number of transactions between the queried "
+        "address and that neighbor), while the embedded `address` object carries "
+        "the neighbor's own **lifetime** attributes (its balance, degrees, "
+        "first_tx/last_tx, …), not relative to the queried address."
     ),
     operation_id="list_address_neighbors",
     response_model=NeighborAddresses,

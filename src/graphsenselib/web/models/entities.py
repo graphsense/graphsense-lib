@@ -56,8 +56,14 @@ class Entity(APIModel):
     balance: Values
     total_received: Values
     total_spent: Values
-    first_tx: TxSummary
-    last_tx: TxSummary
+    first_tx: TxSummary = Field(
+        description="First transaction in which this cluster appears, over its "
+        "entire history — independent of any neighbor, direction, or date filter."
+    )
+    last_tx: TxSummary = Field(
+        description="Last transaction in which this cluster appears, over its "
+        "entire history — independent of any neighbor, direction, or date filter."
+    )
     in_degree: int
     out_degree: int
     no_addresses: int
@@ -103,17 +109,30 @@ class NeighborEntity(APIModel):
         }
     )
 
-    value: Values
-    no_txs: int
+    value: Values = Field(
+        description="Total value transferred on the edge between the queried "
+        "cluster and this neighbor (edge-scoped, not the neighbor's lifetime "
+        "total)."
+    )
+    no_txs: int = Field(
+        description="Number of transactions on the edge between the queried "
+        "cluster and this neighbor (edge-scoped, not the neighbor's lifetime "
+        "transaction count)."
+    )
     entity: Optional[Union[Entity, int]] = Field(
         default=None,
         description="Deprecated alias of `cluster`. Use `cluster` instead; this "
         "field is retained for backwards compatibility and will be removed in a "
-        "future release.",
+        "future release. When expanded to an object, these are the neighbor "
+        "cluster's own lifetime attributes, NOT relative to the queried cluster "
+        "or the edge between them.",
         json_schema_extra={"deprecated": True},
     )
     labels: Optional[list[str]] = None
-    token_values: Optional[dict[str, Values]] = None
+    token_values: Optional[dict[str, Values]] = Field(
+        default=None,
+        description="Per-token value transferred on this edge (edge-scoped).",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -15,7 +15,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from graphsense.models.cluster import Cluster
 from graphsense.models.entity import Entity
@@ -28,10 +28,10 @@ class NeighborEntity(BaseModel):
     Neighbor cluster model (legacy name: NeighborEntity).  Dual-emits the neighbor reference under both `entity` (deprecated) and `cluster` (preferred) keys, mirroring the alias pattern on the top-level `Entity`/`Cluster` models. The value is either an integer ID or a full `Entity`/`Cluster` object; whichever shape `entity` carries, `cluster` carries the same value.
     """ # noqa: E501
     value: Values
-    no_txs: StrictInt
+    no_txs: StrictInt = Field(description="Number of transactions on the edge between the queried cluster and this neighbor (edge-scoped, not the neighbor's lifetime transaction count).")
     entity: Optional[Entity] = None
     labels: Optional[List[StrictStr]] = None
-    token_values: Optional[Dict[str, Values]] = None
+    token_values: Optional[Dict[str, Values]] = Field(default=None, description="Per-token value transferred on this edge (edge-scoped).")
     cluster: Optional[Cluster]
     __properties: ClassVar[List[str]] = ["value", "no_txs", "entity", "labels", "token_values", "cluster"]
 

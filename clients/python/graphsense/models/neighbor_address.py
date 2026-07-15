@@ -15,7 +15,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from graphsense.models.address import Address
 from graphsense.models.values import Values
@@ -27,10 +27,10 @@ class NeighborAddress(BaseModel):
     Neighbor address model.
     """ # noqa: E501
     value: Values
-    no_txs: StrictInt
+    no_txs: StrictInt = Field(description="Number of transactions on the edge between the queried address and this neighbor (edge-scoped, not the neighbor's lifetime transaction count).")
     address: Address
     labels: Optional[List[StrictStr]] = None
-    token_values: Optional[Dict[str, Values]] = None
+    token_values: Optional[Dict[str, Values]] = Field(default=None, description="Per-token value transferred on this edge (edge-scoped).")
     __properties: ClassVar[List[str]] = ["value", "no_txs", "address", "labels", "token_values"]
 
     model_config = ConfigDict(

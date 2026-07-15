@@ -1555,7 +1555,7 @@ class EntitiesApi:
     ) -> NeighborEntities:
         """(Deprecated) List neighboring entities
 
-        Returns neighboring entities connected to the given entity in the entity graph.
+        Returns neighboring entities connected to the given entity in the entity graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the value transferred and number of transactions between the queried entity and that neighbor), while the embedded entity/cluster object carries the neighbor's own **lifetime** attributes, not relative to the queried entity.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -1661,7 +1661,7 @@ class EntitiesApi:
     ) -> ApiResponse[NeighborEntities]:
         """(Deprecated) List neighboring entities
 
-        Returns neighboring entities connected to the given entity in the entity graph.
+        Returns neighboring entities connected to the given entity in the entity graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the value transferred and number of transactions between the queried entity and that neighbor), while the embedded entity/cluster object carries the neighbor's own **lifetime** attributes, not relative to the queried entity.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -1767,7 +1767,7 @@ class EntitiesApi:
     ) -> RESTResponseType:
         """(Deprecated) List neighboring entities
 
-        Returns neighboring entities connected to the given entity in the entity graph.
+        Returns neighboring entities connected to the given entity in the entity graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the value transferred and number of transactions between the queried entity and that neighbor), while the embedded entity/cluster object carries the neighbor's own **lifetime** attributes, not relative to the queried entity.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str

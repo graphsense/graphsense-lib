@@ -122,7 +122,10 @@ async def list_entity_addresses(
     summary="List neighboring entities",
     description=(
         "Returns neighboring entities connected to the given entity in the entity "
-        "graph."
+        "graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the value "
+        "transferred and number of transactions between the queried entity and that "
+        "neighbor), while the embedded entity/cluster object carries the neighbor's "
+        "own **lifetime** attributes, not relative to the queried entity."
     ),
     operation_id="list_entity_neighbors",
     deprecated=True,

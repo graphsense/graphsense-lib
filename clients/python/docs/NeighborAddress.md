@@ -7,10 +7,10 @@ Neighbor address model.
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **value** | [**Values**](Values.md) |  | 
-**no_txs** | **int** |  | 
+**no_txs** | **int** | Number of transactions on the edge between the queried address and this neighbor (edge-scoped, not the neighbor&#39;s lifetime transaction count). | 
 **address** | [**Address**](Address.md) |  | 
 **labels** | **List[str]** |  | [optional] 
-**token_values** | [**Dict[str, Values]**](Values.md) |  | [optional] 
+**token_values** | [**Dict[str, Values]**](Values.md) | Per-token value transferred on this edge (edge-scoped). | [optional] 
 
 ## Example
 

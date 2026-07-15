@@ -461,7 +461,7 @@ Name | Type | Description  | Notes
 
 List neighboring addresses
 
-Returns neighboring addresses connected to the given address in the transaction graph.
+Returns neighboring addresses connected to the given address in the transaction graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the value transferred and number of transactions between the queried address and that neighbor), while the embedded `address` object carries the neighbor's own **lifetime** attributes (its balance, degrees, first_tx/last_tx, …), not relative to the queried address.
 
 ### Example
 

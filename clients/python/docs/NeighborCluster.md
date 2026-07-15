@@ -7,10 +7,10 @@ Neighbor cluster (canonical name, supersedes `NeighborEntity`).
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **value** | [**Values**](Values.md) |  | 
-**no_txs** | **int** |  | 
+**no_txs** | **int** | Number of transactions on the edge between the queried cluster and this neighbor (edge-scoped, not the neighbor&#39;s lifetime transaction count). | 
 **entity** | [**Entity**](Entity.md) |  | [optional] 
 **labels** | **List[str]** |  | [optional] 
-**token_values** | [**Dict[str, Values]**](Values.md) |  | [optional] 
+**token_values** | [**Dict[str, Values]**](Values.md) | Per-token value transferred on this edge (edge-scoped). | [optional] 
 **cluster** | [**Cluster**](Cluster.md) |  | 
 
 ## Example

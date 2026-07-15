@@ -380,7 +380,7 @@ Name | Type | Description  | Notes
 
 List neighboring clusters
 
-Returns neighboring clusters connected to the given cluster in the cluster graph.
+Returns neighboring clusters connected to the given cluster in the cluster graph. Per neighbor, `value` and `no_txs` are **edge-scoped** (the value transferred and number of transactions between the queried cluster and that neighbor), while the embedded cluster object carries the neighbor's own **lifetime** attributes, not relative to the queried cluster.
 
 ### Example
 
