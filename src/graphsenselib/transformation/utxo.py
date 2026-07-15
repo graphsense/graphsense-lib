@@ -11,6 +11,10 @@ from graphsenselib.ingest.utxo import (
     normalize_base58_p2pkh,
 )
 from graphsenselib.transformation.account import _write_ingest_complete_marker
+from graphsenselib.transformation.sidecar import (
+    bulk_write_dataframe,
+    sidecar_writer_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,10 @@ class UtxoTransformation:
         tx_bucket_size=UTXO_TX_BUCKET_SIZE,
         tx_hash_prefix_len=UTXO_TX_HASH_PREFIX_LEN,
         debug_write_audit=False,
+        writer="cassandra",
+        sidecar_contact_points=None,
+        sidecar_local_dc=None,
+        sidecar_consistency_level="LOCAL_QUORUM",
     ):
         self.spark = spark
         # Spark/Hadoop uses s3a:// not s3://
@@ -60,6 +68,20 @@ class UtxoTransformation:
         self.tx_bucket_size = tx_bucket_size
         self.tx_hash_prefix_len = tx_hash_prefix_len
         self.debug_write_audit = debug_write_audit
+        self.writer = writer
+        self.sidecar_contact_points = sidecar_contact_points
+        self.sidecar_local_dc = sidecar_local_dc
+        self.sidecar_consistency_level = sidecar_consistency_level
+        if writer == "sidecar":
+            # Fail fast on missing/invalid sidecar settings, not minutes in
+            # at the first Cassandra write.
+            sidecar_writer_options(
+                keyspace=raw_keyspace,
+                table="transaction",
+                contact_points=sidecar_contact_points or [],
+                local_dc=sidecar_local_dc,
+                consistency_level=sidecar_consistency_level,
+            )
         self._tx_df_cache = None
         self._tx_df_cache_range = None
 
@@ -81,12 +103,22 @@ class UtxoTransformation:
             df = df.repartition(partition_key)
         if self.debug_write_audit and partition_key and partition_key in df.columns:
             self._log_partition_audit(df, table_name, partition_key)
-        (
-            df.write.format("org.apache.spark.sql.cassandra")
-            .options(table=table_name, keyspace=self.raw_keyspace)
-            .mode("append")
-            .save()
-        )
+        if self.writer == "sidecar":
+            bulk_write_dataframe(
+                df,
+                keyspace=self.raw_keyspace,
+                table=table_name,
+                contact_points=self.sidecar_contact_points,
+                local_dc=self.sidecar_local_dc,
+                consistency_level=self.sidecar_consistency_level,
+            )
+        else:
+            (
+                df.write.format("org.apache.spark.sql.cassandra")
+                .options(table=table_name, keyspace=self.raw_keyspace)
+                .mode("append")
+                .save()
+            )
         logger.info(f"Wrote to {self.raw_keyspace}.{table_name}")
 
     def _log_partition_audit(self, df, table_name, partition_key):

@@ -23,10 +23,20 @@ def run(
     spark_config=None,
     spark_packages=None,
     debug_write_audit=False,
+    writer="cassandra",
+    sidecar_contact_points=None,
+    sidecar_local_dc=None,
+    sidecar_consistency_level="LOCAL_QUORUM",
 ):
     from graphsenselib.transformation.spark import create_spark_session
 
     schema_type = currency_to_schema_type.get(currency)
+
+    if writer == "sidecar" and schema_type != "utxo":
+        raise ValueError(
+            f"writer='sidecar' is only implemented for UTXO chains "
+            f"(got {currency}, schema_type={schema_type})."
+        )
 
     spark = create_spark_session(
         app_name=f"graphsense-bulk-ingest-{currency}-{env}",
@@ -37,6 +47,7 @@ def run(
         s3_credentials=s3_credentials,
         spark_config=spark_config,
         spark_packages=spark_packages,
+        sidecar=writer == "sidecar",
     )
 
     if end_block is None:
@@ -74,6 +85,10 @@ def run(
             raw_keyspace=raw_keyspace,
             network=currency,
             debug_write_audit=debug_write_audit,
+            writer=writer,
+            sidecar_contact_points=sidecar_contact_points,
+            sidecar_local_dc=sidecar_local_dc,
+            sidecar_consistency_level=sidecar_consistency_level,
         )
     else:
         spark.stop()

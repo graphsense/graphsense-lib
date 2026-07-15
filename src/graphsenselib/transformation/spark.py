@@ -20,6 +20,20 @@ DEFAULT_SPARK_PACKAGES = {
 }
 
 
+def _apply_sidecar_settings(packages, spark_config):
+    """Return (packages, spark_config) augmented for the Sidecar bulk writer.
+
+    Adds the cassandra-analytics package and the SSTable-writer JVM flags;
+    requires ``spark.local.dir`` in ``spark_config`` for the temp-dir redirect.
+    """
+    from graphsenselib.transformation.sidecar import (
+        sidecar_packages,
+        sidecar_spark_properties,
+    )
+
+    return sidecar_packages(packages), sidecar_spark_properties(spark_config or {})
+
+
 def create_spark_session(
     app_name,
     local,
@@ -29,6 +43,7 @@ def create_spark_session(
     s3_credentials=None,
     spark_config=None,
     spark_packages=None,
+    sidecar=False,
 ):
     """Create and configure a SparkSession for reading Delta Lake and writing to Cassandra.
 
@@ -80,6 +95,11 @@ def create_spark_session(
     ]
     if s3_credentials:
         packages.append(coords["hadoop_aws"])
+
+    # Sidecar bulk writes need the analytics package and JVM flags in force
+    # at JVM launch; both must land in the builder config before getOrCreate.
+    if sidecar:
+        packages, spark_config = _apply_sidecar_settings(packages, spark_config)
 
     builder = (
         builder.config("spark.jars.packages", ",".join(packages))

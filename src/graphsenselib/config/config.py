@@ -410,7 +410,8 @@ DEFAULT_SCALA_JOB_PACKAGES = [
 
 
 class SidecarConfig(BaseModel):
-    """Opt-in Cassandra Sidecar bulk-write path for the full transform.
+    """Opt-in Cassandra Sidecar bulk-write path for the Spark transforms
+    (`raw-to-transformed` and, for UTXO chains, `delta-to-raw`).
 
     When enabled the runner adds the cassandra-analytics package (needed even
     with the fat jar, where it is not bundled), the SSTable-writer JVM module
