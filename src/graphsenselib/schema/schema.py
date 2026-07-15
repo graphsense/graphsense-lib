@@ -405,7 +405,6 @@ class GraphsenseSchemas:
         currency,
         keyspace_type,
         keyspace_name_override: Optional[str] = None,
-        replication_config_override: Optional[str] = None,
     ):
         config = get_config()
         with self._db_with_override(
@@ -429,7 +428,7 @@ class GraphsenseSchemas:
                     f"{env}:{currency} exists: {target_ks_name}, nothing to do"
                 )
             else:
-                replication_config = replication_config_override or (
+                replication_config = (
                     config.get_keyspace_config(env, currency)
                     .keyspace_setup_config[keyspace_type]
                     .replication_config
