@@ -138,7 +138,28 @@ class BlocksService:
 
         if min_height is None and min_date is not None:
             bspec_min = await self.get_block_by_date(network, min_date)
-            min_height = bspec_min.before_block
+            # Issue #52: min_date is inclusive, so the lower height bound must be
+            # the FIRST block whose timestamp is >= min_date. before_block is the
+            # last block with ts <= min_date, so using it directly pulled in a
+            # whole block of transactions timestamped *before* min_date. Prefer
+            # before_block only when it sits exactly on the boundary (ts ==
+            # min_date), otherwise step up to after_block.
+            min_ts = int(min_date.timestamp())
+            if (
+                bspec_min.before_block is not None
+                and bspec_min.before_timestamp is not None
+                and bspec_min.before_timestamp >= min_ts
+            ):
+                min_height = bspec_min.before_block
+            elif bspec_min.after_block is not None:
+                min_height = bspec_min.after_block
+            elif bspec_min.before_block is not None:
+                # min_date is past the chain tip: no block qualifies, so step
+                # past the last block to yield an empty range.
+                min_height = bspec_min.before_block + 1
+            else:
+                # min_date is at/before the first block: no lower bound needed.
+                min_height = None
 
         if max_height is None and max_date is not None:
             bspec_max = await self.get_block_by_date(network, max_date)
