@@ -36,10 +36,12 @@ independent Spark P2PK derivation that could disagree about a version byte. (Thi
 does not exempt derived-table *aggregation* from Spark parity — only the
 address-string encoding.)
 
-Two related facts: **graphsense-spark has no DOGE support** (`address_to_str`
-handles only `btc | ltc | zec | bch`; no `dogecoin` config), so a DOGE-side
-address fix has no Spark counterpart to sync — but DOGE keyspaces also aren't
-produced by the batch transformation. And the **cross-chain pubkey dataset**
+Two related facts: **DOGE is not ingested at the moment, and graphsense-spark has
+no DOGE support** (`address_to_str` handles only `btc | ltc | zec | bch`; no
+`dogecoin` config), so a DOGE-side address fix has no Spark counterpart to sync —
+but DOGE keyspaces also aren't produced by the batch transformation. DOGE entries
+in the ingest version tables are kept only so the two ingest P2PK paths stay
+consistent if/when doge ingest is enabled. And the **cross-chain pubkey dataset**
 (`pubkey/job.py` → `pubkey_by_address`, deriving addresses via
 `utils/pubkey_to_address.convert_pubkey_to_addresses`) is a gslib-owned Spark job,
 **not** part of graphsense-spark — changes there need no graphsense-spark

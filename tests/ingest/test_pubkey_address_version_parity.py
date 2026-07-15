@@ -16,11 +16,20 @@ from graphsenselib.ingest.rpc_utxo import (
     _PUBKEY_ADDRESS_VERSION,
     _p2pk_address_from_script,
 )
+from graphsenselib.ingest.utxo import _NETWORK_SCRIPT_PARAMS
 from graphsenselib.utils.pubkey_to_address import (
     MAINNET_ADDRESS_SPECS,
     compress_public_key,
     convert_pubkey_to_addresses,
 )
+
+# The three independent per-network P2PKH/t1 version-byte tables that must agree:
+#   - rpc_utxo._PUBKEY_ADDRESS_VERSION      (P2PK fast path, node omits address)
+#   - utxo._NETWORK_SCRIPT_PARAMS[..]["p2pkh"]  (parse_script enrich path)
+#   - pubkey_to_address.MAINNET_ADDRESS_SPECS   (cross-chain pubkey derivation)
+# The two ingest paths derive the same P2PK output address, and it must equal the
+# pubkey_by_address key; a drift in any one silently diverges an ingested address
+# from its pubkey mapping (or the two ingest paths from each other).
 
 # ingest network code -> (MAINNET_ADDRESS_SPECS group, P2PKH/t1 version field).
 # BCH legacy base58 shares BTC's version bytes, so its P2PK output is emitted as
@@ -56,11 +65,16 @@ _UNCOMP_PUBKEY = (
 
 
 def test_version_tables_cover_the_same_networks():
-    # If a chain is added to one table but not the other, the ingest deriver
-    # silently falls back to BTC's 0x00 for it. Force both to move together.
+    # If a chain is added to one table but not another, the ingest derivers
+    # silently fall back to BTC's 0x00 for it. Force all three to move together.
     assert set(_PUBKEY_ADDRESS_VERSION) == set(_VERSION_SPEC_MAP), (
         "ingest _PUBKEY_ADDRESS_VERSION and the parity map disagree on covered "
         "networks; update both (and MAINNET_ADDRESS_SPECS) when adding a chain"
+    )
+    assert set(_NETWORK_SCRIPT_PARAMS) == set(_PUBKEY_ADDRESS_VERSION), (
+        "utxo._NETWORK_SCRIPT_PARAMS (parse_script) and "
+        "rpc_utxo._PUBKEY_ADDRESS_VERSION (P2PK fast path) cover different "
+        "networks; the two ingest paths would disagree on a P2PK address"
     )
 
 
@@ -70,6 +84,11 @@ def test_version_byte_parity(net):
     assert _PUBKEY_ADDRESS_VERSION[net] == MAINNET_ADDRESS_SPECS[group][field], (
         f"P2PK version byte for {net!r} disagrees with "
         f"MAINNET_ADDRESS_SPECS[{group!r}][{field!r}]"
+    )
+    # The parse_script enrich path must agree with the P2PK fast path.
+    assert _NETWORK_SCRIPT_PARAMS[net]["p2pkh"] == _PUBKEY_ADDRESS_VERSION[net], (
+        f"P2PKH version byte for {net!r} disagrees between "
+        "utxo._NETWORK_SCRIPT_PARAMS and rpc_utxo._PUBKEY_ADDRESS_VERSION"
     )
 
 

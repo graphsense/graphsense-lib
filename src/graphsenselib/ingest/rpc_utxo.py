@@ -283,7 +283,8 @@ _PUBKEY_ADDRESS_VERSION = {
     "btc": b"\x00",
     "bch": b"\x00",
     "ltc": b"\x30",
-    "doge": b"\x1e",  # Dogecoin P2PKH "D" prefix
+    "doge": b"\x1e",  # Dogecoin P2PKH "D" prefix (doge not ingested yet; kept
+    # so this path and utxo._NETWORK_SCRIPT_PARAMS agree if doge is enabled)
     "zec": b"\x1c\xb8",  # Zcash t1 prefix
 }
 
