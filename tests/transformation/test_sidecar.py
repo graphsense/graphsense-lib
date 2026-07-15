@@ -95,6 +95,31 @@ def test_spark_properties_augment_java_options():
     assert props["spark.executor.extraJavaOptions"].startswith("-Xss4m ")
 
 
+def test_spark_properties_set_kryo_for_bulk_writer():
+    # DecoratedKey carries a ByteBuffer; task results with it fail Java
+    # serialization ("not serializable result: java.nio.HeapByteBuffer").
+    # The bulk writer requires Kryo plus its registrator.
+    props = sidecar_spark_properties({"spark.local.dir": "/data/tmp"})
+    assert props["spark.serializer"] == "org.apache.spark.serializer.KryoSerializer"
+    assert (
+        props["spark.kryo.registrator"]
+        == "org.apache.cassandra.spark.bulkwriter.util.SbwKryoRegistrator"
+    )
+
+
+def test_spark_properties_append_to_existing_kryo_registrator():
+    props = sidecar_spark_properties(
+        {
+            "spark.local.dir": "/data/tmp",
+            "spark.kryo.registrator": "com.example.MyRegistrator",
+        }
+    )
+    assert props["spark.kryo.registrator"] == (
+        "com.example.MyRegistrator,"
+        "org.apache.cassandra.spark.bulkwriter.util.SbwKryoRegistrator"
+    )
+
+
 def test_spark_properties_use_first_of_local_dir_list():
     # spark.local.dir may be a comma-separated list; java.io.tmpdir must be
     # a single path

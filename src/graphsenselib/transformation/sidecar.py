@@ -27,6 +27,14 @@ _SIDECAR_MODULE_FLAGS = (
     "--add-opens java.base/sun.nio.ch=ALL-UNNAMED"
 )
 
+# The bulk writer's task results carry DecoratedKey (wraps a ByteBuffer),
+# which Java serialization rejects ("not serializable result:
+# java.nio.HeapByteBuffer"). Kryo + the analytics registrator are required.
+_KRYO_SERIALIZER = "org.apache.spark.serializer.KryoSerializer"
+_SIDECAR_KRYO_REGISTRATOR = (
+    "org.apache.cassandra.spark.bulkwriter.util.SbwKryoRegistrator"
+)
+
 
 def sidecar_spark_properties(spark_props: Dict[str, str]) -> Dict[str, str]:
     """Return a copy of ``spark_props`` with the SSTable-writer JVM flags.
@@ -62,6 +70,13 @@ def sidecar_spark_properties(spark_props: Dict[str, str]) -> Dict[str, str]:
     for key in ("spark.driver.extraJavaOptions", "spark.executor.extraJavaOptions"):
         existing = props.get(key, "").strip()
         props[key] = f"{existing} {jvm}".strip() if existing else jvm
+
+    props["spark.serializer"] = _KRYO_SERIALIZER
+    registrator = props.get("spark.kryo.registrator", "").strip()
+    if registrator and _SIDECAR_KRYO_REGISTRATOR not in registrator.split(","):
+        props["spark.kryo.registrator"] = f"{registrator},{_SIDECAR_KRYO_REGISTRATOR}"
+    else:
+        props.setdefault("spark.kryo.registrator", _SIDECAR_KRYO_REGISTRATOR)
     return props
 
 
