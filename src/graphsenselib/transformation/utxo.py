@@ -303,6 +303,10 @@ class UtxoTransformation:
             "block_id_group",
             F.floor(F.col("block_id") / self.block_bucket_size).cast("int"),
         )
+        # Delta stores block.timestamp as int64; the CQL column is int. The
+        # sidecar bulk writer refuses to narrow Long -> int (the classic
+        # connector did it silently), so cast before the write.
+        df = df.withColumn("timestamp", F.col("timestamp").cast("int"))
         drop_cols = [c for c in _DELTA_ONLY_COLS_BLOCK if c in df.columns]
         df = df.drop(*drop_cols)
         self._write_cassandra(df, "block")
@@ -537,7 +541,9 @@ class UtxoTransformation:
         schema = StructType(
             [
                 StructField("id", StringType(), False),
-                StructField("no_blocks", LongType(), False),
+                # CQL: no_blocks int, no_txs bigint — the sidecar bulk writer
+                # rejects a LongType DataFrame column on an int CQL column.
+                StructField("no_blocks", IntegerType(), False),
                 StructField("no_txs", LongType(), False),
                 StructField("timestamp", IntegerType(), False),
             ]
