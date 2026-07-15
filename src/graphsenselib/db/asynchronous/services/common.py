@@ -219,6 +219,7 @@ class TagstoreProtocol(Protocol):
 
 class DatabaseProtocol(Protocol):
     async def get_address_entity_id(self, currency: str, address: str) -> int: ...
+    async def get_address_id_id_group(self, currency: str, address: str) -> tuple: ...
     async def get_fresh_cluster_id(
         self, currency: str, address_id: int
     ) -> Optional[int]: ...
@@ -337,6 +338,50 @@ async def try_get_cluster_id(
         BadUserInputException,
     ):
         returnv = None
+
+    if cache is not None:
+        cache[key] = returnv
+
+    return returnv
+
+
+async def try_get_tag_cluster_id(
+    db: DatabaseProtocol, network: str, address: str, cache=None
+) -> Optional[int]:
+    """Public cluster id for tagstore lookups — fresh-aware.
+
+    The tagstore cluster relations are self-routing on public ids (fresh ids
+    are shifted above ``FRESH_CLUSTER_ID_OFFSET`` and route to the ``*_v2``
+    relations), so inherited cluster tags must be looked up with the fresh
+    public id when the keyspace has fresh clustering active — resolved via
+    the legacy id, an address merged only in fresh clustering points at its
+    unmerged legacy cluster and inherits nothing. Falls back to
+    :func:`try_get_cluster_id` when fresh clustering is inactive.
+
+    Only for tagstore lookups: ``tag.entity`` and other public entity fields
+    stay legacy (``fresh_cluster_id`` is exposed separately on addresses).
+    """
+    key = f"tag_cluster_id_{network}_{address}"
+    if cache is not None and key in cache:
+        return cache[key]
+
+    returnv = None
+    network_lower = network.lower()
+    if not is_eth_like(network_lower):
+        try:
+            address_canonical = cannonicalize_address(network_lower, address)
+            address_id, _ = await db.get_address_id_id_group(
+                network_lower, address_canonical
+            )
+            returnv = await db.get_fresh_cluster_id(network_lower, address_id)
+        except (
+            AddressNotFoundException,
+            NetworkNotFoundException,
+            BadUserInputException,
+        ):
+            returnv = None
+    if returnv is None:
+        returnv = await try_get_cluster_id(db, network, address, cache)
 
     if cache is not None:
         cache[key] = returnv
