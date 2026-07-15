@@ -523,6 +523,57 @@ def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str
     )
 
 
+_BASE58_ALPHABET = frozenset(
+    "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+)
+
+
+def normalize_base58_p2pkh(address: Optional[str], network: str) -> Optional[str]:
+    """Re-encode a base58check P2PKH address carrying BTC's version byte
+    (0x00, leading ``1``) to ``network``'s own P2PKH version byte.
+
+    Pre-2.14.4 ingests derived fallback addresses with btcpy's hardcoded
+    ``mainnet=True`` (BTC version byte) on every network; stored LTC P2PK
+    rows — and their spends, via input resolution against those rows — still
+    carry that form. Only version byte 0x00 is rewritten: P2SH stays
+    untouched because legacy LTC P2SH legitimately uses BTC's 0x05, and on
+    the affected networks no legitimate encoding starts with a 0x00 version
+    byte. No-op for networks sharing BTC's version byte, unknown networks,
+    and strings that are not valid 0x00-prefixed base58check.
+    """
+    params = _NETWORK_SCRIPT_PARAMS.get(network)
+    if params is None or params["p2pkh"] == b"\x00":
+        return address
+    if not address or address[0] != "1" or not set(address) <= _BASE58_ALPHABET:
+        return address
+
+    import base58
+
+    from graphsenselib.utils.pubkey_to_address import base58check_encode, double_sha256
+
+    raw = base58.b58decode(address)
+    if len(raw) != 25 or raw[0] != 0x00 or double_sha256(raw[:-4])[:4] != raw[-4:]:
+        return address
+    return base58check_encode(params["p2pkh"], raw[1:-4])
+
+
+def normalize_tx_addresses_inplace(txs: Iterable, network: str) -> None:
+    """Rewrite BTC-form base58 P2PKH addresses in every input/output
+    ``addresses`` list to ``network``'s version byte
+    (see :func:`normalize_base58_p2pkh`)."""
+    params = _NETWORK_SCRIPT_PARAMS.get(network)
+    if params is None or params["p2pkh"] == b"\x00":
+        return
+    for tx in txs:
+        for io_list in (tx["inputs"], tx["outputs"]):
+            for io in io_list:
+                addresses = io.get("addresses")
+                if addresses and any(a and a[0] == "1" for a in addresses):
+                    io["addresses"] = [
+                        normalize_base58_p2pkh(a, network) for a in addresses
+                    ]
+
+
 def enrich_txs(
     txs: Iterable,
     resolver: Optional[OutputResolverBase],
@@ -654,6 +705,11 @@ def enrich_txs(
             tx["input_value"] = sum(
                 [i["value"] for i in tx["inputs"] if i["value"] is not None]
             )
+
+    # Stored pre-fix rows (via the Cassandra resolver) and sources replaying
+    # old data may still carry BTC-form base58 addresses on non-BTC networks;
+    # normalize every input/output address list on the way in.
+    normalize_tx_addresses_inplace(txs, network)
 
 
 def prepare_transactions_inplace(
