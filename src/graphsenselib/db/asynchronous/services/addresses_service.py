@@ -581,7 +581,9 @@ class AddressesService:
             )
         except asyncio.TimeoutError:
             raise Exception(
-                f"Timeout while fetching links for {currency}/{address} to {neighbor}"
+                f"Timeout while fetching links for {currency}/"
+                f"{address_to_user_format(currency, address)} to "
+                f"{address_to_user_format(currency, neighbor)}"
             )
 
         return await links_response(
