@@ -15,6 +15,38 @@ disagree, match Spark's behavior — do not "fix" it only on the delta side. If 
 Spark side needs to change too, flag it; a delta-only change that Spark can't
 reproduce is a divergence bug waiting to surface at the next full re-run.
 
+### UTXO address strings: graphsense-spark decodes, it never derives
+
+The one exception to "check Spark before changing address logic" is the UTXO
+address **string** itself. graphsense-spark does **not** derive UTXO addresses
+from scripts — it is a pure bytes→string codec (`AddressDecoder.scala`), the exact
+inverse of gslib's string→bytes codec (`utils/address.py`,
+`AddressConverterBtcLike.to_bytes`). Both just bit-pack/unpack the base58/bech32/
+base62 characters; the version byte (LTC `0x30`, ZEC t1 `0x1cb8`, DOGE `0x1e`, …)
+is baked into the string upstream by the gslib **parser**
+(`ingest/utxo.parse_script`, `ingest/rpc_utxo._p2pk_address_from_script`). Spark
+picks the alphabet by inspecting the stored bytes' leading bits — it never reads a
+version byte or re-derives from a script.
+
+Consequence: a change to how gslib encodes a UTXO address string (e.g. the
+network-aware P2PK/parse_script fix that moved LTC from `1417…` to `LNE5…`) needs
+**no** graphsense-spark change — Spark round-trips whatever string gslib produced,
+so the gslib parser is itself the ground truth for the string. There is no
+independent Spark P2PK derivation that could disagree about a version byte. (This
+does not exempt derived-table *aggregation* from Spark parity — only the
+address-string encoding.)
+
+Two related facts: **graphsense-spark has no DOGE support** (`address_to_str`
+handles only `btc | ltc | zec | bch`; no `dogecoin` config), so a DOGE-side
+address fix has no Spark counterpart to sync — but DOGE keyspaces also aren't
+produced by the batch transformation. And the **cross-chain pubkey dataset**
+(`pubkey/job.py` → `pubkey_by_address`, deriving addresses via
+`utils/pubkey_to_address.convert_pubkey_to_addresses`) is a gslib-owned Spark job,
+**not** part of graphsense-spark — changes there need no graphsense-spark
+coordination. Note the two P2PK version-byte tables that must stay in lockstep —
+`rpc_utxo._PUBKEY_ADDRESS_VERSION` and `pubkey_to_address.MAINNET_ADDRESS_SPECS` —
+are guarded by `tests/ingest/test_pubkey_address_version_parity.py`.
+
 ## Database / Cassandra retry architecture
 
 The Cassandra retry handling in `src/graphsenselib/db/cassandra.py` is split across

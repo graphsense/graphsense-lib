@@ -275,11 +275,15 @@ def _script_hex_to_non_standard_address(script_hex):
 # P2PKH/t1 address version byte per network, used to derive the address of a
 # P2PK output that a node classifies as type "pubkey" but returns without an
 # address. zcashd populates it; Zebra and modern Bitcoin Core do not. BCH
-# legacy addresses share BTC's version bytes.
+# legacy addresses share BTC's version bytes. Must stay in lockstep with
+# pubkey_to_address.MAINNET_ADDRESS_SPECS (parity-tested); a missing/mismatched
+# entry silently encodes a chain's P2PK output with the wrong prefix (e.g. doge
+# falling back to BTC 0x00 → a "1..." address that no doge keyspace stores).
 _PUBKEY_ADDRESS_VERSION = {
     "btc": b"\x00",
     "bch": b"\x00",
     "ltc": b"\x30",
+    "doge": b"\x1e",  # Dogecoin P2PKH "D" prefix
     "zec": b"\x1c\xb8",  # Zcash t1 prefix
 }
 
