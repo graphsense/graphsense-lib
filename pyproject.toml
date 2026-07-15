@@ -199,7 +199,7 @@ package-dir = {"" = "src"}
 # Without this table, that build would ship a wheel with zero yaml/csv/sql
 # resources, breaking taxonomy + schema loading at runtime.
 [tool.setuptools.package-data]
-"*" = ["*.yaml", "*.csv", "*.sql", "*.proto", "*.html", "*.js", "*.template", "*.json"]
+"*" = ["*.yaml", "*.csv", "*.sql", "*.proto", "*.template", "*.json"]
 # Require a min/specific Python version (comma-separated conditions)
 # Add here dependencies of your project (line-separated), e.g. requests>=2.2,<3.0.
 # Version specifiers like >=2.2,<3.0 avoid problems due to API changes in

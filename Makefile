@@ -135,9 +135,6 @@ generate-tron-grpc-code:
 click-bash-completion:
 	_GRAPHSENSE_CLI_COMPLETE=bash_source graphsense-cli
 
-serve-tagstore:
-	@gs_tagstore_db_url=${gs_tagstore_db_url} uv run uvicorn --reload --log-level debug src.graphsenselib.tagstore.web.main:app
-
 # REST API server
 GS_REST_DEV_PORT ?= 9000
 
@@ -200,11 +197,7 @@ check-client-version:
 serve-docker:
 	docker run --rm -it --network='host' -e NUM_THREADS=1 -e NUM_WORKERS=1 -v "${PWD}/instance/config.yaml:/srv/graphsense-rest/instance/config.yaml:Z" graphsense-lib:latest
 
-package-ui:
-	- rm -rf tagpack/admin-ui/dist
-	cd tagpack/admin-ui; npm install && npx --yes elm-land build && cp dist/assets/index-*.js ../../src/graphsenselib/tagstore/web/statics/assets/index.js
-
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build build-rust test-rust pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-tagstore serve-web run-codegen generate-python-client serve-docker package-ui build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions mcp-validate-curation
+.PHONY: all test install lint format build build-rust test-rust pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions mcp-validate-curation

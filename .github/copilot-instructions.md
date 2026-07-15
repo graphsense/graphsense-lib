@@ -25,7 +25,7 @@
 - Data access is split into raw/transformed keyspaces; `src/graphsenselib/db/factory.py` maps schema type (`utxo`, `account`, `account_trx`) to concrete DB/address/tx classes and returns an `AnalyticsDb`.
 - Ingestion modules under `src/graphsenselib/ingest/` load blockchain data into raw keyspaces; delta update modules under `src/graphsenselib/deltaupdate/` derive transformed state from raw data.
 - REST API is in `src/graphsenselib/web/`; `web/app.py` builds the FastAPI app, wires middleware/routes/services, and integrates async DB + tagstore dependencies.
-- Tag metadata tooling is split between `src/graphsenselib/tagstore/` (database + web/admin components) and `src/graphsenselib/tagpack/` (import/validation/quality tooling), both exposed via CLI modules.
+- Tag metadata tooling is split between `src/graphsenselib/tagstore/` (database + algorithms) and `src/graphsenselib/tagpack/` (import/validation/quality tooling), both exposed via CLI modules.
 - Python client generation is tied to OpenAPI versioning via `clients/python/` and root `Makefile` targets.
 
 ## Key conventions specific to this repository
