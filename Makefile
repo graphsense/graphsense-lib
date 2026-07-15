@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASESEM := 'v2.15.1+pysparksidecar.2'
+RELEASESEM := 'v2.15.1+pysparksidecar.3'
 WEBAPISEM := 'v2.15.0'
 
 
