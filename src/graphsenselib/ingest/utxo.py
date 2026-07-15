@@ -293,13 +293,24 @@ _OP_CHECKMULTISIG = 0xAE
 
 # Per-network address params for the script parser: ``p2pkh``/``p2sh``
 # are base58 version-byte prefixes, ``bech32_hrp`` is the native-segwit
-# human-readable part (``None`` for chains without segwit, e.g. ZEC — a
+# human-readable part (``None`` for chains without segwit, e.g. ZEC/DOGE — a
 # segwit-shaped script there is non-standard). BCH legacy addresses share BTC's
 # version bytes. Unknown networks fall back to BTC.
+#
+# The ``p2pkh`` prefix here MUST match rpc_utxo._PUBKEY_ADDRESS_VERSION (the P2PK
+# fast path) — the two are separate ingest code paths that derive the same P2PK
+# output address, so a mismatch makes them disagree. Both are parity-tested
+# against pubkey_to_address.MAINNET_ADDRESS_SPECS in
+# tests/ingest/test_pubkey_address_version_parity.py.
+#
+# NOTE: DOGE is not ingested at the moment; its entry is kept only so the two
+# ingest paths stay consistent if/when doge ingest is enabled (and so the parity
+# test can guard it now rather than regress silently later).
 _NETWORK_SCRIPT_PARAMS = {
     "btc": {"p2pkh": b"\x00", "p2sh": b"\x05", "bech32_hrp": "bc"},
     "bch": {"p2pkh": b"\x00", "p2sh": b"\x05", "bech32_hrp": "bc"},
     "ltc": {"p2pkh": b"\x30", "p2sh": b"\x32", "bech32_hrp": "ltc"},
+    "doge": {"p2pkh": b"\x1e", "p2sh": b"\x16", "bech32_hrp": None},
     "zec": {"p2pkh": b"\x1c\xb8", "p2sh": b"\x1c\xbd", "bech32_hrp": None},
 }
 

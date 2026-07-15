@@ -209,19 +209,21 @@ def get_zcash_addresses(pubkey_hex):
     T-addresses are analogous to Bitcoin's P2PKH and P2SH.
     """
     pubkey_hash = hash160(hex_to_bytes(pubkey_hex))
-    # pubkey_hash_uncomp = hash160(
-    #    hex_to_bytes(uncompress_public_key(pubkey_hex))
-    # )
+    pubkey_hash_uncomp = hash160(hex_to_bytes(uncompress_public_key(pubkey_hex)))
 
     addresses = {}
     specs = MAINNET_ADDRESS_SPECS["zcash"]
 
     # t1 (P2PKH) Address (derived from hash160 of the public key)
-    # Zcash t1 addresses use a 2-byte prefix.
+    # Zcash t1 addresses use a 2-byte prefix. Emit both the compressed- and
+    # uncompressed-key forms: legacy P2PK outputs (which the ingest now derives
+    # network-aware as t1 addresses, hashing the key exactly as it appears in
+    # the script) overwhelmingly carry uncompressed keys, so without the
+    # uncompressed form such an ingested address would never join back here.
     addresses["t1_p2pkh"] = base58check_encode(specs["t1_p2pkh"], pubkey_hash)
-    # addresses["t1_p2pkh_uncomp"] = base58check_encode(
-    #    specs["p2pkh"], pubkey_hash_uncomp
-    # )
+    addresses["t1_p2pkh_uncomp"] = base58check_encode(
+        specs["t1_p2pkh"], pubkey_hash_uncomp
+    )
 
     # t3 (P2SH) Address (derived from a script hash, not directly a single pubkey hash)
     # Zcash t3 addresses use a 2-byte prefix.
@@ -309,10 +311,18 @@ def get_bch_addresses(pubkey_hex):
 
     BCH has no SegWit, so a pubkey maps to a single standard receive address.
     The legacy base58 form is identical to Bitcoin's P2PKH (already derived
-    under ``btc``), so only the modern CashAddr form is added here.
+    under ``btc``, compressed *and* uncompressed), so only the modern CashAddr
+    form is added here — for both key encodings, mirroring the base58 side, so
+    an uncompressed-key P2PK output resolves regardless of address format.
     """
     pubkey_hash = hash160(hex_to_bytes(pubkey_hex))
-    return {"p2pkh_cashaddr": cashaddr_encode("bitcoincash", 0x00, pubkey_hash)}
+    pubkey_hash_uncomp = hash160(hex_to_bytes(uncompress_public_key(pubkey_hex)))
+    return {
+        "p2pkh_cashaddr": cashaddr_encode("bitcoincash", 0x00, pubkey_hash),
+        "p2pkh_cashaddr_uncomp": cashaddr_encode(
+            "bitcoincash", 0x00, pubkey_hash_uncomp
+        ),
+    }
 
 
 # --- Main Conversion Function ---
