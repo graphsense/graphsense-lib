@@ -1,5 +1,20 @@
 # graphsense-lib
 
+## Delta updater must stay in tandem with graphsense-spark
+
+The delta updater (`src/graphsenselib/deltaupdate/`) incrementally produces the
+same derived tables that the batch Spark pipeline (**graphsense-spark**, separate
+repo) computes from scratch. **graphsense-spark is the ground truth.** The two must
+agree column-for-column, or an incrementally-updated keyspace diverges from what a
+full Spark re-run would produce.
+
+**Any change to delta updater logic (schema, transforms, aggregation, address/
+cluster/token accounting, is_contract detection, etc.) requires checking the
+corresponding graphsense-spark code and keeping the two in sync.** When they
+disagree, match Spark's behavior — do not "fix" it only on the delta side. If the
+Spark side needs to change too, flag it; a delta-only change that Spark can't
+reproduce is a divergence bug waiting to surface at the next full re-run.
+
 ## Database / Cassandra retry architecture
 
 The Cassandra retry handling in `src/graphsenselib/db/cassandra.py` is split across
