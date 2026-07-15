@@ -1,8 +1,8 @@
 import pytest
 
 from graphsenselib.transformation import spark_jar
+from graphsenselib.transformation.sidecar import SIDECAR_PACKAGE
 from graphsenselib.transformation.spark_jar import (
-    SIDECAR_PACKAGE,
     apply_sidecar,
     asset_name,
     build_spark_submit,

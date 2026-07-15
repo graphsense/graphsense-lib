@@ -9,6 +9,8 @@ ingested spends. The normalizer re-encodes such addresses to the network's
 own P2PKH version byte and is a no-op on everything else.
 """
 
+from base58 import b58decode_check
+
 from graphsenselib.ingest.utxo import (
     OutputResolverBase,
     enrich_txs,
@@ -44,7 +46,13 @@ def test_noop_on_networks_sharing_btc_version_byte():
 
 
 def test_noop_on_unknown_network():
-    assert normalize_base58_p2pkh(BTC_FORM, "doge") == BTC_FORM
+    assert normalize_base58_p2pkh(BTC_FORM, "nosuchnet") == BTC_FORM
+
+
+def test_doge_rewrites_btc_form():
+    fixed = normalize_base58_p2pkh(BTC_FORM, "doge")
+    assert fixed.startswith("D")
+    assert b58decode_check(fixed)[1:] == HASH160
 
 
 def test_invalid_or_synthetic_addresses_unchanged():

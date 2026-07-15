@@ -14,6 +14,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Added
+- **Reusable Cassandra Sidecar bulk-write helpers for PySpark jobs (`transformation/sidecar.py`).** `bulk_write_dataframe` writes a Spark DataFrame into a keyspace/table through the cassandra-analytics SSTable bulk writer, with `sidecar_spark_properties`/`sidecar_packages` assembling the required JVM module flags, temp-dir redirect and `--packages` entry. Option assembly is validated up front against known runtime failure modes of cassandra-analytics 0.3.0 (`LOCAL_*` consistency requires `local_dc`; identity options cannot be overridden via the tuning dict). The Scala full-transform launcher (`transformation/spark_jar.py`) now reuses the same helpers, so both write paths share one source of truth. Intended first consumer: the delta-lake → raw keyspace rebuild (e.g. the LTC address healing), importable alongside `normalize_base58_p2pkh`.
+
 #### Removed
 - **The unused Elm admin UI and the tagstore REST interface were removed.** The `tagpack/admin-ui/` Elm-Land frontend and the `src/graphsenselib/tagstore/web/` FastAPI app (base + admin routers plus the bundled single-page-application statics) never saw production use and are deleted, along with their `serve-tagstore`/`package-ui` Makefile targets. The tagstore CLI, database, config and algorithms modules are unaffected; tag data is served through the main REST API in `src/graphsenselib/web/`.
 

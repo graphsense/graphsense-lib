@@ -12,20 +12,12 @@ import subprocess
 from typing import Dict, List, Optional, Tuple
 from urllib.request import Request, urlopen
 
-logger = logging.getLogger(__name__)
-
-# cassandra-analytics is Provided in graphsense-spark, so it is NOT in the fat
-# jar — the sidecar bulk-write path needs it added via --packages either way.
-SIDECAR_PACKAGE = "org.apache.cassandra:cassandra-analytics-core_spark3_2.12:0.3.0"
-
-# JDK module flags the Cassandra SSTable bulk writer needs. The temp-dir
-# redirect is appended separately (it depends on spark.local.dir).
-_SIDECAR_MODULE_FLAGS = (
-    "--add-exports java.base/jdk.internal.misc=ALL-UNNAMED "
-    "--add-exports java.base/jdk.internal.ref=ALL-UNNAMED "
-    "--add-opens java.base/jdk.internal.ref=ALL-UNNAMED "
-    "--add-opens java.base/sun.nio.ch=ALL-UNNAMED"
+from graphsenselib.transformation.sidecar import (
+    sidecar_packages,
+    sidecar_spark_properties,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def asset_name(artifact: str, version: str) -> str:
@@ -117,22 +109,8 @@ def apply_sidecar(
     """
     if not contact_points:
         raise ValueError("sidecar.contact_points must be set when sidecar is enabled")
-    local_dir = spark_props.get("spark.local.dir")
-    if not local_dir:
-        raise ValueError(
-            "sidecar writer needs spark.local.dir set (in the spark_config "
-            "profile) to redirect the SSTable/Vert.x temp dir off the root disk"
-        )
-
-    props = dict(spark_props)
-    jvm = f"{_SIDECAR_MODULE_FLAGS} -Djava.io.tmpdir={local_dir} -Dvertx.cacheDirBase={local_dir}"
-    for key in ("spark.driver.extraJavaOptions", "spark.executor.extraJavaOptions"):
-        existing = props.get(key, "").strip()
-        props[key] = f"{existing} {jvm}".strip() if existing else jvm
-
-    pkgs = list(packages)
-    if SIDECAR_PACKAGE not in pkgs:
-        pkgs.append(SIDECAR_PACKAGE)
+    props = sidecar_spark_properties(spark_props)
+    pkgs = sidecar_packages(packages)
 
     args = list(jar_args) + [
         "--writer",
