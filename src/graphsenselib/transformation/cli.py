@@ -12,6 +12,7 @@ from graphsenselib.cli.common import (
 )
 from graphsenselib.config import supported_fiat_currencies
 from graphsenselib.schema import GraphsenseSchemas
+from graphsenselib.utils.cassandra import split_nodes_and_port
 
 logger = logging.getLogger(__name__)
 
@@ -271,8 +272,7 @@ def run_transformation(
     if not patch:
         from cassandra.cluster import Cluster as CassCluster
 
-        host, _, port = cassandra_nodes[0].partition(":")
-        cass_port = int(port) if port else 9042
+        cass_hosts, cass_port = split_nodes_and_port(cassandra_nodes)
         auth_provider = None
         if cassandra_username and cassandra_password:
             from cassandra.auth import PlainTextAuthProvider
@@ -281,7 +281,7 @@ def run_transformation(
                 username=cassandra_username, password=cassandra_password
             )
         with CassCluster(
-            [host], port=cass_port, auth_provider=auth_provider
+            cass_hosts, port=cass_port, auth_provider=auth_provider
         ) as cluster:
             session = cluster.connect()
             rows = list(
@@ -1488,13 +1488,9 @@ def run_full_transform(
             "No spark.master configured. Set it in the spark_config profile "
             "(baseline or the per-currency profile) or pass --local."
         )
-    spark_props.setdefault(
-        "spark.cassandra.connection.host",
-        ",".join(n.split(":")[0] for n in env_config.cassandra_nodes),
-    )
-    ports = {n.partition(":")[2] for n in env_config.cassandra_nodes if ":" in n}
-    if len(ports) == 1:
-        spark_props.setdefault("spark.cassandra.connection.port", ports.pop())
+    submit_hosts, submit_port = split_nodes_and_port(env_config.cassandra_nodes)
+    spark_props.setdefault("spark.cassandra.connection.host", ",".join(submit_hosts))
+    spark_props.setdefault("spark.cassandra.connection.port", str(submit_port))
     if env_config.username:
         spark_props.setdefault("spark.cassandra.auth.username", env_config.username)
     if env_config.password:

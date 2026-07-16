@@ -102,6 +102,39 @@ database:
 | `GS_CASSANDRA_ASYNC_USERNAME` | — | Cassandra username |
 | `GS_CASSANDRA_ASYNC_PASSWORD` | — | Cassandra password |
 
+> **Precedence: the YAML config file wins over these environment variables.**
+> This is the reverse of the more common convention, so it is easy to get caught
+> out by. The variables above are a *fallback* for keys the config file does not
+> set — they do not override it.
+>
+> Precedence is decided **per key**, not per block. Given
+> `database: {nodes: [...], username: gs_user}`, a `GS_CASSANDRA_ASYNC_USERNAME`
+> is ignored (the file sets it), while `GS_CASSANDRA_ASYNC_PASSWORD` still
+> applies (the file does not). The same rule covers the `GSREST_*` variables:
+> `GSREST_DISABLE_AUTH=true` has no effect if the file already sets
+> `disable_auth: false`.
+>
+> To make an environment variable authoritative for a key the config file sets —
+> the usual case for rotating a Cassandra password without editing the file —
+> reference it from the file instead of shadowing it:
+>
+> ```yaml
+> database:
+>   username: gs_user
+>   password: ${CASSANDRA_PASSWORD}
+> ```
+>
+> See [Environment variable substitution in YAML](#environment-variable-substitution-in-yaml)
+> above. Note that `${VAR}` and `GS_CASSANDRA_ASYNC_PASSWORD` are independent
+> mechanisms: the placeholder is resolved when the file is read, so the variable
+> name it references is yours to choose and need not match any name in this table.
+>
+> This ordering applies to the **REST config only**. The CLI config
+> (`.graphsense.yaml`, `GRAPHSENSE_*`) resolves the two the other way round —
+> there a `GRAPHSENSE_`-prefixed variable *does* override the file. `${VAR}`
+> substitution works the same in both, which is why it is the portable way to
+> keep a secret out of either config file.
+
 When enabling `GSREST_ENSURE_TAGSTORE_SCHEMA_ON_STARTUP=true`, keep in mind:
 
 - The DB user must have DDL privileges (create tables/views/indexes/extensions/procedures).

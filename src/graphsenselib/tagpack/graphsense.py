@@ -19,6 +19,7 @@ from tenacity.wait import wait_exponential
 
 from cassandra import InvalidRequest
 
+from graphsenselib.utils.cassandra import split_nodes_and_port
 from graphsenselib.utils.tron import tron_address_to_evm, evm_to_tron_address_string
 from graphsenselib.utils.rest_utils import is_eth_like
 from graphsenselib.db.state import FRESH_CLUSTERING_ACTIVE_KEY, STATE_TABLE
@@ -116,7 +117,8 @@ class GraphSense(object):
         username: Optional[str] = None,
         password: Optional[str] = None,
     ):
-        self.hosts = hosts
+        # Accept "host:port" entries, as cassandra_nodes does everywhere else.
+        self.hosts, self.port = split_nodes_and_port(hosts)
         self.ks_map = ks_map
         self._fresh_network_cache = {}
 
@@ -124,7 +126,7 @@ class GraphSense(object):
         if username is not None:
             auth_provider = PlainTextAuthProvider(username=username, password=password)
 
-        self.cluster = Cluster(hosts, auth_provider=auth_provider)
+        self.cluster = Cluster(self.hosts, port=self.port, auth_provider=auth_provider)
         self.session = self.cluster.connect()
         self.session.row_factory = dict_factory
 

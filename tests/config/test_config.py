@@ -197,6 +197,48 @@ def test_environment_consistency_level_defaults():
     assert env.serial_consistency_level == "LOCAL_SERIAL"
 
 
+def test_environment_credentials_readonly_falls_back_to_read_write():
+    # An env that only configures username/password must still authenticate on
+    # the readonly path rather than connecting anonymously.
+    env = Environment(
+        cassandra_nodes=["localhost"], keyspaces={}, username="rw", password="rwpw"
+    )
+    assert env.get_cassandra_credentials(readonly=True) == ("rw", "rwpw")
+    assert env.get_cassandra_credentials(readonly=False) == ("rw", "rwpw")
+
+
+def test_environment_credentials_prefers_readonly_pair_atomically():
+    env = Environment(
+        cassandra_nodes=["localhost"],
+        keyspaces={},
+        username="rw",
+        password="rwpw",
+        readonly_username="ro",
+        readonly_password="ropw",
+    )
+    assert env.get_cassandra_credentials(readonly=True) == ("ro", "ropw")
+    assert env.get_cassandra_credentials(readonly=False) == ("rw", "rwpw")
+
+
+def test_environment_credentials_readonly_pair_never_mixes_passwords():
+    # readonly_username set without readonly_password must not silently pair the
+    # readonly user with the read-write password.
+    env = Environment(
+        cassandra_nodes=["localhost"],
+        keyspaces={},
+        username="rw",
+        password="rwpw",
+        readonly_username="ro",
+    )
+    assert env.get_cassandra_credentials(readonly=True) == ("ro", None)
+
+
+def test_environment_credentials_unset_is_no_auth():
+    env = Environment(cassandra_nodes=["localhost"], keyspaces={})
+    assert env.get_cassandra_credentials() == (None, None)
+    assert env.get_cassandra_credentials(readonly=True) == (None, None)
+
+
 def test_environment_consistency_level_custom_values():
     env = Environment(
         cassandra_nodes=["localhost"],
