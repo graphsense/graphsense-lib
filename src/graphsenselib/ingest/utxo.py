@@ -1110,6 +1110,16 @@ def prepare_transactions_inplace_parquet(txs, currency):
             input["spent_transaction_hash"] = hex_to_bytes(
                 input["spent_transaction_hash"]
             )
+            # The node's JSON-RPC delivers witness elements as hex strings;
+            # the Delta schema column is binary. Without this, pyarrow
+            # silently stores the UTF-8 bytes of the hex TEXT (b"3045..."),
+            # which structural consumers (pubkey extraction) can't parse.
+            # Mirrors tx_io_summary on the Cassandra path.
+            witness = input.get("txinwitness")
+            if witness is not None:
+                input["txinwitness"] = [
+                    hex_to_bytes(w) if isinstance(w, str) else w for w in witness
+                ]
             input.pop("script_asm", None)
             input.pop("required_signatures", None)
 

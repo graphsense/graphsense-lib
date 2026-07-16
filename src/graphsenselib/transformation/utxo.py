@@ -351,7 +351,24 @@ class UtxoTransformation:
             ),
         )
 
-        # Transform inputs: map type string→int, script_hex, txinwitness already binary
+        # The Delta lake's witness column is binary but holds the UTF-8 bytes
+        # of the node's hex strings (the parquet prep never unhexed them), so
+        # a rebuild would copy hex-as-bytes into Cassandra. Heal list-level
+        # all-or-nothing: decode only when EVERY element is valid even-length
+        # lowercase hex-ASCII — a genuine raw-bytes signature can't pass that
+        # test (odds ~(16/256)^71), so already-clean rows pass through
+        # untouched. Raw non-UTF8 bytes cast to string yield replacement
+        # chars and fail the rlike, keeping the guard safe on healed lakes.
+        def healed_witness(w_col):
+            all_hex = F.forall(
+                w_col, lambda w: w.cast("string").rlike("^([0-9a-f]{2})*$")
+            )
+            return F.when(
+                all_hex, F.transform(w_col, lambda w: F.unhex(w.cast("string")))
+            ).otherwise(w_col)
+
+        # Transform inputs: map type string→int, script_hex hex→binary,
+        # txinwitness healed from hex-as-bytes to raw bytes
         tx_df = tx_df.withColumn(
             "inputs",
             F.transform(
@@ -365,7 +382,7 @@ class UtxoTransformation:
                         "address_type"
                     ),
                     F.unhex(i["script_hex"]).alias("script_hex"),
-                    i["txinwitness"].alias("txinwitness"),
+                    healed_witness(i["txinwitness"]).alias("txinwitness"),
                     i["sequence"].cast("long").alias("sequence"),
                 ),
             ),
