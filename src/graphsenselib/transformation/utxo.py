@@ -7,6 +7,13 @@ from graphsenselib.ingest.utxo import (
     TX_BUCKET_SIZE as UTXO_TX_BUCKET_SIZE,
     TX_HASH_PREFIX_LENGTH as UTXO_TX_HASH_PREFIX_LEN,
     _address_types as ADDRESS_TYPE_MAP,
+)
+
+# The normalizer MUST come from the lean utils module, not ingest.utxo: the
+# normalization UDF pickles it by module reference, and Spark executors (the
+# minimal spark-env archive, no methodtools/db/RPC deps) import that module
+# to unpickle — importing ingest.utxo there dies with ModuleNotFoundError.
+from graphsenselib.utils.utxo_address import (
     _NETWORK_SCRIPT_PARAMS,
     normalize_base58_p2pkh,
 )

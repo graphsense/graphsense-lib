@@ -140,7 +140,7 @@ RUN mkdir -p /opt/graphsense/spark-env \
         --target /opt/graphsense/spark-env --no-deps /tmp/pkwheel/graphsense_lib-*.whl \
     && uv pip install --no-cache --python /usr/local/bin/python3 \
         --target /opt/graphsense/spark-env eth-account coincurve base58 bech32 ecdsa \
-    && PYTHONPATH=/opt/graphsense/spark-env /usr/local/bin/python3 -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; import graphsenselib; assert graphsenselib.__file__.startswith('/opt/graphsense/spark-env'), graphsenselib.__file__; print('spark-env site-packages smoke test OK')" \
+    && PYTHONPATH=/opt/graphsense/spark-env /usr/local/bin/python3 -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; import graphsenselib; assert graphsenselib.__file__.startswith('/opt/graphsense/spark-env'), graphsenselib.__file__; from graphsenselib.utils.utxo_address import normalize_base58_p2pkh; from graphsenselib.utils.pubkey_to_address import base58check_encode; healed = normalize_base58_p2pkh(base58check_encode(b'\x00', b'\xab' * 20), 'ltc'); assert healed.startswith('L'), healed; print('spark-env site-packages smoke test OK')" \
     && tar -C /opt/graphsense/spark-env -czf /opt/graphsense/spark-env.tar.gz . \
     && rm -rf /opt/graphsense/spark-env /tmp/pkwheel \
     && du -h /opt/graphsense/spark-env.tar.gz

@@ -15,6 +15,10 @@ from ..utils import bytes_to_hex, flatten, hex_to_bytes, parse_timestamp, strip_
 from ..utils.account import get_id_group
 from ..utils.bch import bch_address_to_legacy
 from ..utils.signals import graceful_ctlc_shutdown
+from graphsenselib.utils.utxo_address import (  # noqa: F401  (re-export)
+    _NETWORK_SCRIPT_PARAMS,
+    normalize_base58_p2pkh,
+)
 from .common import cassandra_ingest, write_to_sinks
 from .rpc_utxo import BtcBlockExporter
 
@@ -297,22 +301,10 @@ _OP_CHECKMULTISIG = 0xAE
 # segwit-shaped script there is non-standard). BCH legacy addresses share BTC's
 # version bytes. Unknown networks fall back to BTC.
 #
-# The ``p2pkh`` prefix here MUST match rpc_utxo._PUBKEY_ADDRESS_VERSION (the P2PK
-# fast path) — the two are separate ingest code paths that derive the same P2PK
-# output address, so a mismatch makes them disagree. Both are parity-tested
-# against pubkey_to_address.MAINNET_ADDRESS_SPECS in
-# tests/ingest/test_pubkey_address_version_parity.py.
-#
-# NOTE: DOGE is not ingested at the moment; its entry is kept only so the two
-# ingest paths stay consistent if/when doge ingest is enabled (and so the parity
-# test can guard it now rather than regress silently later).
-_NETWORK_SCRIPT_PARAMS = {
-    "btc": {"p2pkh": b"\x00", "p2sh": b"\x05", "bech32_hrp": "bc"},
-    "bch": {"p2pkh": b"\x00", "p2sh": b"\x05", "bech32_hrp": "bc"},
-    "ltc": {"p2pkh": b"\x30", "p2sh": b"\x32", "bech32_hrp": "ltc"},
-    "doge": {"p2pkh": b"\x1e", "p2sh": b"\x16", "bech32_hrp": None},
-    "zec": {"p2pkh": b"\x1c\xb8", "p2sh": b"\x1c\xbd", "bech32_hrp": None},
-}
+# _NETWORK_SCRIPT_PARAMS and normalize_base58_p2pkh live in the lean
+# utils.utxo_address module (importable inside the minimal spark-env archive,
+# where this module's methodtools/db/RPC imports are absent) and are
+# re-exported here for the ingest-side callers.
 
 
 def _looks_like_pubkey(b: bytes) -> bool:
@@ -532,40 +524,6 @@ def parse_script(s: str, network: str = "btc") -> Tuple[Optional[List[str]], str
     raise UnknownScriptType(
         f"ScriptParseError: not handling script type for {s} at the moment."
     )
-
-
-_BASE58_ALPHABET = frozenset(
-    "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-)
-
-
-def normalize_base58_p2pkh(address: Optional[str], network: str) -> Optional[str]:
-    """Re-encode a base58check P2PKH address carrying BTC's version byte
-    (0x00, leading ``1``) to ``network``'s own P2PKH version byte.
-
-    Pre-2.14.4 ingests derived fallback addresses with btcpy's hardcoded
-    ``mainnet=True`` (BTC version byte) on every network; stored LTC P2PK
-    rows — and their spends, via input resolution against those rows — still
-    carry that form. Only version byte 0x00 is rewritten: P2SH stays
-    untouched because legacy LTC P2SH legitimately uses BTC's 0x05, and on
-    the affected networks no legitimate encoding starts with a 0x00 version
-    byte. No-op for networks sharing BTC's version byte, unknown networks,
-    and strings that are not valid 0x00-prefixed base58check.
-    """
-    params = _NETWORK_SCRIPT_PARAMS.get(network)
-    if params is None or params["p2pkh"] == b"\x00":
-        return address
-    if not address or address[0] != "1" or not set(address) <= _BASE58_ALPHABET:
-        return address
-
-    import base58
-
-    from graphsenselib.utils.pubkey_to_address import base58check_encode, double_sha256
-
-    raw = base58.b58decode(address)
-    if len(raw) != 25 or raw[0] != 0x00 or double_sha256(raw[:-4])[:4] != raw[-4:]:
-        return address
-    return base58check_encode(params["p2pkh"], raw[1:-4])
 
 
 def normalize_tx_addresses_inplace(txs: Iterable, network: str) -> None:
