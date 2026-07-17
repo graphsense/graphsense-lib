@@ -1,5 +1,15 @@
 # graphsense-lib
 
+## TEMPORARY — txinwitness hex-ASCII debt (delete this section once healed)
+
+`txinwitness` blobs written before v2.15.1+pysparksidecar.7 hold hex-ASCII, not
+raw bytes: the Delta lake uniformly (parquet prep never unhexed), prod BTC/LTC
+raw keyspaces era-mixed (raw only since the RPC exporter, ~Mar/May 2026). Fixed
+in 2ac413a0: ingest now unhexes, delta-to-raw heals hex-form lists on read. No
+content consumer exists except the pubkey job (hex-intolerant → segwit pubkeys
+never extracted; open). Remove when the LTC rebuild+swap is done and BTC raw is
+rebuilt or the mixed state is accepted.
+
 ## Delta updater must stay in tandem with graphsense-spark
 
 The delta updater (`src/graphsenselib/deltaupdate/`) incrementally produces the
