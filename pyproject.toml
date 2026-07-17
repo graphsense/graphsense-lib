@@ -40,7 +40,7 @@ dependencies = [
     "bech32>=1.2.0",
     "httpx>=0.28.1",
     "orjson>=3.10",
-    "ecdsa>=0.13",
+    "ecdsa>=0.19.2",
     "eth-account>=0.13.7",
     "msgpack>=1.2.0",
 ]
