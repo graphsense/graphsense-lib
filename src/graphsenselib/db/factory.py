@@ -53,12 +53,7 @@ class DbFactory:
         e = config.get_environment(env)
         ks = e.get_keyspace(currency)
 
-        user = e.username
-        pw = e.password
-
-        if readonly:
-            user = e.readonly_username
-            pw = e.readonly_password
+        user, pw = e.get_cassandra_credentials(readonly=readonly)
 
         return self.from_name(
             ks.raw_keyspace_name,

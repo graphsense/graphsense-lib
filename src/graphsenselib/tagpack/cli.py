@@ -1837,37 +1837,38 @@ def insert_cluster_mapping_wp(network, ks_mapping, args, batch, fresh):
 
 def load_ks_mapping(args):
     if args.use_gs_lib_config_env:
-        gs_config_file = os.path.expanduser("~/.graphsense.yaml")
-        if os.path.exists(gs_config_file):
-            with open(gs_config_file) as f:
-                yml = yaml.safe_load(f)
-                if args.use_gs_lib_config_env in yml["environments"]:
-                    env = yml["environments"][args.use_gs_lib_config_env]
-                    args.db_nodes = env["cassandra_nodes"]
-                    args.cassandra_password = env.get(
-                        "readonly_password", None
-                    ) or env.get("password", None)
-                    args.cassandra_username = env.get(
-                        "readonly_username", None
-                    ) or env.get("username", None)
-                    ret = {
-                        k.upper(): {
-                            "raw": v["raw_keyspace_name"],
-                            "transformed": v["transformed_keyspace_name"],
-                        }
-                        for k, v in env["keyspaces"].items()
-                    }
-                    return ret
-                else:
-                    logger.error(
-                        f"Environment {args.use_gs_lib_config_env} "
-                        "not found in gs-config"
-                    )
-                    sys.exit(1)
+        # Go through the config module rather than reading the YAML directly:
+        # it resolves ${VAR} placeholders (so a password supplied via env var
+        # is not passed to Cassandra as a literal "${VAR}" string) and honours
+        # the GRAPHSENSE_CONFIG_YAML / .graphsense.yaml file overrides.
+        from graphsenselib.config import get_config
 
-        else:
-            logger.error("Graphsense config not found at ~/.graphsense.yaml")
+        config = get_config()
+        try:
+            if not config.is_loaded():
+                config.load()
+        except Exception as e:
+            logger.error(f"Could not load graphsense config: {e}")
             sys.exit(1)
+
+        if args.use_gs_lib_config_env not in config.get_configured_environments():
+            logger.error(
+                f"Environment {args.use_gs_lib_config_env} not found in gs-config"
+            )
+            sys.exit(1)
+
+        env = config.get_environment(args.use_gs_lib_config_env)
+        args.db_nodes = env.cassandra_nodes
+        args.cassandra_username, args.cassandra_password = (
+            env.get_cassandra_credentials(readonly=True)
+        )
+        return {
+            k.upper(): {
+                "raw": v.raw_keyspace_name,
+                "transformed": v.transformed_keyspace_name,
+            }
+            for k, v in env.keyspaces.items()
+        }
     else:
         if args.ks_file and os.path.exists(args.ks_file):
             return json.load(open(args.ks_file))

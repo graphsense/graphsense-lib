@@ -34,6 +34,7 @@ from cassandra.query import (
 )
 
 from ..utils import remove_multi_whitespace
+from ..utils.cassandra import DEFAULT_CASSANDRA_PORT, split_nodes_and_port
 
 DEFAULT_TIMEOUT = 120
 DEFAULT_CONSISTENCY_LEVEL = "LOCAL_QUORUM"
@@ -378,19 +379,7 @@ class CassandraDb:
         consistency_level: str = DEFAULT_CONSISTENCY_LEVEL,
         serial_consistency_level: str = DEFAULT_SERIAL_CONSISTENCY_LEVEL,
     ) -> None:
-        ports_in_order = [int(x.split(":")[1]) for x in db_nodes if ":" in x]
-        nodes = [x.split(":")[0] for x in db_nodes]
-        self.db_nodes = nodes
-        unique_ports = set(ports_in_order)
-        if len(unique_ports) > 1:
-            logger.warning(
-                "cassandra_nodes specify conflicting ports %s; using the "
-                "first one (%d). Use the same port for all nodes to silence "
-                "this warning.",
-                sorted(unique_ports),
-                ports_in_order[0],
-            )
-        self.db_port = ports_in_order[0] if ports_in_order else 9042
+        self.db_nodes, self.db_port = split_nodes_and_port(db_nodes)
         self.db_username = username
         self.db_password = password
         self.cluster = None
@@ -404,7 +393,7 @@ class CassandraDb:
 
     @property
     def nodes_with_port(self) -> List[str]:
-        if self.db_port != 9042:
+        if self.db_port != DEFAULT_CASSANDRA_PORT:
             return [f"{node}:{self.db_port}" for node in self.db_nodes]
         return self.db_nodes
 

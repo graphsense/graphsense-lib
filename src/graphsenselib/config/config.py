@@ -391,6 +391,21 @@ class Environment(_WarnExtraModel):
     def get_keyspace(self, currency: str) -> KeyspaceConfig:
         return self.keyspaces[currency]
 
+    def get_cassandra_credentials(
+        self, readonly: bool = False
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Cassandra (username, password) for this environment.
+
+        With readonly=True the dedicated readonly pair is used when configured,
+        otherwise the read-write pair — an env that only sets username/password
+        must still authenticate, not fall back to connecting anonymously. The
+        pair is taken atomically so a readonly user is never sent with the
+        read-write password.
+        """
+        if readonly and self.readonly_username is not None:
+            return self.readonly_username, self.readonly_password
+        return self.username, self.password
+
 
 class SlackTopic(_WarnExtraModel):
     hooks: List[str] = Field(default_factory=lambda: [])

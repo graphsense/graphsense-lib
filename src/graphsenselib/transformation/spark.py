@@ -4,6 +4,8 @@ import logging
 import os
 import sys
 
+from graphsenselib.utils.cassandra import split_nodes_and_port
+
 logger = logging.getLogger(__name__)
 
 # Default Maven packages, keyed by logical name. On the iknaio cluster,
@@ -113,16 +115,9 @@ def create_spark_session(
     # Cassandra connection — accepts a list of "host:port" strings
     if isinstance(cassandra_nodes, str):
         cassandra_nodes = [cassandra_nodes]
-    hosts = []
-    port = None
-    for node in cassandra_nodes:
-        h, _, p = node.partition(":")
-        hosts.append(h)
-        if p and port is None:
-            port = p
+    hosts, port = split_nodes_and_port(cassandra_nodes)
     builder = builder.config("spark.cassandra.connection.host", ",".join(hosts))
-    if port:
-        builder = builder.config("spark.cassandra.connection.port", port)
+    builder = builder.config("spark.cassandra.connection.port", str(port))
     if cassandra_username:
         builder = builder.config("spark.cassandra.auth.username", cassandra_username)
     if cassandra_password:
