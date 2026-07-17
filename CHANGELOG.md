@@ -14,6 +14,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Added
+- **The Docker image now ships a secondary Java 11 runtime at `/opt/java11`** (Temurin 11 JRE, ~136 MB) next to the default Java 17. Spark jobs submitted from the container against a standalone cluster whose executors run Java 11 need a Java-11 driver: with `spark.serializer=KryoSerializer` (the full-transform profiles), Kryo serializes JDK-internal field layouts that differ between major Java versions, so a Java-17 driver fails to deserialize task results from Java-11 executors (`java.io.EOFException` in `TaskResultGetter`). Opt in per run with `JAVA_HOME=/opt/java11`; nothing else changes — the image default remains Java 17, and Temurin bundles its own CA truststore so no cert mounts are needed. Previously this required bind-mounting a JDK and cacerts from the host.
+
 #### Removed
 - **The unused Elm admin UI and the tagstore REST interface were removed.** The `tagpack/admin-ui/` Elm-Land frontend and the `src/graphsenselib/tagstore/web/` FastAPI app (base + admin routers plus the bundled single-page-application statics) never saw production use and are deleted, along with their `serve-tagstore`/`package-ui` Makefile targets. The tagstore CLI, database, config and algorithms modules are unaffected; tag data is served through the main REST API in `src/graphsenselib/web/`.
 

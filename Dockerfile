@@ -100,6 +100,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
+# Secondary Java 11 runtime (~136 MB) for Spark jobs submitted against the
+# prod standalone cluster: its executors run Java 11 (the hosts are shared
+# with Cassandra 4.x, which caps them there), and a Java-17 driver breaks
+# Kryo task-result deserialization (java.io.EOFException in TaskResultGetter
+# — Kryo writes raw JDK-internal field layouts, which differ across major
+# Java versions). Temurin is self-contained incl. its own cacerts. Opt in
+# per run with JAVA_HOME=/opt/java11; everything else keeps the default
+# Java 17. Drop this layer once the cluster JVM moves to 17+ (needs
+# Cassandra 5.x on the shared hosts first; Spark 4 will require it anyway).
+COPY --from=eclipse-temurin:11-jre-jammy /opt/java/openjdk /opt/java11
+
 # Pull the two wheels out of the builder stage. Globs work in COPY.
 COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/wheels/
 COPY --from=builder /wheels/graphsense_clustering-*.whl /tmp/wheels/
