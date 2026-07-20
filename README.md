@@ -428,6 +428,29 @@ environment config. The command is backend-neutral (`backend: scala` today,
 `pyspark` reserved) so a future native implementation can be selected without
 changing how it is invoked.
 
+#### Java runtime when submitting from the Docker image
+
+The Docker image defaults to Java 17 but also ships a secondary Temurin 11 JRE
+at `/opt/java11`. If you submit against a standalone cluster whose executors run
+Java 11 (the prod cluster — its hosts are shared with Cassandra 4.x, which caps
+them there) and the profile uses `spark.serializer=KryoSerializer` (the full
+transform profiles do), the driver must run Java 11 too: Kryo serializes
+JDK-internal field layouts that differ between major Java versions, so a
+Java-17 driver fails to deserialize task results from Java-11 executors
+(`java.io.EOFException` in `TaskResultGetter`). Opt in per run by setting
+`JAVA_HOME` — `spark-submit` picks it up, nothing else changes:
+
+```bash
+# From the host
+docker run -e JAVA_HOME=/opt/java11 ... graphsense-cli transformation raw-to-transformed -e prod -c trx ...
+
+# Or inside the container
+JAVA_HOME=/opt/java11 graphsense-cli transformation raw-to-transformed -e prod -c trx ...
+```
+
+Drop the override once the cluster JVM moves to 17+ (needs Cassandra 5.x on the
+shared hosts first).
+
 ### Delta Updates
 
 Update transformed keyspace from raw keyspace.
