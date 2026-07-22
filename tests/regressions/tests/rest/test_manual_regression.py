@@ -637,6 +637,35 @@ class TestUtxoNettingLitmus:
         assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" in neighbors
 
 
+class TestBulkGetRates:
+    """bulk.json/get_rates must stream valid JSON.
+
+    The service returned internal pydantic Rate models nested in the row dict;
+    flatten(format="json") passes dicts through untouched, so the models hit
+    json.dumps mid-stream (TypeError: Object of type Rate is not JSON
+    serializable) after the 200 header was already sent — clients got a
+    truncated, unparseable body. Current-server invariant, not a baseline
+    comparison: deployed prod (and thus any recent baseline container) has
+    exactly this defect.
+    """
+
+    @pytest.mark.regression
+    def test_bulk_json_get_rates_streams_valid_json(self):
+        url = urljoin(CURRENT_SERVER + "/", "btc/bulk.json/get_rates?num_pages=1")
+        response = requests.post(
+            url, json={"height": [1]}, headers=headers_for(CURRENT_SERVER, True)
+        )
+        assert response.status_code == 200
+        rows = response.json()  # raises on the truncated broken stream
+        assert len(rows) == 1
+        (row,) = rows
+        assert row["_request_height"] == 1
+        assert row["rates"], "no rates returned for btc height 1"
+        for rate in row["rates"]:
+            assert isinstance(rate["code"], str)
+            assert isinstance(rate["value"], float)
+
+
 # =============================================================================
 # Tag summary / inherited cluster tag tests
 # =============================================================================
@@ -692,7 +721,6 @@ class TestManualRegressionTagSummary:
 
         summary, _ = get_data_from_endpoint(
             CURRENT_SERVER,
-            f"btc/addresses/{self.ADDRESS}/tag_summary"
-            "?include_best_cluster_tag=true",
+            f"btc/addresses/{self.ADDRESS}/tag_summary?include_best_cluster_tag=true",
         )
         assert summary.get("best_actor") == "kraken"

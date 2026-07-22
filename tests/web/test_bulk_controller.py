@@ -1,14 +1,17 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 from starlette.datastructures import Headers
 
+from graphsenselib.db.asynchronous.services.models import RatesResponse
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
 from graphsenselib.web.models import AddressTag, AddressTags
 from graphsenselib.web.routes.bulk import wrap
-from tests.web.helpers import get_json, request_with_status
+from graphsenselib.web.service.rates_service import get_rates
+from tests.web.helpers import request_with_status
 from tests.web.testdata.blocks import block, block2
 from tests.web.testdata.bulk import block_path, error_bodies, headers
 
@@ -85,6 +88,73 @@ def test_bulk_wrap_obfuscates_private_tags():
     assert by_public[False]["actor"] == ""
 
 
+def _plain_request():
+    """Fake request with no plugins registered."""
+    app = SimpleNamespace(state=SimpleNamespace(plugins=[], plugin_contexts={}))
+    return SimpleNamespace(app=app, state=SimpleNamespace(), headers=Headers({}))
+
+
+def test_bulk_get_rates_rows_are_json_serializable():
+    """Regression: get_rates wrapped internal pydantic Rate models in a plain
+    dict; flatten(format="json") passes dicts through untouched, so the models
+    reached json.dumps un-serialized and bulk.json/get_rates 500ed mid-stream."""
+
+    async def fake_get_rates(currency, height=None):
+        return RatesResponse(
+            height=1,
+            rates=[{"code": "eur", "value": 0.5}, {"code": "usd", "value": 1.0}],
+        )
+
+    ctx = SimpleNamespace(
+        services=SimpleNamespace(
+            rates_service=SimpleNamespace(get_rates=fake_get_rates)
+        )
+    )
+
+    flat = asyncio.run(
+        wrap(
+            _plain_request(),
+            ctx,
+            get_rates,
+            "btc",
+            {},
+            {"height": 1},
+            1,
+            "json",
+            asyncio.Semaphore(1),
+        )
+    )
+
+    assert len(flat) == 1
+    row = json.loads(json.dumps(flat[0]))
+    assert row["_request_height"] == 1
+    assert row["rates"] == [
+        {"code": "eur", "value": 0.5},
+        {"code": "usd", "value": 1.0},
+    ]
+
+
+def test_bulk_json_get_rates(client):
+    body = {"height": [1]}
+    result = request_with_status(
+        client,
+        "/{currency}/bulk.{form}/get_rates?num_pages=1".format(
+            currency="btc", form="json"
+        ),
+        200,
+        body,
+    )
+    assert result == [
+        {
+            "rates": [
+                {"code": "eur", "value": 0.0},
+                {"code": "usd", "value": 0.0},
+            ],
+            "_request_height": 1,
+        }
+    ]
+
+
 def test_bulk_csv(client):
     body = {"height": [1, 2]}
     response = client.request(
@@ -128,11 +198,7 @@ def test_bulk_csv(client):
         headers=headers,
     )
     result = response.text
-    expected = (
-        "_error,_info,_request_height\r\n"
-        "not found,,100\r\n"
-        "not found,,200\r\n"
-    )
+    expected = "_error,_info,_request_height\r\nnot found,,100\r\nnot found,,200\r\n"
     assert sorted(expected.split("\r\n")) == sorted(result.split("\r\n"))
 
     # error bodies:
