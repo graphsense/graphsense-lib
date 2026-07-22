@@ -229,15 +229,6 @@ exclude = [
 namespaces = true
 
 
-[tool.uv]
-# Transitive-dependency version caps (uv resolves these without adding a direct
-# dependency). aiohttp 3.14 removed `aiohttp.streams.AsyncStreamReaderMixin`,
-# which the latest vcrpy (8.1.1) still references in its aiohttp stub — so any
-# @vcr-recorded test fails at cassette setup. Hold aiohttp <3.14 (pulled via
-# web3) until vcrpy ships an aiohttp-3.14-compatible release, then drop this.
-constraint-dependencies = ["aiohttp<3.14"]
-
-
 [tool.pytest.ini_options]
 # Specify command line options as you would do when invoking pytest directly.
 # e.g. --cov-report html (or xml) for html/xml output or --junitxml junit.xml
