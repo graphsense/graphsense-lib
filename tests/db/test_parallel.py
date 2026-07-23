@@ -265,6 +265,85 @@ def test_pool_still_runs_caller_initializer_with_signal_guard():
     assert result == ["guarded"]
 
 
+# --- worker exception transport ------------------------------------------
+# A worker's exception is pickled by the executor to reach the parent.
+# Driver errors like NoHostAvailable reference cassandra.pool.Host objects
+# (each holding an RLock), so an unguarded re-raise surfaces as
+# "TypeError: cannot pickle '_thread.RLock' object" in the parent and
+# masks the real database error.
+
+
+class _UnpicklableError(Exception):
+    def __init__(self, msg):
+        super().__init__(msg)
+        import threading
+
+        self.lock = threading.RLock()
+
+
+def _raise_unpicklable_chunk(chunk):
+    raise _UnpicklableError("db went away")
+
+
+def _raise_picklable_chunk(chunk):
+    raise ValueError("bad chunk")
+
+
+def _raise_nohostavailable_chunk(chunk):
+    from cassandra.cluster import NoHostAvailable
+    from cassandra.connection import ConnectionException
+    from cassandra.policies import SimpleConvictionPolicy
+    from cassandra.pool import Host
+
+    host = Host("127.0.0.1", SimpleConvictionPolicy)
+    raise NoHostAvailable(
+        "Unable to complete the operation against any hosts",
+        {host: ConnectionException("Pool is shutdown")},
+    )
+
+
+def test_run_task_returns_result_unchanged():
+    from graphsenselib.db.parallel import _run_task_picklable
+
+    assert _run_task_picklable(_square_chunk, [2, 3]) == [4, 9]
+
+
+def test_run_task_reraises_picklable_exception_unchanged():
+    from graphsenselib.db.parallel import _run_task_picklable
+
+    with pytest.raises(ValueError, match="bad chunk"):
+        _run_task_picklable(_raise_picklable_chunk, [1])
+
+
+def test_run_task_converts_unpicklable_exception():
+    from graphsenselib.db.parallel import ParallelWorkerError, _run_task_picklable
+
+    with pytest.raises(ParallelWorkerError) as excinfo:
+        _run_task_picklable(_raise_unpicklable_chunk, [1])
+    # the sanitized error must itself survive pickling (that is the point)
+    restored = pickle.loads(pickle.dumps(excinfo.value))
+    assert "_UnpicklableError" in str(restored)
+    assert "db went away" in str(restored)
+    # original traceback text is preserved for diagnosis
+    assert "_raise_unpicklable_chunk" in str(restored)
+
+
+def test_pool_surfaces_unpicklable_worker_error_with_original_detail():
+    # Regression: a NoHostAvailable raised in a worker (errors dict keyed by
+    # cassandra.pool.Host, which holds an RLock) must reach the parent as a
+    # ParallelWorkerError naming the real failure — not as
+    # "TypeError: cannot pickle '_thread.RLock' object".
+    from graphsenselib.db.parallel import ParallelDbPool, ParallelWorkerError
+
+    with ParallelDbPool(
+        num_workers=1, initializer=_init_test_worker, initargs=("m",)
+    ) as pool:
+        with pytest.raises(ParallelWorkerError) as excinfo:
+            pool.map_chunked(_raise_nohostavailable_chunk, [1])
+    assert "NoHostAvailable" in str(excinfo.value)
+    assert "Pool is shutdown" in str(excinfo.value)
+
+
 def test_plainrow_serializes_identically_to_driver_udt_value():
     # Characterization test against the real driver serializer: a flattened
     # UDT value must produce the same wire bytes as the driver's own

@@ -11,7 +11,9 @@ untrusted data).
 
 import atexit
 import multiprocessing
+import pickle
 import signal
+import traceback
 from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
 
@@ -136,6 +138,41 @@ def worker_apply_changes(chunk: list) -> list:
     return [get_worker_db().transformed.apply_changes(chunk, atomic=False)]
 
 
+class ParallelWorkerError(Exception):
+    """Picklable stand-in for a worker exception that cannot cross the
+    process boundary. Carries the original exception's formatted traceback
+    in its message."""
+
+
+def _run_task_picklable(fn, chunk):
+    """Run a map_chunked task, guaranteeing any raised exception can be
+    pickled back to the parent.
+
+    cassandra-driver errors like NoHostAvailable and OperationTimedOut
+    reference cassandra.pool.Host objects, each holding an RLock. The
+    executor pickles a worker's exception to hand it to the parent; left
+    unguarded, that pickling fails and the parent sees
+    "TypeError: cannot pickle '_thread.RLock' object" instead of the real
+    database error. Exceptions that survive a pickle round-trip are
+    re-raised unchanged; the rest are re-raised as ParallelWorkerError
+    carrying the original traceback text.
+    """
+    try:
+        return fn(chunk)
+    except Exception as exc:
+        try:
+            pickle.loads(pickle.dumps(exc))
+        except Exception:
+            detail = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            ).rstrip()
+            raise ParallelWorkerError(
+                f"worker raised unpicklable {type(exc).__name__}; "
+                f"original traceback:\n{detail}"
+            ) from None
+        raise
+
+
 def _init_worker_signal_inert(initializer, initargs):
     """Pool-worker bootstrap: ignore termination signals, then run the
     caller's initializer.
@@ -179,7 +216,9 @@ class ParallelDbPool:
         if not items:
             return []
         chunks = split_even(items, self.num_workers)
-        futures = [self._executor.submit(fn, chunk) for chunk in chunks]
+        futures = [
+            self._executor.submit(_run_task_picklable, fn, chunk) for chunk in chunks
+        ]
         results = []
         for future in futures:
             results.extend(future.result())
