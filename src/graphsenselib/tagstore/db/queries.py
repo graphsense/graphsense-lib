@@ -18,6 +18,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from graphsenselib.utils.constants import (
     FRESH_CLUSTER_ID_OFFSET,
     is_fresh_cluster_id,
+    is_representable_entity_id,
     to_raw_fresh_cluster_id,
 )
 
@@ -386,7 +387,7 @@ def _routed_id_batches(cluster_ids):
     Returns two triples ``(raw_ids, fresh, shift)`` where ``shift`` restores
     the public id on result rows (``raw + shift == public``).
     """
-    ids = [int(c) for c in cluster_ids]
+    ids = [int(c) for c in cluster_ids if is_representable_entity_id(int(c))]
     legacy = [c for c in ids if not is_fresh_cluster_id(c)]
     fresh_raw = [to_raw_fresh_cluster_id(c) for c in ids if is_fresh_cluster_id(c)]
     return ((legacy, False, 0), (fresh_raw, True, FRESH_CLUSTER_ID_OFFSET))
@@ -897,6 +898,8 @@ class TagstoreDbAsync:
     async def get_labels_by_clusterid(
         self, cluster_id: str, network: str, groups: List[str], session=None
     ) -> List[str]:
+        if not is_representable_entity_id(int(cluster_id)):
+            return []
         results = await session.exec(
             _get_labels_by_clusterid_stmt(cluster_id, network, groups)
         )
@@ -968,6 +971,8 @@ class TagstoreDbAsync:
         exclude_identifiers: Optional[List[str]] = None,
         session=None,
     ) -> List[TagPublic]:
+        if not is_representable_entity_id(int(cluster_id)):
+            return []
         results = await self._get_tags_by_clusterid(
             cluster_id,
             network,
@@ -983,6 +988,8 @@ class TagstoreDbAsync:
     async def get_nr_tags_by_clusterid(
         self, cluster_id: int, network: str, groups: List[str], session=None
     ) -> int:
+        if not is_representable_entity_id(int(cluster_id)):
+            return 0
         results = await session.exec(
             _get_count_by_cluster_stmt(cluster_id, network, groups)
         )
@@ -993,6 +1000,8 @@ class TagstoreDbAsync:
     async def get_actors_by_clusterid(
         self, cluster_id: int, network: str, groups: List[str], session=None
     ) -> List[HumanReadableId]:
+        if not is_representable_entity_id(int(cluster_id)):
+            return []
         results = await session.exec(
             _get_actors_for_clusterid_stmt(cluster_id, network, groups)
         )
@@ -1166,6 +1175,8 @@ class TagstoreDbAsync:
     async def get_best_cluster_tag(
         self, cluster_id: int, network: str, groups: List[str], session=None
     ) -> Optional[TagPublic]:
+        if not is_representable_entity_id(int(cluster_id)):
+            return None
         result = (
             await session.exec(_get_best_cluster_tag_stmt(cluster_id, network, groups))
         ).first()

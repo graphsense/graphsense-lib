@@ -637,6 +637,35 @@ class TestUtxoNettingLitmus:
         assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" in neighbors
 
 
+class TestOutOfRangeEntityIds:
+    """Entity ids outside the representable spaces must not 500.
+
+    Public ids exist only in [0, 2**31) (legacy, int32-bound) or
+    [2**33, 2**33 + 2**31) (fresh offset + int32-bound raw id). Ids in
+    between (like 2280857679, from a prod alert) used to reach the int4/int32
+    binds and blow up: asyncpg DataError on /clusters/{id}/tags, cassandra
+    struct.error on /entities/{id}. Current-server invariant, not a baseline
+    comparison: deployed prod has exactly this defect.
+    """
+
+    DEAD_ZONE_ID = 2280857679
+
+    @pytest.mark.regression
+    def test_out_of_range_cluster_tags_is_empty(self):
+        url = urljoin(
+            CURRENT_SERVER + "/", f"eth/clusters/{self.DEAD_ZONE_ID}/tags?pagesize=1"
+        )
+        response = requests.get(url, headers=headers_for(CURRENT_SERVER, True))
+        assert response.status_code == 200
+        assert response.json() == {"address_tags": []}
+
+    @pytest.mark.regression
+    def test_out_of_range_entity_is_404(self):
+        url = urljoin(CURRENT_SERVER + "/", f"eth/entities/{self.DEAD_ZONE_ID}")
+        response = requests.get(url, headers=headers_for(CURRENT_SERVER, True))
+        assert response.status_code == 404
+
+
 class TestBulkGetRates:
     """bulk.json/get_rates must stream valid JSON.
 

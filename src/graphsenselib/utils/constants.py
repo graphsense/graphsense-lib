@@ -42,3 +42,18 @@ def to_public_fresh_cluster_id(raw_cluster_id: int) -> int:
 def to_raw_fresh_cluster_id(entity_id: int) -> int:
     """Public fresh entity id -> raw cluster id in the fresh_* tables."""
     return entity_id - FRESH_CLUSTER_ID_OFFSET
+
+
+def is_representable_entity_id(entity_id: int) -> bool:
+    """True if a public entity id can exist at all.
+
+    Legacy ids are int32-bound (Cassandra ``cluster_id``/``address_id`` and
+    the tagstore mapping columns are 32-bit), and a fresh id unshifts to a
+    raw id (min address id) that is int32-bound too. Ids in the gap between
+    the legacy ceiling and the offset, beyond the fresh range, or negative
+    address no row in any store — treat them like absent ids instead of
+    letting them reach an int32/int4 bind.
+    """
+    return (0 <= entity_id < 2**31) or (
+        FRESH_CLUSTER_ID_OFFSET <= entity_id < FRESH_CLUSTER_ID_OFFSET + 2**31
+    )

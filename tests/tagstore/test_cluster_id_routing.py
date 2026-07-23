@@ -20,11 +20,18 @@ from graphsenselib.tagstore.db.models import (
     TagCountByClusterView,
     TagCountByClusterViewV2,
 )
-from graphsenselib.utils.constants import FRESH_CLUSTER_ID_OFFSET
+from graphsenselib.utils.constants import (
+    FRESH_CLUSTER_ID_OFFSET,
+    is_representable_entity_id,
+)
 
 LEGACY_ID = 7648699
 FRESH_RAW_ID = 408665187
 FRESH_PUBLIC_ID = FRESH_RAW_ID + FRESH_CLUSTER_ID_OFFSET
+# No public id can exist between the int32 legacy ceiling and the fresh
+# offset, nor beyond the fresh range (raw fresh ids are int32-bound too).
+DEAD_ZONE_ID = 2280857679
+BEYOND_FRESH_ID = FRESH_CLUSTER_ID_OFFSET + 2**31
 
 
 def _sql(stmt):
@@ -122,6 +129,65 @@ class _FakeSession:
         sql = _sql(stmt)
         self.executed.append(sql)
         return _FakeResults(self.fresh_rows if "_v2" in sql else self.legacy_rows)
+
+
+@pytest.mark.parametrize(
+    "entity_id,representable",
+    [
+        (0, True),
+        (2**31 - 1, True),
+        (2**31, False),
+        (DEAD_ZONE_ID, False),
+        (FRESH_CLUSTER_ID_OFFSET - 1, False),
+        (FRESH_CLUSTER_ID_OFFSET, True),
+        (FRESH_CLUSTER_ID_OFFSET + 2**31 - 1, True),
+        (BEYOND_FRESH_ID, False),
+        (-1, False),
+    ],
+)
+def test_is_representable_entity_id_boundaries(entity_id, representable):
+    assert is_representable_entity_id(entity_id) is representable
+
+
+def test_routed_id_batches_drop_unrepresentable_ids():
+    (legacy, _, _), (fresh_raw, _, _) = q._routed_id_batches(
+        [LEGACY_ID, DEAD_ZONE_ID, FRESH_PUBLIC_ID, BEYOND_FRESH_ID, -1]
+    )
+    assert legacy == [LEGACY_ID]
+    assert fresh_raw == [FRESH_RAW_ID]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_id", [DEAD_ZONE_ID, BEYOND_FRESH_ID, -1])
+async def test_single_id_entries_return_empty_without_querying(bad_id):
+    """Ids no relation can hold must behave like absent ids: empty results,
+    and no SQL issued (an int4 bind of a >int32 id would blow up asyncpg)."""
+    db = q.TagstoreDbAsync(None)
+    session = _FakeSession(legacy_rows=[], fresh_rows=[])
+
+    assert (
+        await db.get_tags_by_clusterid(
+            bad_id, "ETH", 0, 10, ["public"], session=session
+        )
+        == []
+    )
+    assert (
+        await db.get_nr_tags_by_clusterid(bad_id, "ETH", ["public"], session=session)
+        == 0
+    )
+    assert (
+        await db.get_actors_by_clusterid(bad_id, "ETH", ["public"], session=session)
+        == []
+    )
+    assert (
+        await db.get_labels_by_clusterid(bad_id, "ETH", ["public"], session=session)
+        == []
+    )
+    assert (
+        await db.get_best_cluster_tag(bad_id, "ETH", ["public"], session=session)
+        is None
+    )
+    assert session.executed == []
 
 
 @pytest.mark.asyncio

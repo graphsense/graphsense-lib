@@ -42,6 +42,7 @@ from graphsenselib.utils.accountmodel import bytes_to_hex, hex_str_to_bytes, str
 from graphsenselib.utils.address import address_to_user_format, cannonicalize_address
 from graphsenselib.utils.constants import (
     is_fresh_cluster_id,
+    is_representable_entity_id,
     replace_tron_dummy_address_with_valid_null_address,
     to_public_fresh_cluster_id,
     to_raw_fresh_cluster_id,
@@ -1409,6 +1410,8 @@ class Cassandra:
         page=None,
         pagesize=None,
     ):
+        if not is_representable_entity_id(int(entity)):
+            return [], None
         return await self.list_txs_by_node_type(
             currency,
             NodeType.CLUSTER,
@@ -2674,6 +2677,8 @@ class Cassandra:
     @eth
     async def get_entity(self, currency, entity):
         entity = int(entity)
+        if not is_representable_entity_id(entity):
+            raise ClusterNotFoundException(currency, entity)
         if is_fresh_cluster_id(entity):
             return await self._get_fresh_entity(currency, entity)
         entity_id_group = self.get_id_group(currency, entity)
@@ -2970,6 +2975,8 @@ class Cassandra:
     async def list_entity_addresses(self, currency, entity, page=None, pagesize=None):
         paging_state = page_from_hex(page)
         entity = int(entity)
+        if not is_representable_entity_id(entity):
+            return [], None
         fresh = is_fresh_cluster_id(entity)
         if fresh:
             entity = to_raw_fresh_cluster_id(entity)
@@ -3026,6 +3033,8 @@ class Cassandra:
 
         elif node_type == NodeType.CLUSTER:
             id = int(id)
+            if not is_representable_entity_id(id):
+                return [], None
             if is_eth_like(currency):
                 node_type = NodeType.ADDRESS
             else:
@@ -3782,6 +3791,9 @@ class Cassandra:
 
     async def get_entity_eth(self, currency, entity):
         # mockup entity by address
+        entity = int(entity)
+        if not is_representable_entity_id(entity):
+            return None
         id_group = self.get_id_group(currency, entity)
         query = "SELECT * FROM address WHERE address_id_group = %s AND address_id = %s"
         result = await self.execute_async(
@@ -4651,6 +4663,8 @@ class Cassandra:
     async def list_entity_addresses_eth(
         self, currency, entity, page=None, pagesize=None
     ):
+        if not is_representable_entity_id(int(entity)):
+            return [], None
         addresses = await self.get_addresses_by_ids(currency, [entity])
         return await self.finish_addresses(currency, addresses), None
 
