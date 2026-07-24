@@ -4,6 +4,16 @@ GENERATOR_VERSION ?= v7.19.0
 TEMPLATES_DIR ?= templates
 COMPAT_DIR ?= compat
 
+# ruff/ty versions come from the repo root's uv.lock — the single pin
+# position. This package has no lockfile entry for them, and an unpinned
+# `--with ruff` floats to latest: ruff 0.16.0 changed its default rule
+# selection and broke CI overnight with 122 new findings on unchanged
+# code. When the root bumps ruff/ty, this package follows automatically
+# (autofix any new findings as part of that bump).
+ROOT_DEV_EXPORT := uv export --directory ../.. --frozen --only-dev --no-hashes --no-emit-project --no-annotate
+RUFF := $(shell $(ROOT_DEV_EXPORT) | grep '^ruff==')
+TY := $(shell $(ROOT_DEV_EXPORT) | grep '^ty==')
+
 # Rootless podman (Fedora ships `docker` as a podman shim) maps the
 # container UID to a host *subuid*, so a plain `--user $(id -u):$(id -g)`
 # runs as a uid that cannot write the host-owned bind-mounted output tree
@@ -85,18 +95,18 @@ test-ci:
 	uv run --extra cli pytest tests/ -q -W error
 
 lint:
-	uv run --with ruff ruff check graphsense/ext graphsense/cli tests
-	uv run --with ruff ruff format --check graphsense/ext graphsense/cli tests
+	uv run --with $(RUFF) ruff check graphsense/ext graphsense/cli tests
+	uv run --with $(RUFF) ruff format --check graphsense/ext graphsense/cli tests
 
 format:
-	uv run --with ruff ruff format graphsense/ext graphsense/cli tests
-	uv run --with ruff ruff check --fix graphsense/ext graphsense/cli tests
+	uv run --with $(RUFF) ruff format graphsense/ext graphsense/cli tests
+	uv run --with $(RUFF) ruff check --fix graphsense/ext graphsense/cli tests
 
 # ty picks up this workspace's first-party paths from --python, and
 # we pass explicit files because ty does not yet discover them from
 # directories in this mixed-project layout.
 type-check:
-	uv run --extra cli --with ty ty check --python .venv \
+	uv run --extra cli --with $(TY) ty check --python .venv \
 		$$(find graphsense/ext graphsense/cli -name '*.py')
 
 run-examples:
