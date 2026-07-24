@@ -169,8 +169,14 @@ jobs:
           # config.
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Layer cache lives in GHCR under the :buildcache tag instead of the
+          # GitHub Actions cache backend: type=gha is capped at 10 GB per repo
+          # and branch-scoped, so the multi-GB cargo caches plus mode=max image
+          # layers constantly evicted each other. A registry cache has no size
+          # cap, is shared across branches and workflows (docker-build.yml
+          # reads it too), and mode=max also caches the builder-stage layers.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
           build-args: |
             SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${{ steps.scm.outputs.version }}
 
