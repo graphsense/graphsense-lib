@@ -1,23 +1,34 @@
 # syntax=docker/dockerfile:1.4
 
 # =============================================================================
+# Pinned external images, declared as named stages.
+#
+# Both are pinned rather than floating (uv was :latest, temurin an unpinned
+# tag): a digest move on either invalidates every layer below the COPY that
+# consumes it, which made prod re-pull hundreds of MB of otherwise unchanged
+# apt/Java/site-packages layers.
+#
+# They are stages instead of inline `COPY --from=ghcr.io/...` refs so each
+# pin exists exactly once AND Dependabot can bump it: the docker ecosystem
+# only parses FROM lines — image references inside COPY --from are still
+# ignored (dependabot-core#5103, PR #12988 open). With the pin on a FROM
+# line, the weekly docker updater opens a normal bump PR (tag for uv, digest
+# for temurin) and CI proves it before it reaches prod.
+# =============================================================================
+FROM ghcr.io/astral-sh/uv:0.11.29 AS uv
+FROM eclipse-temurin:11-jre-jammy@sha256:76ffb747ad3a62a8b81ac3c76e2c3b1c06e475b1e10109d0a4dd604db627c9f5 AS java11
+
+# =============================================================================
 # Stage 1: builder — compiles the Python wheel and the Rust clustering wheel.
 # Carries gcc/g++/make/cmake/curl/binutils/rust/libpq-dev; none of it leaks
 # into the runtime image.
 # =============================================================================
 FROM python:3.13-slim-bookworm AS builder
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 
 ENV UV_ONLY_BINARY=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV GIT_PYTHON_REFRESH=quiet
-
-# Version is computed on the host (where the full worktree + git tags are
-# available) and handed in here. Inside the container only a subset of the
-# tree is COPY'd, so an in-container `git describe` would see "deleted"
-# tracked files and emit a dirty/dev0 version even on a clean tag.
-ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -52,12 +63,31 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     && mkdir -p /wheels \
     && cp rust/gs_clustering/target/wheels/graphsense_clustering-*.whl /wheels/
 
-# --- Python wheel second. Depends on ./src + project metadata; the version is
-# set via SETUPTOOLS_SCM_PRETEND_VERSION_*.
+# Version is computed on the host (where the full worktree + git tags are
+# available) and handed in here. Inside the container only a subset of the
+# tree is COPY'd, so an in-container `git describe` would see "deleted"
+# tracked files and emit a dirty/dev0 version even on a clean tag.
+# Declared only now, below the Rust step: the value changes on every commit,
+# and an ARG/ENV earlier in the stage would invalidate the expensive
+# clustering-wheel layer above on every build.
+ARG SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB}
+
+# Locked third-party requirements for the runtime stage's dependency layer.
+# --no-emit-project/--no-emit-package strip the two wheels built in this
+# stage; everything else comes out version-pinned with hashes. The output
+# depends only on pyproject.toml + uv.lock content (verified: it is
+# identical across pretend versions), so the runtime layer this file feeds
+# stays cached across code-only releases.
+ADD ./pyproject.toml ./uv.lock ./
+RUN uv export --frozen --no-dev --no-emit-project \
+    --no-emit-package graphsense-clustering \
+    --extra all --extra transformation -o /tmp/requirements.txt
+
+# --- Python wheel second. Depends on ./src + project metadata; the version
+# is set via SETUPTOOLS_SCM_PRETEND_VERSION_*.
 ADD ./src/ ./src
 ADD ./Makefile ./
-ADD ./pyproject.toml ./
-ADD ./uv.lock ./
 RUN make build
 
 # =============================================================================
@@ -65,7 +95,7 @@ RUN make build
 # This is the image that ships.
 # =============================================================================
 FROM python:3.13-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 
 LABEL org.opencontainers.image.title="graphsense-lib"
 LABEL org.opencontainers.image.maintainer="contact@iknaio.com"
@@ -109,24 +139,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # per run with JAVA_HOME=/opt/java11; everything else keeps the default
 # Java 17. Drop this layer once the cluster JVM moves to 17+ (needs
 # Cassandra 5.x on the shared hosts first; Spark 4 will require it anyway).
-COPY --from=eclipse-temurin:11-jre-jammy /opt/java/openjdk /opt/java11
+# Pinned by digest in the java11 stage above: a moving tag re-ships this
+# ~136 MB layer to prod on every upstream Temurin rebuild, even when nothing
+# else changed.
+COPY --from=java11 /opt/java/openjdk /opt/java11
 
-# Pull the two wheels out of the builder stage. Globs work in COPY.
-COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/wheels/
-COPY --from=builder /wheels/graphsense_clustering-*.whl /tmp/wheels/
-
-# Install the wheels with all required extras, set up duckdb httpfs, then
-# drop bytecode caches. We deliberately don't run `strip` on the installed
-# .so files: numpy's bundled OpenBLAS ships with a hand-crafted ELF layout
-# whose page-aligned LOAD segments get corrupted by `strip --strip-unneeded`,
-# breaking `import numpy` with "ELF load command address/offset not
-# page-aligned". The ~30 MB we'd save is not worth the breakage.
-RUN uv pip install --no-cache --system /tmp/wheels/graphsense_clustering-*.whl \
-    && uv pip install --no-cache --system "/tmp/wheels/$(ls /tmp/wheels/graphsense_lib-*.whl | xargs -n1 basename)[all,transformation]" \
-    && uv pip install --no-cache --system gunicorn \
-    && rm -rf /tmp/wheels \
+# --- Third-party dependency layer, keyed on the exported lockfile only.
+# This is the image's biggest layer (~500 MB: pyspark, arrow, pandas, ...).
+# It is installed BEFORE the locally-built wheels so a code-only release
+# leaves its digest unchanged and prod pulls only the small wheel layer
+# below — previously wheels+deps were one fused layer that re-shipped
+# entirely on every release. gunicorn arrives lockfile-pinned via the web
+# extra (part of all). duckdb's httpfs extension is baked here because
+# duckdb itself comes from this layer; the extension dir is chown'd in the
+# same RUN (a standalone chown -R would duplicate the files into an extra
+# layer — uid 1000 is the graphsense user created further down).
+# We deliberately don't run `strip` on the installed .so files: numpy's
+# bundled OpenBLAS ships with a hand-crafted ELF layout whose page-aligned
+# LOAD segments get corrupted by `strip --strip-unneeded`, breaking
+# `import numpy` with "ELF load command address/offset not page-aligned".
+# The ~30 MB we'd save is not worth the breakage.
+COPY --from=builder /tmp/requirements.txt /tmp/requirements.txt
+RUN uv pip install --no-cache --system -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt \
     && mkdir -p /opt/duckdb/extensions \
     && python -c "import duckdb; con = duckdb.connect(); con.execute(\"SET extension_directory='/opt/duckdb/extensions';\"); con.execute('INSTALL httpfs;'); con.execute('LOAD httpfs;')" \
+    && chown -R 1000 /opt/duckdb/extensions \
+    && find /usr/local/lib/python3.13/site-packages -depth -type d -name "__pycache__" -exec rm -rf {} +
+
+# --- Application layer: only the two locally-built wheels, installed with
+# --no-deps (their dependency closure is already present above). Globs work
+# in COPY.
+#
+# Two guards, because --no-deps means nothing verifies the wheels' own
+# metadata against what the dependency layer installed:
+#   * `uv pip check` catches an unsatisfied *base* requirement.
+#   * the import assert catches an unsatisfied *extra* — pip/uv check ignore
+#     extras, and cli/main.py imports every optional command group under
+#     `try/except ImportError`, so a missing extra dep would otherwise
+#     silently ship an image whose CLI is just missing `tagpack`, `web`,
+#     `transformation` or `mcp` (no error, no exit code).
+COPY --from=builder /wheels/graphsense_clustering-*.whl /tmp/wheels/
+COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/wheels/
+RUN uv pip install --no-cache --system --no-deps /tmp/wheels/*.whl \
+    && uv pip check \
+    && python -c "import gs_clustering, graphsenselib.web.app; from graphsenselib.cli import main as m; missing = [n for n in ('tagpacktool', 'web', 'transformation', 'mcp') if not getattr(m, n + '_cli_available')]; assert not missing, 'CLI groups unavailable (extra dependency missing from the locked requirements): ' + ', '.join(missing); print('cli/extras smoke test OK')" \
+    && rm -rf /tmp/wheels \
     && find /usr/local/lib/python3.13/site-packages -depth -type d -name "__pycache__" -exec rm -rf {} +
 
 # Baked Spark-executor packages for Python-UDF jobs (e.g. pubkey-update).
@@ -154,6 +212,7 @@ RUN mkdir -p /opt/graphsense/spark-env \
     && PYTHONPATH=/opt/graphsense/spark-env /usr/local/bin/python3 -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; import graphsenselib; assert graphsenselib.__file__.startswith('/opt/graphsense/spark-env'), graphsenselib.__file__; print('spark-env site-packages smoke test OK')" \
     && tar -C /opt/graphsense/spark-env -czf /opt/graphsense/spark-env.tar.gz . \
     && rm -rf /opt/graphsense/spark-env /tmp/pkwheel \
+    && chown -R 1000 /opt/graphsense \
     && du -h /opt/graphsense/spark-env.tar.gz
 
 # Inline gunicorn config for REST API
@@ -205,16 +264,17 @@ def when_ready(server):
     server.log.info("Server is ready. Spawning workers")
 EOF
 
+# Ownership is set with the numeric uid 1000 inside the layers that create
+# the files — a standalone `chown -R` RUN duplicates every touched file
+# into a fresh layer. /opt/duckdb/extensions and /opt/graphsense are
+# chown'd in their creating RUNs above; /opt/graphsense must be *writable*
+# by the runtime user because Spark writes a Hadoop .crc sidecar next to
+# the spark-env archive when serving it via spark.archives (else:
+# java.nio.file.AccessDeniedException). The uid must match adduser here.
 RUN adduser --system --uid 1000 --home /home/graphsense graphsense
-RUN chown -R graphsense /opt/duckdb/extensions
-# The baked spark-env archive is read (and a Hadoop .crc sidecar written next to
-# it) by the non-root runtime user when Spark serves it via spark.archives. Make
-# the dir writable by that user, else: java.nio.file.AccessDeniedException.
-RUN chown -R graphsense /opt/graphsense
-RUN mkdir -p /srv/graphsense-rest/instance
-RUN mkdir -p /srv/graphsense-rest/docs/static
-ADD ./docs/static/ /srv/graphsense-rest/docs/static/
-RUN chown -R graphsense /srv/graphsense-rest
+RUN mkdir -p /srv/graphsense-rest/instance /srv/graphsense-rest/docs/static \
+    && chown -R 1000 /srv/graphsense-rest
+ADD --chown=1000 ./docs/static/ /srv/graphsense-rest/docs/static/
 USER graphsense
 WORKDIR /srv/graphsense-rest/
 
