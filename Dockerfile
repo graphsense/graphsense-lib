@@ -79,10 +79,18 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=${SETUPTOOLS_SCM_PRETEND_V
 # depends only on pyproject.toml + uv.lock content (verified: it is
 # identical across pretend versions), so the runtime layer this file feeds
 # stays cached across code-only releases.
+#
+# The second export is the same resolution without hashes, used as a
+# constraints file for the Spark-executor env further down (that install
+# resolves its own small set of packages, and a hash-bearing constraints
+# file would put the whole install into hash-checking mode).
 ADD ./pyproject.toml ./uv.lock ./
 RUN uv export --frozen --no-dev --no-emit-project \
     --no-emit-package graphsense-clustering \
-    --extra all --extra transformation -o /tmp/requirements.txt
+    --extra all --extra transformation -o /tmp/requirements.txt \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes \
+    --no-emit-package graphsense-clustering \
+    --extra all --extra transformation -o /tmp/constraints.txt
 
 # --- Python wheel second. Depends on ./src + project metadata; the version
 # is set via SETUPTOOLS_SCM_PRETEND_VERSION_*.
@@ -198,20 +206,31 @@ RUN uv pip install --no-cache --system --no-deps /tmp/wheels/*.whl \
 # It is MINIMAL (only the crypto stack the UDFs import; graphsenselib's utils
 # import path was made pandas-free), so ~13 MB rather than the ~250 MB full env.
 # The import smoke test fails the build if a UDF entrypoint can't be imported.
+#
+# This install resolves its own small dependency set, so it is constrained to
+# the same uv.lock resolution the rest of the image uses — otherwise it picks
+# whatever PyPI offers on build day and the executors silently run different
+# versions than the driver. That is not hypothetical: before the constraint,
+# a build shipped eth-utils/eth-typing 6.0.0 to the executors while the
+# driver ran the locked 5.3.1/5.2.1 (plus four smaller skews). The parity
+# assert below fails the build if any package still diverges.
 # Reference it from spark_config (file:// => the driver's HTTP file server
 # distributes it; no S3/HDFS needed). Do NOT override spark.pyspark.python —
 # keep the executors' own python; just put the shipped packages on PYTHONPATH:
 #   spark.archives: "file:///opt/graphsense/spark-env.tar.gz#environment"
 #   spark.executorEnv.PYTHONPATH: "./environment"
 COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/pkwheel/
+COPY --from=builder /tmp/constraints.txt /tmp/constraints.txt
 RUN mkdir -p /opt/graphsense/spark-env \
     && uv pip install --no-cache --python /usr/local/bin/python3 \
         --target /opt/graphsense/spark-env --no-deps /tmp/pkwheel/graphsense_lib-*.whl \
     && uv pip install --no-cache --python /usr/local/bin/python3 \
+        -c /tmp/constraints.txt \
         --target /opt/graphsense/spark-env eth-account coincurve base58 bech32 ecdsa \
     && PYTHONPATH=/opt/graphsense/spark-env /usr/local/bin/python3 -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; import graphsenselib; assert graphsenselib.__file__.startswith('/opt/graphsense/spark-env'), graphsenselib.__file__; print('spark-env site-packages smoke test OK')" \
+    && /usr/local/bin/python3 -c "import importlib.metadata as md; norm = lambda n: n.lower().replace('_', '-'); image = {norm(d.metadata['Name']): d.version for d in md.distributions()}; skew = sorted(f\"{norm(d.metadata['Name'])}: spark-env={d.version} image={image[norm(d.metadata['Name'])]}\" for d in md.distributions(path=['/opt/graphsense/spark-env']) if norm(d.metadata['Name']) != 'graphsense-lib' and norm(d.metadata['Name']) in image and d.version != image[norm(d.metadata['Name'])]); assert not skew, 'spark-env diverges from the locked image versions: ' + '; '.join(skew); print('spark-env/driver version parity OK')" \
     && tar -C /opt/graphsense/spark-env -czf /opt/graphsense/spark-env.tar.gz . \
-    && rm -rf /opt/graphsense/spark-env /tmp/pkwheel \
+    && rm -rf /opt/graphsense/spark-env /tmp/pkwheel /tmp/constraints.txt \
     && chown -R 1000 /opt/graphsense \
     && du -h /opt/graphsense/spark-env.tar.gz
 
