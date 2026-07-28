@@ -16,7 +16,7 @@ CURRENCY_STATS_EXAMPLE = {
     "no_labels": 10000,
     "no_tagged_addresses": 5000,
     "timestamp": 1625703347,
-    "schema_type": "utxo",
+    "network_type": "utxo",
 }
 
 TOKEN_CONFIG_EXAMPLE = {
@@ -50,6 +50,7 @@ class Stats(APIModel):
         {
             "currencies": [CURRENCY_STATS_EXAMPLE],
             "version": "1.0.0",
+            "request_timestamp": "2026-07-28T12:00:00",
         }
     )
 

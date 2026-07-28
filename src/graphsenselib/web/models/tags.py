@@ -19,6 +19,7 @@ ADDRESS_TAG_EXAMPLE = {
     "tagpack_is_public": True,
     "tagpack_title": "GraphSense Demo TagPack",
     "tagpack_uri": "https://github.com/graphsense/graphsense-tagpacks/tree/master/packs/demo.yaml",
+    "tag_type": "actor",
     "address": "1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
     "entity": 264711,
     "cluster": 264711,
