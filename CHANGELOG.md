@@ -3,6 +3,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v26.07.3] 2026-07-28
+### Changed
+- Sidecar bulk writes now size their upload-task count per table via
+  `spark.graphsense.sidecar.splits.<table>` (splits per ring token range,
+  fallback `spark.graphsense.sidecar.splits.default`, default 1) instead of
+  the hard-coded `number_splits=-1`, which derived one global split count
+  from `spark.default.parallelism` for every table. Large tables need many
+  splits so the biggest (unequal) token ranges still fit in executor memory,
+  but cassandra-analytics 0.3.0 builds one never-closed sidecar client per
+  upload task on the executors, so a global split count high enough for
+  `address_transactions` made small-table writes exhaust the executors' file
+  descriptors (`EPoll.create: Too many open files`, 2026-07-28 TRX run).
+
 ## [v26.07.2] 2026-07-23
 ### Fixed
 - Null-safe the pegged-token fiat conversion (`toFiatCurrency` in the account

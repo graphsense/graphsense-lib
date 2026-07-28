@@ -48,10 +48,30 @@ class SidecarBulkWriter(
       .option("table", table)
       .option("local_dc", localDc)
       .option("bulk_writer_cl", consistencyLevel)
-      .option("number_splits", "-1")
+      .option("number_splits", numberSplits(df, table).toString)
       .option("data_transport", "DIRECT")
       .mode("append")
       .save()
+  }
+
+  /** Upload tasks per ring token range for `table`, from
+    * `spark.graphsense.sidecar.splits.<table>`, falling back to
+    * `spark.graphsense.sidecar.splits.default` (1). Total upload tasks = splits
+    * * number of ring token ranges.
+    *
+    * Splits must be sized per table, not globally: token ranges are unequal in
+    * data, so large tables need several splits per range to keep the biggest
+    * range's share small enough to sort in executor memory. But
+    * cassandra-analytics 0.3.0 builds a sidecar client (a Vertx/netty
+    * event-loop group) per upload task and never closes it on the executor, so
+    * every task permanently costs the executor JVM file descriptors -- a
+    * blanket high split count (or number_splits=-1, which derives splits from
+    * spark.default.parallelism) exhausts the executor's fd limit.
+    */
+  private def numberSplits(df: DataFrame, table: String): Int = {
+    val conf = df.sparkSession.conf
+    val default = conf.get("spark.graphsense.sidecar.splits.default", "1")
+    conf.get(s"spark.graphsense.sidecar.splits.${table}", default).toInt
   }
 }
 
