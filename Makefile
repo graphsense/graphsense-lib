@@ -56,11 +56,27 @@ endif
 test: install-dev
 	DANGEROUSLY_ACCELERATE_TESTS=$(DANGEROUSLY_ACCELERATE_TESTS) uv run --exact --all-extras pytest $(PYTEST_OPTS) $(PYTEST_MARK)
 
-test-ci:
-	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
+# Coverage measurement costs ~18% of suite runtime (127s vs 108s locally) and
+# the report is only ever read from the CI log — nothing uploads it. The test
+# matrix therefore runs it on one leg only and passes COVERAGE=0 on the rest;
+# coverage of `src` does not differ by interpreter version. Defaults to on so a
+# plain `make test-ci` still produces the report.
+COVERAGE ?= 1
+ifeq ($(COVERAGE),1)
+COVERAGE_OPTS := --cov=src --cov-report term-missing
+else
+COVERAGE_OPTS :=
+endif
 
+test-ci:
+	uv run --exact --all-extras pytest  -x -rx -vv -m "not slow" $(COVERAGE_OPTS) --capture=no
+
+# Guards that the package still imports and works with only the base extras
+# installed (no [all]). That is a packaging property, not an interpreter one, so
+# CI runs this on a single matrix leg. Never measures coverage: it is a subset
+# run whose numbers would only be confusing next to the full one.
 test-with-base-dependencies-ci:
-	uv run --exact --no-dev --group testing --extra conversions --extra ingest --extra tagpacks --extra web pytest  -x -rx -vv -m "not slow" --cov=src --capture=no --cov-report term-missing
+	uv run --exact --no-dev --group testing --extra conversions --extra ingest --extra tagpacks --extra web pytest  -x -rx -vv -m "not slow" --capture=no
 
 
 # Build pre-baked Cassandra image with all test schemas (resttest_* + pytest_*)

@@ -33,6 +33,14 @@ jobs:
     strategy:
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # One leg is the "primary": it measures coverage and runs the
+          # reduced-extras pass. Both check properties of the codebase, not of
+          # the interpreter, so doing them on all four legs cost wall-clock
+          # (~18% for coverage, plus a second full suite run for the extras
+          # pass) without testing anything the primary leg does not already.
+          - python: "3.11"
+            primary: true
 
     steps:
       - uses: actions/checkout@v4
@@ -44,11 +52,18 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           version: "latest"
+          # Without this every leg resolves and downloads the whole dependency
+          # tree from scratch; the cold leg spent 80s in `uv sync` while warm
+          # ones took 3-5s. Keyed on the root lockfile, which is what
+          # `uv sync` resolves against.
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - name: Install requirements
         run: uv sync --python=${{ matrix.python }}
       - name: Run Unit Tests
-        run: make test-ci
+        run: make test-ci COVERAGE=${{ matrix.primary && '1' || '0' }}
       - name: Run Unit Tests with base dependencies
+        if: matrix.primary
         run: make test-with-base-dependencies-ci
       - name: Run Lint
         run: make lint
