@@ -284,6 +284,47 @@ def create_web_schemas(host, port):
 # Shared Fixtures
 # =============================================================================
 
+# Variables git exports into a hook's environment. They describe *this* repo, and
+# a hook that runs the test suite (the pre-commit `make test`) leaks them into
+# pytest. Tests that build throwaway repos under tmp_path then break: GitPython's
+# pure-python IndexFile writes the temp repo's own index, but `repo.git.<cmd>()`
+# shells out to real git, which honors the inherited GIT_INDEX_FILE/GIT_DIR and
+# reads this repo's index instead — so a file just committed in the temp repo
+# looks untracked and `git checkout` aborts rather than discarding it. Scrubbing
+# them for the session makes a hook-run suite behave like a plain `pytest` run.
+# The author/committer pairs are dropped too so commits made by tests take their
+# identity and timestamps from the test, not from the commit that invoked us.
+_GIT_ENV_VARS = (
+    "GIT_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_WORK_TREE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "GIT_COMMITTER_DATE",
+    "GIT_REFLOG_ACTION",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_git_environment():
+    """Detach the test session from any inherited git context (see above)."""
+    saved = {var: environ[var] for var in _GIT_ENV_VARS if var in environ}
+    for var in saved:
+        del environ[var]
+    try:
+        yield
+    finally:
+        environ.update(saved)
+
 
 def insert_test_data(db_setup):
     """Insert test data for tagstore tests"""
