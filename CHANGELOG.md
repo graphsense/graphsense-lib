@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.15.1] - 2026-07-29
+
+### Library
+
+#### Fixed
+- **ZEC ingest no longer aborts on NU6.3 ("Ironwood") v6 transactions.** Zcash activated NU6.3 on mainnet at block 3,428,143 (2026-07-28), adding a new shielded pool and a v6 transaction format; Zebra 6.0.0 serializes its bundle as a per-transaction `ironwood` object (the same shape as `orchard`). The JSON-RPC exporter's strict field validation — which deliberately raises on unrecognized node fields rather than silently dropping data — did not know the key and failed every block from activation onward with `Unknown fields in transaction response: ironwood`. `ironwood` is now blacklisted alongside `orchard`: like Orchard's, its value balance lives *inside* the bundle object, not in the transaction-level `valueBalance` (which stays Sapling-only), so no field the parser reads has moved. Note the pre-existing consequence, unchanged by this fix and shared with Orchard since NU5: transparent↔Ironwood flows are not recorded as shielded inputs/outputs — only Sprout `vjoinsplit` and Sapling `valueBalance` are. Block-level NU6.3 additions need no change; the Ironwood pool appears only inside the already-ignored `trees` and `valuePools`.
+
 ## [2.15.0] - 2026-07-14
 
 ### Library
