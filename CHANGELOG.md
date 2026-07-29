@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
-## [2.15.1] - Unreleased
+## [2.15.2] - Unreleased
 
 ### Library
 
@@ -40,6 +40,13 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Fixed
 - **`openapi.json` no longer publishes a `CurrencyStats` example that violates its own schema.** The examples on the web models are hand-maintained dicts and nothing checked them against the models they illustrate, so a field rename left one behind: `CURRENCY_STATS_EXAMPLE` still carried `schema_type`, renamed to `network_type` on the model, making both the `CurrencyStats` and the `Stats` example invalid against the schema shipped beside them. Two examples were also incomplete in ways clients noticed: `AddressTag` omitted `tag_type` and `Stats` omitted `request_timestamp`. All three are fixed, and a new `tests/web/test_openapi_examples.py` validates every model example against its model, rejects keys the model does not declare, and pins per-model field coverage to a shrink-only baseline so the next rename cannot pass silently. Examples/docs only; no wire-format change.
+
+## [2.15.1] - 2026-07-29
+
+### Library
+
+#### Fixed
+- **ZEC ingest no longer aborts on NU6.3 ("Ironwood") v6 transactions.** Zcash activated NU6.3 on mainnet at block 3,428,143 (2026-07-28), adding a new shielded pool and a v6 transaction format; Zebra 6.0.0 serializes its bundle as a per-transaction `ironwood` object (the same shape as `orchard`). The JSON-RPC exporter's strict field validation — which deliberately raises on unrecognized node fields rather than silently dropping data — did not know the key and failed every block from activation onward with `Unknown fields in transaction response: ironwood`. `ironwood` is now blacklisted alongside `orchard`: like Orchard's, its value balance lives *inside* the bundle object, not in the transaction-level `valueBalance` (which stays Sapling-only), so no field the parser reads has moved. Note the pre-existing consequence, unchanged by this fix and shared with Orchard since NU5: transparent↔Ironwood flows are not recorded as shielded inputs/outputs — only Sprout `vjoinsplit` and Sapling `valueBalance` are. Block-level NU6.3 additions need no change; the Ironwood pool appears only inside the already-ignored `trees` and `valuePools`.
 
 ## [2.15.0] - 2026-07-14
 

@@ -118,6 +118,7 @@ _TX_BLACKLIST = frozenset(
         "joinSplitPubKey",  # ZEC Sprout joinsplit public key
         "joinSplitSig",  # ZEC Sprout joinsplit signature
         "orchard",  # ZEC NU5 Orchard bundle (actions, proof, etc.)
+        "ironwood",  # ZEC NU6.3 Ironwood bundle, same shape as orchard (v6 txs)
         # Zebra adds these per-transaction lookup fields that zcashd does not
         # emit inside getblock; none carry parser-relevant data.
         "blockhash",
