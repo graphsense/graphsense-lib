@@ -10,8 +10,27 @@ permissions:
   contents: write
 
 jobs:
+  # A tag push does not trigger run_tests.yaml on its own (that workflow listens
+  # on master/develop branch pushes and pull requests), so the suite is invoked
+  # here explicitly. Both this and the image publish must succeed before the
+  # GitHub release is cut; previously all three ran in parallel off the tag and
+  # a release could be published against a failing build.
+  test:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/run_tests.yaml
+
+  publish-image:
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/github-packages-publish.yaml
+
   release:
     name: Release pushed tag
+    needs: [test, publish-image]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

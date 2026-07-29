@@ -7,12 +7,23 @@ name: Publish to Github Docker Hub
 
 on:
   workflow_dispatch:
+  # Stable releases call this workflow from release.yaml so the image is only
+  # published after the test suite passes; see the negative tag filter below.
+  workflow_call:
   push:
     branches:
       - master
       - develop
       - 'feature/**'
-    tags: [ 'v*.*.*' ]
+    tags:
+      - 'v*.*.*'
+      # Stable tags are excluded here and driven by release.yaml instead —
+      # without this they would publish twice, once ungated. The pattern is the
+      # exact complement of release.yaml's trigger, so pre-release tags
+      # (v2.15.0-rc.1, -dev.N, +local) keep the direct, ungated path they have
+      # today: release.yaml never fires for them, so gating them here would
+      # stop them publishing altogether.
+      - '!v[0-9]+.[0-9]+.[0-9]+'
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -23,9 +34,11 @@ env:
 
 jobs:
   # The test suite runs as its own workflow (run_tests.yaml) on pushes and
-  # PRs. Image publishing is intentionally NOT gated on it: gating serialized
-  # the full 4-way Python matrix (~6 min) in front of every build and roughly
-  # doubled publish wall-clock.
+  # PRs. Image publishing on *branch* pushes is intentionally NOT gated on it:
+  # gating serialized the full 4-way Python matrix (~6 min) in front of every
+  # build and roughly doubled publish wall-clock. Stable *releases* are gated,
+  # but that ordering lives in release.yaml, which runs the tests and then
+  # calls this workflow — the dev-loop fast path is unaffected.
   build:
 
     runs-on: ubuntu-latest
