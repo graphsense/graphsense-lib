@@ -542,6 +542,63 @@ class TestParseBlockAndTxs:
         assert len(shielded_outputs) == 1
         assert shielded_outputs[0]["value"] == 500_000_000
 
+    def test_zcash_v6_ironwood_bundle(self):
+        """ZCash NU6.3 v6 tx: the ironwood bundle is ignored, not fatal.
+
+        Zebra 6.0.0 emits an ``ironwood`` object (same shape as ``orchard``)
+        on v6 transactions from NU6.3 activation onward. It carries no field
+        the parser reads, so it must be tolerated like ``orchard``.
+        """
+        block_raw = {
+            "hash": "zcash_block3",
+            "height": 3_428_143,
+            "time": 3000000,
+            "size": 500,
+            "version": 6,
+            "merkleroot": "mk",
+            "nonce": "00",
+            "bits": "1d00ffff",
+            "tx": [
+                {
+                    "txid": "zec_tx3",
+                    "size": 300,
+                    "vsize": 300,
+                    "version": 6,
+                    "locktime": 0,
+                    "vin": [
+                        {
+                            "txid": "prev",
+                            "vout": 0,
+                            "scriptSig": {"asm": "", "hex": ""},
+                            "sequence": 0,
+                        }
+                    ],
+                    "vout": [
+                        {
+                            "value": 1.0,
+                            "n": 0,
+                            "scriptPubKey": {
+                                "asm": "",
+                                "hex": "00",
+                                "type": "pubkeyhash",
+                                "addresses": ["t1addr"],
+                            },
+                        }
+                    ],
+                    "orchard": {"actions": [], "valueBalance": 0.0},
+                    "ironwood": {"actions": [], "valueBalance": 0.0},
+                    "valueBalance": -5.0,
+                }
+            ],
+        }
+        block, txs = _parse_btc_block_and_txs(block_raw)
+        tx = txs[0]
+        assert tx["hash"] == "zec_tx3"
+        # Sapling valueBalance is still the only shielded amount the parser reads.
+        shielded_outputs = [o for o in tx["outputs"] if o["type"] == "shielded"]
+        assert len(shielded_outputs) == 1
+        assert shielded_outputs[0]["value"] == 500_000_000
+
     def test_regular_tx_with_prevout(self):
         """Verbosity 3: prevout resolves input_value and fee correctly."""
         block_raw = {
