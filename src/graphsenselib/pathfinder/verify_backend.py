@@ -74,6 +74,26 @@ def _truncate(items: Iterable[str]) -> str:
     return ", ".join(shown) + suffix
 
 
+def _as_dicts(items: Iterable[Any]) -> list[dict[str, Any]]:
+    """Normalize spec entries to dicts.
+
+    ``builder_from_spec`` documents a string shorthand for ``addresses``
+    and ``txs`` (a bare id), and ``apply_hierarchical_layout`` honours it.
+    Without this, a shorthand entry reaches ``_network_of`` / ``item["id"]``
+    as a ``str`` and raises ``AttributeError: 'str' object has no attribute
+    'get'`` — a crash rather than a warning, on a spec the encoder accepts.
+    Mirrors ``verify_structural._as_dicts``.
+    """
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, str):
+            out.append({"id": item})
+        elif isinstance(item, dict):
+            out.append(item)
+        # Anything else is malformed; builder_from_spec raises on it.
+    return out
+
+
 def _network_of(item: dict[str, Any], default: str) -> str:
     """Resolve the network ticker for a spec entry, falling back to the
     spec-level default. Mirrors what the encoder does so the verifier
@@ -106,8 +126,8 @@ async def verify_against_backend(
     "verifier unavailable" warning so a flaky backend doesn't sink a
     structurally-valid .gs.
     """
-    addresses: list[dict[str, Any]] = spec.get("addresses") or []
-    txs: list[dict[str, Any]] = spec.get("txs") or []
+    addresses: list[dict[str, Any]] = _as_dicts(spec.get("addresses") or [])
+    txs: list[dict[str, Any]] = _as_dicts(spec.get("txs") or [])
     agg_edges: list[dict[str, Any]] = spec.get("agg_edges") or []
 
     semaphore = asyncio.Semaphore(max_concurrency)

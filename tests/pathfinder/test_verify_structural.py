@@ -216,3 +216,30 @@ def test_case_variant_edge_endpoint_is_not_unknown() -> None:
         "agg_edges": [{"a": CHECKSUMMED, "b": other, "tx_ids": [tx]}],
     }
     assert verify_structural(spec) == []
+
+
+def test_string_shorthand_entries_are_recognized() -> None:
+    """`addresses` / `txs` accept a bare id string (documented by
+    `builder_from_spec` and honoured by `apply_hierarchical_layout`).
+    Shorthand entries must populate the id sets like dict entries do —
+    previously they fell through the `"id" in item` guards (a substring
+    test on a str) and every edge looked like it referenced unknown
+    txs/addresses."""
+    a, b = "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", "1P6ZvBftEqhrvqWSWicWRHrbTeSKLFzJMy"
+    tx = "e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114"
+    spec = {
+        "addresses": [{"id": a, "starting_point": True}, b],
+        "txs": [tx],
+        "agg_edges": [{"a": a, "b": b, "tx_ids": [tx]}],
+    }
+    assert verify_structural(spec) == []
+
+
+def test_string_shorthand_still_detects_real_problems() -> None:
+    """Shorthand must not suppress the checks: an orphan tx and a
+    duplicate address written in shorthand are still flagged."""
+    a = "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"
+    tx = "e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114"
+    warnings = verify_structural({"addresses": [a, a], "txs": [tx], "agg_edges": []})
+    assert any("more than once" in w for w in warnings)
+    assert any("not referenced from any agg_edge" in w for w in warnings)

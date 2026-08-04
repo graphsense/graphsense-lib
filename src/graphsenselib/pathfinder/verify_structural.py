@@ -41,6 +41,28 @@ def _truncate(items: Iterable[str]) -> str:
     return ", ".join(shown) + suffix
 
 
+def _as_dicts(items: Iterable[Any]) -> list[dict[str, Any]]:
+    """Normalize spec entries to dicts.
+
+    ``builder_from_spec`` documents a string shorthand for ``addresses``
+    and ``txs`` (a bare id, no label/color/coordinates), and
+    ``apply_hierarchical_layout`` honours it too. Without this, a plain
+    string falls through every ``"id" in item`` guard below — ``"id" in
+    "756a95…"`` is a substring test, not a key test — so shorthand
+    entries would vanish from the id sets and the checks would report
+    edges referencing txs "not in `txs`" that are in fact listed.
+    """
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, str):
+            out.append({"id": item})
+        elif isinstance(item, dict):
+            out.append(item)
+        # Anything else is malformed; builder_from_spec raises on it.
+        # Dropping it here keeps the verifier warning-only, never raising.
+    return out
+
+
 def _duplicate_ids(items: Iterable[dict[str, Any]], normalize) -> list[str]:
     """Ids occurring more than once after canonicalization, keyed per
     declared network so the same hash on two chains doesn't count as a
@@ -85,8 +107,8 @@ def verify_structural(spec: dict[str, Any]) -> list[str]:
     what the encoder commits to the ``.gs`` file.
     """
     warnings: list[str] = []
-    addresses: list[dict[str, Any]] = spec.get("addresses") or []
-    txs: list[dict[str, Any]] = spec.get("txs") or []
+    addresses: list[dict[str, Any]] = _as_dicts(spec.get("addresses") or [])
+    txs: list[dict[str, Any]] = _as_dicts(spec.get("txs") or [])
     agg_edges: list[dict[str, Any]] = spec.get("agg_edges") or []
 
     address_ids = {normalize_address_id(a["id"]) for a in addresses if "id" in a}
