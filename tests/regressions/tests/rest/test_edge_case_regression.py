@@ -666,6 +666,29 @@ class TestOutOfRangeEntityIds:
         assert response.status_code == 404
 
 
+class TestPreGenesisDateFilter:
+    """Date filters below the first stored block must not 500.
+
+    get_block_by_date's binary search assumes every height in
+    [0, no_blocks - 1] has a row in the raw block table, but TRX ingest
+    starts at block 1. A max_date below block 1's timestamp (prod URL from
+    an alert, likely a client-side ms-vs-s epoch bug producing 1975) made
+    the search probe the missing block 0 and crash on 'None < ts'
+    (TypeError -> 500). Current-server invariant, not a baseline
+    comparison: deployed prod has exactly this defect.
+    """
+
+    @pytest.mark.regression
+    def test_trx_pre_genesis_max_date_is_not_500(self):
+        url = urljoin(
+            CURRENT_SERVER + "/",
+            "trx/addresses/TRjKw74po8jYDP2Dk3nVS9aAzSKwawavtb/txs"
+            "?max_date=1975-08-27T14%3A13%3A07Z&order=asc&token_currency=usdt",
+        )
+        response = requests.get(url, headers=headers_for(CURRENT_SERVER, True))
+        assert response.status_code == 200
+
+
 class TestBulkGetRates:
     """bulk.json/get_rates must stream valid JSON.
 
