@@ -15,11 +15,6 @@ import pytest
 
 from graphsenselib.db.asynchronous.services.blocks_service import BlocksService
 
-# The module-level alru_cache on find_block_by_ts sees a fresh event loop per
-# test (pytest-asyncio) and warns once per loop change while auto-clearing
-# stale entries; harmless outside production, but warnings are errors here.
-pytestmark = pytest.mark.filterwarnings("ignore::async_lru.AlruCacheLoopResetWarning")
-
 
 def _service_with_blocks(timestamps: dict) -> BlocksService:
     db = MagicMock()

@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
-from async_lru import alru_cache
 from graphsenselib.errors import BadUserInputException, BlockNotFoundException
 
 from .common import std_tx_from_row
@@ -37,11 +36,6 @@ class RatesServiceProtocol(Protocol):
 
 class ConfigProtocol(Protocol):
     block_by_date_use_linear_search: bool
-
-
-@alru_cache(maxsize=1000)
-async def find_block_by_ts(get_timestamp, currency, ts, start, end):
-    return await find_insertion_point_async(get_timestamp, ts, low=start, high=end)
 
 
 async def find_insertion_point_async(accessor, x, low: int, high: int):
@@ -210,7 +204,7 @@ class BlocksService:
             # block's timestamp probes height 0 and compares None < ts.
             start = 0 if (await get_timestamp(0)) is not None else 1
 
-            r = await find_block_by_ts(get_timestamp, currency, ts, start, hb)
+            r = await find_insertion_point_async(get_timestamp, ts, low=start, high=hb)
 
             if r < start or r > hb:
                 r = None
