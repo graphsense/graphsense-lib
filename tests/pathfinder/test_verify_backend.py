@@ -399,3 +399,42 @@ async def test_checksummed_endpoint_matches_lowercase_participants() -> None:
         spec, default_network="eth", backend=backend
     )
     assert not any("don't actually mediate" in w for w in warnings), warnings
+
+
+async def test_string_shorthand_entries_are_recognized() -> None:
+    """`addresses` / `txs` accept a bare id string (documented by
+    `builder_from_spec`, honoured by `apply_hierarchical_layout`).
+    Shorthand entries previously reached `_network_of` as a `str` and
+    raised `AttributeError: 'str' object has no attribute 'get'` — a
+    crash, on a spec the encoder happily accepts."""
+    backend = _FakeBackend(
+        addresses={("btc", "addrA"): True, ("btc", "addrB"): True},
+        txs={("btc", "tx1"): frozenset({"addrA", "addrB"})},
+    )
+    spec = {
+        "addresses": [{"id": "addrA"}, "addrB"],
+        "txs": ["tx1"],
+        "agg_edges": [{"a": "addrA", "b": "addrB", "tx_ids": ["tx1"]}],
+    }
+    warnings = await verify_against_backend(
+        spec, default_network="btc", backend=backend
+    )
+    assert warnings == []
+
+
+async def test_string_shorthand_still_detects_real_problems() -> None:
+    """Shorthand must not suppress the checks: a shorthand address the
+    backend doesn't know is still flagged."""
+    backend = _FakeBackend(
+        addresses={("btc", "addrA"): True},
+        txs={("btc", "tx1"): frozenset({"addrA"})},
+    )
+    spec = {
+        "addresses": ["addrA", "addrGhost"],
+        "txs": ["tx1"],
+        "agg_edges": [{"a": "addrA", "b": "addrGhost", "tx_ids": ["tx1"]}],
+    }
+    warnings = await verify_against_backend(
+        spec, default_network="btc", backend=backend
+    )
+    assert any("do not exist" in w and "addrGhost" in w for w in warnings)
