@@ -195,7 +195,6 @@ class BlocksService:
                 )
         else:
             hb = (await self.db.get_currency_statistics(currency))["no_blocks"] - 1
-            start = 0
 
             async def get_timestamp(blk):
                 bts = await self.db.get_block_timestamp(currency, blk)
@@ -204,9 +203,16 @@ class BlocksService:
                 else:
                     return int(bts.get("timestamp", None))
 
+            # The binary search requires every height in [start, hb] to have a
+            # row in the raw block table, but some networks' keyspaces do not
+            # contain block 0 (TRX ingest starts at block 1). Clamp the lower
+            # bound to the first stored block, else a date below the first
+            # block's timestamp probes height 0 and compares None < ts.
+            start = 0 if (await get_timestamp(0)) is not None else 1
+
             r = await find_block_by_ts(get_timestamp, currency, ts, start, hb)
 
-            if r == -1 or r > hb:
+            if r < start or r > hb:
                 r = None
                 at = None
                 bt = None
