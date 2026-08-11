@@ -39,7 +39,7 @@ REFERENCE / CURRENT accept any of:
                           (built into a Docker image, served locally)
 
 DEPTH selects which suites run (cumulative):
-  quick     manual suite (hand-written edge cases)   ~40 calls     ~1-2 min
+  quick     edge-case suite (hand-written edge cases)   ~40 calls     ~1-2 min
   standard  quick + fuzz (endpoint families sweep)   ~85 calls     ~3-5 min
   full      standard + loki (replayed prod calls)    ~14k calls    ~15-30 min
             (loki runs with LOKI_WORKERS parallel pytest workers, default 8;
@@ -359,7 +359,7 @@ run_suite() { # <label> <pytest args...>
 
 RESULTS=()
 RET=0
-run_suite manual tests/rest/test_manual_regression.py -v -m regression
+run_suite edge-case tests/rest/test_edge_case_regression.py -v -m regression
 if [ "$DEPTH" = "standard" ] || [ "$DEPTH" = "full" ]; then
     run_suite fuzz tests/rest/test_baseline_regression.py -v -m regression
 fi

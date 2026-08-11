@@ -1,5 +1,5 @@
 """
-Manual regression tests: baseline container vs current code.
+Edge case regression tests: baseline container vs current code.
 
 These are hand-written regression tests for specific edge cases and bug fixes.
 They use the baseline Docker container as reference (previous stable release).
@@ -11,7 +11,7 @@ For auto-generated regression tests, see test_baseline_regression.py.
 For Loki log-derived tests, see test_loki_generated.py.
 
 Usage:
-    # Run all manual regression tests (quick depth = manual suite only)
+    # Run all edge case regression tests (quick depth = edge-case suite only)
     make rest REF=api.iknaio.com CUR=local DEPTH=quick
 
     # Or against a specific baseline version served locally
@@ -140,8 +140,8 @@ def compare_outputs(
     return result
 
 
-class ManualRegressionTestBase:
-    """Base class for manual regression tests using baseline container."""
+class EdgeCaseRegressionTestBase:
+    """Base class for edge case regression tests using baseline container."""
 
     baseline_url: str = BASELINE_SERVER
     current_url: str = CURRENT_SERVER
@@ -176,8 +176,8 @@ class ManualRegressionTestBase:
 # =============================================================================
 
 
-class TestManualRegressionConversions(ManualRegressionTestBase):
-    """Manual regression tests for conversion endpoints."""
+class TestEdgeCaseRegressionConversions(EdgeCaseRegressionTestBase):
+    """Edge case regression tests for conversion endpoints."""
 
     @pytest.mark.regression
     def test_conversions_dex_swap(self):
@@ -291,8 +291,8 @@ class TestManualRegressionConversions(ManualRegressionTestBase):
 # =============================================================================
 
 
-class TestManualRegressionLinks(ManualRegressionTestBase):
-    """Manual regression tests for links endpoints."""
+class TestEdgeCaseRegressionLinks(EdgeCaseRegressionTestBase):
+    """Edge case regression tests for links endpoints."""
 
     @pytest.mark.regression
     def test_links_eth_entity_316592288(self):
@@ -406,8 +406,8 @@ class TestManualRegressionLinks(ManualRegressionTestBase):
 # =============================================================================
 
 
-class TestManualRegressionTxsList(ManualRegressionTestBase):
-    """Manual regression tests for transaction list endpoints."""
+class TestEdgeCaseRegressionTxsList(EdgeCaseRegressionTestBase):
+    """Edge case regression tests for transaction list endpoints."""
 
     @pytest.mark.regression
     def test_txs_list_eth_address_with_height_filter(self):
@@ -436,8 +436,8 @@ class TestManualRegressionTxsList(ManualRegressionTestBase):
 # =============================================================================
 
 
-class TestManualRegressionObfuscation(ManualRegressionTestBase):
-    """Manual regression tests for tag obfuscation."""
+class TestEdgeCaseRegressionObfuscation(EdgeCaseRegressionTestBase):
+    """Edge case regression tests for tag obfuscation."""
 
     @pytest.mark.regression
     @pytest.mark.skipif(
@@ -476,8 +476,8 @@ class TestManualRegressionObfuscation(ManualRegressionTestBase):
 # =============================================================================
 
 
-class TestManualRegressionSearch(ManualRegressionTestBase):
-    """Manual regression tests for search endpoint."""
+class TestEdgeCaseRegressionSearch(EdgeCaseRegressionTestBase):
+    """Edge case regression tests for search endpoint."""
 
     @pytest.mark.regression
     def test_search_btc_address_prefix(self):
@@ -529,7 +529,7 @@ class TestManualRegressionSearch(ManualRegressionTestBase):
 # =============================================================================
 
 
-class TestManualRegressionRelatedAddresses(ManualRegressionTestBase):
+class TestEdgeCaseRegressionRelatedAddresses(EdgeCaseRegressionTestBase):
     """Tests that cross-chain pubkey clusters are symmetric.
 
     Every address in a pubkey cluster must see the same full set of
@@ -700,7 +700,7 @@ class TestBulkGetRates:
 # =============================================================================
 
 
-class TestManualRegressionTagSummary:
+class TestEdgeCaseRegressionTagSummary:
     """Inherited cluster tags must resolve via the FRESH cluster id.
 
     3Q1CZNKeFGcch3vGzPwWZsRL17N7pjvyky is a Kraken deposit address first

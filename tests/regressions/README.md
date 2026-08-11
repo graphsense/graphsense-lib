@@ -27,7 +27,7 @@ any http(s) URL) and expected runtimes per depth:
 
 | DEPTH | Suites | Calls | Runtime |
 |-------|--------|-------|---------|
-| `quick` | manual (hand-written edge cases) | ~40 | ~1–2 min |
+| `quick` | edge-case (hand-written edge cases) | ~40 | ~1–2 min |
 | `standard` | quick + fuzz (endpoint family sweep) | ~85 | ~3–5 min |
 | `full` | standard + loki (replayed production requests, `LOKI_WORKERS` parallel, default 8) | ~14k | ~15–30 min |
 
