@@ -6,6 +6,8 @@ hand-built DataFrames in and capture the post-transform DataFrame out.
 """
 
 import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -42,8 +44,56 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(marker)
 
 
+def _java_binary() -> str | None:
+    """Mirror pyspark's JVM lookup: $JAVA_HOME/bin/java, else `java` on PATH."""
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        candidate = os.path.join(java_home, "bin", "java")
+        if os.path.isfile(candidate):
+            return candidate
+    return shutil.which("java")
+
+
+def _java_major(java: str) -> int | None:
+    """Major version of `java` (8, 17, 25, ...), or None if undeterminable."""
+    try:
+        proc = subprocess.run(
+            [java, "-XshowSettings:properties", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in proc.stderr.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "java.specification.version":
+            # Pre-9 JDKs report "1.8"; 9+ report the major on its own.
+            value = value.strip().removeprefix("1.")
+            return int(value) if value.isdigit() else None
+    return None
+
+
 @pytest.fixture(scope="session")
 def spark():
+    # pyspark being importable does not mean a usable JVM exists. Both gates
+    # below otherwise surface as opaque py4j crashes at session build time.
+    # Only the tests that actually need a SparkSession are affected -- the rest
+    # of this package still runs.
+    java = _java_binary()
+    if java is None:
+        pytest.skip("no JVM found (pyspark needs a JDK); install e.g. openjdk-17")
+
+    # JEP 486 (JDK 24) removed the Security Manager for good, so Hadoop's
+    # UserGroupInformation.getCurrentUser() -> Subject.getSubject() dies with
+    # `UnsupportedOperationException: getSubject is not supported` while the
+    # SparkContext is being constructed. No flag brings it back: passing
+    # -Djava.security.manager=allow is itself a hard error on 25. pyspark 3.5
+    # supports Java 8/11/17.
+    major = _java_major(java)
+    if major is not None and major >= 24:
+        pytest.skip(f"JDK {major} too new for pyspark 3.5, which needs Java 8/11/17")
+
     from pyspark.sql import SparkSession
 
     s = (
