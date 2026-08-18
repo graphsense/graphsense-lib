@@ -53,3 +53,77 @@ def test_trace_drops_creation_method_and_converts_value(spark, transformer):
     assert out.schema["status"].dataType.simpleString() == "smallint"
     assert out.schema["transaction_index"].dataType.simpleString() == "smallint"
     assert out.collect()[0].asDict()["value"] == "5000"
+
+
+def test_trace_withdrawal_synthesizes_reward_traces(spark, transformer):
+    from pyspark.sql.types import (
+        ArrayType,
+        BinaryType,
+        IntegerType,
+        LongType,
+        StringType,
+        StructField,
+        StructType,
+    )
+
+    from graphsenselib.ingest.account import (
+        GWEI_TO_WEI,
+        WITHDRAWAL_TRACE_INDEX_OFFSET,
+    )
+
+    withdrawal_type = StructType(
+        [
+            StructField("index", LongType()),
+            StructField("validator_index", LongType()),
+            StructField("address", StringType()),
+            StructField("amount", BinaryType()),
+        ]
+    )
+    schema = StructType(
+        [
+            StructField("block_id", IntegerType()),
+            StructField("withdrawals", ArrayType(withdrawal_type)),
+        ]
+    )
+    rows = [
+        (15_000_000, None),  # pre-Shanghai
+        (
+            17_100_000,
+            [
+                (
+                    1041981,
+                    340674,
+                    "0xb9d7934878b5fb9610b3fe8a5e441e8fad7e293f",
+                    (12210183).to_bytes(4, "big"),
+                ),
+                (
+                    1041982,
+                    340675,
+                    "0x1f9090aae28b8a3dceadf281b0f12828e676c326",
+                    (12122076).to_bytes(4, "big"),
+                ),
+            ],
+        ),
+    ]
+    transformer._read_stub["block"] = spark.createDataFrame(rows, schema=schema)
+
+    transformer.transform_trace_withdrawal(start_block=15_000_000, end_block=17_100_000)
+    out = sorted(
+        (r.asDict() for r in transformer._captured["trace"].collect()),
+        key=lambda r: r["trace_index"],
+    )
+
+    assert len(out) == 2
+    first = out[0]
+    assert first["block_id"] == 17_100_000
+    assert first["block_id_group"] == 17_100
+    assert first["trace_index"] == WITHDRAWAL_TRACE_INDEX_OFFSET
+    assert first["trace_id"] == f"reward_17100000_{WITHDRAWAL_TRACE_INDEX_OFFSET}"
+    assert first["trace_type"] == "reward"
+    assert first["reward_type"] == "withdrawal"
+    assert first["to_address"] == bytes.fromhex(
+        "b9d7934878b5fb9610b3fe8a5e441e8fad7e293f"
+    )
+    assert first["value"] == str(12210183 * GWEI_TO_WEI)
+    assert first["status"] == 1
+    assert out[1]["value"] == str(12122076 * GWEI_TO_WEI)
