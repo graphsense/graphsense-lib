@@ -3,6 +3,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v26.07.4] 2026-08-18
+### Fixed
+- Sidecar bulk writes now detect Cassandra partitions too large for the bulk
+  writer and route those rows through the plain Spark Cassandra connector
+  (CQL write path) instead, keeping the bulk path for everything else.
+  cassandra-analytics 0.3.0's sorted-mode `CQLSSTableWriter` accumulates each
+  whole Cassandra partition as an in-heap `PartitionUpdate` BTree before
+  appending it to the sstable, and a partition key hashes to a single token,
+  so no split count can divide it: a partition beyond a few hundred million
+  rows OOMs its executor no matter how the write is tuned. Observed on the
+  2026-07 TRX full transform, where two burst-shaped ~455M-row
+  `address_transactions` partitions (one address-id group hammered inside one
+  block bucket) killed 160g executors across three runs, surviving both a 9x
+  smaller `--block-bucket-size-address-txs` and 4x more upload splits. The
+  row-count threshold is `spark.graphsense.sidecar.maxRowsPerPartition`
+  (default 50000000; <= 0 disables the check); detection costs one extra
+  aggregation job over only the partition-key columns per table write.
+
 ## [v26.07.3] 2026-07-28
 ### Changed
 - Sidecar bulk writes now size their upload-task count per table via

@@ -134,6 +134,98 @@ class SidecarBulkWriterTest extends TestBase {
     )
   }
 
+  private val maxRowsConf = "spark.graphsense.sidecar.maxRowsPerPartition"
+
+  private def writerForTest: SidecarBulkWriter =
+    new SidecarBulkWriter("unused:9043", "dc1", "LOCAL_QUORUM")
+
+  // (address_id_group, address_id_secondary_group)-shaped data: partition
+  // (1, 10) holds 3 rows, (1, 20) and (2, 10) hold 1 each.
+  private def partitionedDf = {
+    import spark.implicits._
+    Seq(
+      (1, 10, 100L),
+      (1, 10, 101L),
+      (1, 10, 102L),
+      (1, 20, 103L),
+      (2, 10, 104L)
+    ).toDF("address_id_group", "address_id_secondary_group", "transaction_id")
+  }
+
+  test("oversizedPartitionKeys: finds partitions above the threshold") {
+    spark.conf.set(maxRowsConf, "2")
+    try {
+      val keys = writerForTest.oversizedPartitionKeys(
+        partitionedDf,
+        "address_transactions",
+        Seq("address_id_group", "address_id_secondary_group")
+      )
+      assert(keys.isDefined)
+      val rows = keys.get
+        .collect()
+        .map(r => (r.getInt(0), r.getInt(1)))
+        .toSet
+      assert(rows == Set((1, 10)))
+      keys.get.unpersist()
+    } finally {
+      spark.conf.unset(maxRowsConf)
+    }
+  }
+
+  test("oversizedPartitionKeys: None when all partitions fit") {
+    spark.conf.set(maxRowsConf, "3")
+    try {
+      val keys = writerForTest.oversizedPartitionKeys(
+        partitionedDf,
+        "address_transactions",
+        Seq("address_id_group", "address_id_secondary_group")
+      )
+      assert(keys.isEmpty)
+    } finally {
+      spark.conf.unset(maxRowsConf)
+    }
+  }
+
+  test("oversizedPartitionKeys: threshold <= 0 disables the check") {
+    spark.conf.set(maxRowsConf, "0")
+    try {
+      val keys = writerForTest.oversizedPartitionKeys(
+        partitionedDf,
+        "address_transactions",
+        Seq("address_id_group", "address_id_secondary_group")
+      )
+      assert(keys.isEmpty)
+    } finally {
+      spark.conf.unset(maxRowsConf)
+    }
+  }
+
+  test(
+    "oversizedPartitionKeys: semi/anti joins split the rows exactly"
+  ) {
+    import org.apache.spark.sql.functions.broadcast
+    spark.conf.set(maxRowsConf, "2")
+    try {
+      val df = partitionedDf
+      val pk = Seq("address_id_group", "address_id_secondary_group")
+      val keys = writerForTest
+        .oversizedPartitionKeys(df, "address_transactions", pk)
+        .get
+      val bulkPart = df.join(broadcast(keys), pk, "left_anti")
+      val cqlPart = df.join(broadcast(keys), pk, "left_semi")
+      // schemas unchanged by the split (no `count` column leaks through)
+      assert(bulkPart.schema == df.schema)
+      assert(cqlPart.schema == df.schema)
+      assert(
+        cqlPart.collect().map(_.getLong(2)).toSet == Set(100L, 101L, 102L)
+      )
+      assert(bulkPart.collect().map(_.getLong(2)).toSet == Set(103L, 104L))
+      keys.unpersist()
+    } finally {
+      spark.conf.unset(maxRowsConf)
+    }
+  }
+
   test(
     "alignToSchema: projects to table columns, snake_cases UDT fields, casts varint"
   ) {

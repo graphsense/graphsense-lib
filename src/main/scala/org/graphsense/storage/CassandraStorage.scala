@@ -71,6 +71,31 @@ class CassandraStorage(
     }
   }
 
+  /** Partition-key column names of a Cassandra table, in key order. The bulk
+    * writer needs them to detect Cassandra partitions too large for its in-heap
+    * partition accumulation.
+    */
+  def partitionKeyColumnNames(
+      keyspace: String,
+      tableName: String
+  ): Seq[String] = {
+    import scala.collection.JavaConverters._
+    CassandraConnector(spark.sparkContext).withSessionDo { session =>
+      session
+        .execute(
+          "select column_name, kind, position from system_schema.columns " +
+            s"where keyspace_name = '${keyspace}' " +
+            s"and table_name = '${tableName}';"
+        )
+        .all()
+        .asScala
+        .filter(_.getString("kind") == "partition_key")
+        .sortBy(_.getInt("position"))
+        .map(_.getString("column_name"))
+        .toSeq
+    }
+  }
+
   def store[T <: Product: RowWriterFactory](
       keyspace: String,
       tableName: String,
@@ -87,7 +112,8 @@ class CassandraStorage(
             keyspace,
             tableName,
             df.toDF,
-            tableColumnNames(keyspace, tableName)
+            tableColumnNames(keyspace, tableName),
+            partitionKeyColumnNames(keyspace, tableName)
           )
         case None => df.rdd.saveToCassandra(keyspace, tableName)
       }
