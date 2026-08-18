@@ -12,6 +12,7 @@ import logging
 from graphsenselib.ingest.account import (
     BLOCK_BUCKET_SIZE as ACCOUNT_BLOCK_BUCKET_SIZE,
     TX_HASH_PREFIX_LEN as ACCOUNT_TX_HASH_PREFIX_LEN,
+    WITHDRAWAL_TRACE_INDEX_OFFSET,
 )
 
 logger = logging.getLogger(__name__)
@@ -285,10 +286,71 @@ class AccountTransformationBase:
 class AccountTransformation(AccountTransformationBase):
     """ETH binding."""
 
+    TABLES = ("block", "transaction", "trace", "trace_withdrawal", "log")
+
     VARINT_COLS_BLOCK = frozenset({"difficulty", "total_difficulty"})
 
     DELTA_ONLY_COLS_TRACE = frozenset({"partition", "creation_method"})
     VARINT_COLS_TRACE = frozenset({"value"})
+
+    def _table_methods(self):
+        methods = super()._table_methods()
+        methods["trace_withdrawal"] = self.transform_trace_withdrawal
+        return methods
+
+    def transform_trace_withdrawal(self, start_block, end_block):
+        """Synthesize Cassandra reward traces from EIP-4895 withdrawals.
+
+        The delta lake keeps validator withdrawals nested on its block table;
+        Cassandra represents them as tx_hash-less reward traces so the
+        graphsense-spark transformation credits them to balances like
+        pre-merge block rewards. Must produce rows identical to
+        `graphsenselib.ingest.account.eth_withdrawals_to_reward_traces`
+        (live ingest) and
+        `graphsenselib.deltaupdate.update.account.modelsraw
+        .eth_withdrawal_traces_from_lake_blocks` (delta updater).
+        """
+        from pyspark.sql import functions as F
+        from pyspark.sql.types import StringType
+
+        df = self._read_delta("block", start_block, end_block)
+        if "withdrawals" not in df.columns:
+            logger.info("No withdrawals column in delta block table, skipping.")
+            return
+
+        @F.udf(StringType())
+        def gwei_bytes_to_wei_str(b):
+            # Withdrawal amounts are big-endian bytes denominated in Gwei
+            # (EIP-4895); trace values are wei varints.
+            if b is None:
+                return None
+            return str(int.from_bytes(b, "big", signed=False) * 10**9)
+
+        exploded = df.select("block_id", F.posexplode("withdrawals").alias("pos", "w"))
+        trace_index = (F.col("pos") + F.lit(WITHDRAWAL_TRACE_INDEX_OFFSET)).cast("int")
+        out = exploded.select(
+            F.floor(F.col("block_id") / self.block_bucket_size)
+            .cast("int")
+            .alias("block_id_group"),
+            F.col("block_id"),
+            trace_index.alias("trace_index"),
+            F.concat(
+                F.lit("reward_"),
+                F.col("block_id").cast("string"),
+                F.lit("_"),
+                trace_index.cast("string"),
+            ).alias("trace_id"),
+            F.lit("reward").alias("trace_type"),
+            F.lit("withdrawal").alias("reward_type"),
+            F.unhex(F.regexp_replace(F.col("w.address"), "^0x", "")).alias(
+                "to_address"
+            ),
+            gwei_bytes_to_wei_str(F.col("w.amount")).alias("value"),
+            F.lit(0).alias("subtraces"),
+            F.lit("").alias("trace_address"),
+            F.lit(1).cast("short").alias("status"),
+        )
+        self._write_cassandra(out, "trace")
 
     def transform_trace(self, start_block, end_block):
         from pyspark.sql import functions as F

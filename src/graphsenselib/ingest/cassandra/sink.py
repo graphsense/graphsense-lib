@@ -54,6 +54,11 @@ class CassandraSink(Sink):
         for table_name, rows in items:
             if not rows:
                 continue
+            # Synthetic reward traces for ETH withdrawals travel under their
+            # own key so DeltaSink skips them; in Cassandra they live in the
+            # regular trace table.
+            if table_name == "trace_withdrawal":
+                table_name = "trace"
             # UTXO transactions carry Cassandra-specific io fields alongside
             # the neutral parquet format. Swap them in for Cassandra's schema.
             if table_name == "transaction" and "inputs_cassandra" in rows[0]:

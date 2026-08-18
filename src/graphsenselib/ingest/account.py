@@ -467,6 +467,60 @@ def prepare_blocks_inplace_eth(
         item["uncles"] = [_fast_hex_to_bytes(u) for u in item.get("uncles", [])]
 
 
+GWEI_TO_WEI = 10**9
+# Placed above any real per-block trace_index (contiguous from 0) so synthetic
+# rows can never collide and always sort after real traces within a block.
+WITHDRAWAL_TRACE_INDEX_OFFSET = 1_000_000_000
+
+
+def eth_withdrawals_to_reward_traces(prepared_blocks: Iterable) -> List[dict]:
+    """Synthesize reward-style trace rows from EIP-4895 validator withdrawals.
+
+    Post-Shanghai, block rewards reach the execution layer as block-level
+    withdrawals instead of `trace_type='reward'` traces. Downstream consumers
+    (graphsense-spark balances/address ids, delta updater) already credit
+    tx_hash-less reward traces; withdrawals are represented the same way,
+    marked `reward_type='withdrawal'`. These rows are written to Cassandra
+    only — the delta lake keeps withdrawals on its block table, so every
+    derivation site must produce identical rows (see
+    AccountTransformation.transform_trace_withdrawal and
+    modelsraw.eth_withdrawal_traces_from_lake_blocks).
+
+    Expects blocks already passed through `prepare_blocks_inplace_eth`:
+    withdrawal amounts are big-endian bytes denominated in Gwei, addresses
+    are 0x-prefixed hex strings.
+    """
+    rows = []
+    for block in prepared_blocks:
+        for i, w in enumerate(block.get("withdrawals") or []):
+            trace_index = WITHDRAWAL_TRACE_INDEX_OFFSET + i
+            rows.append(
+                {
+                    "block_id_group": block["block_id_group"],
+                    "block_id": block["block_id"],
+                    "trace_index": trace_index,
+                    "trace_id": f"reward_{block['block_id']}_{trace_index}",
+                    "trace_type": "reward",
+                    "reward_type": "withdrawal",
+                    "from_address": None,
+                    "to_address": _fast_hex_to_bytes(w["address"]),
+                    "value": int.from_bytes(w["amount"], "big") * GWEI_TO_WEI,
+                    "tx_hash": None,
+                    "transaction_index": None,
+                    "call_type": None,
+                    "gas": None,
+                    "gas_used": None,
+                    "input": None,
+                    "output": None,
+                    "subtraces": 0,
+                    "trace_address": "",
+                    "error": None,
+                    "status": 1,
+                }
+            )
+    return rows
+
+
 def prepare_blocks_inplace_trx(
     items, block_bucket_size, partition_size=PARQUET_PARTITION_SIZE
 ):
@@ -820,6 +874,10 @@ def ingest(
             # ingest into Cassandra
             write_to_sinks(db, sink_config, "log", logs)
             write_to_sinks(db, sink_config, "trace", traces)
+            if currency == "eth":
+                write_to_sinks(
+                    db, sink_config, "trace", eth_withdrawals_to_reward_traces(blocks)
+                )
             write_to_sinks(db, sink_config, "transaction", enriched_txs)
             write_to_sinks(db, sink_config, "block", blocks)
 
@@ -901,6 +959,7 @@ class LoadBlockTask(AbstractTask):
         blocks, txs = ctx.adapter.export_blocks_and_transactions(start, end)
         blockst = ctx.strategy.transform_blocks(blocks, ctx.BLOCK_BUCKET_SIZE)
         return [
+            (StoreTask(), ("trace", eth_withdrawals_to_reward_traces(blockst))),
             (StoreTask(), ("block", blockst)),
             (LoadLogsTask(), txs),
         ]

@@ -54,6 +54,7 @@ from graphsenselib.deltaupdate.update.account.modelsraw import (
     Transaction,
     TrxTraceAdapter,
     TrxTransactionAdapter,
+    eth_withdrawal_traces_from_lake_blocks,
 )
 from graphsenselib.deltaupdate.update.account import parallelio
 from graphsenselib.deltaupdate.update.account.tokens import ERC20Decoder
@@ -372,6 +373,10 @@ class UpdateStrategyAccount(UpdateStrategy):
             block_adapter = AccountBlockAdapter()
             traces = trace_adapter.df_to_renamed_dataclasses(traces)
             traces = trace_adapter.process_fields_in_list(traces)
+            if self.currency == "eth":
+                # EIP-4895 validator withdrawals live on the lake's block
+                # table; credit them like pre-merge reward traces.
+                traces.extend(eth_withdrawal_traces_from_lake_blocks(blocks))
             transactions = transaction_adapter.df_to_dataclasses(transactions)
 
             logs = log_adapter.df_to_dataclasses(logs)
