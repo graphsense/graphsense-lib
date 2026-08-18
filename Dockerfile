@@ -15,15 +15,15 @@
 # line, the weekly docker updater opens a normal bump PR (tag for uv, digest
 # for temurin) and CI proves it before it reaches prod.
 # =============================================================================
-FROM ghcr.io/astral-sh/uv:0.11.29 AS uv
-FROM eclipse-temurin:11-jre-jammy@sha256:76ffb747ad3a62a8b81ac3c76e2c3b1c06e475b1e10109d0a4dd604db627c9f5 AS java11
+FROM ghcr.io/astral-sh/uv:0.12.5 AS uv
+FROM eclipse-temurin:22-jre-jammy@sha256:dbcae8b5dd4d63f81739a538ec2c09797735f04a21d814f9071b62f018326043 AS java11
 
 # =============================================================================
 # Stage 1: builder — compiles the Python wheel and the Rust clustering wheel.
 # Carries gcc/g++/make/cmake/curl/binutils/rust/libpq-dev; none of it leaks
 # into the runtime image.
 # =============================================================================
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 COPY --from=uv /uv /uvx /bin/
 
 ENV UV_ONLY_BINARY=1
@@ -102,7 +102,7 @@ RUN make build
 # Stage 2: runtime — fresh slim base, only the wheels and runtime OS deps.
 # This is the image that ships.
 # =============================================================================
-FROM python:3.13-slim-bookworm
+FROM python:3.14-slim-bookworm
 COPY --from=uv /uv /uvx /bin/
 
 LABEL org.opencontainers.image.title="graphsense-lib"
