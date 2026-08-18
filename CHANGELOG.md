@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (default 50000000; <= 0 disables the check); detection costs one extra
   aggregation job over only the partition-key columns per table write.
 
+### Changed
+- The eth job persists `addressRelations` before writing it. It was
+  recomputed from its persisted inputs three times — once for the row count
+  and once for each of the two sorted relation writes (the new
+  oversized-partition detection would have added a pass per write on top).
+
 ## [v26.07.3] 2026-07-28
 ### Changed
 - Sidecar bulk writes now size their upload-task count per table via

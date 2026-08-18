@@ -240,10 +240,12 @@ class EthereumJob(
     println("Computing address relations")
     spark.sparkContext.setJobDescription("Computing address relations")
     val addressRelations =
-      transformation.computeAddressRelations(
-        encodedTransactions,
-        encodedTokenTransfers
-      )
+      transformation
+        .computeAddressRelations(
+          encodedTransactions,
+          encodedTokenTransfers
+        )
+        .persist()
     val noAddressRelations = addressRelations.count()
 
     sink.saveAddressIncomingRelations(
