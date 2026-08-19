@@ -26,6 +26,7 @@ from dateutil import parser as _dateutil_parser
 import graphsense
 from graphsense.api_client import ApiClient
 from graphsense.configuration import Configuration
+from graphsense.ext import bulk as bulk_mod
 from graphsense.ext.deprecation import install as install_deprecation_hook
 
 # APIs that expose only deprecated endpoints; hidden from the convenience
@@ -506,15 +507,31 @@ class GraphSense:
         format: str = "json",
         num_pages: int = 1,
         key_field: str = "address",
+        chunk_size: int = bulk_mod.DEFAULT_BULK_CHUNK_SIZE,
     ) -> Any:
         """Call the /bulk.<format>/<operation> endpoint with `keys`.
 
         `key_field` is the dict key that the bulk operation expects in the
         request body (e.g. "address", "tx_hash", "cluster"). Default is
         "address" which is by far the most common.
+
+        The server bounds how many items a single bulk request may carry, so a
+        longer key list is split into `chunk_size` batches and the responses are
+        merged. Pass `chunk_size=0` to send the list in one request regardless.
         """
         ccy = self._currency(currency)
-        body = {key_field: list(keys)}
+        keys = list(keys)
+
+        def call(batch: list) -> Any:
+            body = {key_field: batch}
+            if format == "csv":
+                return self.raw.bulk.bulk_csv(ccy, operation, num_pages, body)
+            return self.raw.bulk.bulk_json(ccy, operation, num_pages, body)
+
+        if chunk_size <= 0 or len(keys) <= chunk_size:
+            return call(keys)
+
+        results = [call(batch) for batch in bulk_mod.chunked(keys, chunk_size)]
         if format == "csv":
-            return self.raw.bulk.bulk_csv(ccy, operation, num_pages, body)
-        return self.raw.bulk.bulk_json(ccy, operation, num_pages, body)
+            return bulk_mod.merge_csv_chunks(results)
+        return bulk_mod.merge_json_chunks(results)

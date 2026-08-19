@@ -147,7 +147,7 @@ class BulkApi:
     ) -> object:
         """Stream bulk operation results as CSV
 
-        Executes a supported operation for multiple key values and streams flattened result rows as CSV.
+        Executes a supported operation for multiple key values and streams flattened result rows as CSV. Each key list in the request body is capped (10,000 items by default), as is the body itself (8 MiB by default); split longer requests into several calls.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -193,6 +193,7 @@ class BulkApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
             '400': None,
+            '413': None,
             '422': None,
         }
         response_data = self.api_client.call_api(
@@ -228,7 +229,7 @@ class BulkApi:
     ) -> ApiResponse[object]:
         """Stream bulk operation results as CSV
 
-        Executes a supported operation for multiple key values and streams flattened result rows as CSV.
+        Executes a supported operation for multiple key values and streams flattened result rows as CSV. Each key list in the request body is capped (10,000 items by default), as is the body itself (8 MiB by default); split longer requests into several calls.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -274,6 +275,7 @@ class BulkApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
             '400': None,
+            '413': None,
             '422': None,
         }
         response_data = self.api_client.call_api(
@@ -309,7 +311,7 @@ class BulkApi:
     ) -> RESTResponseType:
         """Stream bulk operation results as CSV
 
-        Executes a supported operation for multiple key values and streams flattened result rows as CSV.
+        Executes a supported operation for multiple key values and streams flattened result rows as CSV. Each key list in the request body is capped (10,000 items by default), as is the body itself (8 MiB by default); split longer requests into several calls.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -355,6 +357,7 @@ class BulkApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
             '400': None,
+            '413': None,
             '422': None,
         }
         response_data = self.api_client.call_api(
@@ -474,7 +477,7 @@ class BulkApi:
     ) -> object:
         """Stream bulk operation results as JSON
 
-        Executes a supported operation for multiple key values and streams flattened result rows as JSON.
+        Executes a supported operation for multiple key values and streams flattened result rows as JSON. Each key list in the request body is capped (10,000 items by default), as is the body itself (8 MiB by default); split longer requests into several calls.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -520,6 +523,7 @@ class BulkApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
             '400': None,
+            '413': None,
             '422': None,
         }
         response_data = self.api_client.call_api(
@@ -555,7 +559,7 @@ class BulkApi:
     ) -> ApiResponse[object]:
         """Stream bulk operation results as JSON
 
-        Executes a supported operation for multiple key values and streams flattened result rows as JSON.
+        Executes a supported operation for multiple key values and streams flattened result rows as JSON. Each key list in the request body is capped (10,000 items by default), as is the body itself (8 MiB by default); split longer requests into several calls.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -601,6 +605,7 @@ class BulkApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
             '400': None,
+            '413': None,
             '422': None,
         }
         response_data = self.api_client.call_api(
@@ -636,7 +641,7 @@ class BulkApi:
     ) -> RESTResponseType:
         """Stream bulk operation results as JSON
 
-        Executes a supported operation for multiple key values and streams flattened result rows as JSON.
+        Executes a supported operation for multiple key values and streams flattened result rows as JSON. Each key list in the request body is capped (10,000 items by default), as is the body itself (8 MiB by default); split longer requests into several calls.
 
         :param currency: The cryptocurrency code (e.g., btc) (required)
         :type currency: str
@@ -682,6 +687,7 @@ class BulkApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "object",
             '400': None,
+            '413': None,
             '422': None,
         }
         response_data = self.api_client.call_api(

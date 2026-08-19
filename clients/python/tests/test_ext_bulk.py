@@ -51,3 +51,55 @@ def test_gs_bulk_csv_hits_csv_endpoint(gs: GraphSense, http_mock):
     )
     gs.bulk("get_address", ["1A"], format="csv")
     assert any("/btc/bulk.csv/get_address" in c.url for c in http_mock.calls)
+
+
+def test_chunked_splits_evenly_and_keeps_remainder():
+    assert list(bulk_mod.chunked([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
+    assert list(bulk_mod.chunked([], 2)) == []
+
+
+def test_merge_json_chunks_concatenates_rows():
+    merged = bulk_mod.merge_json_chunks([[{"a": 1}], [{"a": 2}, {"a": 3}], None])
+    assert merged == [{"a": 1}, {"a": 2}, {"a": 3}]
+
+
+def test_merge_csv_chunks_unions_headers():
+    """Each chunk gets its own server-side header inference, so a later chunk
+    may carry a column the first one never saw. Nothing may be dropped."""
+    first = "address,balance\n1A,1\n"
+    second = "address,balance,token\n1B,2,usdt\n"
+    merged = bulk_mod.merge_csv_chunks([first, second])
+    lines = merged.strip().splitlines()
+    assert lines[0] == "address,balance,token"
+    assert lines[1] == "1A,1,"
+    assert lines[2] == "1B,2,usdt"
+
+
+def test_gs_bulk_splits_long_key_lists(gs: GraphSense, http_mock):
+    """A key list longer than the server's per-request cap is sent as several
+    requests instead of one oversized (and rejected) request."""
+    http_mock.add(
+        "POST",
+        "/btc/bulk.json/get_address",
+        json_body=[{"address": "1A", "balance": 1}],
+    )
+    keys = [f"addr{i}" for i in range(7)]
+    result = gs.bulk("get_address", keys, chunk_size=3)
+
+    calls = [c for c in http_mock.calls if "/bulk.json" in c.url]
+    assert len(calls) == 3
+    sent = [str(c.body) for c in calls]
+    assert "addr0" in sent[0] and "addr2" in sent[0] and "addr3" not in sent[0]
+    assert "addr6" in sent[2]
+    # every chunk's rows come back concatenated
+    assert len(result) == 3
+
+
+def test_gs_bulk_sends_one_request_below_the_chunk_size(gs: GraphSense, http_mock):
+    http_mock.add(
+        "POST",
+        "/btc/bulk.json/get_address",
+        json_body=[{"address": "1A", "balance": 1}],
+    )
+    gs.bulk("get_address", ["1A", "1B"], chunk_size=100)
+    assert len([c for c in http_mock.calls if "/bulk.json" in c.url]) == 1

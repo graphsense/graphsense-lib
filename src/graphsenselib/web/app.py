@@ -44,6 +44,7 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
 )
 from graphsenselib.web.config import FileStoreConfig, GSRestConfig, LoggingConfig
 from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
+from graphsenselib.web.middleware.body_size import RequestBodySizeLimitMiddleware
 from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
@@ -1102,6 +1103,13 @@ def create_app(
     # Advertise deprecation on responses from routes marked deprecated=True.
     app.add_middleware(DeprecationHeaderMiddleware)
 
+    # Added last so it runs first: an oversized body must be refused before
+    # any other middleware or FastAPI's own body parsing touches it.
+    app.add_middleware(
+        RequestBodySizeLimitMiddleware,
+        max_body_bytes=config.max_request_body_bytes,
+    )
+
     _register_exception_handlers(app)
     _register_routers(app)
     _register_download_route(app, config.file_store)
@@ -1470,6 +1478,10 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
 
     _setup_cors_middleware(app, config)
     app.add_middleware(PluginMiddleware)
+    app.add_middleware(
+        RequestBodySizeLimitMiddleware,
+        max_body_bytes=config.max_request_body_bytes,
+    )
 
     _register_exception_handlers(app)
     _register_routers(app)

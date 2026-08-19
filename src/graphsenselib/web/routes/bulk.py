@@ -38,6 +38,14 @@ default_concurrency_by_operation = {
     "list_tags_by_address": 2,
 }
 
+# Upper bound on how many wrap() tasks may exist at once, expressed relative to
+# the per-operation backend concurrency. The semaphore in wrap() caps how many
+# backend calls run concurrently; this caps how many coroutines are *created*.
+# Keeping a few multiples of the semaphore size in flight leaves the semaphore
+# saturated while the finished ones flatten their rows.
+tasks_in_flight_factor = 4
+min_tasks_in_flight = 64
+
 # `clusters` is listed before `entities` so new cluster-named operations resolve
 # against clusters_service first. `entities_service` is still present as a
 # back-compat shim re-exporting the same functions under their legacy names.
@@ -192,12 +200,12 @@ def stack(request, ctx, currency, operation, body, num_pages, format):
             f"Unknown operation '{operation_name}'. Check /openapi.json for available bulk operations."
         )
     operation = operation_func
-    aws = []
 
     max_concurrency_bulk_operation = ctx.config.get_max_concurrency_bulk(
         operation_name,
         default_concurrency_by_operation.get(operation_name, 10),
     )
+    max_bulk_items = getattr(ctx.config, "max_bulk_items", 10_000)
 
     params = {}
     keys = {}
@@ -210,8 +218,18 @@ def stack(request, ctx, currency, operation, body, num_pages, format):
             params[attr] = a
             check[attr] = a
         elif len(a) > 0:
-            keys[attr] = a
             le = len(a)
+            # Bound the fan-out: stack() creates one coroutine per item, so an
+            # unbounded list is an unbounded allocation.
+            # Reject rather than silently truncate — a caller that sent more
+            # than it can get back should hear about it.
+            if 0 < max_bulk_items < le:
+                raise BadUserInputException(
+                    f"Too many values for '{attr}': {le} exceeds the limit of "
+                    f"{max_bulk_items} items per bulk request. Split the "
+                    f"request into smaller batches."
+                )
+            keys[attr] = a
             ln = min(le, ln) if ln > 0 else le
             check[attr] = a[0]
 
@@ -221,11 +239,11 @@ def stack(request, ctx, currency, operation, body, num_pages, format):
 
     context = asyncio.Semaphore(max_concurrency_bulk_operation)
 
-    for i in range(0, ln):
+    def make_task(i):
         the_keys = {}
         for k, v in keys.items():
             the_keys[k] = v[i]
-        aw = wrap(
+        return wrap(
             request,
             ctx,
             operation,
@@ -237,9 +255,43 @@ def stack(request, ctx, currency, operation, body, num_pages, format):
             context,
         )
 
-        aws.append(aw)
+    max_in_flight = max(
+        max_concurrency_bulk_operation * tasks_in_flight_factor,
+        min_tasks_in_flight,
+    )
+    return bounded_as_completed(make_task, ln, max_in_flight)
 
-    return asyncio.as_completed(aws)
+
+async def bounded_as_completed(make_task, total, max_in_flight):
+    """Yield `total` tasks in completion order, `max_in_flight` alive at a time.
+
+    `asyncio.as_completed` is not usable here: it calls `ensure_future` on every
+    awaitable up front, so the number of scheduled Tasks — and the memory they
+    hold — grows with the caller-supplied list length instead of with the
+    configured concurrency. This creates coroutines lazily
+    instead, so a large request costs bounded memory no matter how long the list.
+
+    Yields the completed Task rather than its result so callers keep awaiting
+    each item themselves, and per-item exceptions surface at the same place they
+    did before.
+    """
+    pending = set()
+    started = 0
+    try:
+        while started < total or pending:
+            while started < total and len(pending) < max_in_flight:
+                pending.add(asyncio.ensure_future(make_task(started)))
+                started += 1
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                yield task
+    finally:
+        # The consumer may stop early (client disconnect, CSV writer error);
+        # nothing else holds these, so they must not be left running.
+        for task in pending:
+            task.cancel()
 
 
 async def to_csv_generator(the_stack):
@@ -277,16 +329,19 @@ async def to_csv_generator(the_stack):
     NR_REGULAR_ROWS_USED_TO_INFER_HEADER = 100
     rows_to_infer_header = []
     regular_rows = 0
-    ops_rest = []
-    for op in the_stack:
-        if regular_rows < NR_REGULAR_ROWS_USED_TO_INFER_HEADER:
-            rows = await op
-            rows_to_infer_header.extend(rows)
-            regular_rows += sum(
-                1 for r in rows if info_field not in r and error_field not in r
-            )
-        else:
-            ops_rest.append(op)
+    # Consume only as far as the header inference needs, then hand the same
+    # iterator to the streaming loop below. Collecting the remaining operations
+    # up front (as this did) buffers every result before the first byte goes
+    # out, which defeats the streaming response on large requests.
+    ops = the_stack.__aiter__()
+    async for op in ops:
+        rows = await op
+        rows_to_infer_header.extend(rows)
+        regular_rows += sum(
+            1 for r in rows if info_field not in r and error_field not in r
+        )
+        if regular_rows >= NR_REGULAR_ROWS_USED_TO_INFER_HEADER:
+            break
 
     # Infer header
     headerfields = sorted(
@@ -309,7 +364,7 @@ async def to_csv_generator(the_stack):
         yield write_csv_row(csv, wr, row, headerfields)
 
     # write the rest
-    for op in ops_rest:
+    async for op in ops:
         rows = await op
         for row in rows:
             yield write_csv_row(csv, wr, row, headerfields)
@@ -318,7 +373,7 @@ async def to_csv_generator(the_stack):
 async def to_json_generator(the_stack):
     started = False
     yield "["
-    for op in the_stack:
+    async for op in the_stack:
         try:
             rows = await op
         except NotFoundException:
@@ -343,14 +398,22 @@ async def to_json_generator(the_stack):
     summary="Stream bulk operation results as CSV",
     description=(
         "Executes a supported operation for multiple key values and streams "
-        "flattened result rows as CSV."
+        "flattened result rows as CSV. Each key list in the request body is "
+        "capped (10,000 items by default), as is the body itself (8 MiB by "
+        "default); split longer requests into several calls."
     ),
     operation_id="bulk_csv",
     responses={
         200: {
             "description": "Stream of flattened CSV rows for each requested key set."
         },
-        400: {"description": "Invalid operation name or request body parameters."},
+        400: {
+            "description": (
+                "Invalid operation name or request body parameters, including a "
+                "key list above the per-request item limit."
+            )
+        },
+        413: {"description": "Request body larger than the configured limit."},
         422: {"description": "Validation error in path/query/body input."},
     },
 )
@@ -399,14 +462,22 @@ async def bulk_csv(
     summary="Stream bulk operation results as JSON",
     description=(
         "Executes a supported operation for multiple key values and streams "
-        "flattened result rows as JSON."
+        "flattened result rows as JSON. Each key list in the request body is "
+        "capped (10,000 items by default), as is the body itself (8 MiB by "
+        "default); split longer requests into several calls."
     ),
     operation_id="bulk_json",
     responses={
         200: {
             "description": "Stream of flattened JSON rows for each requested key set."
         },
-        400: {"description": "Invalid operation name or request body parameters."},
+        400: {
+            "description": (
+                "Invalid operation name or request body parameters, including a "
+                "key list above the per-request item limit."
+            )
+        },
+        413: {"description": "Request body larger than the configured limit."},
         422: {"description": "Validation error in path/query/body input."},
     },
 )

@@ -19,6 +19,24 @@ Use one changelog file, but separate entries by track in each release window.
 - **The pinned `uv` helper image in the `Dockerfile` moves to 0.12.5 and the `java11` stage picks up the current Temurin 11 JRE digest.** Only the digest moves — the stage stays on Java 11 on purpose (prod Spark executors are capped there by Cassandra 4.x on the shared hosts, and a Java-17+ driver breaks Kryo task-result deserialization).
 - **Dependabot no longer proposes `python` or `eclipse-temurin` major/minor bumps for the Docker images.** The grouped weekly docker PR kept offering `python` 3.13 → 3.14, which cannot build (`requires-python = ">=3.10, <3.14"`, no `psycopg2-binary`/`pyspark` wheels for 3.14, and a hardcoded `/usr/local/lib/python3.13` prune path in the runtime stage), and `eclipse-temurin` 11 → 22, which would defeat the whole point of the `java11` stage. Both are now `ignore`d for major/minor in `.github/dependabot.yml`, with the reasoning inline; digest and patch updates still flow. Raising either is a deliberate change that has to move `pyproject.toml` and the Dockerfile paths along with it.
 
+## [2.15.4] - 2026-08-19
+
+### Web API + Python client (webapi-2.15.1)
+
+#### Changed
+- **Bulk requests are now bounded in size, and their fan-out is bounded independently of what the caller asks for.** `POST /{currency}/bulk.{json,csv}/{operation}` took its request body as an unvalidated `Dict[str, Any]` and built one coroutine per item of every list in it, with no upper bound on list length; `asyncio.as_completed` then scheduled the whole batch at once. The `asyncio.Semaphore` already in place bounds how many backend calls run *concurrently* — it never bounded how many coroutines were *created*, so the cost of serving a bulk request grew without limit while the cost of sending one stayed flat. Three changes:
+  - **Key lists are capped at `max_bulk_items` (default 10,000).** A longer list is rejected with a 400 naming the offending key rather than silently truncated. This is the same bounding pass that `pagesize`, `num_pages` and `depth` got in webapi-2.15.0 — list length was the one input it missed. **Breaking for clients sending more than 10,000 items in one bulk call**; operators who need more can raise `max_bulk_items` in `config.yaml`, and the Python client now splits long lists automatically (below).
+  - **Request bodies are capped at `max_request_body_bytes` (default 8 MiB)** by a new `RequestBodySizeLimitMiddleware`, which answers 413 before the body is parsed. The item cap alone cannot bound the memory a request costs: FastAPI reads and `json.loads`-es the entire body *before* the route handler runs, and a multi-megabyte list of integers costs an order of magnitude more as parsed Python objects than as wire bytes. Bodies declaring an oversized `Content-Length` are refused without invoking the application at all; chunked bodies are counted as they stream. `0` disables the check for deployments that would rather cap this at the proxy.
+  - **Task creation is bounded, not just task execution.** `asyncio.as_completed` is replaced by `bounded_as_completed`, which creates coroutines lazily and keeps at most 4x the configured backend concurrency (minimum 64) alive at a time, cancelling what is still pending if the consumer stops early. A bulk request's memory now scales with the configured concurrency instead of with the caller-supplied list length.
+- **Bulk CSV responses start streaming again after the header-inference window.** `to_csv_generator` awaited the first ~100 rows to infer its header and then collected *every* remaining operation into a list before writing anything, so on a large request the whole result set was buffered before the first byte went out. It now consumes the same iterator lazily for the remainder. Fewer than 100 rows, header inference and column ordering are unchanged.
+- **`GraphSense.bulk()` splits long key lists across several requests** (`chunk_size`, default 5,000) and merges the responses, so callers are unaffected by the new server-side item cap. JSON row lists are concatenated; CSV chunks are re-keyed onto the union of their headers, because each response carries its own server-inferred column set and two chunks of one query can legitimately disagree. `chunk_size=0` restores the previous single-request behaviour.
+
+### Repository
+
+#### Added
+- **`SECURITY.md`** — private reporting via GitHub Security Advisories or `contact@iknaio.com`, response-time targets, supported versions, and an explicit scope statement covering the parts that are trusted by design (gateway-enforced authentication, database credentials, configuration and plugins as code).
+
+
 ## [2.15.3] - 2026-08-19
 
 ### Library
