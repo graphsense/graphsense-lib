@@ -122,6 +122,21 @@ class GSRestConfig(BaseSettings):
     address_links_request_timeout: float = Field(
         default=30, description="Timeout for address links requests endpoint"
     )
+    max_bulk_items: int = Field(
+        default=10_000,
+        description=(
+            "Maximum number of items accepted per key list by the bulk endpoints. "
+            "Bounds the per-request coroutine fan-out in routes/bulk.py; 0 disables "
+            "the check."
+        ),
+    )
+    max_request_body_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        description=(
+            "Maximum accepted request body size in bytes; larger requests are "
+            "rejected with 413 before the body is parsed. 0 disables the check."
+        ),
+    )
     include_pubkey_derived_tags: bool = Field(
         default=True,
         description="Include pubkey derived tags in tag summaries and lists",

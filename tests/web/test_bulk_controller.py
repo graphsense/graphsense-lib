@@ -9,7 +9,11 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
 from graphsenselib.web.models import AddressTag, AddressTags
-from graphsenselib.web.routes.bulk import wrap
+from graphsenselib.web.routes.bulk import (
+    bounded_as_completed,
+    to_csv_generator,
+    wrap,
+)
 from graphsenselib.web.service.rates_service import get_rates
 from tests.web.helpers import request_with_status
 from tests.web.testdata.blocks import block, block2
@@ -232,3 +236,132 @@ def test_bulk_json(client):
         b["_request_height"] = b["height"]
     blocks = sorted(expected, key=s)
     assert blocks == result
+
+
+def test_bulk_rejects_oversized_key_list(client):
+    """stack() creates one coroutine per list item, so the
+    list length must be bounded. Anything above the configured cap is refused
+    with a 400 naming the offending key, not silently truncated."""
+    limit = client.app_state.config.max_bulk_items
+    body = {"height": list(range(limit + 1))}
+    response = client.request(
+        "POST",
+        block_path.format(form="json", currency="btc"),
+        json=body,
+        headers=headers,
+    )
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert "height" in detail
+    assert str(limit) in detail
+
+
+def test_bulk_accepts_list_at_the_limit(client):
+    """The cap is inclusive — a request exactly at the limit still runs."""
+    limit = client.app_state.config.max_bulk_items
+    body = {"height": [1] * limit}
+    response = client.request(
+        "POST",
+        block_path.format(form="json", currency="btc"),
+        json=body,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_bounded_as_completed_bounds_in_flight_tasks():
+    """The scheduler must create coroutines lazily: at no point may more than
+    max_in_flight of them exist, however long the requested run is."""
+    total = 500
+    max_in_flight = 7
+    created = 0
+    live = 0
+    peak_live = 0
+
+    async def item():
+        nonlocal live, peak_live
+        live += 1
+        peak_live = max(peak_live, live)
+        await asyncio.sleep(0)
+        live -= 1
+        return "row"
+
+    def make_task(i):
+        nonlocal created
+        created += 1
+        return item()
+
+    async def run():
+        seen = 0
+        peak_created_ahead = 0
+        async for task in bounded_as_completed(make_task, total, max_in_flight):
+            assert await task == "row"
+            seen += 1
+            peak_created_ahead = max(peak_created_ahead, created - seen)
+        return seen, peak_created_ahead
+
+    seen, peak_created_ahead = asyncio.run(run())
+    assert seen == total
+    assert created == total
+    assert peak_live <= max_in_flight
+    assert peak_created_ahead <= max_in_flight
+
+
+def test_bounded_as_completed_cancels_pending_on_early_exit():
+    """A consumer that stops early (client disconnect, writer error) must not
+    leave tasks running behind the closed response."""
+    started = []
+    cancelled = []
+
+    async def item(i):
+        started.append(i)
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.append(i)
+            raise
+        return i
+
+    async def run():
+        gen = bounded_as_completed(lambda i: item(i), 100, 5)
+        async for _ in gen:  # pragma: no cover - never reached, all items hang
+            break
+        await gen.aclose()
+        await asyncio.sleep(0)
+
+    async def driver():
+        task = asyncio.create_task(run())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(driver())
+    assert len(started) == 5, "more tasks were scheduled than the window allows"
+    assert sorted(cancelled) == sorted(started)
+
+
+def test_to_csv_generator_streams_past_the_header_inference_window():
+    """The CSV path infers its header from the first rows and then streams the
+    rest off the same iterator. Regression guard for the rewrite that dropped
+    the 'collect every remaining operation first' buffering step."""
+    total = 250
+
+    async def rows_for(i):
+        return [{"height": i, "block_hash": f"h{i}"}]
+
+    async def fake_stack():
+        for i in range(total):
+            yield asyncio.ensure_future(rows_for(i))
+
+    async def run():
+        return [chunk async for chunk in to_csv_generator(fake_stack())]
+
+    chunks = asyncio.run(run())
+    header, *rows = [c.strip() for c in chunks if c.strip()]
+    assert header == "_error,_info,block_hash,height"
+    assert len(rows) == total
+    assert rows[0] == ",,h0,0"
+    assert rows[-1] == f",,h{total - 1},{total - 1}"
