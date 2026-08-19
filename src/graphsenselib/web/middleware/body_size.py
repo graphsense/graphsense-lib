@@ -5,7 +5,7 @@ FastAPI reads and ``json.loads``-es in full *before* the route handler — and
 therefore before any application-level item cap — can look at it. A multi-
 megabyte list of integers costs far more as parsed Python objects than as
 wire bytes, so a body limit is the only thing that bounds memory on that path
-Deployments normally also cap this at the reverse
+(see GHSA-372j-2wgf-23ch). Deployments normally also cap this at the reverse
 proxy; this middleware makes the stock container safe on its own.
 
 Pure ASGI (like EmptyQueryParamsMiddleware) so it neither buffers responses

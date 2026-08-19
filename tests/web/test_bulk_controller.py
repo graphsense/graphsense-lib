@@ -239,7 +239,7 @@ def test_bulk_json(client):
 
 
 def test_bulk_rejects_oversized_key_list(client):
-    """stack() creates one coroutine per list item, so the
+    """GHSA-372j-2wgf-23ch: stack() creates one coroutine per list item, so the
     list length must be bounded. Anything above the configured cap is refused
     with a 400 naming the offending key, not silently truncated."""
     limit = client.app_state.config.max_bulk_items

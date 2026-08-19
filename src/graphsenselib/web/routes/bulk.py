@@ -220,7 +220,7 @@ def stack(request, ctx, currency, operation, body, num_pages, format):
         elif len(a) > 0:
             le = len(a)
             # Bound the fan-out: stack() creates one coroutine per item, so an
-            # unbounded list is an unbounded allocation.
+            # unbounded list is an unbounded allocation (GHSA-372j-2wgf-23ch).
             # Reject rather than silently truncate — a caller that sent more
             # than it can get back should hear about it.
             if 0 < max_bulk_items < le:
@@ -268,7 +268,7 @@ async def bounded_as_completed(make_task, total, max_in_flight):
     `asyncio.as_completed` is not usable here: it calls `ensure_future` on every
     awaitable up front, so the number of scheduled Tasks — and the memory they
     hold — grows with the caller-supplied list length instead of with the
-    configured concurrency. This creates coroutines lazily
+    configured concurrency (GHSA-372j-2wgf-23ch). This creates coroutines lazily
     instead, so a large request costs bounded memory no matter how long the list.
 
     Yields the completed Task rather than its result so callers keep awaiting
