@@ -79,6 +79,17 @@ def _strip_udt_fields(value, fields_to_strip: set[str]):
 # but not for byte-identical content.
 METADATA_TABLES = {"configuration", "summary_statistics"}
 
+# EIP-4895: since Shanghai the current version synthesizes withdrawal reward
+# traces (reward_type='withdrawal') that the reference version does not
+# produce. They are excluded from the cross-version hash and instead
+# positively asserted below for ranges that cover post-Shanghai blocks.
+SHANGHAI_BLOCK = 17_034_871
+
+
+def _is_withdrawal_trace(row) -> bool:
+    d = row._asdict()
+    return d.get("trace_type") == "reward" and d.get("reward_type") == "withdrawal"
+
 
 def _cassandra_release(session) -> str:
     """Query the Cassandra server for its release version."""
@@ -107,6 +118,7 @@ def _table_content_hash(
     table: str,
     exclude_cols: set[str] | None = None,
     udt_field_additions: dict[str, set[str]] | None = None,
+    exclude_rows=None,
 ) -> tuple[int, str]:
     """Return (row_count, sha256_hex) for a table's full content.
 
@@ -115,8 +127,12 @@ def _table_content_hash(
     *exclude_cols* drops top-level columns before hashing.
     *udt_field_additions* maps a column name to a set of UDT field names that
     should be stripped from each UDT instance in that column before hashing.
+    *exclude_rows* is a predicate; matching rows are dropped before counting
+    and hashing (for intentional row additions asserted separately).
     """
     rows = list(session.execute(f"SELECT * FROM {keyspace}.{table}"))  # noqa: S608
+    if exclude_rows is not None:
+        rows = [r for r in rows if not exclude_rows(r)]
     count = len(rows)
     sorted_rows = sorted(
         _normalize_row(row, exclude_cols, udt_field_additions) for row in rows
@@ -249,6 +265,13 @@ class TestCassandraIngest:
             extra_cols = KNOWN_COLUMN_ADDITIONS.get((currency, table), set())
             udt_extras = KNOWN_UDT_FIELD_ADDITIONS.get((currency, table))
 
+            # Current-only synthetic withdrawal reward traces are excluded
+            # from the cross-version hash and asserted separately below.
+            row_filter = (
+                _is_withdrawal_trace
+                if (currency, table) == ("eth", "trace")
+                else None
+            )
             ref_count, ref_hash = _table_content_hash(
                 session, ref_ks, table,
                 exclude_cols=extra_cols, udt_field_additions=udt_extras,
@@ -256,6 +279,7 @@ class TestCassandraIngest:
             cur_count, cur_hash = _table_content_hash(
                 session, cur_ks, table,
                 exclude_cols=extra_cols, udt_field_additions=udt_extras,
+                exclude_rows=row_filter,
             )
 
             if table in METADATA_TABLES:
@@ -310,6 +334,37 @@ class TestCassandraIngest:
                     f"(ref={ref_count} rows hash={ref_hash[:12]}... "
                     f"cur={cur_count} rows hash={cur_hash[:12]}...)"
                 )
+
+        # EIP-4895: for ranges covering post-Shanghai blocks the current
+        # version must have synthesized withdrawal reward traces (the rows
+        # excluded from the hash comparison above). One trace per withdrawal,
+        # every post-Shanghai block has withdrawals.
+        if currency == "eth" and cassandra_config.end_block >= SHANGHAI_BLOCK:
+            w_rows = [
+                r
+                for r in session.execute(f"SELECT * FROM {cur_ks}.trace")  # noqa: S608
+                if _is_withdrawal_trace(r)
+            ]
+            n_expected_blocks = cassandra_config.end_block - max(
+                SHANGHAI_BLOCK, cassandra_config.start_block
+            ) + 1
+            blocks_covered = {r.block_id for r in w_rows}
+            print(
+                f"  withdrawal traces: {len(w_rows)} rows over "
+                f"{len(blocks_covered)} blocks "
+                f"(expected blocks: {n_expected_blocks})"
+            )
+            assert len(blocks_covered) == n_expected_blocks, (
+                f"withdrawal traces missing for some post-Shanghai blocks: "
+                f"{len(blocks_covered)} of {n_expected_blocks}"
+            )
+            for r in w_rows:
+                assert r.tx_hash is None
+                assert r.from_address is None
+                assert r.to_address is not None
+                assert r.value is not None and r.value > 0
+                assert r.status == 1
+                assert r.trace_index >= 1_000_000_000
 
         # Verify minimum row counts in current
         min_rows = EXPECTED_MIN_ROWS.get(currency, {})

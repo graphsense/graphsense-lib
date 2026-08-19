@@ -43,6 +43,13 @@ TRANSFORMATION_RANGES: dict[str, list[TransformationRange]] = {
             15_537_400,
             "Merge straddle: 4 PoW + 7 PoS blocks (PoS starts at 15_537_394)",
         ),
+        TransformationRange(
+            "post_shanghai",
+            17_034_870,
+            17_034_880,
+            "Shanghai straddle: EIP-4895 withdrawals start at 17_034_871; "
+            "both ingest paths must derive identical withdrawal reward traces",
+        ),
     ],
     "trx": [
         TransformationRange("mid", 50_000_001, 50_000_010, "mid-chain era"),
