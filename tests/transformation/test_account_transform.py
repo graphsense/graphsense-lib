@@ -10,6 +10,47 @@ import pytest
 from graphsenselib.transformation.account import AccountTransformation
 
 
+def _sparkless_transformer():
+    return AccountTransformation(
+        spark=None, delta_lake_path="s3a://unused", raw_keyspace="test_eth_raw"
+    )
+
+
+def test_run_rejects_unknown_tables():
+    transformer = _sparkless_transformer()
+    with pytest.raises(ValueError, match="trace_withdrawl"):
+        transformer.run(0, 1, tables=["trace_withdrawl"])
+
+
+def test_run_partial_tables_skip_readiness_marker(monkeypatch):
+    """A --tables subset run must not stamp configuration/ingest_complete —
+    the marker is the REST auto-discovery readiness signal."""
+    transformer = _sparkless_transformer()
+    calls = []
+    monkeypatch.setattr(
+        transformer,
+        "_table_methods",
+        lambda: {
+            name: (lambda s, e, n=name: calls.append(n)) for name in transformer.TABLES
+        },
+    )
+    monkeypatch.setattr(
+        transformer, "write_configuration", lambda: calls.append("configuration")
+    )
+    monkeypatch.setattr(
+        transformer,
+        "write_ingest_complete_marker",
+        lambda: calls.append("ingest_complete"),
+    )
+
+    transformer.run(0, 1, tables=["trace_withdrawal"])
+    assert calls == ["trace_withdrawal"]
+
+    calls.clear()
+    transformer.run(0, 1)
+    assert calls == list(transformer.TABLES) + ["configuration", "ingest_complete"]
+
+
 @pytest.fixture
 def transformer(spark, install_harness):
     return install_harness(

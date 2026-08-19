@@ -266,15 +266,31 @@ class AccountTransformationBase:
     def run(self, start_block, end_block, tables=None):
         targets = list(tables) if tables else list(self.TABLES)
         cls_name = type(self).__name__
+        methods = self._table_methods()
+        unknown = sorted(set(targets) - set(methods))
+        if unknown:
+            raise ValueError(
+                f"Unknown table(s) {unknown} for {cls_name}; "
+                f"valid tables: {sorted(methods)}"
+            )
         logger.info(
             f"{cls_name}: {self.raw_keyspace} blocks {start_block}-{end_block}, "
             f"tables={targets}"
         )
-        methods = self._table_methods()
         for table in targets:
-            if table in methods:
-                logger.info(f"Transforming {table}...")
-                methods[table](start_block, end_block)
+            logger.info(f"Transforming {table}...")
+            methods[table](start_block, end_block)
+        missing = sorted(set(self.TABLES) - set(targets))
+        if missing:
+            # ingest_complete is the REST auto-discovery readiness signal; a
+            # partial run must never stamp it (or the configuration) for
+            # tables it did not transform.
+            logger.warning(
+                f"Partial table run (missing {missing}): NOT writing "
+                "configuration or ingest_complete marker."
+            )
+            logger.info(f"{cls_name} complete (partial).")
+            return
         logger.info("Writing configuration...")
         self.write_configuration()
         # MUST stay last — see graphsenselib.db.state.mark_ingest_complete.
