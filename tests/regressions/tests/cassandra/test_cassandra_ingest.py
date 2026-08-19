@@ -91,6 +91,36 @@ def _is_withdrawal_trace(row) -> bool:
     return d.get("trace_type") == "reward" and d.get("reward_type") == "withdrawal"
 
 
+def _node_withdrawal_counts(node_url: str, start: int, end: int) -> dict[int, int]:
+    """Per-block EIP-4895 withdrawal counts straight from the node.
+
+    Blocks may legally carry an empty withdrawals list, so expectations must
+    come from the chain, not from assuming every post-Shanghai block has some.
+    """
+    import json
+    import urllib.request
+
+    payload = [
+        {
+            "jsonrpc": "2.0",
+            "method": "eth_getBlockByNumber",
+            "params": [hex(b), False],
+            "id": b,
+        }
+        for b in range(start, end + 1)
+    ]
+    req = urllib.request.Request(
+        node_url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        results = json.load(resp)
+    return {
+        r["id"]: len(r["result"].get("withdrawals") or []) for r in results
+    }
+
+
 def _cassandra_release(session) -> str:
     """Query the Cassandra server for its release version."""
     row = session.execute("SELECT release_version FROM system.local").one()
@@ -337,32 +367,38 @@ class TestCassandraIngest:
 
         # EIP-4895: for ranges covering post-Shanghai blocks the current
         # version must have synthesized withdrawal reward traces (the rows
-        # excluded from the hash comparison above). One trace per withdrawal,
-        # every post-Shanghai block has withdrawals.
+        # excluded from the hash comparison above), exactly one per
+        # withdrawal the node reports. Empty withdrawal lists and
+        # zero-amount withdrawals are spec-legal, so expectations come from
+        # the node, not from assuming every block has non-zero withdrawals.
         if currency == "eth" and cassandra_config.end_block >= SHANGHAI_BLOCK:
             w_rows = [
                 r
                 for r in session.execute(f"SELECT * FROM {cur_ks}.trace")  # noqa: S608
                 if _is_withdrawal_trace(r)
             ]
-            n_expected_blocks = cassandra_config.end_block - max(
-                SHANGHAI_BLOCK, cassandra_config.start_block
-            ) + 1
-            blocks_covered = {r.block_id for r in w_rows}
+            expected_counts = _node_withdrawal_counts(
+                cassandra_config.node_url,
+                max(SHANGHAI_BLOCK, cassandra_config.start_block),
+                cassandra_config.end_block,
+            )
+            actual_counts: dict[int, int] = {}
+            for r in w_rows:
+                actual_counts[r.block_id] = actual_counts.get(r.block_id, 0) + 1
             print(
                 f"  withdrawal traces: {len(w_rows)} rows over "
-                f"{len(blocks_covered)} blocks "
-                f"(expected blocks: {n_expected_blocks})"
+                f"{len(actual_counts)} blocks "
+                f"(node expects {sum(expected_counts.values())} over "
+                f"{sum(1 for n in expected_counts.values() if n)} blocks)"
             )
-            assert len(blocks_covered) == n_expected_blocks, (
-                f"withdrawal traces missing for some post-Shanghai blocks: "
-                f"{len(blocks_covered)} of {n_expected_blocks}"
-            )
+            assert actual_counts == {
+                b: n for b, n in expected_counts.items() if n
+            }, "withdrawal trace counts diverge from node withdrawals"
             for r in w_rows:
                 assert r.tx_hash is None
                 assert r.from_address is None
                 assert r.to_address is not None
-                assert r.value is not None and r.value > 0
+                assert r.value is not None and r.value >= 0
                 assert r.status == 1
                 assert r.trace_index >= 1_000_000_000
 
