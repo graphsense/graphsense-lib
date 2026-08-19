@@ -1,5 +1,3 @@
-from typing import Any, cast
-
 import pytest
 from goodconf import GoodConfConfigDict
 
@@ -120,9 +118,10 @@ def test_app_config_load_partial_resolves_env(monkeypatch, tmp_path):
 
     assert ok, errors
     assert cfg.coingecko_api_key == "resolved-key"
-    # load_partial stores nested fields raw (dict), so access the dict form.
-    environments = cast(dict[str, Any], cfg.environments)
-    assert environments["prod"]["cassandra_nodes"] == ["resolved-node"]
+    # load_partial validates nested sections, so this is a real Environment,
+    # not the raw dict (a dict here means get_environment() hands out dicts and
+    # every `env.cassandra_nodes` caller breaks).
+    assert cfg.get_environment("prod").cassandra_nodes == ["resolved-node"]
 
 
 def test_gsrest_load_config_resolves_env(monkeypatch, tmp_path):

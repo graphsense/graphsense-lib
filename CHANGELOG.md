@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [2.15.3] - 2026-08-19
+
+### Library
+
+#### Fixed
+- **`tagpack-tool ... --use-gs-lib-config-env <env>` crashed with `AttributeError: 'dict' object has no attribute 'cassandra_nodes'`.** 2.15.2 routed that flag through the config module (so `${VAR}` placeholders and file overrides are honoured) instead of a raw `yaml.safe_load`, but `AppConfig.load_partial()` — the bootstrap used for the `tagpack-tool`, `tagstore`, `web`, `convert` and `mcp` commands — assigned every section with a plain `setattr`, which bypasses pydantic validation. `config.environments` therefore held raw dicts, `is_loaded()` was already true so the strict `load()` never ran, and `get_environment()` handed back a dict whose `.cassandra_nodes` access blew up. For a `tagpack-tool sync` this surfaced at the very end of the run, after the repo sync had already taken the better part of an hour. `load_partial` now validates each value against its declared field type before assigning, so the partial path produces the same `Environment` / `KeyspaceConfig` models as the strict path; a section that fails to validate is still tolerated (it keeps its default and is reported), but is now also logged as a warning naming the field and the error instead of being stored raw and failing far away from the cause.
+
 ## [2.15.2] - 2026-08-18
 
 ### Library

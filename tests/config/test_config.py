@@ -468,3 +468,49 @@ environments:
         assert env.serial_consistency_level == "SERIAL"
     finally:
         os.unlink(fname)
+
+
+def test_load_partial_yields_validated_environment(tmp_path):
+    # Regression: the tagpack-tool / tagstore / web / mcp commands bootstrap the
+    # config via load_partial. A raw setattr left `environments` as plain dicts,
+    # so get_environment() returned a dict and every caller blew up with
+    # "'dict' object has no attribute 'cassandra_nodes'".
+    config_yaml = tmp_path / "graphsense.yaml"
+    config_yaml.write_text(
+        "environments:\n"
+        "  prod:\n"
+        "    cassandra_nodes:\n"
+        "      - host1:9042\n"
+        "    username: user\n"
+        "    password: pw\n"
+        "    keyspaces:\n"
+        "      btc:\n"
+        "        raw_keyspace_name: btc_raw\n"
+        "        transformed_keyspace_name: btc_transformed\n"
+        "        schema_type: utxo\n"
+        "        ingest_config:\n"
+        "          node_reference: http://localhost:8332\n"
+    )
+
+    cfg = AppConfig(load=False)
+    ok, errors = cfg.load_partial(filename=str(config_yaml))
+
+    assert ok, errors
+    env = cfg.get_environment("prod")
+    assert isinstance(env, Environment)
+    assert env.cassandra_nodes == ["host1:9042"]
+    assert env.get_cassandra_credentials(readonly=True) == ("user", "pw")
+    assert env.get_keyspace("btc").transformed_keyspace_name == "btc_transformed"
+
+
+def test_load_partial_reports_invalid_section_instead_of_storing_it(tmp_path):
+    config_yaml = tmp_path / "graphsense.yaml"
+    config_yaml.write_text("environments:\n  prod:\n    cassandra_nodes: 5\n")
+
+    cfg = AppConfig(load=False)
+    ok, errors = cfg.load_partial(filename=str(config_yaml))
+
+    assert ok is False
+    assert any(e.startswith("environments:") for e in errors)
+    # The default is kept, and it is still a validated model.
+    assert isinstance(cfg.get_environment("prod"), Environment)

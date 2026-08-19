@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from goodconf import Field, GoodConf, GoodConfConfigDict
 from goodconf import FileConfigSettingsSource, _load_config
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, TypeAdapter, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 from ..utils import first_or_default, flatten, resolve_env_vars
@@ -860,8 +860,14 @@ class AppConfig(GoodConf):
                     if field_name == "slack_topics" and isinstance(value, dict):
                         setattr(self, field_name, self._parse_slack_topics(value))
                     else:
-                        setattr(self, field_name, value)
+                        setattr(
+                            self, field_name, self._validate_field(field_name, value)
+                        )
                 except Exception as e:
+                    logger.warning(
+                        f"Ignoring config key '{field_name}': {e}. "
+                        "Falling back to its default value."
+                    )
                     errors.append(f"{field_name}: {str(e)}")
 
         env_slack_topics = os.environ.get("GRAPHSENSE_SLACK_TOPICS")
@@ -875,6 +881,22 @@ class AppConfig(GoodConf):
                 errors.append(f"GRAPHSENSE_SLACK_TOPICS: {str(e)}")
 
         return len(errors) == 0, errors
+
+    @classmethod
+    def _validate_field(cls, field_name: str, value: Any) -> Any:
+        """Coerce a raw config value into the field's declared type.
+
+        A plain ``setattr`` bypasses pydantic validation, so nested sections
+        (``environments`` above all) would stay raw dicts and
+        ``get_environment()`` would hand out a dict instead of an
+        ``Environment``. Validating here keeps the partial-load semantics
+        (a bad section is reported and keeps its default) while guaranteeing
+        the same field types as the strict ``load()`` path.
+        """
+        field = cls.model_fields.get(field_name)
+        if field is None:
+            raise ValueError("unknown config key")
+        return TypeAdapter(field.annotation).validate_python(value)
 
     @staticmethod
     def _parse_slack_topics(raw_topics: Dict) -> Dict[str, SlackTopic]:
