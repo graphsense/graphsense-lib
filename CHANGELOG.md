@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Changed
+- **Dependency bumps: `pyarrow` 25.0.0 → 25.0.1, `bitarray` 3.9.1 → 3.10.1.** Both are Dependabot bumps; `bitarray` 3.10 rewrites `util.ba2int()` / `util.int2ba()`, which the UTXO address codec leans on, so the full suite was run against the pair together rather than each in isolation.
+- **The pinned `uv` helper image in the `Dockerfile` moves to 0.12.5 and the `java11` stage picks up the current Temurin 11 JRE digest.** Only the digest moves — the stage stays on Java 11 on purpose (prod Spark executors are capped there by Cassandra 4.x on the shared hosts, and a Java-17+ driver breaks Kryo task-result deserialization).
+- **Dependabot no longer proposes `python` or `eclipse-temurin` major/minor bumps for the Docker images.** The grouped weekly docker PR kept offering `python` 3.13 → 3.14, which cannot build (`requires-python = ">=3.10, <3.14"`, no `psycopg2-binary`/`pyspark` wheels for 3.14, and a hardcoded `/usr/local/lib/python3.13` prune path in the runtime stage), and `eclipse-temurin` 11 → 22, which would defeat the whole point of the `java11` stage. Both are now `ignore`d for major/minor in `.github/dependabot.yml`, with the reasoning inline; digest and patch updates still flow. Raising either is a deliberate change that has to move `pyproject.toml` and the Dockerfile paths along with it.
+
 ## [2.15.3] - 2026-08-19
 
 ### Library
