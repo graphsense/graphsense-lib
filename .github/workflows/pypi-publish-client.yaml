@@ -28,7 +28,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v7
     - name: Validate tag/version alignment
       run: |
         TAG_VERSION="${GITHUB_REF#refs/tags/webapi-v}"
@@ -47,7 +47,7 @@ jobs:
 
         echo "Client release versions aligned (tag=$TAG_VERSION, api=$API_VERSION, client=$CLIENT_VERSION)"
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@v6
+      uses: astral-sh/setup-uv@v7
       with:
         version: "latest"
     - name: Install requirements
