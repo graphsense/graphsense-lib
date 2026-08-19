@@ -633,8 +633,15 @@ def get_sorted_unique_addresses(
             "address": block.miner,
             "block_id": block.block_id,
             "is_log": False,
-            # this is a hack to imitate spark; we assume there a max 1M tx per block
-            "index": 1_000_000_000,
+            # Fabricated sort index so the miner (which appears in no trace
+            # post-merge) is ordered strictly AFTER everything else in the
+            # block: real trace/tx indexes are far below 1e9, and synthetic
+            # withdrawal reward traces occupy WITHDRAWAL_TRACE_INDEX_OFFSET
+            # (1e9) + pos. graphsense-spark has no miner entry in its
+            # address-id ordering at all, so this row only ever defines
+            # first-appearance order for fee-only miners. Must stay disjoint
+            # from the withdrawal index band and below int32 max.
+            "index": 2_000_000_000,
             "is_from_address": False,
         }
         for block in blocks
