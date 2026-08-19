@@ -5,6 +5,7 @@ derives the same tx_hash-less reward traces from them. These tests pin the
 row shape and assert the ingest-side and delta-updater-side derivations agree.
 """
 
+import duckdb
 import pandas as pd
 
 from graphsenselib.deltaupdate.update.account.modelsraw import (
@@ -145,3 +146,36 @@ def test_lake_blocks_pre_shanghai_rows_are_skipped():
 def test_lake_blocks_without_withdrawals_column():
     df = pd.DataFrame([{"block_id": 15000000}])
     assert eth_withdrawal_traces_from_lake_blocks(df) == []
+
+
+def test_lake_blocks_duckdb_reader_types():
+    """Exercise the exact types the prod reader delivers.
+
+    DeltaTableConnector reads lake tables via duckdb fetchdf, which yields
+    pd.NA (not None, not float NaN) for NULL list values, numpy ndarrays of
+    dicts for withdrawals, and numpy ints for block_id. A NULL row written by
+    a pre-withdrawals ingest version must be skipped, not crash the batch.
+    """
+    amount = (12210183).to_bytes(4, "big")
+    hexlit = "".join(f"\\x{b:02X}" for b in amount)
+    con = duckdb.connect()
+    con.execute(
+        "create table b (block_id bigint, "
+        "withdrawals struct(address varchar, amount blob)[])"
+    )
+    con.execute("insert into b values (15000000, NULL)")
+    con.execute(
+        "insert into b values (17100000, "
+        "[{'address': '0xb9d7934878b5fb9610b3fe8a5e441e8fad7e293f', "
+        f"'amount': '{hexlit}'::BLOB}}])"
+    )
+    df = con.execute("select * from b order by block_id").fetchdf()
+    assert df.iloc[0]["withdrawals"] is pd.NA
+
+    traces = eth_withdrawal_traces_from_lake_blocks(df)
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace.block_id == 17100000
+    assert trace.trace_index == WITHDRAWAL_TRACE_INDEX_OFFSET
+    assert trace.to_address == bytes.fromhex("b9d7934878b5fb9610b3fe8a5e441e8fad7e293f")
+    assert trace.value == 12210183 * GWEI_TO_WEI

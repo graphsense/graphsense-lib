@@ -140,8 +140,12 @@ def eth_withdrawal_traces_from_lake_blocks(blocks_df: pd.DataFrame) -> List[EthT
         return traces
     for row in blocks_df[["block_id", "withdrawals"]].itertuples(index=False):
         withdrawals = row.withdrawals
-        if withdrawals is None or (
-            isinstance(withdrawals, float) and pd.isna(withdrawals)
+        # NULL list values surface as None, float NaN, or pd.NA depending on
+        # the reader (duckdb fetchdf yields pd.NA); all mean "no withdrawals".
+        if (
+            withdrawals is None
+            or withdrawals is pd.NA
+            or (isinstance(withdrawals, float) and pd.isna(withdrawals))
         ):
             continue
         for i, w in enumerate(withdrawals):
