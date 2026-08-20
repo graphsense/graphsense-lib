@@ -1,0 +1,21 @@
+name: Publish Artifact to Maven
+# on:
+#   release:
+#     types: [ created ]
+on: workflow_dispatch
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'sbt'
+      - name: Publish
+        run: sbt publish

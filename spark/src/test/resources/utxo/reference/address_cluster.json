@@ -1,0 +1,15 @@
+{"addressIdGroup": 0, "addressId": 0, "clusterId": 0}
+{"addressIdGroup": 0, "addressId": 1, "clusterId": 1}
+{"addressIdGroup": 1, "addressId": 2, "clusterId": 2}
+{"addressIdGroup": 1, "addressId": 3, "clusterId": 3}
+{"addressIdGroup": 2, "addressId": 4, "clusterId": 4}
+{"addressIdGroup": 2, "addressId": 5, "clusterId": 5}
+{"addressIdGroup": 3, "addressId": 6, "clusterId": 5}
+{"addressIdGroup": 3, "addressId": 7, "clusterId": 7}
+{"addressIdGroup": 3, "addressId": 8, "clusterId": 7}
+{"addressIdGroup": 4, "addressId": 9, "clusterId": 9}
+{"addressIdGroup": 5, "addressId": 10, "clusterId": 10}
+{"addressIdGroup": 5, "addressId": 11, "clusterId": 11}
+{"addressIdGroup": 6, "addressId": 12, "clusterId": 12}
+{"addressIdGroup": 6, "addressId": 13, "clusterId": 13}
+{"addressIdGroup": 7, "addressId": 14, "clusterId": 14}

@@ -14,10 +14,13 @@ repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+    # spark/ holds the Scala pipeline; its formatting is owned by
+    # scalafmt/scalafix (see spark/Makefile), and rewriting files there would
+    # also touch test fixtures the Scala tests compare byte for byte.
     -   id: trailing-whitespace
-        exclude: ^clients/
+        exclude: ^(clients|spark)/
     -   id: end-of-file-fixer
-        exclude: ^clients/
+        exclude: ^(clients|spark)/
     -
         id: check-yaml
         exclude: tests/testfiles
@@ -25,7 +28,8 @@ repos:
         args: ['--maxkb=4096']
         exclude: |
             (?x)^(
-                uv.lock
+                uv.lock|
+                spark/src/test/resources/.*
             )$
     -
         id: name-tests-test
