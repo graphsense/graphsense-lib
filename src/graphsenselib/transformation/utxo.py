@@ -486,7 +486,13 @@ class UtxoTransformation:
             "block_transactions",
             "transaction_by_tx_prefix",
         ]
-        targets = tables if tables else all_tables
+        targets = list(tables) if tables else all_tables
+        unknown = sorted(set(targets) - set(all_tables))
+        if unknown:
+            raise ValueError(
+                f"Unknown table(s) {unknown} for UtxoTransformation; "
+                f"valid tables: {all_tables}"
+            )
 
         logger.info(
             f"UtxoTransformation: {self.raw_keyspace} "
@@ -545,15 +551,25 @@ class UtxoTransformation:
                     future.result()
                     logger.info(f"Parallel transform complete: {name}")
 
-        logger.info("Writing configuration...")
-        self.write_configuration()
+        missing = sorted(set(all_tables) - set(targets))
+        if missing:
+            # ingest_complete is the REST auto-discovery readiness signal; a
+            # partial run must never stamp it (nor configuration/statistics)
+            # for tables it did not transform.
+            logger.warning(
+                f"Partial table run (missing {missing}): NOT writing "
+                "configuration, summary statistics or ingest_complete marker."
+            )
+        else:
+            logger.info("Writing configuration...")
+            self.write_configuration()
 
-        logger.info("Writing summary statistics...")
-        self.write_summary_statistics(start_block, end_block)
+            logger.info("Writing summary statistics...")
+            self.write_summary_statistics(start_block, end_block)
 
-        # MUST stay last — see graphsenselib.db.state.mark_ingest_complete.
-        logger.info("Writing ingest_complete marker...")
-        self.write_ingest_complete_marker()
+            # MUST stay last — see graphsenselib.db.state.mark_ingest_complete.
+            logger.info("Writing ingest_complete marker...")
+            self.write_ingest_complete_marker()
 
         # Unpersist cached DataFrame
         if self._tx_df_cache is not None:

@@ -171,6 +171,16 @@ def _log_startup_banner(
         "window-local."
     ),
 )
+@click.option(
+    "--tables",
+    type=str,
+    default=None,
+    help=(
+        "Comma-separated subset of tables to transform (default: all tables "
+        "of the schema type, e.g. block,transaction,trace,trace_withdrawal,"
+        "log for eth). Combine with --patch for targeted backfills."
+    ),
+)
 @spark_profile_option
 def run_transformation(
     env,
@@ -184,6 +194,7 @@ def run_transformation(
     local,
     debug_write_audit,
     patch,
+    tables,
     spark_profile,
 ):
     """Run PySpark transformation from Delta Lake to Cassandra raw keyspace.
@@ -358,6 +369,7 @@ def run_transformation(
             start_block=start_block,
             end_block=end_block,
             local=local,
+            tables=[t.strip() for t in tables.split(",")] if tables else None,
             s3_credentials=s3_credentials,
             spark_config=spark_config,
             spark_packages=spark_packages,

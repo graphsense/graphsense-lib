@@ -2435,7 +2435,7 @@ class Cassandra:
                 # sender/receiver pairing that relations are built from. The
                 # per-(tx, address) netting hides real output receipt for
                 # addresses appearing on both sides of a tx; that is considered
-                # wrong semantics (see the netting litmus test in
+                # wrong semantics (see the netting desired-semantics test in
                 # tests/regressions) and links must not propagate it. Until the
                 # transform's netting is fixed, /links can therefore list txs
                 # for pairs that have no netted relation edge — which is also
