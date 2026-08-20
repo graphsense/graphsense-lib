@@ -28,13 +28,33 @@ _SIDECAR_MODULE_FLAGS = (
 )
 
 
+# Tag prefix of the Spark release track inside the graphsense-lib monorepo.
+# The repo carries several release tracks (library ``vX.Y.Z``, web API
+# ``webapi-v*``, Rust wheels ``gs-clustering-v*``), so Spark jars are published
+# under their own prefix. The archived standalone graphsense-spark repo had a
+# single track and used bare ``vX.Y.Z`` tags — both shapes must keep resolving,
+# because production configs pin jar versions from either.
+SPARK_TAG_PREFIX = "spark-"
+
+
+def strip_tag_prefix(version: str) -> str:
+    """Version number of a release tag, without track prefix or leading ``v``.
+
+    ``spark-v26.08.0`` and ``v26.08.0`` both yield ``26.08.0``.
+    """
+    if version.startswith(SPARK_TAG_PREFIX):
+        version = version[len(SPARK_TAG_PREFIX) :]
+    return version.lstrip("v")
+
+
 def asset_name(artifact: str, version: str) -> str:
     """Release asset filename for an artifact + version.
 
-    The release tag keeps a leading ``v`` but the jar filename does not, e.g.
-    tag ``v26.06.0`` -> ``graphsense-spark-assembly-26.06.0.jar``.
+    The release tag keeps its track prefix and leading ``v`` but the jar
+    filename does not, e.g. tag ``spark-v26.08.0`` (or the legacy
+    ``v26.06.0``) -> ``graphsense-spark-assembly-26.08.0.jar``.
     """
-    v = version.lstrip("v")
+    v = strip_tag_prefix(version)
     if artifact == "fat":
         return f"graphsense-spark-assembly-{v}.jar"
     if artifact == "slim":
@@ -42,24 +62,50 @@ def asset_name(artifact: str, version: str) -> str:
     raise ValueError(f"Unknown artifact '{artifact}' (expected 'fat' or 'slim')")
 
 
-def resolve_latest_release(repo: str) -> str:
-    """Resolve the latest stable release tag for ``repo`` via the GitHub API.
+def resolve_latest_release(repo: str, tag_prefix: Optional[str] = None) -> str:
+    """Resolve the latest stable Spark release tag for ``repo``.
 
-    Uses the token-free ``/releases/latest`` endpoint, which GitHub defines as
-    the most recent non-draft, non-prerelease release — i.e. latest *stable*.
-    Returns the tag (e.g. ``v26.06.0``).
+    Without ``tag_prefix`` this uses the token-free ``/releases/latest``
+    endpoint, which GitHub defines as the most recent non-draft, non-prerelease
+    release — correct for a repository whose releases are all Spark jars (the
+    archived standalone graphsense-spark).
+
+    In the monorepo that endpoint is wrong: it reports the newest release of
+    ANY track, so a Python-only library release would resolve to a tag that
+    carries no jar, and the download would 404. With a ``tag_prefix`` the
+    release list is scanned instead and the newest stable release whose tag
+    starts with that prefix wins.
     """
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    logger.info(f"Resolving latest stable graphsense-spark release from {url}")
+    if not tag_prefix:
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+        logger.info(f"Resolving latest stable graphsense-spark release from {url}")
+        req = Request(url, headers={"Accept": "application/vnd.github+json"})
+        with urlopen(req, timeout=30) as resp:  # noqa: S310
+            data = json.load(resp)
+        tag = data.get("tag_name")
+        if not tag:
+            raise ValueError(
+                f"GitHub API returned no tag_name for the latest release of {repo}"
+            )
+        return tag
+
+    # Releases come back newest-first, so the first stable match wins.
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=100"
+    logger.info(f"Resolving latest stable '{tag_prefix}' release of {repo} from {url}")
     req = Request(url, headers={"Accept": "application/vnd.github+json"})
     with urlopen(req, timeout=30) as resp:  # noqa: S310
-        data = json.load(resp)
-    tag = data.get("tag_name")
-    if not tag:
-        raise ValueError(
-            f"GitHub API returned no tag_name for the latest release of {repo}"
-        )
-    return tag
+        releases = json.load(resp)
+    for release in releases:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        tag = release.get("tag_name") or ""
+        if tag.startswith(tag_prefix):
+            return tag
+    raise ValueError(
+        f"No stable release with tag prefix '{tag_prefix}' found in {repo}. "
+        "Pin an explicit jar version in full_transform_args.version or pass "
+        "--version."
+    )
 
 
 def release_jar_url(repo: str, version: str, artifact: str) -> str:

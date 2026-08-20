@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from graphsenselib.transformation import spark_jar
@@ -41,6 +42,50 @@ def test_resolve_latest_release_missing_tag(monkeypatch):
 def test_asset_name_fat_strips_leading_v():
     assert asset_name("fat", "v26.06.0") == "graphsense-spark-assembly-26.06.0.jar"
     assert asset_name("fat", "26.06.0") == "graphsense-spark-assembly-26.06.0.jar"
+
+
+def test_asset_name_strips_monorepo_track_prefix():
+    # Monorepo jars are tagged spark-vX.Y.Z, the asset itself is unprefixed.
+    assert (
+        asset_name("fat", "spark-v26.08.0") == "graphsense-spark-assembly-26.08.0.jar"
+    )
+    assert asset_name("slim", "spark-v26.08.0") == "graphsense-spark_2.12-26.08.0.jar"
+
+
+def test_release_jar_url_monorepo_tag_keeps_prefix_in_path():
+    # The download path is the tag; only the filename drops the prefix.
+    assert release_jar_url("graphsense/graphsense-lib", "spark-v26.08.0", "fat") == (
+        "https://github.com/graphsense/graphsense-lib/releases/download/"
+        "spark-v26.08.0/graphsense-spark-assembly-26.08.0.jar"
+    )
+
+
+def test_resolve_latest_release_with_prefix_skips_other_tracks(monkeypatch):
+    # A monorepo lists every track's releases newest-first; a Python-only
+    # release must not be mistaken for a jar release.
+    payload = json.dumps(
+        [
+            {"tag_name": "v2.15.5", "draft": False, "prerelease": False},
+            {"tag_name": "webapi-v2.15.1", "draft": False, "prerelease": False},
+            {"tag_name": "spark-v26.08.1-rc.1", "draft": False, "prerelease": True},
+            {"tag_name": "spark-v26.08.0", "draft": False, "prerelease": False},
+            {"tag_name": "spark-v26.07.5", "draft": False, "prerelease": False},
+        ]
+    ).encode()
+    monkeypatch.setattr(spark_jar, "urlopen", lambda *a, **k: _FakeResp(payload))
+    assert (
+        resolve_latest_release("graphsense/graphsense-lib", "spark-")
+        == "spark-v26.08.0"
+    )
+
+
+def test_resolve_latest_release_with_prefix_none_found(monkeypatch):
+    payload = json.dumps(
+        [{"tag_name": "v2.15.5", "draft": False, "prerelease": False}]
+    ).encode()
+    monkeypatch.setattr(spark_jar, "urlopen", lambda *a, **k: _FakeResp(payload))
+    with pytest.raises(ValueError, match="spark-"):
+        resolve_latest_release("graphsense/graphsense-lib", "spark-")
 
 
 def test_asset_name_slim():
