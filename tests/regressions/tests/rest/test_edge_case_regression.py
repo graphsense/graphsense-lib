@@ -371,7 +371,7 @@ class TestEdgeCaseRegressionLinks(EdgeCaseRegressionTestBase):
         semantics (id in inputs, neighbor in outputs), so the tx IS a link
         1oUWFer... -> bc1q3ng... even though the netted relations contain no
         such edge (the relations side of this tx is pinned by
-        TestUtxoNettingLitmus). A baseline built from the short-lived netted
+        TestUtxoNettingDesiredSemantics). A baseline built from the short-lived netted
         /links code returns 0 links here; prod and everything else return 1.
         """
         pair = (
@@ -594,11 +594,11 @@ class TestEdgeCaseRegressionRelatedAddresses(EdgeCaseRegressionTestBase):
 
 
 # =============================================================================
-# Semantics litmus tests (current server only — assert DESIRED semantics)
+# Desired-semantics tests (current server only — strict xfail until implemented)
 # =============================================================================
 
 
-class TestUtxoNettingLitmus:
+class TestUtxoNettingDesiredSemantics:
     """Indicator for the UTXO relations netting semantics.
 
     Relations are currently derived from per-(tx, address) NETTED flows
@@ -637,7 +637,7 @@ class TestUtxoNettingLitmus:
         assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" in neighbors
 
 
-class TestWithdrawalVisibilityLitmus:
+class TestWithdrawalVisibilityDesiredSemantics:
     """Indicator for EIP-4895 withdrawal visibility in address tx listings.
 
     Post-Shanghai validator withdrawals are ingested as tx_hash-less reward
