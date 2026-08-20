@@ -41,6 +41,29 @@ class BlockRangeToProcessTest extends TestBase {
     assert(range == BlockRangeToProcess(5, 42))
   }
 
+  test("write markers: absent until marked, then reported complete") {
+    val cacheDir = Some(Files.createTempDirectory("gs-cache-test").toString)
+
+    assert(!TransformHelpers.writeMarkersInitialized(cacheDir, spark))
+    TransformHelpers.initWriteMarkers(cacheDir, spark)
+    assert(TransformHelpers.writeMarkersInitialized(cacheDir, spark))
+
+    assert(!TransformHelpers.isWriteComplete(cacheDir, spark, "address"))
+    TransformHelpers.markWriteComplete(cacheDir, spark, "address")
+    assert(TransformHelpers.isWriteComplete(cacheDir, spark, "address"))
+    // markers are per table
+    assert(
+      !TransformHelpers.isWriteComplete(cacheDir, spark, "address_transactions")
+    )
+  }
+
+  test("write markers: without a cache directory nothing is tracked") {
+    assert(!TransformHelpers.writeMarkersInitialized(None, spark))
+    TransformHelpers.initWriteMarkers(None, spark)
+    TransformHelpers.markWriteComplete(None, spark, "address")
+    assert(!TransformHelpers.isWriteComplete(None, spark, "address"))
+  }
+
   test(
     "cachePinnedConfig: a rerun under changed arguments sees the pinned config"
   ) {

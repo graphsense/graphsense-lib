@@ -86,6 +86,40 @@ class TronJob(
     time(title)(block)
   }
 
+  /** Captured before this run writes anything; see
+    * TransformHelpers.writeMarkersInitialized.
+    */
+  private val adoptTablesWithoutMarker =
+    !TransformHelpers.writeMarkersInitialized(base_path, spark)
+  TransformHelpers.initWriteMarkers(base_path, spark)
+
+  /** Write `table` unless it is already known to hold a COMPLETE write.
+    *
+    * Replaces the bare "target table is empty" guard, which cannot tell a
+    * finished write from one that died halfway and therefore let a retry skip a
+    * partial table.
+    */
+  def guardedWrite(table: String, isTargetEmpty: => Boolean)(
+      write: => Unit
+  ): Unit = {
+    if (config.forceOverwrite.toOption.getOrElse(false)) {
+      write
+      TransformHelpers.markWriteComplete(base_path, spark, table)
+    } else if (TransformHelpers.isWriteComplete(base_path, spark, table)) {
+      println(f"Skipping ${table} - already written completely.")
+    } else if (adoptTablesWithoutMarker && !isTargetEmpty) {
+      println(
+        f"Warning - ${table} not empty and predates write markers, " +
+          "assuming it is complete and skipping it. If the run that wrote it " +
+          "did not finish, truncate the table and rerun."
+      )
+      TransformHelpers.markWriteComplete(base_path, spark, table)
+    } else {
+      write
+      TransformHelpers.markWriteComplete(base_path, spark, table)
+    }
+  }
+
   def prepareAndLoad(): (
       Dataset[ExchangeRates],
       Dataset[Block],
@@ -348,10 +382,7 @@ class TronJob(
 
     /* computing and storing balances */
     timeJob("Computing balances") {
-      if (
-        sink
-          .areBalancesEmpty() || config.forceOverwrite.toOption.getOrElse(false)
-      ) {
+      guardedWrite("balance", sink.areBalancesEmpty()) {
 
         val balances = transformation
           .computeBalances(
@@ -376,19 +407,13 @@ class TronJob(
 
         balances.unpersist(true)
         txFees.unpersist(true)
-      } else {
-        println("Warning - balances not empty skipping stage.")
       }
     }
 
     /* computing and storing address id prefixes */
     timeJob("Computing and storing addr id lookups") {
 
-      if (
-        sink.areAddressIdsEmpty() || config.forceOverwrite.toOption.getOrElse(
-          false
-        )
-      ) {
+      guardedWrite("address_ids_by_address_prefix", sink.areAddressIdsEmpty()) {
         val addressIdsByAddressPrefix =
           addressIds.toDF.transform(
             TransformHelpers.withSortedPrefix[AddressIdByAddressPrefix](
@@ -411,8 +436,6 @@ class TronJob(
         sink.saveAddressIdsByPrefix(
           addressIdsByAddressPrefix
         )
-      } else {
-        println("Warning - AddressId not empty skipping stage.")
       }
     }
 
@@ -438,9 +461,9 @@ class TronJob(
     /* computing and storing address id prefixes */
     timeJob("Computing and storing txid lookups") {
 
-      if (
-        sink.areTransactionIdsGroupEmpty() || config.forceOverwrite.toOption
-          .getOrElse(false)
+      guardedWrite(
+        "transaction_ids_by_transaction_id_group",
+        sink.areTransactionIdsGroupEmpty()
       ) {
         val transactionIdsByTransactionIdGroup =
           transactionIds.toDF.transform(
@@ -453,14 +476,10 @@ class TronJob(
           )
 
         sink.saveTransactionIdsByGroup(transactionIdsByTransactionIdGroup)
-      } else {
-        println(
-          "Warning - transactionIdsByTransactionIdGroup not empty skipping stage."
-        )
       }
-      if (
-        sink.areTransactionIdsPrefixEmpty() || config.forceOverwrite.toOption
-          .getOrElse(false)
+      guardedWrite(
+        "transaction_ids_by_transaction_prefix",
+        sink.areTransactionIdsPrefixEmpty()
       ) {
         val transactionIdsByTransactionPrefix =
           transactionIds.toDF.transform(
@@ -471,10 +490,6 @@ class TronJob(
             )
           )
         sink.saveTransactionIdsByTxPrefix(transactionIdsByTransactionPrefix)
-      } else {
-        println(
-          "Warning - transactionIdsByTransactionPrefix not empty skipping stage."
-        )
       }
     }
 
@@ -557,10 +572,7 @@ class TronJob(
     tokenTxs.unpersist(true)
 
     timeJob("Computing and storing block transactions") {
-      if (
-        sink.areBlockTransactionsEmpty() || config.forceOverwrite.toOption
-          .getOrElse(false)
-      ) {
+      guardedWrite("block_transactions", sink.areBlockTransactionsEmpty()) {
         val blockTransactions =
           computeCached("blockTransactions") {
             transformation
@@ -571,8 +583,6 @@ class TronJob(
 
         sink.saveBlockTransactions(blockTransactions)
         blockTransactions.unpersist(true)
-      } else {
-        println("Warning - blockTransactions not empty skipping stage.")
       }
 
     }
@@ -587,26 +597,25 @@ class TronJob(
       }
     }
 
-    if (sink.areAddressTransactionsEmtpy()) {
-      printDatasetStats(addressTransactions, "addressTransactions")
-
-      if (debug > 0) {
-        printStat("#address Txs", addressTransactions.count())
-      }
-    }
-
     timeJob("Saving address transactions and lookups") {
-      if (sink.areAddressTransactionsEmtpy()) {
+      guardedWrite("address_transactions", sink.areAddressTransactionsEmtpy()) {
+        printDatasetStats(addressTransactions, "addressTransactions")
+
+        if (debug > 0) {
+          printStat("#address Txs", addressTransactions.count())
+        }
+
         sink.saveAddressTransactions(addressTransactions)
 
         if (debug > 0) {
           addressTransactions.show(100)
         }
-      } else {
-        println("Warning - addressTransactions not empty skipping stage.")
       }
 
-      if (sink.areAddressTransactionsSecondaryGroupEmtpy()) {
+      guardedWrite(
+        "address_transactions_secondary_ids",
+        sink.areAddressTransactionsSecondaryGroupEmtpy()
+      ) {
         val addressTransactionsSecondaryIds =
           TransformHelpers
             .computeSecondaryPartitionIdLookup[AddressTransactionSecondaryIds](
@@ -618,18 +627,11 @@ class TronJob(
         sink.saveAddressTransactionBySecondaryId(
           addressTransactionsSecondaryIds
         )
-      } else {
-        println(
-          "Warning - addressTransactionsSecondaryIds not empty skipping stage."
-        )
       }
     }
 
     timeJob("Computing address and storing statistics") {
-      if (
-        sink
-          .areAddressEmpty() || config.forceOverwrite.toOption.getOrElse(false)
-      ) {
+      guardedWrite("address", sink.areAddressEmpty()) {
         val addresses =
           computeCached("addresses") {
             transformation.computeAddresses(
@@ -645,8 +647,6 @@ class TronJob(
 
         sink.saveAddresses(addresses)
         addresses.unpersist(true)
-      } else {
-        println("Warning - addresses not empty skipping stage.")
       }
     }
 
@@ -667,9 +667,9 @@ class TronJob(
 
         printDatasetStats(addressRelations, "addressRelations")
 
-        if (
-          sink.areAddressIncomingRelationsEmpty() || config.forceOverwrite.toOption
-            .getOrElse(false)
+        guardedWrite(
+          "address_incoming_relations",
+          sink.areAddressIncomingRelationsEmpty()
         ) {
           sink.saveAddressIncomingRelations(
             addressRelations.sort(
@@ -677,14 +677,10 @@ class TronJob(
               "dstAddressIdSecondaryGroup"
             )
           )
-        } else {
-          println(
-            "Warning - saveAddressIncomingRelations not empty skipping stage."
-          )
         }
-        if (
-          sink.areAddressOutgoingRelationsEmpty() || config.forceOverwrite.toOption
-            .getOrElse(false)
+        guardedWrite(
+          "address_outgoing_relations",
+          sink.areAddressOutgoingRelationsEmpty()
         ) {
           sink.saveAddressOutgoingRelations(
             addressRelations.sort(
@@ -692,15 +688,11 @@ class TronJob(
               "srcAddressIdSecondaryGroup"
             )
           )
-        } else {
-          println(
-            "Warning - saveAddressOutgoingRelations not empty skipping stage."
-          )
         }
 
-        if (
-          sink.areAddressIncomingRelationsSecondaryIdsEmpty() || config.forceOverwrite.toOption
-            .getOrElse(false)
+        guardedWrite(
+          "address_incoming_relations_secondary_ids",
+          sink.areAddressIncomingRelationsSecondaryIdsEmpty()
         ) {
           val addressIncomingRelationsSecondaryIds =
             TransformHelpers
@@ -715,14 +707,10 @@ class TronJob(
           sink.saveAddressIncomingRelationsBySecondaryId(
             addressIncomingRelationsSecondaryIds
           )
-        } else {
-          println(
-            "Warning - addressIncomingRelationsSecondaryIds not empty skipping stage."
-          )
         }
-        if (
-          sink.areAddressOutgoingRelationsSecondaryIdsEmpty() || config.forceOverwrite.toOption
-            .getOrElse(false)
+        guardedWrite(
+          "address_outgoing_relations_secondary_ids",
+          sink.areAddressOutgoingRelationsSecondaryIdsEmpty()
         ) {
           val addressOutgoingRelationsSecondaryIds =
             TransformHelpers
@@ -736,10 +724,6 @@ class TronJob(
 
           sink.saveAddressOutgoingRelationsBySecondaryId(
             addressOutgoingRelationsSecondaryIds
-          )
-        } else {
-          println(
-            "Warning - addressOutgoingRelationsSecondaryIds not empty skipping stage."
           )
         }
 

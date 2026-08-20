@@ -78,6 +78,20 @@ object TransformationJob {
 
     transform.run(conf.minBlock.toOption, conf.maxBlock.toOption)
 
-    spark.stop()
+    // The transform is complete and every write is durable at this point.
+    // SparkContext.stop() can still trip an RPC teardown race
+    // (TransportResponseHandler "requests outstanding" + a
+    // RejectedExecutionException from the already-shutting-down dispatcher
+    // pool; observed on Spark 3.5 after a multi-hour run) which would turn
+    // a fully successful run into a non-zero exit code. Teardown is
+    // best-effort; the exit code reports the transform's outcome.
+    println("Transformation finished successfully.")
+    try {
+      spark.stop()
+    } catch {
+      case e: Throwable =>
+        println("Warn - ignoring exception during Spark shutdown: " + e)
+    }
+    sys.exit(0)
   }
 }

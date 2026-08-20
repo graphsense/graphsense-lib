@@ -320,6 +320,15 @@ object TransformationJob {
       summaryStatistics
     )
 
-    spark.stop()
+    // See the account job: shutdown is best-effort, a teardown race must not
+    // turn a completed transform into a non-zero exit code.
+    println("Transformation finished successfully.")
+    try {
+      spark.stop()
+    } catch {
+      case e: Throwable =>
+        println("Warn - ignoring exception during Spark shutdown: " + e)
+    }
+    sys.exit(0)
   }
 }

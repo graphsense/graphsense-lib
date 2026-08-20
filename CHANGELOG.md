@@ -3,6 +3,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v26.08.0] 2026-08-20
+### Fixed
+- Retrying a TRX transform no longer skips a table that was only written
+  half way. The "should I write this" guards asked whether the target table
+  was empty, which cannot tell a finished write from one whose run died mid
+  write — the retry then left the keyspace silently incomplete, and the
+  operator had to remember to truncate partial tables by hand. Each table
+  now gets a completion marker in the gs-cache directory
+  (`<gs-cache-dir>/<keyspace>/_written/<table>`), written only after the
+  write returned, and the guards consult those markers. Tables that already
+  held data before markers existed are adopted as complete once, so existing
+  keyspaces keep working; deleting the cache directory resets the state.
+- A completed transform no longer reports failure because of a Spark shutdown
+  race. `SparkContext.stop()` tears down the driver's RPC connections while
+  in-flight callbacks may still be pending, which surfaces as
+  `TransportResponseHandler: Still have N requests outstanding` plus a
+  `RejectedExecutionException` from the already-shutting-down dispatcher pool
+  (seen on Spark 3.5 at the end of a 17h TRX run, after every table was
+  written). Shutdown is now best-effort and the job exits explicitly with 0
+  once the transform is done, so the exit code reports the transform's
+  outcome rather than teardown noise.
+
 ## [v26.07.5] 2026-08-20
 ### Fixed
 - The TRX transform now pins its processed block range (`min/maxBlockToProcess`)

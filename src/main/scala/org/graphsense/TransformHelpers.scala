@@ -24,8 +24,68 @@ import org.apache.spark.sql.AnalysisException
 import org.graphsense.Util._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.storage.StorageLevel
+import org.apache.hadoop.fs.Path
 
 object TransformHelpers {
+
+  /* --- write-completion markers -------------------------------------------
+   *
+   * The job's "should I write this table" guards ask whether the TARGET table
+   * is empty, which cannot distinguish "fully written" from "half written and
+   * the run died": a retry silently skips a partial table and leaves the
+   * keyspace corrupt (this cost the 2026-07 TRX full transform several runs).
+   * A marker file per table, written only after `store()` returned, records
+   * completion explicitly. Markers live in the gs-cache directory next to the
+   * cached datasets — the cache is already the per-target-keyspace retry
+   * state (see the pinned block range and job config), and deleting it resets
+   * everything together. Without a cache directory there is nowhere to keep
+   * them and the guards fall back to the emptiness check.
+   */
+
+  private def writeMarkerDir(basePath: String): Path =
+    new Path(basePath, "_written")
+
+  private def writeMarker(basePath: String, table: String): Path =
+    new Path(writeMarkerDir(basePath), table)
+
+  private def exists(spark: SparkSession, path: Path): Boolean =
+    path.getFileSystem(spark.sparkContext.hadoopConfiguration).exists(path)
+
+  /** Whether this cache already tracks write completion. Captured ONCE before a
+    * run writes anything: if markers were not in use yet, tables already
+    * holding data predate them and are adopted as complete (that is the
+    * pre-marker behaviour); if they were, a table without a marker is a partial
+    * write and must be redone.
+    */
+  def writeMarkersInitialized(
+      basePath: Option[String],
+      spark: SparkSession
+  ): Boolean =
+    basePath.exists(base => exists(spark, writeMarkerDir(base)))
+
+  def initWriteMarkers(basePath: Option[String], spark: SparkSession): Unit =
+    basePath.foreach { base =>
+      val dir = writeMarkerDir(base)
+      dir.getFileSystem(spark.sparkContext.hadoopConfiguration).mkdirs(dir)
+    }
+
+  def isWriteComplete(
+      basePath: Option[String],
+      spark: SparkSession,
+      table: String
+  ): Boolean =
+    basePath.exists(base => exists(spark, writeMarker(base, table)))
+
+  def markWriteComplete(
+      basePath: Option[String],
+      spark: SparkSession,
+      table: String
+  ): Unit =
+    basePath.foreach { base =>
+      val marker = writeMarker(base, table)
+      val fs = marker.getFileSystem(spark.sparkContext.hadoopConfiguration)
+      fs.create(marker, true).close()
+    }
 
   def toDSEager[
       R: Encoder
