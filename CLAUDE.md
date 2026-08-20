@@ -1,19 +1,26 @@
 # graphsense-lib
 
-## Delta updater must stay in tandem with graphsense-spark
+## Delta updater must stay in tandem with the Spark pipeline (`spark/`)
 
 The delta updater (`src/graphsenselib/deltaupdate/`) incrementally produces the
-same derived tables that the batch Spark pipeline (**graphsense-spark**, separate
-repo) computes from scratch. **graphsense-spark is the ground truth.** The two must
+same derived tables that the batch Spark pipeline (**`spark/`**, the Scala
+transformation formerly in the standalone graphsense-spark repo) computes from
+scratch. **The Spark pipeline is the ground truth.** The two must
 agree column-for-column, or an incrementally-updated keyspace diverges from what a
 full Spark re-run would produce.
 
 **Any change to delta updater logic (schema, transforms, aggregation, address/
 cluster/token accounting, is_contract detection, etc.) requires checking the
-corresponding graphsense-spark code and keeping the two in sync.** When they
+corresponding `spark/` code and keeping the two in sync — ideally in the same
+commit, which is why they now live in one repo.** When they
 disagree, match Spark's behavior — do not "fix" it only on the delta side. If the
 Spark side needs to change too, flag it; a delta-only change that Spark can't
 reproduce is a divergence bug waiting to surface at the next full re-run.
+
+`spark/` keeps its own toolchain (sbt, scalafmt/scalafix, `spark/CHANGELOG.md`)
+and its own release track (`spark-vX.Y.Z` tags — see VERSIONING.md); the Python
+formatting hooks deliberately skip that tree. Build and test it with the
+`spark-*` Makefile targets, or `cd spark && sbt test`.
 
 ### UTXO address strings: graphsense-spark decodes, it never derives
 

@@ -10,14 +10,23 @@ How `graphsense-lib` is versioned, when to mint a tag, and what each tag does in
 - **Web API + Python client:** managed on a separate track via `webapi-vA.B.C` tags. Triggers PyPI client publish only.
 - **Python wheel version** is derived automatically by `setuptools_scm`, never hand-edited.
 
-## Two version tracks
+## Three version tracks
 
 | Track | Tag shape | Where the version lives | What it covers |
 |---|---|---|---|
 | Library | `vX.Y.Z`, `vX.Y.Z-rc.N`, `vX.Y.Z-dev.N` | `setuptools_scm` (dynamic) → reads from git tag | The `graphsense-lib` package on PyPI, Docker images on ghcr.io |
 | Web API + Client | `webapi-vA.B.C` | `clients/python/pyproject.toml` `version = "..."` and `src/graphsenselib/web/version.py` `__api_version__` | The `graphsense-lib-client` package on PyPI, OpenAPI spec version |
+| Spark pipeline | `spark-vYY.MM.P` | `spark/Makefile` `RELEASE` (mirrored by `SPARKSEM` in the root Makefile) | The `spark/` Scala jars published as GitHub release assets |
 
-Both tracks live in the same repo and share `Makefile` helpers (`RELEASESEM` for the library track, `WEBAPISEM` for the client track) to mint and validate tags.
+All three tracks live in the same repo and share `Makefile` helpers (`RELEASESEM` for the library track, `WEBAPISEM` for the client track, `SPARKSEM` for the Spark track) to mint and validate tags.
+
+### Why the Spark pipeline has its own track
+
+`spark/` is the Scala transformation that a full transform runs; `graphsense-lib` downloads its jar by tag at run time (`src/graphsenselib/transformation/spark_jar.py`, version pinned in the config's `full_transform_args.version` or passed with `--version`). Keeping it on a separate track means a Python-only release does not force a jar rebuild, and — more importantly — an operator can pin a specific jar independently of the library version, which is what makes it possible to hotfix a running multi-hour transform.
+
+Mint with `make tag-spark-version` (validates that `SPARKSEM` matches `spark/Makefile`'s `RELEASE`), then push the tag; `.github/workflows/spark_release.yml` builds the slim and fat jars and attaches them to the release. Note that `spark/build.sbt` derives the jar version from the tag by looking at its **first character**, so the workflow strips the `spark-` prefix before invoking sbt — a tag it cannot parse silently produces a jar named after the Makefile version instead.
+
+Older jars (`v26.07.x` and earlier) live on releases of the archived standalone `graphsense-spark` repository. That repo is archived, not deleted, precisely so those pinned assets keep resolving; `spark_jar.py` takes the source repo as a parameter, so existing configs keep working unchanged.
 
 ## How `setuptools_scm` derives the wheel version
 
