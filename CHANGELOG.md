@@ -3,6 +3,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [v26.07.5] 2026-08-20
+### Fixed
+- The TRX transform now pins its processed block range (`min/maxBlockToProcess`)
+  to the gs-cache (`blockRangeToProcess` dataset). The cutoff is derived from
+  the exchange rates, which advance with every daily rate ingest, so a retry
+  that reused cached datasets (`computeCached`) silently recomputed everything
+  live — filtered counts, max block timestamp, `summary_statistics` — against
+  a NEWER horizon than the cached table content. Observed on the 2026-07/08
+  TRX full transform: after eleven runs spanning a month, `summary_statistics`
+  claimed the transform reached 2026-08-18 while the cached content ended at
+  the first run's horizon (~2026-07-19) — a delta updater onboarded from that
+  row would have silently skipped the difference. The first run resolves and
+  stores the range; every rerun loads it (a diverging `--min-block`/
+  `--max-block` is reported); deleting the cache directory re-resolves it.
+
 ## [v26.07.4] 2026-08-18
 ### Fixed
 - Sidecar bulk writes now detect Cassandra partitions too large for the bulk

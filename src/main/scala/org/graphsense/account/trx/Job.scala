@@ -15,6 +15,40 @@ import org.graphsense.account.models.TokenConfiguration
 import org.graphsense.Util._
 import org.graphsense.account.models.AddressTransactionSecondaryIds
 
+/** The block range a transform run processes, pinned to the gs-cache.
+  *
+  * The cutoff (maxBlock) is derived from the exchange rates, which advance with
+  * every daily rate ingest. A rerun that reuses cached datasets (computeCached)
+  * MUST use the same cutoff as the run that created them: otherwise everything
+  * computed live from raw (filtered counts, summary_statistics, max block
+  * timestamp) silently runs ahead of the cached table content — the stats row
+  * then claims a horizon the data does not have, and a delta updater onboarded
+  * from it skips the difference. Caching the resolved range pins every retry to
+  * the first run's cutoff; deleting the cache directory resets it.
+  */
+final case class BlockRangeToProcess(minBlock: Int, maxBlock: Int)
+
+/** The job arguments the cached datasets were built with, pinned to the
+  * gs-cache alongside them.
+  *
+  * computeCached reuses whatever parquet it finds — it cannot tell that a
+  * cached dataset was produced under different arguments than the current
+  * run's. That bit hard on the 2026-07/08 TRX full transform:
+  * `--block-bucket-size-address-txs` was changed 450000 → 50000 between runs,
+  * the addressTransactions cache survived, and three reruns wrote
+  * 450000-bucketed rows into a keyspace whose `configuration` row said 50000 —
+  * breaking every secondary-bucket read. Pinning the arguments and refusing to
+  * run on a mismatch turns that silent corruption into an immediate, explicit
+  * failure.
+  */
+final case class CachePinnedConfig(
+    bucketSize: Int,
+    blockBucketSizeAddressTxs: Int,
+    addressrelationsIdsNbuckets: Int,
+    txPrefixLength: Int,
+    addressPrefixLength: Int
+)
+
 class TronJob(
     spark: SparkSession,
     source: TrxSource,
@@ -65,6 +99,28 @@ class TronJob(
       Int,
       Long
   ) = {
+    // Refuse to reuse caches built under different job arguments; see
+    // CachePinnedConfig. Runs before anything is written to the keyspace.
+    val currentConfig = CachePinnedConfig(
+      config.bucketSize(),
+      config.blockBucketSizeAddressTxs(),
+      config.addressrelationsIdsNbuckets(),
+      config.txPrefixLength(),
+      config.addressPrefixLength()
+    )
+    val pinnedConfig = computeCached("cachePinnedConfig") {
+      Seq(currentConfig).toDS()
+    }.first()
+    if (pinnedConfig != currentConfig) {
+      throw new IllegalStateException(
+        f"The gs-cache at ${base_path.getOrElse("?")} was built with " +
+          f"different job arguments (cached: ${pinnedConfig}, current: " +
+          f"${currentConfig}). Reusing it would write data inconsistent " +
+          "with the keyspace configuration. Either restore the arguments " +
+          "or delete the cache directory to recompute."
+      )
+    }
+
     val exchangeRatesRaw = source.exchangeRates()
     val blocks = source.blocks()
     val tokenConfigurations = source.tokenConfigurations().persist()
@@ -97,23 +153,46 @@ class TronJob(
       rates
     }
 
-    val minBlockToProcess = config.minBlock.toOption match {
-      case None => exchangeRates.select(min(col("blockId"))).first.getInt(0)
-      case Some(user_min_block) =>
-        scala.math.max(
-          exchangeRates.select(min(col("blockId"))).first.getInt(0),
-          user_min_block
-        )
-    }
+    // Resolved once per cache lifetime; see BlockRangeToProcess. On a warm
+    // cache the values load from parquet and the exchange-rate horizon of
+    // THIS run is irrelevant — retries stay consistent with the cached
+    // datasets downstream.
+    val blockRange = computeCached("blockRangeToProcess") {
+      val minBlock = config.minBlock.toOption match {
+        case None => exchangeRates.select(min(col("blockId"))).first.getInt(0)
+        case Some(user_min_block) =>
+          scala.math.max(
+            exchangeRates.select(min(col("blockId"))).first.getInt(0),
+            user_min_block
+          )
+      }
+      val maxBlock = config.maxBlock.toOption match {
+        case None => exchangeRates.select(max(col("blockId"))).first.getInt(0)
+        case Some(user_max_block) =>
+          scala.math.min(
+            exchangeRates.select(max(col("blockId"))).first.getInt(0),
+            user_max_block
+          )
+      }
+      Seq(BlockRangeToProcess(minBlock, maxBlock)).toDS()
+    }.first()
 
-    val maxBlockToProcess = config.maxBlock.toOption match {
-      case None => exchangeRates.select(max(col("blockId"))).first.getInt(0)
-      case Some(user_max_block) =>
-        scala.math.min(
-          exchangeRates.select(max(col("blockId"))).first.getInt(0),
-          user_max_block
-        )
-    }
+    val minBlockToProcess = blockRange.minBlock
+    val maxBlockToProcess = blockRange.maxBlock
+
+    def warnRangeOverride(flag: String, requested: Int): Unit = println(
+      f"Warn - ${flag} ${requested} is not the effective value: the run " +
+        f"processes [${minBlockToProcess}, ${maxBlockToProcess}] (clamped " +
+        "to the exchange-rate horizon on first resolution, then pinned by " +
+        "the cached blockRangeToProcess dataset; delete the cache " +
+        "directory to re-resolve)."
+    )
+    config.minBlock.toOption
+      .filter(_ != minBlockToProcess)
+      .foreach(warnRangeOverride("--min-block", _))
+    config.maxBlock.toOption
+      .filter(_ != maxBlockToProcess)
+      .foreach(warnRangeOverride("--max-block", _))
 
     val (
       blks,

@@ -1,4 +1,4 @@
-RELEASE := 'v26.07.4'
+RELEASE := 'v26.07.5'
 
 all: format lint build
 
