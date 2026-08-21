@@ -2322,6 +2322,7 @@ class Cassandra:
                         targets=[neighbor_id],
                         page=None,
                         pagesize=None,
+                        include_neighbor_rows=False,
                     )
                     if edge_rows:
                         edge_tx_count = sum(row["no_transactions"] for row in edge_rows)
@@ -3221,7 +3222,15 @@ class Cassandra:
         )
 
     async def list_neighbors(
-        self, currency, id, is_outgoing, node_type: NodeType, targets, page, pagesize
+        self,
+        currency,
+        id,
+        is_outgoing,
+        node_type: NodeType,
+        targets,
+        page,
+        pagesize,
+        include_neighbor_rows=True,
     ):
         pagesize = min(pagesize or SMALL_PAGE_SIZE, SMALL_PAGE_SIZE)
 
@@ -3302,13 +3311,16 @@ class Cassandra:
                     that + "_address_id"
                 ]
 
-        if orig_node_type == NodeType.ADDRESS:
+        if orig_node_type == NodeType.ADDRESS and include_neighbor_rows:
             ids = [row[that + "_address_id"] for row in results]
             # Full rows, not just the address string: the service layer
             # builds each neighbor Address straight from these instead of
             # re-resolving the address string back to an id via the prefix
             # table and re-reading the same row (see
-            # addresses_service.list_address_neighbors).
+            # addresses_service.list_address_neighbors). Callers that only
+            # need the relation row itself (the links edge pre-check reads
+            # just no_transactions) pass include_neighbor_rows=False and
+            # skip the address fetch and finishing entirely.
             addresses = await self.get_addresses_by_ids(
                 currency, ids, address_only=False
             )
