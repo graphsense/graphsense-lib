@@ -24,7 +24,9 @@ on:
       - '.github/workflows/spark_tests.yml'
 
 jobs:
-  build:
+  # Not "build": three other workflows already expose a check by that name, so
+  # the Spark run is indistinguishable in a PR's check list.
+  spark-test:
     runs-on: ubuntu-latest
     defaults:
       run:
