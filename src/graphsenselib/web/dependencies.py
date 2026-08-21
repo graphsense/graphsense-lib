@@ -63,6 +63,11 @@ class MockTagstoreDb:
     ) -> list[Any]:
         return []
 
+    async def get_actors_by_subjectids(
+        self, subject_ids: list[str], groups: list[str], session: Any = None
+    ) -> dict[str, list[Any]]:
+        return {}
+
     async def get_tags_by_subjectid(
         self, address: str, offset: int, limit: Optional[int], groups: list[str]
     ) -> list[Any]:
@@ -98,10 +103,24 @@ class MockTagstoreDb:
     ) -> list[str]:
         return []
 
+    async def get_labels_by_subjectids(
+        self, subject_ids: list[str], groups: list[str], session: Any = None
+    ) -> dict[str, list[str]]:
+        return {}
+
     async def get_labels_by_clusterid(
         self, cluster_id: str, network: str, groups: list[str]
     ) -> list[str]:
         return []
+
+    async def get_labels_by_clusterids(
+        self,
+        cluster_ids: list[int],
+        network: str,
+        groups: list[str],
+        session: Any = None,
+    ) -> dict[int, list[str]]:
+        return {}
 
     async def get_network_statistics_cached(self) -> TagstoreStatisticsPublic:
         return TagstoreStatisticsPublic(by_network={})

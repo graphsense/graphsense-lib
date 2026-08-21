@@ -65,6 +65,9 @@ class TagstoreProtocol(Protocol):
     async def get_actors_by_subjectid(
         self, subject_id: str, groups: List[str]
     ) -> List[LabeledItemRef]: ...
+    async def get_actors_by_subjectids(
+        self, subject_ids: List[str], groups: List[str], session: Any = None
+    ) -> Dict[str, List[Any]]: ...
     async def get_tags_by_subjectid(
         self, address: str, offset: int, limit: Optional[int], groups: List[str]
     ) -> List["TagPublic"]: ...  # noqa: F821
@@ -744,6 +747,23 @@ class TagsService:
         return (
             [LabeledItemRef(id=a.id, label=a.label) for a in actors] if actors else []
         )
+
+    async def get_actors_by_subjectids(
+        self,
+        subject_ids: List[str],
+        tagstore_groups: List[str],
+        session: Any = None,
+    ) -> Dict[str, List[LabeledItemRef]]:
+        # Batched counterpart of get_actors_by_subjectid: one Postgres query
+        # (optionally sharing a caller-provided session) instead of one per
+        # subject id.
+        actors_by_id = await self.tagstore.get_actors_by_subjectids(
+            subject_ids, tagstore_groups, session=session
+        )
+        return {
+            sid: [LabeledItemRef(id=a.id, label=a.label) for a in actors]
+            for sid, actors in actors_by_id.items()
+        }
 
     async def list_concepts(self, taxonomy: str) -> List[Concept]:
         try:

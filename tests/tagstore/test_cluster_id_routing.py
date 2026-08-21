@@ -107,6 +107,12 @@ def test_batch_builders_take_regime_flag():
     assert "address_cluster_mapping_v2" in _sql(
         q._get_actors_for_clusterids_batch_stmt([FRESH_RAW_ID], "LTC", ["public"], True)
     )
+    assert "address_cluster_mapping_v2" in _sql(
+        q._get_labels_by_clusterids_batch_stmt([FRESH_RAW_ID], "LTC", ["public"], True)
+    )
+    assert "address_cluster_mapping_v2" not in _sql(
+        q._get_labels_by_clusterids_batch_stmt([LEGACY_ID], "LTC", ["public"], False)
+    )
 
 
 class _FakeResults:
@@ -204,6 +210,81 @@ async def test_bulk_counts_merge_mixed_regimes_on_public_ids():
     assert str(LEGACY_ID) in legacy_sql
     assert str(FRESH_RAW_ID) in fresh_sql
     assert str(FRESH_PUBLIC_ID) not in fresh_sql
+
+
+@pytest.mark.asyncio
+async def test_get_labels_by_clusterids_merges_mixed_regimes_on_public_ids():
+    db = q.TagstoreDbAsync(None)
+    session = _FakeSession(
+        legacy_rows=[(LEGACY_ID, "legacy-label")],
+        fresh_rows=[(FRESH_RAW_ID, "fresh-label")],
+    )
+    out = await db.get_labels_by_clusterids(
+        [LEGACY_ID, FRESH_PUBLIC_ID], "LTC", ["public"], session=session
+    )
+    assert out == {LEGACY_ID: ["legacy-label"], FRESH_PUBLIC_ID: ["fresh-label"]}
+
+
+@pytest.mark.asyncio
+async def test_get_labels_by_clusterids_empty_input_short_circuits():
+    db = q.TagstoreDbAsync(None)
+    session = _FakeSession(legacy_rows=[], fresh_rows=[])
+    assert (
+        await db.get_labels_by_clusterids([], "LTC", ["public"], session=session) == {}
+    )
+    assert session.executed == []
+
+
+@pytest.mark.asyncio
+async def test_get_actors_by_subjectids_groups_by_identifier():
+    """Ids with no matching rows are absent from the result, not present with
+    an empty list — list_address_neighbors relies on that distinction to
+    reproduce the per-address get_actors_by_subjectid fallback semantics."""
+    db = q.TagstoreDbAsync(None)
+    session = _FakeSession(
+        legacy_rows=[
+            ("addr1", "actorA", "Actor A"),
+            ("addr1", "actorB", "Actor B"),
+            ("addr2", "actorC", "Actor C"),
+        ],
+        fresh_rows=[],
+    )
+    out = await db.get_actors_by_subjectids(
+        ["addr1", "addr2", "addr3"], ["public"], session=session
+    )
+    assert set(out.keys()) == {"addr1", "addr2"}
+    assert [a.id for a in out["addr1"]] == ["actorA", "actorB"]
+    assert [a.label for a in out["addr2"]] == ["Actor C"]
+    assert "addr3" not in out
+
+
+@pytest.mark.asyncio
+async def test_get_actors_by_subjectids_empty_input_short_circuits():
+    db = q.TagstoreDbAsync(None)
+    session = _FakeSession(legacy_rows=[], fresh_rows=[])
+    assert await db.get_actors_by_subjectids([], ["public"], session=session) == {}
+    assert session.executed == []
+
+
+@pytest.mark.asyncio
+async def test_get_labels_by_subjectids_groups_by_identifier():
+    db = q.TagstoreDbAsync(None)
+    session = _FakeSession(
+        legacy_rows=[("addr1", "label-a"), ("addr1", "label-b"), ("addr2", "label-c")],
+        fresh_rows=[],
+    )
+    out = await db.get_labels_by_subjectids(
+        ["addr1", "addr2"], ["public"], session=session
+    )
+    assert out == {"addr1": ["label-a", "label-b"], "addr2": ["label-c"]}
+
+
+@pytest.mark.asyncio
+async def test_get_labels_by_subjectids_empty_input_short_circuits():
+    db = q.TagstoreDbAsync(None)
+    session = _FakeSession(legacy_rows=[], fresh_rows=[])
+    assert await db.get_labels_by_subjectids([], ["public"], session=session) == {}
+    assert session.executed == []
 
 
 @pytest.mark.asyncio

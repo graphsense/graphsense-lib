@@ -694,6 +694,19 @@ def _get_actors_for_clusterids_batch_stmt(
     )
 
 
+def _get_actors_for_subjects_batch_stmt(identifiers: List[str], groups: List[str]):
+    return (
+        select(Tag.identifier, Actor.id, Actor.label)
+        .where(Tag.identifier.in_(identifiers))
+        .where(Actor.id.isnot(None))
+        .where(Actor.id == Tag.actor_id)
+        .where(Tag.tagpack_id == TagPack.id)
+        .where(TagPack.acl_group.in_(groups))
+        .order_by(Tag.identifier, Actor.label)
+        .distinct()
+    )
+
+
 def _get_labels_by_subjectid_stmt(subject_id: str, groups: List[str]):
     return (
         select(Tag.label)
@@ -741,6 +754,35 @@ def _get_labels_by_clusterid_stmt(cluster_id: str, network: str, groups: List[st
         .where(Tag.tagpack_id == TagPack.id)
         .where(TagPack.acl_group.in_(groups))
         .order_by(asc(Tag.label))
+        .distinct()
+    )
+
+
+def _get_labels_by_subjectids_stmt(subject_ids: List[str], groups: List[str]):
+    return (
+        select(Tag.identifier, Tag.label)
+        .where(Tag.identifier.in_(subject_ids))
+        .where(Tag.tagpack_id == TagPack.id)
+        .where(TagPack.acl_group.in_(groups))
+        .order_by(Tag.identifier, asc(Tag.label))
+        .distinct()
+    )
+
+
+def _get_labels_by_clusterids_batch_stmt(
+    cluster_ids: List[int], network: str, groups: List[str], fresh: bool
+):
+    # Raw ids of one regime; see _routed_id_batches. Network-scoping rationale
+    # matches _get_labels_by_clusterid_stmt.
+    AddressClusterMap, _, _ = _cluster_models(fresh)
+    return (
+        select(AddressClusterMap.gs_cluster_id, Tag.label)
+        .where(AddressClusterMap.gs_cluster_id.in_(cluster_ids))
+        .where(AddressClusterMap.network == network)
+        .where(AddressClusterMap.address == Tag.identifier)
+        .where(Tag.tagpack_id == TagPack.id)
+        .where(TagPack.acl_group.in_(groups))
+        .order_by(AddressClusterMap.gs_cluster_id, asc(Tag.label))
         .distinct()
     )
 
@@ -876,6 +918,24 @@ class TagstoreDbAsync:
         return [HumanReadableId(id=idt, label=lbl) for idt, lbl in results]
 
     @_inject_session
+    async def get_actors_by_subjectids(
+        self, subject_ids: List[str], groups: List[str], session=None
+    ) -> Dict[str, List[HumanReadableId]]:
+        # Single-query batch lookup, mirrors get_tags_by_subjectids: avoids
+        # the per-call session checkout pattern that amplified the
+        # 2026-05-04 pool-exhaustion incident.
+        if not subject_ids:
+            return {}
+        cleaned = [sid.strip() for sid in subject_ids]
+        results = await session.exec(
+            _get_actors_for_subjects_batch_stmt(cleaned, groups)
+        )
+        out: Dict[str, List[HumanReadableId]] = {}
+        for sid, idt, lbl in results:
+            out.setdefault(sid, []).append(HumanReadableId(id=idt, label=lbl))
+        return out
+
+    @_inject_session
     async def get_labels_by_subjectid(
         self, subject_id: str, groups: List[str], session=None
     ) -> List[str]:
@@ -883,6 +943,19 @@ class TagstoreDbAsync:
             _get_labels_by_subjectid_stmt(subject_id.strip(), groups)
         )
         return [x for x in results]
+
+    @_inject_session
+    async def get_labels_by_subjectids(
+        self, subject_ids: List[str], groups: List[str], session=None
+    ) -> Dict[str, List[str]]:
+        if not subject_ids:
+            return {}
+        cleaned = [sid.strip() for sid in subject_ids]
+        results = await session.exec(_get_labels_by_subjectids_stmt(cleaned, groups))
+        out: Dict[str, List[str]] = {}
+        for sid, lbl in results:
+            out.setdefault(sid, []).append(lbl)
+        return out
 
     @_inject_session
     async def get_tag_count_by_subjectid(
@@ -904,6 +977,27 @@ class TagstoreDbAsync:
             _get_labels_by_clusterid_stmt(cluster_id, network, groups)
         )
         return [x for x in results]
+
+    @_inject_session
+    async def get_labels_by_clusterids(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        session=None,
+    ) -> Dict[int, List[str]]:
+        if not cluster_ids:
+            return {}
+        out: Dict[int, List[str]] = {}
+        for raw_ids, fresh, shift in _routed_id_batches(cluster_ids):
+            if not raw_ids:
+                continue
+            results = await session.exec(
+                _get_labels_by_clusterids_batch_stmt(raw_ids, network, groups, fresh)
+            )
+            for cid, lbl in results:
+                out.setdefault(cid + shift, []).append(lbl)
+        return out
 
     # Get Tags by Label
     @_inject_session

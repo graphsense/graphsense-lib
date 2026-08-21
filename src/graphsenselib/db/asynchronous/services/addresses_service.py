@@ -28,6 +28,8 @@ from .common import (
     get_address,
     links_response,
     list_neighbors,
+    tagstore_session,
+    tagstore_session_kwargs,
     try_get_cluster_id,
     txs_from_rows,
 )
@@ -38,6 +40,7 @@ from .models import (
     AddressTxs,
     CrossChainPubkeyRelatedAddresses,
     Entity,
+    LabeledItemRef,
     Links,
     NeighborAddress,
     NeighborAddresses,
@@ -494,41 +497,67 @@ class AddressesService:
             only_ids = await asyncio.gather(*aws)
             only_ids = [id for id in only_ids if id is not None]
 
-        results, paging_state = await list_neighbors(
-            self.db,
-            currency,
-            address,
-            direction,
-            NodeType.ADDRESS,
-            ids=only_ids,
-            include_labels=include_labels,
-            page=page,
-            pagesize=pagesize,
-            tagstore=self.tagstore if include_labels else None,
-            tagstore_groups=tagstore_groups if include_labels else None,
-        )
-
         is_outgoing = "out" in direction
         dst = "dst" if is_outgoing else "src"
         relations = []
 
-        if results is None:
-            return NeighborAddresses(neighbors=[])
+        # Share one Postgres session across this request's tagstore calls
+        # (the label batch inside list_neighbors and the actor batch below)
+        # instead of opening one pool connection per call.
+        async with tagstore_session(self.tagstore) as ts:
+            ts_kw = tagstore_session_kwargs(ts)
 
-        aws = [
-            self.get_address(
+            results, paging_state = await list_neighbors(
+                self.db,
                 currency,
-                address_to_user_format(currency, row[dst + "_address"]),
-                tagstore_groups,
-                include_actors=include_actors,
+                address,
+                direction,
+                NodeType.ADDRESS,
+                ids=only_ids,
+                include_labels=include_labels,
+                page=page,
+                pagesize=pagesize,
+                tagstore=self.tagstore if include_labels else None,
+                tagstore_groups=tagstore_groups if include_labels else None,
+                tagstore_session=ts,
             )
-            for row in results
-        ]
 
-        # Bound the per-neighbor fan-out: each get_address() with
-        # include_actors=True opens a Postgres session via tagstore.
-        sem = asyncio.Semaphore(get_tagstore_max_concurrency())
-        nodes = await gather_bounded(sem, *aws)
+            if results is None:
+                return NeighborAddresses(neighbors=[])
+
+            # Batched actor prefetch: one Postgres query for the whole page
+            # instead of one per neighbor (each previously opened its own
+            # session via the per-row get_address() call below).
+            actors_by_address: Dict[str, List[LabeledItemRef]] = {}
+            if include_actors and results:
+                addr_strings = [
+                    address_to_user_format(currency, row[dst + "_address"])
+                    for row in results
+                ]
+                actors_by_address = await self.tags_service.get_actors_by_subjectids(
+                    addr_strings, tagstore_groups, **ts_kw
+                )
+
+            aws = [
+                self.get_address(
+                    currency,
+                    address_to_user_format(currency, row[dst + "_address"]),
+                    tagstore_groups,
+                    include_actors=False,
+                )
+                for row in results
+            ]
+
+            # Bound the per-neighbor Cassandra fan-out.
+            sem = asyncio.Semaphore(get_tagstore_max_concurrency())
+            nodes = await gather_bounded(sem, *aws)
+
+            if include_actors:
+                for row, node in zip(results, nodes):
+                    addr_string = address_to_user_format(
+                        currency, row[dst + "_address"]
+                    )
+                    node.actors = actors_by_address.get(addr_string)
 
         for row, node in zip(results, nodes):
             nb = NeighborAddress(

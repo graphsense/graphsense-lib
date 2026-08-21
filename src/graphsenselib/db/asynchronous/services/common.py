@@ -1,8 +1,10 @@
 import asyncio
+import contextlib
 from typing import Any, Dict, List, Optional, Protocol, Union
 
+from sqlmodel.ext.asyncio.session import AsyncSession
+
 import graphsenselib.utils.address
-from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.db.asynchronous.cassandra import get_tx_identifier
 from graphsenselib.errors import (
@@ -46,6 +48,26 @@ async def gather_bounded(sem: Optional[asyncio.Semaphore], *coros):
             return await coro
 
     return await asyncio.gather(*(_run(c) for c in coros))
+
+
+@contextlib.asynccontextmanager
+async def tagstore_session(tagstore: Optional[Any]):
+    """Yield a shared AsyncSession for the duration of a hot path so
+    sequential tagstore calls reuse one pool connection instead of
+    opening one per call (mirrors EntitiesService._tagstore_session).
+    Yields None when no real engine is available (MockTagstoreDb in
+    tests / fallback) — callers must skip passing `session=` in that
+    case via `tagstore_session_kwargs`."""
+    engine = getattr(tagstore, "engine", None)
+    if engine is None:
+        yield None
+        return
+    async with AsyncSession(engine) as session:
+        yield session
+
+
+def tagstore_session_kwargs(session: Optional[Any]) -> Dict[str, Any]:
+    return {"session": session} if session is not None else {}
 
 
 def make_values(value, eur, usd):
@@ -215,6 +237,16 @@ class TagstoreProtocol(Protocol):
     async def get_labels_by_clusterid(
         self, cluster_id: str, network: str, groups: List[str]
     ) -> List[str]: ...
+    async def get_labels_by_subjectids(
+        self, subject_ids: List[str], groups: List[str], session: Any = None
+    ) -> Dict[str, List[str]]: ...
+    async def get_labels_by_clusterids(
+        self,
+        cluster_ids: List[int],
+        network: str,
+        groups: List[str],
+        session: Any = None,
+    ) -> Dict[int, List[str]]: ...
 
 
 class DatabaseProtocol(Protocol):
@@ -655,6 +687,7 @@ async def list_neighbors(
     pagesize: Optional[int] = None,
     tagstore: Optional[TagstoreProtocol] = None,
     tagstore_groups: Optional[List[str]] = None,
+    tagstore_session: Optional[Any] = None,
 ) -> tuple:
     is_outgoing = "out" in direction
     results, paging_state = await db.list_neighbors(
@@ -670,7 +703,15 @@ async def list_neighbors(
     dst = "dst" if is_outgoing else "src"
 
     if results and include_labels and tagstore and tagstore_groups:
-        await _add_labels(tagstore, currency, node_type, dst, results, tagstore_groups)
+        await _add_labels(
+            tagstore,
+            currency,
+            node_type,
+            dst,
+            results,
+            tagstore_groups,
+            session=tagstore_session,
+        )
 
     return results, paging_state
 
@@ -682,6 +723,7 @@ async def _add_labels(
     that: str,
     nodes: List[Dict[str, Any]],
     tagstore_groups: List[str],
+    session: Optional[Any] = None,
 ):
     def identity(x, y):
         return y
@@ -694,20 +736,22 @@ async def _add_labels(
     thatfield = that + "_" + field
     ids = tuple((fmt(currency, node[thatfield]) for node in nodes))
 
+    # Single batched Postgres query (one pool checkout, optionally sharing a
+    # caller-provided session) instead of one call per neighbor — the N+1
+    # pattern this replaced amplified the 2026-05-04 pool-exhaustion incident.
     if node_type == NodeType.ADDRESS:
-        tstasks = [
-            tagstore.get_labels_by_subjectid(addr, tagstore_groups) for addr in ids
-        ]
+        by_subject = await tagstore.get_labels_by_subjectids(
+            list(ids), tagstore_groups, session=session
+        )
+        tsresults = {addr: by_subject.get(addr, []) for addr in ids}
     else:
-        tstasks = [
-            tagstore.get_labels_by_clusterid(
-                cluster_id, currency.upper(), tagstore_groups
-            )
-            for cluster_id in ids
-        ]
-
-    sem = asyncio.Semaphore(get_tagstore_max_concurrency())
-    tsresults = {k: v for k, v in zip(ids, await gather_bounded(sem, *tstasks))}
+        by_cluster = await tagstore.get_labels_by_clusterids(
+            [int(cid) for cid in ids],
+            currency.upper(),
+            tagstore_groups,
+            session=session,
+        )
+        tsresults = {cid: by_cluster.get(int(cid), []) for cid in ids}
 
     for node in nodes:
         nid = node[thatfield]
