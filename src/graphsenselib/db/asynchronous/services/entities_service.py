@@ -225,21 +225,27 @@ class EntitiesService:
             return EntityAddresses(addresses=[])
 
         rates = await self.rates_service.get_rates(currency)
-        # Convert each address result to Address objects
-        addresses = []
-        for row in results:
-            # Get actors for this address
-            actors = await self.tags_service.get_actors_by_subjectid(
-                address_to_user_format(currency, row["address"]),
-                tagstore_groups,
+
+        # Batched actor prefetch: one Postgres query for the whole page
+        # instead of one per address.
+        addr_strings = [
+            address_to_user_format(currency, row["address"]) for row in results
+        ]
+        async with self._tagstore_session() as ts:
+            ts_kw = self._session_kwargs(ts)
+            actors_by_addr = await self.tags_service.get_actors_by_subjectids(
+                addr_strings, tagstore_groups, **ts_kw
             )
 
+        # Convert each address result to Address objects
+        addresses = []
+        for row, addr_string in zip(results, addr_strings):
             address = address_from_row(
                 currency,
                 row,
                 rates.rates,
                 self.db.get_token_configuration(currency),
-                actors=actors,
+                actors=actors_by_addr.get(addr_string),
             )
             addresses.append(address)
 
