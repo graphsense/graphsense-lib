@@ -400,6 +400,75 @@ class TestEdgeCaseRegressionLinks(EdgeCaseRegressionTestBase):
             "?neighbor=bc1qfuyscyyxqyzuu6pd7fwqtv5kxwalp6ajd3h7xu&pagesize=10"
         )
 
+    @pytest.mark.regression
+    def test_links_trx_sparse_edge_desc_first_page(self):
+        """Sparse edge on a huge candidate history, natural (desc) direction.
+
+        TE6Jbt... has ~823K outgoing txs but shares only 2 txs with
+        TU4vEr..., both at the recent end of the history — desc finds them
+        in the first candidate batches, so this is fast on any version and
+        safe as a baseline comparison. Pins that the probe-side rewrites
+        (directed probe, per-tx-asset probe, IN-batched probes, slim
+        candidate columns, candidate prefetch) leave the result identical.
+        """
+        self.assert_call_equal(
+            "trx/addresses/TE6JbtSQ3zwFjWuGaYPWLX2oyzGXEUhGMJ/links"
+            "?neighbor=TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa&pagesize=25"
+        )
+
+    @pytest.mark.regression
+    def test_links_trx_asc_far_end_race_completes(self):
+        """Ascending links scan whose links sit at the far end of the history.
+
+        Same sparse edge as the desc test (TE6Jbt... -> TU4vEr..., 2 shared
+        txs at the END of an ~823K-tx candidate history). An ascending scan
+        walks the whole history before reaching them, which on the pre-fix
+        code runs ~90-100s and is killed by the API gateway — that timeout
+        is the bug (fixed by the sparse-edge direction race), so this cannot
+        be a baseline comparison. Instead assert on the current server only
+        that asc returns the provably complete link set: exactly the same
+        links as the (trivially complete) desc scan, in reversed order, with
+        no next page — which also pins that the race's flipped-scan result
+        is only accepted when complete and is re-sorted into asc order.
+        """
+        desc_call = (
+            "trx/addresses/TE6JbtSQ3zwFjWuGaYPWLX2oyzGXEUhGMJ/links"
+            "?neighbor=TU4vEruvZwLLkSfV9bNw12EJTPvNr7Pvaa&pagesize=25"
+        )
+        asc_call = desc_call + "&order=asc"
+
+        desc_data, _ = get_data_from_endpoint(self.current_url, desc_call)
+        asc_data, asc_time = get_data_from_endpoint(self.current_url, asc_call)
+        logger.info(f"asc far-end links answered in {asc_time:.2f}s")
+
+        desc_links = desc_data.get("links", [])
+        asc_links = asc_data.get("links", [])
+        # premise: the edge is sparse and complete within one page
+        assert len(desc_links) == 2, f"expected 2 desc links, got {len(desc_links)}"
+        assert desc_data.get("next_page") in (None, ""), "desc edge must fit one page"
+        # the actual regression: asc must return the complete set, asc-ordered
+        assert asc_data.get("next_page") in (None, ""), "asc edge must fit one page"
+        assert asc_links == list(reversed(desc_links)), (
+            "asc links must be the complete desc link set in ascending order"
+        )
+        heights = [link["height"] for link in asc_links]
+        assert heights == sorted(heights), f"asc links out of order: {heights}"
+
+    @pytest.mark.regression
+    def test_links_trx_large_candidate_probe_batching(self):
+        """Large candidate set crossing the IN-batched probe threshold.
+
+        TUMn53... vs TDqSqu... intersects a large TRX history, so single
+        probe rounds exceed links_probe_in_min_statements and take the
+        'transaction_id IN (...)' batched path. Pins that redistributing the
+        IN results into per-candidate sub-results preserves the exact link
+        set and ordering of the per-candidate point probes.
+        """
+        self.assert_call_equal(
+            "trx/addresses/TUMn53bf4LzPwTgsysn9xQ63jywk16kv2o/links"
+            "?neighbor=TDqSquXBgUCLYvYC4XZgrprLK589dkhSCf&pagesize=1000"
+        )
+
 
 # =============================================================================
 # Transaction list endpoint tests (with filters)
