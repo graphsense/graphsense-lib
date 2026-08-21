@@ -25,21 +25,25 @@ class _MembershipResult:
         self.paging_state = None
 
 
+class _AddressResult:
+    def __init__(self, rows):
+        self.current_rows = rows
+
+
 def _make_self(membership_rows, address_rows_by_id):
-    calls = {"concurrent_params": None}
+    calls = {"address_query_params": []}
 
     async def execute_async(
         currency, keyspace, query, params, paging_state=None, fetch_size=None
     ):
-        return _MembershipResult(membership_rows)
-
-    async def concurrent_with_args(currency, keyspace, query, params):
-        calls["concurrent_params"] = list(params)
-        return [
-            address_rows_by_id[address_id]
-            for _, address_id in params
-            if address_id in address_rows_by_id
-        ]
+        if query.startswith("SELECT address_id FROM"):
+            return _MembershipResult(membership_rows)
+        # Grouped address-row IN query: params = [group, ids].
+        group, ids = params
+        calls["address_query_params"].append((group, list(ids)))
+        return _AddressResult(
+            [address_rows_by_id[aid] for aid in ids if aid in address_rows_by_id]
+        )
 
     async def finish_addresses(currency, rows):
         return list(rows)
@@ -47,7 +51,6 @@ def _make_self(membership_rows, address_rows_by_id):
     ns = SimpleNamespace(
         get_id_group=lambda keyspace, id_: 0,
         execute_async=execute_async,
-        concurrent_with_args=concurrent_with_args,
         finish_addresses=finish_addresses,
         _calls=calls,
     )
@@ -62,7 +65,7 @@ def test_singleton_serves_own_address_when_fresh():
     s = _make_self(membership_rows=[], address_rows_by_id={99: {"address_id": 99}})
     addresses, paging = _list(s, _OFF + 99)
     assert addresses == [{"address_id": 99}]
-    assert s._calls["concurrent_params"] == [(0, 99)]
+    assert s._calls["address_query_params"] == [(0, [99])]
     assert paging is None
 
 
@@ -79,7 +82,7 @@ def test_multi_member_cluster_uses_membership_rows():
     )
     addresses, _ = _list(s, _OFF + 5)
     assert addresses == [{"address_id": 5}, {"address_id": 8}]
-    assert s._calls["concurrent_params"] == [(0, 5), (0, 8)]
+    assert s._calls["address_query_params"] == [(0, [5, 8])]
 
 
 def test_no_fallback_for_legacy_ids():

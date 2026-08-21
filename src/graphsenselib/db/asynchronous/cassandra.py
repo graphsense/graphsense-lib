@@ -3214,8 +3214,40 @@ class Cassandra:
             # too, so serve that one address; an unknown id still yields an
             # empty result, matching legacy.
             params = [(entity_id_group, entity)]
-        query = "SELECT * FROM address WHERE address_id_group = %s and address_id = %s"
-        result = await self.concurrent_with_args(currency, "transformed", query, params)
+        # Grouped single-partition IN queries instead of one point read per
+        # address: address_id_group is fixed per partition, so ids sharing a
+        # group become one "address_id in (...)" statement.
+        groups = {}
+        for group, address_id in params:
+            groups.setdefault(group, []).append(address_id)
+        query = "SELECT * FROM address WHERE address_id_group = %s and address_id in %s"
+
+        async def fetch_chunk(group, chunk):
+            chunk_result = await self.execute_async(
+                currency, "transformed", query, [group, ValueSequence(chunk)]
+            )
+            return chunk_result.current_rows
+
+        aws = [
+            fetch_chunk(group, group_ids[i : i + 200])
+            for group, group_ids in groups.items()
+            for i in range(0, len(group_ids), 200)
+        ]
+        rows_by_id = {
+            row["address_id"]: row
+            for chunk_rows in await asyncio.gather(*aws)
+            for row in chunk_rows
+        }
+        # An IN query returns rows in clustering order, not the cluster
+        # membership paging order that concurrent_with_args preserved (input
+        # params order); re-order back to it. Ids with no row (a data
+        # inconsistency) are dropped, matching concurrent_with_args'
+        # filter_empty default.
+        result = [
+            rows_by_id[address_id]
+            for _group, address_id in params
+            if address_id in rows_by_id
+        ]
 
         return await self.finish_addresses(currency, result), to_hex(
             results.paging_state
