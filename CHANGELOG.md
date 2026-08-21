@@ -12,6 +12,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Web API + Python client
+
+#### Added
+- **Networks without a Cassandra keyspace can be served by an external GraphSense-API-compatible backend** (e.g. the iknaio external backend adapter, which answers the GraphSense wire contract from a node-provider API). A new `external_backends` config section (`enabled` toggle + `networks: {code: {url, api_key}}`) activates `ExternalBackendMiddleware`: requests for a configured network are reverse-proxied to its backend (marked `x-served-by: external-backend`), while TagStore-owned data stays local — address `tags`/`tag_summary` routes are answered locally, and `/stats` and `/search` merge the backend's per-currency entries (filtered to its configured networks) into the local answer. Entity/cluster routes of an external network are proxied on purpose: each backend mints its own entity ids, which mean nothing in the local id space. When the section is absent or `enabled` is false, the middleware is not installed and the app is byte-identical to before.
+
 ### Library
 
 #### Changed

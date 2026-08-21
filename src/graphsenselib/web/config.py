@@ -95,6 +95,36 @@ class FileStoreConfig(BaseSettings):
     )
 
 
+class ExternalBackendConfig(BaseSettings):
+    """One external chain-data backend serving one network (see
+    middleware/external_backends.py)."""
+
+    url: str = Field(..., description="Base URL of the external backend")
+    api_key: Optional[str] = Field(
+        default=None,
+        description="Optional Authorization header value sent to the backend",
+    )
+
+
+class ExternalBackendsConfig(BaseSettings):
+    """Networks served by GraphSense-API-compatible external backends
+    instead of a Cassandra keyspace (see middleware/external_backends.py)."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Master toggle; when false every request is served "
+        "locally exactly as without this feature",
+    )
+    networks: Dict[str, ExternalBackendConfig] = Field(
+        default_factory=dict,
+        description="Externally served networks, keyed by the lowercase "
+        "network code (e.g. bnb)",
+    )
+    timeout_s: float = Field(
+        default=60.0, description="HTTP timeout towards the backends"
+    )
+
+
 class GSRestConfig(BaseSettings):
     model_config = ConfigDict(env_prefix="GSREST_", case_sensitive=False, extra="allow")
 
@@ -262,6 +292,12 @@ class GSRestConfig(BaseSettings):
 
     file_store: Optional[FileStoreConfig] = Field(
         default=None, description="Download file store configuration"
+    )
+
+    external_backends: Optional[ExternalBackendsConfig] = Field(
+        default=None,
+        description="Networks served by external GraphSense-API-compatible "
+        "backends (middleware/external_backends.py)",
     )
 
     @model_validator(mode="after")

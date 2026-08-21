@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager, suppress
 from html import escape
 from typing import Any, Optional
 
+import httpx
 import yaml
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +48,7 @@ from graphsenselib.web.dependencies import MockTagstoreDb, ServiceContainer
 from graphsenselib.web.middleware.body_size import RequestBodySizeLimitMiddleware
 from graphsenselib.web.middleware.deprecation import DeprecationHeaderMiddleware
 from graphsenselib.web.middleware.empty_params import EmptyQueryParamsMiddleware
+from graphsenselib.web.middleware.external_backends import ExternalBackendMiddleware
 from graphsenselib.web.middleware.plugins import PluginMiddleware
 from graphsenselib.web.plugins import get_subclass
 from graphsenselib.web.routes import (
@@ -624,6 +626,12 @@ async def teardown_database(app: FastAPI):
         await file_store.aclose()
         logger.info("Closed file store Redis connection.")
 
+    # Close the external-backends HTTP client if the feature is enabled
+    external_client = getattr(app.state, "external_backends_client", None)
+    if external_client is not None:
+        await external_client.aclose()
+        logger.info("Closed external backends HTTP client.")
+
 
 class ConceptsCacheServiceFastAPI(ConceptProtocol):
     """FastAPI-compatible concepts cache service"""
@@ -974,6 +982,25 @@ def _promote_common_security_to_global(schema: dict[str, Any]) -> dict[str, Any]
     return schema
 
 
+def _setup_external_backends_middleware(app: FastAPI, config: GSRestConfig):
+    """Serve configured networks from external backends (config toggle).
+
+    No-op unless `external_backends.enabled` is set with at least one
+    network — the app is then byte-identical to one without the feature.
+    The shared httpx client lives on app.state so teardown can close it.
+    """
+    eb_config = config.external_backends
+    if eb_config is None or not eb_config.enabled or not eb_config.networks:
+        return
+    client = httpx.AsyncClient(timeout=httpx.Timeout(eb_config.timeout_s))
+    app.state.external_backends_client = client
+    app.add_middleware(ExternalBackendMiddleware, config=eb_config, client=client)
+    logger.info(
+        "External backends enabled for networks: %s",
+        ", ".join(sorted(eb_config.networks)),
+    )
+
+
 def _setup_cors_middleware(app: FastAPI, config: GSRestConfig):
     """Setup CORS middleware on the app.
 
@@ -1090,6 +1117,11 @@ def create_app(
     )
 
     app.state.config = config
+
+    # External chain-data backends: added BEFORE the CORS middleware so it
+    # ends up INSIDE it (Starlette: last added = outermost) — short-circuited
+    # proxy responses must still receive CORS headers.
+    _setup_external_backends_middleware(app, config)
 
     logger.info(f"ALLOWED_ORIGINS: {config.ALLOWED_ORIGINS}")
     _setup_cors_middleware(app, config)
@@ -1476,6 +1508,7 @@ def create_app_from_dict(config_dict: dict) -> FastAPI:
 
     app.state.config = config
 
+    _setup_external_backends_middleware(app, config)
     _setup_cors_middleware(app, config)
     app.add_middleware(PluginMiddleware)
     app.add_middleware(
