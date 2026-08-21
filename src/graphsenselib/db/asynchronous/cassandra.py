@@ -3310,20 +3310,33 @@ class Cassandra:
 
         if orig_node_type == NodeType.ADDRESS:
             ids = [row[that + "_address_id"] for row in results]
+            # Full rows, not just the address string: the service layer
+            # builds each neighbor Address straight from these instead of
+            # re-resolving the address string back to an id via the prefix
+            # table and re-reading the same row (see
+            # addresses_service.list_address_neighbors).
             addresses = await self.get_addresses_by_ids(
-                currency, ids, address_only=True
+                currency, ids, address_only=False
             )
 
             if len(addresses) != len(ids):
                 address_ids = [address["address"] for address in addresses]
                 self.log_missing(address_ids, ids, node_type, query, params)
 
+            # finish_addresses adds first/last tx, dirty status and balance —
+            # the same work db.get_address() would do per neighbor, batched
+            # here into one unbounded Cassandra fan-out instead of N serial
+            # per-neighbor round trips.
+            addresses = await self.finish_addresses(currency, addresses)
+
             # Key by address_id instead of zipping: get_addresses_by_ids drops
             # missing rows, so a positional zip would shift every subsequent
             # neighbor onto the wrong address string once one row is absent.
-            addr_by_id = {a["address_id"]: a["address"] for a in addresses}
+            addr_by_id = {a["address_id"]: a for a in addresses}
             for row in results:
-                row[that + "_address"] = addr_by_id.get(row[that + "_address_id"])
+                full = addr_by_id.get(row[that + "_address_id"])
+                row[that + "_address"] = full["address"] if full is not None else None
+                row[that + "_address_row"] = full
 
         field = "value" if is_eth_like(currency) else "estimated_value"
         for neighbor in results:

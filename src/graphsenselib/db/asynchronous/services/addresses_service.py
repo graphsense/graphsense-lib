@@ -2,8 +2,8 @@ import asyncio
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Callable
 
 from graphsenselib.config import chain_forks
-from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
+from graphsenselib.db.asynchronous.cassandra import MAX_ROW_LOOKUP_CONCURRENCY
 from graphsenselib.errors import (
     AddressNotFoundException,
     NetworkNotFoundException,
@@ -15,6 +15,7 @@ from graphsenselib.utils.bch import (
     InvalidAddress as BCHInvalidAddress,
     bch_address_to_legacy,
 )
+from graphsenselib.utils.rest_utils import is_eth_like
 from graphsenselib.utils.tron import (
     evm_to_tron_address_string,
     tron_address_to_evm_string,
@@ -23,6 +24,7 @@ from graphsenselib.tagstore.db import TagPublic
 
 from .blocks_service import BlocksService
 from .common import (
+    address_from_row,
     cannonicalize_address,
     gather_bounded,
     get_address,
@@ -80,6 +82,9 @@ class DatabaseProtocol(Protocol):
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]: ...
     async def get_address_entity_id(self, currency: str, address: str) -> int: ...
     async def new_entity(self, currency: str, address: str) -> Dict[str, Any]: ...
+    async def get_fresh_cluster_id(
+        self, currency: str, address_id: int
+    ) -> Optional[int]: ...
     def get_token_configuration(self, currency: str) -> Dict[str, Any]: ...
 
 
@@ -538,26 +543,54 @@ class AddressesService:
                     addr_strings, tagstore_groups, **ts_kw
                 )
 
-            aws = [
-                self.get_address(
-                    currency,
-                    address_to_user_format(currency, row[dst + "_address"]),
-                    tagstore_groups,
-                    include_actors=False,
+            rates = await self.rates_service.get_rates(currency)
+            token_config = self.db.get_token_configuration(currency)
+
+            # Batched fresh-cluster-id prefetch (UTXO only): pure Cassandra
+            # point reads, bounded well above the tagstore concurrency limit
+            # since none of this fan-out touches Postgres.
+            fresh_cluster_by_id: Dict[int, Optional[int]] = {}
+            if not is_eth_like(currency) and results:
+                address_ids = [row[dst + "_address_id"] for row in results]
+                fresh_sem = asyncio.Semaphore(MAX_ROW_LOOKUP_CONCURRENCY)
+                fresh_ids = await gather_bounded(
+                    fresh_sem,
+                    *[
+                        self.db.get_fresh_cluster_id(currency, aid)
+                        for aid in address_ids
+                    ],
                 )
-                for row in results
-            ]
+                fresh_cluster_by_id = dict(zip(address_ids, fresh_ids))
 
-            # Bound the per-neighbor Cassandra fan-out.
-            sem = asyncio.Semaphore(get_tagstore_max_concurrency())
-            nodes = await gather_bounded(sem, *aws)
-
-            if include_actors:
-                for row, node in zip(results, nodes):
-                    addr_string = address_to_user_format(
-                        currency, row[dst + "_address"]
+            nodes = []
+            for row in results:
+                full_row = row.get(dst + "_address_row")
+                addr_string = address_to_user_format(currency, row[dst + "_address"])
+                if full_row is None:
+                    # Address row missing from the batched fetch (a data
+                    # inconsistency) - fall back to the original per-address
+                    # path so behavior matches exactly.
+                    node = await self.get_address(
+                        currency,
+                        addr_string,
+                        tagstore_groups,
+                        include_actors=include_actors,
                     )
-                    node.actors = actors_by_address.get(addr_string)
+                else:
+                    actors = (
+                        actors_by_address.get(addr_string) if include_actors else None
+                    )
+                    node = address_from_row(
+                        currency,
+                        full_row,
+                        rates.rates,
+                        token_config,
+                        actors,
+                        fresh_cluster_id=fresh_cluster_by_id.get(
+                            row[dst + "_address_id"]
+                        ),
+                    )
+                nodes.append(node)
 
         for row, node in zip(results, nodes):
             nb = NeighborAddress(
