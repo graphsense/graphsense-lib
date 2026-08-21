@@ -26,7 +26,7 @@ import org.apache.spark.sql.functions.{
   typedLit,
   when
 }
-import org.apache.spark.sql.types.{DecimalType, FloatType, IntegerType}
+import org.apache.spark.sql.types.{DecimalType, FloatType}
 import org.graphsense.TransformHelpers
 import org.graphsense.account.eth.models._
 import org.graphsense.account.models._
@@ -702,16 +702,24 @@ class EthTransformation(
     val outStatsRelations = relations
       .groupBy("srcAddressId")
       .agg(
-        count("transactionId").cast(IntegerType).as("noOutgoingTxs"),
-        countDistinct("dstAddressId").cast(IntegerType).as("outDegree")
+        TransformHelpers
+          .saturateToInt(count("transactionId"))
+          .as("noOutgoingTxs"),
+        TransformHelpers
+          .saturateToInt(countDistinct("dstAddressId"))
+          .as("outDegree")
       )
 
     val outStatsRelationsZeroValue = relations
       .where(col("zero") === true)
       .groupBy("srcAddressId")
       .agg(
-        count("transactionId").cast(IntegerType).as("noOutgoingTxsZeroValue"),
-        countDistinct("dstAddressId").cast(IntegerType).as("outDegreeZeroValue")
+        TransformHelpers
+          .saturateToInt(count("transactionId"))
+          .as("noOutgoingTxsZeroValue"),
+        TransformHelpers
+          .saturateToInt(countDistinct("dstAddressId"))
+          .as("outDegreeZeroValue")
       )
 
     val outStatsToken = encodedTokenTransfers
@@ -746,16 +754,24 @@ class EthTransformation(
     val inStatsRelations = relations
       .groupBy("dstAddressId")
       .agg(
-        count("transactionId").cast(IntegerType).as("noIncomingTxs"),
-        countDistinct("srcAddressId").cast(IntegerType).as("inDegree")
+        TransformHelpers
+          .saturateToInt(count("transactionId"))
+          .as("noIncomingTxs"),
+        TransformHelpers
+          .saturateToInt(countDistinct("srcAddressId"))
+          .as("inDegree")
       )
 
     val inStatsRelationsZeroValue = relations
       .where($"zero" === true)
       .groupBy("dstAddressId")
       .agg(
-        count("transactionId").cast(IntegerType).as("noIncomingTxsZeroValue"),
-        countDistinct("srcAddressId").cast(IntegerType).as("inDegreeZeroValue")
+        TransformHelpers
+          .saturateToInt(count("transactionId"))
+          .as("noIncomingTxsZeroValue"),
+        TransformHelpers
+          .saturateToInt(countDistinct("srcAddressId"))
+          .as("inDegreeZeroValue")
       )
 
     val inStatsToken = encodedTokenTransfers
@@ -885,7 +901,7 @@ class EthTransformation(
       .filter(col("dstAddressId").isNotNull)
       .withColumn(
         "noTransactions",
-        count(col("transactionId")).over(window).cast(IntegerType)
+        TransformHelpers.saturateToInt(count(col("transactionId")).over(window))
       )
       .groupBy("srcAddressId", "dstAddressId")
       // aggregate to number of transactions and list of transaction ids

@@ -181,3 +181,64 @@ async def test_get_address_without_fallback_propagates_not_found():
             include_actors=False,
             new_address_fallback=False,
         )
+
+
+def test_saturate_int32_count_passes_through_non_negative():
+    from graphsenselib.db.asynchronous.services.common import (
+        INT32_MAX,
+        saturate_int32_count,
+    )
+
+    assert saturate_int32_count(0) == 0
+    assert saturate_int32_count(1234) == 1234
+    assert saturate_int32_count(INT32_MAX) == INT32_MAX
+    assert saturate_int32_count(None) is None
+
+
+def test_saturate_int32_count_caps_a_wrapped_counter():
+    # A Spark full transform written by a jar older than the saturating cast
+    # truncated the true count into the 32-bit column. The TRON USDT contract
+    # has 3,703,869,446 incoming txs and landed as -591,097,850
+    # (== 3703869446 - 2**32), which the REST API then served verbatim.
+    from graphsenselib.db.asynchronous.services.common import (
+        INT32_MAX,
+        saturate_int32_count,
+    )
+
+    assert -591097850 + 2**32 == 3703869446  # it really is a wrap
+    assert saturate_int32_count(-591097850) == INT32_MAX
+    assert saturate_int32_count(-1) == INT32_MAX
+
+
+def test_address_from_row_never_reports_negative_counters():
+    """A wrapped row must not surface as a negative count in the API."""
+    from collections import namedtuple
+
+    from graphsenselib.db.asynchronous.services.common import (
+        INT32_MAX,
+        address_from_row,
+    )
+
+    Tx = namedtuple("Tx", ["height", "timestamp", "tx_hash"])
+    Val = namedtuple("Val", ["value", "fiat_values"])
+    zero = Val(value=0, fiat_values=[])
+    row = {
+        "address": "0x9a5c6328d0adfe511ba981957cbe8ff29faf60e1",
+        "cluster_id": None,
+        "first_tx": Tx(1, 1, b"\x01"),
+        "last_tx": Tx(2, 2, b"\x02"),
+        "no_incoming_txs": -591097850,
+        "no_outgoing_txs": -1,
+        "in_degree": -42,
+        "out_degree": 7,
+        "total_received": zero,
+        "total_spent": zero,
+        "balance": 0,
+    }
+
+    address = address_from_row("trx", row, {}, {})
+
+    assert address.no_incoming_txs == INT32_MAX
+    assert address.no_outgoing_txs == INT32_MAX
+    assert address.in_degree == INT32_MAX
+    assert address.out_degree == 7  # untouched

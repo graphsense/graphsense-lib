@@ -8,6 +8,7 @@ import org.apache.spark.sql.functions.{
   col,
   floor,
   hex,
+  least,
   lit,
   map_keys,
   max,
@@ -27,6 +28,28 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.hadoop.fs.Path
 
 object TransformHelpers {
+
+  /** Narrow a count to the schema's 32-bit column, saturating instead of
+    * wrapping.
+    *
+    * The transformed schema stores tx counts and degrees as Cassandra `int`,
+    * but a count is a Long. A plain `.cast(IntegerType)` TRUNCATES two's
+    * complement in Spark's default (non-ANSI) mode, so anything past 2^31 lands
+    * in the table NEGATIVE: the TRON USDT contract has ~3.7e9 incoming txs and
+    * was written as -591,097,850, which the REST API then served.
+    *
+    * The Python delta updater caps the same fields at Int.MaxValue (`min(value,
+    * 2147483647)` in deltaupdate/update/account/createchanges.py), so an
+    * incrementally-maintained keyspace saturates while a freshly transformed
+    * one wrapped — the two implementations disagreed on the same address.
+    * Saturating here restores parity.
+    *
+    * Both behaviours under-report; the column really wants to be `bigint`. That
+    * is a schema migration across Spark, the delta updater and REST, so until
+    * then the two sides must at least fail the same way, and never negatively.
+    */
+  def saturateToInt(count: Column): Column =
+    least(count, lit(Int.MaxValue.toLong)).cast(IntegerType)
 
   /* --- write-completion markers -------------------------------------------
    *

@@ -3,6 +3,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+### Fixed
+- Address and entity tx counts and degrees no longer wrap into negative
+  numbers once they pass 2^31. The transformed schema stores them as
+  Cassandra `int`, and the aggregations cast the true count (a Long) with a
+  plain `.cast(IntegerType)`, which truncates two's complement in Spark's
+  default non-ANSI mode: the TRON USDT contract's 3,703,869,446 incoming txs
+  were written as -591,097,850 and served that way by the REST API. All nine
+  count/degree aggregations in the account transformation now go through
+  `TransformHelpers.saturateToInt`, capping at `Int.MaxValue` — which is
+  what the Python delta updater already did (`min(value, 2147483647)`), so
+  the batch and incremental paths agree on the same address again. Both
+  still under-report; widening the columns to `bigint` is tracked in
+  graphsense-lib#133.
+
 ## [v26.08.0] 2026-08-20
 ### Fixed
 - Retrying a TRX transform no longer skips a table that was only written
