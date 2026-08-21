@@ -14,6 +14,9 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Fixed
+- **The API no longer reports negative transaction counts or degrees.** These columns are Cassandra `int` (32-bit), and the Spark full transform cast the true count — a Long — with a plain cast, which truncates two's complement rather than saturating: the TRON USDT contract's 3,703,869,446 incoming txs were stored as `-591,097,850` and served verbatim. The Spark side now caps at `Int.MaxValue` (`spark/`, released separately), matching what the delta updater already did (`min(value, 2147483647)`), and reads normalize the same way so keyspaces written by older jars stop emitting negatives without needing a re-transform. Both paths under-report; widening the columns to `bigint` is tracked in #133.
+
 #### Changed
 - **Dependency bumps: `pyarrow` 25.0.0 → 25.0.1, `bitarray` 3.9.1 → 3.10.1.** Both are Dependabot bumps; `bitarray` 3.10 rewrites `util.ba2int()` / `util.int2ba()`, which the UTXO address codec leans on, so the full suite was run against the pair together rather than each in isolation.
 - **The pinned `uv` helper image in the `Dockerfile` moves to 0.12.5 and the `java11` stage picks up the current Temurin 11 JRE digest.** Only the digest moves — the stage stays on Java 11 on purpose (prod Spark executors are capped there by Cassandra 4.x on the shared hosts, and a Java-17+ driver breaks Kryo task-result deserialization).
