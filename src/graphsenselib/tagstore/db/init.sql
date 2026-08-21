@@ -125,6 +125,17 @@ CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr ON best_cluster_tag (cluster_id
 CREATE INDEX IF NOT EXISTS cluster_tags_by_clstr_and_network ON best_cluster_tag (network, cluster_id);
 CREATE UNIQUE INDEX IF NOT EXISTS cluster_tag_unique ON best_cluster_tag (network, cluster_id, tag_id);
 
+-- Distinct (label, acl_group) pairs behind the /search label leg: trigram
+-- scoring the full tag table rechecks a lossy GIN bitmap over every matching
+-- row, so this view lets the query score the much smaller distinct set instead.
+CREATE MATERIALIZED VIEW IF NOT EXISTS label_search AS
+    SELECT DISTINCT t.label, tp.acl_group
+    FROM tag t, tagpack tp
+    WHERE t.tagpack = tp.id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS label_search_pk ON label_search (label, acl_group);
+CREATE INDEX IF NOT EXISTS label_search_trgm_gist_idx ON label_search USING gist (label gist_trgm_ops);
+
 -- # FRESH CLUSTERING (v2) MATERIALIZED VIEWS
 --
 -- Parallel copies of the cluster-tag rollups, keyed on the canonical fresh

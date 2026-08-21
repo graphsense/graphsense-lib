@@ -298,6 +298,12 @@ class NetworkStatisticsView(SQLModel, tabel=True):
     nr_tags: int
 
 
+class LabelSearchView(SQLModel, table=True):
+    __tablename__ = "label_search"
+    label: str = Field(primary_key=True)
+    acl_group: str = Field(primary_key=True)
+
+
 # Fresh-clustering (v2) parallel objects. Same shape as the legacy mapping/views
 # above, but keyed on the canonical fresh cluster id (cluster root = min address
 # id) and sourced from the separate ``address_cluster_mapping_v2`` table. Kept in

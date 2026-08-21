@@ -722,10 +722,10 @@ class TagStore(object):
     def refresh_db(self):
         # self.cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY label")
         self.cursor.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY statistics")
-        for mv in _CLUSTER_MVS:
-            # The *_v2 relations only appear once `tagstore init` has run
-            # against this store; a not-yet-migrated tagstore simply has
-            # nothing to refresh for that regime.
+        for mv in _CLUSTER_MVS + ("label_search",):
+            # The *_v2 relations and label_search only appear once `tagstore
+            # init` has run against this store; a not-yet-migrated tagstore
+            # simply has nothing to refresh for that regime/view.
             self.cursor.execute("SELECT to_regclass(%s)", (mv,))
             if self.cursor.fetchone()[0] is None:
                 logger.warning(
