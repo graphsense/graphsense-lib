@@ -1,3 +1,6 @@
+import json
+from urllib.error import HTTPError
+
 import pytest
 
 from graphsenselib.transformation import spark_jar
@@ -22,7 +25,9 @@ class _FakeResp:
         return False
 
     def read(self, *args):
-        return self._payload
+        # Drains on first read: the jar download loops until read() is empty.
+        payload, self._payload = self._payload, b""
+        return payload
 
 
 def test_resolve_latest_release(monkeypatch):
@@ -41,6 +46,150 @@ def test_resolve_latest_release_missing_tag(monkeypatch):
 def test_asset_name_fat_strips_leading_v():
     assert asset_name("fat", "v26.06.0") == "graphsense-spark-assembly-26.06.0.jar"
     assert asset_name("fat", "26.06.0") == "graphsense-spark-assembly-26.06.0.jar"
+
+
+def test_asset_name_strips_monorepo_track_prefix():
+    # Monorepo jars are tagged spark-vX.Y.Z, the asset itself is unprefixed.
+    assert (
+        asset_name("fat", "spark-v26.08.0") == "graphsense-spark-assembly-26.08.0.jar"
+    )
+    assert asset_name("slim", "spark-v26.08.0") == "graphsense-spark_2.12-26.08.0.jar"
+
+
+def test_release_jar_url_monorepo_tag_keeps_prefix_in_path():
+    # The download path is the tag; only the filename drops the prefix.
+    assert release_jar_url("graphsense/graphsense-lib", "spark-v26.08.0", "fat") == (
+        "https://github.com/graphsense/graphsense-lib/releases/download/"
+        "spark-v26.08.0/graphsense-spark-assembly-26.08.0.jar"
+    )
+
+
+def test_resolve_latest_release_with_prefix_skips_other_tracks(monkeypatch):
+    # A monorepo lists every track's releases newest-first; a Python-only
+    # release must not be mistaken for a jar release.
+    payload = json.dumps(
+        [
+            {"tag_name": "v2.15.5", "draft": False, "prerelease": False},
+            {"tag_name": "webapi-v2.15.1", "draft": False, "prerelease": False},
+            {"tag_name": "spark-v26.08.1-rc.1", "draft": False, "prerelease": True},
+            {"tag_name": "spark-v26.08.0", "draft": False, "prerelease": False},
+            {"tag_name": "spark-v26.07.5", "draft": False, "prerelease": False},
+        ]
+    ).encode()
+    monkeypatch.setattr(spark_jar, "urlopen", lambda *a, **k: _FakeResp(payload))
+    assert (
+        resolve_latest_release("graphsense/graphsense-lib", "spark-")
+        == "spark-v26.08.0"
+    )
+
+
+def test_resolve_latest_release_with_prefix_none_found(monkeypatch):
+    payload = json.dumps(
+        [{"tag_name": "v2.15.5", "draft": False, "prerelease": False}]
+    ).encode()
+    monkeypatch.setattr(spark_jar, "urlopen", lambda *a, **k: _FakeResp(payload))
+    with pytest.raises(ValueError, match="spark-"):
+        resolve_latest_release("graphsense/graphsense-lib", "spark-")
+
+
+def _http_error(code: int) -> HTTPError:
+    return HTTPError("http://x", code, "boom", {}, None)
+
+
+def test_resolve_release_asset_finds_differently_named_jar(monkeypatch):
+    # e.g. a jar carried over from an older release, so its filename does not
+    # match the tag the constructed URL is built from.
+    payload = json.dumps(
+        {
+            "tag_name": "v2.16.0",
+            "assets": [
+                {"name": "CHANGELOG.md", "browser_download_url": "http://x/c.md"},
+                {
+                    "name": "graphsense-spark-assembly-26.08.0.jar",
+                    "browser_download_url": "http://x/fat.jar",
+                },
+                {
+                    "name": "graphsense-spark_2.12-26.08.0.jar",
+                    "browser_download_url": "http://x/slim.jar",
+                },
+            ],
+        }
+    ).encode()
+    monkeypatch.setattr(spark_jar, "urlopen", lambda *a, **k: _FakeResp(payload))
+    url, name = spark_jar.resolve_release_asset(
+        "graphsense/graphsense-lib", "v2.16.0", "fat"
+    )
+    assert url == "http://x/fat.jar"
+    assert name == "graphsense-spark-assembly-26.08.0.jar"
+
+
+def test_resolve_release_asset_lists_assets_when_jar_missing(monkeypatch):
+    payload = json.dumps(
+        {"tag_name": "v2.16.0", "assets": [{"name": "CHANGELOG.md"}]}
+    ).encode()
+    monkeypatch.setattr(spark_jar, "urlopen", lambda *a, **k: _FakeResp(payload))
+    with pytest.raises(ValueError, match="CHANGELOG.md"):
+        spark_jar.resolve_release_asset("graphsense/graphsense-lib", "v2.16.0", "fat")
+
+
+def test_resolve_release_asset_unknown_tag(monkeypatch):
+    def _raise(*a, **k):
+        raise _http_error(404)
+
+    monkeypatch.setattr(spark_jar, "urlopen", _raise)
+    with pytest.raises(ValueError, match="No release tagged"):
+        spark_jar.resolve_release_asset("graphsense/graphsense-lib", "v9.9.9", "fat")
+
+
+def test_fetch_release_jar_falls_back_to_api_on_404(monkeypatch, tmp_path):
+    """A 404 on the constructed URL must resolve via the API, not just fail."""
+    api_payload = json.dumps(
+        {
+            "assets": [
+                {
+                    "name": "graphsense-spark-assembly-26.08.0.jar",
+                    "browser_download_url": "http://x/fat.jar",
+                }
+            ]
+        }
+    ).encode()
+
+    calls = []
+
+    def fake_urlopen(req, *a, **k):
+        url = req if isinstance(req, str) else req.full_url
+        calls.append(url)
+        if "releases/download" in url:  # constructed URL: wrong name
+            raise _http_error(404)
+        if "api.github.com" in url:
+            return _FakeResp(api_payload)
+        return _FakeResp(b"JARBYTES")  # the asset URL from the API
+
+    monkeypatch.setattr(spark_jar, "urlopen", fake_urlopen)
+    path = spark_jar.fetch_release_jar(
+        "graphsense/graphsense-lib", "v2.16.0", "fat", str(tmp_path)
+    )
+    # stored under the asset's real name, with its content
+    assert path.endswith("graphsense-spark-assembly-26.08.0.jar")
+    with open(path, "rb") as f:
+        assert f.read() == b"JARBYTES"
+    assert any("api.github.com" in c for c in calls)
+
+
+def test_fetch_release_jar_does_not_call_api_on_the_happy_path(monkeypatch, tmp_path):
+    """The API is rate limited; a resolvable URL must not consume that budget."""
+    calls = []
+
+    def fake_urlopen(req, *a, **k):
+        url = req if isinstance(req, str) else req.full_url
+        calls.append(url)
+        return _FakeResp(b"JARBYTES")
+
+    monkeypatch.setattr(spark_jar, "urlopen", fake_urlopen)
+    spark_jar.fetch_release_jar(
+        "graphsense/graphsense-spark", "v26.07.4", "fat", str(tmp_path)
+    )
+    assert not any("api.github.com" in c for c in calls)
 
 
 def test_asset_name_slim():

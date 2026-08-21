@@ -369,19 +369,21 @@ graphsense-cli ingest from-node \
 
 ### Full Transform (raw → transformed)
 
-Run the raw → transformed "full transform" by driving the external
-[graphsense-spark](https://github.com/graphsense/graphsense-spark) Scala job via
-`spark-submit`. The release jar is downloaded from a public GitHub Release asset
-(token-free) and cached under `<cache_directory>/spark-jars`. The command creates
-a fresh dated transformed keyspace, resolves Spark properties from a
-`spark_config` profile, and launches the job.
+Run the raw → transformed "full transform" by driving the Scala Spark
+transformation job via `spark-submit`. That job lives in this repository under
+[`spark/`](spark/README.md) (formerly the standalone `graphsense-spark` repo) and
+is released on its own `spark-vX.Y.Z` tag track — see [VERSIONING.md](VERSIONING.md).
+The release jar is downloaded from a public GitHub Release asset (token-free) and
+cached under `<cache_directory>/spark-jars`. The command creates a fresh dated
+transformed keyspace, resolves Spark properties from a `spark_config` profile, and
+launches the job.
 
 ```bash
 # Show options
 graphsense-cli transformation raw-to-transformed --help
 
 # Run against a pinned release, creating a fresh dated transformed keyspace
-graphsense-cli transformation raw-to-transformed -e prod -c btc --version v26.06.0
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version spark-v26.08.1
 
 # Use the latest stable release (also the default when no version is configured)
 graphsense-cli transformation raw-to-transformed -e prod -c btc --version latest
@@ -396,7 +398,7 @@ graphsense-cli transformation raw-to-transformed -e dev -c btc --local
 graphsense-cli transformation raw-to-transformed -e prod -c btc \
     --target-keyspace btc_transformed
 
-# Pass extra args through to the graphsense-spark job after `--`
+# Pass extra args through to the Spark transformation job after `--`
 graphsense-cli transformation raw-to-transformed -e prod -c btc -- --debug 1
 ```
 
@@ -404,11 +406,20 @@ Configured via a `full_transform_args` section in the config file:
 
 ```yaml
 full_transform_args:
+  # Repository publishing the jar releases, and the tag prefix of its Spark
+  # release track. These are the defaults: jars built from `spark/` in this
+  # monorepo, whose releases span several tracks, so the prefix is what makes
+  # "latest" resolve to a Spark release rather than a Python-only one that
+  # carries no jar. To pin a jar from before the move (`v26.08.0` and earlier),
+  # point `repo` at `graphsense/graphsense-spark` and set the prefix to `""` —
+  # that repo is archived rather than deleted so its assets keep resolving.
+  repo: graphsense/graphsense-lib
+  release_tag_prefix: spark-
   # Release tag to run. Omit or set to "latest" to resolve the newest stable
-  # (non-prerelease) release from the GitHub API at run time.
-  version: v26.06.0
+  # (non-prerelease) release of that track from the GitHub API at run time.
+  version: spark-v26.08.1
   version_overrides: # optional, per-currency
-    eth: v26.06.1
+    eth: spark-v26.08.1
   artifact: fat # "fat" (self-contained assembly, default) or "slim" (+ Maven packages)
   spark_profile: # selects a spark_config profile per currency
     btc: utxo

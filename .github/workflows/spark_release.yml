@@ -1,0 +1,62 @@
+name: Create Spark release
+
+# Third release track next to the library (vX.Y.Z) and web API (webapi-vA.B.C)
+# tags — see VERSIONING.md. A spark-vX.Y.Z tag publishes the slim and fat jars
+# as release assets; graphsense-lib downloads them by tag at transform time
+# (src/graphsenselib/transformation/spark_jar.py).
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - spark-v[0-9]+.[0-9]+.[0-9]+
+      - spark-v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release pushed tag
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spark
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Setup sbt launcher
+        uses: sbt/setup-sbt@v1
+      # build.sbt derives the jar version from GITHUB_REF_NAME by switching on
+      # the tag's FIRST character ('v' -> production build). The monorepo tag
+      # carries a `spark-` prefix to keep it apart from the library track, so
+      # the prefix is stripped here — otherwise the build silently falls back
+      # to the Makefile version and produces a differently named asset than
+      # the one graphsense-lib downloads.
+      - name: Build slim and fat jars
+        env:
+          tag: ${{ github.ref_name }}
+        run: |
+          export GITHUB_REF_TYPE=tag
+          # spark-v26.08.1 -> v26.08.1
+          export GITHUB_REF_NAME="${tag#spark-}"
+          echo "Building jars as version ${GITHUB_REF_NAME#v}"
+          sbt package assembly
+      - name: Filter CHANGELOG
+        run: |
+          sed  '1,/## \[/d;/## \[/Q' CHANGELOG.md > CHANGELOG_LATEST.md
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+        run: |
+          gh release create "${tag}" \
+              --repo="$GITHUB_REPOSITORY" \
+              --title="graphsense-spark ${tag#spark-v}" \
+              -F CHANGELOG_LATEST.md \
+              target/scala-2.12/graphsense-spark_2.12-*.jar \
+              target/scala-2.12/graphsense-spark-assembly-*.jar

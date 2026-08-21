@@ -61,7 +61,9 @@ def test_run_full_transform_resolves_latest_by_default(monkeypatch):
         "baseline": {"spark.master": "spark://m:7077"},
         "utxo": {},
     }
-    monkeypatch.setattr(spark_jar, "resolve_latest_release", lambda repo: "v99.9.9")
+    monkeypatch.setattr(
+        spark_jar, "resolve_latest_release", lambda repo, prefix=None: "v99.9.9"
+    )
     seen = {}
 
     def fake_fetch(repo, version, artifact, cache_dir):
@@ -92,7 +94,9 @@ def test_run_full_transform_version_latest_keyword(monkeypatch):
     cfg = get_config()
     cfg.full_transform_args = FullTransformArgs(version="v1.0.0")
     cfg.spark_config = {"baseline": {"spark.master": "spark://m:7077"}}
-    monkeypatch.setattr(spark_jar, "resolve_latest_release", lambda repo: "v99.9.9")
+    monkeypatch.setattr(
+        spark_jar, "resolve_latest_release", lambda repo, prefix=None: "v99.9.9"
+    )
     seen = {}
 
     def fake_fetch(repo, version, artifact, cache_dir):

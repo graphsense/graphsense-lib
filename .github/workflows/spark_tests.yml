@@ -1,0 +1,46 @@
+name: Run Spark Unit-Tests
+
+# The Scala pipeline lives in spark/. It is exercised on every change to that
+# tree AND on every change to the delta updater or the transformed schema:
+# both produce the same derived tables, so a change to one side without the
+# other is the exact drift this job exists to catch.
+# (Paths are repeated per trigger: GitHub Actions does not support YAML
+# anchors.)
+on:
+  push:
+    branches:
+      - master
+      - develop
+    paths:
+      - 'spark/**'
+      - 'src/graphsenselib/deltaupdate/**'
+      - 'src/graphsenselib/schema/resources/transformed_*.sql'
+      - '.github/workflows/spark_tests.yml'
+  pull_request:
+    paths:
+      - 'spark/**'
+      - 'src/graphsenselib/deltaupdate/**'
+      - 'src/graphsenselib/schema/resources/transformed_*.sql'
+      - '.github/workflows/spark_tests.yml'
+
+jobs:
+  # Not "build": three other workflows already expose a check by that name, so
+  # the Spark run is indistinguishable in a PR's check list.
+  spark-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spark
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+    - name: Setup JDK
+      uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: 11
+    - name: Setup sbt launcher
+      uses: sbt/setup-sbt@v1
+    - name: Test with SBT
+      run: sbt test

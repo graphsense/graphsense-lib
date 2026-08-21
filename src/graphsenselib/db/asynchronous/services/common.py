@@ -389,6 +389,37 @@ async def try_get_tag_cluster_id(
     return returnv
 
 
+# Cassandra stores tx counts and degrees as 32-bit `int`. Two writers fill
+# those columns and they used to disagree once a value passed 2**31: the Spark
+# full transform cast the true count (a Long) down with a plain cast, which
+# TRUNCATES two's complement and lands NEGATIVE, while the delta updater caps
+# at Int.MaxValue (`min(value, 2147483647)`, deltaupdate/update/account/
+# createchanges.py). The TRON USDT contract has ~3.7e9 incoming txs and a
+# freshly transformed keyspace served -591,097,850 for it.
+#
+# Spark now saturates too (TransformHelpers.saturateToInt), but keyspaces
+# written by older jars still hold wrapped values, so reads normalize as well:
+# the API must never emit a negative count, whatever is in the table.
+INT32_MAX = 2**31 - 1
+
+
+def saturate_int32_count(value: Optional[int]) -> Optional[int]:
+    """Normalize a possibly-wrapped 32-bit counter to delta-updater semantics.
+
+    A negative counter can only be a wrapped one — these columns are counts and
+    are never legitimately below zero. Its true value is ``value + 2**32``,
+    which is necessarily >= 2**31 and therefore saturates to ``INT32_MAX``,
+    exactly what the delta updater would have written.
+
+    Both the cap and the wrap under-report; the column really wants to be
+    ``bigint``. Until that migration, a saturated value is at least
+    non-negative and monotone.
+    """
+    if value is None:
+        return None
+    return INT32_MAX if value < 0 else value
+
+
 def address_from_row(
     currency: str,
     row: Dict[str, Any],
@@ -427,14 +458,14 @@ def address_from_row(
         )
         if row.get("last_tx")
         else None,
-        no_incoming_txs=row.get("no_incoming_txs", 0),
-        no_outgoing_txs=row.get("no_outgoing_txs", 0),
+        no_incoming_txs=saturate_int32_count(row.get("no_incoming_txs", 0)),
+        no_outgoing_txs=saturate_int32_count(row.get("no_outgoing_txs", 0)),
         total_received=to_values(row["total_received"]),
         total_tokens_received=to_values_tokens(row.get("total_tokens_received")),
         total_spent=to_values(row["total_spent"]),
         total_tokens_spent=to_values_tokens(row.get("total_tokens_spent")),
-        in_degree=row.get("in_degree", 0),
-        out_degree=row.get("out_degree", 0),
+        in_degree=saturate_int32_count(row.get("in_degree", 0)),
+        out_degree=saturate_int32_count(row.get("out_degree", 0)),
         balance=convert_value(currency, row["balance"], rates),
         token_balances=convert_token_values_map(
             currency,

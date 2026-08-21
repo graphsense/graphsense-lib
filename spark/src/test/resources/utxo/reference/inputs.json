@@ -1,0 +1,13 @@
+{"value": 2500000, "blockId": 1, "txId": 1, "addressIdGroup": 0, "addressId": 0, "isOutgoing": true}
+{"value": 2500000, "blockId": 2, "txId": 2, "addressIdGroup": 0, "addressId": 0, "isOutgoing": true}
+{"value": 2500000, "blockId": 3, "txId": 4, "addressIdGroup": 0, "addressId": 0, "isOutgoing": true}
+{"value": 2500000, "blockId": 4, "txId": 7, "addressIdGroup": 0, "addressId": 0, "isOutgoing": true}
+{"value": 2500000, "blockId": 2, "txId": 3, "addressIdGroup": 0, "addressId": 1, "isOutgoing": true}
+{"value": 2500000, "blockId": 3, "txId": 5, "addressIdGroup": 1, "addressId": 2, "isOutgoing": true}
+{"value": 1480000, "blockId": 3, "txId": 5, "addressIdGroup": 1, "addressId": 3, "isOutgoing": true}
+{"value": 150000, "blockId": 3, "txId": 6, "addressIdGroup": 2, "addressId": 4, "isOutgoing": true}
+{"value": 345000, "blockId": 4, "txId": 9, "addressIdGroup": 2, "addressId": 4, "isOutgoing": true}
+{"value": 495000, "blockId": 4, "txId": 8, "addressIdGroup": 2, "addressId": 5, "isOutgoing": true}
+{"value": 2500000, "blockId": 4, "txId": 8, "addressIdGroup": 3, "addressId": 6, "isOutgoing": true}
+{"value": 1325000, "blockId": 4, "txId": 10, "addressIdGroup": 3, "addressId": 7, "isOutgoing": true}
+{"value": 100000, "blockId": 4, "txId": 10, "addressIdGroup": 4, "addressId": 8, "isOutgoing": true}

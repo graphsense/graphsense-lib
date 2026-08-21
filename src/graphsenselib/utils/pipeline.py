@@ -239,7 +239,7 @@ class Process:
     def get_one(self, sources, timeout=1):
         if isinstance(sources, list):
             q = random.choice(sources)
-            return q.get(timeout=timeout)  # ty: ignore[unresolved-attribute]
+            return q.get(timeout=timeout)
         else:
             return sources.get(timeout=timeout)
 

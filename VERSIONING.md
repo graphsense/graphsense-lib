@@ -10,14 +10,27 @@ How `graphsense-lib` is versioned, when to mint a tag, and what each tag does in
 - **Web API + Python client:** managed on a separate track via `webapi-vA.B.C` tags. Triggers PyPI client publish only.
 - **Python wheel version** is derived automatically by `setuptools_scm`, never hand-edited.
 
-## Two version tracks
+## Three version tracks
 
 | Track | Tag shape | Where the version lives | What it covers |
 |---|---|---|---|
 | Library | `vX.Y.Z`, `vX.Y.Z-rc.N`, `vX.Y.Z-dev.N` | `setuptools_scm` (dynamic) → reads from git tag | The `graphsense-lib` package on PyPI, Docker images on ghcr.io |
 | Web API + Client | `webapi-vA.B.C` | `clients/python/pyproject.toml` `version = "..."` and `src/graphsenselib/web/version.py` `__api_version__` | The `graphsense-lib-client` package on PyPI, OpenAPI spec version |
+| Spark pipeline | `spark-vYY.MM.P` | `spark/Makefile` `RELEASE` (mirrored by `SPARKSEM` in the root Makefile) | The `spark/` Scala jars published as GitHub release assets, plus the `ghcr.io/graphsense/graphsense-spark` image |
 
-Both tracks live in the same repo and share `Makefile` helpers (`RELEASESEM` for the library track, `WEBAPISEM` for the client track) to mint and validate tags.
+All three tracks live in the same repo and share `Makefile` helpers (`RELEASESEM` for the library track, `WEBAPISEM` for the client track, `SPARKSEM` for the Spark track) to mint and validate tags.
+
+The Rust clustering extension (`rust/gs_clustering`) is **not** a track: it ships as an optional dependency of the library (`graphsense-lib[clustering]` pulls `graphsense-clustering` wheels from PyPI) and is versioned in its own `Cargo.toml`. `.github/workflows/pypi-publish-clustering.yaml` would fire on a `gs-clustering-vX.Y.Z` tag, but no such tag has ever been minted here — treat that workflow as dormant rather than as a release process to follow.
+
+Note the asymmetry: the library track uses **bare** `vX.Y.Z` tags while every other track is prefixed. That is deliberate — `setuptools_scm`, the PyPI version history and every downstream git pin key off those bare tags, so renaming the track would be far more disruptive than the inconsistency is worth. It does have one consequence worth remembering: GitHub's "latest release" endpoint is repo-wide, so anything resolving a release automatically **must filter by tag prefix** or it will happily return another track's release. `spark_jar.py` learned this the hard way; see `full_transform_args.release_tag_prefix`.
+
+### Why the Spark pipeline has its own track
+
+`spark/` is the Scala transformation that a full transform runs; `graphsense-lib` downloads its jar by tag at run time (`src/graphsenselib/transformation/spark_jar.py`, version pinned in the config's `full_transform_args.version` or passed with `--version`). Keeping it on a separate track means a Python-only release does not force a jar rebuild, and — more importantly — an operator can pin a specific jar independently of the library version, which is what makes it possible to hotfix a running multi-hour transform.
+
+Mint with `make tag-spark-version` (validates that `SPARKSEM` matches `spark/Makefile`'s `RELEASE`), then push the tag; `.github/workflows/spark_release.yml` builds the slim and fat jars and attaches them to the release, and `.github/workflows/spark_docker_publish.yml` publishes `ghcr.io/graphsense/graphsense-spark:vYY.MM.P`. Unlike the library release workflow, the Spark one does **not** verify that `spark/CHANGELOG.md` has a section matching the tag — it publishes whatever the topmost `## [` section is, so cut that section before tagging. Note that `spark/build.sbt` derives the jar version from the tag by looking at its **first character**, so the workflow strips the `spark-` prefix before invoking sbt — a tag it cannot parse silently produces a jar named after the Makefile version instead.
+
+Older jars (`v26.07.x` and earlier) live on releases of the archived standalone `graphsense-spark` repository. That repo is archived, not deleted, precisely so those pinned assets keep resolving; `spark_jar.py` takes the source repo as a parameter, so existing configs keep working unchanged.
 
 ## How `setuptools_scm` derives the wheel version
 
