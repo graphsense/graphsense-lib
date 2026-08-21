@@ -151,6 +151,11 @@ HEX_ALPHABET = "0123456789ABCDEF"
 # per page into bounded-concurrent ones on the hottest (address-txs) endpoint.
 MAX_ROW_LOOKUP_CONCURRENCY = 100
 
+# In-flight statement cap for the per-(direction, asset, tx) subquery fan-out
+# in list_address_txs_ordered. High enough to keep the pipeline to all nodes
+# full, low enough that one links scan cannot monopolize the session.
+ADDRESS_TXS_SUBQUERY_CONCURRENCY = 500
+
 
 def _fresh_degrees_pending(row) -> bool:
     """A fresh_cluster_stats row lacking degrees.
@@ -540,6 +545,7 @@ def build_select_address_txs_statement(
     with_tx_id: bool,
     ascending: bool,
     limit: Optional[int],
+    tx_id_in: bool = False,
 ) -> str:
     # prebuild useful helpers and conditions
     eth_like = is_eth_like(network)
@@ -581,7 +587,10 @@ def build_select_address_txs_statement(
         not with_tx_id and not ascending and with_upper_bound,
     )
 
-    query += wc(f"{tx_id_col} = %(tx_id)s", with_tx_id)
+    query += wc(f"{tx_id_col} = %(tx_id)s", with_tx_id and not tx_id_in)
+    # single-partition named-slice batch; the tx_reference clustering suffix
+    # stays unrestricted so this needs no ALLOW FILTERING
+    query += wc(f"{tx_id_col} IN %(tx_ids)s", with_tx_id and tx_id_in)
 
     ordering = "ASC" if ascending else "DESC"
     # Ordering statement
@@ -2185,10 +2194,19 @@ class Cassandra:
         token_currency=None,
         page=None,
         pagesize=None,
+        _no_direction_race=False,
+        _precheck=None,
     ):
         ascending = order == "asc"
 
-        if node_type == NodeType.ADDRESS:
+        # _precheck carries the already-fetched node rows, tx-id bounds and
+        # edge tx count from the outer call into the direction-race's
+        # recursive scans (none of them depend on the scan order), so a raced
+        # request pays for the node/range/edge lookups once instead of twice.
+        if _precheck is not None:
+            src_node = _precheck["src_node"]
+            dst_node = _precheck["dst_node"]
+        elif node_type == NodeType.ADDRESS:
             src_node = await self.get_address(currency, id)
             dst_node = await self.get_address(currency, neighbor)
         else:
@@ -2240,10 +2258,18 @@ class Cassandra:
             else:
                 include_assets = [currency.upper()]
 
-        (
-            tx_id_lower_bound,
-            tx_id_upper_bound,
-        ) = await self.resolve_tx_id_range_by_block(currency, min_height, max_height)
+        if _precheck is not None:
+            # Already clamped by the outer call; the node clamp below is
+            # idempotent so re-running it is harmless.
+            tx_id_lower_bound = _precheck["tx_id_lower_bound"]
+            tx_id_upper_bound = _precheck["tx_id_upper_bound"]
+        else:
+            (
+                tx_id_lower_bound,
+                tx_id_upper_bound,
+            ) = await self.resolve_tx_id_range_by_block(
+                currency, min_height, max_height
+            )
 
         # Get the transaction ID range overlap for both nodes
         src_first_tx_id = src_node["first_tx_id"]
@@ -2278,24 +2304,27 @@ class Cassandra:
         if self.tconfig.fanout_bounding_and_links_precheck_enabled and is_eth_like(
             currency
         ):
-            if node_type == NodeType.ADDRESS:
-                neighbor_id = await self.get_address_id(currency, neighbor)
+            if _precheck is not None:
+                edge_tx_count = _precheck["edge_tx_count"]
             else:
-                neighbor_id = int(neighbor)
+                if node_type == NodeType.ADDRESS:
+                    neighbor_id = await self.get_address_id(currency, neighbor)
+                else:
+                    neighbor_id = int(neighbor)
 
-            edge_tx_count = 0
-            if neighbor_id is not None:
-                edge_rows, _ = await self.list_neighbors(
-                    currency,
-                    id,
-                    True,
-                    node_type,
-                    targets=[neighbor_id],
-                    page=None,
-                    pagesize=None,
-                )
-                if edge_rows:
-                    edge_tx_count = sum(row["no_transactions"] for row in edge_rows)
+                edge_tx_count = 0
+                if neighbor_id is not None:
+                    edge_rows, _ = await self.list_neighbors(
+                        currency,
+                        id,
+                        True,
+                        node_type,
+                        targets=[neighbor_id],
+                        page=None,
+                        pagesize=None,
+                    )
+                    if edge_rows:
+                        edge_tx_count = sum(row["no_transactions"] for row in edge_rows)
 
             if edge_tx_count == 0:
                 # No direct edge id -> neighbor: there can be no links.
@@ -2304,248 +2333,414 @@ class Cassandra:
         final_results = []
         requested_pagesize = pagesize or SMALL_PAGE_SIZE
         fetch_size = max(FETCH_SIZE_MIN, requested_pagesize)
+        adaptive_cap = self.tconfig.links_adaptive_fetch_size_cap
 
-        while len(final_results) < requested_pagesize:
-            # Use the efficient fetch_size for database calls
-            fs_it = fetch_size
-            results1_raw, new_pages, finished = await self.list_address_txs_ordered(
-                network=currency,
-                node_type=node_type,
-                id=first,
-                tx_id_lower_bound=tx_id_lower_bound,
-                tx_id_upper_bound=tx_id_upper_bound,
-                is_outgoing=is_outgoing,
-                include_assets=include_assets,
-                ascending=ascending,
-                page=page,
-                fetch_size=max(FETCH_SIZE_MIN, fs_it),
-            )
-            final_page1 = new_pages[-1] if new_pages and not finished else None
+        # For eth-like the second side can only hold a link tx in the
+        # direction opposite to the first side's scan (candidates are
+        # first's outgoing txs -> second received them, and vice versa).
+        # UTXO must probe both directions: its address_transactions rows
+        # carry only the net direction (see comment at the results2 call).
+        second_is_outgoing = None
+        if is_eth_like(currency) and self.tconfig.links_directed_probe_enabled:
+            second_is_outgoing = not is_outgoing
 
-            self.logger.debug(f"results1 {len(results1_raw)} {final_page1}")
-
-            tx_id = "transaction_id" if is_eth_like(currency) else "tx_id"
-
-            first_tx_ids = (
-                [(row[tx_id], row["tx_reference"]) for row in results1_raw]
-                if is_eth_like(currency)
-                else [(row[tx_id], None) for row in results1_raw]
-            )
-
-            if token_currency is not None:
-                # Token-filtered query: only the token's rows on the `second`
-                # side are relevant. Fetching the native asset (or others) here
-                # would (a) let non-token events leak into a token-filtered
-                # result — e.g. the native contract-call trace when `neighbor`
-                # is the token contract, which passes the address-only filter
-                # below but is not a token transfer — and (b) multiply the
-                # per-page fan-out against a possibly huge `second` partition.
-                # It never drops a genuine token link: a real token transfer
-                # id -> neighbor still produces a token row on the second side.
-                assets = [token_currency.upper()]
-            else:
-                assets = set([currency.upper()])
-                if is_eth_like(currency):
-                    for row in results1_raw:
-                        assets.add(row["currency"])
-
-                assets = list(assets)
-
-            results2, _, _ = await self.list_address_txs_ordered(
-                network=currency,
-                node_type=node_type,
-                id=second,
-                tx_id_lower_bound=None,
-                tx_id_upper_bound=None,
-                # fetch both directions regardless, this is needed since for
-                # some transactions the total flow is an inflow but it is an
-                # outflow at the same time (UTXO address_transactions rows
-                # carry only the net direction). If we would not fetch both
-                # directions we would miss these transactions.
-                is_outgoing=None,
-                include_assets=assets,
-                ascending=ascending,
-                tx_ids=first_tx_ids,  # limit second set by tx ids of first set
-                page=None,
-                fetch_size=len(first_tx_ids),
-            )
-            self.logger.debug(f"results2 {len(results2)}")
-
-            if is_eth_like(currency):
-                results2 = await self.normalize_address_transactions(
+        # Sparse-edge direction race: when the pre-check shows the whole edge
+        # fits in one page, the requested-order scan may still walk the entire
+        # history when the links sit at its far end, while the opposite
+        # direction would find them immediately (and early-stop via
+        # all_edge_found). Race both directions and take the first complete
+        # result. A flipped result is only used when it provably holds the
+        # complete link set (no next page and fewer rows than the requested
+        # page), re-sorted into the requested order — so results and page
+        # tokens are identical to the non-raced scan.
+        if (
+            not _no_direction_race
+            and self.tconfig.links_sparse_direction_race_enabled
+            and page is None
+            and edge_tx_count is not None
+            and 0 < edge_tx_count < requested_pagesize
+        ):
+            precheck = {
+                "src_node": src_node,
+                "dst_node": dst_node,
+                "tx_id_lower_bound": tx_id_lower_bound,
+                "tx_id_upper_bound": tx_id_upper_bound,
+                "edge_tx_count": edge_tx_count,
+            }
+            task_requested = asyncio.ensure_future(
+                self.list_links(
                     currency,
-                    results2,
-                    ignore_traces_not_found=self.tconfig.ignore_traces_not_found_in_list_txs,
+                    node_type,
+                    id,
+                    neighbor,
+                    min_height=min_height,
+                    max_height=max_height,
+                    order=order,
+                    token_currency=token_currency,
+                    page=None,
+                    pagesize=pagesize,
+                    _no_direction_race=True,
+                    _precheck=precheck,
                 )
-            else:
-                results1 = {row[tx_id]: row for row in results1_raw}
-                tx_ids = [row[tx_id] for row in results2]
-                txs = await self.list_txs_by_ids(currency, tx_ids)
-
-                if len(results2) != len(txs):
-                    raise DBInconsistencyException(
-                        "result sets for txs intersection not equal"
+            )
+            task_flipped = None
+            # The finally block guarantees neither scan outlives this call,
+            # whichever branch returns, raises or is cancelled; a done losing
+            # task has its exception marked retrieved.
+            try:
+                # Hedge: give the requested direction a head start; only a
+                # scan that is already slow warrants the cost (and
+                # contention) of a concurrent opposite-direction scan.
+                done, _ = await asyncio.wait(
+                    {task_requested},
+                    timeout=self.tconfig.links_direction_race_hedge_delay_ms / 1000.0,
+                )
+                if task_requested in done:
+                    return task_requested.result()
+                task_flipped = asyncio.ensure_future(
+                    self.list_links(
+                        currency,
+                        node_type,
+                        id,
+                        neighbor,
+                        min_height=min_height,
+                        max_height=max_height,
+                        order="desc" if ascending else "asc",
+                        token_currency=token_currency,
+                        page=None,
+                        pagesize=pagesize,
+                        _no_direction_race=True,
+                        _precheck=precheck,
                     )
-
-                # merge address_transactions and raw transaction sets
-                for row, tx in zip(results2, txs):
-                    row[second_value] = row["value"]
-                    row[first_value] = results1[row[tx_id]]["value"]
-
-                    for k, v in tx.items():
-                        row[k] = v
-
-                # results2 was indexed by `second`; assert each merged tx
-                # actually has `second` on the side its is_outgoing claims.
-                # Catches address_transactions index misalignments. Only
-                # checked for ADDRESS queries.
-                if node_type == NodeType.ADDRESS:
-                    for row in results2:
-                        self._verify_address_in_tx_btc(
-                            currency, second, row, row.get("is_outgoing")
+                )
+                done, _ = await asyncio.wait(
+                    {task_requested, task_flipped},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                # A flipped scan that errored simply loses the race; only a
+                # clean, provably complete flipped result short-circuits the
+                # requested scan.
+                if task_requested not in done and task_flipped.exception() is None:
+                    flip_results, flip_page = task_flipped.result()
+                    if flip_page is None and len(flip_results) < requested_pagesize:
+                        self.logger.debug(
+                            f"direction race won by flipped scan with "
+                            f"{len(flip_results)} complete results"
                         )
+                        return list(reversed(flip_results)), None
+                return await task_requested
+            finally:
+                for task in (task_requested, task_flipped):
+                    if task is None:
+                        continue
+                    if not task.done():
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                    elif not task.cancelled():
+                        task.exception()
 
-            if is_eth_like(currency):
-                # TODO probably this check is no longer necessary
-                # since we filtered on tx_ref level already
-                # in list_address_txs_ordered
-                if node_type == NodeType.CLUSTER:
-                    neighbor = dst_node["root_address"]
-                    id = src_node["root_address"]
+        tx_id = "transaction_id" if is_eth_like(currency) else "tx_id"
 
-                # results2 was indexed by `second`; assert each returned row
-                # actually has `second` on the side its is_outgoing claims.
-                # Catches address_transactions index misalignments.
-                second_address = neighbor if is_outgoing else id
-                for row in results2:
-                    self._verify_address_in_tx_eth(currency, second_address, row)
-
-                # Token/Trace transactions might not be between the requested
-                # nodes so only keep the relevant ones
-                before = len(results2)
-                results2 = [
-                    tx
-                    for tx in results2
-                    if tx["to_address"] == neighbor and tx["from_address"] == id
-                ]
-                self.logger.debug(f"pruned {before - len(results2)}")
-            if not is_eth_like(currency):
-                # Keep only rows where `id` is in the inputs and `neighbor` in
-                # the outputs — RAW io membership, deliberately NOT the netted
-                # sender/receiver pairing that relations are built from. The
-                # per-(tx, address) netting hides real output receipt for
-                # addresses appearing on both sides of a tx; that is considered
-                # wrong semantics (see the netting desired-semantics test in
-                # tests/regressions) and links must not propagate it. Until the
-                # transform's netting is fixed, /links can therefore list txs
-                # for pairs that have no netted relation edge — which is also
-                # why the relations pre-check above is eth-only.
-                # Filter the FRESH page (results2) BEFORE extending —
-                # re-filtering the whole accumulated `final_results` on every
-                # while-loop iteration would re-run the per-address cluster-id
-                # lookups for already-accepted rows (10^5+ serial queries per
-                # request in the cluster case).
-                if node_type == NodeType.ADDRESS:
-
-                    def has_address_in_ios(address, ios):
-                        if ios is None and address == "coinbase":
-                            return True
-                        if ios is None:
-                            return False
-                        addresses_io = sum([x.address or [] for x in ios], [])
-                        return address in addresses_io
-
-                    results2 = [
-                        r
-                        for r in results2
-                        if has_address_in_ios(id, r["inputs"])
-                        and has_address_in_ios(neighbor, r["outputs"])
-                    ]
-                else:
-
-                    def get_address_from_io(x):
-                        address_wrapped = x.address
-                        if address_wrapped is None:
-                            return None
-                        assert len(address_wrapped) == 1
-                        return address_wrapped[0]
-
-                    async def cluster_ids_of(ios):
-                        addresses_io = [get_address_from_io(x) for x in ios]
-                        addresses_io = [a for a in addresses_io if a is not None]
-                        # resolve the io addresses' cluster ids concurrently
-                        return set(
-                            await asyncio.gather(
-                                *[
-                                    self.get_address_entity_id(currency, a)
-                                    for a in addresses_io
-                                ]
-                            )
-                        )
-
-                    async def cluster_row_matches(r):
-                        in_ids, out_ids = await asyncio.gather(
-                            cluster_ids_of(r["inputs"]),
-                            cluster_ids_of(r["outputs"]),
-                        )
-                        return id in in_ids and neighbor in out_ids
-
-                    keep = await asyncio.gather(
-                        *[cluster_row_matches(r) for r in results2]
-                    )
-                    results2 = [r for r, k in zip(results2, keep) if k]
-
-            final_results.extend(results2)
-
-            # Once every edge tx has been found there is nothing left to page
-            # for. Only eth-like queries carry a non-None edge_tx_count (the
-            # pre-check above is eth-only): there no_transactions counts
-            # transfer rows (native txs plus token transfers), which is >=
-            # their distinct tx ids, so the early stop can only over-scan,
-            # never truncate. For UTXO the raw links are not bounded by the
-            # netted relation row, so edge_tx_count stays None and the scan
-            # always walks the full overlap window.
-            all_edge_found = (
-                edge_tx_count is not None
-                and len({row[tx_id] for row in final_results}) >= edge_tx_count
+        # Only the columns the links intersection actually reads from the
+        # candidate side; full rows are still fetched for the second side
+        # (results2), which is what gets returned/normalized.
+        candidate_cols = None
+        if self.tconfig.links_slim_candidate_columns_enabled:
+            candidate_cols = (
+                [tx_id, "tx_reference", "currency"]
+                if is_eth_like(currency)
+                else [tx_id, "value"]
             )
 
-            # Check if we have enough results after all filtering
-            if len(final_results) >= requested_pagesize:
-                # Truncate to exact requested size and get page token from last result
-                final_results = final_results[:requested_pagesize]
-                # now we know which is the last item from results1 that made it into final_results
-                # so we can use that to get the page token from the last result
-                last_row = final_results[-1]
-                result1_to_page_mapping = {
-                    (
-                        row[tx_id],
-                        row["tx_reference"] if is_eth_like(currency) else None,
-                    ): page
-                    for row, page in zip(results1_raw, new_pages)
-                }
-                page = result1_to_page_mapping[
-                    (
-                        last_row[tx_id],
-                        last_row["tx_reference"] if is_eth_like(currency) else None,
-                    )
-                ]
-                self.logger.debug(
-                    f"early termination with {len(final_results)} results, page: {page}"
+        def fetch_candidates(cand_page, cand_fetch_size):
+            return asyncio.ensure_future(
+                self.list_address_txs_ordered(
+                    network=currency,
+                    node_type=node_type,
+                    id=first,
+                    tx_id_lower_bound=tx_id_lower_bound,
+                    tx_id_upper_bound=tx_id_upper_bound,
+                    is_outgoing=is_outgoing,
+                    include_assets=include_assets,
+                    ascending=ascending,
+                    page=cand_page,
+                    cols=candidate_cols,
+                    fetch_size=max(FETCH_SIZE_MIN, cand_fetch_size),
                 )
-                break
+            )
 
-            if all_edge_found:
-                # All edge txs found and they fit within one page: no more
-                # results exist, so there is no next page.
-                page = None
-                self.logger.debug(f"all {edge_tx_count} edge txs found; stopping scan")
-                break
+        prefetch = self.tconfig.links_candidate_prefetch_enabled
+        candidate_task = fetch_candidates(page, fetch_size)
+        # The finally block guarantees an in-flight prefetch never
+        # outlives this call, also when probing or verification raises.
+        try:
+            while len(final_results) < requested_pagesize:
+                results1_raw, new_pages, finished = await candidate_task
+                candidate_task = None
+                final_page1 = new_pages[-1] if new_pages and not finished else None
 
-            page = new_pages[-1] if new_pages else None
-            self.logger.debug(f"next page {page}")
-            if page is None:
-                break
+                # Pipeline: start fetching the next candidate page while this
+                # one is probed. Candidate pages are deterministic in
+                # (page token, batch size), so results are unchanged; if the
+                # loop terminates early the in-flight task is discarded below.
+                # A finished scan has no next page even when the last row still
+                # carries a token — same gate as final_page1.
+                next_page = new_pages[-1] if new_pages and not finished else None
+                next_fetch_size = fetch_size
+                if adaptive_cap and next_fetch_size < adaptive_cap:
+                    next_fetch_size = min(next_fetch_size * 2, adaptive_cap)
+                if prefetch and next_page is not None:
+                    candidate_task = fetch_candidates(next_page, next_fetch_size)
+
+                self.logger.debug(f"results1 {len(results1_raw)} {final_page1}")
+
+                if is_eth_like(currency):
+                    if self.tconfig.links_per_tx_asset_probe_enabled:
+                        # A link is one transfer seen from both sides, so the
+                        # second side's row has the candidate's own currency —
+                        # probe only that asset per tx instead of the batch's
+                        # asset union.
+                        first_tx_ids = [
+                            (row[tx_id], row["tx_reference"], row["currency"])
+                            for row in results1_raw
+                        ]
+                    else:
+                        first_tx_ids = [
+                            (row[tx_id], row["tx_reference"]) for row in results1_raw
+                        ]
+                else:
+                    first_tx_ids = [(row[tx_id], None) for row in results1_raw]
+
+                if token_currency is not None:
+                    # Token-filtered query: only the token's rows on the `second`
+                    # side are relevant. Fetching the native asset (or others) here
+                    # would (a) let non-token events leak into a token-filtered
+                    # result — e.g. the native contract-call trace when `neighbor`
+                    # is the token contract, which passes the address-only filter
+                    # below but is not a token transfer — and (b) multiply the
+                    # per-page fan-out against a possibly huge `second` partition.
+                    # It never drops a genuine token link: a real token transfer
+                    # id -> neighbor still produces a token row on the second side.
+                    assets = [token_currency.upper()]
+                else:
+                    assets = set([currency.upper()])
+                    if is_eth_like(currency):
+                        for row in results1_raw:
+                            assets.add(row["currency"])
+
+                    assets = list(assets)
+
+                results2, _, _ = await self.list_address_txs_ordered(
+                    network=currency,
+                    node_type=node_type,
+                    id=second,
+                    tx_id_lower_bound=None,
+                    tx_id_upper_bound=None,
+                    # fetch both directions by default, this is needed since for
+                    # some transactions the total flow is an inflow but it is an
+                    # outflow at the same time (UTXO address_transactions rows
+                    # carry only the net direction). If we would not fetch both
+                    # directions we would miss these transactions. eth-like may
+                    # narrow this to the only possible direction (see
+                    # second_is_outgoing above).
+                    is_outgoing=second_is_outgoing,
+                    include_assets=assets,
+                    ascending=ascending,
+                    tx_ids=first_tx_ids,  # limit second set by tx ids of first set
+                    page=None,
+                    fetch_size=len(first_tx_ids),
+                )
+                self.logger.debug(f"results2 {len(results2)}")
+
+                if is_eth_like(currency):
+                    results2 = await self.normalize_address_transactions(
+                        currency,
+                        results2,
+                        ignore_traces_not_found=self.tconfig.ignore_traces_not_found_in_list_txs,
+                    )
+                else:
+                    results1 = {row[tx_id]: row for row in results1_raw}
+                    tx_ids = [row[tx_id] for row in results2]
+                    txs = await self.list_txs_by_ids(currency, tx_ids)
+
+                    if len(results2) != len(txs):
+                        raise DBInconsistencyException(
+                            "result sets for txs intersection not equal"
+                        )
+
+                    # merge address_transactions and raw transaction sets
+                    for row, tx in zip(results2, txs):
+                        row[second_value] = row["value"]
+                        row[first_value] = results1[row[tx_id]]["value"]
+
+                        for k, v in tx.items():
+                            row[k] = v
+
+                    # results2 was indexed by `second`; assert each merged tx
+                    # actually has `second` on the side its is_outgoing claims.
+                    # Catches address_transactions index misalignments. Only
+                    # checked for ADDRESS queries.
+                    if node_type == NodeType.ADDRESS:
+                        for row in results2:
+                            self._verify_address_in_tx_btc(
+                                currency, second, row, row.get("is_outgoing")
+                            )
+
+                if is_eth_like(currency):
+                    # TODO probably this check is no longer necessary
+                    # since we filtered on tx_ref level already
+                    # in list_address_txs_ordered
+                    if node_type == NodeType.CLUSTER:
+                        neighbor = dst_node["root_address"]
+                        id = src_node["root_address"]
+
+                    # results2 was indexed by `second`; assert each returned row
+                    # actually has `second` on the side its is_outgoing claims.
+                    # Catches address_transactions index misalignments.
+                    second_address = neighbor if is_outgoing else id
+                    for row in results2:
+                        self._verify_address_in_tx_eth(currency, second_address, row)
+
+                    # Token/Trace transactions might not be between the requested
+                    # nodes so only keep the relevant ones
+                    before = len(results2)
+                    results2 = [
+                        tx
+                        for tx in results2
+                        if tx["to_address"] == neighbor and tx["from_address"] == id
+                    ]
+                    self.logger.debug(f"pruned {before - len(results2)}")
+                if not is_eth_like(currency):
+                    # Keep only rows where `id` is in the inputs and `neighbor` in
+                    # the outputs — RAW io membership, deliberately NOT the netted
+                    # sender/receiver pairing that relations are built from. The
+                    # per-(tx, address) netting hides real output receipt for
+                    # addresses appearing on both sides of a tx; that is considered
+                    # wrong semantics (see the netting desired-semantics test in
+                    # tests/regressions) and links must not propagate it. Until the
+                    # transform's netting is fixed, /links can therefore list txs
+                    # for pairs that have no netted relation edge — which is also
+                    # why the relations pre-check above is eth-only.
+                    # Filter the FRESH page (results2) BEFORE extending —
+                    # re-filtering the whole accumulated `final_results` on every
+                    # while-loop iteration would re-run the per-address cluster-id
+                    # lookups for already-accepted rows (10^5+ serial queries per
+                    # request in the cluster case).
+                    if node_type == NodeType.ADDRESS:
+
+                        def has_address_in_ios(address, ios):
+                            if ios is None and address == "coinbase":
+                                return True
+                            if ios is None:
+                                return False
+                            addresses_io = sum([x.address or [] for x in ios], [])
+                            return address in addresses_io
+
+                        results2 = [
+                            r
+                            for r in results2
+                            if has_address_in_ios(id, r["inputs"])
+                            and has_address_in_ios(neighbor, r["outputs"])
+                        ]
+                    else:
+
+                        def get_address_from_io(x):
+                            address_wrapped = x.address
+                            if address_wrapped is None:
+                                return None
+                            assert len(address_wrapped) == 1
+                            return address_wrapped[0]
+
+                        async def cluster_ids_of(ios):
+                            addresses_io = [get_address_from_io(x) for x in ios]
+                            addresses_io = [a for a in addresses_io if a is not None]
+                            # resolve the io addresses' cluster ids concurrently
+                            return set(
+                                await asyncio.gather(
+                                    *[
+                                        self.get_address_entity_id(currency, a)
+                                        for a in addresses_io
+                                    ]
+                                )
+                            )
+
+                        async def cluster_row_matches(r):
+                            in_ids, out_ids = await asyncio.gather(
+                                cluster_ids_of(r["inputs"]),
+                                cluster_ids_of(r["outputs"]),
+                            )
+                            return id in in_ids and neighbor in out_ids
+
+                        keep = await asyncio.gather(
+                            *[cluster_row_matches(r) for r in results2]
+                        )
+                        results2 = [r for r, k in zip(results2, keep) if k]
+
+                final_results.extend(results2)
+
+                # Once every edge tx has been found there is nothing left to page
+                # for. Only eth-like queries carry a non-None edge_tx_count (the
+                # pre-check above is eth-only): there no_transactions counts
+                # transfer rows (native txs plus token transfers), which is >=
+                # their distinct tx ids, so the early stop can only over-scan,
+                # never truncate. For UTXO the raw links are not bounded by the
+                # netted relation row, so edge_tx_count stays None and the scan
+                # always walks the full overlap window.
+                all_edge_found = (
+                    edge_tx_count is not None
+                    and len({row[tx_id] for row in final_results}) >= edge_tx_count
+                )
+
+                # Check if we have enough results after all filtering
+                if len(final_results) >= requested_pagesize:
+                    # Truncate to exact requested size and get page token from last result
+                    final_results = final_results[:requested_pagesize]
+                    # now we know which is the last item from results1 that made it into final_results
+                    # so we can use that to get the page token from the last result
+                    last_row = final_results[-1]
+                    result1_to_page_mapping = {
+                        (
+                            row[tx_id],
+                            row["tx_reference"] if is_eth_like(currency) else None,
+                        ): page
+                        for row, page in zip(results1_raw, new_pages)
+                    }
+                    page = result1_to_page_mapping[
+                        (
+                            last_row[tx_id],
+                            last_row["tx_reference"] if is_eth_like(currency) else None,
+                        )
+                    ]
+                    self.logger.debug(
+                        f"early termination with {len(final_results)} results, page: {page}"
+                    )
+                    break
+
+                if all_edge_found:
+                    # All edge txs found and they fit within one page: no more
+                    # results exist, so there is no next page.
+                    page = None
+                    self.logger.debug(
+                        f"all {edge_tx_count} edge txs found; stopping scan"
+                    )
+                    break
+
+                page = next_page
+                self.logger.debug(f"next page {page}")
+                if page is None:
+                    break
+
+                # The page is not filled yet: the links are sparse in the first
+                # side's history, so widen the next candidate batch. Batch size
+                # only changes round-trip count, never results or page tokens.
+                fetch_size = next_fetch_size
+                if candidate_task is None:
+                    candidate_task = fetch_candidates(page, fetch_size)
+
+        finally:
+            if candidate_task is not None:
+                candidate_task.cancel()
+                await asyncio.gather(candidate_task, return_exceptions=True)
 
         self.logger.debug(f"final_results len {len(final_results)}")
 
@@ -3985,6 +4180,22 @@ class Cassandra:
         pages_results = []  # each result gets a page so we can truncate and still know the page
         finished = False
 
+        # tx_ids entries may be (tx_id, tx_ref) or (tx_id, tx_ref, asset); a
+        # per-tx asset narrows the probe to that asset instead of the whole
+        # include_assets fan-out.
+        tx_items = (
+            [(t[0], t[1], t[2] if len(t) > 2 else None) for t in tx_ids]
+            if tx_ids is not None
+            else None
+        )
+
+        # Concurrent secondary-group scan window (eth-like history walks
+        # only): starts at 1, doubles after every round that fails to fill
+        # its batch, so sparse histories cross empty block buckets in
+        # logarithmically many round trips.
+        group_window = 1
+        group_window_cap = max(1, self.tconfig.txs_secondary_group_scan_window)
+
         # Track the current secondary_id for eth-like networks
         current_secondary_id = (
             item_id_secondary_group[0]
@@ -4033,9 +4244,20 @@ class Cassandra:
                 with_tx_id=(tx_ids is not None),
             )
 
-            # Use current_secondary_id for eth-like networks without tx_ids
+            # Use a window of consecutive secondary ids for eth-like
+            # networks without tx_ids, starting at current_secondary_id and
+            # extending in scan direction (window size 1 = previous behavior)
             if is_eth_like(network) and tx_ids is None:
-                current_item_id_secondary_group = [current_secondary_id]
+                if ascending:
+                    window_end = min(current_secondary_id + group_window - 1, sec_max)
+                    current_item_id_secondary_group = list(
+                        range(current_secondary_id, window_end + 1)
+                    )
+                else:
+                    window_end = max(current_secondary_id - group_window + 1, sec_min)
+                    current_item_id_secondary_group = list(
+                        range(current_secondary_id, window_end - 1, -1)
+                    )
             else:
                 current_item_id_secondary_group = item_id_secondary_group
 
@@ -4057,28 +4279,32 @@ class Cassandra:
                         "tx_id": tx_id,
                         "tx_ref": tx_ref,
                     }
-                    for is_outgoing, asset, s_d_group, (tx_id, tx_ref) in product(
+                    for is_outgoing, s_d_group, (tx_id, tx_ref, tx_asset) in product(
                         directions,
-                        include_assets,
                         current_item_id_secondary_group,
-                        [(0, None)] if tx_ids is None else tx_ids,
+                        [(0, None, None)] if tx_items is None else tx_items,
+                    )
+                    for asset in (
+                        [tx_asset] if tx_asset is not None else include_assets
                     )
                 ]
             else:
-                if tx_ids:
+                if tx_items:
                     secondary_ids_with_tx_ids = [
                         (
                             secondary_id_from_tx_id(tx_id),
                             tx_id,
                             tx_ref,
+                            tx_asset,
                         )
-                        for (tx_id, tx_ref) in tx_ids
+                        for (tx_id, tx_ref, tx_asset) in tx_items
                     ]
                 else:
                     secondary_ids_with_tx_ids = [
                         (
                             secondary_id,
                             0,
+                            None,
                             None,
                         )
                         for secondary_id in current_item_id_secondary_group
@@ -4095,18 +4321,34 @@ class Cassandra:
                         "tx_id": tx_id,
                         "tx_ref": tx_ref,
                     }
-                    for is_outgoing, asset, (s_d_group, tx_id, tx_ref) in product(
+                    for is_outgoing, (
+                        s_d_group,
+                        tx_id,
+                        tx_ref,
+                        tx_asset,
+                    ) in product(
                         directions,
-                        include_assets,
                         secondary_ids_with_tx_ids,
+                    )
+                    for asset in (
+                        [tx_asset] if tx_asset is not None else include_assets
                     )
                 ]
 
             def tx_ref_match(a, b):
                 return a[0] == b[0] and a[1] == b[1]
 
+            # Bound the number of in-flight statements: the tx_ids probe fans
+            # out per (direction, asset, tx) and large candidate batches would
+            # otherwise fire tens of thousands of concurrent point reads,
+            # starving other requests on the shared session.
+            probe_sem = asyncio.Semaphore(ADDRESS_TXS_SUBQUERY_CONCURRENCY)
+
             async def fetch(stmt, params):
-                res = await self.execute_async(network, "transformed", cql_stmt, params)
+                async with probe_sem:
+                    res = await self.execute_async(
+                        network, "transformed", cql_stmt, params
+                    )
                 if params["tx_ref"] is None:
                     return res
 
@@ -4117,13 +4359,104 @@ class Cassandra:
                 ]
                 return res
 
-            aws = [fetch(cql_stmt, p) for p in params_chunks]
-
             tx_id_keys = "transaction_id" if is_eth_like(network) else "tx_id"
+
+            probe_batch = (
+                self.tconfig.links_probe_in_batch_size if tx_items is not None else 0
+            )
+            # Only batch when the round is too large to fly fully
+            # concurrently as point reads: n parallel point reads spread
+            # over all replicas and cost ~one round trip, while an IN(n)
+            # runs its n slices serially on one coordinator. Batching wins
+            # only once the statement count exceeds the concurrency window
+            # (client-side per-query overhead then dominates).
+            if (
+                probe_batch
+                and probe_batch > 1
+                and len(params_chunks) > self.tconfig.links_probe_in_min_statements
+            ):
+                # Transport-level batching of the candidate probes: tx ids
+                # sharing a (direction, partition, asset) become one
+                # single-partition "transaction_id IN (...)" named-slice
+                # query. The rows are redistributed into the exact
+                # per-candidate sub-result lists (params_chunks order,
+                # per-candidate tx_ref filter) that per-candidate point
+                # probes would produce, so the merge below is unaffected.
+                in_stmt = build_select_address_txs_statement(
+                    network,
+                    node_type,
+                    cols,
+                    with_lower_bound=has_lower_bound,
+                    with_upper_bound=has_upper_bound,
+                    limit=None,
+                    ascending=ascending,
+                    with_tx_id=True,
+                    tx_id_in=True,
+                )
+
+                probe_groups = {}
+                for p in params_chunks:
+                    key = (p["is_outgoing"], p["s_d_group"], p["currency"])
+                    # dict as ordered set: the same tx can be a candidate
+                    # twice (distinct tx_references) but is fetched once
+                    probe_groups.setdefault(key, {})[p["tx_id"]] = None
+
+                async def fetch_batch(key, tx_id_chunk):
+                    group_is_outgoing, s_d_group, asset = key
+                    params = {
+                        "id": item_id,
+                        "g_id": item_id_group,
+                        "s_d_group": s_d_group,
+                        "currency": asset,
+                        "is_outgoing": group_is_outgoing,
+                        "tx_ids": ValueSequence(tx_id_chunk),
+                    }
+                    async with probe_sem:
+                        res = await self.execute_async(
+                            network, "transformed", in_stmt, params
+                        )
+                    return key, res.current_rows
+
+                batch_aws = [
+                    fetch_batch(key, tx_id_list[i : i + probe_batch])
+                    for key, txs in probe_groups.items()
+                    for tx_id_list in [list(txs)]
+                    for i in range(0, len(tx_id_list), probe_batch)
+                ]
+
+                rows_by_candidate = {}
+                for key, rows in await asyncio.gather(*batch_aws):
+                    for r in rows:
+                        rows_by_candidate.setdefault(key + (r[tx_id_keys],), []).append(
+                            r
+                        )
+
+                sub_rows = []
+                for p in params_chunks:
+                    rows = rows_by_candidate.get(
+                        (
+                            p["is_outgoing"],
+                            p["s_d_group"],
+                            p["currency"],
+                            p["tx_id"],
+                        ),
+                        [],
+                    )
+                    if p["tx_ref"] is not None:
+                        rows = [
+                            r
+                            for r in rows
+                            if tx_ref_match(r["tx_reference"], p["tx_ref"])
+                        ]
+                    sub_rows.append(rows)
+            else:
+                aws = [fetch(cql_stmt, p) for p in params_chunks]
+                sub_rows = [r.current_rows for r in await asyncio.gather(*aws)]
+
             # collect and merge results
             more_results, more_pages, more_offsets = merge_address_txs_subquery_results(
                 self.logger,
-                [r.current_rows for r in await asyncio.gather(*aws)],
+                sub_rows,
                 ascending,
                 fs_it,
                 tx_id_keys,
@@ -4175,8 +4508,10 @@ class Cassandra:
                     return next_secondary_id
 
             if is_eth_like(network):
+                # a row's secondary group is derived from its own tx id, so
+                # tokens stay correct when a round spans multiple groups
                 more_pages_results = [
-                    f"{page}:{current_secondary_id}:{offset}"
+                    f"{page}:{secondary_id_from_tx_id(page)}:{offset}"
                     if page is not None
                     else None
                     for page, offset in zip(more_pages, more_offsets)
@@ -4189,11 +4524,22 @@ class Cassandra:
 
             pages_results.extend(more_pages_results)
 
+            if is_eth_like(network):
+                # widen the scan window after a round that could not fill
+                # its batch (sparse region), reset it in dense regions
+                if len(more_results) < fs_it:
+                    group_window = min(group_window * 2, group_window_cap)
+                else:
+                    group_window = 1
+
             if page is None:
-                # Current secondary_id_group is exhausted
+                # The whole fetched secondary group window is exhausted
                 if is_eth_like(network):
                     current_secondary_id = get_next_secondary_id(
-                        current_secondary_id, ascending, sec_min, sec_max
+                        current_item_id_secondary_group[-1],
+                        ascending,
+                        sec_min,
+                        sec_max,
                     )
                     if current_secondary_id is None:
                         finished = True
@@ -4204,6 +4550,11 @@ class Cassandra:
                     # No more data expected for non-eth networks
                     finished = True
                     break
+            elif is_eth_like(network):
+                # resume inside the group that produced the border row; rows
+                # past it (including ones in later window groups) are
+                # refetched next round bounded by the page tx id
+                current_secondary_id = secondary_id_from_tx_id(page)
 
         return results, pages_results, finished
 
