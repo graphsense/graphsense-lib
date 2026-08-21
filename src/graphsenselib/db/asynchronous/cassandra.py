@@ -1580,9 +1580,17 @@ class Cassandra:
         )
         paging_state = paging_states[-1] if paging_states and not finished else None
 
-        txs = await self.list_txs_by_ids(
-            currency, [row["tx_id"] for row in results], filter_empty=False
-        )
+        tx_ids = [row["tx_id"] for row in results]
+        if self.tconfig.strict_data_validation:
+            # _verify_address_in_tx_btc needs inputs/outputs, so keep the full read.
+            txs = await self.list_txs_by_ids(currency, tx_ids, filter_empty=False)
+        else:
+            summaries = await self._get_tx_summaries_by_ids(
+                currency,
+                tx_ids,
+                columns="tx_id, tx_hash, block_id, timestamp, coinbase",
+            )
+            txs = [summaries.get(tx_id) for tx_id in tx_ids]
 
         rows = []
         for row, tx in zip(results, txs):
@@ -3773,12 +3781,15 @@ class Cassandra:
         statement = "SELECT * FROM transaction WHERE tx_id_group = %s and tx_id = %s"
         return (await self.execute_async(currency, "raw", statement, params)).one()
 
-    async def _get_tx_summaries_by_ids(self, currency, tx_ids):
+    async def _get_tx_summaries_by_ids(
+        self, currency, tx_ids, columns="tx_id, tx_hash, block_id, timestamp"
+    ):
         # Slim counterpart of get_tx_by_id for finish_address's first/last tx
         # lookups: UTXO transaction rows carry full inputs/outputs (hundreds
         # of entries for busy addresses) but only tx_hash/timestamp/block_id
         # are used to build a TxSummary, so project those columns and batch
         # same-partition ids into one IN query instead of one SELECT * per id.
+        # tx_id is always included below since callers key the result dict by it.
         ids = {id for id in tx_ids if id is not None}
         if not ids:
             return {}
@@ -3786,8 +3797,7 @@ class Cassandra:
         for id in ids:
             groups.setdefault(self.get_tx_id_group(currency, id), []).append(id)
         statement = (
-            "SELECT tx_id, tx_hash, block_id, timestamp FROM transaction "
-            "WHERE tx_id_group = %s AND tx_id in %s"
+            f"SELECT {columns} FROM transaction WHERE tx_id_group = %s AND tx_id in %s"
         )
 
         async def fetch_chunk(group, chunk):
