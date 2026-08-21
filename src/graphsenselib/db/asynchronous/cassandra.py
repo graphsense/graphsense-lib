@@ -3741,28 +3741,82 @@ class Cassandra:
         statement = "SELECT * FROM transaction WHERE tx_id_group = %s and tx_id = %s"
         return (await self.execute_async(currency, "raw", statement, params)).one()
 
+    async def _get_tx_summaries_by_ids(self, currency, tx_ids):
+        # Slim counterpart of get_tx_by_id for finish_address's first/last tx
+        # lookups: UTXO transaction rows carry full inputs/outputs (hundreds
+        # of entries for busy addresses) but only tx_hash/timestamp/block_id
+        # are used to build a TxSummary, so project those columns and batch
+        # same-partition ids into one IN query instead of one SELECT * per id.
+        ids = {id for id in tx_ids if id is not None}
+        if not ids:
+            return {}
+        groups = {}
+        for id in ids:
+            groups.setdefault(self.get_tx_id_group(currency, id), []).append(id)
+        statement = (
+            "SELECT tx_id, tx_hash, block_id, timestamp FROM transaction "
+            "WHERE tx_id_group = %s AND tx_id in %s"
+        )
+
+        async def fetch_chunk(group, chunk):
+            result = await self.execute_async(
+                currency, "raw", statement, [group, ValueSequence(chunk)]
+            )
+            return result.current_rows
+
+        aws = [
+            fetch_chunk(group, group_ids[i : i + 200])
+            for group, group_ids in groups.items()
+            for i in range(0, len(group_ids), 200)
+        ]
+        rows = [row for chunk_rows in await asyncio.gather(*aws) for row in chunk_rows]
+        return {row["tx_id"]: row for row in rows}
+
     async def finish_entities(self, currency, rows, with_txs=True):
-        aws = [self.finish_entity(currency, row, with_txs=with_txs) for row in rows]
+        tx_summaries = await self._prefetch_tx_summaries(currency, rows, with_txs)
+        aws = [
+            self.finish_entity(
+                currency, row, with_txs=with_txs, tx_summaries=tx_summaries
+            )
+            for row in rows
+        ]
         return await asyncio.gather(*aws)
 
     @eth
-    async def finish_entity(self, currency, row, with_txs=True):
+    async def finish_entity(self, currency, row, with_txs=True, tx_summaries=None):
         a = await self.get_addresses_by_ids(
             currency, [row["cluster_id"]], address_only=True
         )
         row["root_address"] = a[0]["address"]
-        return await self.finish_address(currency, row, with_txs)
+        return await self.finish_address(
+            currency, row, with_txs, tx_summaries=tx_summaries
+        )
 
-    async def finish_entity_eth(self, currency, row, with_txs=True):
+    async def finish_entity_eth(self, currency, row, with_txs=True, tx_summaries=None):
         row["root_address"] = row["address"]
         return await self.finish_address(currency, row, with_txs)
 
     async def finish_addresses(self, currency, rows, with_txs=True):
-        aws = [self.finish_address(currency, row, with_txs=with_txs) for row in rows]
+        tx_summaries = await self._prefetch_tx_summaries(currency, rows, with_txs)
+        aws = [
+            self.finish_address(
+                currency, row, with_txs=with_txs, tx_summaries=tx_summaries
+            )
+            for row in rows
+        ]
         return await asyncio.gather(*aws)
 
+    async def _prefetch_tx_summaries(self, currency, rows, with_txs):
+        # finish_address's eth path (finish_address_eth) uses a different
+        # two-hop projected read and ignores this prefetch, so only collect
+        # it for the UTXO path.
+        if not with_txs or is_eth_like(currency):
+            return None
+        tx_ids = [id for row in rows for id in (row["first_tx_id"], row["last_tx_id"])]
+        return await self._get_tx_summaries_by_ids(currency, tx_ids)
+
     @eth
-    async def finish_address(self, currency, row, with_txs=True):
+    async def finish_address(self, currency, row, with_txs=True, tx_summaries=None):
         # Backstop for stats-pending fresh cluster rows that slipped past
         # synthesis: zero-fill instead of 500ing on values._fields.
         if row["total_received"] is None:
@@ -3777,10 +3831,17 @@ class Cassandra:
             return row
 
         balance_task = self.add_balance(currency, row)
-        tx_tasks = [
-            self.get_tx_by_id(currency, id)
-            for id in [row["first_tx_id"], row["last_tx_id"]]
-        ]
+
+        async def _tx_summary(id):
+            # When the caller prefetched summaries (finish_addresses /
+            # finish_entities), use those instead of a per-tx point read.
+            # An absent key means the tx is genuinely missing, same as
+            # get_tx_by_id returning no row.
+            if tx_summaries is not None:
+                return tx_summaries.get(id)
+            return await self.get_tx_by_id(currency, id)
+
+        tx_tasks = [_tx_summary(id) for id in [row["first_tx_id"], row["last_tx_id"]]]
 
         has_address = "address" in row
         if has_address:
@@ -3809,7 +3870,7 @@ class Cassandra:
 
         return row
 
-    async def finish_address_eth(self, currency, row, with_txs=True):
+    async def finish_address_eth(self, currency, row, with_txs=True, tx_summaries=None):
         row["cluster_id"] = row["address_id"]
         row["total_received"] = self.markup_currency(currency, row["total_received"])
         row["total_spent"] = self.markup_currency(currency, row["total_spent"])
