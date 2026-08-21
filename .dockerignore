@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 dist/
 *.egg-info/
+# The Scala pipeline is built with sbt and shipped as release jars, never
+# baked into these images; its test fixtures alone are ~65 MB of build
+# context that would be uploaded to the daemon on every build.
+spark/

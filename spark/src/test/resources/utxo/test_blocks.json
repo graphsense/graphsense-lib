@@ -1,0 +1,4 @@
+{"blockIdGroup": 0, "blockId": 1, "blockHash": "00000000000000000a4d72c6f0c714e8b0f4e847a9599110acc133cec97900d4", "noTransactions": 1, "timestamp": 1230948000}
+{"blockIdGroup": 0, "blockId": 2, "blockHash": "0000000000000000000fc3ab40914d4e72ff42d7f9730647cee43d2178607a31", "noTransactions": 2, "timestamp": 1231466400}
+{"blockIdGroup": 1, "blockId": 3, "blockHash": "000000005c7ef94cf3eb3526aef2c9ec1352c33e7e869056cdffa3711d9b3eb5", "noTransactions": 3, "timestamp": 1231552800}
+{"blockIdGroup": 1, "blockId": 4, "blockHash": "00000000000000469658b3aab3f35fce54f24844b8ae5fd696033d858eff7df2", "noTransactions": 4, "timestamp": 1231639200}

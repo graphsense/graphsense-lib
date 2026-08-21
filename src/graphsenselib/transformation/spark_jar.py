@@ -10,6 +10,7 @@ import logging
 import os
 import subprocess
 from typing import Dict, List, Optional, Tuple
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
@@ -28,13 +29,33 @@ _SIDECAR_MODULE_FLAGS = (
 )
 
 
+# Tag prefix of the Spark release track inside the graphsense-lib monorepo.
+# The repo carries several release tracks (library ``vX.Y.Z``, web API
+# ``webapi-v*``, Rust wheels ``gs-clustering-v*``), so Spark jars are published
+# under their own prefix. The archived standalone graphsense-spark repo had a
+# single track and used bare ``vX.Y.Z`` tags — both shapes must keep resolving,
+# because production configs pin jar versions from either.
+SPARK_TAG_PREFIX = "spark-"
+
+
+def strip_tag_prefix(version: str) -> str:
+    """Version number of a release tag, without track prefix or leading ``v``.
+
+    ``spark-v26.08.0`` and ``v26.08.0`` both yield ``26.08.0``.
+    """
+    if version.startswith(SPARK_TAG_PREFIX):
+        version = version[len(SPARK_TAG_PREFIX) :]
+    return version.lstrip("v")
+
+
 def asset_name(artifact: str, version: str) -> str:
     """Release asset filename for an artifact + version.
 
-    The release tag keeps a leading ``v`` but the jar filename does not, e.g.
-    tag ``v26.06.0`` -> ``graphsense-spark-assembly-26.06.0.jar``.
+    The release tag keeps its track prefix and leading ``v`` but the jar
+    filename does not, e.g. tag ``spark-v26.08.0`` (or the legacy
+    ``v26.06.0``) -> ``graphsense-spark-assembly-26.08.0.jar``.
     """
-    v = version.lstrip("v")
+    v = strip_tag_prefix(version)
     if artifact == "fat":
         return f"graphsense-spark-assembly-{v}.jar"
     if artifact == "slim":
@@ -42,24 +63,50 @@ def asset_name(artifact: str, version: str) -> str:
     raise ValueError(f"Unknown artifact '{artifact}' (expected 'fat' or 'slim')")
 
 
-def resolve_latest_release(repo: str) -> str:
-    """Resolve the latest stable release tag for ``repo`` via the GitHub API.
+def resolve_latest_release(repo: str, tag_prefix: Optional[str] = None) -> str:
+    """Resolve the latest stable Spark release tag for ``repo``.
 
-    Uses the token-free ``/releases/latest`` endpoint, which GitHub defines as
-    the most recent non-draft, non-prerelease release — i.e. latest *stable*.
-    Returns the tag (e.g. ``v26.06.0``).
+    Without ``tag_prefix`` this uses the token-free ``/releases/latest``
+    endpoint, which GitHub defines as the most recent non-draft, non-prerelease
+    release — correct for a repository whose releases are all Spark jars (the
+    archived standalone graphsense-spark).
+
+    In the monorepo that endpoint is wrong: it reports the newest release of
+    ANY track, so a Python-only library release would resolve to a tag that
+    carries no jar, and the download would 404. With a ``tag_prefix`` the
+    release list is scanned instead and the newest stable release whose tag
+    starts with that prefix wins.
     """
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    logger.info(f"Resolving latest stable graphsense-spark release from {url}")
+    if not tag_prefix:
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+        logger.info(f"Resolving latest stable graphsense-spark release from {url}")
+        req = Request(url, headers={"Accept": "application/vnd.github+json"})
+        with urlopen(req, timeout=30) as resp:  # noqa: S310
+            data = json.load(resp)
+        tag = data.get("tag_name")
+        if not tag:
+            raise ValueError(
+                f"GitHub API returned no tag_name for the latest release of {repo}"
+            )
+        return tag
+
+    # Releases come back newest-first, so the first stable match wins.
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=100"
+    logger.info(f"Resolving latest stable '{tag_prefix}' release of {repo} from {url}")
     req = Request(url, headers={"Accept": "application/vnd.github+json"})
     with urlopen(req, timeout=30) as resp:  # noqa: S310
-        data = json.load(resp)
-    tag = data.get("tag_name")
-    if not tag:
-        raise ValueError(
-            f"GitHub API returned no tag_name for the latest release of {repo}"
-        )
-    return tag
+        releases = json.load(resp)
+    for release in releases:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        tag = release.get("tag_name") or ""
+        if tag.startswith(tag_prefix):
+            return tag
+    raise ValueError(
+        f"No stable release with tag prefix '{tag_prefix}' found in {repo}. "
+        "Pin an explicit jar version in full_transform_args.version or pass "
+        "--version."
+    )
 
 
 def release_jar_url(repo: str, version: str, artifact: str) -> str:
@@ -67,6 +114,60 @@ def release_jar_url(repo: str, version: str, artifact: str) -> str:
     return (
         f"https://github.com/{repo}/releases/download/"
         f"{version}/{asset_name(artifact, version)}"
+    )
+
+
+# Asset filename prefixes per artifact, used to recognise a jar in a release
+# whose filename does not follow the tag (see resolve_release_asset).
+_ASSET_PREFIXES = {
+    "fat": "graphsense-spark-assembly-",
+    "slim": "graphsense-spark_2.12-",
+}
+
+
+def resolve_release_asset(repo: str, version: str, artifact: str) -> Tuple[str, str]:
+    """Find a release's jar asset through the GitHub API: (url, filename).
+
+    ``release_jar_url`` builds a download URL out of the tag, which assumes the
+    asset is named after it. That holds for jars this project releases, but not
+    for a jar carried over from an older release, renamed, or built under a
+    different version scheme — and when the assumption breaks, the download
+    fails with a bare 404 that says nothing about why. Asking the API which
+    assets a release actually has turns that into either a working URL or an
+    error naming what is there.
+
+    Only used as a fallback: the API is rate limited to 60 requests/hour for
+    unauthenticated callers while release downloads are not limited at all, so
+    the constructed URL stays the normal path.
+    """
+    prefix = _ASSET_PREFIXES.get(artifact)
+    if prefix is None:
+        raise ValueError(f"Unknown artifact '{artifact}' (expected 'fat' or 'slim')")
+
+    url = f"https://api.github.com/repos/{repo}/releases/tags/{version}"
+    logger.info(f"Looking up release assets of {version} via {url}")
+    req = Request(url, headers={"Accept": "application/vnd.github+json"})
+    try:
+        with urlopen(req, timeout=30) as resp:  # noqa: S310
+            release = json.load(resp)
+    except HTTPError as e:
+        if e.code == 404:
+            raise ValueError(
+                f"No release tagged '{version}' in {repo}. Check "
+                "full_transform_args.version (or --version); for jars released "
+                "before the monorepo move the repo is graphsense/graphsense-spark."
+            ) from e
+        raise
+
+    assets = release.get("assets") or []
+    for asset in assets:
+        name = asset.get("name") or ""
+        if name.startswith(prefix) and name.endswith(".jar"):
+            return asset["browser_download_url"], name
+    raise ValueError(
+        f"Release '{version}' in {repo} has no {artifact} jar "
+        f"(no asset named {prefix}*.jar). Assets present: "
+        f"{[a.get('name') for a in assets] or 'none'}."
     )
 
 
@@ -86,6 +187,24 @@ def fetch_release_jar(repo: str, version: str, artifact: str, cache_dir: str) ->
         return dest
 
     url = release_jar_url(repo, version, artifact)
+    try:
+        return _download_jar(url, dest)
+    except HTTPError as e:
+        if e.code != 404:
+            raise
+        # The asset is not named after its tag. Ask the API what the release
+        # holds instead of failing on a URL we guessed.
+        logger.info(f"{url} not found, resolving the asset through the GitHub API")
+        url, name = resolve_release_asset(repo, version, artifact)
+        cached = os.path.join(jar_dir, name)
+        if os.path.exists(cached) and os.path.getsize(cached) > 0:
+            logger.info(f"Using cached graphsense-spark jar {cached}")
+            return cached
+        return _download_jar(url, cached)
+
+
+def _download_jar(url: str, dest: str) -> str:
+    """Stream ``url`` to ``dest`` via a temp file; return ``dest``."""
     logger.info(f"Downloading {url}")
     tmp = dest + ".part"
     try:

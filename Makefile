@@ -3,6 +3,10 @@ PROJECT := graphsense-lib
 VENV := venv
 RELEASESEM := 'v2.15.4'
 WEBAPISEM := 'v2.15.1'
+# Spark pipeline release track (spark/, tag shape spark-vX.Y.Z). Kept apart
+# from the library track so a jar is only rebuilt and republished when the
+# Scala side actually changes — see VERSIONING.md.
+SPARKSEM := 'v26.08.0'
 
 
 -include .env
@@ -129,6 +133,42 @@ build-rust:
 test-rust:
 	cd rust/gs_clustering && cargo test
 
+# --- Spark pipeline (spark/, Scala + sbt) ---------------------------------
+# Needs a JDK (11 for tests, 17 to build release jars) and sbt on PATH.
+test-spark:
+	cd spark && sbt test
+
+format-spark:
+	cd spark && sbt scalafmt
+
+lint-spark:
+	cd spark && sbt compile && sbt scalafix
+
+# Fat jar, versioned exactly like the release workflow does it.
+build-spark-jar:
+	@version=$$(echo $(SPARKSEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	cd spark && GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v$$version sbt assembly
+
+# Mints the spark-vX.Y.Z tag; pushing it triggers .github/workflows/
+# spark_release.yml, which attaches the slim and fat jars to the release.
+tag-spark-version:
+	@set -e; \
+	git diff --exit-code; \
+	git diff --staged --exit-code; \
+	version=$$(echo $(SPARKSEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
+	makefile_version=$$(sed -n "s/^RELEASE := '\?v\?\([0-9.]*\)'\?/\1/p" spark/Makefile); \
+	if [ "$$version" != "$$makefile_version" ]; then \
+		echo "Version mismatch: SPARKSEM=$$version, spark/Makefile RELEASE=$$makefile_version"; \
+		exit 1; \
+	fi; \
+	tag=spark-v$$version; \
+	if git rev-parse "$$tag" >/dev/null 2>&1; then \
+		echo "Tag $$tag already exists (skipping)"; \
+	else \
+		git tag -a "$$tag" -m "Spark pipeline release $$tag"; \
+		echo "Created $$tag - push it with: git push origin $$tag"; \
+	fi
+
 build-docker:
 	docker build \
 		--build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GRAPHSENSE_LIB=$$(uv run python -m setuptools_scm) \
@@ -216,4 +256,4 @@ serve-docker:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build build-rust test-rust pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions mcp-validate-curation
+.PHONY: all test install lint format build build-rust test-rust test-spark format-spark lint-spark build-spark-jar tag-spark-version pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions mcp-validate-curation

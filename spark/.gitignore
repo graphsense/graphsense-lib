@@ -1,0 +1,11 @@
+# sbt
+target/
+.metals/
+.bloop/
+.ammonite/
+.bsp/
+metals.sbt
+.idea/*
+graphsense-spark.jar
+test_ref
+.vscode/

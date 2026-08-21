@@ -1511,7 +1511,7 @@ def run_full_transform(
     # 3. Jar + packages (fat is self-contained; slim needs the package list).
     version = version_override or fta.version_for(currency)
     if not version or version == "latest":
-        version = resolve_latest_release(fta.repo)
+        version = resolve_latest_release(fta.repo, fta.release_tag_prefix)
         logger.info(f"Using latest stable graphsense-spark release: {version}")
     artifact = artifact or fta.artifact
     packages = [] if artifact == "fat" else list(fta.packages)

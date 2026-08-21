@@ -460,8 +460,15 @@ class FullTransformArgs(BaseModel):
 
     # --- Scala (spark-submit) backend ---------------------------------------
     repo: str = "graphsense/graphsense-spark"
+    # Tag prefix of the jar release track in `repo`. Empty for the archived
+    # standalone graphsense-spark repo, whose releases are all Spark jars under
+    # bare vX.Y.Z tags. Set to "spark-" when pointing `repo` at the
+    # graphsense-lib monorepo: releases there span several tracks, so resolving
+    # "latest" without a prefix can return a Python-only release that carries
+    # no jar.
+    release_tag_prefix: str = ""
     # Release tag, e.g. "v26.06.0". Empty or "latest" resolves the latest stable
-    # (non-prerelease) release from the GitHub API at run time.
+    # (non-prerelease) release of that track from the GitHub API at run time.
     version: str = ""
     version_overrides: Dict[str, str] = Field(default_factory=dict)
     artifact: str = "fat"  # "fat" (assembly, self-contained) | "slim" (+packages)
