@@ -3273,9 +3273,13 @@ class Cassandra:
             if len(targets) == 0:
                 return None, None
 
-            query = basequery.replace("*", f"{that}_{node_type}_id")
+            # Single-partition IN query with the full column selection: this
+            # side of the relation (this_*_id) is fixed, so an IN clause on
+            # the clustering column that_*_id is one round trip against one
+            # partition — the previous id-only query plus one point read per
+            # matched id was two round trips for no narrower a scan.
+            query = basequery + f" AND {that}_{node_type}_id in %s"
             targets = ValueSequence(targets)
-            query += f" AND {that}_{node_type}_id in %s"
             params.append(targets)
         else:
             query = basequery
@@ -3291,16 +3295,6 @@ class Cassandra:
         )
         paging_state = results.paging_state
         results = results.current_rows
-        if has_targets:
-            params = []
-            query = basequery + f" AND {that}_{node_type}_id = %s"
-            for row in results:
-                p = base_parameters.copy()
-                p.append(row[f"{that}_{node_type}_id"])
-                params.append(p)
-            results = await self.concurrent_with_args(
-                currency, "transformed", query, params
-            )
 
         if orig_node_type == NodeType.CLUSTER and is_eth_like(currency):
             for neighbor in results:
