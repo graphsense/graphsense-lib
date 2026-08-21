@@ -2353,12 +2353,21 @@ class Cassandra:
         # complete link set (no next page and fewer rows than the requested
         # page), re-sorted into the requested order — so results and page
         # tokens are identical to the non-raced scan.
+        # The candidate side of the scan is the smaller directed history
+        # (see is_outgoing above); its tx count bounds how long the requested
+        # scan can possibly take. Small histories can never be pathologically
+        # slow, so they skip the race entirely (structural guard) — the hedge
+        # delay below is only a temporal guard and would still fire for every
+        # mid-size request whenever the whole cluster is slow, adding a
+        # second scan's load exactly when the cluster is struggling.
+        candidate_count = min(src_node["no_outgoing_txs"], dst_node["no_incoming_txs"])
         if (
             not _no_direction_race
             and self.tconfig.links_sparse_direction_race_enabled
             and page is None
             and edge_tx_count is not None
             and 0 < edge_tx_count < requested_pagesize
+            and candidate_count > self.tconfig.links_direction_race_min_candidates
         ):
             precheck = {
                 "src_node": src_node,

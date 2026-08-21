@@ -200,6 +200,20 @@ class CassandraConfig(BaseSettings):
             "probe concurrency window."
         ),
     )
+    links_direction_race_min_candidates: int = Field(
+        default=20000,
+        description=(
+            "The sparse-edge direction race only applies when the scanned "
+            "(smaller) side's directed tx count exceeds this bound. A small "
+            "candidate history is scanned in a handful of ramped batches and "
+            "can never be pathologically slow, so racing it buys nothing — "
+            "while without this guard a cluster-wide slow period would push "
+            "every mid-size request past the hedge delay and spawn a second "
+            "scan per request exactly when the cluster is already "
+            "struggling. 20k candidates is ~5-6 ramped rounds. 0 restores "
+            "purely hedge-gated racing."
+        ),
+    )
     links_direction_race_hedge_delay_ms: int = Field(
         default=1000,
         description=(
