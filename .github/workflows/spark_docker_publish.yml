@@ -73,7 +73,13 @@ jobs:
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: type=raw,value=${{ steps.ver.outputs.version }}
+          # Both tags are explicit. metadata-action's default `latest=auto`
+          # only adds `latest` when the ref is a git tag, which a manual
+          # dispatch (a branch ref) never is — that is how the first monorepo
+          # image shipped without one.
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' || github.ref_name == 'master' }}
 
       # spark/ is the build context: the Dockerfile ADDs src/, docker/,
       # build.sbt and friends by paths relative to that tree.
