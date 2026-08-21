@@ -63,6 +63,18 @@ def get_tagstore_max_concurrency() -> int:
     return _DEFAULT_TAGSTORE_MAX_CONCURRENCY
 
 
+def get_use_label_search_view() -> bool:
+    """Whether the /search label leg should read the label_search view.
+
+    Reads `use_label_search_view` from the registered TagStoreReaderConfig.
+    Falls back to False when no config has been activated (e.g. in CLI tools
+    or tests that don't go through REST startup).
+    """
+    if _active_config is not None:
+        return _active_config.use_label_search_view
+    return False
+
+
 class TagStoreReaderConfig(BaseSettings):
     """Configuration for TagStore database connection and settings."""
 
@@ -96,6 +108,17 @@ class TagStoreReaderConfig(BaseSettings):
     # Optional performance settings
     enable_prepared_statements_cache: bool = Field(
         default=False, description="Enable prepared statements cache"
+    )
+    use_label_search_view: bool = Field(
+        default=False,
+        description=(
+            "Serve the /search tag-label leg from the label_search "
+            "materialized view instead of scoring the full tag table. "
+            "Requires `graphsense-cli tagstore init` to have created the "
+            "view first; defaults to False so existing deployments don't "
+            "flip to a relation that doesn't exist yet until the migration "
+            "has run, at which point this can be set True in config."
+        ),
     )
 
     @field_validator("pool_size")

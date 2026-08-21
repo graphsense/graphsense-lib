@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload
 from sqlmodel import select, text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from graphsenselib.config.tagstore_config import get_use_label_search_view
 from graphsenselib.utils.constants import (
     FRESH_CLUSTER_ID_OFFSET,
     is_fresh_cluster_id,
@@ -33,6 +34,7 @@ from .models import (
     Concept,
     Confidence,
     Country,
+    LabelSearchView,
     Tag,
     TagConcept,
     TagCountByClusterView,
@@ -643,6 +645,24 @@ def _get_similar_tag_labels_stmt(query: str, limit: int, groups: List[str]):
         .group_by(Tag.label, "sim_score")
         .order_by(desc("sim_score"), Tag.label)
         .limit(limit)
+    )
+
+
+def _get_similar_tag_labels_view_stmt(query: str, limit: int, groups: List[str]):
+    # Same result as _get_similar_tag_labels_stmt, scored against the
+    # label_search view's distinct (label, acl_group) pairs instead of every
+    # matching tag row; .distinct() collapses the duplicates a label can
+    # still produce across acl_group.
+    return (
+        select(
+            LabelSearchView.label,
+            func.similarity(LabelSearchView.label, query).label("sim_score"),
+        )
+        .where(LabelSearchView.label.op("%")(query))
+        .where(LabelSearchView.acl_group.in_(groups))
+        .order_by(desc("sim_score"), LabelSearchView.label)
+        .limit(limit)
+        .distinct()
     )
 
 
@@ -1374,9 +1394,12 @@ class TagstoreDbAsync:
     async def search_tag_labels(
         self, label: str, limit: int, groups: List[str], session=None
     ) -> List[str]:
-        results = await session.exec(
-            _get_similar_tag_labels_stmt(label.strip(), limit, groups)
+        stmt = (
+            _get_similar_tag_labels_view_stmt
+            if get_use_label_search_view()
+            else _get_similar_tag_labels_stmt
         )
+        results = await session.exec(stmt(label.strip(), limit, groups))
         return [a for a, _ in results]
 
     @_inject_session

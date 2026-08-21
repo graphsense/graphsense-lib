@@ -12,6 +12,14 @@ from graphsenselib.tagpack.tagstore import (
 )
 from graphsenselib.tagpack.cli import insert_tagpack, DEFAULT_SCHEMA
 
+from sqlmodel import text
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from graphsenselib.config.tagstore_config import (
+    TagStoreReaderConfig,
+    get_active_tagstore_config,
+    set_active_tagstore_config,
+)
 from graphsenselib.tagstore.db.queries import UserReportedAddressTag
 from graphsenselib.tagstore.db import TagAlreadyExistsException
 from pathlib import Path
@@ -240,6 +248,35 @@ async def test_db_url(async_tagstore_db):
 
     addr = {t.identifier for t in tags}
     assert addr == {"0xdeadbeef"}
+
+
+@pytest.mark.asyncio
+async def test_label_search_view_matches_default_search(async_tagstore_db):
+    db = async_tagstore_db
+
+    # (a) insert_test_data's `tagstore refresh-views` run has created and
+    # populated the view.
+    async with AsyncSession(db.engine) as session:
+        relkind = (await session.exec(text("SELECT to_regclass('label_search')"))).one()
+    assert relkind is not None
+
+    # "sometag" is seeded (as a public tag) by several of the test tagpacks.
+    previous_config = get_active_tagstore_config()
+    set_active_tagstore_config(None)
+    default_result = await db.search_tag_labels("sometag", 10, ["public"])
+
+    set_active_tagstore_config(
+        TagStoreReaderConfig(
+            url="postgresql://unused/db",
+            use_label_search_view=True,
+        )
+    )
+    view_result = await db.search_tag_labels("sometag", 10, ["public"])
+    set_active_tagstore_config(previous_config)
+
+    # (b) byte-identical result with the flag on vs off.
+    assert default_result
+    assert default_result == view_result
 
 
 @pytest.mark.asyncio
