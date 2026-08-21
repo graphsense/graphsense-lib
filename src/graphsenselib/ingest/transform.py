@@ -6,6 +6,7 @@ from graphsenselib.ingest.account import (
     TX_HASH_PREFIX_LEN,
     enrich_transactions_with_type,
     enrich_txs_with_vrs,
+    eth_withdrawals_to_reward_traces,
     prepare_blocks_inplace_trx,
     prepare_fees_inplace,
     prepare_logs_inplace,
@@ -478,6 +479,11 @@ class TransformerETH(Transformer):
             "transaction": txs,
             "log": logs,
             "trace": traces,
+            # Cassandra-only synthetic reward traces for EIP-4895 validator
+            # withdrawals. DeltaSink has no writer for this key and skips it
+            # (the lake keeps withdrawals on the block table); CassandraSink
+            # redirects it into `trace`.
+            "trace_withdrawal": eth_withdrawals_to_reward_traces(blocks),
             "block": blocks,
         }
         return block_range_content

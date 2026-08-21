@@ -1,0 +1,16 @@
+{"address": "138cWsiAGpW9yqfjMVCCsFcnaiSHyoWMnJ", "value": 2500000, "blockId": 1, "txId": 1, "n": 0, "timestamp": 1230948000, "coinJoin": false, "addressPrefix": "138cW"}
+{"address": "1HxbaBMF2jXBVnagoHvaA6rLxmaYL8gb8T", "value": 2500000, "blockId": 2, "txId": 2, "n": 0, "timestamp": 1231466400, "coinJoin": false, "addressPrefix": "1Hxba"}
+{"address": "1FDCgJ8m2xDyVmYuankk13XReVC2Zvs5cz", "value": 1480000, "blockId": 2, "txId": 3, "n": 0, "timestamp": 1231466400, "coinJoin": false, "addressPrefix": "1FDCg"}
+{"address": "1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB", "value": 495000, "blockId": 2, "txId": 3, "n": 1, "timestamp": 1231466400, "coinJoin": false, "addressPrefix": "1FAkh"}
+{"address": "3Kawbc5pkpQPfmaoGCBiaw5t2uK6WBoVVe", "value": 495000, "blockId": 2, "txId": 3, "n": 2, "timestamp": 1231466400, "coinJoin": false, "addressPrefix": "3Kawb"}
+{"address": "12751KvnaTTPMJbHbbercdTV48kL81BjX8", "value": 2500000, "blockId": 3, "txId": 4, "n": 0, "timestamp": 1231552800, "coinJoin": false, "addressPrefix": "12751"}
+{"address": "1231PgW8KbpwKkvACPhp13fcL6fM5sKGvy", "value": 1325000, "blockId": 3, "txId": 5, "n": 1, "timestamp": 1231552800, "coinJoin": true, "addressPrefix": "1231P"}
+{"address": "1Fufjpf9RM2aQsGedhSpbSCGRHrmLMJ7yY", "value": 100000, "blockId": 3, "txId": 5, "n": 2, "timestamp": 1231552800, "coinJoin": true, "addressPrefix": "1Fufj"}
+{"address": "1iYSYHTpr2wMShaXTTNUzMohkpuV5p5ep", "value": 2350000, "blockId": 3, "txId": 5, "n": 3, "timestamp": 1231552800, "coinJoin": true, "addressPrefix": "1iYSY"}
+{"address": "3Fkx2TFdcHoab4xGgSjhAVh5YBPvbBWjNL", "value": 140000, "blockId": 3, "txId": 6, "n": 0, "timestamp": 1231552800, "coinJoin": false, "addressPrefix": "3Fkx2"}
+{"address": "1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB", "value": 345000, "blockId": 3, "txId": 6, "n": 1, "timestamp": 1231552800, "coinJoin": false, "addressPrefix": "1FAkh"}
+{"address": "1CjPR7Z5ZSyWk6WtXvSFgkptmpoi4UM9BC", "value": 2500000, "blockId": 4, "txId": 7, "n": 0, "timestamp": 1231639200, "coinJoin": false, "addressPrefix": "1CjPR"}
+{"address": "1AGMAXWELLayCyS1vkLXEszESHEcB3LWqa", "value": 4300000, "blockId": 4, "txId": 8, "n": 0, "timestamp": 1231639200, "coinJoin": false, "addressPrefix": "1AGMA"}
+{"address": "3JX79i9xSSmLEDZ8WrUFsy3WqrpvPoQmPv", "value": 149000, "blockId": 4, "txId": 8, "n": 1, "timestamp": 1231639200, "coinJoin": false, "addressPrefix": "3JX79"}
+{"address": "3Fkx2TFdcHoab4xGgSjhAVh5YBPvbBWjNL", "value": 340000, "blockId": 4, "txId": 9, "n": 0, "timestamp": 1231639200, "coinJoin": false, "addressPrefix": "3Fkx2"}
+{"address": "1Fm1rJe1CtGuTKxWjQ4MyU7GEwrgkHYn5k", "value": 1400000, "blockId": 4, "txId": 10, "n": 0, "timestamp": 1231639200, "coinJoin": false, "addressPrefix": "1Fm1r"}

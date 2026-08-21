@@ -1,0 +1,15 @@
+{"addressId": 0, "firstTxId": 1, "lastTxId": 7, "noIncomingTxs": 0, "totalReceived": {"value": 0, "fiatValues": [0, 0]}, "noOutgoingTxs": 4, "totalSpent": {"value": 10000000, "fiatValues": [38.75, 38.72]}}
+{"addressId": 1, "firstTxId": 1, "lastTxId": 3, "noIncomingTxs": 1, "totalReceived": {"value": 2500000, "fiatValues": [3.75, 3.74]}, "noOutgoingTxs": 1, "totalSpent": {"value": 2500000, "fiatValues": [7.5, 7.57]}}
+{"addressId": 2, "firstTxId": 2, "lastTxId": 5, "noIncomingTxs": 1, "totalReceived": {"value": 2500000, "fiatValues": [7.5, 7.57]}, "noOutgoingTxs": 1, "totalSpent": {"value": 2500000, "fiatValues": [15.0, 14.96]}}
+{"addressId": 3, "firstTxId": 3, "lastTxId": 5, "noIncomingTxs": 1, "totalReceived": {"value": 1480000, "fiatValues": [4.44, 4.48]}, "noOutgoingTxs": 1, "totalSpent": {"value": 1480000, "fiatValues": [8.88, 8.85]}}
+{"addressId": 4, "firstTxId": 3, "lastTxId": 9, "noIncomingTxs": 1, "totalReceived": {"value": 495000, "fiatValues": [1.49, 1.5]}, "noOutgoingTxs": 2, "totalSpent": {"value": 495000, "fiatValues": [2.63, 2.62]}}
+{"addressId": 5, "firstTxId": 3, "lastTxId": 8, "noIncomingTxs": 1, "totalReceived": {"value": 495000, "fiatValues": [1.49, 1.5]}, "noOutgoingTxs": 1, "totalSpent": {"value": 495000, "fiatValues": [2.48, 2.47]}}
+{"addressId": 6, "firstTxId": 4, "lastTxId": 8, "noIncomingTxs": 1, "totalReceived": {"value": 2500000, "fiatValues": [15.0, 14.96]}, "noOutgoingTxs": 1, "totalSpent": {"value": 2500000, "fiatValues": [12.5, 12.45]}}
+{"addressId": 7, "firstTxId": 5, "lastTxId": 10, "noIncomingTxs": 1, "totalReceived": {"value": 1325000, "fiatValues": [7.95, 7.93]}, "noOutgoingTxs": 1, "totalSpent": {"value": 1325000, "fiatValues": [6.62, 6.6]}}
+{"addressId": 8, "firstTxId": 5, "lastTxId": 10, "noIncomingTxs": 1, "totalReceived": {"value": 100000, "fiatValues": [0.6, 0.6]}, "noOutgoingTxs": 1, "totalSpent": {"value": 100000, "fiatValues": [0.5, 0.5]}}
+{"addressId": 9, "firstTxId": 5, "lastTxId": 5, "noIncomingTxs": 1, "totalReceived": {"value": 2350000, "fiatValues": [14.1, 14.06]}, "noOutgoingTxs": 0, "totalSpent": {"value": 0, "fiatValues": [0.0, 0.0]}}
+{"addressId": 10, "firstTxId": 6, "lastTxId": 9, "noIncomingTxs": 2, "totalReceived": {"value": 480000, "fiatValues": [2.54, 2.53]}, "noOutgoingTxs": 0, "totalSpent": {"value": 0, "fiatValues": [0.0, 0.0]}}
+{"addressId": 11, "firstTxId": 7, "lastTxId": 7, "noIncomingTxs": 1, "totalReceived": {"value": 2500000, "fiatValues": [12.5, 12.45]}, "noOutgoingTxs": 0, "totalSpent": {"value": 0, "fiatValues": [0.0, 0.0]}}
+{"addressId": 12, "firstTxId": 8, "lastTxId": 8, "noIncomingTxs": 1, "totalReceived": {"value": 4300000, "fiatValues": [21.5, 21.42]}, "noOutgoingTxs": 0, "totalSpent": {"value": 0, "fiatValues": [0.0, 0.0]}}
+{"addressId": 13, "firstTxId": 8, "lastTxId": 8, "noIncomingTxs": 1, "totalReceived": {"value": 149000, "fiatValues": [0.75, 0.74]}, "noOutgoingTxs": 0, "totalSpent": {"value": 0, "fiatValues": [0.0, 0.0]}}
+{"addressId": 14, "firstTxId": 10, "lastTxId": 10, "noIncomingTxs": 1, "totalReceived": {"value": 1400000, "fiatValues": [7.0, 6.97]}, "noOutgoingTxs": 0, "totalSpent": {"value": 0, "fiatValues": [0.0, 0.0]}}

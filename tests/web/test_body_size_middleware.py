@@ -1,4 +1,4 @@
-"""Request body size limit.
+"""Request body size limit (GHSA-372j-2wgf-23ch).
 
 FastAPI reads and parses the whole body before a route handler runs, so the
 bulk endpoint's item cap cannot prevent a huge body from being materialized as

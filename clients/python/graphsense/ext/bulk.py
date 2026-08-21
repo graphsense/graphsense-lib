@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional
 DEFAULT_BULK_THRESHOLD = 10
 
 # The server bounds how many items one bulk request may carry (10,000 by
-# default) and answers a longer list with a 400.
+# default; see GHSA-372j-2wgf-23ch) and answers a longer list with a 400.
 # Splitting below that bound keeps arbitrarily long key lists working from the
 # client's side. Deployments that lower the server cap need a matching
 # `chunk_size` on the call.

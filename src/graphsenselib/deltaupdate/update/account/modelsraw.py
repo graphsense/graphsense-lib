@@ -1,7 +1,12 @@
-from typing import Optional
+from typing import List, Optional
 
 import pandas as pd
 from pydantic import BaseModel
+
+from graphsenselib.ingest.account import (
+    GWEI_TO_WEI,
+    WITHDRAWAL_TRACE_INDEX_OFFSET,
+)
 
 
 class BlockchainAdapter:
@@ -117,6 +122,47 @@ class EthTrace(Trace):
 
 class EthTraceAdapter(BlockchainAdapter):
     datamodel = EthTrace
+
+
+def eth_withdrawal_traces_from_lake_blocks(blocks_df: pd.DataFrame) -> List[EthTrace]:
+    """Synthesize reward-style traces from EIP-4895 validator withdrawals.
+
+    The delta lake keeps withdrawals nested on its block table (address as
+    0x-hex string, amount as big-endian bytes denominated in Gwei). They are
+    modeled like pre-merge block rewards: tx_hash is None, so downstream they
+    flow through the reward_traces path (balance credit + address creation,
+    no address_transactions entry). Must produce traces identical to the
+    Cassandra rows written by
+    `graphsenselib.ingest.account.eth_withdrawals_to_reward_traces`.
+    """
+    traces: List[EthTrace] = []
+    if "withdrawals" not in blocks_df.columns:
+        return traces
+    for row in blocks_df[["block_id", "withdrawals"]].itertuples(index=False):
+        withdrawals = row.withdrawals
+        # NULL list values surface as None, float NaN, or pd.NA depending on
+        # the reader (duckdb fetchdf yields pd.NA); all mean "no withdrawals".
+        if (
+            withdrawals is None
+            or withdrawals is pd.NA
+            or (isinstance(withdrawals, float) and pd.isna(withdrawals))
+        ):
+            continue
+        for i, w in enumerate(withdrawals):
+            traces.append(
+                EthTrace(
+                    block_id=int(row.block_id),
+                    tx_hash=None,
+                    trace_index=WITHDRAWAL_TRACE_INDEX_OFFSET + i,
+                    from_address=None,
+                    to_address=bytes.fromhex(w["address"][2:]),
+                    value=int.from_bytes(bytes(w["amount"]), "big") * GWEI_TO_WEI,
+                    call_type=None,
+                    status=1,
+                    trace_type="reward",
+                )
+            )
+    return traces
 
 
 class AccountTransactionAdapter(BlockchainAdapter):

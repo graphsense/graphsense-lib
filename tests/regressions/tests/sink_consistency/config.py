@@ -44,6 +44,13 @@ SINK_CONSISTENCY_RANGES: dict[str, list[SinkConsistencyRange]] = {
     ],
     "eth": [
         SinkConsistencyRange("mid", 2_000_000, 2_000_010, "early PoW era"),
+        SinkConsistencyRange(
+            "post_shanghai",
+            17_034_870,
+            17_034_880,
+            "EIP-4895 withdrawals: synthetic reward traces are Cassandra-only "
+            "and must be identical between dual-sink and individual runs",
+        ),
     ],
     "trx": [
         SinkConsistencyRange("mid", 50_000_001, 50_000_010, "mid-chain era"),

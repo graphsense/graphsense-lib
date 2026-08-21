@@ -1,0 +1,90 @@
+Block 1 [0x00000000000000000a4d72c6f0c714e8b0f4e847a9599110acc133cec97900d4]
+  Tx 1 [0xab100004ba5dd70a143ca2359693c19fc879bb86b259870eed0de573f51d34e6]
+    Inputs:
+      |- (coinbase)
+    Outputs:
+      |- 138cWsiAGpW9yqfjMVCCsFcnaiSHyoWMnJ (2500000)
+      TotalOutput: 2500000
+Block 2 [0x0000000000000000000fc3ab40914d4e72ff42d7f9730647cee43d2178607a31]
+  Tx 2 [0xab200013f626405ddebf1a7b2e0af34253d09e80f9ef7f981ec1ec59d6200c1f]
+    Inputs:
+      |- (coinbase)
+    Outputs:
+      |- 1HxbaBMF2jXBVnagoHvaA6rLxmaYL8gb8T (2500000)
+      TotalOutput: 2500000
+  Tx 3 [0xab20101c4ca509cd1bbb31bef15b96cc5f987e6438f770e105e41d012057930a]
+    Inputs:
+      |- 138cWsiAGpW9yqfjMVCCsFcnaiSHyoWMnJ (2500000)
+      TotalInput:  2500000
+    Outputs:
+      |- 1FDCgJ8m2xDyVmYuankk13XReVC2Zvs5cz (1480000)
+      |- 1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB (495000)
+      |- 3Kawbc5pkpQPfmaoGCBiaw5t2uK6WBoVVe (495000)
+      TotalOutput: 2470000
+Block 3 [0x000000005c7ef94cf3eb3526aef2c9ec1352c33e7e869056cdffa3711d9b3eb5]
+  Tx 4 [0xab300013f626405ddebf1a7b2e0af34253d09e80f9ef7f981ec1ec59d6200c1f]
+    Inputs:
+      |- (coinbase)
+    Outputs:
+      |- 12751KvnaTTPMJbHbbercdTV48kL81BjX8 (2500000)
+      TotalOutput: 2500000
+  Tx 5 [0xab30109910f327700e0f199972eed8ea7c6b1920e965f9cb48a92973e7325046]
+    Inputs:
+      |- 1FDCgJ8m2xDyVmYuankk13XReVC2Zvs5cz (1480000)
+      |- 1HxbaBMF2jXBVnagoHvaA6rLxmaYL8gb8T (2500000)
+      TotalInput:  3980000
+    Outputs:
+      |- c("1E5UPs8bXBq7v7D2b7BYNU19ZviX2LMgEe", "1KLWBUTPXtRB7wvTYq9TYdeo93fAKvWPKs") (150000)
+      |- 1231PgW8KbpwKkvACPhp13fcL6fM5sKGvy (1325000)
+      |- 1Fufjpf9RM2aQsGedhSpbSCGRHrmLMJ7yY (100000)
+      |- 1iYSYHTpr2wMShaXTTNUzMohkpuV5p5ep (2350000)
+      TotalOutput: 3925000
+  Tx 6 [0xab3020c34bed7a86eef78534d72fd38c3c247c25d58be632201cb2027c9d2197]
+    Inputs:
+      |- 1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB (495000)
+      TotalInput:  495000
+    Outputs:
+      |- 3Fkx2TFdcHoab4xGgSjhAVh5YBPvbBWjNL (140000)
+      |- 1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB (345000)
+      TotalOutput: 485000
+Block 4 [0x00000000000000469658b3aab3f35fce54f24844b8ae5fd696033d858eff7df2]
+  Tx 7 [0xab4006c39b99683ac8f456721b270786c627ecb246700888315991877024b983]
+    Inputs:
+      |- (coinbase)
+    Outputs:
+      |- 1CjPR7Z5ZSyWk6WtXvSFgkptmpoi4UM9BC (2500000)
+      TotalOutput: 2500000
+  Tx 8 [0xab40158fdb719f333927a92f72727b996f1ebf565fce2cc83aea04b0f6902c6f]
+    Inputs:
+      |- 1E5UPs8bXBq7v7D2b7BYNU19ZviX2LMgEe+1KLWBUTPXtRB7wvTYq9TYdeo93fAKvWPKs (1500000)
+      |- 3Kawbc5pkpQPfmaoGCBiaw5t2uK6WBoVVe (495000)
+      |- 12751KvnaTTPMJbHbbercdTV48kL81BjX8 (2500000)
+      TotalInput:  4495000
+    Outputs:
+      |- 1AGMAXWELLayCyS1vkLXEszESHEcB3LWqa (4300000)
+      |- 3JX79i9xSSmLEDZ8WrUFsy3WqrpvPoQmPv (149000)
+      TotalOutput: 4449000
+  Tx 9 [0xab40231bd240c232eb8a8ed1b2267fe9f76d46c892415ab74427195cce5c6cff]
+    Inputs:
+      |- 1FAkhqm95YnV5Mi7Q5j2Wb8CkbK7Z9zpyB (345000)
+      TotalInput:  345000
+    Outputs:
+      |- 3Fkx2TFdcHoab4xGgSjhAVh5YBPvbBWjNL (340000)
+      TotalOutput: 340000
+  Tx 10 [0xab403d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d]
+    Inputs:
+      |- 1Fufjpf9RM2aQsGedhSpbSCGRHrmLMJ7yY (100000)
+      |- 1231PgW8KbpwKkvACPhp13fcL6fM5sKGvy (1325000)
+      TotalInput:  1425000
+    Outputs:
+      |- 1Fm1rJe1CtGuTKxWjQ4MyU7GEwrgkHYn5k (1400000)
+      TotalOutput: 1400000
+
+
+Total number
+	|- Blocks: 4
+	|- Transactions: 10
+		|- coinbase: 4
+		|- coinjoin: 1
+	|- Outputs: 17 (15 unique)
+	|- Inputs: 10 (9 unique)

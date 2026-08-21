@@ -25,6 +25,25 @@ updates:
       docker-images:
         patterns:
           - "*"
+    # Two of the three pinned images must not move on their own:
+    #   * python — the project is `requires-python = ">=3.10, <3.14"`, the
+    #     runtime stage prunes a hardcoded /usr/local/lib/python3.13 path, and
+    #     psycopg2-binary/pyspark have no wheels beyond 3.13. A 3.14 bump fails
+    #     the image build (PR #127); raise it deliberately together with
+    #     pyproject and the Dockerfile paths.
+    #   * eclipse-temurin — the `java11` stage exists *because* prod Spark
+    #     executors run Java 11 (shared hosts capped there by Cassandra 4.x);
+    #     a Java-17+ driver breaks Kryo task-result deserialization. Only the
+    #     digest may move, never the major.
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      - dependency-name: "eclipse-temurin"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   # Workflow actions are pinned to commit SHAs (supply-chain hardening);
   # without this they would silently rot at whatever SHA they were pinned to.

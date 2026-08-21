@@ -10,12 +10,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+## [2.16.0] - 2026-08-21
+
+### Library
+
+#### Added
+- **The Scala Spark transformation pipeline now lives in this repository, under `spark/`.** It was the standalone `graphsense-spark` repo; the two have to stay in lockstep to be correct — the Spark pipeline is the ground truth for every derived table, and a delta-updater change Spark cannot reproduce is a divergence that only surfaces at the next full re-run. The move was a subtree merge, so the original commit SHAs still resolve. `spark/` keeps its own toolchain (sbt, scalafmt/scalafix, `spark/CHANGELOG.md`) and its own release track, `spark-vYY.MM.P` — see VERSIONING.md. CI runs the Scala suite on changes to `spark/**` *and* to `src/graphsenselib/deltaupdate/**` or the transformed schema, which is the drift catcher the split repos could not have.
+- **`full_transform_args.release_tag_prefix`** selects which release track a jar version resolves within. GitHub's "latest release" endpoint is repo-wide, so in a repo publishing several tracks an unprefixed lookup can return a Python-only release that carries no jar. Jar downloads also fall back to the GitHub API when a release's asset is not named after its tag, turning a bare 404 into either a working URL or an error naming the assets that are actually present.
+
+#### Fixed
+- **The API no longer reports negative transaction counts or degrees.** These columns are Cassandra `int` (32-bit), and the Spark full transform cast the true count — a Long — with a plain cast, which truncates two's complement rather than saturating: the TRON USDT contract's 3,703,869,446 incoming txs were stored as `-591,097,850` and served verbatim. The Spark side now caps at `Int.MaxValue` (`spark/`, released separately), matching what the delta updater already did (`min(value, 2147483647)`), and reads normalize the same way so keyspaces written by older jars stop emitting negatives without needing a re-transform. Both paths under-report; widening the columns to `bigint` is tracked in #133.
+
+#### Changed
+- **Dependency bumps: `pyarrow` 25.0.0 → 25.0.1, `bitarray` 3.9.1 → 3.10.1.** Both are Dependabot bumps; `bitarray` 3.10 rewrites `util.ba2int()` / `util.int2ba()`, which the UTXO address codec leans on, so the full suite was run against the pair together rather than each in isolation.
+- **The pinned `uv` helper image in the `Dockerfile` moves to 0.12.5 and the `java11` stage picks up the current Temurin 11 JRE digest.** Only the digest moves — the stage stays on Java 11 on purpose (prod Spark executors are capped there by Cassandra 4.x on the shared hosts, and a Java-17+ driver breaks Kryo task-result deserialization).
+- **Dependabot no longer proposes `python` or `eclipse-temurin` major/minor bumps for the Docker images.** The grouped weekly docker PR kept offering `python` 3.13 → 3.14, which cannot build (`requires-python = ">=3.10, <3.14"`, no `psycopg2-binary`/`pyspark` wheels for 3.14, and a hardcoded `/usr/local/lib/python3.13` prune path in the runtime stage), and `eclipse-temurin` 11 → 22, which would defeat the whole point of the `java11` stage. Both are now `ignore`d for major/minor in `.github/dependabot.yml`, with the reasoning inline; digest and patch updates still flow. Raising either is a deliberate change that has to move `pyproject.toml` and the Dockerfile paths along with it.
+
 ## [2.15.4] - 2026-08-19
 
 ### Web API + Python client (webapi-2.15.1)
 
 #### Changed
-- **Bulk requests are now bounded in size, and their fan-out is bounded independently of what the caller asks for.** `POST /{currency}/bulk.{json,csv}/{operation}` took its request body as an unvalidated `Dict[str, Any]` and built one coroutine per item of every list in it, with no upper bound on list length; `asyncio.as_completed` then scheduled the whole batch at once. The `asyncio.Semaphore` already in place bounds how many backend calls run *concurrently* — it never bounded how many coroutines were *created*, so the cost of serving a bulk request grew without limit while the cost of sending one stayed flat. Three changes:
+- **Bulk requests are now bounded in size, and their fan-out is bounded independently of what the caller asks for ([GHSA-372j-2wgf-23ch](https://github.com/graphsense/graphsense-lib/security/advisories/GHSA-372j-2wgf-23ch), CWE-770, CVSS 7.5; reported by EQSTLab).** `POST /{currency}/bulk.{json,csv}/{operation}` took its request body as an unvalidated `Dict[str, Any]` and built one coroutine per item of every list in it, with no upper bound on list length; `asyncio.as_completed` then scheduled the whole batch at once. The `asyncio.Semaphore` already in place bounds how many backend calls run *concurrently* — it never bounded how many coroutines were *created*, so the cost of serving a bulk request grew without limit while the cost of sending one stayed flat. Three changes:
   - **Key lists are capped at `max_bulk_items` (default 10,000).** A longer list is rejected with a 400 naming the offending key rather than silently truncated. This is the same bounding pass that `pagesize`, `num_pages` and `depth` got in webapi-2.15.0 — list length was the one input it missed. **Breaking for clients sending more than 10,000 items in one bulk call**; operators who need more can raise `max_bulk_items` in `config.yaml`, and the Python client now splits long lists automatically (below).
   - **Request bodies are capped at `max_request_body_bytes` (default 8 MiB)** by a new `RequestBodySizeLimitMiddleware`, which answers 413 before the body is parsed. The item cap alone cannot bound the memory a request costs: FastAPI reads and `json.loads`-es the entire body *before* the route handler runs, and a multi-megabyte list of integers costs an order of magnitude more as parsed Python objects than as wire bytes. Bodies declaring an oversized `Content-Length` are refused without invoking the application at all; chunked bodies are counted as they stream. `0` disables the check for deployments that would rather cap this at the proxy.
   - **Task creation is bounded, not just task execution.** `asyncio.as_completed` is replaced by `bounded_as_completed`, which creates coroutines lazily and keeps at most 4x the configured backend concurrency (minimum 64) alive at a time, cancelling what is still pending if the consumer stops early. A bulk request's memory now scales with the configured concurrency instead of with the caller-supplied list length.
@@ -26,6 +44,7 @@ Use one changelog file, but separate entries by track in each release window.
 
 #### Added
 - **`SECURITY.md`** — private reporting via GitHub Security Advisories or `contact@iknaio.com`, response-time targets, supported versions, and an explicit scope statement covering the parts that are trusted by design (gateway-enforced authentication, database credentials, configuration and plugins as code).
+
 
 ## [2.15.3] - 2026-08-19
 

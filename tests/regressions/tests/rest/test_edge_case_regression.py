@@ -371,7 +371,7 @@ class TestEdgeCaseRegressionLinks(EdgeCaseRegressionTestBase):
         semantics (id in inputs, neighbor in outputs), so the tx IS a link
         1oUWFer... -> bc1q3ng... even though the netted relations contain no
         such edge (the relations side of this tx is pinned by
-        TestUtxoNettingLitmus). A baseline built from the short-lived netted
+        TestUtxoNettingDesiredSemantics). A baseline built from the short-lived netted
         /links code returns 0 links here; prod and everything else return 1.
         """
         pair = (
@@ -594,11 +594,11 @@ class TestEdgeCaseRegressionRelatedAddresses(EdgeCaseRegressionTestBase):
 
 
 # =============================================================================
-# Semantics litmus tests (current server only — assert DESIRED semantics)
+# Desired-semantics tests (current server only — strict xfail until implemented)
 # =============================================================================
 
 
-class TestUtxoNettingLitmus:
+class TestUtxoNettingDesiredSemantics:
     """Indicator for the UTXO relations netting semantics.
 
     Relations are currently derived from per-(tx, address) NETTED flows
@@ -635,6 +635,53 @@ class TestUtxoNettingLitmus:
         neighbors = {n["address"]["address"] for n in data.get("neighbors") or []}
         assert "bc1qfuyscyyxqyzuu6pd7fwqtv5kxwalp6ajd3h7xu" in neighbors
         assert "bc1q3ngmpljwztklmj5n7et4fv8k2kfjph28gwdefm" in neighbors
+
+
+class TestWithdrawalVisibilityDesiredSemantics:
+    """Indicator for EIP-4895 withdrawal visibility in address tx listings.
+
+    Post-Shanghai validator withdrawals are ingested as tx_hash-less reward
+    traces (raw trace table) and credited to balances, but they carry no
+    transaction, so they are excluded from address_transactions and thus
+    from /addresses/{a}/txs — an address's listed history does not
+    reconcile with its total_received/balance (Etherscan solves this with
+    a separate 'Beacon Chain Withdrawals' tab). Decided 2026-08-20: not
+    worth the blast radius for now (evaluated designs: dedicated table
+    merged into the txs endpoint at serve time was the best candidate).
+
+    0xb9d7934878b5fb9610b3fe8a5e441e8fad7e293f is a withdrawal vault: it
+    received withdrawal index 1041981 (12210183 Gwei) in block 17100000.
+    That credit should appear in its tx listing for that height.
+
+    strict xfail: once withdrawal visibility is implemented (and the
+    keyspace carries it), this XPASSes and fails the suite — remove the
+    marker then.
+    """
+
+    VAULT = "0xb9d7934878b5fb9610b3fe8a5e441e8fad7e293f"
+    WITHDRAWAL_WEI = 12_210_183 * 10**9
+
+    @pytest.mark.regression
+    @pytest.mark.xfail(
+        strict=True,
+        reason="EIP-4895 withdrawals are balance-only: no address_transactions "
+        "rows, so the credit in block 17100000 is missing from the listing",
+    )
+    def test_withdrawal_credit_listed_in_address_txs(self):
+        data, _ = get_data_from_endpoint(
+            CURRENT_SERVER,
+            f"eth/addresses/{self.VAULT}/txs"
+            "?min_height=17100000&max_height=17100000&pagesize=100",
+        )
+        credits_at_height = [
+            tx
+            for tx in data.get("address_txs") or []
+            if tx.get("height") == 17100000
+            and tx.get("value", {}).get("value") == self.WITHDRAWAL_WEI
+        ]
+        assert credits_at_height, (
+            "withdrawal credit of 12210183 Gwei at block 17100000 not in listing"
+        )
 
 
 class TestOutOfRangeEntityIds:
