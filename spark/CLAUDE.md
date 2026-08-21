@@ -1,18 +1,37 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) when working inside `spark/`. This tree is
+part of the **graphsense-lib monorepo** — it was the standalone `graphsense-spark`
+repository until 2026-08, which is now archived. See the repository-root `CLAUDE.md`
+first; the rule that matters most lives there.
+
+## Read this before changing anything here
+
+**The Spark pipeline and the Python delta updater (`src/graphsenselib/deltaupdate/`)
+must agree column-for-column.** Both produce the same derived tables — Spark from
+scratch, the delta updater incrementally — so a change on one side that the other
+cannot reproduce is a divergence bug that only surfaces at the next full re-run.
+That is why the two now live in one repo. Any change to schema, transforms,
+aggregation, or address/cluster/token accounting here needs the corresponding
+delta-updater change, ideally in the same commit. CI enforces the reverse direction
+too: `.github/workflows/spark_tests.yml` runs this suite on changes to
+`deltaupdate/**` and the transformed schema, not just to `spark/**`.
 
 ## What this is
 
 The GraphSense Spark Transformation Pipeline: a Scala / Apache Spark batch job that
-reads raw blockchain block & transaction data from Apache Cassandra (ingested
-separately by `graphsense-lib`) and computes a de-normalized "transformed" keyspace
+reads raw blockchain block & transaction data from Apache Cassandra (ingested by the
+Python side of this repo) and computes a de-normalized "transformed" keyspace
 (address graph, address/cluster relations, balances, statistics) written back into
 Cassandra. The transformed keyspace is then served by `graphsense-rest`.
 
 ## Build & test commands
 
-Build tooling is SBT (Scala 2.12.17). `make` targets wrap SBT:
+Build tooling is SBT (Scala 2.12.17), separate from the repo's Python tooling — the
+Python formatting hooks deliberately skip this tree. The targets below are
+`spark/Makefile`'s, so run them from **this** directory; from the repository root the
+same work is `make test-spark` / `format-spark` / `lint-spark` / `build-spark-jar`
+(plain `make test` at the root runs the Python suite).
 
 - `make test` — run all tests (`sbt test`)
 - `make test-account` / `make test-utxo` / `make test-common` — run a model's test subtree
@@ -32,8 +51,17 @@ Run `make format && make test` before committing.
 Java 11 is the primary/CI target. Java 17 works; the required `--add-opens` /
 `--add-exports` JVM flags are already set in `build.sbt`.
 
-The release version is the `RELEASE` line in the `Makefile` — `build.sbt` parses it
-from there for local builds (CI derives the version from the git tag instead).
+The release version is the `RELEASE` line in this directory's `Makefile` —
+`build.sbt` parses it from there for local builds (CI derives the version from the
+git tag instead). It must stay in step with `SPARKSEM` in the repository-root
+`Makefile`; `make tag-spark-version` refuses to tag if the two disagree.
+
+Jars ship on their own release track, `spark-vYY.MM.P` (see `VERSIONING.md`), so a
+Python-only release does not force a jar rebuild and an operator can pin a jar
+independently of the library version. `build.sbt` derives the version from the tag's
+FIRST character, so the release workflow strips the `spark-` prefix before invoking
+sbt. Jars for `v26.08.0` and earlier live on releases of the archived standalone
+repo, which is kept precisely so those pinned assets keep resolving.
 
 ## Spark dependency model
 
