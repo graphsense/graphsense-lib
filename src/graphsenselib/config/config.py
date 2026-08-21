@@ -459,14 +459,19 @@ class FullTransformArgs(BaseModel):
     spark_profile: Dict[str, str] = Field(default_factory=dict)
 
     # --- Scala (spark-submit) backend ---------------------------------------
-    repo: str = "graphsense/graphsense-spark"
-    # Tag prefix of the jar release track in `repo`. Empty for the archived
-    # standalone graphsense-spark repo, whose releases are all Spark jars under
-    # bare vX.Y.Z tags. Set to "spark-" when pointing `repo` at the
-    # graphsense-lib monorepo: releases there span several tracks, so resolving
-    # "latest" without a prefix can return a Python-only release that carries
-    # no jar.
-    release_tag_prefix: str = ""
+    # The Spark pipeline lives in this repo under spark/ and publishes its jars
+    # on the spark-v* release track. Jars for v26.08.0 and earlier were built
+    # from the standalone graphsense-spark repo, which is archived (not
+    # deleted) so those assets keep resolving — point `repo` back at
+    # "graphsense/graphsense-spark" with an empty prefix to pin one of them.
+    repo: str = "graphsense/graphsense-lib"
+    # Tag prefix of the jar release track in `repo`. This repo publishes
+    # several tracks (library vX.Y.Z, webapi-v*, gs-clustering-v*, spark-v*),
+    # and GitHub's "latest release" endpoint is repo-wide: without a prefix it
+    # can return a Python-only release that carries no jar. Empty is correct
+    # only for the archived standalone repo, whose releases are all Spark jars
+    # under bare vX.Y.Z tags.
+    release_tag_prefix: str = "spark-"
     # Release tag, e.g. "v26.06.0". Empty or "latest" resolves the latest stable
     # (non-prerelease) release of that track from the GitHub API at run time.
     version: str = ""

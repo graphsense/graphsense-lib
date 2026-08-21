@@ -10,7 +10,11 @@ def test_defaults():
     fta = FullTransformArgs()
     assert fta.backend == "scala"
     assert fta.artifact == "fat"
-    assert fta.repo == "graphsense/graphsense-spark"
+    # The Spark pipeline lives in this repo under spark/ and publishes on the
+    # spark-v* track; resolving "latest" without the prefix would pick up a
+    # Python-only release that carries no jar.
+    assert fta.repo == "graphsense/graphsense-lib"
+    assert fta.release_tag_prefix == "spark-"
     assert fta.main_class == "org.graphsense.TransformationJob"
     assert fta.packages == DEFAULT_SCALA_JOB_PACKAGES
     assert fta.sidecar.enabled is False
