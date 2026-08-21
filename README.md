@@ -383,7 +383,7 @@ launches the job.
 graphsense-cli transformation raw-to-transformed --help
 
 # Run against a pinned release, creating a fresh dated transformed keyspace
-graphsense-cli transformation raw-to-transformed -e prod -c btc --version spark-v26.06.0
+graphsense-cli transformation raw-to-transformed -e prod -c btc --version spark-v26.08.1
 
 # Use the latest stable release (also the default when no version is configured)
 graphsense-cli transformation raw-to-transformed -e prod -c btc --version latest
@@ -407,17 +407,19 @@ Configured via a `full_transform_args` section in the config file:
 ```yaml
 full_transform_args:
   # Repository publishing the jar releases, and the tag prefix of its Spark
-  # release track. Defaults still point at the archived standalone repo
-  # (`graphsense/graphsense-spark`, bare `vX.Y.Z` tags); set both to consume the
-  # jars built from `spark/` in this monorepo, whose releases span several
-  # tracks and therefore need the prefix to resolve "latest" correctly.
+  # release track. These are the defaults: jars built from `spark/` in this
+  # monorepo, whose releases span several tracks, so the prefix is what makes
+  # "latest" resolve to a Spark release rather than a Python-only one that
+  # carries no jar. To pin a jar from before the move (`v26.08.0` and earlier),
+  # point `repo` at `graphsense/graphsense-spark` and set the prefix to `""` —
+  # that repo is archived rather than deleted so its assets keep resolving.
   repo: graphsense/graphsense-lib
   release_tag_prefix: spark-
   # Release tag to run. Omit or set to "latest" to resolve the newest stable
   # (non-prerelease) release of that track from the GitHub API at run time.
-  version: spark-v26.06.0
+  version: spark-v26.08.1
   version_overrides: # optional, per-currency
-    eth: spark-v26.06.1
+    eth: spark-v26.08.1
   artifact: fat # "fat" (self-contained assembly, default) or "slim" (+ Maven packages)
   spark_profile: # selects a spark_config profile per currency
     btc: utxo
