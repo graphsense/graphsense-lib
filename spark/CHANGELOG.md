@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [v26.08.1] 2026-08-21
 ### Fixed
 - Address and entity tx counts and degrees no longer wrap into negative
   numbers once they pass 2^31. The transformed schema stores them as

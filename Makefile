@@ -1,12 +1,12 @@
 SHELL := /bin/bash
 PROJECT := graphsense-lib
 VENV := venv
-RELEASESEM := 'v2.15.4'
+RELEASESEM := 'v2.16.0'
 WEBAPISEM := 'v2.15.1'
 # Spark pipeline release track (spark/, tag shape spark-vX.Y.Z). Kept apart
 # from the library track so a jar is only rebuilt and republished when the
 # Scala side actually changes — see VERSIONING.md.
-SPARKSEM := 'v26.08.0'
+SPARKSEM := 'v26.08.1'
 
 
 -include .env
