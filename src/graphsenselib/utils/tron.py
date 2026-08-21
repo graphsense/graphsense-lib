@@ -71,7 +71,7 @@ def tron_address_to_evm(taddress_str: str, validate: bool = True) -> bytes:
     # recompute checksum
     checkSumComputed = get_tron_address_checksum(a) if validate else None
 
-    if not validate or all(a == b for a, b in zip(checkSum, checkSumComputed)):  # ty: ignore[invalid-argument-type, not-iterable]
+    if not validate or all(a == b for a, b in zip(checkSum, checkSumComputed)):  # ty: ignore[invalid-argument-type]
         return strip_tron_prefix(a)
     else:
         raise ValueError(f"Invalid checksum on address {taddress_str}")

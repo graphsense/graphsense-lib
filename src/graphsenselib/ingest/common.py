@@ -1,6 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import pydantic
 
@@ -72,7 +72,11 @@ class BlockRangeContent(pydantic.BaseModel):
         for brc in block_range_contents:
             assert brc.start_block is not None and brc.end_block is not None
         # sort block_range_contents by start_block
-        block_range_contents = sorted(block_range_contents, key=lambda x: x.start_block)
+        # start_block is Optional on the model but non-None here, asserted
+        # just above; the cast keeps the key comparable without widening it.
+        block_range_contents = sorted(
+            block_range_contents, key=lambda x: cast(int, x.start_block)
+        )
         # make sure that there are no gaps in the block range
         assert all(
             block_range_contents[i].end_block + 1  # ty: ignore[unsupported-operator]
