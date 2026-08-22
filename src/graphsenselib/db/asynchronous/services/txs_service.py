@@ -109,7 +109,15 @@ class DatabaseProtocol(Protocol):
     def get_token_configuration(self, currency: str) -> Any: ...
 
     async def list_token_txs(
-        self, currency: str, tx_hash: str, log_index: Optional[int] = None
+        self,
+        currency: str,
+        tx_hash: str,
+        log_index: Optional[int] = None,
+        tx: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]: ...
+
+    async def fetch_transaction_traces(
+        self, currency: str, tx: Dict[str, Any]
     ) -> List[Dict[str, Any]]: ...
 
     async def get_spent_in_txs(
@@ -280,12 +288,29 @@ class TxsService:
     ) -> Txs:
         tx = await self.db.get_tx(network, tx_hash)
         tokenConfig = self.db.get_token_configuration(network)
-        rates = await self.rates_service.get_rates(network, tx["block_id"])
 
         results_list = []
         if is_eth_like(network):
+            # The rates lookup, the traces scan (or, when internal txs are
+            # excluded, the plain tx fetch that takes its place) and the
+            # token-log scan are mutually independent - none of them consumes
+            # another's result - so run them concurrently instead of one
+            # after another.
+            coros = [self.rates_service.get_rates(network, tx["block_id"])]
             if include_internal_txs:
-                traces = await self.db.fetch_transaction_traces(network, tx)
+                coros.append(self.db.fetch_transaction_traces(network, tx))
+            else:
+                coros.append(self.get_tx(network, tx_hash, trace_account_chains=True))
+            if include_token_txs:
+                coros.append(self.db.list_token_txs(network, tx_hash, tx=tx))
+
+            gathered = await asyncio.gather(*coros)
+            rates = gathered[0]
+            traces_or_tx = gathered[1]
+            tokens = gathered[2] if include_token_txs else None
+
+            if include_internal_txs:
+                traces = traces_or_tx
                 traces_converted = await asyncio.gather(
                     *[
                         _raw_trace_to_std_tx(
@@ -303,12 +328,9 @@ class TxsService:
 
                 results_list.extend(traces_converted)
             else:
-                results_list.append(
-                    await self.get_tx(network, tx_hash, trace_account_chains=True)
-                )
+                results_list.append(traces_or_tx)
 
             if include_token_txs:
-                tokens = await self.db.list_token_txs(network, tx_hash)
                 tokens_converted = await asyncio.gather(
                     *[
                         std_tx_from_row(network, result, rates.rates, tokenConfig)
@@ -325,6 +347,7 @@ class TxsService:
                 results_list = [x for x in results_list if x.is_external is not True]
 
         else:
+            rates = await self.rates_service.get_rates(network, tx["block_id"])
             results_list.append(
                 await std_tx_from_row(
                     network,
