@@ -2904,6 +2904,79 @@ class Cassandra:
             raise ClusterNotFoundException(currency, entity)
         return (await self.finish_entities(currency, [result]))[0]
 
+    @eth
+    async def get_entities_by_ids(self, currency, entity_ids):
+        """Batched analog of get_entity for a page of neighbor cluster ids.
+
+        list_neighbors' cluster relations tables carry only legacy cluster
+        ids (see _legacy_relations_cluster_id: "the fresh tables carry no
+        cluster relations"), so unlike get_entity this never needs the
+        fresh-cluster or non-representable-id branches. Fetches the page's
+        cluster rows with grouped single-partition IN queries instead of one
+        independent get_entity chain (cluster row + root address + tx
+        summaries) per id, then reuses finish_entities' batched prefetch for
+        the rest. Raises ClusterNotFoundException for the first id with no
+        matching row, matching get_entity. Returns {entity_id: row}.
+        """
+        ids = list(dict.fromkeys(entity_ids))
+        if not ids:
+            return {}
+        rows_by_id = await self._get_cluster_rows_by_ids(currency, ids)
+        missing = next((id for id in ids if id not in rows_by_id), None)
+        if missing is not None:
+            raise ClusterNotFoundException(currency, missing)
+        finished = await self.finish_entities(currency, [rows_by_id[id] for id in ids])
+        return dict(zip(ids, finished))
+
+    async def get_entities_by_ids_eth(self, currency, entity_ids):
+        # The eth entity read (get_entity_eth) is a single point read, not
+        # the multi-hop chain the UTXO path has, so batching here is just
+        # bounding concurrency instead of throttling on the unrelated
+        # tagstore semaphore (see list_entity_neighbors).
+        ids = list(dict.fromkeys(entity_ids))
+        if not ids:
+            return {}
+        sem = asyncio.Semaphore(MAX_ROW_LOOKUP_CONCURRENCY)
+
+        async def _one(entity_id):
+            async with sem:
+                return await self.get_entity_eth(currency, entity_id)
+
+        results = await asyncio.gather(*[_one(id) for id in ids])
+        for entity_id, row in zip(ids, results):
+            if not row:
+                raise ClusterNotFoundException(currency, entity_id)
+        return dict(zip(ids, results))
+
+    async def _get_cluster_rows_by_ids(self, currency, cluster_ids):
+        # Grouped single-partition IN queries instead of one point read per
+        # cluster: same pattern as _get_tx_summaries_by_ids /
+        # _get_root_addresses_by_ids — cluster_id_group is fixed per
+        # partition, so ids sharing a group become one "cluster_id in (...)"
+        # statement.
+        groups = {}
+        for cluster_id in cluster_ids:
+            groups.setdefault(self.get_id_group(currency, cluster_id), []).append(
+                cluster_id
+            )
+        statement = (
+            "SELECT * FROM cluster WHERE cluster_id_group = %s AND cluster_id in %s"
+        )
+
+        async def fetch_chunk(group, chunk):
+            result = await self.execute_async(
+                currency, "transformed", statement, [group, ValueSequence(chunk)]
+            )
+            return result.current_rows
+
+        aws = [
+            fetch_chunk(group, group_ids[i : i + 200])
+            for group, group_ids in groups.items()
+            for i in range(0, len(group_ids), 200)
+        ]
+        rows = [row for chunk_rows in await asyncio.gather(*aws) for row in chunk_rows]
+        return {row["cluster_id"]: row for row in rows}
+
     async def _get_fresh_entity(self, currency, entity):
         """Serve an entity from the fresh tables (public id >= offset).
 
@@ -3816,25 +3889,38 @@ class Cassandra:
 
     async def finish_entities(self, currency, rows, with_txs=True):
         tx_summaries = await self._prefetch_tx_summaries(currency, rows, with_txs)
+        root_addresses = await self._prefetch_root_addresses(currency, rows)
         aws = [
             self.finish_entity(
-                currency, row, with_txs=with_txs, tx_summaries=tx_summaries
+                currency,
+                row,
+                with_txs=with_txs,
+                tx_summaries=tx_summaries,
+                root_addresses=root_addresses,
             )
             for row in rows
         ]
         return await asyncio.gather(*aws)
 
     @eth
-    async def finish_entity(self, currency, row, with_txs=True, tx_summaries=None):
-        a = await self.get_addresses_by_ids(
-            currency, [row["cluster_id"]], address_only=True
-        )
-        row["root_address"] = a[0]["address"]
+    async def finish_entity(
+        self, currency, row, with_txs=True, tx_summaries=None, root_addresses=None
+    ):
+        if root_addresses is not None:
+            # Batched prefetch from finish_entities: no per-row point read.
+            row["root_address"] = root_addresses[row["cluster_id"]]
+        else:
+            a = await self.get_addresses_by_ids(
+                currency, [row["cluster_id"]], address_only=True
+            )
+            row["root_address"] = a[0]["address"]
         return await self.finish_address(
             currency, row, with_txs, tx_summaries=tx_summaries
         )
 
-    async def finish_entity_eth(self, currency, row, with_txs=True, tx_summaries=None):
+    async def finish_entity_eth(
+        self, currency, row, with_txs=True, tx_summaries=None, root_addresses=None
+    ):
         row["root_address"] = row["address"]
         return await self.finish_address(currency, row, with_txs)
 
@@ -3856,6 +3942,45 @@ class Cassandra:
             return None
         tx_ids = [id for row in rows for id in (row["first_tx_id"], row["last_tx_id"])]
         return await self._get_tx_summaries_by_ids(currency, tx_ids)
+
+    async def _prefetch_root_addresses(self, currency, rows):
+        # finish_entity_eth carries its root address on the row already
+        # (entity == address for account-model chains), so only the
+        # legacy/fresh cluster path needs this prefetch.
+        if is_eth_like(currency):
+            return None
+        cluster_ids = [row["cluster_id"] for row in rows if "cluster_id" in row]
+        return await self._get_root_addresses_by_ids(currency, cluster_ids)
+
+    async def _get_root_addresses_by_ids(self, currency, address_ids):
+        # finish_entity resolves each cluster's root address string (its
+        # cluster_id doubles as the root address's address_id) via one point
+        # read; batch that into grouped IN reads for the whole page, same
+        # shape as _get_tx_summaries_by_ids.
+        ids = {id for id in address_ids if id is not None}
+        if not ids:
+            return {}
+        groups = {}
+        for id in ids:
+            groups.setdefault(self.get_id_group(currency, id), []).append(id)
+        statement = (
+            "SELECT address, address_id FROM address "
+            "WHERE address_id_group = %s AND address_id in %s"
+        )
+
+        async def fetch_chunk(group, chunk):
+            result = await self.execute_async(
+                currency, "transformed", statement, [group, ValueSequence(chunk)]
+            )
+            return result.current_rows
+
+        aws = [
+            fetch_chunk(group, group_ids[i : i + 200])
+            for group, group_ids in groups.items()
+            for i in range(0, len(group_ids), 200)
+        ]
+        rows = [row for chunk_rows in await asyncio.gather(*aws) for row in chunk_rows]
+        return {row["address_id"]: row["address"] for row in rows}
 
     @eth
     async def finish_address(self, currency, row, with_txs=True, tx_summaries=None):

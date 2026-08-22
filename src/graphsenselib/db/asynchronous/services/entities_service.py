@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional, Protocol
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from graphsenselib.config.tagstore_config import get_tagstore_max_concurrency
 from graphsenselib.datatypes.common import NodeType
 from graphsenselib.errors import ClusterNotFoundException
 from graphsenselib.utils.address import address_to_user_format
@@ -40,6 +39,9 @@ class DatabaseProtocol(Protocol):
     async def get_entity(
         self, currency: str, entity_id: int
     ) -> Optional[Dict[str, Any]]: ...
+    async def get_entities_by_ids(
+        self, currency: str, entity_ids: List[int]
+    ) -> Dict[int, Dict[str, Any]]: ...
     async def list_entity_addresses(
         self,
         currency: str,
@@ -316,13 +318,18 @@ class EntitiesService:
 
             rates = await self.rates_service.get_rates(currency)
             token_config = self.db.get_token_configuration(currency)
-            sem = asyncio.Semaphore(get_tagstore_max_concurrency())
 
-            async def _build_node(cid: int) -> Entity:
-                async with sem:
-                    row = await self.db.get_entity(currency, cid)
-                if not row:
-                    raise ClusterNotFoundException(currency, cid)
+            # Batched Cassandra prefetch: grouped IN reads for the whole page
+            # instead of one independent get_entity chain (cluster row + root
+            # address + tx summaries) per neighbor. This is pure Cassandra
+            # fan-out, so it must not share the tagstore pool's concurrency
+            # limit (get_tagstore_max_concurrency()) — no tagstore work
+            # happens here, that semaphore only throttled unrelated Postgres
+            # connections.
+            entities_by_id = await self.db.get_entities_by_ids(currency, cluster_ids)
+
+            def _build_node(cid: int) -> Entity:
+                row = entities_by_id[cid]
                 tag_pub = best_tags.get(cid)
                 best_tag = (
                     self.tags_service._address_tag_from_public_tag(tag_pub, cid)
@@ -347,7 +354,7 @@ class EntitiesService:
                     cluster_actors,
                 )
 
-            nodes = await asyncio.gather(*[_build_node(cid) for cid in cluster_ids])
+            nodes = [_build_node(cid) for cid in cluster_ids]
 
         else:
             nodes = [r[dst + "_cluster_id"] for r in results]
