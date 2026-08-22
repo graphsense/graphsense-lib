@@ -1,4 +1,5 @@
 import asyncio
+from collections import namedtuple
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -418,6 +419,152 @@ async def test_tolerated_miss_with_token_txs_drops_without_placeholder():
 
     assert None not in result
     assert [tx["tx_hash"] for tx in result] == [b"aa", b"aa"]
+
+
+from graphsenselib.db.asynchronous.cassandra import TxSummary  # noqa: E402
+
+
+class _TxSummaryResult:
+    def __init__(self, rows):
+        self.current_rows = rows
+
+
+def _make_finish_address_self(tx_rows_by_id, calls, no_row_calls=None):
+    async def execute_async(
+        currency, keyspace, query, params, paging_state=None, fetch_size=None
+    ):
+        calls.append((query, params))
+        group, ids = params
+        rows = [tx_rows_by_id[i] for i in list(ids) if i in tx_rows_by_id]
+        return _TxSummaryResult(rows)
+
+    async def get_tx_by_id(currency, id):
+        # The single-address path (finish_address with tx_summaries=None)
+        # must use the slim projected batch read instead of this full-row
+        # `SELECT *` lookup.
+        if no_row_calls is not None:
+            no_row_calls.append(id)
+        raise AssertionError(
+            "get_tx_by_id (full-row SELECT *) must not be used by finish_address"
+        )
+
+    async def add_balance(currency, row):
+        row["balance"] = 0
+
+    async def is_address_dirty(currency, address):
+        return False
+
+    ns = SimpleNamespace(
+        parameters={"btc": {"tx_bucket_size": 1000, "fiat_currencies": ["EUR", "USD"]}},
+        execute_async=execute_async,
+        get_tx_by_id=get_tx_by_id,
+        add_balance=add_balance,
+        is_address_dirty=is_address_dirty,
+    )
+    ns.markup_values = Cassandra.markup_values.__get__(ns)
+    ns.markup_currency = Cassandra.markup_currency.__get__(ns)
+    ns.get_tx_id_group = Cassandra.get_tx_id_group.__get__(ns)
+    ns._get_tx_summaries_by_ids = Cassandra._get_tx_summaries_by_ids.__get__(ns)
+    ns._zero_values = Cassandra._zero_values.__get__(ns)
+    return ns
+
+
+_Values = namedtuple("_Values", ["value", "fiat_values"])
+
+
+def _values(value):
+    return _Values(value=value, fiat_values=[])
+
+
+async def test_finish_address_single_path_uses_slim_projected_read():
+    # Defect 2 regression: the single-address path (tx_summaries=None) used
+    # to call get_tx_by_id (SELECT *) once per first/last tx id — a 10x
+    # tail cost on busy UTXO txs. It must now route through the same slim,
+    # batched helper the list paths (finish_addresses/finish_entities) use.
+    tx_hash_first = bytes.fromhex("aa" * 32)
+    tx_hash_last = bytes.fromhex("bb" * 32)
+    tx_rows = {
+        10: {"tx_id": 10, "tx_hash": tx_hash_first, "block_id": 100, "timestamp": 111},
+        20: {"tx_id": 20, "tx_hash": tx_hash_last, "block_id": 200, "timestamp": 222},
+    }
+    calls = []
+    s = _make_finish_address_self(tx_rows, calls)
+    row = {
+        "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+        "total_received": _values(500),
+        "total_spent": _values(100),
+        "first_tx_id": 10,
+        "last_tx_id": 20,
+    }
+
+    finished = await Cassandra.finish_address(s, "btc", row, with_txs=True)
+
+    # Both ids land in the same tx_id_group (bucket size 1000), so the slim
+    # helper's grouped IN-query collapses them into a single round trip —
+    # down from two full-row SELECT * round trips before this fix.
+    assert len(calls) == 1
+
+    assert finished["first_tx"] == TxSummary(
+        height=100, timestamp=111, tx_hash=tx_hash_first
+    )
+    assert finished["last_tx"] == TxSummary(
+        height=200, timestamp=222, tx_hash=tx_hash_last
+    )
+    assert finished["status"] == "clean"
+
+
+async def test_finish_address_prefetched_summaries_skip_any_query():
+    # The list paths (finish_addresses/finish_entities) prefetch tx_summaries
+    # up front; finish_address must keep using that dict as-is, issuing no
+    # additional query at all (not even the slim one).
+    tx_hash_first = bytes.fromhex("cc" * 32)
+    tx_hash_last = bytes.fromhex("dd" * 32)
+    calls = []
+    s = _make_finish_address_self({}, calls)
+    row = {
+        "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+        "total_received": _values(500),
+        "total_spent": _values(100),
+        "first_tx_id": 10,
+        "last_tx_id": 20,
+    }
+    tx_summaries = {
+        10: {"tx_hash": tx_hash_first, "block_id": 100, "timestamp": 111},
+        20: {"tx_hash": tx_hash_last, "block_id": 200, "timestamp": 222},
+    }
+
+    finished = await Cassandra.finish_address(
+        s, "btc", row, with_txs=True, tx_summaries=tx_summaries
+    )
+
+    assert calls == []
+    assert finished["first_tx"] == TxSummary(
+        height=100, timestamp=111, tx_hash=tx_hash_first
+    )
+    assert finished["last_tx"] == TxSummary(
+        height=200, timestamp=222, tx_hash=tx_hash_last
+    )
+
+
+async def test_finish_address_missing_tx_still_raises_inconsistency():
+    # A genuinely missing first/last tx (absent from the slim read result)
+    # must still trip the same DBInconsistencyException as before.
+    tx_rows = {
+        10: {"tx_id": 10, "tx_hash": b"\xaa" * 32, "block_id": 100, "timestamp": 111},
+        # 20 is intentionally missing
+    }
+    calls = []
+    s = _make_finish_address_self(tx_rows, calls)
+    row = {
+        "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+        "total_received": _values(500),
+        "total_spent": _values(100),
+        "first_tx_id": 10,
+        "last_tx_id": 20,
+    }
+
+    with pytest.raises(DBInconsistencyException):
+        await Cassandra.finish_address(s, "btc", row, with_txs=True)
 
 
 class TestFallbackToLocalOneInheritedBehavior:

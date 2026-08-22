@@ -3999,25 +3999,34 @@ class Cassandra:
 
         balance_task = self.add_balance(currency, row)
 
-        async def _tx_summary(id):
+        async def _tx_summaries():
             # When the caller prefetched summaries (finish_addresses /
-            # finish_entities), use those instead of a per-tx point read.
-            # An absent key means the tx is genuinely missing, same as
-            # get_tx_by_id returning no row.
+            # finish_entities), use those instead of issuing a read here.
+            # Otherwise (the single-address path) fetch just the columns a
+            # TxSummary needs via the same slim, batched helper the list
+            # paths use — get_tx_by_id's `SELECT *` drags full inputs/
+            # outputs across the wire for a busy UTXO tx just to keep three
+            # scalars. An absent key means the tx is genuinely missing,
+            # same as get_tx_by_id returning no row.
             if tx_summaries is not None:
-                return tx_summaries.get(id)
-            return await self.get_tx_by_id(currency, id)
+                return tx_summaries
+            return await self._get_tx_summaries_by_ids(
+                currency, [row["first_tx_id"], row["last_tx_id"]]
+            )
 
-        tx_tasks = [_tx_summary(id) for id in [row["first_tx_id"], row["last_tx_id"]]]
+        summaries_task = _tx_summaries()
 
         has_address = "address" in row
         if has_address:
             dirty_task = self.is_address_dirty(currency, row["address"])
-            results = await asyncio.gather(balance_task, *tx_tasks, dirty_task)
-            tx1, tx2, is_dirty = results[1], results[2], results[3]
+            results = await asyncio.gather(balance_task, summaries_task, dirty_task)
+            summaries, is_dirty = results[1], results[2]
         else:
-            results = await asyncio.gather(balance_task, *tx_tasks)
-            tx1, tx2 = results[1], results[2]
+            results = await asyncio.gather(balance_task, summaries_task)
+            summaries = results[1]
+
+        tx1 = summaries.get(row["first_tx_id"])
+        tx2 = summaries.get(row["last_tx_id"])
 
         if not tx1 or not tx2:
             raise DBInconsistencyException(

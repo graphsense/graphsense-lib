@@ -163,6 +163,15 @@ def test_real_function_call_from_row():
 
 
 async def test_get_address_without_fallback_propagates_not_found():
+    # The rates lookup is started concurrently with db.get_address (it needs
+    # only the currency), so it fires even on a path that ultimately raises
+    # AddressNotFoundException — it must be a valid awaitable, not None, and
+    # the fix must still cancel/drain it instead of leaking it or letting it
+    # mask the not-found exception.
+    class FakeRatesService:
+        async def get_rates(self, currency):
+            return None
+
     class FakeDb:
         async def get_address(self, currency, address):
             raise AddressNotFoundException(currency, address)
@@ -174,7 +183,7 @@ async def test_get_address_without_fallback_propagates_not_found():
         await get_address_common(
             FakeDb(),
             None,  # tagstore unused: include_actors=False
-            None,  # rates_service unused: raises before conversion
+            FakeRatesService(),
             "btc",
             "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
             [],
