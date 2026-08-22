@@ -3553,11 +3553,12 @@ class Cassandra:
         return self.get_tx_by_hash(currency, tx_hash)
 
     @eth
-    async def list_token_txs(self, currency, tx_hash, log_index=None):
+    async def list_token_txs(self, currency, tx_hash, log_index=None, tx=None):
         return []
 
-    async def list_token_txs_eth(self, currency, tx_hash, log_index=None):
-        tx = await self.get_tx(currency, tx_hash)
+    async def list_token_txs_eth(self, currency, tx_hash, log_index=None, tx=None):
+        if tx is None:
+            tx = await self.get_tx(currency, tx_hash)
         return await self.fetch_token_transactions(currency, tx, log_index)
 
     async def fetch_token_transaction(self, currency, tx, log_index):

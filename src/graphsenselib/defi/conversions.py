@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, List, Optional, Union, Any, Tuple
 
@@ -134,9 +135,13 @@ async def get_conversions_from_db(
                 return bridges
         return []
 
-    # For EVM networks, fetch logs and traces
-    tx_logs_raw = await db.fetch_transaction_logs(network, tx)
-    tx_traces = await db.fetch_transaction_traces(network, tx)
+    # For EVM networks, fetch logs and traces. Both scans read the same
+    # tx's block partition independently of each other, so run them
+    # concurrently instead of one after another.
+    tx_logs_raw, tx_traces = await asyncio.gather(
+        db.fetch_transaction_logs(network, tx),
+        db.fetch_transaction_traces(network, tx),
+    )
     tx_traces = Trace.dicts_to_normalized(network, tx_traces, tx)
 
     # Check for direct vault deposits (no logs, memo in input data)

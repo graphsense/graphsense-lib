@@ -22,6 +22,7 @@ from graphsenselib.db.asynchronous.services.heuristics_service import (
     _one_time_change_heuristic,
     calculate_heuristics,
 )
+from graphsenselib.db.asynchronous.services.models import TxAccount, Values
 from graphsenselib.db.asynchronous.services.txs_service import TxsService
 
 
@@ -833,3 +834,170 @@ class TestGetAssetFlowsWithinTxAccount:
         leg = result.txs[0]
         assert leg.value.value == 302_000_000
         assert leg.is_external is True
+
+
+def make_raw_eth_tx(block_id=BLOCK_ID):
+    return {
+        "tx_hash": TX_HASH,
+        "block_id": block_id,
+        "block_timestamp": 123456789,
+    }
+
+
+def make_tx_account(identifier, marker, is_external):
+    """A real TxAccount (not a stand-in) so it survives Txs' pydantic
+    validation; `identifier` doubles as an order/origin marker for assertions.
+    """
+    return TxAccount(
+        currency="eth",
+        network="eth",
+        identifier=identifier,
+        tx_hash=TX_HASH.hex(),
+        timestamp=123456789,
+        height=BLOCK_ID,
+        from_address="0x" + "00" * 20,
+        to_address="0x" + "00" * 20,
+        value=Values(value=marker),
+        is_external=is_external,
+    )
+
+
+class TestGetAssetFlowsWithinTxEth:
+    """get_asset_flows_within_tx (eth-like) must reuse the already-fetched tx
+    instead of re-resolving it for the token-log scan, and must preserve
+    result ORDER: traces first, then token txs — the gather-based rewrite
+    must not shuffle that.
+    """
+
+    def make_service(self, raw_tx, traces, tokens):
+        db = MagicMock()
+        db.get_tx = AsyncMock(return_value=raw_tx)
+        db.get_token_configuration = MagicMock(return_value={})
+        db.fetch_transaction_traces = AsyncMock(return_value=traces)
+        db.list_token_txs = AsyncMock(return_value=tokens)
+        svc = TxsService(db=db, rates_service=make_rates_service(), logger=MagicMock())
+        return svc, db
+
+    def patch_converters(self):
+        async def fake_trace_to_std(
+            currency,
+            result,
+            tx_timestamp,
+            rates,
+            token_config,
+            trace_index,
+            is_first_trace,
+        ):
+            return make_tx_account(
+                f"trace-{result['marker']}",
+                result["marker"],
+                is_external=(is_first_trace or trace_index is None),
+            )
+
+        async def fake_std_tx_from_row(
+            currency, result, rates, token_config, *args, **kwargs
+        ):
+            return make_tx_account(
+                f"token-{result['marker']}", result["marker"], is_external=False
+            )
+
+        return patch.multiple(
+            "graphsenselib.db.asynchronous.services.txs_service",
+            _raw_trace_to_std_tx=AsyncMock(side_effect=fake_trace_to_std),
+            std_tx_from_row=AsyncMock(side_effect=fake_std_tx_from_row),
+        )
+
+    async def test_both_flags_on_preserves_trace_then_token_order(self):
+        raw_tx = make_raw_eth_tx()
+        traces = [
+            {"trace_index": 0, "marker": 10},
+            {"trace_index": 1, "marker": 11},
+        ]
+        tokens = [
+            {"marker": 20, "block_id": BLOCK_ID, "currency": "USDT"},
+            {"marker": 21, "block_id": BLOCK_ID, "currency": "USDT"},
+        ]
+        svc, db = self.make_service(raw_tx, traces, tokens)
+
+        with self.patch_converters():
+            result = await svc.get_asset_flows_within_tx(
+                "eth",
+                TX_HASH.hex(),
+                include_token_txs=True,
+                include_internal_txs=True,
+            )
+
+        identifiers = [t.identifier for t in result.txs]
+        assert identifiers == ["trace-10", "trace-11", "token-20", "token-21"]
+
+        # tx must be fetched exactly once and reused for the token-log scan
+        db.get_tx.assert_awaited_once()
+        db.list_token_txs.assert_awaited_once_with("eth", TX_HASH.hex(), tx=raw_tx)
+
+    async def test_include_internal_txs_false_skips_traces(self):
+        raw_tx = make_raw_eth_tx()
+        tokens = [{"marker": 30, "block_id": BLOCK_ID, "currency": "USDT"}]
+        svc, db = self.make_service(raw_tx, traces=[], tokens=tokens)
+        db.fetch_transaction_traces = AsyncMock(
+            side_effect=AssertionError("traces scan must not run when disabled")
+        )
+        # stand in for the trace_account_chains=True base leg
+        base_leg = make_tx_account("base", 1, is_external=True)
+        svc.get_tx = AsyncMock(return_value=base_leg)
+
+        with self.patch_converters():
+            result = await svc.get_asset_flows_within_tx(
+                "eth",
+                TX_HASH.hex(),
+                include_token_txs=True,
+                include_internal_txs=False,
+            )
+
+        identifiers = [t.identifier for t in result.txs]
+        assert identifiers == ["base", "token-30"]
+        db.fetch_transaction_traces.assert_not_called()
+        db.list_token_txs.assert_awaited_once_with("eth", TX_HASH.hex(), tx=raw_tx)
+
+    async def test_include_token_txs_false_skips_token_scan(self):
+        raw_tx = make_raw_eth_tx()
+        traces = [{"trace_index": 0, "marker": 40}]
+        svc, db = self.make_service(raw_tx, traces=traces, tokens=[])
+        db.list_token_txs = AsyncMock(
+            side_effect=AssertionError("token-log scan must not run when disabled")
+        )
+
+        with self.patch_converters():
+            result = await svc.get_asset_flows_within_tx(
+                "eth",
+                TX_HASH.hex(),
+                include_token_txs=False,
+                include_internal_txs=True,
+            )
+
+        identifiers = [t.identifier for t in result.txs]
+        assert identifiers == ["trace-40"]
+        db.list_token_txs.assert_not_called()
+
+    async def test_both_flags_off_yields_only_base_leg(self):
+        raw_tx = make_raw_eth_tx()
+        svc, db = self.make_service(raw_tx, traces=[], tokens=[])
+        db.fetch_transaction_traces = AsyncMock(
+            side_effect=AssertionError("traces scan must not run when disabled")
+        )
+        db.list_token_txs = AsyncMock(
+            side_effect=AssertionError("token-log scan must not run when disabled")
+        )
+        base_leg = make_tx_account("base", 1, is_external=True)
+        svc.get_tx = AsyncMock(return_value=base_leg)
+
+        with self.patch_converters():
+            result = await svc.get_asset_flows_within_tx(
+                "eth",
+                TX_HASH.hex(),
+                include_token_txs=False,
+                include_internal_txs=False,
+            )
+
+        identifiers = [t.identifier for t in result.txs]
+        assert identifiers == ["base"]
+        db.get_tx.assert_awaited_once()
