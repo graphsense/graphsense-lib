@@ -643,28 +643,52 @@ async def get_address(
             f"{address} does not look like a valid {currency} address"
         )
 
+    async def _none():
+        return None
+
+    # The actor lookup (Postgres) needs only the input address string, and
+    # the rates lookup (Cassandra/cache) needs only the currency — neither
+    # depends on the address row below, so both start now instead of paying
+    # their round trips serially after db.get_address returns.
+    actor_task = asyncio.ensure_future(
+        tagstore.get_actors_by_subjectid(address, tagstore_groups)
+        if include_actors
+        else _none()
+    )
+    rates_task = asyncio.ensure_future(rates_service.get_rates(currency))
+
     try:
         result = await db.get_address(currency, address_canonical)
     except AddressNotFoundException:
         if not new_address_fallback:
+            # Don't leak the already-started tasks: cancel and drain them
+            # before re-raising, so nothing keeps running in the background
+            # and no "exception was never retrieved" warning fires later.
+            actor_task.cancel()
+            rates_task.cancel()
+            await asyncio.gather(actor_task, rates_task, return_exceptions=True)
             raise
         result = await db.new_address(currency, address_canonical)
 
-    actors = None
-    if include_actors:
-        actor_res = await tagstore.get_actors_by_subjectid(address, tagstore_groups)
-        actors = [labeled_item_ref_from_actor(a) for a in actor_res]
-
     # Fresh cluster id (UTXO only): populated whenever the fresh tables
     # exist, independent of the fresh read switch, so clients can discover
-    # the fresh id while all legacy-id lookups keep working unchanged.
-    fresh_cluster_id = None
-    if result and not is_eth_like(currency):
-        address_id = result.get("address_id")
-        if address_id is not None:
-            fresh_cluster_id = await db.get_fresh_cluster_id(currency, address_id)
+    # the fresh id while all legacy-id lookups keep working unchanged. It
+    # needs address_id from the row above, so it can only start now — but it
+    # still overlaps with the still in-flight actor/rates tasks instead of
+    # waiting for them to finish first.
+    fresh_cluster_task = asyncio.ensure_future(
+        db.get_fresh_cluster_id(currency, result["address_id"])
+        if result and not is_eth_like(currency) and result.get("address_id") is not None
+        else _none()
+    )
 
-    rates = await rates_service.get_rates(currency)
+    actor_res, fresh_cluster_id, rates = await asyncio.gather(
+        actor_task, fresh_cluster_task, rates_task
+    )
+    actors = (
+        [labeled_item_ref_from_actor(a) for a in actor_res] if include_actors else None
+    )
+
     return address_from_row(
         currency,
         result,
