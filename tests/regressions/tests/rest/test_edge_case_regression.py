@@ -928,3 +928,78 @@ class TestEdgeCaseRegressionTagSummary:
             f"btc/addresses/{self.ADDRESS}/tag_summary?include_best_cluster_tag=true",
         )
         assert summary.get("best_actor") == "kraken"
+
+
+class TestBulkRelationsOnlyNeighborsObfuscation:
+    """bulk.json/list_cluster_neighbors must survive `relations_only=true`.
+
+    With `relations_only=true` a neighbor's `entity` is the bare cluster id
+    rather than an expanded cluster object. The tag-obfuscation response hook
+    assumed the expanded shape and raised `AttributeError: 'int' object has no
+    attribute 'best_address_tag'` after the 200 header had been sent, so
+    clients got a truncated, unparseable body (prod:
+    btc/bulk.json/list_cluster_neighbors?num_pages=1).
+
+    Sent anonymously so the obfuscation path actually runs: the harness injects
+    `X-Consumer-Groups: tags-private` on authenticated local requests, which
+    skips obfuscation and would make this pass without exercising the bug.
+    Current-server invariant, not a baseline comparison — deployed prod has
+    exactly this defect. The paired expanded-neighbor call asserts the fix did
+    not simply switch obfuscation off for this endpoint.
+    """
+
+    CLUSTER = 2647118
+
+    def _bulk_neighbors(self, body: Dict[str, Any]) -> Any:
+        url = urljoin(
+            CURRENT_SERVER + "/",
+            "btc/bulk.json/list_cluster_neighbors?num_pages=1",
+        )
+        response = requests.post(
+            url, json=body, headers=headers_for(CURRENT_SERVER, False)
+        )
+        assert response.status_code == 200
+        return response.json()  # raises on the truncated broken stream
+
+    @pytest.mark.regression
+    @pytest.mark.skipif(
+        "iknaio.com" in CURRENT_SERVER,
+        reason="hosted gateways 401 anonymous requests before the obfuscation "
+        "middleware runs — only testable against a bare (local) server",
+    )
+    def test_bulk_relations_only_neighbors_stream_completely(self):
+        rows = self._bulk_neighbors(
+            {
+                "cluster": [self.CLUSTER],
+                "direction": "out",
+                "relations_only": True,
+            }
+        )
+        assert rows, "no neighbors returned for the cluster"
+        for row in rows:
+            assert "_error" not in row, row["_error"]
+            # relations_only keeps the neighbor as a bare id under both the
+            # deprecated `entity` and the preferred `cluster` key
+            assert isinstance(row["entity"], int)
+            assert row["cluster"] == row["entity"]
+
+    @pytest.mark.regression
+    @pytest.mark.skipif(
+        "iknaio.com" in CURRENT_SERVER,
+        reason="hosted gateways 401 anonymous requests before the obfuscation "
+        "middleware runs — only testable against a bare (local) server",
+    )
+    def test_bulk_expanded_neighbors_are_still_obfuscated(self):
+        rows = self._bulk_neighbors({"cluster": [self.CLUSTER], "direction": "out"})
+        assert rows, "no neighbors returned for the cluster"
+        private = [
+            row
+            for row in rows
+            if row.get("entity_best_address_tag_tagpack_is_public") is False
+        ]
+        if not private:
+            pytest.skip("no private-tagged neighbor in this page to check")
+        for row in private:
+            assert row["entity_best_address_tag_label"] == "", (
+                "private neighbor tag label leaked to an anonymous caller"
+            )

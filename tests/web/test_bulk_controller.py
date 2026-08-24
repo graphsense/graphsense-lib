@@ -8,7 +8,16 @@ from graphsenselib.db.asynchronous.services.models import RatesResponse
 from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
     ObfuscateTags,
 )
-from graphsenselib.web.models import AddressTag, AddressTags
+from graphsenselib.web.models import (
+    AddressTag,
+    AddressTags,
+    Cluster,
+    NeighborCluster,
+    NeighborClusters,
+    Rate,
+    TxSummary,
+    Values,
+)
 from graphsenselib.web.routes.bulk import (
     bounded_as_completed,
     to_csv_generator,
@@ -40,6 +49,31 @@ def _make_addr_tag(is_public, label):
         currency="btc",
         address="addr",
         entity=123,
+    )
+
+
+def _make_values():
+    return Values(fiat_values=[Rate(code="eur", value=0.0)], value=0)
+
+
+def _make_cluster(tag=None):
+    return Cluster(
+        currency="btc",
+        entity=109578,
+        root_address="addr",
+        balance=_make_values(),
+        first_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        last_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        in_degree=1,
+        out_degree=1,
+        no_addresses=1,
+        no_incoming_txs=1,
+        no_outgoing_txs=1,
+        total_received=_make_values(),
+        total_spent=_make_values(),
+        actors=None,
+        best_address_tag=tag,
+        no_address_tags=1,
     )
 
 
@@ -90,6 +124,56 @@ def test_bulk_wrap_obfuscates_private_tags():
     assert by_public[False]["source"] == ""
     assert by_public[False]["tagpack_uri"] == ""
     assert by_public[False]["actor"] == ""
+
+
+def test_bulk_wrap_relations_only_neighbors_are_not_obfuscated_as_entities():
+    """Regression: with relations_only=true a neighbor's `entity` is the bare
+    cluster id, not an expanded cluster. The obfuscation hook assumed the
+    expanded shape and raised AttributeError: 'int' object has no attribute
+    'best_address_tag' inside wrap(), aborting bulk.json/list_cluster_neighbors
+    after the 200 header had been sent (prod, btc/bulk.json/
+    list_cluster_neighbors?num_pages=1). Id-only neighbors carry no tags or
+    actors, so there is nothing to obfuscate; expanded ones still are."""
+    private = _make_addr_tag(False, "PrivateLabel")
+
+    async def op(ctx, currency, **params):
+        return NeighborClusters(
+            neighbors=[
+                NeighborCluster(
+                    entity=109578, value=_make_values(), no_txs=1, labels=None
+                ),
+                NeighborCluster(
+                    entity=_make_cluster(tag=private),
+                    value=_make_values(),
+                    no_txs=2,
+                    labels=None,
+                ),
+            ],
+            next_page=None,
+        )
+
+    flat = asyncio.run(
+        wrap(
+            _obfuscating_request(),
+            None,
+            op,
+            "btc",
+            {"relations_only": True},
+            {"cluster": 2647118},
+            1,
+            "json",
+            asyncio.Semaphore(1),
+        )
+    )
+
+    assert len(flat) == 2
+    id_only, expanded = flat
+    # the id-only reference survives untouched under both keys
+    assert id_only["entity"] == 109578
+    assert id_only["cluster"] == 109578
+    # ... and the expanded neighbor in the same page is still obfuscated
+    assert expanded["entity"]["best_address_tag"]["label"] == ""
+    assert expanded["entity"]["best_address_tag"]["actor"] == ""
 
 
 def _plain_request():
