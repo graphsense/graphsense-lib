@@ -499,6 +499,42 @@ class TestEdgeCaseRegressionTxsList(EdgeCaseRegressionTestBase):
             "eth/addresses/0x255c0dc1567739ceb2c8cd0fddcf1706563868d0/txs?pagesize=1"
         )
 
+    @pytest.mark.regression
+    def test_txs_page_token_below_first_tx_does_not_500(self):
+        """A page token whose secondary group predates the address's first tx.
+
+        The eth-like scan widens its secondary-group window after a sparse
+        round. Clamping that window to [sec_min, sec_max] inverts the range
+        when the token's secondary id sits outside it — a token minted before
+        the address's first tx, or against an older data generation — leaving
+        an EMPTY window that the loop cannot advance from, because it reads
+        the window's last element to pick the next group. That raised
+        IndexError and surfaced as HTTP 500 on a request production answers
+        with 200. Real TRX clients send such tokens; ten of them appear in the
+        Loki replay set.
+
+        Pinned as a comparison: production is correct here and the fix
+        restores agreement with it.
+        """
+        self.assert_call_equal(
+            "trx/addresses/TT8qvpubj3vxFqYYtGnD8ToXwPPotCxqrJ/txs"
+            "?order=desc&page=299795344395337794%3A155%3A1&pagesize=25"
+        )
+
+    @pytest.mark.regression
+    def test_txs_page_token_below_first_tx_token_currency(self):
+        """Same empty-window crash reached through the token_currency path.
+
+        Worth pinning separately: the asset filter builds a different query
+        chunk set, so a fix that only guarded the native-asset path would
+        still 500 here.
+        """
+        self.assert_call_equal(
+            "trx/addresses/TRLjDBbQq9SD5EgBwbzCWrb1tJTCjDJ8jm/txs"
+            "?order=desc&token_currency=usdt"
+            "&page=346090586425524368%3A179%3A1&pagesize=25"
+        )
+
 
 # =============================================================================
 # Tag obfuscation tests (anonymous vs authenticated)

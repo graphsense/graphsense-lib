@@ -4514,13 +4514,24 @@ class Cassandra:
             # networks without tx_ids, starting at current_secondary_id and
             # extending in scan direction (window size 1 = previous behavior)
             if is_eth_like(network) and tx_ids is None:
+                # current_secondary_id comes from a client-supplied page token
+                # and may sit outside [sec_min, sec_max] — a token minted before
+                # the address's first tx, or against another data generation.
+                # Clamping the window end to sec_min/sec_max alone would then
+                # invert the range and yield an EMPTY window, which the scan
+                # loop cannot advance from (it reads [-1] to pick the next
+                # group). Keep current_secondary_id in the window so an
+                # out-of-range token degrades to the window-size-1 behaviour:
+                # the round finds nothing and the loop retires the group.
                 if ascending:
                     window_end = min(current_secondary_id + group_window - 1, sec_max)
+                    window_end = max(window_end, current_secondary_id)
                     current_item_id_secondary_group = list(
                         range(current_secondary_id, window_end + 1)
                     )
                 else:
                     window_end = max(current_secondary_id - group_window + 1, sec_min)
+                    window_end = min(window_end, current_secondary_id)
                     current_item_id_secondary_group = list(
                         range(current_secondary_id, window_end - 1, -1)
                     )
