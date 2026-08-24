@@ -24,6 +24,8 @@ try:
 except ImportError:
     _WRITER_PROPERTIES = None
 
+from graphsenselib.utils.memory import release_unused_memory
+
 from ...schema.resources.parquet.account import (
     ACCOUNT_SCHEMA_RAW,
     BINARY_COL_CONVERSION_MAP_ACCOUNT,
@@ -86,6 +88,10 @@ def optimize_tables(
             full_vacuum=full_vacuum,
             last_n_partitions=per_table_last_n,
         )
+        # Each table's compaction leaves a high-water mark the next would
+        # otherwise start from; under a memory cap the kernel kills on the peak
+        # across the whole run, and the largest table is not always first.
+        release_unused_memory(f"after compacting {cfg.table_name}")
 
 
 def _recent_partition_filter(table: "DeltaTable", last_n: int) -> Optional[List[tuple]]:

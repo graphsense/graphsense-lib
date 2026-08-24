@@ -11,6 +11,7 @@ import click
 from graphsenselib.utils.DeltaTableConnector import DeltaTableConnector
 from graphsenselib.utils.date import parse_older_than_run_spec
 from graphsenselib.utils.locking import LockAcquisitionError, create_lock
+from graphsenselib.utils.memory import release_unused_memory
 
 from ..cli.common import require_currency, require_environment
 from ..config import get_config, supported_fiat_currencies
@@ -499,6 +500,10 @@ def _run_auto_compact(
                 f"Auto-compaction conditions met, last compaction was "
                 f"{last_vaccum_time}, running compaction"
             )
+            # The ingest that just ran holds its Arrow pool and native heap
+            # until asked to give them back; compaction would otherwise start
+            # from that floor and peak over any memory cap on the process.
+            release_unused_memory("before compaction")
             optimize_tables(
                 currency,
                 parquet_directory,
