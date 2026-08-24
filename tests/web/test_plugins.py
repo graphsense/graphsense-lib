@@ -319,6 +319,49 @@ class TestBeforeResponseNeighborClusters:
         assert neighbors.neighbors[1].entity.best_address_tag.label == "Kept"
 
 
+class TestBeforeResponseRelationsOnlyNeighbors:
+    """`relations_only=true` returns bare cluster ids instead of expanded
+    entities; the plugin must leave those untouched instead of crashing."""
+
+    def test_neighbor_entities_with_id_only_reference(self):
+        neighbors = NeighborEntities(
+            neighbors=[
+                NeighborEntity(entity=123, value=make_values(), no_txs=1),
+                NeighborEntity(
+                    entity=make_entity(tag=make_tag(is_public=False)),
+                    value=make_values(),
+                    no_txs=1,
+                ),
+            ],
+            next_page=None,
+        )
+        req = make_request("/btc/entities/123/neighbors")
+        req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+        ObfuscateTags.before_response({}, req, neighbors)
+        assert neighbors.neighbors[0].entity == 123
+        assert neighbors.neighbors[1].entity.best_address_tag.label == ""
+
+    def test_neighbor_clusters_with_id_only_reference(self):
+        neighbors = NeighborClusters(
+            neighbors=[NeighborCluster(entity=123, value=make_values(), no_txs=1)],
+            next_page=None,
+        )
+        req = make_request("/btc/clusters/123/neighbors")
+        req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+        ObfuscateTags.before_response({}, req, neighbors)
+        assert neighbors.neighbors[0].entity == 123
+
+    def test_neighbor_without_entity(self):
+        neighbors = NeighborClusters(
+            neighbors=[NeighborCluster(value=make_values(), no_txs=1)],
+            next_page=None,
+        )
+        req = make_request("/btc/clusters/123/neighbors")
+        req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+        ObfuscateTags.before_response({}, req, neighbors)
+        assert neighbors.neighbors[0].entity is None
+
+
 @pytest.mark.parametrize(
     "group", ["tags-private"]
 )  # tags-private group skips obfuscation (unless FORCE_OBFUSCATE is enabled)

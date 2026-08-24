@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Web API + Python client
+
+#### Fixed
+- **`list_cluster_neighbors` / `list_entity_neighbors` no longer crash with `relations_only=true` when tag obfuscation is active.** With `relations_only=true` a neighbor is returned as a bare cluster id rather than an expanded cluster object; the obfuscation plugin assumed the expanded shape and raised `AttributeError: 'int' object has no attribute 'best_address_tag'`, aborting the (bulk) response mid-stream. Id-only and absent neighbor references are now skipped — they carry no tags or actors to obfuscate.
+
 ## [2.16.1] - 2026-08-24
 
 ### Library

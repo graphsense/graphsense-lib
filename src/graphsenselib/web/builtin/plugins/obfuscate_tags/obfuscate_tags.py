@@ -94,6 +94,18 @@ def obfuscate_tagpack_uri_by_rule(rule, tags):
             tags.tagpack_uri = ""
 
 
+def expanded_entity(entity_ref):
+    """Return the neighbor reference only if it is an expanded entity object.
+
+    With `relations_only=true` a neighbor's `entity` is the bare cluster id, not
+    an `Entity`/`Cluster`. Such a reference carries no tags or actors to
+    obfuscate.
+    """
+    if isinstance(entity_ref, (Entity, Cluster)):
+        return entity_ref
+    return None
+
+
 def obfuscate_private_tags(tags):
     if not tags:
         return
@@ -189,8 +201,11 @@ class ObfuscateTags(Plugin):
             return
         if isinstance(result, (NeighborEntities, NeighborClusters)):
             for neighbor in result.neighbors:
-                tag_obfuscation_func(neighbor.entity.best_address_tag)
-                obfuscate_entity_actor(neighbor.entity)
+                entity = expanded_entity(neighbor.entity)
+                if entity is None:
+                    continue
+                tag_obfuscation_func(entity.best_address_tag)
+                obfuscate_entity_actor(entity)
         if (
             isinstance(result, SearchResultLevel1)
             or isinstance(result, SearchResultLevel2)
@@ -201,7 +216,9 @@ class ObfuscateTags(Plugin):
             or isinstance(result, SearchResultLeaf)
         ):
             if result.neighbor:
-                tag_obfuscation_func(result.neighbor.entity.best_address_tag)
+                entity = expanded_entity(result.neighbor.entity)
+                if entity is not None:
+                    tag_obfuscation_func(entity.best_address_tag)
             if not isinstance(result, SearchResultLeaf) and result.paths:
                 for path in result.paths:
                     cls.before_response(context, request, path)
