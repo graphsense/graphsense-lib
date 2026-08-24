@@ -12,9 +12,15 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [Unreleased]
 
+### Library
+
+#### Changed
+- **Account (eth/trx) transformed-schema tx counts widened from `int` to `bigint`** (`address.no_incoming_txs`, `no_outgoing_txs` and their `_zero_value` variants). Transaction counts are unbounded in time and have outgrown 32 bits — the TRON USDT contract sits at 3.7e9 incoming txs, stored as a wrapped negative. Cassandra cannot `ALTER` an `int` column to `bigint`, so there is no migration: existing keyspaces keep 32-bit columns until they are rebuilt, and the writers still cap at `Int.MaxValue` so they stay compatible with both widths. Degrees and relation counts stay `int` — both are bounded by the address universe rather than by time.
+
 ### Web API + Python client
 
 #### Fixed
+- **`/links` no longer times out on nodes whose tx count is 32-bit-wrapped.** The endpoint scans the smaller side of the pair, chosen by comparing the raw `no_outgoing_txs` and `no_incoming_txs` columns — but a count past 2**31 written by an older Spark jar is stored *negative*, so a wrapped node looked smaller than every counterparty and the scan walked its multi-billion-row history instead. The TRON USDT contract is such a node, and the same wrapped value also disabled the sparse-direction race. Both comparisons now saturate first, turning affected requests from a timeout into a sub-second response.
 - **`list_cluster_neighbors` / `list_entity_neighbors` no longer crash with `relations_only=true` when tag obfuscation is active.** With `relations_only=true` a neighbor is returned as a bare cluster id rather than an expanded cluster object; the obfuscation plugin assumed the expanded shape and raised `AttributeError: 'int' object has no attribute 'best_address_tag'`, aborting the (bulk) response mid-stream. Id-only and absent neighbor references are now skipped — they carry no tags or actors to obfuscate.
 
 ## [2.16.1] - 2026-08-24
