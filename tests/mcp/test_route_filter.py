@@ -59,3 +59,21 @@ def test_component_fn_skips_unlisted(sample_curation_file):
     fn(_fake_route("not_included"), comp)
     assert comp.description is None  # left alone
     assert comp.tags == set()
+
+
+def test_component_fn_strips_output_schema(sample_curation_file):
+    c = curation_mod.load(sample_curation_file)
+    fn = make_component_fn(c)
+    comp = _fake_component()
+    comp.output_schema = {"type": "object", "properties": {"huge": {}}}
+    fn(_fake_route("get_statistics", method="GET", path="/stats"), comp)
+    assert comp.output_schema is None
+
+
+def test_component_fn_leaves_unlisted_output_schema(sample_curation_file):
+    c = curation_mod.load(sample_curation_file)
+    fn = make_component_fn(c)
+    comp = _fake_component()
+    comp.output_schema = {"type": "object"}
+    fn(_fake_route("not_included"), comp)
+    assert comp.output_schema == {"type": "object"}  # left alone

@@ -41,6 +41,12 @@ def make_component_fn(curation: CurationFile):
         if not op_id or op_id not in include:
             return
         entry = include[op_id]
+        # Auto-generated tools inherit their OpenAPI response model as an MCP
+        # outputSchema — up to ~3.4k tokens each (graph_summary, list_block_txs)
+        # that no known client shows the model. Drop it; the hand-written
+        # consolidated tools never had one.
+        if getattr(component, "output_schema", None) is not None:
+            component.output_schema = None
         endpoint_info = f"{route.method} {route.path}"
         if entry.description:
             component.description = (
