@@ -12,6 +12,11 @@ Use one changelog file, but separate entries by track in each release window.
 
 ## [2.16.1] - unreleased
 
+### Library
+
+#### Fixed
+- **Delta-lake compaction no longer inherits the ingest's memory floor.** Auto-compaction runs in the process that just ingested, and neither allocator returns pages unprompted (Arrow's mimalloc pool has no wall-clock purge; the Rust extensions use glibc malloc), so both phases stack their high-water marks. Under a hard memory cap the kernel kills on peak RSS across the process lifetime, not the live set — enough to OOM a 30 GiB container mid-`OPTIMIZE`. Unused heap is now released before compaction and after each table.
+
 ### Web API + Python client (webapi-2.15.2)
 
 #### Added
@@ -23,6 +28,12 @@ Use one changelog file, but separate entries by track in each release window.
 - **`/entities/{entity}/addresses` (and its `/clusters/{cluster}/addresses` alias) is faster.** Actor lookups, member address rows and UTXO first/last-tx summaries are now fetched in a few grouped database calls per page instead of one round trip per address, with results unchanged.
 - **`/addresses/{address}/txs` and `/entities/{entity}/txs` are faster for UTXO networks.** Listed transactions are now resolved with a slim grouped-`IN` read of just the fields the page needs (hash, height, timestamp, coinbase) instead of one full-row point read per transaction; unchanged when `strict_data_validation` is enabled, since that path still needs the full inputs/outputs.
 - **`/search`'s tag-label matching can now be served from a `label_search` materialized view** of distinct `(label, acl_group)` pairs instead of trigram-scoring every tag row, cutting common-word queries from several seconds to well under one on large TagStores, with byte-identical results. Opt in per deployment with `use_label_search_view: true` after running `graphsense-cli tagstore init` to create the view (default off, since the view doesn't exist until then).
+- **`/entities/{entity}/neighbors` is faster, most visibly on slow pages.** The page's cluster rows, root addresses and tag data are each fetched in a few grouped calls instead of one chain per neighbor, and the Cassandra reads no longer share a concurrency limit that exists to protect the TagStore connection pool — that limit still governs every path that actually opens pooled connections, and the tag work for a page now uses a single shared connection, so pool pressure is lower than before. Results unchanged.
+- **`/addresses/{address}` is faster.** Tag, rate and address lookups that used to run one after another now overlap, and the first/last transaction is read with only the columns the response needs.
+- **`/txs/{tx_hash}/flows` and `/txs/{tx_hash}/conversions` are faster.** The transaction is fetched once and reused instead of being re-read per sub-query, and the log and trace scans run together.
+
+#### Fixed
+- **Paging with a token that points before an address's first transaction no longer returns HTTP 500.** On account-model networks the transaction scan widens its block-group window after a sparse round; a page token whose group fell outside the address's own range collapsed that window to nothing and the scan raised an error instead of simply finding no more results. Such tokens occur in normal client traffic — for instance one minted against an older data generation — and production answers them with 200. Introduced with the scan-window widening in this release window, so no released version is affected.
 
 ## [2.16.0] - 2026-08-21
 
