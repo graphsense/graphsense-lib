@@ -930,6 +930,52 @@ class TestEdgeCaseRegressionTagSummary:
         assert summary.get("best_actor") == "kraken"
 
 
+class TestEdgeCaseRegressionLinksWrappedCount:
+    """/links must not scan the wrong side when a tx count is int32-wrapped.
+
+    trx_transformed stores the TRON USDT contract's no_incoming_txs as
+    -580,448,962 (a 32-bit count past 2**31 written by an older Spark jar).
+    list_links picks the side to scan by comparing that raw column against the
+    counterparty's no_outgoing_txs, so every counterparty looked larger than
+    USDT and the scan walked USDT's ~3.7e9-row history instead of the other
+    side's few thousand rows — a guaranteed endpoint timeout.
+
+    Not a baseline comparison: deployed prod has the same inverted comparison
+    and times out on this call, so there is nothing correct to compare against.
+    The premise (USDT's count is still wrapped, the edge still exists) is
+    asserted from the current server, so the case stops silently passing if
+    either changes.
+    """
+
+    ADDRESS = "TSMnejGCoV8dX4GfCPcLS77g99SLZG8Kne"
+    USDT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+
+    @pytest.mark.regression
+    def test_links_to_usdt_contract_completes(self):
+        usdt, _ = get_data_from_endpoint(CURRENT_SERVER, f"trx/addresses/{self.USDT}")
+        assert usdt["no_incoming_txs"] >= 2**31 - 1, (
+            "premise broken: USDT's incoming count is no longer saturated, so "
+            "this case no longer exercises the wrapped-count path"
+        )
+
+        address, _ = get_data_from_endpoint(
+            CURRENT_SERVER, f"trx/addresses/{self.ADDRESS}"
+        )
+        assert address["no_outgoing_txs"] < usdt["no_incoming_txs"], (
+            "premise broken: the address side is no longer the smaller one"
+        )
+
+        # The assertion is that this returns at all: pre-fix it ran until the
+        # address_links_request_timeout and surfaced as a 500.
+        links, elapsed = get_data_from_endpoint(
+            CURRENT_SERVER,
+            f"trx/addresses/{self.ADDRESS}/links?neighbor={self.USDT}"
+            "&order=asc&pagesize=25",
+        )
+        assert isinstance(links.get("links"), list)
+        assert elapsed < 30, f"links took {elapsed:.1f}s, the timeout is 30s"
+
+
 class TestBulkRelationsOnlyNeighborsObfuscation:
     """bulk.json/list_cluster_neighbors must survive `relations_only=true`.
 

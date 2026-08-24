@@ -6,7 +6,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 import graphsenselib.utils.address
 from graphsenselib.datatypes.common import NodeType
-from graphsenselib.db.asynchronous.cassandra import get_tx_identifier
+from graphsenselib.db.asynchronous.cassandra import (
+    INT32_MAX,  # noqa: F401  re-exported: callers import it from here
+    get_tx_identifier,
+    saturate_int32_count,
+)
 from graphsenselib.errors import (
     AddressNotFoundException,
     BadUserInputException,
@@ -419,37 +423,6 @@ async def try_get_tag_cluster_id(
         cache[key] = returnv
 
     return returnv
-
-
-# Cassandra stores tx counts and degrees as 32-bit `int`. Two writers fill
-# those columns and they used to disagree once a value passed 2**31: the Spark
-# full transform cast the true count (a Long) down with a plain cast, which
-# TRUNCATES two's complement and lands NEGATIVE, while the delta updater caps
-# at Int.MaxValue (`min(value, 2147483647)`, deltaupdate/update/account/
-# createchanges.py). The TRON USDT contract has ~3.7e9 incoming txs and a
-# freshly transformed keyspace served -591,097,850 for it.
-#
-# Spark now saturates too (TransformHelpers.saturateToInt), but keyspaces
-# written by older jars still hold wrapped values, so reads normalize as well:
-# the API must never emit a negative count, whatever is in the table.
-INT32_MAX = 2**31 - 1
-
-
-def saturate_int32_count(value: Optional[int]) -> Optional[int]:
-    """Normalize a possibly-wrapped 32-bit counter to delta-updater semantics.
-
-    A negative counter can only be a wrapped one — these columns are counts and
-    are never legitimately below zero. Its true value is ``value + 2**32``,
-    which is necessarily >= 2**31 and therefore saturates to ``INT32_MAX``,
-    exactly what the delta updater would have written.
-
-    Both the cap and the wrap under-report; the column really wants to be
-    ``bigint``. Until that migration, a saturated value is at least
-    non-negative and monotone.
-    """
-    if value is None:
-        return None
-    return INT32_MAX if value < 0 else value
 
 
 def address_from_row(
