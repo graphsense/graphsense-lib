@@ -1,0 +1,56 @@
+name: Submit Spark Dependency Graph
+
+# Dependabot has no sbt ecosystem — its JVM support is maven and gradle only —
+# so spark/build.sbt is invisible to the dependency graph and has never raised
+# a single alert. This action resolves the sbt build and pushes the result
+# through GitHub's Dependency Submission API, which is what the graph (and
+# therefore Dependabot alerts) reads.
+#
+# What this does and does NOT buy us:
+#   * alerts on the Scala/Spark dependency tree — spark-sql, spark-graphx,
+#     spark-cassandra-connector, scallop, scalatest — yes.
+#   * automated bump PRs — no. Dependabot still cannot update sbt, so
+#     remediation is a manual edit to spark/build.sbt. Treat an alert here as
+#     a ticket, not as something that will fix itself.
+#
+# Only the default branch is submitted: the dependency graph tracks one
+# snapshot per repo, and submitting from feature branches would make it
+# flap between whatever happens to be building.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'spark/build.sbt'
+      - 'spark/project/**'
+      - '.github/workflows/spark_dependency_graph.yml'
+  workflow_dispatch:
+
+# Required by the Dependency Submission API.
+permissions:
+  contents: write
+
+jobs:
+  dependency-graph:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+    # Java 11 to match spark_tests.yml and the runtime the jar is built for;
+    # resolution is version-sensitive, so a different JDK could snapshot a
+    # different tree than the one we ship.
+    - name: Setup JDK
+      uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: 11
+    - name: Setup sbt launcher
+      uses: sbt/setup-sbt@v1
+    - name: Submit dependency graph
+      uses: scalacenter/sbt-dependency-submission@d84eef4c09e633bcf5f113bcad7fd5e9af1baee9 # v3.2.3
+      with:
+        working-directory: spark
+        # A resolution hiccup should not fail the build on master — submit what
+        # resolved and surface the rest as a warning.
+        on-resolve-failure: warning
