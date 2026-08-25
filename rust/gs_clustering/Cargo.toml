@@ -12,5 +12,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rayon = "1.10"
-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
-arrow = { version = "54.3", features = ["pyarrow"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
+arrow = { version = "59", features = ["pyarrow"] }

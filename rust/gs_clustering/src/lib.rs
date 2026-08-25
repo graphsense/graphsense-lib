@@ -53,14 +53,14 @@ impl Clustering {
             })?;
         array
             .py()
-            .allow_threads(|| execute_union_operations_arrow(&self.uf, list))
+            .detach(|| execute_union_operations_arrow(&self.uf, list))
             .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Return the full (address_id, cluster_id) mapping as an Arrow RecordBatch:
     /// one row per id in `0..=max_id`, dense and ascending. Kept for the
     /// incremental delta path, which drives small densified id spaces through it.
-    fn get_mapping(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn get_mapping<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let (address_ids, cluster_ids) = self.parallel_find_all();
         let batch = self
             .make_record_batch(address_ids, cluster_ids)
@@ -75,9 +75,13 @@ impl Clustering {
     /// component minimum by construction — the union-find links by minimum —
     /// so no relabel pass exists and the peak allocation is just the kept rows
     /// instead of one row per address id.
-    fn get_mapping_min(&self, py: Python<'_>, skip_singletons: bool) -> PyResult<PyObject> {
+    fn get_mapping_min<'py>(
+        &self,
+        py: Python<'py>,
+        skip_singletons: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let (address_ids, cluster_ids) =
-            py.allow_threads(|| self.build_min_mapping(skip_singletons));
+            py.detach(|| self.build_min_mapping(skip_singletons));
         let batch = self
             .make_record_batch(address_ids, cluster_ids)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
