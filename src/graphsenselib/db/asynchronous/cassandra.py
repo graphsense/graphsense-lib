@@ -2009,8 +2009,8 @@ class Cassandra:
                 first_tx = TxSummary(tx_hash=None, timestamp=None, height=height)
             result[addr] = {
                 "cluster_id": row.get("cluster_id", -1),
-                "no_incoming_txs": row.get("no_incoming_txs", 0),
-                "no_outgoing_txs": row.get("no_outgoing_txs", 0),
+                "no_incoming_txs": saturate_int32_count(row.get("no_incoming_txs", 0)),
+                "no_outgoing_txs": saturate_int32_count(row.get("no_outgoing_txs", 0)),
                 "first_tx": first_tx,
             }
 

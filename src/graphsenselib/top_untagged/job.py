@@ -406,6 +406,20 @@ class TopUntaggedAddresses:
         lookup = self.spark.createDataFrame(pairs, "raw_address binary, address string")
         return df.join(F.broadcast(lookup), on="raw_address").drop("raw_address")
 
+    @staticmethod
+    def _saturate_int32(column):
+        """Normalize a possibly-wrapped 32-bit count column (Spark-side).
+
+        Mirrors ``saturate_int32_count`` in the REST read path: a negative
+        count stored by a legacy int32 writer means the true counter wrapped
+        past 2^31 (e.g. the TRON USDT contract's ~3.7e9 incoming txs). A
+        wrapped value must count as huge, not negative, or sums, rankings and
+        the ``min_txs`` filter read it as "almost zero".
+        """
+        from pyspark.sql import functions as F
+
+        return F.when(column < 0, F.lit(2147483647)).otherwise(column)
+
     def _metrics(self, min_txs: int, fiat_index: int):
         """Project the address table down to the ranking metrics."""
         from pyspark.sql import functions as F
@@ -416,8 +430,8 @@ class TopUntaggedAddresses:
             F.col("address_id"),
             F.col("address").alias("raw_address"),
             (
-                F.coalesce(F.col("no_incoming_txs"), F.lit(0))
-                + F.coalesce(F.col("no_outgoing_txs"), F.lit(0))
+                F.coalesce(self._saturate_int32(F.col("no_incoming_txs")), F.lit(0))
+                + F.coalesce(self._saturate_int32(F.col("no_outgoing_txs")), F.lit(0))
             ).alias("no_txs"),
             (
                 F.coalesce(F.col("in_degree"), F.lit(0))

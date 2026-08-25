@@ -12,11 +12,16 @@ from graphsenselib.tagstore.algorithms.obfuscate import (
 )
 
 from graphsenselib.web.models import (
+    Address,
     AddressTags,
     Cluster,
     Entity,
+    EntityAddresses,
+    NeighborAddress,
+    NeighborAddresses,
     NeighborClusters,
     NeighborEntities,
+    SearchResult,
     SearchResultLeaf,
     SearchResultLevel1,
     SearchResultLevel2,
@@ -116,6 +121,39 @@ def obfuscate_private_tags(tags):
         obfuscate_tag_if_not_public(tags)
 
 
+def obfuscate_address_actors(address):
+    """Blank actor attribution on an address response.
+
+    Unlike ``Entity``/``Cluster``, ``Address`` carries no ``best_address_tag``
+    with a publicity flag, so the per-tag gate used by
+    :func:`obfuscate_entity_actor` is unavailable here. Under obfuscation the
+    whole actor list is hidden — the same stance the single-address route
+    takes by not loading address actors for obfuscated consumers.
+    """
+    if not address or not address.actors:
+        return
+    for actor in address.actors:
+        actor.id = ""
+        actor.label = ""
+
+
+def obfuscate_label_strings(labels):
+    """Blank plain label strings (no publicity info survives on them)."""
+    if not labels:
+        return
+    for i in range(len(labels)):
+        labels[i] = ""
+
+
+def obfuscate_search_result_actors(result):
+    """Blank actor attribution and label strings on a top-level search result."""
+    if result.actors:
+        for actor in result.actors:
+            actor.id = ""
+            actor.label = ""
+    obfuscate_label_strings(result.labels)
+
+
 class ObfuscateTags(Plugin):
     @classmethod
     def before_request(cls, context: dict, request: Request) -> dict | None:
@@ -196,6 +234,23 @@ class ObfuscateTags(Plugin):
             tag_obfuscation_func(result.best_address_tag)
             obfuscate_entity_actor(result)
             return
+        if isinstance(result, Address):
+            obfuscate_address_actors(result)
+            return
+        if isinstance(result, NeighborAddress):
+            obfuscate_address_actors(result.address)
+            return
+        if isinstance(result, NeighborAddresses):
+            for neighbor in result.neighbors:
+                obfuscate_address_actors(neighbor.address)
+            return
+        if isinstance(result, EntityAddresses):
+            for address in result.addresses:
+                obfuscate_address_actors(address)
+            return
+        if isinstance(result, SearchResult):
+            obfuscate_search_result_actors(result)
+            return
         if isinstance(result, AddressTags):
             tag_obfuscation_func(result.address_tags)
             return
@@ -206,6 +261,7 @@ class ObfuscateTags(Plugin):
                     continue
                 tag_obfuscation_func(entity.best_address_tag)
                 obfuscate_entity_actor(entity)
+            return
         if (
             isinstance(result, SearchResultLevel1)
             or isinstance(result, SearchResultLevel2)
@@ -219,6 +275,9 @@ class ObfuscateTags(Plugin):
                 entity = expanded_entity(result.neighbor.entity)
                 if entity is not None:
                     tag_obfuscation_func(entity.best_address_tag)
+                    obfuscate_entity_actor(entity)
+            for address in result.matching_addresses:
+                obfuscate_address_actors(address)
             if not isinstance(result, SearchResultLeaf) and result.paths:
                 for path in result.paths:
                     cls.before_response(context, request, path)

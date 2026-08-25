@@ -703,7 +703,7 @@ class EthTransformation(
       .groupBy("srcAddressId")
       .agg(
         TransformHelpers
-          .saturateToInt(count("transactionId"))
+          .saturateToLong(count("transactionId"))
           .as("noOutgoingTxs"),
         TransformHelpers
           .saturateToInt(countDistinct("dstAddressId"))
@@ -715,7 +715,7 @@ class EthTransformation(
       .groupBy("srcAddressId")
       .agg(
         TransformHelpers
-          .saturateToInt(count("transactionId"))
+          .saturateToLong(count("transactionId"))
           .as("noOutgoingTxsZeroValue"),
         TransformHelpers
           .saturateToInt(countDistinct("dstAddressId"))
@@ -755,7 +755,7 @@ class EthTransformation(
       .groupBy("dstAddressId")
       .agg(
         TransformHelpers
-          .saturateToInt(count("transactionId"))
+          .saturateToLong(count("transactionId"))
           .as("noIncomingTxs"),
         TransformHelpers
           .saturateToInt(countDistinct("srcAddressId"))
@@ -767,7 +767,7 @@ class EthTransformation(
       .groupBy("dstAddressId")
       .agg(
         TransformHelpers
-          .saturateToInt(count("transactionId"))
+          .saturateToLong(count("transactionId"))
           .as("noIncomingTxsZeroValue"),
         TransformHelpers
           .saturateToInt(countDistinct("srcAddressId"))

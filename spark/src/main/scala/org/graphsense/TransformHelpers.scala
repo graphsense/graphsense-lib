@@ -19,7 +19,7 @@ import org.apache.spark.sql.functions.{
   typedLit,
   when
 }
-import org.apache.spark.sql.types.{DataType, FloatType, IntegerType}
+import org.apache.spark.sql.types.{DataType, FloatType, IntegerType, LongType}
 import org.graphsense.models.ExchangeRatesRaw
 import org.apache.spark.sql.AnalysisException
 import org.graphsense.Util._
@@ -32,24 +32,26 @@ object TransformHelpers {
   /** Narrow a count to the schema's 32-bit column, saturating instead of
     * wrapping.
     *
-    * The transformed schema stores tx counts and degrees as Cassandra `int`,
-    * but a count is a Long. A plain `.cast(IntegerType)` TRUNCATES two's
+    * Used for the degree and relation counts, which are bounded by the address
+    * universe rather than by time. A plain `.cast(IntegerType)` TRUNCATES two's
     * complement in Spark's default (non-ANSI) mode, so anything past 2^31 lands
-    * in the table NEGATIVE: the TRON USDT contract has ~3.7e9 incoming txs and
-    * was written as -591,097,850, which the REST API then served.
-    *
-    * The Python delta updater caps the same fields at Int.MaxValue (`min(value,
-    * 2147483647)` in deltaupdate/update/account/createchanges.py), so an
-    * incrementally-maintained keyspace saturates while a freshly transformed
-    * one wrapped — the two implementations disagreed on the same address.
-    * Saturating here restores parity.
-    *
-    * Both behaviours under-report; the column really wants to be `bigint`. That
-    * is a schema migration across Spark, the delta updater and REST, so until
-    * then the two sides must at least fail the same way, and never negatively.
+    * in the table NEGATIVE. Transaction counts (the time-grown ones) live in
+    * 64-bit columns and go through :func:`saturateToLong` instead.
     */
   def saturateToInt(count: Column): Column =
     least(count, lit(Int.MaxValue.toLong)).cast(IntegerType)
+
+  /** Cast a count to the schema's 64-bit column, preserving the true value.
+    *
+    * The account schema stores tx counts (`no_incoming_txs`/`no_outgoing_txs`
+    * and their `_zero_value` variants) as Cassandra `bigint`. A count is a
+    * Long; a plain cast to `IntegerType` would truncate past 2^31 and store a
+    * negative (the historical wrap). Degrees and relation counts stay bounded
+    * by the address universe and keep the 32-bit `saturateToInt`; only these
+    * time-grown tx counts reach 64 bits.
+    */
+  def saturateToLong(count: Column): Column =
+    least(count, lit(Long.MaxValue)).cast(LongType)
 
   /* --- write-completion markers -------------------------------------------
    *

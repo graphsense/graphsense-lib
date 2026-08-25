@@ -269,6 +269,12 @@ def prepare_entities_for_ingest(
     get_address_prefix: Callable[[str], Tuple[str, str]],
 ) -> Tuple[List[DbChange], int]:
     changes = []
+    # The cap must stay until every served keyspace has bigint count columns:
+    # this function also writes UTXO cluster rows (schema still `int`), and
+    # account keyspaces created before the bigint widening keep their 32-bit
+    # columns forever (Cassandra cannot ALTER int -> bigint). Writing a value
+    # past 2^31 into such a column fails the whole ingest batch, which is
+    # strictly worse than the saturated under-report.
     int_signed_32_max = 2147483647
     nr_new_entities = 0
     for update in delta:
