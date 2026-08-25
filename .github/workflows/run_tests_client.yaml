@@ -21,8 +21,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Client pins requires-python = ">=3.9"; cover the full matrix.
-        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        # Client pins requires-python = ">=3.10"; cover the full matrix.
+        python: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v7
