@@ -10,15 +10,21 @@ core owns stays local.
 Decision rules:
 1. ``/{network}/...`` paths of a configured network proxy to its backend —
    EXCEPT address tag routes (``.../addresses/{addr}/tags`` and
-   ``.../tag_summary``): tags are keyed by real chain addresses and live in
-   this deployment's TagStore, so they are answered locally. Entity/cluster
-   routes DO proxy: an external backend mints its own entity ids, which mean
-   nothing in the local id space (and vice versa), so both sides of that id
-   family must stay with the backend that minted them.
+   ``.../tag_summary``) and their bulk twins
+   (``.../bulk.{csv,json}/{list_tags_by_address,get_tag_summary_by_address}``):
+   tags are keyed by real chain addresses and live in this deployment's
+   TagStore, so they are answered locally. Entity/cluster routes DO proxy: an
+   external backend mints its own entity ids, which mean nothing in the local
+   id space (and vice versa), so both sides of that id family must stay with
+   the backend that minted them.
 2. ``/stats`` is answered locally, then the per-currency entries of each
    backend (filtered to its configured networks) are merged into the
    ``currencies`` list. Local scalars (version, request_timestamp) win — they
-   describe THIS deployment.
+   describe THIS deployment. A backend entry that declares a ``capabilities``
+   list (absent = full core; present = lite, limited to exactly the named
+   features) gets ``"tags"`` added: the backend cannot know a TagStore fronts
+   it, but rule 1 makes tag routes work here, so THIS deployment truthfully
+   supports tags for those networks.
 3. ``/search`` without a currency filter is answered locally, then each
    backend's per-currency address/tx hits (filtered to its configured
    networks) are merged into the ``currencies`` list; labels and actors are
@@ -52,7 +58,15 @@ SERVED_BY_VALUE = "external-backend"
 
 # address tag routes stay local (rule 1): TagStore data keyed by real chain
 # addresses, owned by this deployment regardless of who serves the chain data
-_LOCAL_TAG_PATHS = (re.compile(r"^/[^/]+/addresses/[^/]+/(tags|tag_summary)$"),)
+_LOCAL_TAG_PATHS = (
+    re.compile(r"^/[^/]+/addresses/[^/]+/(tags|tag_summary)$"),
+    re.compile(
+        r"^/[^/]+/bulk\.(csv|json)/(list_tags_by_address|get_tag_summary_by_address)$"
+    ),
+)
+
+# the capability word rule 1 adds to a declaring backend's stats entry (rule 2)
+_TAGS_CAPABILITY = "tags"
 
 
 class ExternalBackendMiddleware(BaseHTTPMiddleware):
@@ -144,6 +158,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 for entry in backend_doc.get("currencies", [])
                 if entry.get(key) in networks
             ]
+            if request.url.path == "/stats":
+                entries = [_with_tags_capability(entry) for entry in entries]
             merged["currencies"] = _merge_keyed_lists(
                 merged["currencies"], entries, key
             )
@@ -196,6 +212,18 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             media_type=backend_response.headers.get("content-type"),
             headers={SERVED_BY_HEADER: SERVED_BY_VALUE},
         )
+
+
+def _with_tags_capability(entry: dict) -> dict:
+    """Add ``"tags"`` to a stats entry's declared capabilities (rule 2).
+
+    An entry WITHOUT a ``capabilities`` field declares a full core network and
+    is passed through untouched — adding a list there would demote it to lite.
+    """
+    capabilities = entry.get("capabilities")
+    if not isinstance(capabilities, list) or _TAGS_CAPABILITY in capabilities:
+        return entry
+    return {**entry, "capabilities": capabilities + [_TAGS_CAPABILITY]}
 
 
 def _merge_keyed_lists(base_entries: list, extra_entries: list, key: str) -> list:

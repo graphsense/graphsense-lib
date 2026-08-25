@@ -20,7 +20,12 @@ BACKEND_URL = "https://backend.test"
 BACKEND_STATS = {
     "version": "backend-version",
     "currencies": [
-        {"name": "bnb", "no_blocks": 42, "some_unmodeled_field": "kept"},
+        {
+            "name": "bnb",
+            "no_blocks": 42,
+            "some_unmodeled_field": "kept",
+            "capabilities": [],  # lite declaration: no relations/clusters/tags
+        },
         {"name": "eth", "no_blocks": 9},  # NOT configured -> must be filtered
     ],
 }
@@ -35,7 +40,7 @@ BACKEND_SEARCH = {
 }
 
 
-def make_client(enabled=True, api_key="backend-key"):
+def make_client(enabled=True, api_key="backend-key", backend_stats=BACKEND_STATS):
     """Local stand-in app + recording mock backend behind the middleware."""
     app = FastAPI()
 
@@ -74,12 +79,16 @@ def make_client(enabled=True, api_key="backend-key"):
     async def bulk(currency: str, operation: str):
         return {"served": "local"}
 
+    @app.post("/{currency}/bulk.csv/{operation}")
+    async def bulk_csv(currency: str, operation: str):
+        return {"served": "local"}
+
     seen: list[httpx.Request] = []
 
     def backend(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         if request.url.path == "/stats":
-            return httpx.Response(200, json=BACKEND_STATS)
+            return httpx.Response(200, json=backend_stats)
         if request.url.path == "/search":
             return httpx.Response(200, json=BACKEND_SEARCH)
         return httpx.Response(200, json={"backend_path": request.url.path})
@@ -139,6 +148,48 @@ def test_address_tag_routes_of_external_network_stay_local():
     assert seen == []
 
 
+def test_bulk_tag_operations_of_external_network_stay_local():
+    """The bulk twins of the address tag routes are the same TagStore reads
+    (the dashboard's CSV export uses them) and stay local like rule 1's
+    single-address routes."""
+    client, seen = make_client()
+    for form in ("csv", "json"):
+        for operation in ("list_tags_by_address", "get_tag_summary_by_address"):
+            response = client.post(
+                f"/bnb/bulk.{form}/{operation}", json={"address": ["0xabc"]}
+            )
+            assert response.json() == {"served": "local"}
+    assert seen == []
+
+
+def test_other_bulk_operations_of_external_network_proxy():
+    client, seen = make_client()
+    response = client.post("/bnb/bulk.json/get_address", json={"address": ["0xabc"]})
+    assert response.json() == {"backend_path": "/bnb/bulk.json/get_address"}
+    assert response.headers["x-served-by"] == "external-backend"
+
+
+def test_stats_capability_declaration_edge_cases():
+    """Absent capabilities = full core, untouched; an already-declared
+    "tags" is not duplicated."""
+    client, seen = make_client(
+        backend_stats={
+            "currencies": [
+                {"name": "bnb", "no_blocks": 1, "capabilities": ["relations", "tags"]}
+            ]
+        }
+    )
+    assert client.get("/stats").json()["currencies"][-1]["capabilities"] == [
+        "relations",
+        "tags",
+    ]
+
+    client, seen = make_client(
+        backend_stats={"currencies": [{"name": "bnb", "no_blocks": 1}]}
+    )
+    assert "capabilities" not in client.get("/stats").json()["currencies"][-1]
+
+
 def test_entity_routes_of_external_network_proxy():
     """Entity/cluster ids are minted per-backend; the local TagStore must
     never be queried with a backend-minted id (and vice versa)."""
@@ -162,10 +213,16 @@ def test_stats_merges_configured_networks_only():
     # local scalars win: they describe THIS deployment
     assert body["version"] == "local-version"
     # local entries first, backend entries for CONFIGURED networks appended;
-    # unmodeled backend fields survive (mirrored, not re-validated)
+    # unmodeled backend fields survive (mirrored, not re-validated); a
+    # declared capabilities list gains "tags" — rule 1 serves tags locally
     assert body["currencies"] == [
         {"name": "btc", "no_blocks": 1},
-        {"name": "bnb", "no_blocks": 42, "some_unmodeled_field": "kept"},
+        {
+            "name": "bnb",
+            "no_blocks": 42,
+            "some_unmodeled_field": "kept",
+            "capabilities": ["tags"],
+        },
     ]
     assert seen[-1].url.path == "/stats"
 
