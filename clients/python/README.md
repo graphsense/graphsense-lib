@@ -49,7 +49,7 @@ For more information, please visit [https://www.iknaio.com/](https://www.iknaio.
 
 ## Requirements.
 
-Python 3.9+
+Python 3.10+
 
 ## Installation & Usage
 
