@@ -1,14 +1,69 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
+# Dependabot configuration. See:
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
 version: 2
 updates:
-  - package-ecosystem: "uv" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # Root project. Version updates are grouped: without a group each bump is its
+  # own PR, the default open-pull-requests-limit of 5 fills up, and Dependabot
+  # then stops opening uv PRs entirely (that is how gitpython/aiohttp sat on
+  # 5 open version PRs while security alerts piled up). One weekly PR for
+  # minor+patch keeps the slot free; majors still come individually.
+  - package-ecosystem: "uv"
+    directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      uv-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # The generated API client is a separate uv project with its own lockfile;
+  # without an entry here nothing ever bumps it and its alerts (urllib3,
+  # requests, pytest) only ever got a one-shot security PR.
+  - package-ecosystem: "uv"
+    directory: "/clients/python"
+    schedule:
+      interval: "weekly"
+    groups:
+      uv-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Nightly regression harness — own uv project, own lockfile.
+  - package-ecosystem: "uv"
+    directory: "/tests/regressions"
+    schedule:
+      interval: "weekly"
+    groups:
+      uv-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # The pyo3 extension. pyo3 and arrow's `pyarrow` feature both link the native
+  # `python` library, so cargo only resolves when the two move together — a
+  # single-crate security bump of pyo3 always fails to resolve. Group them so
+  # Dependabot proposes the pair.
+  - package-ecosystem: "cargo"
+    directory: "/rust/gs_clustering"
+    schedule:
+      interval: "weekly"
+    groups:
+      pyo3-arrow:
+        patterns:
+          - "pyo3"
+          - "arrow"
 
   # Base and tool images pinned in the Dockerfile (python, uv, temurin).
   # They are pinned on purpose — a moving tag silently re-ships the big
@@ -40,6 +95,26 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      - dependency-name: "eclipse-temurin"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+
+  # `directory: "/"` above covers the two root Dockerfiles but not
+  # subdirectories, so the Spark image had no coverage at all. Its base is
+  # `eclipse-temurin:11-jdk` — same Java 11 constraint as the runtime image's
+  # `java11` stage (prod Spark executors are capped at 11 by Cassandra 4.x,
+  # and a Java-17+ driver breaks Kryo task-result deserialization), so major
+  # and minor are ignored here too and only the tag's digest may move.
+  - package-ecosystem: "docker"
+    directory: "/spark"
+    schedule:
+      interval: "weekly"
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+    ignore:
       - dependency-name: "eclipse-temurin"
         update-types:
           - "version-update:semver-major"
