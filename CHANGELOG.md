@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Fixed
+- **A Redis ingest lock left behind by a killed process no longer blocks ingest silently.** Two independent gaps let an eth ingest fall 32h behind without a single notification. (1) The Redis lock was released only in a `finally`, so a holder that died hard (OOM kill during auto-compaction, SIGKILL, reboot) never released it, and the key — an opaque uuid — survived until someone deleted it by hand, naming neither who held it nor since when. The lock value now identifies its holder as `{host, pid, acquired_at, nonce}`, readable with `redis-cli GET <key>` (host and pid are for the human reading the alert — in a container they are a discarded container id and pid 1, and nothing decides anything from them; the nonce keeps the value unique, since `release()` is a compare-and-delete against it), and the holder stamps a heartbeat in a sibling `<key>:heartbeat` while it works. A contender that finds a holder which has gone quiet for more than 15 minutes sends a Slack notification to the `exceptions` topic naming the host, the pid, how long it has been silent and the `redis-cli DEL` needed to break the lock — rate-limited to one report per lock per hour via a `SET NX EX` marker. Because the heartbeat measures *silence* rather than runtime, a legitimately hour-long job keeps stamping and is never reported. Nothing ever takes the lock away from its owner: there is deliberately **no TTL** (a lease must be renewed, and any renewal stall — Redis unreachable, the process stopped or thrashing, a long GIL-holding call — expires the lock while the holder is still writing, putting two ingest processes on one delta table), and no automatic reclaim (proving a pid is dead only works on the same host and in the same pid namespace, and gets it *wrong* elsewhere). A stalled heartbeat can therefore only cause a false alarm, never a released lock. (2) `ingest from-node` exited with code 911 on lock contention *before* reaching its post-ingest staleness check — and 911 is deliberately whitelisted in the Slack exception context, since contention normally just means the previous run is still going. A stuck lock therefore produced one log line per cron run and nothing else. The staleness check now runs on the contention path too (exit code 911 unchanged), so a lock that stays stuck past the configured `raw_ingest_staleness_threshold` raises the same alert as any other stalled ingest.
+
 ## [2.16.2] - 2026-08-24
 
 ### Library

@@ -252,6 +252,54 @@ def test_staleness_check_runs_when_nothing_to_ingest():
     mock_check.assert_called_once_with("test", "btc", 10, topic="exceptions")
 
 
+def test_staleness_check_runs_when_lock_is_contended():
+    """A held lock (exit 911) must still run the staleness check before exiting.
+
+    Lock contention is silent by design (911 is whitelisted in the slack
+    notification context), so a lock left behind by a killed holder blocks
+    every later run without any signal. The staleness check is the only thing
+    that notices the data going stale, so it must run on this path too.
+    """
+    from graphsenselib.ingest.cli import ingest
+    from graphsenselib.utils.locking import LockAcquisitionError
+
+    ingest_cfg = MagicMock(
+        exchange_rates_provider=None,
+        raw_ingest_staleness_threshold=10,
+        source_max_workers=None,
+    )
+    mock_config = MagicMock()
+    mock_config.legacy_ingest = False
+    mock_config.get_keyspace_config.return_value = MagicMock(ingest_config=ingest_cfg)
+
+    with (
+        patch("graphsenselib.ingest.cli.get_config", return_value=mock_config),
+        patch("graphsenselib.ingest.cli.GraphsenseSchemas"),
+        patch("graphsenselib.ingest.cli.DbFactory"),
+        patch(
+            "graphsenselib.ingest.cli.export_delta",
+            side_effect=LockAcquisitionError("lock held"),
+        ),
+        patch("graphsenselib.ingest.cli.check_raw_ingest_staleness") as mock_check,
+    ):
+        result = CliRunner().invoke(
+            ingest,
+            [
+                "--env",
+                "test",
+                "--currency",
+                "btc",
+                "--sinks",
+                "cassandra",
+                "--sinks",
+                "delta",
+            ],
+        )
+
+    assert result.exit_code == 911
+    mock_check.assert_called_once_with("test", "btc", 10, topic="exceptions")
+
+
 def test_sigint_after_first_partition_returns_partial():
     """Simulated SIGINT after the first partition must return partial progress.
 
