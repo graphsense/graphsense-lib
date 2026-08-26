@@ -48,10 +48,12 @@ interactions:
 - request:
     body: null
     headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
       Connection:
-      - close
-      Host:
-      - www.ecb.europa.eu
+      - keep-alive
     method: GET
     uri: https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.zip
   response:

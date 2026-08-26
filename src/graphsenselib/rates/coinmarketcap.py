@@ -7,7 +7,13 @@ import pandas as pd
 import requests
 
 from ..db import DbFactory
-from .utils import forward_filled_fx_rate, normalize_date_bounds
+from .utils import (
+    HTTP_TIMEOUT,
+    forward_filled_fx_rate,
+    normalize_date_bounds,
+    rates_session,
+    read_csv_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +25,7 @@ def fetch_ecb_rates(symbol_list: List) -> pd.DataFrame:
     """Fetch and preprocess FX rates from ECB."""
 
     logger.info(f"Fetching conversion rates for FIAT currencies from {FX_URL}")
-    rates_eur = pd.read_csv(FX_URL)  # exchange rates based on EUR
+    rates_eur = read_csv_url(FX_URL, compression="zip")  # rates based on EUR
     rates_eur = rates_eur.iloc[:, :-1]  # remove empty last column
     rates_eur["EUR"] = 1.0
     # convert to values based on USD
@@ -74,9 +80,7 @@ def fetch_cmc_rates(
     url = cmc_historical_url(crypto_currency, start_date, end_date)
 
     logger.info(f"Fetching {crypto_currency} exchange rates from {url}")
-    rsession = requests.Session()
-    rsession.mount("https://", requests.adapters.HTTPAdapter(max_retries=5))
-    response = rsession.get(url, headers=headers)
+    response = rates_session().get(url, headers=headers, timeout=HTTP_TIMEOUT)
     cmc_rates = parse_cmc_historical_response(response)
 
     if len(cmc_rates) > 0:
