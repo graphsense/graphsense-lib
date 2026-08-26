@@ -44,10 +44,14 @@ class CurrencyStats(APIModel):
     # Contract extension shared with external GraphSense-compatible backends
     # (the provider-backed adapter): capability discovery for consumers.
     # ABSENT = full core GraphSense (every locally served network); present =
-    # the exact subset of core features answered for this currency, from the
-    # vocabulary "relations" (counterparty enumeration / pair edges),
+    # the exact subset of OPTIONAL features answered for this currency, from
+    # the vocabulary "relations" (counterparty enumeration / pair edges),
     # "clusters" (address clustering), "tags" (TagStore data), "conversions"
-    # (DEX-swap/bridge resolution on txs). The
+    # (DEX-swap/bridge resolution on txs). The vocabulary covers only those
+    # optional families: being listed in /stats at all means the core route
+    # families (address/tx/block detail, search, rates) work, so consumers
+    # must never gate core endpoints on this field. Unknown words are
+    # ignored (forward-extensible). The
     # external-backends middleware appends "tags" to declared lists because
     # tag routes are answered locally. Local serving never sets these fields;
     # response_model_exclude_none keeps them off the wire.
