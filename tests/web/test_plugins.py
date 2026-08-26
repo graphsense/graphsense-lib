@@ -114,25 +114,6 @@ def make_cluster(tag=None, actors=None):
     )
 
 
-def make_address(actors=None):
-    return Address(
-        currency="btc",
-        address="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
-        entity=123,
-        fresh_cluster_id=456,
-        balance=make_values(),
-        total_received=make_values(),
-        total_spent=make_values(),
-        first_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
-        last_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
-        in_degree=1,
-        out_degree=1,
-        no_incoming_txs=1,
-        no_outgoing_txs=1,
-        actors=actors,
-    )
-
-
 def make_request(path, headers=None, query=""):
     req = MagicMock(spec=Request)
     req.url = MagicMock(path=path)
@@ -213,113 +194,6 @@ class TestObfuscateTagpackUriByRule:
 def test_before_request_skips(path, headers, query):
     req = make_request(path, headers, query)
     assert ObfuscateTags.before_request({}, req) is None
-
-
-def _marker_request(path):
-    req = make_request(path)
-    req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
-    return req
-
-
-class TestBeforeResponseAddresses:
-    def test_obfuscates_address_actors(self):
-        actors = [LabeledItemRef(id="a1", label="Actor1")]
-        address = make_address(actors=actors)
-        req = _marker_request("/btc/addresses/abc123")
-        ObfuscateTags.before_response({}, req, address)
-        assert address.actors[0].id == ""
-        assert address.actors[0].label == ""
-
-    def test_obfuscates_neighbor_address_actors(self):
-        actors = [LabeledItemRef(id="a1", label="Actor1")]
-        address = make_address(actors=actors)
-        neighbors = NeighborAddresses(
-            neighbors=[NeighborAddress(address=address, value=make_values(), no_txs=1)],
-            next_page=None,
-        )
-        req = _marker_request("/btc/addresses/abc123/neighbors")
-        ObfuscateTags.before_response({}, req, neighbors)
-        assert neighbors.neighbors[0].address.actors[0].id == ""
-        assert neighbors.neighbors[0].address.actors[0].label == ""
-
-    def test_obfuscates_entity_addresses_actors(self):
-        actors = [LabeledItemRef(id="a1", label="Actor1")]
-        addresses = EntityAddresses(
-            addresses=[make_address(actors=actors), make_address()],
-            next_page=None,
-        )
-        req = _marker_request("/btc/entities/123/addresses")
-        ObfuscateTags.before_response({}, req, addresses)
-        assert addresses.addresses[0].actors[0].id == ""
-        assert addresses.addresses[0].actors[0].label == ""
-        assert addresses.addresses[1].actors is None
-
-    def test_leaves_address_without_actors_untouched(self):
-        req = _marker_request("/btc/addresses/abc123")
-        address = make_address()
-        ObfuscateTags.before_response({}, req, address)
-        assert address.actors is None
-
-
-class TestBeforeResponseSearchResult:
-    def test_obfuscates_top_level_actors_and_labels(self):
-        result = SearchResult(
-            currencies=[],
-            labels=["private-label"],
-            actors=[LabeledItemRef(id="a1", label="Actor1")],
-        )
-        req = _marker_request("/search")
-        ObfuscateTags.before_response({}, req, result)
-        assert result.actors[0].id == ""
-        assert result.actors[0].label == ""
-        assert result.labels == [""]
-
-    def test_search_level1_obfuscates_entity_actors_and_matching_addresses(self):
-        neighbor = SearchResultLevel1(
-            neighbor=NeighborEntity(
-                entity=make_entity(
-                    tag=make_tag(is_public=False),
-                    actors=[LabeledItemRef(id="a1", label="Actor1")],
-                ),
-                value=make_values(),
-                no_txs=1,
-            ),
-            matching_addresses=[
-                make_address(actors=[LabeledItemRef(id="a2", label="Actor2")])
-            ],
-            paths=[],
-        )
-        req = _marker_request("/btc/entities/123/search")
-        ObfuscateTags.before_response({}, req, neighbor)
-        assert neighbor.neighbor.entity.best_address_tag.label == ""
-        assert neighbor.neighbor.entity.actors[0].id == ""
-        assert neighbor.matching_addresses[0].actors[0].id == ""
-        assert neighbor.matching_addresses[0].actors[0].label == ""
-
-    def test_search_level1_preserves_public_entity_actor_blanks_address_actor(
-        self,
-    ):
-        """A public best_address_tag keeps the entity actor readable, but the
-        matching addresses carry no publicity flag, so their actors are
-        blanked wholesale like on every other Address-bearing shape."""
-        neighbor = SearchResultLevel1(
-            neighbor=NeighborEntity(
-                entity=make_entity(
-                    tag=make_tag(is_public=True),
-                    actors=[LabeledItemRef(id="a1", label="PublicActor")],
-                ),
-                value=make_values(),
-                no_txs=1,
-            ),
-            matching_addresses=[
-                make_address(actors=[LabeledItemRef(id="a2", label="Actor2")])
-            ],
-            paths=[],
-        )
-        req = _marker_request("/btc/entities/123/search")
-        ObfuscateTags.before_response({}, req, neighbor)
-        assert neighbor.neighbor.entity.actors[0].label == "PublicActor"
-        assert neighbor.matching_addresses[0].actors[0].label == ""
 
 
 @pytest.mark.parametrize(
@@ -587,3 +461,112 @@ class TestTagpackUriRule:
             {"config": {"obfuscate_tagpack_uri_rule": r"internal/.*"}}, req, entity
         )
         assert entity.best_address_tag.tagpack_uri == "public/tp.yaml"
+
+
+# --- Attribution passthrough guard ---
+
+
+def make_address(actors=None):
+    return Address(
+        currency="btc",
+        address="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+        entity=123,
+        fresh_cluster_id=456,
+        balance=make_values(),
+        total_received=make_values(),
+        total_spent=make_values(),
+        first_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        last_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        in_degree=1,
+        out_degree=1,
+        no_incoming_txs=1,
+        no_outgoing_txs=1,
+        actors=actors,
+    )
+
+
+def _obfuscated_request(path):
+    req = make_request(path)
+    req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+    return req
+
+
+class TestAttributionPassthroughForObfuscatedConsumers:
+    """Obfuscation must NOT strip actor attribution from address-bearing or
+    search responses — for ANY consumer, obfuscated ones included.
+
+    Deliberate product decision (2026-08-26): actor attributions on
+    addresses, neighbor lists, entity address lists, and search results
+    stay visible to everyone; obfuscation only gates the publicity of
+    entity best_address_tag / address tags. Commit 63955d65 blanked these
+    shapes wholesale (reverted in the commit adding this class); besides
+    hiding wanted data, the blanked-to-"" actor ids made Pathfinder
+    request `GET /tags/actors/` (empty id) and surface request errors.
+    Do not re-add such dispatch without revisiting that decision.
+    """
+
+    def test_address_actors_pass_through(self):
+        address = make_address(actors=[LabeledItemRef(id="a1", label="Actor1")])
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/addresses/abc123"), address
+        )
+        assert address.actors[0].id == "a1"
+        assert address.actors[0].label == "Actor1"
+
+    def test_neighbor_address_actors_pass_through(self):
+        neighbors = NeighborAddresses(
+            neighbors=[
+                NeighborAddress(
+                    address=make_address(
+                        actors=[LabeledItemRef(id="a1", label="Actor1")]
+                    ),
+                    value=make_values(),
+                    no_txs=1,
+                )
+            ],
+            next_page=None,
+        )
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/addresses/abc123/neighbors"), neighbors
+        )
+        assert neighbors.neighbors[0].address.actors[0].id == "a1"
+
+    def test_entity_addresses_actors_pass_through(self):
+        addresses = EntityAddresses(
+            addresses=[make_address(actors=[LabeledItemRef(id="a1", label="Actor1")])],
+            next_page=None,
+        )
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/entities/123/addresses"), addresses
+        )
+        assert addresses.addresses[0].actors[0].id == "a1"
+
+    def test_search_result_labels_and_actors_pass_through(self):
+        result = SearchResult(
+            currencies=[],
+            labels=["private-label"],
+            actors=[LabeledItemRef(id="a1", label="Actor1")],
+        )
+        ObfuscateTags.before_response({}, _obfuscated_request("/search"), result)
+        assert result.labels == ["private-label"]
+        assert result.actors[0].id == "a1"
+
+    def test_search_level_matching_addresses_pass_through(self):
+        neighbor = SearchResultLevel1(
+            neighbor=NeighborEntity(
+                entity=make_entity(tag=make_tag(is_public=False)),
+                value=make_values(),
+                no_txs=1,
+            ),
+            matching_addresses=[
+                make_address(actors=[LabeledItemRef(id="a2", label="Actor2")])
+            ],
+            paths=[],
+        )
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/entities/123/search"), neighbor
+        )
+        # the entity best tag keeps its publicity gate ...
+        assert neighbor.neighbor.entity.best_address_tag.label == ""
+        # ... but address attribution passes through
+        assert neighbor.matching_addresses[0].actors[0].id == "a2"
