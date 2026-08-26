@@ -46,7 +46,8 @@ class CurrencyStats(APIModel):
     # ABSENT = full core GraphSense (every locally served network); present =
     # the exact subset of core features answered for this currency, from the
     # vocabulary "relations" (counterparty enumeration / pair edges),
-    # "clusters" (address clustering), "tags" (TagStore data). The
+    # "clusters" (address clustering), "tags" (TagStore data), "conversions"
+    # (DEX-swap/bridge resolution on txs). The
     # external-backends middleware appends "tags" to declared lists because
     # tag routes are answered locally. Local serving never sets these fields;
     # response_model_exclude_none keeps them off the wire.
