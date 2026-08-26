@@ -21,16 +21,22 @@ from graphsenselib.web.builtin.plugins.obfuscate_tags.obfuscate_tags import (
 from graphsenselib.web.app import setup_plugins
 from graphsenselib.web.routes.base import should_obfuscate_private_tags
 from graphsenselib.web.models import (
+    Address,
     AddressTag,
     AddressTags,
     Cluster,
     Entity,
+    EntityAddresses,
     LabeledItemRef,
+    NeighborAddress,
+    NeighborAddresses,
     NeighborCluster,
     NeighborClusters,
     NeighborEntities,
     NeighborEntity,
     Rate,
+    SearchResult,
+    SearchResultLevel1,
     TxSummary,
     Values,
 )
@@ -455,3 +461,112 @@ class TestTagpackUriRule:
             {"config": {"obfuscate_tagpack_uri_rule": r"internal/.*"}}, req, entity
         )
         assert entity.best_address_tag.tagpack_uri == "public/tp.yaml"
+
+
+# --- Attribution passthrough guard ---
+
+
+def make_address(actors=None):
+    return Address(
+        currency="btc",
+        address="1Archive1n2C579dMsAu3iC6tWzuQJz8dN",
+        entity=123,
+        fresh_cluster_id=456,
+        balance=make_values(),
+        total_received=make_values(),
+        total_spent=make_values(),
+        first_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        last_tx=TxSummary(timestamp=0, height=1, tx_hash="tx"),
+        in_degree=1,
+        out_degree=1,
+        no_incoming_txs=1,
+        no_outgoing_txs=1,
+        actors=actors,
+    )
+
+
+def _obfuscated_request(path):
+    req = make_request(path)
+    req.state.header_modifications = {GROUPS_HEADER_NAME: OBFUSCATION_MARKER_GROUP}
+    return req
+
+
+class TestAttributionPassthroughForObfuscatedConsumers:
+    """Obfuscation must NOT strip actor attribution from address-bearing or
+    search responses — for ANY consumer, obfuscated ones included.
+
+    Deliberate product decision (2026-08-26): actor attributions on
+    addresses, neighbor lists, entity address lists, and search results
+    stay visible to everyone; obfuscation only gates the publicity of
+    entity best_address_tag / address tags. Commit 63955d65 blanked these
+    shapes wholesale (reverted in the commit adding this class); besides
+    hiding wanted data, the blanked-to-"" actor ids made Pathfinder
+    request `GET /tags/actors/` (empty id) and surface request errors.
+    Do not re-add such dispatch without revisiting that decision.
+    """
+
+    def test_address_actors_pass_through(self):
+        address = make_address(actors=[LabeledItemRef(id="a1", label="Actor1")])
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/addresses/abc123"), address
+        )
+        assert address.actors[0].id == "a1"
+        assert address.actors[0].label == "Actor1"
+
+    def test_neighbor_address_actors_pass_through(self):
+        neighbors = NeighborAddresses(
+            neighbors=[
+                NeighborAddress(
+                    address=make_address(
+                        actors=[LabeledItemRef(id="a1", label="Actor1")]
+                    ),
+                    value=make_values(),
+                    no_txs=1,
+                )
+            ],
+            next_page=None,
+        )
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/addresses/abc123/neighbors"), neighbors
+        )
+        assert neighbors.neighbors[0].address.actors[0].id == "a1"
+
+    def test_entity_addresses_actors_pass_through(self):
+        addresses = EntityAddresses(
+            addresses=[make_address(actors=[LabeledItemRef(id="a1", label="Actor1")])],
+            next_page=None,
+        )
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/entities/123/addresses"), addresses
+        )
+        assert addresses.addresses[0].actors[0].id == "a1"
+
+    def test_search_result_labels_and_actors_pass_through(self):
+        result = SearchResult(
+            currencies=[],
+            labels=["private-label"],
+            actors=[LabeledItemRef(id="a1", label="Actor1")],
+        )
+        ObfuscateTags.before_response({}, _obfuscated_request("/search"), result)
+        assert result.labels == ["private-label"]
+        assert result.actors[0].id == "a1"
+
+    def test_search_level_matching_addresses_pass_through(self):
+        neighbor = SearchResultLevel1(
+            neighbor=NeighborEntity(
+                entity=make_entity(tag=make_tag(is_public=False)),
+                value=make_values(),
+                no_txs=1,
+            ),
+            matching_addresses=[
+                make_address(actors=[LabeledItemRef(id="a2", label="Actor2")])
+            ],
+            paths=[],
+        )
+        ObfuscateTags.before_response(
+            {}, _obfuscated_request("/btc/entities/123/search"), neighbor
+        )
+        # the entity best tag keeps its publicity gate ...
+        assert neighbor.neighbor.entity.best_address_tag.label == ""
+        # ... but address attribution passes through
+        assert neighbor.matching_addresses[0].actors[0].id == "a2"
