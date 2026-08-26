@@ -19,6 +19,8 @@ Name | Type | Description | Notes
 **out_degree** | **int** |  | 
 **no_incoming_txs** | **int** |  | 
 **no_outgoing_txs** | **int** |  | 
+**aggregates_truncated** | **bool** | True when count/degree and total fields are lower bounds because the backend could not cover the address&#39;s full history (provider-call budget, or flows invisible to the provider). Absent means values are computed over the full history. | [optional] 
+**cutoff** | [**AggregateCutoff**](AggregateCutoff.md) | Present exactly when aggregates_truncated is true: names which fields are floors (render as \&quot;value+\&quot;) and which are sample-approximations. Absent means every served field is exact. | [optional] 
 **token_balances** | [**Dict[str, Values]**](Values.md) |  | [optional] 
 **total_tokens_received** | [**Dict[str, Values]**](Values.md) |  | [optional] 
 **total_tokens_spent** | [**Dict[str, Values]**](Values.md) |  | [optional] 

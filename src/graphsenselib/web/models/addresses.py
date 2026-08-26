@@ -28,6 +28,26 @@ ADDRESS_EXAMPLE = {
 }
 
 
+class AggregateCutoff(APIModel):
+    """Per-field qualification of a truncated Address body served by an
+    external GraphSense-compatible backend: consumers must be able to render
+    a floor value as "63,037+" instead of presenting it as exact. Fields not
+    listed in either list are exact. Local Cassandra serving computes exact
+    aggregates and never emits this model."""
+
+    floor_fields: list[str] = Field(
+        description="Fields whose served value is a LOWER BOUND of the true "
+        "value — the scan budget covered only part of the history. Render as "
+        '"value+".'
+    )
+    approximate_fields: Optional[list[str]] = Field(
+        default=None,
+        description="Fields derived from the scanned sample that are neither "
+        "exact nor a guaranteed bound (e.g. token_balances, a difference of "
+        "two floors).",
+    )
+
+
 class Address(APIModel):
     """Address model."""
 
@@ -64,6 +84,23 @@ class Address(APIModel):
     out_degree: int
     no_incoming_txs: int
     no_outgoing_txs: int
+    # Contract extension shared with external GraphSense-compatible backends,
+    # whose provider-call budgets can truncate an address's history. Local
+    # Cassandra serving computes exact aggregates and never sets these;
+    # response_model_exclude_none keeps them off the wire.
+    aggregates_truncated: Optional[bool] = Field(
+        default=None,
+        description="True when count/degree and total fields are lower bounds "
+        "because the backend could not cover the address's full history "
+        "(provider-call budget, or flows invisible to the provider). Absent "
+        "means values are computed over the full history.",
+    )
+    cutoff: Optional[AggregateCutoff] = Field(
+        default=None,
+        description="Present exactly when aggregates_truncated is true: names "
+        'which fields are floors (render as "value+") and which are '
+        "sample-approximations. Absent means every served field is exact.",
+    )
     token_balances: Optional[dict[str, Values]] = None
     total_tokens_received: Optional[dict[str, Values]] = None
     total_tokens_spent: Optional[dict[str, Values]] = None
@@ -133,3 +170,12 @@ class NeighborAddresses(APIModel):
 
     neighbors: list[NeighborAddress]
     next_page: Optional[str] = None
+    # Contract extension shared with external GraphSense-compatible backends;
+    # local Cassandra serving enumerates the full relations table and never
+    # sets this (response_model_exclude_none keeps it off the wire).
+    neighbors_truncated: Optional[bool] = Field(
+        default=None,
+        description="True when the neighbor list is incomplete because the "
+        "backend's provider-call budget could not cover the focal address's "
+        "full history. Absent means the enumeration is complete.",
+    )

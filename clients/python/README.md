@@ -198,6 +198,7 @@ Class | Method | HTTP request | Description
  - [AddressTx](docs/AddressTx.md)
  - [AddressTxUtxo](docs/AddressTxUtxo.md)
  - [AddressTxs](docs/AddressTxs.md)
+ - [AggregateCutoff](docs/AggregateCutoff.md)
  - [Block](docs/Block.md)
  - [BlockAtDate](docs/BlockAtDate.md)
  - [ChangeHeuristics](docs/ChangeHeuristics.md)

@@ -45,6 +45,7 @@ __all__ = [
     "AddressTx",
     "AddressTxUtxo",
     "AddressTxs",
+    "AggregateCutoff",
     "Block",
     "BlockAtDate",
     "ChangeHeuristics",
@@ -168,6 +169,7 @@ from graphsense.models.address_tags import AddressTags as AddressTags
 from graphsense.models.address_tx import AddressTx as AddressTx
 from graphsense.models.address_tx_utxo import AddressTxUtxo as AddressTxUtxo
 from graphsense.models.address_txs import AddressTxs as AddressTxs
+from graphsense.models.aggregate_cutoff import AggregateCutoff as AggregateCutoff
 from graphsense.models.block import Block as Block
 from graphsense.models.block_at_date import BlockAtDate as BlockAtDate
 from graphsense.models.change_heuristics import ChangeHeuristics as ChangeHeuristics

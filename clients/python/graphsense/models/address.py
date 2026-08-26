@@ -18,6 +18,7 @@ import json
 from pydantic import field_validator,  BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 from graphsense.compat import CompatList
 from typing import Any, ClassVar, Dict, List, Optional
+from graphsense.models.aggregate_cutoff import AggregateCutoff
 from graphsense.models.labeled_item_ref import LabeledItemRef
 from graphsense.models.tx_summary import TxSummary
 from graphsense.models.values import Values
@@ -41,6 +42,8 @@ class Address(BaseModel):
     out_degree: StrictInt
     no_incoming_txs: StrictInt
     no_outgoing_txs: StrictInt
+    aggregates_truncated: Optional[StrictBool] = Field(default=None, description="True when count/degree and total fields are lower bounds because the backend could not cover the address's full history (provider-call budget, or flows invisible to the provider). Absent means values are computed over the full history.")
+    cutoff: Optional[AggregateCutoff] = Field(default=None, description="Present exactly when aggregates_truncated is true: names which fields are floors (render as \"value+\") and which are sample-approximations. Absent means every served field is exact.")
     token_balances: Optional[Dict[str, Values]] = None
     total_tokens_received: Optional[Dict[str, Values]] = None
     total_tokens_spent: Optional[Dict[str, Values]] = None
@@ -48,7 +51,7 @@ class Address(BaseModel):
     is_contract: Optional[StrictBool] = None
     status: Optional[StrictStr] = Field(default=None, description="Legacy field. Do not use — retained only for backwards compatibility and will be removed in a future release.")
     cluster: StrictInt = Field(description="Address cluster ID (preferred alias for the deprecated `entity` field).")
-    __properties: ClassVar[List[str]] = ["currency", "address", "entity", "fresh_cluster_id", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "is_contract", "status", "cluster"]
+    __properties: ClassVar[List[str]] = ["currency", "address", "entity", "fresh_cluster_id", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs", "aggregates_truncated", "cutoff", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "is_contract", "status", "cluster"]
     @field_validator('actors', mode='wrap')
     @classmethod
     def wrap_actors_compat(cls, v, handler):
@@ -115,6 +118,9 @@ class Address(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of last_tx
         if self.last_tx:
             _dict['last_tx'] = self.last_tx.to_dict()
+        # override the default output from pydantic by calling `to_dict()` of cutoff
+        if self.cutoff:
+            _dict['cutoff'] = self.cutoff.to_dict()
         # override the default output from pydantic by calling `to_dict()` of each value in token_balances (dict)
         _field_dict = {}
         if self.token_balances:
@@ -169,6 +175,8 @@ class Address(BaseModel):
             "out_degree": obj.get("out_degree"),
             "no_incoming_txs": obj.get("no_incoming_txs"),
             "no_outgoing_txs": obj.get("no_outgoing_txs"),
+            "aggregates_truncated": obj.get("aggregates_truncated"),
+            "cutoff": AggregateCutoff.from_dict(obj["cutoff"]) if obj.get("cutoff") is not None else None,
             "token_balances": dict(
                 (_k, Values.from_dict(_v))
                 for _k, _v in obj["token_balances"].items()

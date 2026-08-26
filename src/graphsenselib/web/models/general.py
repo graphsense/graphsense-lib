@@ -41,6 +41,24 @@ class CurrencyStats(APIModel):
     no_tagged_addresses: int
     timestamp: int
     network_type: str
+    # Contract extension shared with external GraphSense-compatible backends
+    # (the provider-backed adapter): capability discovery for consumers.
+    # ABSENT = full core GraphSense (every locally served network); present =
+    # the exact subset of core features answered for this currency, from the
+    # vocabulary "relations" (counterparty enumeration / pair edges),
+    # "clusters" (address clustering), "tags" (TagStore data). The
+    # external-backends middleware appends "tags" to declared lists because
+    # tag routes are answered locally. Local serving never sets these fields;
+    # response_model_exclude_none keeps them off the wire.
+    capabilities: Optional[list[str]] = None
+    # Network-behavior discovery so consumers can stop hardcoding a per-network
+    # table for every new EVM chain. ABSENT = the consumer falls back to its
+    # own tables. Naming follows TokenConfig (ticker/decimals): coin_ticker is
+    # the GAS coin's lowercase ticker, which on L2s differs from the network
+    # code (arb pays gas in "eth"; "arb" quotes the governance token).
+    coin_ticker: Optional[str] = None
+    coin_decimals: Optional[int] = None
+    network_name: Optional[str] = None
 
 
 class Stats(APIModel):

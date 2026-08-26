@@ -28,10 +28,15 @@ from graphsenselib.web.models.base import APIModel
 
 # Fields declared on the model but absent from its example, as of the
 # 2026-07-28 audit. Shrink-only: never add an entry to silence a new model,
-# extend that model's example instead.
+# extend that model's example instead. Exception: external-backend contract
+# extensions (capabilities, truncation qualifiers) whose ABSENCE is the
+# semantic default — baseline responses never carry them, so the canonical
+# examples must not show them either.
 KNOWN_GAPS: dict[str, set[str]] = {
     "Address": {
         "actors",
+        "aggregates_truncated",
+        "cutoff",
         "is_contract",
         "tags",
         "token_balances",
@@ -45,6 +50,12 @@ KNOWN_GAPS: dict[str, set[str]] = {
         "token_balances",
         "total_tokens_received",
         "total_tokens_spent",
+    },
+    "CurrencyStats": {
+        "capabilities",
+        "coin_decimals",
+        "coin_ticker",
+        "network_name",
     },
     "Entity": {
         "actors",

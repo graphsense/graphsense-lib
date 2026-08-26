@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **neighbors** | [**List[NeighborAddress]**](NeighborAddress.md) |  | 
 **next_page** | **str** |  | [optional] 
+**neighbors_truncated** | **bool** | True when the neighbor list is incomplete because the backend&#39;s provider-call budget could not cover the focal address&#39;s full history. Absent means the enumeration is complete. | [optional] 
 
 ## Example
 

@@ -15,30 +15,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
-class CurrencyStats(BaseModel):
+class AggregateCutoff(BaseModel):
     """
-    Currency statistics model.
+    Per-field qualification of a truncated Address body served by an external GraphSense-compatible backend: consumers must be able to render a floor value as \"63,037+\" instead of presenting it as exact. Fields not listed in either list are exact. Local Cassandra serving computes exact aggregates and never emits this model.
     """ # noqa: E501
-    name: StrictStr
-    no_blocks: StrictInt
-    no_address_relations: StrictInt
-    no_addresses: StrictInt
-    no_entities: StrictInt
-    no_txs: StrictInt
-    no_labels: StrictInt
-    no_tagged_addresses: StrictInt
-    timestamp: StrictInt
-    network_type: StrictStr
-    capabilities: Optional[List[StrictStr]] = None
-    coin_ticker: Optional[StrictStr] = None
-    coin_decimals: Optional[StrictInt] = None
-    network_name: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name", "no_blocks", "no_address_relations", "no_addresses", "no_entities", "no_txs", "no_labels", "no_tagged_addresses", "timestamp", "network_type", "capabilities", "coin_ticker", "coin_decimals", "network_name"]
+    floor_fields: List[StrictStr] = Field(description="Fields whose served value is a LOWER BOUND of the true value — the scan budget covered only part of the history. Render as \"value+\".")
+    approximate_fields: Optional[List[StrictStr]] = Field(default=None, description="Fields derived from the scanned sample that are neither exact nor a guaranteed bound (e.g. token_balances, a difference of two floors).")
+    __properties: ClassVar[List[str]] = ["floor_fields", "approximate_fields"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -58,7 +46,7 @@ class CurrencyStats(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of CurrencyStats from a JSON string"""
+        """Create an instance of AggregateCutoff from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -84,7 +72,7 @@ class CurrencyStats(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of CurrencyStats from a dict"""
+        """Create an instance of AggregateCutoff from a dict"""
         if obj is None:
             return None
 
@@ -92,20 +80,8 @@ class CurrencyStats(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "name": obj.get("name"),
-            "no_blocks": obj.get("no_blocks"),
-            "no_address_relations": obj.get("no_address_relations"),
-            "no_addresses": obj.get("no_addresses"),
-            "no_entities": obj.get("no_entities"),
-            "no_txs": obj.get("no_txs"),
-            "no_labels": obj.get("no_labels"),
-            "no_tagged_addresses": obj.get("no_tagged_addresses"),
-            "timestamp": obj.get("timestamp"),
-            "network_type": obj.get("network_type"),
-            "capabilities": obj.get("capabilities"),
-            "coin_ticker": obj.get("coin_ticker"),
-            "coin_decimals": obj.get("coin_decimals"),
-            "network_name": obj.get("network_name")
+            "floor_fields": obj.get("floor_fields"),
+            "approximate_fields": obj.get("approximate_fields")
         })
         return _obj
 

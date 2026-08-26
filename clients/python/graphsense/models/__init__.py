@@ -20,6 +20,7 @@ from graphsense.models.address_tags import AddressTags
 from graphsense.models.address_tx import AddressTx
 from graphsense.models.address_tx_utxo import AddressTxUtxo
 from graphsense.models.address_txs import AddressTxs
+from graphsense.models.aggregate_cutoff import AggregateCutoff
 from graphsense.models.block import Block
 from graphsense.models.block_at_date import BlockAtDate
 from graphsense.models.change_heuristics import ChangeHeuristics

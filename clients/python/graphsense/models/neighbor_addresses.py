@@ -15,7 +15,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from graphsense.models.neighbor_address import NeighborAddress
 from typing import Optional, Set
@@ -27,7 +27,8 @@ class NeighborAddresses(BaseModel):
     """ # noqa: E501
     neighbors: List[NeighborAddress]
     next_page: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["neighbors", "next_page"]
+    neighbors_truncated: Optional[StrictBool] = Field(default=None, description="True when the neighbor list is incomplete because the backend's provider-call budget could not cover the focal address's full history. Absent means the enumeration is complete.")
+    __properties: ClassVar[List[str]] = ["neighbors", "next_page", "neighbors_truncated"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -89,7 +90,8 @@ class NeighborAddresses(BaseModel):
 
         _obj = cls.model_validate({
             "neighbors": [NeighborAddress.from_dict(_item) for _item in obj["neighbors"]] if obj.get("neighbors") is not None else None,
-            "next_page": obj.get("next_page")
+            "next_page": obj.get("next_page"),
+            "neighbors_truncated": obj.get("neighbors_truncated")
         })
         return _obj
 

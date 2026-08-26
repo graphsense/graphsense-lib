@@ -295,3 +295,97 @@ def test_config_parses_from_dict():
         GSRestConfig.from_dict({"database": {"nodes": ["localhost"]}}).external_backends
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# Contract extensions shared with external backends (models, not middleware)
+# ---------------------------------------------------------------------------
+
+
+def test_currency_stats_declares_backend_extension_fields():
+    """The /stats schema documents the fields external backends serve
+    (capability + network-behavior discovery), while local serialization
+    keeps them off the wire (exclude_none) so baseline output is unchanged."""
+    from graphsenselib.web.models import CurrencyStats
+
+    props = CurrencyStats.model_json_schema()["properties"]
+    for field in ("capabilities", "coin_ticker", "coin_decimals", "network_name"):
+        assert field in props
+
+    local = CurrencyStats(
+        name="btc",
+        no_blocks=1,
+        no_address_relations=1,
+        no_addresses=1,
+        no_entities=1,
+        no_txs=1,
+        no_labels=1,
+        no_tagged_addresses=1,
+        timestamp=1,
+        network_type="utxo",
+    ).model_dump(exclude_none=True)
+    assert "capabilities" not in local
+    assert "coin_ticker" not in local
+
+    declared = CurrencyStats.model_validate(
+        {
+            "name": "arb",
+            "no_blocks": 1,
+            "no_address_relations": 0,
+            "no_addresses": 0,
+            "no_entities": 0,
+            "no_txs": 0,
+            "no_labels": 0,
+            "no_tagged_addresses": 0,
+            "timestamp": 1,
+            "network_type": "account",
+            "capabilities": [],
+            "coin_ticker": "eth",
+            "coin_decimals": 18,
+            "network_name": "Arbitrum",
+        }
+    )
+    assert declared.capabilities == []
+    assert declared.coin_ticker == "eth"
+
+
+def test_address_declares_truncation_extension_fields():
+    """Address bodies proxied from external backends may qualify truncated
+    aggregates (aggregates_truncated/cutoff) and neighbor lists
+    (neighbors_truncated); local Cassandra serving never sets them and the
+    fields stay off the wire via exclude_none."""
+    from graphsenselib.web.models import Address, AggregateCutoff, NeighborAddresses
+
+    for field in ("aggregates_truncated", "cutoff"):
+        assert field in Address.model_json_schema()["properties"]
+    assert "neighbors_truncated" in NeighborAddresses.model_json_schema()["properties"]
+
+    values = {"value": 1, "fiat_values": [{"code": "eur", "value": 0.1}]}
+    body = {
+        "currency": "bnb",
+        "address": "0xabc",
+        "entity": 1,
+        "balance": values,
+        "total_received": values,
+        "total_spent": values,
+        "in_degree": 5,
+        "out_degree": 3,
+        "no_incoming_txs": 10,
+        "no_outgoing_txs": 7,
+    }
+    exact = Address.model_validate(body).to_dict()
+    assert "aggregates_truncated" not in exact
+    assert "cutoff" not in exact
+
+    truncated = Address.model_validate(
+        {
+            **body,
+            "aggregates_truncated": True,
+            "cutoff": {"floor_fields": ["total_received", "in_degree"]},
+        }
+    )
+    assert isinstance(truncated.cutoff, AggregateCutoff)
+    assert truncated.to_dict()["cutoff"]["floor_fields"] == [
+        "total_received",
+        "in_degree",
+    ]

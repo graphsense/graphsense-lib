@@ -6,6 +6,7 @@ replacing the generated OpenAPI models with a clean, minimal implementation.
 
 from graphsenselib.web.models.addresses import (
     Address,
+    AggregateCutoff,
     NeighborAddress,
     NeighborAddresses,
 )
@@ -138,6 +139,7 @@ __all__ = [
     "UserTagReportResponse",
     # Addresses
     "Address",
+    "AggregateCutoff",
     "NeighborAddress",
     "NeighborAddresses",
     # Entities (deprecated names, kept for backwards compatibility)
