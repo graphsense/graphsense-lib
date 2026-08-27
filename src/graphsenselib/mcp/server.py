@@ -13,6 +13,7 @@ from graphsenselib import __version__ as gs_version
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
 from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
+from graphsenselib.mcp.pagesize import PagesizeCapMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
 from graphsenselib.mcp.tools import register_custom_tools
 
@@ -38,7 +39,9 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
         )
 
     route_map_fn = make_route_map_fn(curation)
-    component_fn = make_component_fn(curation)
+    # Filled in by component_fn while from_fastapi walks the routes below.
+    paged_tools: set[str] = set()
+    component_fn = make_component_fn(curation, paged_tools)
 
     # serverInfo extras advertised in the initialize handshake, forwarded
     # through from_fastapi's **settings to the FastMCP constructor. Both
@@ -73,6 +76,12 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
     # logger so the same handlers the REST app uses for incident notifications
     # (Slack/SMTP, set up in web/app.py:setup_logging) fire for MCP failures too.
     mcp.add_middleware(ErrorLoggingMiddleware())
+
+    # Auto-generated tools pass the model's arguments straight to the
+    # upstream route, so an omitted pagesize arrives as "no limit". The
+    # consolidated tools cap themselves in _params_from; this covers the
+    # rest (today: list_tx_flows).
+    mcp.add_middleware(PagesizeCapMiddleware(paged_tools))
 
     # Consolidated tools receive (mcp, app, stack) but not the MCP config;
     # tools that build Pathfinder deep links (build_pathfinder_file's

@@ -29,9 +29,14 @@ def make_route_map_fn(curation: CurationFile):
     return route_map_fn
 
 
-def make_component_fn(curation: CurationFile):
+def make_component_fn(curation: CurationFile, paged_tools: set[str] | None = None):
     """Return an mcp_component_fn that applies description + tag overrides
     from the curation YAML.
+
+    When `paged_tools` is given, the names of auto-generated tools that take
+    a `pagesize` query parameter are collected into it. That set is what
+    PagesizeCapMiddleware caps (see mcp/pagesize.py). This is the only place
+    the route's parameter list is visible, hence the out-parameter.
     """
     include = curation.include
     tag_prefix = curation.defaults.tag_prefix
@@ -41,6 +46,11 @@ def make_component_fn(curation: CurationFile):
         if not op_id or op_id not in include:
             return
         entry = include[op_id]
+        if paged_tools is not None and any(
+            p.name == "pagesize" and p.location == "query"
+            for p in getattr(route, "parameters", ())
+        ):
+            paged_tools.add(component.name)
         # Auto-generated tools inherit their OpenAPI response model as an MCP
         # outputSchema — up to ~3.4k tokens each (graph_summary, list_block_txs)
         # that no known client shows the model. Drop it; the hand-written

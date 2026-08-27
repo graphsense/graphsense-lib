@@ -9,6 +9,8 @@ import httpx
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_http_headers
 
+from graphsenselib.mcp.pagesize import capped
+
 logger = logging.getLogger(__name__)
 
 # Regex guards on user-controlled path segments. httpx does not URL-encode
@@ -404,15 +406,10 @@ def register_lookup_cluster(mcp, app, stack) -> None:
         return {"cluster": _slim(_strip_cluster_legacy(base))}
 
 
-# Without an explicit pagesize the upstream returns its own default page,
-# which for list endpoints on high-volume addresses is effectively unbounded
-# (a single list_txs_for on an exchange hot wallet came back at ~2.7 MB /
-# ~677k LLM tokens). Every list tool routes through _params_from, so the
-# default and ceiling live here: callers can page onward via `next_page`.
-_DEFAULT_PAGESIZE = 25
-_MAX_PAGESIZE = 100
-
-
+# Every consolidated list tool routes through _params_from, so this is where
+# the shared pagesize policy (see mcp/pagesize.py) is applied for them:
+# callers can page onward via `next_page`. Auto-generated tools have no such
+# chokepoint and are capped by PagesizeCapMiddleware instead.
 def _params_from(
     direction: Optional[str],
     pagesize: Optional[int],
@@ -422,7 +419,7 @@ def _params_from(
     params: dict[str, Any] = {}
     if direction is not None:
         params["direction"] = direction
-    params["pagesize"] = min(pagesize or _DEFAULT_PAGESIZE, _MAX_PAGESIZE)
+    params["pagesize"] = capped(pagesize)
     if page is not None:
         params["page"] = page
     for k, v in extra.items():

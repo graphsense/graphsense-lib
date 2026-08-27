@@ -8,13 +8,22 @@ from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
 
 
 def _fake_route(
-    op_id: Optional[str], method: str = "GET", path: str = "/x"
+    op_id: Optional[str],
+    method: str = "GET",
+    path: str = "/x",
+    params: tuple = (),
 ) -> SimpleNamespace:
-    return SimpleNamespace(operation_id=op_id, method=method, path=path, tags=set())
+    return SimpleNamespace(
+        operation_id=op_id,
+        method=method,
+        path=path,
+        tags=set(),
+        parameters=[SimpleNamespace(name=n, location=loc) for n, loc in params],
+    )
 
 
-def _fake_component():
-    return SimpleNamespace(description=None, tags=set())
+def _fake_component(name: str = "x"):
+    return SimpleNamespace(name=name, description=None, tags=set())
 
 
 def test_route_map_fn_keeps_included(sample_curation_file):
@@ -77,3 +86,22 @@ def test_component_fn_leaves_unlisted_output_schema(sample_curation_file):
     comp.output_schema = {"type": "object"}
     fn(_fake_route("not_included"), comp)
     assert comp.output_schema == {"type": "object"}  # left alone
+
+
+def test_component_fn_collects_paged_tools(sample_curation_file):
+    c = curation_mod.load(sample_curation_file)
+    paged: set[str] = set()
+    fn = make_component_fn(c, paged)
+
+    fn(
+        _fake_route("get_statistics", params=(("pagesize", "query"),)),
+        _fake_component("get_statistics"),
+    )
+    fn(_fake_route("search", params=(("q", "query"),)), _fake_component("search"))
+    # Unlisted ops are skipped entirely, pagesize or not.
+    fn(
+        _fake_route("not_included", params=(("pagesize", "query"),)),
+        _fake_component("not_included"),
+    )
+
+    assert paged == {"get_statistics"}
