@@ -1,7 +1,9 @@
+import io
 from datetime import datetime, timezone
 from typing import List
 
 import pandas as pd
+import requests
 
 
 def as_utc_datetime(value: str | datetime) -> datetime:
@@ -58,3 +60,52 @@ def forward_filled_fx_rate(
 def convert_to_fiat(value: int, rates: List[int]) -> List[int]:
     # col(valueColumn) * x / 1e6 + 0.5).cast(LongType) / 100.0
     return [int(value * r / 1e6 + 0.5) / 100 for r in rates]
+
+
+# (connect, read) timeout for every exchange-rates HTTP call.
+#
+# Without a read timeout `requests` blocks in recv() forever when a connection
+# is established and then silently dropped (NAT/firewall/LB reaping an idle
+# flow) -- there is no OS-level timer that ever wakes it, since requests does
+# not enable SO_KEEPALIVE. That stranded an ingest process indefinitely: this
+# step runs *before* the ingest lock is acquired, so a wedged run holds nothing,
+# blocks nothing and is invisible to the lock's stale-holder alerting -- the
+# next cron tick just starts another one and the corpses pile up.
+#
+# The read timeout is per socket read, not per request, so it bounds "the peer
+# went away", not "the response is legitimately slow". That is exactly the
+# failure being fixed; combined with the retrying adapter below a transient
+# stall is retried and a persistent one fails in bounded time.
+HTTP_TIMEOUT = (5, 60)
+
+# Retries connect *and* read timeouts (GET is idempotent), so HTTP_TIMEOUT
+# ending a stalled read means one more attempt, not an immediate failure.
+_HTTP_MAX_RETRIES = 5
+
+
+def rates_session() -> requests.Session:
+    """A `requests.Session` with the retry policy the rates fetchers share.
+
+    Always pair its requests with `timeout=HTTP_TIMEOUT`: the retry count alone
+    does not bound a read that never returns.
+    """
+    session = requests.Session()
+    session.mount(
+        "https://", requests.adapters.HTTPAdapter(max_retries=_HTTP_MAX_RETRIES)
+    )
+    return session
+
+
+def read_csv_url(url: str, **kwargs) -> pd.DataFrame:
+    """`pd.read_csv(url)` with a timeout.
+
+    pandas downloads via `urllib.request.urlopen` without a timeout, so the
+    socket default (None) applies and a dead connection hangs forever. Fetch the
+    bytes ourselves, then hand pandas a buffer.
+
+    Compression must be passed explicitly by the caller: pandas infers it from a
+    URL's suffix but cannot infer it from an unnamed buffer.
+    """
+    response = rates_session().get(url, timeout=HTTP_TIMEOUT)
+    response.raise_for_status()
+    return pd.read_csv(io.BytesIO(response.content), **kwargs)

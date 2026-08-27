@@ -20,7 +20,6 @@ from datetime import date
 from typing import List, Optional, Tuple
 
 import pandas as pd
-import requests
 
 from graphsenselib.db import DbFactory
 from graphsenselib.db.analytics import DATE_FORMAT
@@ -28,9 +27,11 @@ from graphsenselib.rates.coingecko import fetch_ecb_rates
 from graphsenselib.rates.coinmarketcap import fetch_cmc_rates
 from graphsenselib.rates.cryptocompare import fetch_cryptocompare_rates
 from graphsenselib.rates.utils import (
+    HTTP_TIMEOUT,
     as_utc_datetime,
     forward_filled_fx_rate,
     normalize_date_bounds,
+    rates_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,9 +88,7 @@ def _fetch_coingecko_contract_usd(
     }
     url = _coingecko_market_chart_url(platform, contract, start, end)
     logger.info(f"Fetching token rates (coingecko contract) from {url}")
-    rsession = requests.Session()
-    rsession.mount("https://", requests.adapters.HTTPAdapter(max_retries=5))
-    response = rsession.get(url, headers=headers)
+    response = rates_session().get(url, headers=headers, timeout=HTTP_TIMEOUT)
     prices = json.loads(response.content).get("prices", [])
     # prices: [[timestamp_ms, price_usd], ...]; collapse to one price per day
     per_day = {}

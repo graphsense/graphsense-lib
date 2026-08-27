@@ -11,6 +11,7 @@ from graphsenselib.db import DbFactory
 from graphsenselib.db.analytics import DATE_FORMAT
 from graphsenselib.rates.coingecko import fetch_ecb_rates
 from graphsenselib.rates.utils import (
+    HTTP_TIMEOUT,
     as_utc_datetime,
     forward_filled_fx_rate,
     normalize_date_bounds,
@@ -48,7 +49,9 @@ def fetch_cryptocompare_rates(
 ):
     headers = {"Authorization": f"Apikey {api_key}"} if api_key else {}
     r1 = requests.get(
-        cryptocompare_historical_url(start, end, symbol, fiat), headers=headers
+        cryptocompare_historical_url(start, end, symbol, fiat),
+        headers=headers,
+        timeout=HTTP_TIMEOUT,
     )
     body = json.loads(r1.content)
     data = body.get("Data")

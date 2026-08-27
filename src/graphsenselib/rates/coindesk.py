@@ -6,7 +6,7 @@ import requests
 from simplejson.errors import JSONDecodeError
 
 from ..db import DbFactory
-from .utils import as_utc_datetime, normalize_date_bounds
+from .utils import HTTP_TIMEOUT, as_utc_datetime, normalize_date_bounds
 
 MIN_START = "2010-10-17"  # no CoinDesk exchange rates available before
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ def fetch_exchange_rates(
             f"?currency={fiat.lower()}&start={start_date}&end={end_date}"
         )
         logger.info(f"Fetching url: {url}")
-        request = requests.get(url)
+        request = requests.get(url, timeout=HTTP_TIMEOUT)
         try:
             json = request.json()
             logger.info(json["disclaimer"])
