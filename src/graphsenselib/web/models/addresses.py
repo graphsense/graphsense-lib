@@ -25,6 +25,8 @@ ADDRESS_EXAMPLE = {
     "no_incoming_txs": 200,
     "no_outgoing_txs": 100,
     "status": "clean",
+    "is_possible_service": False,
+    "qualifiers": {"total_received": "gt", "no_incoming_txs": "gt"},
 }
 
 
@@ -106,6 +108,24 @@ class Address(APIModel):
     total_tokens_spent: Optional[dict[str, Values]] = None
     actors: Optional[list[LabeledItemRef]] = None
     is_contract: Optional[bool] = None
+    is_possible_service: Optional[bool] = Field(
+        default=None,
+        description="Structural heuristic: True when the address is likely a "
+        "service (exchange, payment processor, ...) judged from degree/tx "
+        "counts (account networks) or its cluster's size and degrees (UTXO "
+        "networks). Tag data is deliberately not consulted. Absent means the "
+        "serving backend did not compute it (older server, embedded neighbor "
+        "bodies) — consumers fall back to their own judgment.",
+    )
+    qualifiers: Optional[dict[str, str]] = Field(
+        default=None,
+        description="Flat per-field qualification map, the simple consumer "
+        'form of cutoff: field name -> "gt" (served value is a lower bound '
+        'of the true value) or "approx" (neither exact nor a guaranteed '
+        "bound). Absent means every served field is exact. Set only by "
+        "external GraphSense-compatible backends with provider-call budgets; "
+        "local Cassandra serving computes exact aggregates.",
+    )
     status: Optional[str] = Field(
         default=None,
         description="Legacy field. Do not use — retained only for backwards "

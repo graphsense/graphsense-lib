@@ -49,9 +49,11 @@ class Address(BaseModel):
     total_tokens_spent: Optional[Dict[str, Values]] = None
     actors: Optional[List[LabeledItemRef]] = None
     is_contract: Optional[StrictBool] = None
+    is_possible_service: Optional[StrictBool] = Field(default=None, description="Structural heuristic: True when the address is likely a service (exchange, payment processor, ...) judged from degree/tx counts (account networks) or its cluster's size and degrees (UTXO networks). Tag data is deliberately not consulted. Absent means the serving backend did not compute it (older server, embedded neighbor bodies) — consumers fall back to their own judgment.")
+    qualifiers: Optional[Dict[str, StrictStr]] = Field(default=None, description="Flat per-field qualification map, the simple consumer form of cutoff: field name -> \"gt\" (served value is a lower bound of the true value) or \"approx\" (neither exact nor a guaranteed bound). Absent means every served field is exact. Set only by external GraphSense-compatible backends with provider-call budgets; local Cassandra serving computes exact aggregates.")
     status: Optional[StrictStr] = Field(default=None, description="Legacy field. Do not use — retained only for backwards compatibility and will be removed in a future release.")
     cluster: StrictInt = Field(description="Address cluster ID (preferred alias for the deprecated `entity` field).")
-    __properties: ClassVar[List[str]] = ["currency", "address", "entity", "fresh_cluster_id", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs", "aggregates_truncated", "cutoff", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "is_contract", "status", "cluster"]
+    __properties: ClassVar[List[str]] = ["currency", "address", "entity", "fresh_cluster_id", "balance", "total_received", "total_spent", "first_tx", "last_tx", "in_degree", "out_degree", "no_incoming_txs", "no_outgoing_txs", "aggregates_truncated", "cutoff", "token_balances", "total_tokens_received", "total_tokens_spent", "actors", "is_contract", "is_possible_service", "qualifiers", "status", "cluster"]
     @field_validator('actors', mode='wrap')
     @classmethod
     def wrap_actors_compat(cls, v, handler):
@@ -197,6 +199,8 @@ class Address(BaseModel):
             else None,
             "actors": [LabeledItemRef.from_dict(_item) for _item in obj["actors"]] if obj.get("actors") is not None else None,
             "is_contract": obj.get("is_contract"),
+            "is_possible_service": obj.get("is_possible_service"),
+            "qualifiers": obj.get("qualifiers"),
             "status": obj.get("status"),
             "cluster": obj.get("cluster")
         })

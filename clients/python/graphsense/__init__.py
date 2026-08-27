@@ -48,6 +48,7 @@ __all__ = [
     "AggregateCutoff",
     "Block",
     "BlockAtDate",
+    "Capabilities",
     "ChangeHeuristics",
     "Cluster",
     "ClusterAddresses",
@@ -95,6 +96,7 @@ __all__ = [
     "NeighborClusters",
     "NeighborEntities",
     "NeighborEntity",
+    "NetworkCapabilities",
     "OneTimeChangeHeuristic",
     "PerTxInner",
     "Rate",
@@ -172,6 +174,7 @@ from graphsense.models.address_txs import AddressTxs as AddressTxs
 from graphsense.models.aggregate_cutoff import AggregateCutoff as AggregateCutoff
 from graphsense.models.block import Block as Block
 from graphsense.models.block_at_date import BlockAtDate as BlockAtDate
+from graphsense.models.capabilities import Capabilities as Capabilities
 from graphsense.models.change_heuristics import ChangeHeuristics as ChangeHeuristics
 from graphsense.models.cluster import Cluster as Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses as ClusterAddresses
@@ -219,6 +222,7 @@ from graphsense.models.neighbor_cluster import NeighborCluster as NeighborCluste
 from graphsense.models.neighbor_clusters import NeighborClusters as NeighborClusters
 from graphsense.models.neighbor_entities import NeighborEntities as NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity as NeighborEntity
+from graphsense.models.network_capabilities import NetworkCapabilities as NetworkCapabilities
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic as OneTimeChangeHeuristic
 from graphsense.models.per_tx_inner import PerTxInner as PerTxInner
 from graphsense.models.rate import Rate as Rate

@@ -17,6 +17,17 @@ def test_get_statistics(client):
     assert cs == result["currencies"]
 
 
+def test_get_capabilities(client):
+    result = get_json(client, "/capabilities")
+    # local serving is always full core: every supported network, nothing
+    # disabled (external-backend networks are merged in by the middleware)
+    entries = sorted(result["networks"], key=lambda entry: entry["network"])
+    assert entries == [
+        {"network": currency.name, "disabled": []}
+        for currency in sorted(stats.currencies, key=lambda c: c.name)
+    ]
+
+
 def test_search(client):
     expected = base_search_results()
     expected.currencies[0] = SearchResultByCurrency(

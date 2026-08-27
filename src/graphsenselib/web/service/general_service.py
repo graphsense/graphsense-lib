@@ -1,6 +1,7 @@
 from graphsenselib.db.asynchronous.services.models import SearchRequestConfig
 
 from graphsenselib.web.translators import (
+    to_api_capabilities,
     to_api_search_result,
     to_api_search_result_by_currency,
     to_api_stats,
@@ -12,6 +13,13 @@ async def get_statistics(ctx, version=None):
     pydantic_result = await ctx.services.general_service.get_statistics(version)
 
     return to_api_stats(pydantic_result)
+
+
+async def get_capabilities(ctx):
+    """Returns per-network feature availability"""
+    pydantic_result = ctx.services.general_service.get_capabilities()
+
+    return to_api_capabilities(pydantic_result)
 
 
 async def search_by_currency(ctx, currency, q, limit=10):

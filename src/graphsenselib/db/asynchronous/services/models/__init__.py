@@ -127,6 +127,7 @@ class Address(BaseModel):
     is_contract: Optional[bool] = None
     actors: Optional[List[LabeledItemRef]] = None
     status: Optional[str] = None
+    is_possible_service: Optional[bool] = None
 
 
 class Rate(BaseModel):
@@ -322,6 +323,15 @@ class Stats(BaseModel):
     currencies: List[CurrencyStats]
     version: str
     request_timestamp: str
+
+
+class NetworkCapabilities(BaseModel):
+    network: str
+    disabled: List[str] = Field(default_factory=list)
+
+
+class Capabilities(BaseModel):
+    networks: List[NetworkCapabilities]
 
 
 class Actor(BaseModel):

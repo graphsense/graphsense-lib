@@ -4,9 +4,85 @@ All URIs are relative to *https://api.iknaio.com*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**get_capabilities**](GeneralApi.md#get_capabilities) | **GET** /capabilities | Get per-network feature availability
 [**get_statistics**](GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
 [**search**](GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
 
+
+# **get_capabilities**
+> Capabilities get_capabilities()
+
+Get per-network feature availability
+
+Returns which optional feature families are disabled per served network. A network absent from the list is fully enabled, as is every network of a deployment that does not serve this endpoint (404).
+
+### Example
+
+* Api Key Authentication (api_key):
+
+```python
+import graphsense
+from graphsense.models.capabilities import Capabilities
+from graphsense.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to https://api.iknaio.com
+# See configuration.py for a list of all supported configuration parameters.
+configuration = graphsense.Configuration(
+    host = "https://api.iknaio.com"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure API key authorization: api_key
+configuration.api_key['api_key'] = os.environ["API_KEY"]
+
+# Uncomment below to setup prefix (e.g. Bearer) for API key, if needed
+# configuration.api_key_prefix['api_key'] = 'Bearer'
+
+# Enter a context with an instance of the API client
+with graphsense.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = graphsense.GeneralApi(api_client)
+
+    try:
+        # Get per-network feature availability
+        api_response = api_instance.get_capabilities()
+        print("The response of GeneralApi->get_capabilities:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling GeneralApi->get_capabilities: %s\n" % e)
+```
+
+
+
+### Parameters
+
+This endpoint does not need any parameter.
+
+### Return type
+
+[**Capabilities**](Capabilities.md)
+
+### Authorization
+
+[api_key](../README.md#api_key)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Disabled feature families grouped by network. |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **get_statistics**
 > Stats get_statistics()

@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from graphsenselib.web.service import ServiceContext
-from graphsenselib.web.models import SearchResult, Stats
+from graphsenselib.web.models import Capabilities, SearchResult, Stats
 from graphsenselib.web.routes.base import (
     PluginRoute,
     get_ctx,
@@ -32,6 +32,29 @@ async def get_statistics(
 ):
     """Returns per-currency platform statistics."""
     result = await service.get_statistics(ctx, version=request.app.version)
+    return result
+
+
+@router.get(
+    "/capabilities",
+    summary="Get per-network feature availability",
+    description=(
+        "Returns which optional feature families are disabled per served network. "
+        "A network absent from the list is fully enabled, as is every network of "
+        "a deployment that does not serve this endpoint (404)."
+    ),
+    operation_id="get_capabilities",
+    response_model=Capabilities,
+    response_model_exclude_none=True,
+    responses={
+        200: {"description": "Disabled feature families grouped by network."},
+    },
+)
+async def get_capabilities(
+    ctx: ServiceContext = Depends(get_ctx),
+):
+    """Returns per-network feature availability."""
+    result = await service.get_capabilities(ctx)
     return result
 
 

@@ -24,9 +24,19 @@ BACKEND_STATS = {
             "name": "bnb",
             "no_blocks": 42,
             "some_unmodeled_field": "kept",
-            "capabilities": [],  # lite declaration: no relations/clusters/tags
+            "capabilities": [],  # legacy declaration: must be stripped (rule 2)
         },
         {"name": "eth", "no_blocks": 9},  # NOT configured -> must be filtered
+    ],
+}
+
+BACKEND_CAPABILITIES = {
+    "networks": [
+        {
+            "network": "bnb",
+            "disabled": ["relations", "clusters", "tags", "exact_stats"],
+        },
+        {"network": "eth", "disabled": []},  # NOT configured -> must be filtered
     ],
 }
 
@@ -40,8 +50,16 @@ BACKEND_SEARCH = {
 }
 
 
-def make_client(enabled=True, api_key="backend-key", backend_stats=BACKEND_STATS):
-    """Local stand-in app + recording mock backend behind the middleware."""
+def make_client(
+    enabled=True,
+    api_key="backend-key",
+    backend_stats=BACKEND_STATS,
+    backend_capabilities=BACKEND_CAPABILITIES,
+):
+    """Local stand-in app + recording mock backend behind the middleware.
+
+    ``backend_capabilities=None`` makes the mock 404 the endpoint (an older
+    adapter without /capabilities)."""
     app = FastAPI()
 
     @app.get("/stats")
@@ -50,6 +68,10 @@ def make_client(enabled=True, api_key="backend-key", backend_stats=BACKEND_STATS
             "version": "local-version",
             "currencies": [{"name": "btc", "no_blocks": 1}],
         }
+
+    @app.get("/capabilities")
+    async def capabilities():
+        return {"networks": [{"network": "btc", "disabled": []}]}
 
     @app.get("/search")
     async def search(request: Request):
@@ -89,6 +111,10 @@ def make_client(enabled=True, api_key="backend-key", backend_stats=BACKEND_STATS
         seen.append(request)
         if request.url.path == "/stats":
             return httpx.Response(200, json=backend_stats)
+        if request.url.path == "/capabilities":
+            if backend_capabilities is None:
+                return httpx.Response(404)
+            return httpx.Response(200, json=backend_capabilities)
         if request.url.path == "/search":
             return httpx.Response(200, json=BACKEND_SEARCH)
         return httpx.Response(200, json={"backend_path": request.url.path})
@@ -169,9 +195,31 @@ def test_other_bulk_operations_of_external_network_proxy():
     assert response.headers["x-served-by"] == "external-backend"
 
 
-def test_stats_capability_declaration_edge_cases():
-    """Absent capabilities = full core, untouched; an already-declared
-    "tags" is not duplicated."""
+def test_capabilities_merges_and_serves_tags_locally():
+    """Backend entries for configured networks are merged in; "tags" is
+    removed from their disabled lists because rule 1 answers tag routes
+    locally — other flags survive untouched."""
+    client, seen = make_client()
+    body = client.get("/capabilities").json()
+    assert body["networks"] == [
+        {"network": "btc", "disabled": []},
+        {"network": "bnb", "disabled": ["relations", "clusters", "exact_stats"]},
+    ]
+    assert seen[-1].url.path == "/capabilities"
+
+
+def test_capabilities_backend_404_contributes_nothing():
+    """An older adapter without /capabilities degrades like an older server:
+    its networks are simply absent, which consumers read as fully enabled."""
+    client, seen = make_client(backend_capabilities=None)
+    body = client.get("/capabilities").json()
+    assert body["networks"] == [{"network": "btc", "disabled": []}]
+    assert seen[-1].url.path == "/capabilities"
+
+
+def test_stats_strips_legacy_capability_declarations():
+    """A stale adapter still declaring the retired per-currency capabilities
+    field must not leak it through the mirror-not-revalidate merge."""
     client, seen = make_client(
         backend_stats={
             "currencies": [
@@ -179,10 +227,7 @@ def test_stats_capability_declaration_edge_cases():
             ]
         }
     )
-    assert client.get("/stats").json()["currencies"][-1]["capabilities"] == [
-        "relations",
-        "tags",
-    ]
+    assert "capabilities" not in client.get("/stats").json()["currencies"][-1]
 
     client, seen = make_client(
         backend_stats={"currencies": [{"name": "bnb", "no_blocks": 1}]}
@@ -213,15 +258,14 @@ def test_stats_merges_configured_networks_only():
     # local scalars win: they describe THIS deployment
     assert body["version"] == "local-version"
     # local entries first, backend entries for CONFIGURED networks appended;
-    # unmodeled backend fields survive (mirrored, not re-validated); a
-    # declared capabilities list gains "tags" — rule 1 serves tags locally
+    # unmodeled backend fields survive (mirrored, not re-validated) EXCEPT
+    # the retired capabilities field, which is stripped (rule 2)
     assert body["currencies"] == [
         {"name": "btc", "no_blocks": 1},
         {
             "name": "bnb",
             "no_blocks": 42,
             "some_unmodeled_field": "kept",
-            "capabilities": ["tags"],
         },
     ]
     assert seen[-1].url.path == "/stats"
@@ -304,13 +348,15 @@ def test_config_parses_from_dict():
 
 def test_currency_stats_declares_backend_extension_fields():
     """The /stats schema documents the fields external backends serve
-    (capability + network-behavior discovery), while local serialization
-    keeps them off the wire (exclude_none) so baseline output is unchanged."""
+    (network-behavior discovery), while local serialization keeps them off
+    the wire (exclude_none) so baseline output is unchanged. Capability
+    declaration moved to /capabilities and is no longer a stats field."""
     from graphsenselib.web.models import CurrencyStats
 
     props = CurrencyStats.model_json_schema()["properties"]
-    for field in ("capabilities", "coin_ticker", "coin_decimals", "network_name"):
+    for field in ("coin_ticker", "coin_decimals", "network_name"):
         assert field in props
+    assert "capabilities" not in props
 
     local = CurrencyStats(
         name="btc",
@@ -339,14 +385,13 @@ def test_currency_stats_declares_backend_extension_fields():
             "no_tagged_addresses": 0,
             "timestamp": 1,
             "network_type": "account",
-            "capabilities": [],
             "coin_ticker": "eth",
             "coin_decimals": 18,
             "network_name": "Arbitrum",
         }
     )
-    assert declared.capabilities == []
     assert declared.coin_ticker == "eth"
+    assert declared.coin_decimals == 18
 
 
 def test_address_declares_truncation_extension_fields():
@@ -389,3 +434,16 @@ def test_address_declares_truncation_extension_fields():
         "total_received",
         "in_degree",
     ]
+
+    # the flat qualifiers map (the simple consumer form of cutoff) is a
+    # backend-only extension too; is_possible_service IS set by local serving
+    for field in ("qualifiers", "is_possible_service"):
+        assert field in Address.model_json_schema()["properties"]
+    assert "qualifiers" not in exact
+    qualified = Address.model_validate(
+        {**body, "qualifiers": {"total_received": "gt", "balance": "approx"}}
+    )
+    assert qualified.to_dict()["qualifiers"] == {
+        "total_received": "gt",
+        "balance": "approx",
+    }

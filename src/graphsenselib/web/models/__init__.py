@@ -26,8 +26,10 @@ from graphsenselib.web.models.entities import (
 from graphsenselib.web.models.general import (
     Actor,
     ActorContext,
+    Capabilities,
     Concept,
     CurrencyStats,
+    NetworkCapabilities,
     ExternalConversion,
     Rates,
     RelatedAddress,
@@ -166,7 +168,9 @@ __all__ = [
     "SearchResultLevel5",
     "SearchResultLevel6",
     # General
+    "Capabilities",
     "CurrencyStats",
+    "NetworkCapabilities",
     "Stats",
     "Rates",
     "Taxonomy",

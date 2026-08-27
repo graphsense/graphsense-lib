@@ -15,29 +15,18 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
-class CurrencyStats(BaseModel):
+class NetworkCapabilities(BaseModel):
     """
-    Currency statistics model.
+    Feature availability of one network in this deployment.
     """ # noqa: E501
-    name: StrictStr
-    no_blocks: StrictInt
-    no_address_relations: StrictInt
-    no_addresses: StrictInt
-    no_entities: StrictInt
-    no_txs: StrictInt
-    no_labels: StrictInt
-    no_tagged_addresses: StrictInt
-    timestamp: StrictInt
-    network_type: StrictStr
-    coin_ticker: Optional[StrictStr] = None
-    coin_decimals: Optional[StrictInt] = None
-    network_name: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name", "no_blocks", "no_address_relations", "no_addresses", "no_entities", "no_txs", "no_labels", "no_tagged_addresses", "timestamp", "network_type", "coin_ticker", "coin_decimals", "network_name"]
+    network: StrictStr
+    disabled: List[StrictStr] = Field(description="Feature families NOT served for this network, from the vocabulary \"relations\" (neighbors/links counterparty enumeration), \"clusters\" (address clustering), \"tags\" (TagStore data), \"conversions\" (DEX-swap/bridge resolution on txs), \"exact_stats\" (the per-currency /stats numbers are placeholders, not pipeline-exact). Routes of a disabled family answer 501. Unknown flags must be ignored (forward-extensible). Core route families (address/tx/block detail, search, rates) are never listed here — they work on every served network.")
+    __properties: ClassVar[List[str]] = ["network", "disabled"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -57,7 +46,7 @@ class CurrencyStats(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of CurrencyStats from a JSON string"""
+        """Create an instance of NetworkCapabilities from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -78,12 +67,11 @@ class CurrencyStats(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of CurrencyStats from a dict"""
+        """Create an instance of NetworkCapabilities from a dict"""
         if obj is None:
             return None
 
@@ -91,19 +79,8 @@ class CurrencyStats(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "name": obj.get("name"),
-            "no_blocks": obj.get("no_blocks"),
-            "no_address_relations": obj.get("no_address_relations"),
-            "no_addresses": obj.get("no_addresses"),
-            "no_entities": obj.get("no_entities"),
-            "no_txs": obj.get("no_txs"),
-            "no_labels": obj.get("no_labels"),
-            "no_tagged_addresses": obj.get("no_tagged_addresses"),
-            "timestamp": obj.get("timestamp"),
-            "network_type": obj.get("network_type"),
-            "coin_ticker": obj.get("coin_ticker"),
-            "coin_decimals": obj.get("coin_decimals"),
-            "network_name": obj.get("network_name")
+            "network": obj.get("network"),
+            "disabled": obj.get("disabled")
         })
         return _obj
 

@@ -4,8 +4,10 @@ from typing import Any, List, Optional, Protocol
 
 from ....utils.rest_utils import alphanumeric_lower_identifier
 from .models import (
+    Capabilities,
     GeneralStats,
     LabeledItemRef,
+    NetworkCapabilities,
     SearchResult,
     SearchResultByCurrency,
     Stats,
@@ -64,6 +66,17 @@ class GeneralService:
         tstamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return Stats(
             currencies=currency_stats, version=version, request_timestamp=tstamp
+        )
+
+    def get_capabilities(self) -> Capabilities:
+        """Feature availability per supported network. Local serving is always
+        full core, so every locally indexed network reports an empty disabled
+        list; external-backend networks are merged in by the middleware."""
+        return Capabilities(
+            networks=[
+                NetworkCapabilities(network=currency, disabled=[])
+                for currency in self.db.get_supported_currencies()
+            ]
         )
 
     async def search_by_currency(

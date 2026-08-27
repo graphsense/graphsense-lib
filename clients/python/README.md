@@ -166,6 +166,7 @@ Class | Method | HTTP request | Description
 *EntitiesApi* | [**list_entity_neighbors**](docs/EntitiesApi.md#list_entity_neighbors) | **GET** /{currency}/entities/{entity}/neighbors | List neighboring entities
 *EntitiesApi* | [**list_entity_txs**](docs/EntitiesApi.md#list_entity_txs) | **GET** /{currency}/entities/{entity}/txs | List entity transactions
 *EntitiesApi* | [**search_entity_neighbors**](docs/EntitiesApi.md#search_entity_neighbors) | **GET** /{currency}/entities/{entity}/search | Search entity neighborhood
+*GeneralApi* | [**get_capabilities**](docs/GeneralApi.md#get_capabilities) | **GET** /capabilities | Get per-network feature availability
 *GeneralApi* | [**get_statistics**](docs/GeneralApi.md#get_statistics) | **GET** /stats | Get platform statistics for supported currencies
 *GeneralApi* | [**search**](docs/GeneralApi.md#search) | **GET** /search | Search addresses, transactions, actors, and labels
 *GraphApi* | [**graph_compare**](docs/GraphApi.md#graph_compare) | **POST** /graph/compare | Compare multiple transactions (beta)
@@ -201,6 +202,7 @@ Class | Method | HTTP request | Description
  - [AggregateCutoff](docs/AggregateCutoff.md)
  - [Block](docs/Block.md)
  - [BlockAtDate](docs/BlockAtDate.md)
+ - [Capabilities](docs/Capabilities.md)
  - [ChangeHeuristics](docs/ChangeHeuristics.md)
  - [Cluster](docs/Cluster.md)
  - [ClusterAddresses](docs/ClusterAddresses.md)
@@ -248,6 +250,7 @@ Class | Method | HTTP request | Description
  - [NeighborClusters](docs/NeighborClusters.md)
  - [NeighborEntities](docs/NeighborEntities.md)
  - [NeighborEntity](docs/NeighborEntity.md)
+ - [NetworkCapabilities](docs/NetworkCapabilities.md)
  - [OneTimeChangeHeuristic](docs/OneTimeChangeHeuristic.md)
  - [PerTxInner](docs/PerTxInner.md)
  - [Rate](docs/Rate.md)

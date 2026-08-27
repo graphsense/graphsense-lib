@@ -52,7 +52,6 @@ KNOWN_GAPS: dict[str, set[str]] = {
         "total_tokens_spent",
     },
     "CurrencyStats": {
-        "capabilities",
         "coin_decimals",
         "coin_ticker",
         "network_name",

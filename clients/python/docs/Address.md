@@ -26,6 +26,8 @@ Name | Type | Description | Notes
 **total_tokens_spent** | [**Dict[str, Values]**](Values.md) |  | [optional] 
 **actors** | [**List[LabeledItemRef]**](LabeledItemRef.md) |  | [optional] 
 **is_contract** | **bool** |  | [optional] 
+**is_possible_service** | **bool** | Structural heuristic: True when the address is likely a service (exchange, payment processor, ...) judged from degree/tx counts (account networks) or its cluster&#39;s size and degrees (UTXO networks). Tag data is deliberately not consulted. Absent means the serving backend did not compute it (older server, embedded neighbor bodies) — consumers fall back to their own judgment. | [optional] 
+**qualifiers** | **Dict[str, str]** | Flat per-field qualification map, the simple consumer form of cutoff: field name -&gt; \&quot;gt\&quot; (served value is a lower bound of the true value) or \&quot;approx\&quot; (neither exact nor a guaranteed bound). Absent means every served field is exact. Set only by external GraphSense-compatible backends with provider-call budgets; local Cassandra serving computes exact aggregates. | [optional] 
 **status** | **str** | Legacy field. Do not use — retained only for backwards compatibility and will be removed in a future release. | [optional] 
 **cluster** | **int** | Address cluster ID (preferred alias for the deprecated &#x60;entity&#x60; field). | [readonly] 
 

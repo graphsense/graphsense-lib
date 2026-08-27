@@ -2,6 +2,8 @@
 
 from typing import Literal, Optional
 
+from pydantic import Field
+
 from graphsenselib.web.models.base import APIModel, api_model_config
 from graphsenselib.web.models.common import LabeledItemRef
 from graphsenselib.web.models.values import RATE_EXAMPLE, Rate
@@ -41,21 +43,6 @@ class CurrencyStats(APIModel):
     no_tagged_addresses: int
     timestamp: int
     network_type: str
-    # Contract extension shared with external GraphSense-compatible backends
-    # (the provider-backed adapter): capability discovery for consumers.
-    # ABSENT = full core GraphSense (every locally served network); present =
-    # the exact subset of OPTIONAL features answered for this currency, from
-    # the vocabulary "relations" (counterparty enumeration / pair edges),
-    # "clusters" (address clustering), "tags" (TagStore data), "conversions"
-    # (DEX-swap/bridge resolution on txs). The vocabulary covers only those
-    # optional families: being listed in /stats at all means the core route
-    # families (address/tx/block detail, search, rates) work, so consumers
-    # must never gate core endpoints on this field. Unknown words are
-    # ignored (forward-extensible). The
-    # external-backends middleware appends "tags" to declared lists because
-    # tag routes are answered locally. Local serving never sets these fields;
-    # response_model_exclude_none keeps them off the wire.
-    capabilities: Optional[list[str]] = None
     # Network-behavior discovery so consumers can stop hardcoding a per-network
     # table for every new EVM chain. ABSENT = the consumer falls back to its
     # own tables. Naming follows TokenConfig (ticker/decimals): coin_ticker is
@@ -64,6 +51,50 @@ class CurrencyStats(APIModel):
     coin_ticker: Optional[str] = None
     coin_decimals: Optional[int] = None
     network_name: Optional[str] = None
+
+
+NETWORK_CAPABILITIES_EXAMPLE = {
+    "network": "eth",
+    "disabled": [],
+}
+
+
+class NetworkCapabilities(APIModel):
+    """Feature availability of one network in this deployment."""
+
+    model_config = api_model_config(NETWORK_CAPABILITIES_EXAMPLE)
+
+    network: str
+    disabled: list[str] = Field(
+        description="Feature families NOT served for this network, from the "
+        'vocabulary "relations" (neighbors/links counterparty enumeration), '
+        '"clusters" (address clustering), "tags" (TagStore data), '
+        '"conversions" (DEX-swap/bridge resolution on txs), "exact_stats" '
+        "(the per-currency /stats numbers are placeholders, not "
+        "pipeline-exact). Routes of a disabled family answer 501. Unknown "
+        "flags must be ignored (forward-extensible). Core route families "
+        "(address/tx/block detail, search, rates) are never listed here — "
+        "they work on every served network."
+    )
+
+
+class Capabilities(APIModel):
+    """Per-network feature availability of this deployment."""
+
+    model_config = api_model_config(
+        {
+            "networks": [
+                NETWORK_CAPABILITIES_EXAMPLE,
+                {"network": "arb", "disabled": ["relations", "clusters"]},
+            ]
+        }
+    )
+
+    networks: list[NetworkCapabilities] = Field(
+        description="One entry per served network. A network ABSENT from the "
+        "list is fully enabled; so is every network of a deployment old "
+        "enough to 404 this endpoint."
+    )
 
 
 class Stats(APIModel):

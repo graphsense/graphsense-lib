@@ -20,17 +20,24 @@ Decision rules:
 2. ``/stats`` is answered locally, then the per-currency entries of each
    backend (filtered to its configured networks) are merged into the
    ``currencies`` list. Local scalars (version, request_timestamp) win — they
-   describe THIS deployment. A backend entry that declares a ``capabilities``
-   list (absent = full core; present = lite, limited to exactly the named
-   features) gets ``"tags"`` added: the backend cannot know a TagStore fronts
-   it, but rule 1 makes tag routes work here, so THIS deployment truthfully
-   supports tags for those networks.
+   describe THIS deployment. A legacy ``capabilities`` field on a backend
+   entry is stripped: capability declaration moved to ``/capabilities``, and
+   mirroring an unmodeled leftover would resurrect the old contract.
 3. ``/search`` without a currency filter is answered locally, then each
    backend's per-currency address/tx hits (filtered to its configured
    networks) are merged into the ``currencies`` list; labels and actors are
    TagStore data and stay local. With a currency filter naming a configured
    network, the whole request proxies to that backend; any other currency
    filter skips the backends entirely.
+4. ``/capabilities`` is answered locally, then each backend's per-network
+   entries (filtered to its configured networks) are merged into the
+   ``networks`` list. ``"tags"`` is removed from a backend entry's
+   ``disabled`` list: the backend cannot know a TagStore fronts it, but
+   rule 1 makes tag routes work here, so THIS deployment truthfully serves
+   tags for those networks. A backend that 404s the endpoint (older adapter)
+   contributes no entries — consumers already treat an absent network as
+   fully enabled, the same rule they apply to an old server without the
+   endpoint, so deployment skew degrades uniformly.
 
 Backend transport errors propagate — a broken backend must be loud (500 via
 the generic exception handler), not silently shaped as an empty answer.
@@ -65,8 +72,15 @@ _LOCAL_TAG_PATHS = (
     ),
 )
 
-# the capability word rule 1 adds to a declaring backend's stats entry (rule 2)
+# the disabled-flag rule 1 removes from a backend's /capabilities entry (rule 4)
 _TAGS_CAPABILITY = "tags"
+
+# merge endpoints: path -> (list field to merge, entry key within it)
+_MERGE_FIELDS = {
+    "/stats": ("currencies", "name"),
+    "/search": ("currencies", "currency"),
+    "/capabilities": ("networks", "network"),
+}
 
 
 class ExternalBackendMiddleware(BaseHTTPMiddleware):
@@ -127,7 +141,7 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         """True when the local response must be merged with backend answers."""
         if request.method != "GET":
             return False
-        if request.url.path == "/stats":
+        if request.url.path in ("/stats", "/capabilities"):
             return True
         return (
             request.url.path == "/search"
@@ -137,32 +151,35 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
     async def _merge_response(
         self, request: Request, status_code: int, body: bytes
     ) -> Optional[Response]:
-        """Merge backend answers into a buffered local /stats or /search body.
+        """Merge backend answers into a buffered local merge-endpoint body.
 
         Returns the merged response, or None when the local response should
         pass through unchanged (non-200 locally, nothing to merge).
         """
         if status_code != 200:
             return None
+        path = request.url.path
+        list_field, key = _MERGE_FIELDS[path]
         local_doc = json.loads(body)
         merged = dict(local_doc)
-        merged["currencies"] = list(local_doc.get("currencies", []))
-        key = "name" if request.url.path == "/stats" else "currency"
+        merged[list_field] = list(local_doc.get(list_field, []))
         query = ("?" + str(request.url.query)) if request.url.query else ""
         for base_url, networks in self._backends_by_url().items():
             backend_doc = await self._fetch_json(
-                base_url, request.url.path + query, networks
+                base_url, path + query, tolerate_404=(path == "/capabilities")
             )
+            if backend_doc is None:
+                continue
             entries = [
                 entry
-                for entry in backend_doc.get("currencies", [])
+                for entry in backend_doc.get(list_field, [])
                 if entry.get(key) in networks
             ]
-            if request.url.path == "/stats":
-                entries = [_with_tags_capability(entry) for entry in entries]
-            merged["currencies"] = _merge_keyed_lists(
-                merged["currencies"], entries, key
-            )
+            if path == "/stats":
+                entries = [_strip_legacy_capabilities(entry) for entry in entries]
+            elif path == "/capabilities":
+                entries = [_without_tags_disabled(entry) for entry in entries]
+            merged[list_field] = _merge_keyed_lists(merged[list_field], entries, key)
         return JSONResponse(merged, status_code=200)
 
     def _backends_by_url(self) -> Dict[str, set]:
@@ -178,7 +195,9 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
                 return backend.api_key
         return None
 
-    async def _fetch_json(self, base_url: str, path_and_query: str, networks) -> dict:
+    async def _fetch_json(
+        self, base_url: str, path_and_query: str, tolerate_404: bool = False
+    ) -> Optional[dict]:
         headers = {"Accept": "application/json"}
         api_key = self._api_key_for_url(base_url)
         if api_key:
@@ -186,6 +205,8 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         response = await self.client.get(
             base_url.rstrip("/") + path_and_query, headers=headers
         )
+        if tolerate_404 and response.status_code == 404:
+            return None
         response.raise_for_status()
         return response.json()
 
@@ -214,16 +235,20 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
         )
 
 
-def _with_tags_capability(entry: dict) -> dict:
-    """Add ``"tags"`` to a stats entry's declared capabilities (rule 2).
-
-    An entry WITHOUT a ``capabilities`` field declares a full core network and
-    is passed through untouched — adding a list there would demote it to lite.
-    """
-    capabilities = entry.get("capabilities")
-    if not isinstance(capabilities, list) or _TAGS_CAPABILITY in capabilities:
+def _strip_legacy_capabilities(entry: dict) -> dict:
+    """Drop a legacy ``capabilities`` field from a backend stats entry (rule 2)."""
+    if "capabilities" not in entry:
         return entry
-    return {**entry, "capabilities": capabilities + [_TAGS_CAPABILITY]}
+    return {k: v for k, v in entry.items() if k != "capabilities"}
+
+
+def _without_tags_disabled(entry: dict) -> dict:
+    """Remove ``"tags"`` from a backend capabilities entry's disabled list
+    (rule 4): tag routes are answered locally, so tags ARE served here."""
+    disabled = entry.get("disabled")
+    if not isinstance(disabled, list) or _TAGS_CAPABILITY not in disabled:
+        return entry
+    return {**entry, "disabled": [d for d in disabled if d != _TAGS_CAPABILITY]}
 
 
 def _merge_keyed_lists(base_entries: list, extra_entries: list, key: str) -> list:

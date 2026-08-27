@@ -82,6 +82,9 @@ from graphsenselib.db.asynchronous.services.models import RatesResponse as Pydan
 from graphsenselib.db.asynchronous.services.models import (
     SearchResult as PydanticSearchResult,
 )
+from graphsenselib.db.asynchronous.services.models import (
+    Capabilities as PydanticCapabilities,
+)
 from graphsenselib.db.asynchronous.services.models import Stats as PydanticStats
 from graphsenselib.db.asynchronous.services.models import (
     TagCloudEntry as PydanticTagCloudEntry,
@@ -114,6 +117,7 @@ from graphsenselib.web.models import (
     AddressTxUtxo,
     Block,
     BlockAtDate,
+    Capabilities,
     Concept,
     CurrencyStats,
     Entity,
@@ -513,6 +517,11 @@ def to_api_block_at_date(pydantic_block_at_date: PydanticBlockAtDate) -> BlockAt
 def to_api_currency_stats(pydantic_stats: PydanticCurrencyStats) -> CurrencyStats:
     """Convert service CurrencyStats to API CurrencyStats."""
     return CurrencyStats.model_validate(pydantic_stats.model_dump())
+
+
+def to_api_capabilities(pydantic_capabilities: PydanticCapabilities) -> Capabilities:
+    """Convert service Capabilities to API Capabilities."""
+    return Capabilities.model_validate(pydantic_capabilities.model_dump())
 
 
 def to_api_stats(pydantic_stats: PydanticStats) -> Stats:

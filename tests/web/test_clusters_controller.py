@@ -253,8 +253,12 @@ def test_list_cluster_addresses(client):
     assert entityWithTagsAddresses.to_dict() == result
 
     result = get_json(client, path, currency="eth", cluster=eth_entity.entity)
+    # listings embed plain address rows: is_possible_service is computed on
+    # the address-detail path only
+    listed_eth_address = eth_address.model_copy(update={"is_possible_service": None})
     assert (
-        EntityAddresses(next_page=None, addresses=[eth_address]).to_dict() == result
+        EntityAddresses(next_page=None, addresses=[listed_eth_address]).to_dict()
+        == result
     )
 
 

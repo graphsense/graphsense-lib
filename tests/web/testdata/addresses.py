@@ -35,6 +35,8 @@ address = Address(
     in_degree=5013,
     balance=make_values(eur=1.15, usd=2.31, value=115422577),
     status="clean",
+    # cluster 17642138 has no_addresses=110 > 100 in the seed data
+    is_possible_service=True,
 )
 
 addressWithTags = Address(**address.to_dict())
@@ -62,6 +64,8 @@ address2 = Address(
     no_outgoing_txs=1,
     balance=make_values(eur=0.0, usd=0.0, value=0),
     status="clean",
+    # cluster 325790641 has no row in the seed data -> not a service
+    is_possible_service=False,
 )
 
 addressWithoutTags = Address(**address2.to_dict())
@@ -210,6 +214,8 @@ addressWithTotalSpent0 = Address(
     in_degree=5013,
     balance=make_values(eur=0.0, usd=0.0, value=18099),
     status="clean",
+    # cluster 17642139 has no row in the seed data -> not a service
+    is_possible_service=False,
 )
 
 addressWithTagsOutNeighbors = NeighborAddresses(
@@ -342,6 +348,8 @@ eth_address = Address(
     in_degree=5,
     balance=make_values(eur=111.0, usd=222.0, value=111000000000000000000),
     status="clean",
+    # account heuristic: in_degree 5 <= 7500 and no_incoming_txs 5 <= 500
+    is_possible_service=False,
 )
 
 eth_addressWithTags = Address(**eth_address.to_dict())

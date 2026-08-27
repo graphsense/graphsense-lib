@@ -23,6 +23,7 @@ from graphsense.models.address_txs import AddressTxs
 from graphsense.models.aggregate_cutoff import AggregateCutoff
 from graphsense.models.block import Block
 from graphsense.models.block_at_date import BlockAtDate
+from graphsense.models.capabilities import Capabilities
 from graphsense.models.change_heuristics import ChangeHeuristics
 from graphsense.models.cluster import Cluster
 from graphsense.models.cluster_addresses import ClusterAddresses
@@ -70,6 +71,7 @@ from graphsense.models.neighbor_cluster import NeighborCluster
 from graphsense.models.neighbor_clusters import NeighborClusters
 from graphsense.models.neighbor_entities import NeighborEntities
 from graphsense.models.neighbor_entity import NeighborEntity
+from graphsense.models.network_capabilities import NetworkCapabilities
 from graphsense.models.one_time_change_heuristic import OneTimeChangeHeuristic
 from graphsense.models.per_tx_inner import PerTxInner
 from graphsense.models.rate import Rate

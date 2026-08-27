@@ -2927,6 +2927,23 @@ class Cassandra:
 
         return rows
 
+    async def get_cluster_stats(self, currency, cluster_id):
+        """Raw cluster row for the is_possible_service heuristic — a single
+        point read without get_entity's root-address and tx-summary
+        follow-ups. Returns None when no legacy cluster row exists (fresh-only
+        or non-representable ids included), never raises for a missing row."""
+        cluster_id = int(cluster_id)
+        if not is_representable_entity_id(cluster_id) or is_fresh_cluster_id(
+            cluster_id
+        ):
+            return None
+        cluster_id_group = self.get_id_group(currency, cluster_id)
+        query = "SELECT * FROM cluster WHERE cluster_id_group = %s AND cluster_id = %s "
+        result = await self.execute_async(
+            currency, "transformed", query, [cluster_id_group, cluster_id]
+        )
+        return one(result)
+
     @eth
     async def get_entity(self, currency, entity):
         entity = int(entity)
