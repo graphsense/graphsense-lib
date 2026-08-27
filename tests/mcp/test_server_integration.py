@@ -261,12 +261,14 @@ async def test_pagesize_middleware_covers_auto_generated_list_tools(bundled_mcp)
 
     list_tx_flows is the live case: an omitted pagesize means no pagination
     at all upstream, so the whole flow list of an aggregator tx comes back.
-    The consolidated tools must NOT be in the set: they cap themselves,
+    The consolidated tools must NOT be in the set: they default themselves,
     and list_neighbors reuses pagesize as a filter target.
     """
-    from graphsenselib.mcp.pagesize import PagesizeCapMiddleware
+    from graphsenselib.mcp.pagesize import PagesizeDefaultMiddleware
 
-    mw = next(m for m in bundled_mcp.middleware if isinstance(m, PagesizeCapMiddleware))
+    mw = next(
+        m for m in bundled_mcp.middleware if isinstance(m, PagesizeDefaultMiddleware)
+    )
 
     assert "list_tx_flows" in mw.tool_names
     assert mw.tool_names.isdisjoint(

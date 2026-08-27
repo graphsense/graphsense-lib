@@ -13,7 +13,7 @@ from graphsenselib import __version__ as gs_version
 from graphsenselib.mcp import curation as curation_mod
 from graphsenselib.mcp.config import GSMCPConfig
 from graphsenselib.mcp.error_logging import ErrorLoggingMiddleware
-from graphsenselib.mcp.pagesize import PagesizeCapMiddleware
+from graphsenselib.mcp.pagesize import PagesizeDefaultMiddleware
 from graphsenselib.mcp.routes import make_component_fn, make_route_map_fn
 from graphsenselib.mcp.tools import register_custom_tools
 
@@ -79,9 +79,9 @@ def build_mcp(app, config: GSMCPConfig) -> tuple[FastMCP, AsyncExitStack]:
 
     # Auto-generated tools pass the model's arguments straight to the
     # upstream route, so an omitted pagesize arrives as "no limit". The
-    # consolidated tools cap themselves in _params_from; this covers the
-    # rest (today: list_tx_flows).
-    mcp.add_middleware(PagesizeCapMiddleware(paged_tools))
+    # consolidated tools default themselves in _params_from; this covers
+    # the rest (today: list_tx_flows).
+    mcp.add_middleware(PagesizeDefaultMiddleware(paged_tools))
 
     # Consolidated tools receive (mcp, app, stack) but not the MCP config;
     # tools that build Pathfinder deep links (build_pathfinder_file's

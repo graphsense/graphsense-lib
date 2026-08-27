@@ -35,8 +35,8 @@ def make_component_fn(curation: CurationFile, paged_tools: set[str] | None = Non
 
     When `paged_tools` is given, the names of auto-generated tools that take
     a `pagesize` query parameter are collected into it. That set is what
-    PagesizeCapMiddleware caps (see mcp/pagesize.py). This is the only place
-    the route's parameter list is visible, hence the out-parameter.
+    PagesizeDefaultMiddleware fills in (see mcp/pagesize.py). This is the only
+    place the route's parameter list is visible, hence the out-parameter.
     """
     include = curation.include
     tag_prefix = curation.defaults.tag_prefix

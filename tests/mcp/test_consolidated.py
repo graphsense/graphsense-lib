@@ -1315,9 +1315,9 @@ def test_params_from_defaults_and_caps_pagesize():
     # An omitted pagesize must not reach upstream as "no limit": one
     # unbounded list_txs_for on a hot wallet returned ~2.7 MB. The default
     # and ceiling apply to every list tool via this shared helper.
-    from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE, MAX_PAGESIZE
+    from graphsenselib.mcp.pagesize import DEFAULT_PAGESIZE
     from graphsenselib.mcp.tools.consolidated import _params_from
 
     assert _params_from(None, None, None)["pagesize"] == DEFAULT_PAGESIZE
     assert _params_from(None, 40, None)["pagesize"] == 40
-    assert _params_from(None, 5000, None)["pagesize"] == MAX_PAGESIZE
+    assert _params_from(None, 5000, None)["pagesize"] == 5000
