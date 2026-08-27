@@ -123,7 +123,7 @@ class Address(APIModel):
         'form of cutoff: field name -> "gt" (served value is a lower bound '
         'of the true value) or "approx" (neither exact nor a guaranteed '
         "bound). Absent means every served field is exact. Set only by "
-        "external GraphSense-compatible backends with provider-call budgets; "
+        "external GraphSense-compatible backends; "
         "local Cassandra serving computes exact aggregates.",
     )
     status: Optional[str] = Field(
