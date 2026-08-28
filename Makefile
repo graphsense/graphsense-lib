@@ -230,6 +230,15 @@ check-api-version:
 		echo "API version aligned: $$version"; \
 	fi
 
+# spark/build.sbt is the source of truth for the Scala job's compile-scope
+# dependencies; config.py mirrors them for the slim artifact's --packages.
+# Same generate/check split as update-api-version above.
+sync-spark-packages:
+	uv run python scripts/check_spark_packages.py --fix
+
+check-spark-packages:
+	uv run python scripts/check_spark_packages.py
+
 sync-client-version:
 	@version=$$(echo $(WEBAPISEM) | sed "s/^['\"]\?v\?//" | sed "s/['\"]$$//"); \
 	sed -i 's/^version = ".*"/version = "'$$version'"/' clients/python/pyproject.toml; \
@@ -256,4 +265,4 @@ serve-docker:
 # NOTE: Tagpack integration tests have moved to iknaio-tests-nightly repository
 # Run: cd ../iknaio/iknaio-tests-nightly && make test-tagpack
 
-.PHONY: all test install lint format build build-rust test-rust test-spark format-spark lint-spark build-spark-jar tag-spark-version pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-client-version update-client-version check-client-version show-versions mcp-validate-curation
+.PHONY: all test install lint format build build-rust test-rust test-spark format-spark lint-spark build-spark-jar tag-spark-version pre-commit check-semver test-all type-check ty-check tag-version click-bash-completion generate-tron-grpc-code test-with-base-dependencies-ci test-ci serve-web run-codegen generate-python-client serve-docker build-fast-cassandra update-api-version check-api-version sync-spark-packages check-spark-packages sync-client-version update-client-version check-client-version show-versions mcp-validate-curation

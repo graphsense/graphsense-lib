@@ -14,14 +14,31 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Added
+- **`spark/build.sbt` is now the single source of truth for the Scala job's
+  dependencies.** `DEFAULT_SCALA_JOB_PACKAGES` mirrors its compile-scope
+  entries so the `slim` artifact can pass them to `spark-submit --packages`,
+  and nothing enforced that mirroring — the two drifted silently whenever the
+  sbt build changed, and a slim run would only find out as a
+  `NoClassDefFoundError` on a cluster. `scripts/check_spark_packages.py` parses
+  the declaration block and either fails (`make check-spark-packages`) or
+  regenerates the lists (`make sync-spark-packages`), wired into pre-commit
+  exactly like `update-api-version`. It caught a real drift on its first run:
+  `bcprov-jdk18on` had been added to the sbt build and never mirrored. If the
+  declaration shape ever changes, the parser exits with an error rather than
+  silently matching nothing.
+- **`--exclude-packages` on the slim submit path.** `--packages` resolves
+  transitively, so an artifact the sbt build excludes came straight back:
+  without this the slim path re-resolved `bcprov-jdk15on` through
+  `org.web3j:utils`, undoing the BouncyCastle swap. The new
+  `DEFAULT_SCALA_JOB_EXCLUDES` is generated from the build's `exclude(...)`
+  clauses by the same script, and is only emitted alongside `--packages`.
+
 #### Changed
 - **`DEFAULT_SCALA_JOB_PACKAGES` drops `org.web3j:core`**, tracking the same
   removal in `spark/build.sbt` (see `spark/CHANGELOG.md`): nothing in the Scala
   job imports it. This list only feeds the `slim` artifact's `--packages`;
-  production runs `fat`, where the assembly jar is authoritative. Note the list
-  cannot express the `bcprov-jdk15on` -> `bcprov-jdk18on` swap that the sbt
-  build now applies, so the slim path would still resolve the old BouncyCastle
-  coordinate transitively.
+  production runs `fat`, where the assembly jar is authoritative.
 
 ## [2.16.3] - 2026-08-28
 

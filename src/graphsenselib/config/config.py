@@ -414,12 +414,28 @@ class SlackTopic(_WarnExtraModel):
 # Maven coordinates of the graphsense-spark job's runtime dependencies. Only
 # needed for the "slim" artifact; the "fat" (assembly) jar bundles these. The
 # slim path also needs the spark-packages resolver for graphframes.
+#
+# GENERATED FROM spark/build.sbt -- do not hand-edit. `make check-spark-packages`
+# fails when these drift from the Scala build's compile-scope dependencies, and
+# `make sync-spark-packages` regenerates them. Both run in pre-commit.
 DEFAULT_SCALA_JOB_PACKAGES = [
-    "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
     "org.rogach:scallop_2.12:4.1.0",
+    "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
     "joda-time:joda-time:2.10.10",
     "org.web3j:abi:4.8.7",
+    "org.bouncycastle:bcprov-jdk18on:1.80",
     "graphframes:graphframes:0.8.3-spark3.5-s_2.12",
+]
+
+# Coordinates the sbt build excludes from its compile classpath. `--packages`
+# resolves transitively, so without passing these to `--exclude-packages` the
+# slim path would silently pull back exactly what the assembly leaves out --
+# bcprov-jdk15on, dragged in by org.web3j:utils, whose advisories are only
+# fixed under the renamed bcprov-jdk18on artifact.
+#
+# GENERATED FROM spark/build.sbt -- see DEFAULT_SCALA_JOB_PACKAGES above.
+DEFAULT_SCALA_JOB_EXCLUDES = [
+    "org.bouncycastle:bcprov-jdk15on",
 ]
 
 
@@ -477,6 +493,9 @@ class FullTransformArgs(BaseModel):
     version_overrides: Dict[str, str] = Field(default_factory=dict)
     artifact: str = "fat"  # "fat" (assembly, self-contained) | "slim" (+packages)
     main_class: str = "org.graphsense.TransformationJob"
+    exclude_packages: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_SCALA_JOB_EXCLUDES)
+    )
     packages: List[str] = Field(
         default_factory=lambda: list(DEFAULT_SCALA_JOB_PACKAGES)
     )
