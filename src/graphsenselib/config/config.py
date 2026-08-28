@@ -418,7 +418,6 @@ DEFAULT_SCALA_JOB_PACKAGES = [
     "com.datastax.spark:spark-cassandra-connector_2.12:3.5.1",
     "org.rogach:scallop_2.12:4.1.0",
     "joda-time:joda-time:2.10.10",
-    "org.web3j:core:4.8.7",
     "org.web3j:abi:4.8.7",
     "graphframes:graphframes:0.8.3-spark3.5-s_2.12",
 ]

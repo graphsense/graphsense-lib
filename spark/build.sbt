@@ -91,13 +91,34 @@ lazy val root = (project in file(".")).
     // scope, so the slim jar and the existing prod spark-submit flow (slim jar
     // + --packages) are unchanged by this.
     libraryDependencies ++= Seq(
-      "org.scalatest" %% "scalatest" % "3.2.12" % Test,
+      "org.scalatest" %% "scalatest" % "3.2.19" % Test,
       "com.github.mrpowers" % "spark-fast-tests_2.12" % "1.0.0" % Test,
       "org.rogach" %% "scallop" % "4.1.0",
       "com.datastax.spark" %% "spark-cassandra-connector" % "3.5.1",
       "joda-time" % "joda-time" % "2.10.10",
-      "org.web3j" % "core" % "4.8.7",
-      "org.web3j" % "abi" % "4.8.7",
+      // Only org.web3j.abi is used (Tokens.scala: EventEncoder,
+      // FunctionReturnDecoder, TypeReference, datatypes.Event). `core` was
+      // declared but never imported, and it is what dragged okhttp, okio,
+      // Java-WebSocket, kotlin-stdlib and bouncycastle into the assembly jar —
+      // all carrying open advisories with nothing here calling them. Do not
+      // re-add it without an import to justify it.
+      //
+      // Pinned at 4.8.7 deliberately: web3j moved to Java 17 bytecode at
+      // 4.10.0 and Java 21 at 4.14.0, and this builds on Scala 2.12.17 for a
+      // Java 11 cluster. 4.14.0 fails at `typer` with "bad constant pool
+      // index: 0" and would not load on the executors either. 4.9.8 is the
+      // last Java 8 build, but abi's only dependency is org.web3j:utils at
+      // every version, so a bump buys no advisory coverage.
+      "org.web3j" % "abi" % "4.8.7" exclude ("org.bouncycastle", "bcprov-jdk15on"),
+      // web3j:utils pins bcprov-jdk15on 1.68, and that coordinate ends at 1.70:
+      // BouncyCastle renamed the artifact to bcprov-jdk18on at 1.71, which is
+      // where the fix for GHSA advisories on >= 1.61, < 1.78 lives. Bumping
+      // web3j cannot reach it (4.9.8, the last Java 8 build, still pins 1.70),
+      // so the old coordinate is excluded and the new one added explicitly.
+      // Same org.bouncycastle.* packages, so it is a drop-in; it must stay on
+      // the classpath because EventEncoder hashes the event signature through
+      // org.web3j.crypto.Hash, which calls BouncyCastle's Keccak digest.
+      "org.bouncycastle" % "bcprov-jdk18on" % "1.80",
       "org.apache.spark" %% "spark-sql" % "3.5.8" % Provided,
       "org.apache.spark" %% "spark-graphx" % "3.5.8" % Provided,
       "graphframes" % "graphframes" % "0.8.3-spark3.5-s_2.12",

@@ -3,6 +3,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+### Security
+- **`org.web3j:core` dropped from the build.** Nothing imported it — the whole
+  web3j surface is four calls in `Tokens.scala` (`EventEncoder`,
+  `FunctionReturnDecoder`, `TypeReference`, `datatypes.Event`), all in
+  `org.web3j:abi`. It was pulling okhttp, okio, Java-WebSocket, kotlin-stdlib,
+  rxjava and jnr-unixsocket into the assembly jar, none of them reachable from
+  any code path here and several carrying open advisories. The jar goes from
+  19,207 to 14,747 classes and 32.6 MB to 24.9 MB.
+- **BouncyCastle moved to `bcprov-jdk18on` 1.80.** `org.web3j:utils` pins
+  `bcprov-jdk15on` 1.68, and no web3j release can fix it: that coordinate ends
+  at 1.70 because BouncyCastle renamed the artifact at 1.71, and the advisories
+  covering `>= 1.61, < 1.78` are only fixed under the new name. 4.9.8, the last
+  web3j build on Java 8 bytecode, still pins 1.70. So `bcprov-jdk15on` is
+  excluded from `abi` and `bcprov-jdk18on` added explicitly; the packages are
+  identical, and it has to stay on the classpath because `EventEncoder` hashes
+  the event signature through `org.web3j.crypto.Hash`, which calls Keccak.
+
+### Changed
+- scalatest 3.2.12 -> 3.2.19 (test scope).
+
+### Notes
+- `org.web3j:abi` stays at **4.8.7 deliberately**. web3j moved to Java 17
+  bytecode at 4.10.0 and Java 21 at 4.14.0; this builds on Scala 2.12.17 for a
+  Java 11 cluster (Cassandra 4.1 is co-located and supports 8/11 only), so
+  4.14.0 fails at `typer` with "bad constant pool index: 0" and would not load
+  on the executors either. **Check a dependency's classfile major version
+  before bumping it here** — nothing in the build enforces the ceiling.
+- The remaining sbt advisories are transitive through `spark-sql`/`spark-graphx`
+  and `cassandra-analytics-core`, all `Provided`: the cluster supplies those at
+  runtime, so editing `build.sbt` changes the reported tree without changing a
+  class the job loads. Remediation there is a cluster Spark upgrade.
+- Verified on JDK 11: 84/84 tests, and the assembled jar has no base (non
+  `META-INF/versions/`) class above Java 8 bytecode.
+
 ## [v26.08.2] 2026-08-28
 ### Changed
 - The four account tx-count aggregations (`no_incoming_txs`,

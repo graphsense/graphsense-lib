@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Use one changelog file, but separate entries by track in each release window.
 
+## [Unreleased]
+
+### Library
+
+#### Changed
+- **`DEFAULT_SCALA_JOB_PACKAGES` drops `org.web3j:core`**, tracking the same
+  removal in `spark/build.sbt` (see `spark/CHANGELOG.md`): nothing in the Scala
+  job imports it. This list only feeds the `slim` artifact's `--packages`;
+  production runs `fat`, where the assembly jar is authoritative. Note the list
+  cannot express the `bcprov-jdk15on` -> `bcprov-jdk18on` swap that the sbt
+  build now applies, so the slim path would still resolve the old BouncyCastle
+  coordinate transitively.
+
 ## [2.16.3] - 2026-08-28
 
 ### Library
