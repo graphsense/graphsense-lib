@@ -169,7 +169,7 @@ wheels = [
 
 [[package]]
 name = "graphsense-python"
-version = "2.16.0rc1"
+version = "2.15.3+pflite.1"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
