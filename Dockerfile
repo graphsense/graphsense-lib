@@ -16,7 +16,7 @@
 # for temurin) and CI proves it before it reaches prod.
 # =============================================================================
 FROM ghcr.io/astral-sh/uv:0.12.5 AS uv
-FROM eclipse-temurin:11-jre-jammy@sha256:eca8fa395077325c4065446e99e79af91c7283f10600d7f8c11530493e38a07c AS java11
+FROM eclipse-temurin:11-jre-jammy@sha256:372c96aef3c1c32281ecffbf9aa10de22ef9d8335c60033c2498a2ed4edcdb6f AS java11
 
 # =============================================================================
 # Stage 1: builder — compiles the Python wheel and the Rust clustering wheel.
