@@ -23,6 +23,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 - scalatest 3.2.12 -> 3.2.19 (test scope).
+- **`spark_release.yml` builds on JDK 11**, matching `spark_tests.yml` and the
+  cluster, where Cassandra 4.1 is co-located and supports 8/11 only. Building
+  on 17 produced a loadable jar (Scala 2.12 emits Java 8 bytecode and no
+  `-release` is set), but compiled the source against the JDK 17 class library,
+  so a Java 12+ stdlib call would have compiled clean and thrown
+  `NoSuchMethodError` on the executors. The release job runs no tests and
+  `spark_tests.yml` fires on branches and PRs rather than tags, which made the
+  release artifact the one build never exercised on the runtime JVM.
 
 ### Notes
 - `org.web3j:abi` stays at **4.8.7 deliberately**. web3j moved to Java 17

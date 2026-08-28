@@ -24,11 +24,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+      # Java 11, matching spark_tests.yml and the cluster — Cassandra 4.1 is
+      # co-located with the Spark workers and supports 8/11 only, so the
+      # executors and driver both run 11. This built on 17 for a long time and
+      # produced a loadable jar (Scala 2.12 emits Java 8 bytecode by default and
+      # no -release is set), but the source was still compiled against the JDK 17
+      # class library: a call to any Java 12+ stdlib method would compile clean
+      # here and throw NoSuchMethodError on the executors. This job runs no
+      # tests, and spark_tests.yml triggers on branches and PRs rather than
+      # tags, so the release artifact was the one build never exercised on the
+      # runtime JVM.
       - name: Setup JDK
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 11
       - name: Setup sbt launcher
         uses: sbt/setup-sbt@v1
       # build.sbt derives the jar version from GITHUB_REF_NAME by switching on
