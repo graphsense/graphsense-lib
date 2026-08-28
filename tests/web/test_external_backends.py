@@ -346,52 +346,14 @@ def test_config_parses_from_dict():
 # ---------------------------------------------------------------------------
 
 
-def test_currency_stats_declares_backend_extension_fields():
-    """The /stats schema documents the fields external backends serve
-    (network-behavior discovery), while local serialization keeps them off
-    the wire (exclude_none) so baseline output is unchanged. Capability
-    declaration moved to /capabilities and is no longer a stats field."""
+def test_currency_stats_has_no_extension_fields():
+    """Capability declaration moved to /capabilities and the per-currency
+    coin fields were dropped: CurrencyStats is exactly the core contract."""
     from graphsenselib.web.models import CurrencyStats
 
     props = CurrencyStats.model_json_schema()["properties"]
-    for field in ("coin_ticker", "coin_decimals", "network_name"):
-        assert field in props
-    assert "capabilities" not in props
-
-    local = CurrencyStats(
-        name="btc",
-        no_blocks=1,
-        no_address_relations=1,
-        no_addresses=1,
-        no_entities=1,
-        no_txs=1,
-        no_labels=1,
-        no_tagged_addresses=1,
-        timestamp=1,
-        network_type="utxo",
-    ).model_dump(exclude_none=True)
-    assert "capabilities" not in local
-    assert "coin_ticker" not in local
-
-    declared = CurrencyStats.model_validate(
-        {
-            "name": "arb",
-            "no_blocks": 1,
-            "no_address_relations": 0,
-            "no_addresses": 0,
-            "no_entities": 0,
-            "no_txs": 0,
-            "no_labels": 0,
-            "no_tagged_addresses": 0,
-            "timestamp": 1,
-            "network_type": "account",
-            "coin_ticker": "eth",
-            "coin_decimals": 18,
-            "network_name": "Arbitrum",
-        }
-    )
-    assert declared.coin_ticker == "eth"
-    assert declared.coin_decimals == 18
+    for field in ("capabilities", "coin_ticker", "coin_decimals", "network_name"):
+        assert field not in props
 
 
 def test_address_declares_truncation_extension_fields():

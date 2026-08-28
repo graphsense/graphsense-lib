@@ -16,7 +16,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -34,10 +34,7 @@ class CurrencyStats(BaseModel):
     no_tagged_addresses: StrictInt
     timestamp: StrictInt
     network_type: StrictStr
-    coin_ticker: Optional[StrictStr] = None
-    coin_decimals: Optional[StrictInt] = None
-    network_name: Optional[StrictStr] = None
-    __properties: ClassVar[List[str]] = ["name", "no_blocks", "no_address_relations", "no_addresses", "no_entities", "no_txs", "no_labels", "no_tagged_addresses", "timestamp", "network_type", "coin_ticker", "coin_decimals", "network_name"]
+    __properties: ClassVar[List[str]] = ["name", "no_blocks", "no_address_relations", "no_addresses", "no_entities", "no_txs", "no_labels", "no_tagged_addresses", "timestamp", "network_type"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,7 +75,6 @@ class CurrencyStats(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-
         return _dict
 
     @classmethod
@@ -100,10 +96,7 @@ class CurrencyStats(BaseModel):
             "no_labels": obj.get("no_labels"),
             "no_tagged_addresses": obj.get("no_tagged_addresses"),
             "timestamp": obj.get("timestamp"),
-            "network_type": obj.get("network_type"),
-            "coin_ticker": obj.get("coin_ticker"),
-            "coin_decimals": obj.get("coin_decimals"),
-            "network_name": obj.get("network_name")
+            "network_type": obj.get("network_type")
         })
         return _obj
 

@@ -43,14 +43,6 @@ class CurrencyStats(APIModel):
     no_tagged_addresses: int
     timestamp: int
     network_type: str
-    # Network-behavior discovery so consumers can stop hardcoding a per-network
-    # table for every new EVM chain. ABSENT = the consumer falls back to its
-    # own tables. Naming follows TokenConfig (ticker/decimals): coin_ticker is
-    # the GAS coin's lowercase ticker, which on L2s differs from the network
-    # code (arb pays gas in "eth"; "arb" quotes the governance token).
-    coin_ticker: Optional[str] = None
-    coin_decimals: Optional[int] = None
-    network_name: Optional[str] = None
 
 
 NETWORK_CAPABILITIES_EXAMPLE = {

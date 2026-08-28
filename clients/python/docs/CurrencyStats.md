@@ -16,9 +16,6 @@ Name | Type | Description | Notes
 **no_tagged_addresses** | **int** |  | 
 **timestamp** | **int** |  | 
 **network_type** | **str** |  | 
-**coin_ticker** | **str** |  | [optional] 
-**coin_decimals** | **int** |  | [optional] 
-**network_name** | **str** |  | [optional] 
 
 ## Example
 

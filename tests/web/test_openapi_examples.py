@@ -51,11 +51,6 @@ KNOWN_GAPS: dict[str, set[str]] = {
         "total_tokens_received",
         "total_tokens_spent",
     },
-    "CurrencyStats": {
-        "coin_decimals",
-        "coin_ticker",
-        "network_name",
-    },
     "Entity": {
         "actors",
         "best_address_tag",
