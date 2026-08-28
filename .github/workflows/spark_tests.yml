@@ -28,6 +28,17 @@ jobs:
   # the Spark run is indistinguishable in a PR's check list.
   spark-test:
     runs-on: ubuntu-latest
+    # 11 is what production runs (Cassandra 4.1 is co-located with the Spark
+    # workers and supports 8/11 only) and what spark_release.yml builds on. 17
+    # is the highest JVM Spark 3.5 supports, and is tested so that "runs on a
+    # newer JVM" is an observed fact rather than an assumption — the jar itself
+    # is Java 8 bytecode and loads anywhere, but module-system encapsulation
+    # and reflection behaviour differ, which is what this catches. Java 21
+    # would need Spark 4.0.
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [11, 17]
     defaults:
       run:
         working-directory: spark
@@ -39,7 +50,7 @@ jobs:
       uses: actions/setup-java@v5
       with:
         distribution: temurin
-        java-version: 11
+        java-version: ${{ matrix.java }}
     - name: Setup sbt launcher
       uses: sbt/setup-sbt@v1
     - name: Test with SBT

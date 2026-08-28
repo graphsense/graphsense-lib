@@ -61,6 +61,15 @@ lazy val root = (project in file(".")).
     fork := true,
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oD"),
     scalacOptions ++= List(
+      // Compile against the Java 8 API, whatever JDK is running the build.
+      // Scala 2.12 always emits Java 8 bytecode, so the target never varied —
+      // but without this the source is checked against the builder's class
+      // library, and a Java 9+ stdlib call would compile on a 17 runner and
+      // throw NoSuchMethodError on the Java 11 executors. The source is
+      // already Java 8 API-clean, so this costs nothing and turns the property
+      // into something the compiler enforces rather than something the CI
+      // environment happens to provide.
+      "-release:8",
       "-deprecation",
       "-feature",
       "-unchecked",

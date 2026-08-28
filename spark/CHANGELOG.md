@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 - scalatest 3.2.12 -> 3.2.19 (test scope).
+- **`scalacOptions += "-release:8"`.** Scala 2.12 always emitted Java 8
+  bytecode, so the artifact never varied by build JDK — but the source was
+  checked against whichever class library the builder had, so a Java 9+ stdlib
+  call would compile on a 17 runner and throw `NoSuchMethodError` on the Java
+  11 executors. The source is already Java 8 API-clean, so this costs nothing
+  and makes the compiler enforce what the CI environment previously only
+  happened to provide. It also keeps the published jar loadable on any JVM
+  from 8 up, which is what makes a per-JVM build matrix unnecessary: every leg
+  would emit a byte-identical jar.
+- **`spark_tests.yml` runs a `[11, 17]` JVM matrix.** 11 is production
+  (Cassandra 4.1 co-located, 8/11 only); 17 is the highest JVM Spark 3.5
+  supports, and is now tested so that running on a newer JVM is observed rather
+  than assumed — the jar loads anywhere, but module encapsulation and
+  reflection behaviour differ. Java 21 would need Spark 4.0.
 - **`spark_release.yml` builds on JDK 11**, matching `spark_tests.yml` and the
   cluster, where Cassandra 4.1 is co-located and supports 8/11 only. Building
   on 17 produced a loadable jar (Scala 2.12 emits Java 8 bytecode and no
