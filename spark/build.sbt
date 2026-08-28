@@ -128,6 +128,15 @@ lazy val root = (project in file(".")).
       // the classpath because EventEncoder hashes the event signature through
       // org.web3j.crypto.Hash, which calls BouncyCastle's Keccak digest.
       "org.bouncycastle" % "bcprov-jdk18on" % "1.80",
+      // Pulled transitively at 3.10 by spark-cassandra-connector-driver, inside
+      // the advisory range >= 3.0, < 3.18.0. Declared directly rather than as a
+      // dependencyOverride so that sbt's latest-revision conflict manager picks
+      // 3.18.0 *and* the coordinate reaches config.py's package list — an
+      // override is invisible to scripts/check_spark_packages.py, which would
+      // leave the slim --packages path resolving 3.10 while the assembly jar
+      // carried 3.18.0. Nothing here imports it; 3.20.0 exists and is equally
+      // Java 8, but 3.18.0 is the smallest step that clears the advisory.
+      "org.apache.commons" % "commons-lang3" % "3.18.0",
       "org.apache.spark" %% "spark-sql" % "3.5.8" % Provided,
       "org.apache.spark" %% "spark-graphx" % "3.5.8" % Provided,
       "graphframes" % "graphframes" % "0.8.3-spark3.5-s_2.12",

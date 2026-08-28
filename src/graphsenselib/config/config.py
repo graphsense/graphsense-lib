@@ -424,6 +424,7 @@ DEFAULT_SCALA_JOB_PACKAGES = [
     "joda-time:joda-time:2.10.10",
     "org.web3j:abi:4.8.7",
     "org.bouncycastle:bcprov-jdk18on:1.80",
+    "org.apache.commons:commons-lang3:3.18.0",
     "graphframes:graphframes:0.8.3-spark3.5-s_2.12",
 ]
 
