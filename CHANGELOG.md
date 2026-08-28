@@ -14,6 +14,36 @@ Use one changelog file, but separate entries by track in each release window.
 
 ### Library
 
+#### Added
+- **`spark/build.sbt` is now the single source of truth for the Scala job's
+  dependencies.** `DEFAULT_SCALA_JOB_PACKAGES` mirrors its compile-scope
+  entries so the `slim` artifact can pass them to `spark-submit --packages`,
+  and nothing enforced that mirroring — the two drifted silently whenever the
+  sbt build changed, and a slim run would only find out as a
+  `NoClassDefFoundError` on a cluster. `scripts/check_spark_packages.py` parses
+  the declaration block and either fails (`make check-spark-packages`) or
+  regenerates the lists (`make sync-spark-packages`), wired into pre-commit
+  exactly like `update-api-version`. It caught a real drift on its first run:
+  `bcprov-jdk18on` had been added to the sbt build and never mirrored. If the
+  declaration shape ever changes, the parser exits with an error rather than
+  silently matching nothing.
+- **`--exclude-packages` on the slim submit path.** `--packages` resolves
+  transitively, so an artifact the sbt build excludes came straight back:
+  without this the slim path re-resolved `bcprov-jdk15on` through
+  `org.web3j:utils`, undoing the BouncyCastle swap. The new
+  `DEFAULT_SCALA_JOB_EXCLUDES` is generated from the build's `exclude(...)`
+  clauses by the same script, and is only emitted alongside `--packages`.
+
+#### Changed
+- **`DEFAULT_SCALA_JOB_PACKAGES` drops `org.web3j:core`**, tracking the same
+  removal in `spark/build.sbt` (see `spark/CHANGELOG.md`): nothing in the Scala
+  job imports it. This list only feeds the `slim` artifact's `--packages`;
+  production runs `fat`, where the assembly jar is authoritative.
+
+## [2.16.3] - 2026-08-28
+
+### Library
+
 #### Security
 - **Dependency bumps closing eight open Dependabot alerts.** `gitpython` 3.1.50 → 3.1.59 (six advisories, including arbitrary git-repo creation outside the working tree via an unvalidated `.gitmodules` submodule name), `aiohttp` 3.14.2 → 3.14.3, `cryptography` 48.0.1 → 50.0.0, and `pyo3` 0.23 → 0.29 in the Rust clustering extension (GHSA-36hh-v3qg-5jq4 out-of-bounds read in `nth`/`nth_back` for `PyList`/`PyTuple` iterators, plus two lesser ones). The `pyo3` bump could not be done on its own: `arrow`'s `pyarrow` feature also links the native `python` library, and cargo refuses a graph with two crates claiming the same `links` value, so `arrow` had to move 54.3 → 59 in the same step. That in turn needed three call-site changes — `Python::allow_threads` is now `Python::detach`, the `PyObject` alias is gone, and `ToPyArrow::to_pyarrow` returns a `Bound<'py, PyAny>` rather than an owned `Py`. The remaining open alert, `ecdsa` GHSA-wj6h-64fc-37mp (Minerva timing attack on P-256), has no patched version in any release and cannot be bumped away; `ecdsa` is only the `fast=False` fallback behind coincurve in pubkey validation.
 
@@ -21,7 +51,7 @@ Use one changelog file, but separate entries by track in each release window.
 - **The Scala/Spark dependency tree is now visible to the dependency graph.** Dependabot has no sbt ecosystem — its JVM support is `maven` and `gradle` only — so `spark/build.sbt` had never produced a dependency-graph entry or a single alert in the repo's history, leaving `spark-sql`/`spark-graphx` 3.5.8, `spark-cassandra-connector` 3.5.1, `scallop`, `scalatest` and the sbt plugins entirely unmonitored. A new `spark_dependency_graph.yml` workflow runs `scalacenter/sbt-dependency-submission` on pushes to `master` that touch the sbt build, submitting the resolved graph through GitHub's Dependency Submission API so alerts fire normally. This buys **alerts only** — Dependabot still cannot update sbt, so remediation stays a manual `spark/build.sbt` edit.
 
 #### Changed
-- **Freshly transformed account keyspaces now store real 64-bit tx counts.** The v2.16.2 schema widening (`no_incoming_txs`/`no_outgoing_txs` and their `_zero_value` variants to `bigint`) was inert: the Spark aggregations still saturated at `Int.MaxValue`. The four tx-count aggregations now cast to Long (`TransformHelpers.saturateToLong`), so the next fresh transform stores true counts (TRON USDT's ~3.7e9 incoming txs instead of a capped 2147483647); degrees and relation counts stay 32-bit-saturated, bounded by the address universe rather than by time. The Python delta updater deliberately KEEPS its `min(value, 2^31-1)` cap: it also writes UTXO cluster rows (schema still `int`), and account keyspaces created before the widening keep their 32-bit columns forever (Cassandra cannot `ALTER int -> bigint`) — an uncapped write there fails the whole ingest batch. The cap can only go once every served keyspace has bigint columns.
+- **Freshly transformed account keyspaces now store real 64-bit tx counts.** The v2.16.2 schema widening (`no_incoming_txs`/`no_outgoing_txs` and their `_zero_value` variants to `bigint`) was inert: the Spark aggregations still saturated at `Int.MaxValue`. The four tx-count aggregations now cast to Long (`TransformHelpers.saturateToLong`), so the next fresh transform stores true counts (TRON USDT's ~3.7e9 incoming txs instead of a capped 2147483647); degrees and relation counts stay 32-bit-saturated, bounded by the address universe rather than by time. The Python delta updater now resolves its `min(value, 2^31-1)` cap from the live schema instead of applying it unconditionally: `prepare_entities_for_ingest` takes a `count_cap`, and `resolve_tx_count_cap` reads `address.no_incoming_txs` out of `system_schema.columns` and passes `None` when it is `bigint`. On a widened keyspace the cap was not merely lossy but destructive — the merge reads the stored total, adds the delta and writes the result back, so a capped write returns a *smaller* number than it read, and TRON USDT's 3.7e9 would collapse to 2147483647 on the first batch that touched it. Keyspaces created before the widening keep their 32-bit columns forever (Cassandra cannot `ALTER int -> bigint`) and still cap, because an over-2^31 write there fails the whole ingest batch; the probe falls back to the cap whenever the column type cannot be established, which is the safe direction. The UTXO path is unaffected: it uses the separate `generic.prepare_entities_for_ingest`, which never capped.
 - **Dependency bumps taken from the open Dependabot PRs**: `protobuf` 6.33.6 → 7.36.0 with `grpcio`/`grpcio-tools` 1.81.1 → 1.83.0, plus `pydantic-settings` 2.15.0, `filelock` 3.32.4 and `orjson` 3.12.0. Applied on `develop` rather than merged, since every one of those PRs was based on `master`. `protobuf` 7 is a major bump and the TRON gRPC `_pb2` modules are imported function-locally, so a green suite proves nothing about them — they were imported explicitly and round-tripped against the new runtime instead. The checked-in generated code is left as it is: it loads and serializes correctly under protobuf 7, and `make run-codegen` (the pre-commit codegen hook) only regenerates the OpenAPI client, not the TRON stubs, which come from the separate `generate-tron-grpc-code` target.
 - **The Spark image publish workflow's actions are no longer years behind the main image build.** `spark_docker_publish.yml` was still on `docker/login-action` v3.0.0, `docker/metadata-action` v5.0.0 and `docker/build-push-action` v5.0.0 while `docker-build.yml` had already moved to v4.6.0 / v7.3.0; `sigstore/cosign-installer` goes 3.4.0 → 4.1.2. Same pins the grouped Dependabot PR proposed, SHA-verified against their tags.
 

@@ -14,6 +14,7 @@ from graphsenselib.deltaupdate.update.abstractupdater import (
     UpdateStrategy,
 )
 from graphsenselib.deltaupdate.update.account.createchanges import (
+    INT32_MAX,
     get_bookkeeping_changes,
     prepare_balances_for_ingest,
     prepare_entities_for_ingest,
@@ -93,6 +94,30 @@ DEFAULT_SUMMARY_STATISTICS = MutableNamedTuple(
         "no_cluster_relations": 0,
     }
 )
+
+
+def resolve_tx_count_cap(transformed_db) -> Optional[int]:
+    """Cap for address tx counts, or ``None`` when the column is ``bigint``.
+
+    Read from the live schema rather than assumed, because the fleet is mixed:
+    a keyspace rebuilt since the bigint widening stores true 64-bit counts and
+    must not be capped (that would write back less than was read), while one
+    created before it keeps 32-bit columns forever and an over-2**31 write
+    fails the whole ingest batch. Falls back to the 32-bit cap — the safe
+    direction — whenever the column type cannot be established.
+    """
+    try:
+        result = transformed_db.get_columns_for_table("address")
+        for row in getattr(result, "_current_rows", None) or []:
+            if row.column_name == "no_incoming_txs":
+                return None if row.type == "bigint" else INT32_MAX
+        logger.warning(
+            "No no_incoming_txs column found on the address table; "
+            "capping tx counts at 2**31-1."
+        )
+    except Exception as e:  # noqa: BLE001  - schema probe must never fail ingest
+        logger.warning(f"Could not resolve the tx-count column type ({e}); capping.")
+    return INT32_MAX
 
 
 class UpdateStrategyAccount(UpdateStrategy):
@@ -997,6 +1022,7 @@ class UpdateStrategyAccount(UpdateStrategy):
                 new_rels_out,
                 id_bucket_size,
                 get_address_prefix,
+                count_cap=resolve_tx_count_cap(self._db.transformed),
             )
             changes += entity_changes
 

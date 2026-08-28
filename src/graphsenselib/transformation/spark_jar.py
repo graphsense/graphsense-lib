@@ -275,6 +275,7 @@ def build_spark_submit(
     repositories: List[str],
     jar_args: List[str],
     extra_submit_args: List[str],
+    exclude_packages: Optional[List[str]] = None,
 ) -> List[str]:
     """Assemble the spark-submit argv (no execution)."""
     submit = (
@@ -285,6 +286,10 @@ def build_spark_submit(
     cmd = [submit, "--class", main_class, "--verbose"]
     if packages:
         cmd += ["--packages", ",".join(packages)]
+        # Only meaningful alongside --packages: ivy resolves transitively, so
+        # an artifact the sbt build excludes comes back unless it is named here.
+        if exclude_packages:
+            cmd += ["--exclude-packages", ",".join(exclude_packages)]
         if repositories:
             cmd += ["--repositories", ",".join(repositories)]
     for key, value in spark_props.items():

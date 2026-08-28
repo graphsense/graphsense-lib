@@ -60,6 +60,12 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+    -   id: sync-spark-packages
+        name: Sync Scala job packages from spark/build.sbt to config.py
+        entry: make sync-spark-packages
+        language: system
+        pass_filenames: false
+        always_run: true
     -   id: type-check
         name: type-check
         entry: make type-check

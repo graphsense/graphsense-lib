@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Callable, Dict, List, NamedTuple, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from graphsenselib.db import DbChange
 from graphsenselib.deltaupdate.update.abstractupdater import TABLE_NAME_DELTA_HISTORY
@@ -23,6 +23,26 @@ from graphsenselib.utils.account import (
 from graphsenselib.utils.logging import LoggerScope
 
 logger = logging.getLogger(__name__)
+
+# Cassandra's 32-bit `int` upper bound, and the default cap for address tx
+# counts. Account keyspaces created before the bigint widening (graphsense-lib
+# 2.16.2) keep 32-bit count columns forever — Cassandra cannot ALTER int ->
+# bigint — and a write past 2**31 into one of them fails the whole ingest
+# batch, which is strictly worse than a saturated under-report.
+#
+# A keyspace rebuilt since the widening resolves `count_cap` to None instead
+# and stores the true count, which the Spark transform also writes now
+# (TransformHelpers.saturateToLong, spark 26.08.2). Capping there would be
+# actively destructive rather than merely lossy: the merge reads the stored
+# total, adds the delta and writes the result back, so a capped write returns
+# a *smaller* number than it read — TRON USDT's 3.7e9 would drop to 2^31-1 on
+# the first batch that touches it.
+INT32_MAX = 2147483647
+
+
+def _capped(value: int, cap: Optional[int]) -> int:
+    """Saturate ``value`` at ``cap``; ``None`` means the column is 64-bit."""
+    return value if cap is None else min(value, cap)
 
 
 def prepare_token_exchange_rates_for_ingest(
@@ -267,15 +287,9 @@ def prepare_entities_for_ingest(
     new_rel_out: dict,
     id_bucket_size: int,
     get_address_prefix: Callable[[str], Tuple[str, str]],
+    count_cap: Optional[int] = INT32_MAX,
 ) -> Tuple[List[DbChange], int]:
     changes = []
-    # The cap must stay until every served keyspace has bigint count columns:
-    # this function also writes UTXO cluster rows (schema still `int`), and
-    # account keyspaces created before the bigint widening keep their 32-bit
-    # columns forever (Cassandra cannot ALTER int -> bigint). Writing a value
-    # past 2^31 into such a column fails the whole ingest batch, which is
-    # strictly worse than the saturated under-report.
-    int_signed_32_max = 2147483647
     nr_new_entities = 0
     for update in delta:
         int_ident, entity = (
@@ -300,13 +314,13 @@ def prepare_entities_for_ingest(
             # Since no merges happen there should not be a difference
 
             generic_data = {
-                "no_incoming_txs": min(new_value.no_incoming_txs, int_signed_32_max),
-                "no_outgoing_txs": min(new_value.no_outgoing_txs, int_signed_32_max),
-                "no_incoming_txs_zero_value": min(
-                    new_value.no_incoming_txs_zero_value, int_signed_32_max
+                "no_incoming_txs": _capped(new_value.no_incoming_txs, count_cap),
+                "no_outgoing_txs": _capped(new_value.no_outgoing_txs, count_cap),
+                "no_incoming_txs_zero_value": _capped(
+                    new_value.no_incoming_txs_zero_value, count_cap
                 ),
-                "no_outgoing_txs_zero_value": min(
-                    new_value.no_outgoing_txs_zero_value, int_signed_32_max
+                "no_outgoing_txs_zero_value": _capped(
+                    new_value.no_outgoing_txs_zero_value, count_cap
                 ),
                 "first_tx_id": new_value.first_tx_id,
                 "last_tx_id": new_value.last_tx_id,
@@ -335,13 +349,13 @@ def prepare_entities_for_ingest(
             nr_new_entities += 1
 
             data = {
-                "no_incoming_txs": min(update.no_incoming_txs, int_signed_32_max),
-                "no_outgoing_txs": min(update.no_outgoing_txs, int_signed_32_max),
-                "no_incoming_txs_zero_value": min(
-                    update.no_incoming_txs_zero_value, int_signed_32_max
+                "no_incoming_txs": _capped(update.no_incoming_txs, count_cap),
+                "no_outgoing_txs": _capped(update.no_outgoing_txs, count_cap),
+                "no_incoming_txs_zero_value": _capped(
+                    update.no_incoming_txs_zero_value, count_cap
                 ),
-                "no_outgoing_txs_zero_value": min(
-                    update.no_outgoing_txs_zero_value, int_signed_32_max
+                "no_outgoing_txs_zero_value": _capped(
+                    update.no_outgoing_txs_zero_value, count_cap
                 ),
                 "first_tx_id": update.first_tx_id,
                 "last_tx_id": update.last_tx_id,

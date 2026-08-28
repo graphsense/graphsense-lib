@@ -86,11 +86,17 @@ updates:
     #     psycopg2-binary/pyspark have no wheels beyond 3.13. A 3.14 bump fails
     #     the image build (PR #127); raise it deliberately together with
     #     pyproject and the Dockerfile paths.
+    #   * pyspark — pinned `>=3.5.0,<4.0.0` in pyproject.toml because the
+    #     cluster runs Spark 3.5.8; a 4.x PR cannot merge against that
+    #     constraint and cannot be taken without upgrading the cluster first.
     #   * eclipse-temurin — the `java11` stage exists *because* prod Spark
     #     executors run Java 11 (shared hosts capped there by Cassandra 4.x);
     #     a Java-17+ driver breaks Kryo task-result deserialization. Only the
     #     digest may move, never the major.
     ignore:
+      - dependency-name: "pyspark"
+        update-types:
+          - "version-update:semver-major"
       - dependency-name: "python"
         update-types:
           - "version-update:semver-major"

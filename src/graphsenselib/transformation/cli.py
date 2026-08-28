@@ -1548,6 +1548,7 @@ def run_full_transform(
         main_class=fta.main_class,
         spark_props=spark_props,
         packages=packages,
+        exclude_packages=fta.exclude_packages,
         repositories=fta.repositories,
         jar_args=jar_args,
         extra_submit_args=fta.extra_submit_args,
