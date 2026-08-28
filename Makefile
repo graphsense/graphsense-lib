@@ -6,7 +6,7 @@ WEBAPISEM := 'v2.15.3'
 # Spark pipeline release track (spark/, tag shape spark-vX.Y.Z). Kept apart
 # from the library track so a jar is only rebuilt and republished when the
 # Scala side actually changes — see VERSIONING.md.
-SPARKSEM := 'v26.08.1'
+SPARKSEM := 'v26.08.2'
 
 
 -include .env

@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [v26.08.2] 2026-08-28
 ### Changed
 - The four account tx-count aggregations (`no_incoming_txs`,
   `no_outgoing_txs` and their `_zero_value` variants) now cast to Long
