@@ -64,14 +64,13 @@ def try_decode_subTx(
     stringRep: str, stt: SubTransactionType
 ) -> Optional[SubTransactionIdentifier]:
     prefix = SUBTX_TYPE_TO_PREFIX[stt]
-    if f"{SUBTX_IDENT_SEPERATOR_CHAR}{prefix}" in stringRep:
-        h, postfix, *_ = stringRep.split(SUBTX_IDENT_SEPERATOR_CHAR)
-
-        try:
-            tindexS = postfix.strip(prefix)
-            subtx_id = int(tindexS)
-            return SubTransactionIdentifier(tx_hash=h, tx_type=stt, sub_index=subtx_id)
-        except ValueError:
-            raise ValueError(f"{stt} index: {tindexS} is not an integer.")
-    else:
+    h, _, postfix = stringRep.partition(SUBTX_IDENT_SEPERATOR_CHAR)
+    # The marker letter is accepted case-insensitively ("_t1" == "_T1"); the
+    # case carries no information and hand-typed identifiers are often
+    # lowercased. to_string keeps the canonical uppercase form.
+    if postfix[:1].upper() != prefix:
         return None
+    tindexS = postfix[1:]
+    if not tindexS.isdigit():
+        raise ValueError(f"{stt} index: {tindexS} is not an integer.")
+    return SubTransactionIdentifier(tx_hash=h, tx_type=stt, sub_index=int(tindexS))
