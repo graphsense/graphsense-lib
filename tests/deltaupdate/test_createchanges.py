@@ -11,6 +11,7 @@ import graphsenselib
 from graphsenselib.db import DbChange
 from graphsenselib.deltaupdate.update.abstractupdater import TABLE_NAME_DELTA_HISTORY
 from graphsenselib.deltaupdate.update.account.createchanges import (
+    INT32_MAX,
     prepare_balances_for_ingest,
     prepare_entities_for_ingest,
     prepare_entity_txs_for_ingest,
@@ -23,7 +24,8 @@ from graphsenselib.deltaupdate.update.account.modelsdelta import (
     RawEntityTxAccount,
     RelationDeltaAccount,
 )
-from graphsenselib.deltaupdate.update.generic import DeltaScalar, Tx
+from graphsenselib.deltaupdate.update.account.update import resolve_tx_count_cap
+from graphsenselib.deltaupdate.update.generic import DeltaScalar, DeltaValue, Tx
 from graphsenselib.utils import DataObject as MutableNamedTuple
 from graphsenselib.utils.account import (
     get_id_group,
@@ -225,3 +227,123 @@ class TestPrepareRelationsForIngest(unittest.TestCase):
         self.assertEqual(in_chg.data["value"], DeltaValue(10, [1, 2]))
         self.assertEqual(new_in[b"dst"], 1)
         self.assertEqual(new_out[b"src"], 1)
+
+
+# TRON USDT's incoming tx count, the value that motivated the bigint widening.
+TRON_USDT_INCOMING = 3703869446
+
+
+class _FakeColumns:
+    def __init__(self, rows):
+        self._current_rows = rows
+
+
+class _FakeTransformedDb:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def get_columns_for_table(self, table):
+        assert table == "address"
+        return _FakeColumns(self._rows)
+
+
+class _RaisingTransformedDb:
+    def get_columns_for_table(self, table):
+        raise RuntimeError("no session")
+
+
+def _column(name, type_):
+    return MutableNamedTuple(column_name=name, type=type_)
+
+
+class TestResolveTxCountCap(unittest.TestCase):
+    def test_bigint_column_lifts_the_cap(self):
+        db = _FakeTransformedDb([_column("no_incoming_txs", "bigint")])
+        self.assertIsNone(resolve_tx_count_cap(db))
+
+    def test_int_column_keeps_the_cap(self):
+        db = _FakeTransformedDb([_column("no_incoming_txs", "int")])
+        self.assertEqual(resolve_tx_count_cap(db), INT32_MAX)
+
+    def test_missing_column_falls_back_to_the_cap(self):
+        db = _FakeTransformedDb([_column("address_id", "int")])
+        self.assertEqual(resolve_tx_count_cap(db), INT32_MAX)
+
+    def test_probe_failure_falls_back_to_the_cap(self):
+        self.assertEqual(resolve_tx_count_cap(_RaisingTransformedDb()), INT32_MAX)
+
+
+class TestEntityTxCountCapping(unittest.TestCase):
+    """A capped write into a bigint keyspace returns less than it read."""
+
+    def _delta(self, no_incoming_txs):
+        return EntityDeltaAccount(
+            identifier=b"addr",
+            total_received=DeltaValue(10, [1, 2]),
+            total_spent=DeltaValue(5, [1, 2]),
+            total_tokens_received={},
+            total_tokens_spent={},
+            first_tx_id=1,
+            last_tx_id=2,
+            no_incoming_txs=no_incoming_txs,
+            no_outgoing_txs=0,
+            no_incoming_txs_zero_value=0,
+            no_outgoing_txs_zero_value=0,
+            is_contract=False,
+        )
+
+    def _stored_row(self, no_incoming_txs):
+        return MutableNamedTuple(
+            address=b"addr",
+            address_id=1,
+            total_received=MutableNamedTuple(value=10, fiat_values=[1, 2]),
+            total_spent=MutableNamedTuple(value=5, fiat_values=[1, 2]),
+            total_tokens_received=None,
+            total_tokens_spent=None,
+            first_tx_id=1,
+            last_tx_id=2,
+            no_incoming_txs=no_incoming_txs,
+            no_outgoing_txs=0,
+            no_incoming_txs_zero_value=0,
+            no_outgoing_txs_zero_value=0,
+            is_contract=False,
+            in_degree=0,
+            out_degree=0,
+            in_degree_zero_value=0,
+            out_degree_zero_value=0,
+        )
+
+    def _address_change(self, delta, stored_row, **kwargs):
+        changes, _ = prepare_entities_for_ingest(
+            [delta],
+            {b"addr": 1},
+            {b"addr": stored_row},
+            defaultdict(int),
+            defaultdict(int),
+            10,
+            lambda a: ("ADDR", "AD"),
+            **kwargs,
+        )
+        return [c for c in changes if c.table == "address"][0]
+
+    def test_update_of_a_bigint_keyspace_keeps_the_true_total(self):
+        stored = self._stored_row(TRON_USDT_INCOMING)
+        chng = self._address_change(self._delta(1), stored, count_cap=None)
+        self.assertEqual(chng.data["no_incoming_txs"], TRON_USDT_INCOMING + 1)
+
+    def test_update_of_an_int_keyspace_still_saturates(self):
+        stored = self._stored_row(TRON_USDT_INCOMING)
+        chng = self._address_change(self._delta(1), stored)
+        self.assertEqual(chng.data["no_incoming_txs"], INT32_MAX)
+        # The regression the cap causes on a widened keyspace, and the reason
+        # it must not be the default there: it writes back less than it read.
+        self.assertLess(chng.data["no_incoming_txs"], stored.no_incoming_txs)
+
+    def test_new_address_respects_the_cap_setting(self):
+        capped = self._address_change(self._delta(TRON_USDT_INCOMING), None)
+        self.assertEqual(capped.data["no_incoming_txs"], INT32_MAX)
+
+        uncapped = self._address_change(
+            self._delta(TRON_USDT_INCOMING), None, count_cap=None
+        )
+        self.assertEqual(uncapped.data["no_incoming_txs"], TRON_USDT_INCOMING)
