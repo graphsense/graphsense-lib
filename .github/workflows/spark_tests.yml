@@ -1,27 +1,18 @@
 name: Run Spark Unit-Tests
 
-# The Scala pipeline lives in spark/. It is exercised on every change to that
-# tree AND on every change to the delta updater or the transformed schema:
-# both produce the same derived tables, so a change to one side without the
-# other is the exact drift this job exists to catch.
-# (Paths are repeated per trigger: GitHub Actions does not support YAML
-# anchors.)
+# The Scala pipeline lives in spark/. It runs unconditionally rather than on a
+# path filter: the delta updater and spark/ must produce the same derived tables
+# (see CLAUDE.md), and a path list is exactly the thing that goes stale when a
+# new file starts feeding that contract -- the drift this job exists to catch
+# would then slip through unnoticed. sbt is not run locally at all, so this is
+# the only gate on the Scala side.
 on:
   push:
     branches:
       - master
       - develop
-    paths:
-      - 'spark/**'
-      - 'src/graphsenselib/deltaupdate/**'
-      - 'src/graphsenselib/schema/resources/transformed_*.sql'
-      - '.github/workflows/spark_tests.yml'
   pull_request:
-    paths:
-      - 'spark/**'
-      - 'src/graphsenselib/deltaupdate/**'
-      - 'src/graphsenselib/schema/resources/transformed_*.sql'
-      - '.github/workflows/spark_tests.yml'
+  workflow_dispatch:
 
 jobs:
   # Not "build": three other workflows already expose a check by that name, so

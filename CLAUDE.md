@@ -1,5 +1,48 @@
 # graphsense-lib
 
+## Tests: what runs where, and what it costs
+
+Three suites and three toolchains, and the local gate deliberately runs only
+part of the Python one. **A green pre-commit does not mean a green CI.**
+
+| command | scope | time | who runs it |
+| --- | --- | --- | --- |
+| `make test-fast` | Python minus `slow` marks and the four testcontainer dirs — 1307 of 2327 tests | **~33s** | the pre-commit hook |
+| `make test-rust` | `cargo test` in `rust/gs_clustering` | 3.3s cold, 0.06s warm | pre-commit (gated on `rust/**`) + CI |
+| `make run-codegen` | regenerates the Python client (Docker + Java openapi-generator) | ~7s | pre-commit (gated on `src/graphsenselib/web/`, client templates, compat) + CI |
+| `make test-ci` | the **whole** Python suite, `slow` included — 2327 tests | ~105s (+~18% with `COVERAGE=1`) | CI only |
+| `make test-spark` | `sbt test` for the Scala pipeline | minutes | CI only — never run locally |
+| `make test` | whole Python suite + coverage + a forced `uv sync` | ~145s | on demand |
+
+**What the hook does NOT cover** — run these yourself before calling a change
+verified:
+
+- `tests/web`, `tests/db`, `tests/tagstore`, `tests/integration`: everything
+  needing a Cassandra/Postgres/Redis testcontainer. ~1020 tests, including the
+  entire REST controller surface. `make test-ci`.
+- the three `@pytest.mark.slow` tests.
+- `spark/` — no hook runs `sbt test`.
+
+Why the split: the containers are ~80s of a ~95s suite, and their fixtures are
+session-scoped, so the cost is all-or-nothing per run — skipping them is the
+only lever that changes the order of magnitude. Coverage adds ~18% on top and
+nothing reads the local report.
+
+Traps, each of which has already bitten once:
+
+- **Never put `-m "not slow"` back in `make test-ci`.** The local gate skips
+  those tests, so CI is their only home. Until 2026-08-31 every CI invocation
+  filtered them out and they ran nowhere at all.
+- **There is no `pre-push` hook and none is wanted.** `make dev` runs
+  `pre-commit install`, which installs `pre-commit` only. Anything too slow for
+  the commit loop belongs in CI, not in a pre-push stage.
+- **`spark_tests.yml` runs unconditionally, not on a path filter.** The delta
+  updater and `spark/` must agree (see the next section), and a path list is
+  exactly what goes stale when a new file starts feeding that contract.
+- **A test that reaches a hostname which does not resolve** costs whatever the
+  local resolver charges for a dead name — 120s on a dev box behind a
+  blackholing DNS server, instant in CI. Use a refused port (`127.0.0.1:1`).
+
 ## Delta updater must stay in tandem with the Spark pipeline (`spark/`)
 
 The delta updater (`src/graphsenselib/deltaupdate/`) incrementally produces the
