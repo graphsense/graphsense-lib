@@ -217,6 +217,52 @@ def test_capabilities_backend_404_contributes_nothing():
     assert seen[-1].url.path == "/capabilities"
 
 
+def test_stats_overlays_tag_counts_from_the_local_tagstore():
+    """Rule 2: a backend serves placeholder zeros for tag counts — the local
+    TagStore owns tag data (rule 1), so its per-network numbers overwrite
+    them. Networks without a TagStore row stay at zero."""
+    from graphsenselib.tagstore.db import (
+        NetworkStatisticsPublic,
+        TagstoreStatisticsPublic,
+    )
+
+    class FakeTagstore:
+        async def get_network_statistics_cached(self):
+            return TagstoreStatisticsPublic(
+                by_network={
+                    "BNB": NetworkStatisticsPublic(
+                        nr_tags=7,
+                        nr_identifiers_explicit=5,
+                        nr_identifiers_implicit=3572140,
+                        nr_labels=11295,
+                    )
+                }
+            )
+
+    client, _ = make_client(
+        backend_stats={
+            "currencies": [
+                {"name": "bnb", "no_blocks": 42, "no_labels": 0, "no_tagged_addresses": 0}
+            ]
+        }
+    )
+    client.app.state.tagstore_db = FakeTagstore()
+    entry = client.get("/stats").json()["currencies"][-1]
+    assert entry["no_labels"] == 11295
+    assert entry["no_tagged_addresses"] == 3572140
+    assert entry["no_blocks"] == 42
+
+    client.app.state.tagstore_db = None
+
+    class EmptyTagstore:
+        async def get_network_statistics_cached(self):
+            return TagstoreStatisticsPublic(by_network={})
+
+    client.app.state.tagstore_db = EmptyTagstore()
+    entry = client.get("/stats").json()["currencies"][-1]
+    assert entry["no_labels"] == 0 and entry["no_tagged_addresses"] == 0
+
+
 def test_stats_strips_legacy_capability_declarations():
     """A stale adapter still declaring the retired per-currency capabilities
     field must not leak it through the mirror-not-revalidate merge."""

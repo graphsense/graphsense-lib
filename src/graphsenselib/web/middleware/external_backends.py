@@ -23,6 +23,10 @@ Decision rules:
    describe THIS deployment. A legacy ``capabilities`` field on a backend
    entry is stripped: capability declaration moved to ``/capabilities``, and
    mirroring an unmodeled leftover would resurrect the old contract.
+   ``no_labels`` and ``no_tagged_addresses`` are overlaid from this
+   deployment's TagStore (the backend serves placeholder zeros — tag data
+   lives here, exactly like rule 1's tag routes; the chain-pipeline numbers
+   stay as the backend sent them).
 3. ``/search`` without a currency filter is answered locally, then each
    backend's per-currency address/tx hits (filtered to its configured
    networks) are merged into the ``currencies`` list; labels and actors are
@@ -177,10 +181,36 @@ class ExternalBackendMiddleware(BaseHTTPMiddleware):
             ]
             if path == "/stats":
                 entries = [_strip_legacy_capabilities(entry) for entry in entries]
+                entries = await self._overlay_tag_counts(request, entries)
             elif path == "/capabilities":
                 entries = [_without_tags_disabled(entry) for entry in entries]
             merged[list_field] = _merge_keyed_lists(merged[list_field], entries, key)
         return JSONResponse(merged, status_code=200)
+
+    async def _overlay_tag_counts(self, request: Request, entries: list) -> list:
+        """Overwrite a backend stats entry's tag counts with the local
+        TagStore's per-network numbers (rule 2). The backend cannot know the
+        TagStore fronting it and serves zeros; absent network rows (or the
+        mock TagStore) yield zeros again, so the overlay never invents data."""
+        if not entries:
+            return entries
+        tagstore_db = getattr(request.app.state, "tagstore_db", None)
+        if tagstore_db is None:
+            return entries
+        tag_stats = await tagstore_db.get_network_statistics_cached()
+        overlaid = []
+        for entry in entries:
+            network_stats = tag_stats.by_network.get(str(entry.get("name")).upper())
+            overlaid.append(
+                {
+                    **entry,
+                    "no_labels": network_stats.nr_labels if network_stats else 0,
+                    "no_tagged_addresses": (network_stats.nr_identifiers_implicit or 0)
+                    if network_stats
+                    else 0,
+                }
+            )
+        return overlaid
 
     def _backends_by_url(self) -> Dict[str, set]:
         """Group configured networks by backend URL — one call per backend."""
