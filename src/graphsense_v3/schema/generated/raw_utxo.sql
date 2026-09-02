@@ -28,13 +28,23 @@ CREATE TABLE IF NOT EXISTS block_by_date (
     WITH CLUSTERING ORDER BY (timestamp ASC, block_id ASC)
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
+-- Addressed by id, not by hash (D13). tx_id is (block_id << 32) + index in
+-- both families, so block_id_group is a shift and a division away and a
+-- lookup by id is ONE point read -- where v2 spent two per transaction, an
+-- id->hash mapping table then the transaction
+-- (`cassandra.py:5177-5203`), for every row of every page.
+--
+-- Partitioned by a run of blocks rather than one block: TRON would otherwise
+-- have 85.8M partitions. tx_block_bucket_size is per network because a BTC
+-- block holds ~1 480 transactions and a ZEC block ~5.
+--
 -- Header only. no_inputs/no_outputs live here so /graph/compare can
 -- apply its _MAX_TOTAL_IOS gate without fetching the IO lists.
 CREATE TABLE IF NOT EXISTS transaction (
-    tx_id_group int,
-    tx_id bigint,
-    tx_hash blob,
+    block_id_group int,                     -- block_id // tx_block_bucket_size
     block_id int,
+    tx_id bigint,                           -- (block_id << 32) + transaction_index
+    tx_hash blob,
     timestamp bigint,
     coinbase boolean,
     coinjoin boolean,
@@ -44,18 +54,20 @@ CREATE TABLE IF NOT EXISTS transaction (
     no_outputs int,
     version int,
     lock_time bigint,
-    PRIMARY KEY (tx_id_group, tx_id)
+    PRIMARY KEY (block_id_group, tx_id)
 )
-    WITH compaction = {'class':'SizeTieredCompactionStrategy'}
+    WITH CLUSTERING ORDER BY (tx_id ASC)
+    AND compaction = {'class':'SizeTieredCompactionStrategy'}
     AND compression = {'class':'ZstdCompressor','chunk_length_in_kb':16};
 
 -- Replaces transaction.inputs/outputs list<FROZEN<tx_input_output>>.
--- Same partition as the header, so 'read the whole tx' is still one
--- partition read -- but it pages, and there is no >16MB mutation cliff.
+-- Partitioned by block like `transaction`, so one transaction's IOs are
+-- a clustering slice and a whole block's are one partition -- but it
+-- pages, and there is no >16MB mutation cliff.
 -- An oversized mutation is REJECTED, not truncated, so under v2 a
 -- 20k-input transaction is simply unwritable.
 CREATE TABLE IF NOT EXISTS transaction_io (
-    tx_id_group int,
+    block_id_group int,
     tx_id bigint,
     is_output boolean,
     io_index int,
@@ -65,26 +77,11 @@ CREATE TABLE IF NOT EXISTS transaction_io (
     script_hex blob,
     txinwitness frozen<list<blob>>,
     sequence bigint,
-    PRIMARY KEY (tx_id_group, tx_id, is_output, io_index)
+    PRIMARY KEY (block_id_group, tx_id, is_output, io_index)
 )
     WITH CLUSTERING ORDER BY (tx_id ASC, is_output ASC, io_index ASC)
     AND compaction = {'class':'SizeTieredCompactionStrategy'}
     AND compression = {'class':'ZstdCompressor','chunk_length_in_kb':16};
-
--- Flattened from list<FROZEN<tx_summary>>.
-CREATE TABLE IF NOT EXISTS block_transactions (
-    block_id_group int,
-    block_id int,
-    tx_id bigint,
-    tx_hash blob,
-    no_inputs int,
-    no_outputs int,
-    total_input bigint,
-    total_output bigint,
-    PRIMARY KEY (block_id_group, block_id, tx_id)
-)
-    WITH CLUSTERING ORDER BY (block_id DESC, tx_id ASC)
-    AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
 CREATE TABLE IF NOT EXISTS transaction_spent_in (
     spent_tx_prefix text,
@@ -106,6 +103,9 @@ CREATE TABLE IF NOT EXISTS transaction_spending (
 )
     WITH compaction = {'class':'SizeTieredCompactionStrategy'};
 
+-- The only route from a hash to a transaction, in both families. An exact
+-- hash is a point read giving tx_id; a prefix is a range slice over
+-- tx_hash within the one partition.
 CREATE TABLE IF NOT EXISTS transaction_by_tx_prefix (
     tx_prefix text,
     tx_hash blob,
@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS configuration (
     address_prefix_length int,
     tx_prefix_length int,
     block_bucket_size int,
+    tx_block_bucket_size int,               -- blocks per transaction partition
     fiat_currencies frozen<list<text>>,
     schema_version int,
     PRIMARY KEY (keyspace_name)

@@ -56,7 +56,7 @@ def _violations_for_table(table: Table, schema: Schema) -> list[str]:
         if (
             bare in ("int",)
             and column.name.endswith(("_tx_id", "_id"))
-            and (column.name not in ("block_id", "log_index", "trace_index"))
+            and column.name not in _BOUNDED_32_BIT_IDS
         ):
             out.append(f"{table.name}.{column.name}: 32-bit id (rule 5)")
         if bare == "text" and column.name in ("address", "src_address", "dst_address"):
@@ -74,6 +74,16 @@ def _violations_for_table(table: Table, schema: Schema) -> list[str]:
         )
 
     return out
+
+
+#: Ids rule 5 does not apply to: each is bounded by the protocol rather than by
+#: our own surrogate-key counter, which is the thing that overflows (BTC's
+#: address_id is at 72% of int32 with no cap). A block height, a within-block
+#: log/trace index and a TRON TRC10 asset id are all int32 at the source, and
+#: widening them here would only disagree with the lake.
+_BOUNDED_32_BIT_IDS = frozenset(
+    {"block_id", "log_index", "trace_index", "call_token_id"}
+)
 
 
 def violations(schema: Schema) -> list[str]:

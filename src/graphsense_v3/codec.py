@@ -76,3 +76,60 @@ def search_prefix(
         # taproot -- effectively constant, so it buys no partitions.
         body = address[len(dead) + 1 :]
     return body[:length].lower()
+
+
+#: Bits reserved for a transaction's position within its block. 32 is what the
+#: account families already use, and consistency across families is worth more
+#: than the ~20 bits it wastes: a UTXO block holds at most a few thousand
+#: transactions, and (3.4M blocks << 32) is still only 2^54.
+TX_INDEX_BITS = 32
+
+
+def tx_id(block_id: int, index: int) -> int:
+    """``(block_id << 32) + index`` -- a transaction's id, in every family.
+
+    Derivable from the transaction itself, so nothing has to be counted, looked
+    up or carried between batches. Three properties matter:
+
+    * It **orders identically** to the running counter it replaces, since
+      block_id is the high part and index the low -- so ``ORDER BY tx_id``,
+      ``min(tx_id)`` and ``max(tx_id)`` all keep their meaning.
+    * It is **decodable**: ``first_tx_id -> height`` becomes arithmetic instead
+      of a point read on `transaction`, and a height range maps onto a tx_id
+      range with no lookup at all.
+    * It is **local**: a backfill of blocks N..M needs nothing from block N-1,
+      so ranged and parallel runs need no coordination.
+
+    It is *not* dense. Nothing may treat a tx_id as a count of transactions.
+    """
+    if block_id < 0 or index < 0:
+        raise ValueError(
+            f"block_id and index must be non-negative: {block_id}, {index}"
+        )
+    if index >= 1 << TX_INDEX_BITS:
+        raise ValueError(
+            f"transaction index {index} does not fit in {TX_INDEX_BITS} bits"
+        )
+    return (block_id << TX_INDEX_BITS) + index
+
+
+def block_of_tx_id(value: int) -> int:
+    """The block a transaction id belongs to."""
+    return value >> TX_INDEX_BITS
+
+
+def index_of_tx_id(value: int) -> int:
+    """A transaction's position within its block."""
+    return value & ((1 << TX_INDEX_BITS) - 1)
+
+
+def tx_id_range(first_block: int, last_block: int) -> tuple[int, int]:
+    """Inclusive ``(lo, hi)`` tx_id bounds covering a block range.
+
+    This is what makes a height filter a pushdown rather than a lookup: v2 had
+    to read the previous block's `block_transactions` and take ``max(tx_id)``
+    (``db/utxo.py:109``) to answer the same question.
+    """
+    if last_block < first_block:
+        raise ValueError(f"empty block range: {first_block}..{last_block}")
+    return tx_id(first_block, 0), tx_id(last_block + 1, 0) - 1

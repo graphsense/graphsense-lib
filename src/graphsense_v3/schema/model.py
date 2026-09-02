@@ -74,6 +74,9 @@ class Schema:
     types: tuple[UserType, ...]
     tables: tuple[Table, ...]
 
+    def table_names(self) -> frozenset[str]:
+        return frozenset(t.name for t in self.tables)
+
     def table(self, name: str) -> Table:
         for t in self.tables:
             if t.name == name:

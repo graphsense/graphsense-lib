@@ -21,17 +21,28 @@ REPLICATION_PLACEHOLDER = "__REPLICATION__"
 GENERATED_DIR = Path(__file__).parent / "generated"
 
 
+#: Chains whose account raw schema differs in its chain-specific tables.
+ACCOUNT_CHAINS = ("eth", "trx")
+
+
 def schemas() -> dict[str, Schema]:
-    """The four distinct schemas. Networks differ only in keyspace name, so
-    ``btc`` and ``ltc`` share a file by construction -- which is the property the
-    v2 layout lacked, and where three column types drifted between
-    ``raw_account_schema.sql`` and ``raw_account_trx_schema.sql``."""
-    return {
+    """The distinct schemas.
+
+    Networks of a family differ only in keyspace name, so ``btc`` and ``ltc``
+    share a file by construction -- the property the v2 layout lacked, and where
+    three column types drifted between ``raw_account_schema.sql`` and
+    ``raw_account_trx_schema.sql``. The account raw schema still renders once per
+    chain, because traces and the TRC10 tables really are chain-specific; but the
+    shared columns come from one definition, so only what genuinely differs can.
+    """
+    out: dict[str, Schema] = {
         f"{Kind.RAW.value}_{Family.UTXO.value}": raw_utxo(),
-        f"{Kind.RAW.value}_{Family.ACCOUNT.value}": raw_account(),
         f"{Kind.TRANSFORMED.value}_{Family.UTXO.value}": transformed(Family.UTXO),
         f"{Kind.TRANSFORMED.value}_{Family.ACCOUNT.value}": transformed(Family.ACCOUNT),
     }
+    for chain in ACCOUNT_CHAINS:
+        out[f"{Kind.RAW.value}_{Family.ACCOUNT.value}_{chain}"] = raw_account(chain)
+    return out
 
 
 def render_all() -> dict[str, str]:

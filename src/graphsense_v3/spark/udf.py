@@ -12,7 +12,12 @@ asserts that against a real SparkSession rather than trusting it.
 
 from typing import TYPE_CHECKING
 
-from graphsense_v3.codec import DEFAULT_PREFIX_LENGTH, encode_address, search_prefix
+from graphsense_v3.codec import (
+    DEFAULT_PREFIX_LENGTH,
+    TX_INDEX_BITS,
+    encode_address,
+    search_prefix,
+)
 
 if TYPE_CHECKING:
     from pyspark.sql import Column
@@ -72,3 +77,39 @@ def search_prefix_udf(network: str, length: int = DEFAULT_PREFIX_LENGTH):
         )
 
     return _prefix
+
+
+def encode_address_list_udf(network: str):
+    """Vectorised UDF for a list of address strings -> a list of stored bytes.
+
+    ``transaction_io.address`` is a list because a multisig output names several
+    addresses. Encoding the whole array in one UDF rather than calling the scalar
+    one under ``F.transform`` keeps this to a single Python round trip per row.
+    """
+    import pandas as pd
+    from pyspark.sql.functions import pandas_udf
+    from pyspark.sql.types import ArrayType, BinaryType
+
+    net = network.lower()
+
+    def _one(addresses):
+        if addresses is None:
+            return None
+        return [None if a is None else encode_address(net, a) for a in addresses]
+
+    @pandas_udf(ArrayType(BinaryType()))  # ty: ignore[no-matching-overload]
+    def _encode(values: pd.Series) -> pd.Series:
+        return values.map(_one)
+
+    return _encode
+
+
+def tx_id_expr(block_id: "Column", index: "Column") -> "Column":
+    """``(block_id << 32) + index`` -- native, mirroring :func:`codec.tx_id`.
+
+    Both operands are cast to long first: shifting an int column overflows at
+    block 0 in Spark, silently.
+    """
+    from pyspark.sql import functions as F
+
+    return F.shiftleft(block_id.cast("long"), TX_INDEX_BITS) + index.cast("long")

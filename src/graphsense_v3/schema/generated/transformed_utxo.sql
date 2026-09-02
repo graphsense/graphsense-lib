@@ -238,16 +238,6 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     AND caching = {'keys':'ALL','rows_per_partition':'ALL'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
--- Flattened from list<FROZEN<tx_summary>>.
-CREATE TABLE IF NOT EXISTS block_transactions (
-    block_id_group int,
-    block_id int,
-    tx_id bigint,
-    PRIMARY KEY (block_id_group, block_id, tx_id)
-)
-    WITH CLUSTERING ORDER BY (block_id DESC, tx_id ASC)
-    AND compaction = {'class':'SizeTieredCompactionStrategy'};
-
 -- v2 grows one partition per run forever and reads it by unbounded scan. highest_address_id is gone: there is no allocator.
 CREATE TABLE IF NOT EXISTS delta_updater_history (
     last_synced_block bigint,
@@ -268,6 +258,7 @@ CREATE TABLE IF NOT EXISTS configuration (
     address_prefix_length int,
     tx_prefix_length int,
     block_bucket_size int,
+    tx_block_bucket_size int,               -- blocks per transaction partition
     fiat_currencies frozen<list<text>>,
     schema_version int,
     PRIMARY KEY (keyspace_name)

@@ -6,6 +6,11 @@ CREATE KEYSPACE IF NOT EXISTS __KEYSPACE__
 
 USE __KEYSPACE__;
 
+CREATE TYPE IF NOT EXISTS trc10_frozen_supply (
+    frozen_amount bigint,
+    frozen_days bigint
+);
+
 -- Unifies raw_account and raw_account_trx, which had silently drifted in three column types.
 CREATE TABLE IF NOT EXISTS block (
     block_id_group int,
@@ -44,20 +49,28 @@ CREATE TABLE IF NOT EXISTS block_by_date (
     WITH CLUSTERING ORDER BY (timestamp ASC, block_id ASC)
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
--- Account tx_id is (block_id << 32) + transaction_index, so id -> hash
--- is a point read derivable from the id itself. Removes both transformed
--- mapping tables -- 56% of the TRX transformed keyspace -- and with them
--- the cross-table visibility race behind the 2026-07-03 incident.
-CREATE TABLE IF NOT EXISTS block_transactions (
-    block_id_group int,
-    block_id int,
-    transaction_index int,
+-- The only route from a hash to a transaction, in both families. An exact
+-- hash is a point read giving tx_id; a prefix is a range slice over
+-- tx_hash within the one partition.
+CREATE TABLE IF NOT EXISTS transaction_by_tx_prefix (
+    tx_prefix text,
     tx_hash blob,
-    PRIMARY KEY (block_id_group, block_id, transaction_index)
+    tx_id bigint,
+    PRIMARY KEY (tx_prefix, tx_hash)
 )
-    WITH CLUSTERING ORDER BY (block_id DESC, transaction_index ASC)
+    WITH caching = {'keys':'ALL','rows_per_partition':'NONE'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
+-- Addressed by id, not by hash (D13). tx_id is (block_id << 32) + index in
+-- both families, so block_id_group is a shift and a division away and a
+-- lookup by id is ONE point read -- where v2 spent two per transaction, an
+-- id->hash mapping table then the transaction
+-- (`cassandra.py:5177-5203`), for every row of every page.
+--
+-- Partitioned by a run of blocks rather than one block: TRON would otherwise
+-- have 85.8M partitions. tx_block_bucket_size is per network because a BTC
+-- block holds ~1 480 transactions and a ZEC block ~5.
+--
 -- The four range pointers replace per-transaction log/trace tables.
 -- A transaction's logs occupy a contiguous log_index range, because
 -- log_index is a block-scoped counter and transactions execute in order,
@@ -70,7 +83,8 @@ CREATE TABLE IF NOT EXISTS block_transactions (
 -- trace_index, and TRX uses a different trace model. If traces are not
 -- contiguous, fall back to a duplicated table for traces only.
 CREATE TABLE IF NOT EXISTS transaction (
-    tx_hash_prefix text,
+    block_id_group int,                     -- block_id // tx_block_bucket_size
+    tx_id bigint,                           -- (block_id << 32) + transaction_index
     tx_hash blob,
     nonce int,
     block_hash blob,
@@ -101,9 +115,10 @@ CREATE TABLE IF NOT EXISTS transaction (
     no_logs int,
     first_trace_index int,
     no_traces int,
-    PRIMARY KEY (tx_hash_prefix, tx_hash)
+    PRIMARY KEY (block_id_group, tx_id)
 )
-    WITH compaction = {'class':'SizeTieredCompactionStrategy'}
+    WITH CLUSTERING ORDER BY (tx_id ASC)
+    AND compaction = {'class':'SizeTieredCompactionStrategy'}
     AND compression = {'class':'ZstdCompressor','chunk_length_in_kb':16};
 
 -- Re-keyed off topic0. As a clustering column it meant a block's logs
@@ -127,13 +142,20 @@ CREATE TABLE IF NOT EXISTS log (
     AND compaction = {'class':'SizeTieredCompactionStrategy'}
     AND compression = {'class':'ZstdCompressor','chunk_length_in_kb':16};
 
--- Chain-specific columns (eth vs trx) are appended per network.
+-- Shared columns first; the rest are that chain's own trace model.
 CREATE TABLE IF NOT EXISTS trace (
     block_id_group int,
     block_id int,
     trace_index int,
     tx_hash blob,
-    transaction_index int,
+    internal_index smallint,
+    caller_address blob,
+    transferto_address blob,
+    call_info_index smallint,
+    call_token_id int,
+    call_value varint,
+    note text,
+    rejected boolean,
     PRIMARY KEY (block_id_group, block_id, trace_index)
 )
     WITH CLUSTERING ORDER BY (block_id ASC, trace_index ASC)
@@ -157,6 +179,52 @@ CREATE TABLE IF NOT EXISTS token_exchange_rates (
     WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
+-- Small and joined onto nearly every TRC10 transfer.
+CREATE TABLE IF NOT EXISTS trc10 (
+    id int,
+    owner_address blob,
+    name text,
+    abbr text,
+    total_supply varint,
+    trx_num varint,
+    num varint,
+    start_time varint,                      -- last 3 digits dropped, as on eth
+    end_time varint,
+    description text,
+    url text,
+    frozen_supply frozen<list<frozen<trc10_frozen_supply>>>,
+    public_latest_free_net_time varint,
+    vote_score smallint,
+    free_asset_net_limit bigint,
+    public_free_asset_net_limit bigint,
+    precision smallint,
+    PRIMARY KEY (id)
+)
+    WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
+    AND compaction = {'class':'SizeTieredCompactionStrategy'};
+
+-- Keyed like `transaction` (D13), so the tx_id already in hand reads
+-- the fee directly. Addressed by hash it would have cost a third hop:
+-- id -> transaction -> hash -> prefix -> fee.
+CREATE TABLE IF NOT EXISTS fee (
+    block_id_group int,
+    tx_id bigint,
+    tx_hash blob,
+    fee bigint,
+    energy_usage bigint,
+    energy_fee bigint,
+    origin_energy_usage bigint,
+    energy_usage_total bigint,
+    net_usage bigint,
+    net_fee bigint,
+    result int,
+    energy_penalty_total bigint,
+    PRIMARY KEY (block_id_group, tx_id)
+)
+    WITH CLUSTERING ORDER BY (tx_id ASC)
+    AND compaction = {'class':'SizeTieredCompactionStrategy'}
+    AND compression = {'class':'ZstdCompressor','chunk_length_in_kb':16};
+
 CREATE TABLE IF NOT EXISTS configuration (
     keyspace_name text,
     entity_buckets int,                     -- murmur3(entity) % this
@@ -166,6 +234,7 @@ CREATE TABLE IF NOT EXISTS configuration (
     address_prefix_length int,
     tx_prefix_length int,
     block_bucket_size int,
+    tx_block_bucket_size int,               -- blocks per transaction partition
     fiat_currencies frozen<list<text>>,
     schema_version int,
     PRIMARY KEY (keyspace_name)

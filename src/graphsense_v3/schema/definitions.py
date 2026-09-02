@@ -73,6 +73,11 @@ def _housekeeping(kind: Kind) -> tuple[Table, ...]:
                 C("address_prefix_length", "int"),
                 C("tx_prefix_length", "int"),
                 C("block_bucket_size", "int"),
+                C(
+                    "tx_block_bucket_size",
+                    "int",
+                    "blocks per transaction partition",
+                ),
                 C("fiat_currencies", "frozen<list<text>>"),
                 C("schema_version", "int"),
             ),
@@ -122,6 +127,40 @@ _BLOCK_BY_DATE = Table(
 )
 
 
+#: Both families address a transaction the same way (D13): the partition is a
+#: run of blocks, the clustering key is the id, and the id is derivable from the
+#: transaction. Defined once so the two cannot drift.
+def _transaction_key() -> Key:
+    return Key(("block_id_group",), ("tx_id",), (("tx_id", "ASC"),))
+
+
+_TRANSACTION_COMMENT = (
+    "Addressed by id, not by hash (D13). tx_id is (block_id << 32) + index in\n"
+    "both families, so block_id_group is a shift and a division away and a\n"
+    "lookup by id is ONE point read -- where v2 spent two per transaction, an\n"
+    "id->hash mapping table then the transaction\n"
+    "(`cassandra.py:5177-5203`), for every row of every page.\n"
+    "\n"
+    "Partitioned by a run of blocks rather than one block: TRON would otherwise\n"
+    "have 85.8M partitions. tx_block_bucket_size is per network because a BTC\n"
+    "block holds ~1 480 transactions and a ZEC block ~5."
+)
+
+#: Hash -> id, and the prefix-search index. Narrow on purpose: search reads whole
+#: rows, and the transaction rows are wide (an ETH `input` runs to kilobytes).
+_TRANSACTION_BY_TX_PREFIX = Table(
+    "transaction_by_tx_prefix",
+    (C("tx_prefix", "text"), C("tx_hash", "blob"), C("tx_id", "bigint")),
+    Key(("tx_prefix",), ("tx_hash",)),
+    {**STCS, "caching": "{'keys':'ALL','rows_per_partition':'NONE'}"},
+    comment=(
+        "The only route from a hash to a transaction, in both families. An exact\n"
+        "hash is a point read giving tx_id; a prefix is a range slice over\n"
+        "tx_hash within the one partition."
+    ),
+)
+
+
 def raw_utxo() -> Schema:
     tables = (
         Table(
@@ -140,10 +179,10 @@ def raw_utxo() -> Schema:
         Table(
             "transaction",
             (
-                C("tx_id_group", "int"),
-                C("tx_id", "bigint"),
-                C("tx_hash", "blob"),
+                C("block_id_group", "int", "block_id // tx_block_bucket_size"),
                 C("block_id", "int"),
+                C("tx_id", "bigint", "(block_id << 32) + transaction_index"),
+                C("tx_hash", "blob"),
                 C("timestamp", "bigint"),
                 C("coinbase", "boolean"),
                 C("coinjoin", "boolean"),
@@ -154,9 +193,11 @@ def raw_utxo() -> Schema:
                 C("version", "int"),
                 C("lock_time", "bigint"),
             ),
-            Key(("tx_id_group",), ("tx_id",)),
+            _transaction_key(),
             BULK,
             comment=(
+                _TRANSACTION_COMMENT + "\n"
+                "\n"
                 "Header only. no_inputs/no_outputs live here so /graph/compare can\n"
                 "apply its _MAX_TOTAL_IOS gate without fetching the IO lists."
             ),
@@ -164,7 +205,7 @@ def raw_utxo() -> Schema:
         Table(
             "transaction_io",
             (
-                C("tx_id_group", "int"),
+                C("block_id_group", "int"),
                 C("tx_id", "bigint"),
                 C("is_output", "boolean"),
                 C("io_index", "int"),
@@ -176,38 +217,19 @@ def raw_utxo() -> Schema:
                 C("sequence", "bigint"),
             ),
             Key(
-                ("tx_id_group",),
+                ("block_id_group",),
                 ("tx_id", "is_output", "io_index"),
                 (("tx_id", "ASC"), ("is_output", "ASC"), ("io_index", "ASC")),
             ),
             BULK,
             comment=(
                 "Replaces transaction.inputs/outputs list<FROZEN<tx_input_output>>.\n"
-                "Same partition as the header, so 'read the whole tx' is still one\n"
-                "partition read -- but it pages, and there is no >16MB mutation cliff.\n"
+                "Partitioned by block like `transaction`, so one transaction's IOs are\n"
+                "a clustering slice and a whole block's are one partition -- but it\n"
+                "pages, and there is no >16MB mutation cliff.\n"
                 "An oversized mutation is REJECTED, not truncated, so under v2 a\n"
                 "20k-input transaction is simply unwritable."
             ),
-        ),
-        Table(
-            "block_transactions",
-            (
-                C("block_id_group", "int"),
-                C("block_id", "int"),
-                C("tx_id", "bigint"),
-                C("tx_hash", "blob"),
-                C("no_inputs", "int"),
-                C("no_outputs", "int"),
-                C("total_input", "bigint"),
-                C("total_output", "bigint"),
-            ),
-            Key(
-                ("block_id_group",),
-                ("block_id", "tx_id"),
-                (("block_id", "DESC"), ("tx_id", "ASC")),
-            ),
-            STCS,
-            comment="Flattened from list<FROZEN<tx_summary>>.",
         ),
         Table(
             "transaction_spent_in",
@@ -233,12 +255,7 @@ def raw_utxo() -> Schema:
             Key(("spending_tx_prefix",), ("spending_tx_hash", "spending_input_index")),
             STCS,
         ),
-        Table(
-            "transaction_by_tx_prefix",
-            (C("tx_prefix", "text"), C("tx_hash", "blob"), C("tx_id", "bigint")),
-            Key(("tx_prefix",), ("tx_hash",)),
-            {**STCS, "caching": "{'keys':'ALL','rows_per_partition':'NONE'}"},
-        ),
+        _TRANSACTION_BY_TX_PREFIX,
         Table(
             "exchange_rates",
             (C("date", "text"), C("fiat_values", "frozen<map<text, double>>")),
@@ -252,7 +269,135 @@ def raw_utxo() -> Schema:
     return Schema(Kind.RAW, Family.UTXO, (), tables)
 
 
-def raw_account() -> Schema:
+TRC10_FROZEN_SUPPLY = UserType(
+    "trc10_frozen_supply",
+    (C("frozen_amount", "bigint"), C("frozen_days", "bigint")),
+)
+
+#: Columns only one chain has. The *shared* trace columns are shared by
+#: construction -- which is the property v2 lacked, where three column types
+#: drifted between raw_account_schema.sql and raw_account_trx_schema.sql without
+#: anything noticing. Only genuinely chain-specific data varies here.
+_TRACE_EXTRA: dict[str, tuple[C, ...]] = {
+    "eth": (
+        C("transaction_index", "int"),
+        C("from_address", "blob"),
+        C("to_address", "blob"),
+        C("value", "varint"),
+        C("input", "blob"),
+        C("output", "blob"),
+        C("trace_type", "text"),
+        C("call_type", "text"),
+        C("reward_type", "text"),
+        C("gas", "bigint", "was int"),
+        C("gas_used", "bigint"),
+        C("subtraces", "int"),
+        C("trace_address", "text"),
+        C("error", "text"),
+        C("status", "smallint"),
+        C("trace_id", "text"),
+    ),
+    "trx": (
+        C("internal_index", "smallint"),
+        C("caller_address", "blob"),
+        C("transferto_address", "blob"),
+        C("call_info_index", "smallint"),
+        C("call_token_id", "int"),
+        C("call_value", "varint"),
+        C("note", "text"),
+        C("rejected", "boolean"),
+    ),
+}
+
+
+def _trace_table(network: str) -> Table:
+    """Traces: shared key and tx pointer, plus that chain's own columns.
+
+    TRX has no ``transaction_index`` on a trace -- it is an EVM-trace column, so
+    it lives in the eth block rather than in the shared set.
+    """
+    return Table(
+        "trace",
+        (
+            C("block_id_group", "int"),
+            C("block_id", "int"),
+            C("trace_index", "int"),
+            C("tx_hash", "blob"),
+            *_TRACE_EXTRA[network],
+        ),
+        Key(
+            ("block_id_group",),
+            ("block_id", "trace_index"),
+            (("block_id", "ASC"), ("trace_index", "ASC")),
+        ),
+        BULK,
+        comment="Shared columns first; the rest are that chain's own trace model.",
+    )
+
+
+def _trx_tables() -> tuple[Table, ...]:
+    """Tables only TRON has."""
+    return (
+        Table(
+            "trc10",
+            (
+                C("id", "int"),
+                C("owner_address", "blob"),
+                C("name", "text"),
+                C("abbr", "text"),
+                C("total_supply", "varint"),
+                C("trx_num", "varint"),
+                C("num", "varint"),
+                C("start_time", "varint", "last 3 digits dropped, as on eth"),
+                C("end_time", "varint"),
+                C("description", "text"),
+                C("url", "text"),
+                C("frozen_supply", "frozen<list<frozen<trc10_frozen_supply>>>"),
+                C("public_latest_free_net_time", "varint"),
+                C("vote_score", "smallint"),
+                C("free_asset_net_limit", "bigint"),
+                C("public_free_asset_net_limit", "bigint"),
+                C("precision", "smallint"),
+            ),
+            Key(("id",)),
+            CACHED,
+            comment="Small and joined onto nearly every TRC10 transfer.",
+        ),
+        Table(
+            "fee",
+            (
+                C("block_id_group", "int"),
+                C("tx_id", "bigint"),
+                C("tx_hash", "blob"),
+                C("fee", "bigint"),
+                C("energy_usage", "bigint"),
+                C("energy_fee", "bigint"),
+                C("origin_energy_usage", "bigint"),
+                C("energy_usage_total", "bigint"),
+                C("net_usage", "bigint"),
+                C("net_fee", "bigint"),
+                C("result", "int"),
+                C("energy_penalty_total", "bigint"),
+            ),
+            _transaction_key(),
+            BULK,
+            comment=(
+                "Keyed like `transaction` (D13), so the tx_id already in hand reads\n"
+                "the fee directly. Addressed by hash it would have cost a third hop:\n"
+                "id -> transaction -> hash -> prefix -> fee."
+            ),
+        ),
+    )
+
+
+def raw_account(network: str) -> Schema:
+    """The account raw schema for one chain.
+
+    One definition, rendered per chain: the shared columns cannot drift, and the
+    chain-specific blocks are the only thing that varies.
+    """
+    if network not in _TRACE_EXTRA:
+        raise KeyError(f"no account raw schema for network {network!r}")
     tables = (
         Table(
             "block",
@@ -284,31 +429,12 @@ def raw_account() -> Schema:
             "drifted in three column types.",
         ),
         _BLOCK_BY_DATE,
-        Table(
-            "block_transactions",
-            (
-                C("block_id_group", "int"),
-                C("block_id", "int"),
-                C("transaction_index", "int"),
-                C("tx_hash", "blob"),
-            ),
-            Key(
-                ("block_id_group",),
-                ("block_id", "transaction_index"),
-                (("block_id", "DESC"), ("transaction_index", "ASC")),
-            ),
-            STCS,
-            comment=(
-                "Account tx_id is (block_id << 32) + transaction_index, so id -> hash\n"
-                "is a point read derivable from the id itself. Removes both transformed\n"
-                "mapping tables -- 56% of the TRX transformed keyspace -- and with them\n"
-                "the cross-table visibility race behind the 2026-07-03 incident."
-            ),
-        ),
+        _TRANSACTION_BY_TX_PREFIX,
         Table(
             "transaction",
             (
-                C("tx_hash_prefix", "text"),
+                C("block_id_group", "int", "block_id // tx_block_bucket_size"),
+                C("tx_id", "bigint", "(block_id << 32) + transaction_index"),
                 C("tx_hash", "blob"),
                 C("nonce", "int"),
                 C("block_hash", "blob"),
@@ -340,9 +466,11 @@ def raw_account() -> Schema:
                 C("first_trace_index", "int"),
                 C("no_traces", "int"),
             ),
-            Key(("tx_hash_prefix",), ("tx_hash",)),
+            _transaction_key(),
             BULK,
             comment=(
+                _TRANSACTION_COMMENT + "\n"
+                "\n"
                 "The four range pointers replace per-transaction log/trace tables.\n"
                 "A transaction's logs occupy a contiguous log_index range, because\n"
                 "log_index is a block-scoped counter and transactions execute in order,\n"
@@ -383,23 +511,7 @@ def raw_account() -> Schema:
                 "clustering value -- worked around by storing an empty blob."
             ),
         ),
-        Table(
-            "trace",
-            (
-                C("block_id_group", "int"),
-                C("block_id", "int"),
-                C("trace_index", "int"),
-                C("tx_hash", "blob"),
-                C("transaction_index", "int"),
-            ),
-            Key(
-                ("block_id_group",),
-                ("block_id", "trace_index"),
-                (("block_id", "ASC"), ("trace_index", "ASC")),
-            ),
-            BULK,
-            comment="Chain-specific columns (eth vs trx) are appended per network.",
-        ),
+        _trace_table(network),
         Table(
             "exchange_rates",
             (C("date", "text"), C("fiat_values", "frozen<map<text, double>>")),
@@ -416,9 +528,11 @@ def raw_account() -> Schema:
             Key(("asset",), ("date",)),
             CACHED,
         ),
+        *(_trx_tables() if network == "trx" else ()),
         *_housekeeping(Kind.RAW),
     )
-    return Schema(Kind.RAW, Family.ACCOUNT, (), tables)
+    types = (TRC10_FROZEN_SUPPLY,) if network == "trx" else ()
+    return Schema(Kind.RAW, Family.ACCOUNT, types, tables)
 
 
 # --------------------------------------------------------------------------- #
@@ -766,17 +880,6 @@ def transformed(family: Family) -> Schema:
             ),
         ),
         Table(
-            "block_transactions",
-            (C("block_id_group", "int"), C("block_id", "int"), C("tx_id", "bigint")),
-            Key(
-                ("block_id_group",),
-                ("block_id", "tx_id"),
-                (("block_id", "DESC"), ("tx_id", "ASC")),
-            ),
-            STCS,
-            comment="Flattened from list<FROZEN<tx_summary>>.",
-        ),
-        Table(
             "delta_updater_history",
             (
                 C("last_synced_block", "bigint"),
@@ -891,4 +994,4 @@ def schema_for(network: str, kind: Kind) -> Schema:
     family = NETWORKS[network]
     if kind is Kind.TRANSFORMED:
         return transformed(family)
-    return raw_utxo() if family is Family.UTXO else raw_account()
+    return raw_utxo() if family is Family.UTXO else raw_account(network)

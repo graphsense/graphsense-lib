@@ -83,3 +83,34 @@ def render_schema(schema: Schema, keyspace: str, replication: str) -> str:
     parts.extend(render_type(t) for t in schema.types)
     parts.extend(render_table(t) for t in schema.tables)
     return "\n\n".join(parts) + "\n"
+
+
+#: A keyspace at RF 1 loses data outright when any single node is lost. This is
+#: not hypothetical: `trx_transformed_20260820` ran in production at `DC1: 1`
+#: for months, and nothing flagged it -- it was found while investigating what
+#: looked like a 2x storage anomaly and turned out to be the missing replica.
+MIN_REPLICATION_FACTOR = 2
+
+
+def replication(
+    datacenters: dict[str, int], *, allow_single_replica: bool = False
+) -> str:
+    """Build the CQL replication literal for a keyspace.
+
+    ``allow_single_replica`` exists for local and test keyspaces, where one node
+    is all there is. Nothing else may pass RF 1: a caller that wants it in
+    production has to say so in the code, which is the point.
+    """
+    if not datacenters:
+        raise ValueError("replication needs at least one datacenter")
+    for name, factor in datacenters.items():
+        if factor < 1:
+            raise ValueError(f"replication factor for {name!r} must be >= 1")
+        if factor < MIN_REPLICATION_FACTOR and not allow_single_replica:
+            raise ValueError(
+                f"replication factor {factor} for datacenter {name!r} means a "
+                "single node loss loses data; pass allow_single_replica=True "
+                "only for a local or test keyspace"
+            )
+    entries = ",".join(f"'{name}':'{factor}'" for name, factor in datacenters.items())
+    return "{'class':'NetworkTopologyStrategy'," + entries + "}"

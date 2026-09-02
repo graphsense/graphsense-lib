@@ -9,7 +9,16 @@ import zlib
 
 import pytest
 
-from graphsense_v3.codec import bucket, decode_address, encode_address, search_prefix
+from graphsense_v3.codec import (
+    block_of_tx_id,
+    bucket,
+    decode_address,
+    encode_address,
+    index_of_tx_id,
+    search_prefix,
+    tx_id,
+    tx_id_range,
+)
 
 pyspark = pytest.importorskip("pyspark")
 
@@ -87,3 +96,64 @@ def test_bech32_prefix_carries_four_varying_characters() -> None:
 def test_bucket_rejects_zero() -> None:
     with pytest.raises(ValueError, match="positive"):
         bucket(b"x", 0)
+
+
+# --------------------------------------------------------------------------- #
+# transaction ids                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_tx_id_round_trips_through_its_parts() -> None:
+    for block_id, index in ((0, 0), (1, 0), (1, 4095), (3_400_000, 7), (964_902, 2499)):
+        value = tx_id(block_id, index)
+        assert block_of_tx_id(value) == block_id
+        assert index_of_tx_id(value) == index
+
+
+def test_tx_id_orders_by_block_then_position() -> None:
+    """The one property the running counter it replaces actually provided.
+    Everything downstream uses tx_id for ORDER BY, min and max -- never as a
+    count -- so preserving the order preserves the meaning."""
+    ordered = [(0, 0), (0, 1), (1, 0), (1, 500), (2, 0)]
+    ids = [tx_id(b, i) for b, i in ordered]
+    assert ids == sorted(ids)
+
+
+def test_tx_id_fits_a_signed_64_bit_column() -> None:
+    """Worst case in production is ZEC's 3.47M blocks."""
+    assert tx_id(3_467_088, (1 << 32) - 1) < 2**63 - 1
+
+
+def test_tx_id_range_covers_a_block_range_exactly() -> None:
+    """A height filter becomes a tx_id range with no lookup. v2 read the
+    previous block's block_transactions and took max(tx_id) (db/utxo.py:109)."""
+    lo, hi = tx_id_range(10, 12)
+    assert lo == tx_id(10, 0)
+    assert hi == tx_id(13, 0) - 1
+    assert lo <= tx_id(12, (1 << 32) - 1) <= hi
+    assert tx_id(9, (1 << 32) - 1) < lo
+    assert tx_id(13, 0) > hi
+
+
+def test_tx_id_rejects_an_index_that_would_carry() -> None:
+    with pytest.raises(ValueError, match="does not fit"):
+        tx_id(1, 1 << 32)
+    with pytest.raises(ValueError, match="non-negative"):
+        tx_id(-1, 0)
+    with pytest.raises(ValueError, match="empty block range"):
+        tx_id_range(5, 4)
+
+
+def test_tx_id_expr_matches_python(spark) -> None:
+    """The Spark mirror and the Python function must agree: the backfill writes
+    ids the DAL later has to decode."""
+    from pyspark.sql import functions as F
+
+    from graphsense_v3.spark.udf import tx_id_expr
+
+    pairs = [(0, 0), (1, 3), (964_902, 2499), (3_467_088, 12)]
+    df = spark.createDataFrame(pairs, "block_id int, idx int")
+    got = df.select(
+        tx_id_expr(F.col("block_id"), F.col("idx")).alias("tx_id")
+    ).collect()
+    assert [r["tx_id"] for r in got] == [tx_id(b, i) for b, i in pairs]
