@@ -49,18 +49,29 @@ def check(df: DataFrame, table: Table) -> None:
         raise ValueError("; ".join(errors))
 
 
-def write(df: DataFrame, table: Table, keyspace: str) -> None:
+def write(
+    df: DataFrame, table: Table, keyspace: str, sidecar: dict | None = None
+) -> None:
     """Write ``df`` to ``keyspace.table``, after checking it conforms.
 
     The keyspace name is checked against the v3 pattern first. Nothing in this
     package can write outside it, which is the point: a v3 backfill must not be
     able to touch a live keyspace by typo, by a stale argument, or by a caller
     that skipped the driver.
+
+    ``sidecar`` routes the write through the Cassandra Sidecar bulk path
+    instead of the connector's CQL path; its keys are
+    :func:`graphsense_v3.spark.sidecar.write`'s keyword arguments.
     """
     from graphsense_v3.settings import assert_v3_keyspace
 
     assert_v3_keyspace(keyspace)
     check(df, table)
+    if sidecar is not None:
+        from graphsense_v3.spark import sidecar as bulk
+
+        bulk.write(df, keyspace, table.name, **sidecar)
+        return
     (
         df.write.format("org.apache.spark.sql.cassandra")
         .options(table=table.name, keyspace=keyspace)

@@ -11,12 +11,6 @@ alternative is reimplementing something that must not diverge (see
 import datetime
 from typing import TYPE_CHECKING
 
-# The ingest-time script-type classification. Imported rather than copied: a
-# second copy of this table is exactly the drift the v3 schema work exists to
-# remove, and `addresstype_to_int` is a per-row Python call where a Spark map
-# literal does the job natively.
-from graphsenselib.ingest.utxo import _address_types
-
 if TYPE_CHECKING:
     from pyspark.sql import Column, DataFrame
 
@@ -26,6 +20,24 @@ _EPOCH = datetime.date(1970, 1, 1)
 #: Spark's maximum decimal precision, so a value wider than that cannot be
 #: represented and must fail loudly rather than wrap.
 VARINT_PRECISION = 38
+
+
+def _script_types() -> dict:
+    """The ingest-time script-type classification.
+
+    Imported inside the function, not at module level: this module defines
+    pandas UDFs, so the EXECUTORS import it -- and `graphsenselib.ingest.utxo`
+    pulls in `graphsenselib.config`, hence pydantic and goodconf, which the
+    baked spark-env archive does not carry. Only :func:`address_type` needs the
+    table, and that builds a Spark expression on the driver.
+
+    Imported rather than copied: a second copy of this table is exactly the
+    drift the v3 schema work exists to remove.
+    """
+    from graphsenselib.ingest.utxo import _address_types
+
+    return _address_types
+
 
 #: Script types ingest deliberately stores with no address (`address_as_string`).
 ADDRESSLESS_TYPES = (
@@ -68,7 +80,7 @@ def address_type(column: "Column") -> "Column":
     from pyspark.sql import functions as F
 
     pairs: list[Column] = []
-    for name, value in sorted(_address_types.items()):
+    for name, value in sorted(_script_types().items()):
         pairs.extend([F.lit(name), F.lit(value)])
     return F.create_map(*pairs)[column].cast("smallint")
 
@@ -123,7 +135,7 @@ def unknown_address_types(df: "DataFrame", column: str = "type") -> list[str]:
     """
     from pyspark.sql import functions as F
 
-    known = list(_address_types)
+    known = list(_script_types())
     rows = (
         df.select(F.col(column).alias("t"))
         # `NULL IN (...)` is NULL, so nulls are dropped by the filter anyway.

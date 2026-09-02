@@ -139,7 +139,12 @@ def run(
     if "raw" in wanted and not dry_run:
         for name, frame in raw_frames.items():
             with Stage(f"write raw.{name}"):
-                writer.write(frame, raw_schema.table(name), settings.raw_keyspace)
+                writer.write(
+                    frame,
+                    raw_schema.table(name),
+                    settings.raw_keyspace,
+                    sidecar=settings.sidecar,
+                )
 
     if "transformed" not in wanted:
         if dry_run:
@@ -154,6 +159,7 @@ def run(
         settings.rates_keyspace,
         config=config,
         dry_run=dry_run,
+        sidecar=settings.sidecar,
     )
 
 
@@ -166,6 +172,7 @@ def _run_transformed(
     *,
     config,
     dry_run: bool,
+    sidecar: Optional[dict] = None,
 ) -> None:
     """The transformed stage, from the frames the raw stage just built.
 
@@ -198,7 +205,9 @@ def _run_transformed(
 
     for name, frame in frames.items():
         with Stage(f"write transformed.{name}"):
-            writer.write(frame, schema.table(name), transformed_keyspace)
+            writer.write(
+                frame, schema.table(name), transformed_keyspace, sidecar=sidecar
+            )
 
 
 def main(argv: Optional[list] = None) -> None:

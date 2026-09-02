@@ -88,10 +88,49 @@ class RunSettings:
     spark_config: dict[str, str] = field(default_factory=dict)
     spark_packages: dict[str, str] = field(default_factory=dict)
     spark_profile: Optional[str] = None
+    #: Keyword arguments for the sidecar bulk writer, or None for the CQL path.
+    sidecar: Optional[dict] = None
 
     @property
     def config(self) -> NetworkConfig:
         return config_for(self.network)
+
+    def with_sidecar(self) -> "RunSettings":
+        """The same run, bulk-writing through the Cassandra Sidecar.
+
+        Contact points and local DC come from the config's existing
+        ``full_transform_args.sidecar`` block, so there is one place that
+        records where the sidecars are. The Spark properties the bulk writer
+        needs must be set before the session exists, so they are folded into
+        ``spark_config`` here rather than applied later.
+        """
+        from dataclasses import replace
+
+        from graphsenselib.config import get_config
+
+        from graphsense_v3.spark import sidecar as bulk
+
+        args = get_config().full_transform_args
+        cfg = getattr(args, "sidecar", None) if args is not None else None
+        if cfg is None or not getattr(cfg, "contact_points", None):
+            raise KeyError(
+                "sidecar writes need full_transform_args.sidecar.contact_points "
+                "in graphsense.yaml"
+            )
+        contact_points = list(cfg.contact_points)
+        local_dc = getattr(cfg, "local_dc", None) or "DC1"
+        return replace(
+            self,
+            spark_config=bulk.session_config(
+                self.spark_config, contact_points, local_dc
+            ),
+            sidecar={
+                "contact_points": contact_points,
+                "local_dc": local_dc,
+                "consistency_level": getattr(cfg, "consistency_level", None)
+                or "LOCAL_QUORUM",
+            },
+        )
 
     def describe(self) -> str:
         """What the run will do, in the form a person can check before firing."""
@@ -105,7 +144,7 @@ class RunSettings:
                 f"rates keyspace     {self.rates_keyspace}      (READ ONLY)",
                 f"cassandra          {', '.join(self.cassandra_nodes) or '(none)'}",
                 f"spark profile      {self.spark_profile or '(baseline)'}",
-                "cassandra writes   connector CQL path (no sidecar writer)",
+                f"cassandra writes   {'sidecar bulk writer' if self.sidecar else 'connector CQL path'}",
                 *(f"WARNING            {w}" for w in warnings(self.spark_config)),
             ]
         )

@@ -9,6 +9,7 @@ import pytest
 
 from graphsense_v3.schema import Kind
 from graphsense_v3.settings import (
+    RunSettings,
     UnsafeKeyspace,
     assert_no_conflict,
     assert_v3_keyspace,
@@ -94,8 +95,6 @@ def test_an_environment_named_v3_is_caught_by_the_second_check() -> None:
     """The pattern alone would not catch this: an environment literally named
     `v3` makes `btc_raw_v3` a real, live keyspace. Hence the cross-check
     against every name the config mentions."""
-    from graphsense_v3.settings import RunSettings
-
     config = _Config(
         {"v3": _Environment({"btc": _Keyspace("btc_raw_v3", "btc_transformed_v3")})}
     )
@@ -116,8 +115,6 @@ def test_an_environment_named_v3_is_caught_by_the_second_check() -> None:
 
 
 def test_the_rates_keyspace_is_never_a_write_target() -> None:
-    from graphsense_v3.settings import RunSettings
-
     settings = RunSettings(
         network="btc",
         env="prod",
@@ -144,8 +141,6 @@ def test_the_writer_refuses_a_non_v3_keyspace() -> None:
 
 
 def test_describe_names_what_is_read_and_what_is_written() -> None:
-    from graphsense_v3.settings import RunSettings
-
     text = RunSettings(
         network="btc",
         env="prod",
@@ -227,3 +222,92 @@ def test_missing_cluster_facts_are_reported_not_invented() -> None:
         )
         == []
     )
+
+
+# --------------------------------------------------------------------------- #
+# sidecar and DDL                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_sidecar_config_is_applied_before_the_session() -> None:
+    """Kryo registration and the SSTable writer's JDK module flags cannot be
+    set after a SparkSession exists, so they are folded into spark_config."""
+    from graphsense_v3.spark.sidecar import KRYO_REGISTRATOR, session_config
+
+    props = session_config(
+        {"spark.local.dir": "/var/data/nvme4/spark/local_storage"},
+        ["10.0.0.1:9043"],
+        "DC1",
+    )
+    assert props["spark.serializer"].endswith("KryoSerializer")
+    assert KRYO_REGISTRATOR in props["spark.kryo.registrator"]
+    assert (
+        "--add-opens java.base/sun.nio.ch=ALL-UNNAMED"
+        in (props["spark.executor.extraJavaOptions"])
+    )
+    # the temp dir must follow spark.local.dir off the ~23G root disk
+    assert "-Djava.io.tmpdir=/var/data/nvme4" in props["spark.driver.extraJavaOptions"]
+    assert "cassandra-analytics-core" in props["spark.jars.packages"]
+
+
+def test_sidecar_refuses_without_a_local_dir() -> None:
+    """SSTables and Vert.x would otherwise stage on the root disk."""
+    from graphsense_v3.spark.sidecar import session_config
+
+    with pytest.raises(ValueError, match="spark.local.dir"):
+        session_config({}, ["10.0.0.1:9043"], "DC1")
+    with pytest.raises(ValueError, match="contact point"):
+        session_config({"spark.local.dir": "/tmp"}, [], "DC1")
+
+
+def test_existing_java_options_are_kept() -> None:
+    """The profiles already set G1GC; the module flags are appended, not
+    substituted."""
+    from graphsense_v3.spark.sidecar import session_config
+
+    props = session_config(
+        {
+            "spark.local.dir": "/tmp",
+            "spark.executor.extraJavaOptions": "-XX:+UseG1GC",
+        },
+        ["10.0.0.1:9043"],
+        "DC1",
+    )
+    assert props["spark.executor.extraJavaOptions"].startswith("-XX:+UseG1GC")
+    assert "--add-exports" in props["spark.executor.extraJavaOptions"]
+
+
+def test_ddl_is_split_into_statements() -> None:
+    from graphsense_v3.cassandra import keyspace_of, statements
+
+    cql = (
+        "-- a comment; with a semicolon\n"
+        "CREATE KEYSPACE IF NOT EXISTS btc_raw_v3 WITH replication = "
+        "{'class':'NetworkTopologyStrategy','DC1':'1'};\n\n"
+        "USE btc_raw_v3;\n\n"
+        "CREATE TABLE IF NOT EXISTS block (block_id int PRIMARY KEY);\n"
+    )
+    assert keyspace_of(cql) == "btc_raw_v3"
+    parts = statements(cql)
+    assert len(parts) == 3
+    assert parts[0].startswith("CREATE KEYSPACE")
+    assert not any("comment" in p for p in parts)
+
+
+def test_ddl_can_only_target_a_v3_keyspace() -> None:
+    """The same gate as the write path: `create` cannot alter a live keyspace."""
+    from graphsense_v3.cassandra import apply_cql
+
+    settings = RunSettings(
+        network="btc",
+        env="prod",
+        lake_root="s3a://lake/btc",
+        raw_keyspace="btc_raw_v3",
+        transformed_keyspace="btc_transformed_v3",
+        rates_keyspace="btc_raw_20260101",
+        cassandra_nodes=["node"],
+    )
+    with pytest.raises(UnsafeKeyspace):
+        apply_cql(settings, "CREATE KEYSPACE IF NOT EXISTS btc_raw_20260101 WITH x;")
+    with pytest.raises(ValueError, match="creates no keyspace"):
+        apply_cql(settings, "DROP KEYSPACE btc_raw_20260101;")
