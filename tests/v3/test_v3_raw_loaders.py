@@ -707,3 +707,16 @@ def test_trx_rejected_maps_onto_the_eth_status_convention(
     row = raw_account.build(lake, "trx", "ks")["trace"].collect()[0]
     assert row["status"] == expected
     assert "rejected" not in row.asDict()
+
+
+def test_the_lake_root_is_rewritten_to_the_s3a_scheme(spark) -> None:
+    """The config stores `s3://`, which Hadoop does not register -- Spark fails
+    with "No FileSystem for scheme: s3". Every Spark job in gslib rewrites it
+    (transformation/utxo.py:53, pubkey/job.py:202)."""
+    from graphsense_v3.spark.source import DeltaLake
+
+    lake = DeltaLake(spark, "s3://raw-data/ltc/", "ltc")
+    assert lake.root == "s3a://raw-data/ltc"
+    assert lake.path("block") == "s3a://raw-data/ltc/block"
+    # a local or hdfs path is left alone
+    assert DeltaLake(spark, "hdfs://nn/lake/ltc", "ltc").root == "hdfs://nn/lake/ltc"

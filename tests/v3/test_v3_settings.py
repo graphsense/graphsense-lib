@@ -152,6 +152,7 @@ def test_describe_names_what_is_read_and_what_is_written() -> None:
     ).describe()
     assert "btc_raw_20260101      (READ ONLY)" in text
     assert "btc_raw_v3      (created, written)" in text
+    assert "derived keyspace   btc_derived_v3" in text
 
 
 # --------------------------------------------------------------------------- #

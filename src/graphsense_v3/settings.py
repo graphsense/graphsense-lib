@@ -140,7 +140,7 @@ class RunSettings:
                 f"environment        {self.env}",
                 f"lake               {self.lake_root}",
                 f"raw keyspace       {self.raw_keyspace}      (created, written)",
-                f"derived        {self.derived_keyspace}      (created, written)",
+                f"derived keyspace   {self.derived_keyspace}      (created, written)",
                 f"rates keyspace     {self.rates_keyspace}      (READ ONLY)",
                 f"cassandra          {', '.join(self.cassandra_nodes) or '(none)'}",
                 f"spark profile      {self.spark_profile or '(baseline)'}",

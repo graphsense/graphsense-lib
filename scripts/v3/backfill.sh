@@ -9,9 +9,10 @@
 #
 # PREREQUISITES, in the order they bite:
 #
-#   1. AN IMAGE BUILT FROM THIS BRANCH. The published tag has no graphsense_v3.
-#      Build and push, or build on the server:
-#        docker build -t "$IMAGE:$TAG" .
+#   1. AN IMAGE BUILT FROM THIS BRANCH. CI publishes one on every feature/**
+#      push (github-packages-publish.yaml), tagged both by branch and by short
+#      SHA. `verify` pulls it. A release tag will NOT do: graphsense_v3 only
+#      exists on this branch.
 #
 #   2. THE EXECUTORS MUST BE ABLE TO IMPORT graphsense_v3. The pandas UDFs
 #      (address encode/decode, varint) run ON THE EXECUTORS. The image bakes
@@ -36,12 +37,19 @@
 #   ./scripts/v3/backfill.sh run                    # the real thing
 #
 # Env vars:
-#   IMAGE, TAG          default graphsense-lib / v3
+#   PULL                1 (default) pulls before every command; 0 skips
+#   IMAGE, TAG          default ghcr.io/graphsense/graphsense-lib /
+#                       feature-backend-v3. PIN THE SHORT SHA for a run you
+#                       want to reproduce -- the branch tag moves on the
+#                       next push, and a benchmark whose image changed
+#                       underneath is worse than no benchmark. TAG may be a
+#                       sha256:... digest, which is addressed with @ not :.
 #   ENV                 config environment; default prod
 #   NETWORK             default btc; both families transform
 #   LABEL               keyspace suffix; default bench1
 #   PROFILE             spark_config profile; default v3-utxo
-#   WRITER              connector | sidecar; default sidecar
+#   WRITER              connector | sidecar; default connector
+#   FULL                set to 1 for a full-history run (no END_BLOCK)
 #   RF                  replication factor; default 1 (benchmark keyspace: half
 #                       the disk, half the write cost, and nothing depends on
 #                       it. NEVER 1 for anything that matters.)
@@ -51,26 +59,48 @@
 #
 # WRITER: `sidecar` bulk-writes SSTables through the Cassandra Sidecar, the same
 # path the TRON transform uses; `connector` goes through the CQL write path at
-# throughputMBPerSec, which is what that transform moved off. Sidecar is the
-# default here, but it has NOT yet been exercised from PySpark against a real
-# cluster -- prove it on a small block range before a long run.
+# throughputMBPerSec, which is what that transform moved off. Sidecar is much
+# faster for volume but has NOT been exercised from PySpark against a real
+# cluster, so `connector` is the default -- prove the pipeline on the path that
+# has run, then switch.
 #
-# WHY BOUND THE RUN ANYWAY: a full-history BTC backfill is hours of writing
-# whichever path you pick, and a bounded slice answers the benchmark question.
+# BOUND THE FIRST RUN. `run` refuses an unbounded one unless FULL=1, because a
+# bounded slice exercises every seam in minutes and a full history does not.
 set -euo pipefail
 
-IMAGE="${IMAGE:-graphsense-lib}"
-TAG="${TAG:-v3}"
+IMAGE="${IMAGE:-ghcr.io/graphsense/graphsense-lib}"
+TAG="${TAG:-feature-backend-v3}"
 ENV="${ENV:-prod}"
 NETWORK="${NETWORK:-btc}"
 LABEL="${LABEL:-bench1}"
 PROFILE="${PROFILE:-v3-utxo}"
-WRITER="${WRITER:-sidecar}"
+WRITER="${WRITER:-connector}"
 RF="${RF:-1}"
 GRAPHSENSE_CONFIG="${GRAPHSENSE_CONFIG:-$PWD/graphsense.yaml}"
 START_BLOCK="${START_BLOCK:-}"
 END_BLOCK="${END_BLOCK:-}"
 ENV_FILE="${ENV_FILE:-}"
+
+# A digest pins the image; a tag does not. `TAG=sha256:...` addresses it by
+# digest, which is what a run you intend to reproduce should use.
+if [[ "$TAG" == sha256:* ]]; then
+  IMAGE_REF="$IMAGE@$TAG"
+else
+  IMAGE_REF="$IMAGE:$TAG"
+fi
+
+# Pull for EVERY command, not just verify: the branch tag moves on each push, so
+# a `run` a day after a `verify` would otherwise write with yesterday's image
+# while `plan` reported today's schema. A digest ref is immutable, and a tag
+# already current costs one manifest check. PULL=0 skips it.
+if [[ "${PULL:-1}" == "1" && -n "${1:-}" && "${1:-}" != "-h" ]]; then
+  docker pull "$IMAGE_REF" >/dev/null || {
+    echo "could not pull $IMAGE_REF" >&2
+    exit 2
+  }
+  echo "image  $(docker image inspect --format '{{index .RepoDigests 0}}' \
+    "$IMAGE_REF" 2>/dev/null || echo "$IMAGE_REF (local)")"
+fi
 
 ENVFILE_ARG=()
 [[ -n "$ENV_FILE" ]] && ENVFILE_ARG=(--env-file "$ENV_FILE")
@@ -92,20 +122,20 @@ v3() {
     -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml \
     "${ENVFILE_ARG[@]}" \
     -v "$GRAPHSENSE_CONFIG:/graphsense.yaml:ro" \
-    "$IMAGE:$TAG" graphsense-v3 "$@"
+    "$IMAGE_REF" graphsense-v3 "$@"
 }
 
 case "${1:-}" in
   verify)
     echo ">>> graphsense_v3 in the driver image"
-    docker run --rm "$IMAGE:$TAG" python3 -c \
+    docker run --rm "$IMAGE_REF" python3 -c \
       "import graphsense_v3, graphsense_v3.spark.udf; print('driver ok')"
     echo ">>> graphsense_v3 in the baked executor archive"
-    docker run --rm "$IMAGE:$TAG" sh -c \
+    docker run --rm "$IMAGE_REF" sh -c \
       'mkdir -p /tmp/e && tar xzf /opt/graphsense/spark-env.tar.gz -C /tmp/e \
        && PYTHONPATH=/tmp/e python3 -c "import graphsense_v3.codec, graphsense_v3.spark.udf; print(\"executor archive ok\")"'
     echo ">>> pandas/pyarrow in the archive, and matching the driver"
-    docker run --rm "$IMAGE:$TAG" sh -c \
+    docker run --rm "$IMAGE_REF" sh -c \
       'mkdir -p /tmp/e && tar xzf /opt/graphsense/spark-env.tar.gz -C /tmp/e \
        && PYTHONPATH=/tmp/e python3 -c "
 import pandas, pyarrow, pyspark
@@ -130,10 +160,11 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
       --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" --dry-run
     ;;
   run)
-    [[ -z "$END_BLOCK" ]] && {
-      echo "refusing an unbounded run: set END_BLOCK (see the header)." >&2
+    if [[ -z "$END_BLOCK" && "${FULL:-0}" != "1" ]]; then
+      echo "refusing an unbounded run: set END_BLOCK, or FULL=1 to mean it." >&2
+      echo "A bounded slice exercises every seam in minutes; do that first." >&2
       exit 2
-    }
+    fi
     v3 -v run -e "$ENV" -n "$NETWORK" --label "$LABEL" \
       --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" --yes
     ;;

@@ -36,20 +36,60 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def exchange_rates_by_block(
-    spark: "SparkSession", blocks: "DataFrame", rates: "DataFrame"
-) -> "DataFrame":
-    """``(asset, block_id, fiat_values)`` from the date-keyed rate table.
+#: Every rate table this loader accepts, and how to tell them apart.
+#:
+#:   v2 raw          exchange_rates(date)                 map, NO asset column
+#:   v2 raw          token_exchange_rates(asset, date)    account only
+#:   v3 raw          exchange_rates(asset, date)          merged
+#:   v3 derived      exchange_rates(asset, block_id...)   merged, per block
+#:
+#: The presence of an `asset` column is what distinguishes a v3 table from a v2
+#: one, and a `block_id` column is what says the dates have already been
+#: resolved. v2's *transformed* tables are deliberately NOT accepted -- their
+#: fiat_values is a positional `list<float>`, whose meaning depends on an
+#: ordering stored elsewhere, and silently reading it against the wrong ordering
+#: is exactly the defect v3's map replaced.
 
-    Rates are not in the lake -- the existing gslib ``exchange-rates`` path owns
-    that table -- so they are read from a keyspace and joined onto blocks by
-    date. One table covers the native coin and every token alike, so this is one
-    join rather than two. An asset with no rate for a block simply gets no row,
-    and the transform then contributes no fiat for it rather than a zero.
+
+def normalise_rates(rates: "DataFrame", *, symbol: str) -> "DataFrame":
+    """Any accepted rate table -> ``(asset, <key>, fiat_values)``.
+
+    ``<key>`` is whichever of ``date`` or ``block_id`` the source carries;
+    :func:`rates_by_block` handles both.
+    """
+    from pyspark.sql import functions as F
+    from pyspark.sql.types import ArrayType
+
+    field = rates.schema["fiat_values"].dataType
+    if isinstance(field, ArrayType):
+        raise SystemExit(
+            "this rate table stores fiat_values as a positional list, so its "
+            "meaning depends on a currency ordering held elsewhere. Point "
+            "--rates-keyspace at a raw keyspace, whose fiat_values is a map."
+        )
+
+    key = "block_id" if "block_id" in rates.columns else "date"
+    asset = F.col("asset") if "asset" in rates.columns else F.lit(symbol)
+    return rates.select(
+        asset.alias("asset"),
+        F.col(key),
+        F.col("fiat_values").cast("map<string,double>").alias("fiat_values"),
+    )
+
+
+def rates_by_block(blocks: "DataFrame", rates: "DataFrame") -> "DataFrame":
+    """``(asset, block_id, fiat_values)``, resolving dates against the blocks.
+
+    A source that is already per-block needs no join. A block whose date has no
+    rate simply gets no row, and the transform then contributes no fiat for it
+    rather than a zero.
     """
     from pyspark.sql import functions as F
 
     from graphsense_v3.spark.columns import day_from_timestamp
+
+    if "block_id" in rates.columns:
+        return rates.select("asset", "block_id", "fiat_values")
 
     dated = blocks.select(
         F.col("block_id"),
@@ -58,10 +98,33 @@ def exchange_rates_by_block(
         ),
     )
     return dated.join(rates, on="date", how="inner").select(
-        F.col("asset"),
-        F.col("block_id"),
-        F.col("fiat_values").cast("map<string,double>").alias("fiat_values"),
+        "asset", "block_id", "fiat_values"
     )
+
+
+def exchange_rates_by_block(
+    spark: "SparkSession", network: str, keyspace: str, blocks: "DataFrame"
+) -> "DataFrame":
+    """``(asset, block_id, fiat_values)`` from an existing rate keyspace.
+
+    Rates are not in the lake -- the gslib ``exchange-rates`` path owns them --
+    so they come from a live keyspace, which may be either generation.
+    """
+    from graphsense_v3.spark.derived_account import NATIVE
+
+    symbol = NATIVE[network][0] if network in NATIVE else network.upper()
+    rates = normalise_rates(
+        read_cassandra(spark, keyspace, "exchange_rates"), symbol=symbol
+    )
+    # v3 merged the token rates in, so a v3 source is already complete. Only a
+    # v2 account keyspace has a second table to union.
+    is_v2 = "asset" not in read_cassandra(spark, keyspace, "exchange_rates").columns
+    if is_v2 and NETWORKS[network] is Family.ACCOUNT:
+        tokens = normalise_rates(
+            read_cassandra(spark, keyspace, "token_exchange_rates"), symbol=symbol
+        )
+        rates = rates.unionByName(tokens)
+    return rates_by_block(blocks, rates)
 
 
 def read_cassandra(spark: "SparkSession", keyspace: str, table: str) -> "DataFrame":
@@ -214,11 +277,7 @@ def _run_derived(
     real run the two heavy frames are worth persisting first if the cluster has
     the memory.
     """
-    rates = exchange_rates_by_block(
-        spark,
-        raw_frames["block"],
-        read_cassandra(spark, rates_keyspace, "exchange_rates"),
-    )
+    rates = exchange_rates_by_block(spark, network, rates_keyspace, raw_frames["block"])
 
     schema = schema_for(network, Kind.DERIVED)
     with Stage("build derived frames"):

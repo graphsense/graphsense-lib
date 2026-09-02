@@ -21,7 +21,11 @@ class DeltaLake:
         partition_size: int | None = None,
     ) -> None:
         self.spark = spark
-        self.root = root.rstrip("/")
+        # Spark/Hadoop reads S3 through the s3a connector; `s3://` is not a
+        # registered scheme and fails with "No FileSystem for scheme: s3". The
+        # config stores `s3://`, so every Spark job in gslib rewrites it the
+        # same way (transformation/utxo.py:53, pubkey/job.py:202).
+        self.root = root.rstrip("/").replace("s3://", "s3a://")
         self.network = network.lower()
         # The lake's physical Delta partition is block_id // this. Pushing a
         # predicate on `partition` is what actually prunes files; a predicate on
