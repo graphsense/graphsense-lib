@@ -282,3 +282,50 @@ def test_no_unexplained_type_drift_between_any_two_schemas() -> None:
                     f"{name}.{column}: {a_name} has {a_cols[column]}, "
                     f"{b_name} has {b_cols[column]}"
                 )
+
+
+def test_no_temporal_column_types_anywhere() -> None:
+    """Design rule 5. `timestamp` is milliseconds where everything upstream and
+    downstream speaks seconds, and a `date` partition key buys nothing over an
+    integer when the only access pattern is equality on the day."""
+    for network in NETWORKS:
+        for kind in Kind:
+            for table in schema_for(network, kind).tables:
+                for column in table.columns:
+                    assert column.type not in ("timestamp", "date"), (
+                        f"{table.name}.{column.name} is {column.type}"
+                    )
+
+
+def test_the_delta_updater_history_table_is_gone() -> None:
+    """Its job in v2 was detecting a torn bookkeeping write, which matters only
+    because applying a batch twice is unsafe there. A v3 epoch row is keyed
+    (bucket, entity, epoch) and carries that epoch's sum, so rewriting it is an
+    identical upsert -- there is nothing left for it to guard."""
+    for network in NETWORKS:
+        assert (
+            "delta_updater_history"
+            not in schema_for(network, Kind.TRANSFORMED).table_names()
+        )
+
+
+def test_the_markers_table_replaces_state() -> None:
+    """v2 called this `state`, which reads as an invitation to keep cursors in
+    it -- and a cursor is exactly what must not live there, since these rows are
+    set once and never advanced. I misread it that way myself before renaming."""
+    from graphsense_v3.schema.definitions import MARKERS
+
+    for network in NETWORKS:
+        for kind in Kind:
+            names = schema_for(network, kind).table_names()
+            assert MARKERS in names
+            assert "state" not in names
+
+
+def test_the_completion_marker_is_documented_in_the_schema() -> None:
+    """A key/value table earns its shape only if the key set is written down."""
+    from graphsense_v3.schema.definitions import MARKER_COMPLETE
+
+    comment = schema_for("btc", Kind.RAW).table("markers").comment or ""
+    assert MARKER_COMPLETE in comment
+    assert "Written LAST" in comment

@@ -238,17 +238,6 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     AND caching = {'keys':'ALL','rows_per_partition':'ALL'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
--- v2 grows one partition per run forever and reads it by unbounded scan. highest_address_id is gone: there is no allocator.
-CREATE TABLE IF NOT EXISTS delta_updater_history (
-    last_synced_block bigint,
-    last_synced_block_timestamp bigint,
-    timestamp bigint,
-    runtime_seconds int,
-    PRIMARY KEY (last_synced_block)
-)
-    WITH compaction = {'class':'TimeWindowCompactionStrategy','compaction_window_unit':'DAYS','compaction_window_size':'7'}
-    AND default_time_to_live = 7776000;
-
 CREATE TABLE IF NOT EXISTS configuration (
     keyspace_name text,
     entity_buckets int,                     -- murmur3(entity) % this
@@ -266,7 +255,18 @@ CREATE TABLE IF NOT EXISTS configuration (
     WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
-CREATE TABLE IF NOT EXISTS state (
+-- Write-once flags about the keyspace as a whole. Named for what it
+-- holds: v2 called this `state`, which reads as an invitation to keep
+-- cursors here, and a cursor is exactly what must not live in it --
+-- these rows are set once and never advanced.
+--
+-- Known keys, and there should be few:
+--   complete -- every table of this keyspace has been fully written.
+--     Written LAST, after every other write of the run. Nothing may
+--     read the keyspace as authoritative without it: a half-written
+--     keyspace is otherwise indistinguishable from a finished one,
+--     which would make a comparison silently measure missing data.
+CREATE TABLE IF NOT EXISTS markers (
     key text,
     value text,
     updated_at bigint,

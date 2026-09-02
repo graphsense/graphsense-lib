@@ -14,9 +14,11 @@ instead of hours in.
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from graphsense_v3.schema import Kind, NETWORKS, Family, schema_for
+from graphsense_v3.schema.definitions import MARKER_COMPLETE, MARKERS
 from graphsense_v3.spark import raw_account, raw_utxo, transformed_utxo, writer
 from graphsense_v3.settings import RunSettings, assert_v3_keyspace
 from graphsense_v3.spark.source import DeltaLake
@@ -76,6 +78,24 @@ class Stage:
         elapsed = time.monotonic() - self.started
         outcome = "FAILED" if exc[0] else "done"
         logger.info("%s  %s in %.1fs", outcome, self.name, elapsed)
+
+
+def mark_complete(
+    spark: "SparkSession", network: str, kind: Kind, keyspace: str
+) -> None:
+    """Record that every table of ``keyspace`` has been written.
+
+    The last write of the run, and the only thing that distinguishes a finished
+    keyspace from one whose job died halfway. A reader without this marker is
+    measuring missing data and cannot tell that it is.
+    """
+    now = datetime.now(timezone.utc)
+    frame = spark.createDataFrame(
+        [(MARKER_COMPLETE, now.isoformat(), int(now.timestamp()))],
+        schema="key STRING, value STRING, updated_at BIGINT",
+    )
+    writer.write(frame, schema_for(network, kind).table(MARKERS), keyspace)
+    logger.info("marked %s complete", keyspace)
 
 
 def run(
@@ -146,6 +166,9 @@ def run(
                     sidecar=settings.sidecar,
                 )
 
+    if "raw" in wanted and not dry_run:
+        mark_complete(spark, network, Kind.RAW, settings.raw_keyspace)
+
     if "transformed" not in wanted:
         if dry_run:
             logger.info("dry run: %d raw frames conform", len(raw_frames))
@@ -208,6 +231,7 @@ def _run_transformed(
             writer.write(
                 frame, schema.table(name), transformed_keyspace, sidecar=sidecar
             )
+    mark_complete(spark, network, Kind.TRANSFORMED, transformed_keyspace)
 
 
 def main(argv: Optional[list] = None) -> None:

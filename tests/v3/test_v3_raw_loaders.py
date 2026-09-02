@@ -318,12 +318,10 @@ def test_no_family_has_a_block_transactions_table(utxo_lake) -> None:
 
 
 def test_utxo_block_by_date_buckets_by_utc_day(utxo_lake) -> None:
+    """`day` is yyyymmdd as an int, per design rule 5: time is stored as an
+    integer, never as a temporal type."""
     rows = raw_utxo.build(utxo_lake, "btc", "ks")["block_by_date"].collect()
-    assert sorted(str(r["day"]) for r in rows) == [
-        "1970-01-01",
-        "1970-01-02",
-        "1970-01-03",
-    ]
+    assert sorted(r["day"] for r in rows) == [19700101, 19700102, 19700103]
 
 
 def test_utxo_configuration_carries_the_keyspace(utxo_lake) -> None:

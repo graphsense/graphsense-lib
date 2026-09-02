@@ -13,9 +13,13 @@ Design rules, each of which the v2 schema violates somewhere:
 4. The hot write path never reads. Aggregates are summable rows (see
    ``address_stats``); compaction is an optimisation, not a correctness
    requirement.
-5. All ids and timestamps are 64-bit. Timestamps are ``bigint`` seconds, not
-   ``timestamp``: the query helper interpolates WHERE values verbatim and accepts
-   only str/int/float, so a type needing quoting breaks every caller.
+5. Time is stored as an integer, never as a temporal type. Timestamps are
+   ``bigint`` unix **seconds**: the lake and the REST contract both speak unix
+   seconds, so a temporal type would add a conversion at each end for the same
+   eight bytes -- and CQL ``timestamp`` is *milliseconds*, a standing factor-of-
+   1000 trap that yields a plausible wrong answer rather than an error. Dates
+   follow the same rule (``block_by_date.day`` is ``yyyymmdd``). All ids are
+   64-bit.
 6. Every collection is frozen. A non-frozen collection overwrite emits a range
    tombstone.
 7. Every table declares its compaction, compression and caching.
@@ -41,6 +45,10 @@ from graphsense_v3.schema.model import (
 #: Clustering value of the compacted row in every ``*_stats`` table. Epochs above
 #: it are un-absorbed deltas; a read sums the whole partition slice.
 EPOCH_BASE = 0
+
+#: The `markers` table, and the one key a backfill writes.
+MARKERS = "markers"
+MARKER_COMPLETE = "complete"
 
 CURRENCY = UserType(
     "currency",
@@ -85,10 +93,23 @@ def _housekeeping(kind: Kind) -> tuple[Table, ...]:
             CACHED,
         ),
         Table(
-            "state",
+            "markers",
             (C("key", "text"), C("value", "text"), C("updated_at", "bigint")),
             Key(("key",)),
             CACHED,
+            comment=(
+                "Write-once flags about the keyspace as a whole. Named for what it\n"
+                "holds: v2 called this `state`, which reads as an invitation to keep\n"
+                "cursors here, and a cursor is exactly what must not live in it --\n"
+                "these rows are set once and never advanced.\n"
+                "\n"
+                "Known keys, and there should be few:\n"
+                "  complete -- every table of this keyspace has been fully written.\n"
+                "    Written LAST, after every other write of the run. Nothing may\n"
+                "    read the keyspace as authoritative without it: a half-written\n"
+                "    keyspace is otherwise indistinguishable from a finished one,\n"
+                "    which would make a comparison silently measure missing data."
+            ),
         ),
         Table(
             "summary_statistics",
@@ -115,7 +136,11 @@ def _housekeeping(kind: Kind) -> tuple[Table, ...]:
 
 _BLOCK_BY_DATE = Table(
     "block_by_date",
-    (C("day", "date"), C("timestamp", "bigint"), C("block_id", "int")),
+    (
+        C("day", "int", "yyyymmdd, UTC"),
+        C("timestamp", "bigint"),
+        C("block_id", "int"),
+    ),
     Key(
         ("day",), ("timestamp", "block_id"), (("timestamp", "ASC"), ("block_id", "ASC"))
     ),
@@ -889,25 +914,6 @@ def transformed(family: Family) -> Schema:
                 "indexes. /rates/{height} stays a point read; the group is computed\n"
                 "client-side."
             ),
-        ),
-        Table(
-            "delta_updater_history",
-            (
-                C("last_synced_block", "bigint"),
-                C("last_synced_block_timestamp", "bigint"),
-                C("timestamp", "bigint"),
-                C("runtime_seconds", "int"),
-            ),
-            Key(("last_synced_block",)),
-            {
-                "default_time_to_live": "7776000",
-                "compaction": (
-                    "{'class':'TimeWindowCompactionStrategy',"
-                    "'compaction_window_unit':'DAYS','compaction_window_size':'7'}"
-                ),
-            },
-            comment="v2 grows one partition per run forever and reads it by unbounded "
-            "scan. highest_address_id is gone: there is no allocator.",
         ),
         *_housekeeping(Kind.TRANSFORMED),
     ]

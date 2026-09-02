@@ -41,7 +41,7 @@ from graphsense_v3.spark import writer
 from graphsense_v3.spark.columns import (
     ADDRESSLESS_TYPES,
     address_type,
-    day_from_timestamp,
+    day_key_from_timestamp,
     hex_to_bytes,
     hex_prefix,
     id_group,
@@ -196,7 +196,7 @@ def build(
     )
 
     out["block_by_date"] = blocks.select(
-        day_from_timestamp(F.col("timestamp")).alias("day"),
+        day_key_from_timestamp(F.col("timestamp")).alias("day"),
         F.col("timestamp").cast("bigint").alias("timestamp"),
         F.col("block_id").cast("int").alias("block_id"),
     )

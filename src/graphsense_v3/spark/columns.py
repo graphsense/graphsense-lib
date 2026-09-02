@@ -70,6 +70,19 @@ def day_from_timestamp(column: "Column") -> "Column":
     return F.date_add(F.lit(_EPOCH), F.floor(column / F.lit(86400)).cast("int"))
 
 
+def day_key_from_timestamp(column: "Column") -> "Column":
+    """Unix seconds -> the ``block_by_date`` partition key, ``yyyymmdd``.
+
+    An integer rather than a CQL ``date``, per design rule 5. It sorts
+    correctly, reads in cqlsh, and the only access pattern is equality on the
+    day followed by a range on the timestamp within it. Formatting a DateType
+    is timezone-free, and the DateType itself came from epoch arithmetic.
+    """
+    from pyspark.sql import functions as F
+
+    return F.date_format(day_from_timestamp(column), "yyyyMMdd").cast("int")
+
+
 def address_type(column: "Column") -> "Column":
     """Script-type string -> the stored smallint classification.
 
