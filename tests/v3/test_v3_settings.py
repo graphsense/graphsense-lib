@@ -312,3 +312,27 @@ def test_ddl_can_only_target_a_v3_keyspace() -> None:
         apply_cql(settings, "CREATE KEYSPACE IF NOT EXISTS btc_raw_20260101 WITH x;")
     with pytest.raises(ValueError, match="creates no keyspace"):
         apply_cql(settings, "DROP KEYSPACE btc_raw_20260101;")
+
+
+def test_plan_shows_the_path_that_is_really_read() -> None:
+    """`plan` exists to say what a run will do, so it must not print a lake
+    path that differs from the one Spark opens. The config stores `s3://`;
+    Hadoop 3 dropped that scheme, so the reader uses `s3a://`."""
+    from graphsense_v3.settings import effective_lake_root
+
+    assert effective_lake_root("s3://raw-data/ltc/") == "s3a://raw-data/ltc"
+    # idempotent, and non-s3 paths are untouched
+    assert effective_lake_root("s3a://raw-data/ltc") == "s3a://raw-data/ltc"
+    assert effective_lake_root("hdfs://nn/lake/ltc") == "hdfs://nn/lake/ltc"
+    assert effective_lake_root("/local/lake/ltc") == "/local/lake/ltc"
+
+    text = RunSettings(
+        network="ltc",
+        env="prod",
+        lake_root=effective_lake_root("s3://raw-data/ltc"),
+        raw_keyspace="ltc_raw_v3",
+        derived_keyspace="ltc_derived_v3",
+        rates_keyspace="ltc_raw_20260727",
+        cassandra_nodes=["172.22.240.72"],
+    ).describe()
+    assert "s3a://raw-data/ltc" in text

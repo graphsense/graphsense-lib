@@ -69,6 +69,18 @@ def configured_keyspaces(config: Any) -> set[str]:
     return {n for n in names if n}
 
 
+def effective_lake_root(root: str) -> str:
+    """The path Spark will actually read.
+
+    The config stores ``s3://``, which the deltalake/duckdb readers accept, but
+    Hadoop 3 dropped that scheme and Spark fails with "No FileSystem for scheme:
+    s3". Resolved here rather than only in the reader so that `plan` cannot
+    print a path different from the one that gets read. Idempotent: an
+    ``s3a://``, ``hdfs://`` or local path passes through.
+    """
+    return root.rstrip("/").replace("s3://", "s3a://")
+
+
 @dataclass(frozen=True)
 class RunSettings:
     """What one backfill needs, resolved from the config."""
@@ -197,7 +209,7 @@ def from_config(
     settings = RunSettings(
         network=network,
         env=env,
-        lake_root=lake.delta_sink.directory,
+        lake_root=effective_lake_root(lake.delta_sink.directory),
         raw_keyspace=v3_keyspace(network, Kind.RAW, label),
         derived_keyspace=v3_keyspace(network, Kind.DERIVED, label),
         rates_keyspace=keyspaces.raw_keyspace_name,

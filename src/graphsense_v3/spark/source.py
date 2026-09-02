@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Protocol
 
 from graphsenselib.ingest.dump import PARTITIONSIZES
 
+from graphsense_v3.settings import effective_lake_root
+
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
 
@@ -21,11 +23,10 @@ class DeltaLake:
         partition_size: int | None = None,
     ) -> None:
         self.spark = spark
-        # Spark/Hadoop reads S3 through the s3a connector; `s3://` is not a
-        # registered scheme and fails with "No FileSystem for scheme: s3". The
-        # config stores `s3://`, so every Spark job in gslib rewrites it the
-        # same way (transformation/utxo.py:53, pubkey/job.py:202).
-        self.root = root.rstrip("/").replace("s3://", "s3a://")
+        # Normally already done by `settings.effective_lake_root`, so that
+        # `plan` prints the path that is really read; repeated here, and
+        # idempotent, because a caller can construct this directly.
+        self.root = effective_lake_root(root)
         self.network = network.lower()
         # The lake's physical Delta partition is block_id // this. Pushing a
         # predicate on `partition` is what actually prunes files; a predicate on
