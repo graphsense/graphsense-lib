@@ -226,6 +226,7 @@ def _run_derived(
             frames = derived_utxo.build(
                 raw_frames["transaction_io"],
                 raw_frames["transaction"],
+                raw_frames["block"],
                 rates,
                 network,
                 config=config,
@@ -238,6 +239,7 @@ def _run_derived(
                 raw_frames["trace"],
                 raw_frames["log"],
                 read_cassandra(spark, rates_keyspace, "token_configuration"),
+                raw_frames["block"],
                 rates,
                 network,
                 config=config,

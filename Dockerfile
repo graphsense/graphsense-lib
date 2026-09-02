@@ -219,6 +219,14 @@ RUN uv pip install --no-cache --system --no-deps /tmp/wheels/*.whl \
 # keep the executors' own python; just put the shipped packages on PYTHONPATH:
 #   spark.archives: "file:///opt/graphsense/spark-env.tar.gz#environment"
 #   spark.executorEnv.PYTHONPATH: "./environment"
+#
+# pandas and pyarrow are in here because graphsense_v3's Spark jobs use
+# pandas_udf, which needs both ON THE EXECUTOR. They are installed under the
+# same constraints file as everything else, so the archive ships the exact
+# versions the driver runs and the parity check below covers them too --
+# a mismatched pyarrow breaks Arrow serialisation in ways that are much harder
+# to read than a missing import. Costs ~100MB in the archive; it is distributed
+# once per executor per job by the driver's file server.
 COPY --from=builder /opt/graphsense/lib/dist/graphsense_lib-*.whl /tmp/pkwheel/
 COPY --from=builder /tmp/constraints.txt /tmp/constraints.txt
 RUN mkdir -p /opt/graphsense/spark-env \
@@ -227,7 +235,8 @@ RUN mkdir -p /opt/graphsense/spark-env \
     && uv pip install --no-cache --python /usr/local/bin/python3 \
         -c /tmp/constraints.txt \
         --target /opt/graphsense/spark-env eth-account coincurve base58 bech32 ecdsa \
-    && PYTHONPATH=/opt/graphsense/spark-env /usr/local/bin/python3 -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; import graphsense_v3.codec, graphsense_v3.spark.udf, graphsense_v3.spark.columns; import graphsenselib; assert graphsenselib.__file__.startswith('/opt/graphsense/spark-env'), graphsenselib.__file__; import graphsense_v3; assert graphsense_v3.__file__.startswith('/opt/graphsense/spark-env'), graphsense_v3.__file__; print('spark-env site-packages smoke test OK')" \
+        pandas pyarrow \
+    && PYTHONPATH=/opt/graphsense/spark-env /usr/local/bin/python3 -c "import graphsenselib.pubkey.extract, graphsenselib.utils.pubkey_to_address, graphsenselib.utils.signature, coincurve, eth_account, eth_keys, ecdsa, base58, bech32; import graphsense_v3.codec, graphsense_v3.spark.udf, graphsense_v3.spark.columns; import pandas, pyarrow; import graphsenselib; assert graphsenselib.__file__.startswith('/opt/graphsense/spark-env'), graphsenselib.__file__; import graphsense_v3; assert graphsense_v3.__file__.startswith('/opt/graphsense/spark-env'), graphsense_v3.__file__; print('spark-env site-packages smoke test OK')" \
     && /usr/local/bin/python3 -c "import importlib.metadata as md; norm = lambda n: n.lower().replace('_', '-'); image = {norm(d.metadata['Name']): d.version for d in md.distributions()}; skew = sorted(f\"{norm(d.metadata['Name'])}: spark-env={d.version} image={image[norm(d.metadata['Name'])]}\" for d in md.distributions(path=['/opt/graphsense/spark-env']) if norm(d.metadata['Name']) != 'graphsense-lib' and norm(d.metadata['Name']) in image and d.version != image[norm(d.metadata['Name'])]); assert not skew, 'spark-env diverges from the locked image versions: ' + '; '.join(skew); print('spark-env/driver version parity OK')" \
     && tar -C /opt/graphsense/spark-env -czf /opt/graphsense/spark-env.tar.gz . \
     && rm -rf /opt/graphsense/spark-env /tmp/pkwheel /tmp/constraints.txt \

@@ -648,10 +648,16 @@ def _stats_table(name: str, entity: str, family: Family, extra: tuple[C, ...]) -
             C("out_degree", "bigint"),
             C("in_degree_zero_value", "bigint"),
             C("out_degree_zero_value", "bigint"),
+            # One cursor pair per partition class of *_transactions, which is
+            # (direction x zero-ness) since both are in that partition key.
             C("in_tx_page_max", "int", "epoch 0 only: paging cursors"),
             C("out_tx_page_max", "int"),
             C("in_tx_ordinal_next", "bigint"),
             C("out_tx_ordinal_next", "bigint"),
+            C("in_zero_tx_page_max", "int"),
+            C("out_zero_tx_page_max", "int"),
+            C("in_zero_tx_ordinal_next", "bigint"),
+            C("out_zero_tx_ordinal_next", "bigint"),
             *extra,
         ),
         Key((bucket,), (entity, "epoch"), ((entity, "ASC"), ("epoch", "ASC"))),
@@ -703,12 +709,13 @@ def _txs_table(name: str, entity: str, family: Family, *, recent: bool) -> Table
         (
             C(entity, "blob"),
             C("is_outgoing", "boolean"),
+            C("is_zero_value", "boolean", "value == 0; see the comment"),
             C(split[0], split[1]),
             C("tx_id", "bigint"),
             *account_only,
             C("value", "varint"),
         ),
-        Key((entity, "is_outgoing", split[0]), clustering, order),
+        Key((entity, "is_outgoing", "is_zero_value", split[0]), clustering, order),
         CHURN if recent else STCS,
         comment=(
             (
@@ -732,7 +739,22 @@ def _txs_table(name: str, entity: str, family: Family, *, recent: bool) -> Table
                 "pushed down at all, and direction=out on an address with 10M incoming\n"
                 "and 100 outgoing would scan the lot. currency stays below tx_id: in the\n"
                 "partition key it would make the UNFILTERED query fan out over every\n"
-                "asset held, which is exactly the v2 pathology."
+                "asset held, which is exactly the v2 pathology.\n"
+                "\n"
+                "is_zero_value is there for the same reason. A zero-value transfer is a\n"
+                "contract call that moved nothing, and on ETH and TRON they dominate an\n"
+                "address's listing; excluding them is the DEFAULT read, so it must be a\n"
+                "point partition rather than a filter applied after paging -- otherwise\n"
+                "a page of 100 rows can return 3. Below tx_id it could not be pushed\n"
+                "down; above it, it would order the partition by zero-ness before\n"
+                "recency and break the ordering contract.\n"
+                "\n"
+                "Cost: including zero-value merges two partition streams instead of\n"
+                "one, the way both directions already merge two. A value BRACKET was\n"
+                "considered and rejected -- N brackets means an N-way merge for the\n"
+                "unfiltered query, and the boundaries become a constant that can never\n"
+                "change without rewriting the table. Zero is the one boundary that is\n"
+                "a property of the transfer rather than of a chosen scale."
             )
         ),
     )
@@ -850,10 +872,15 @@ def derived(family: Family) -> Schema:
         (
             C("address", "blob"),
             C("is_outgoing", "boolean"),
+            C("is_zero_value", "boolean"),
             C("first_tx_id", "bigint"),
             C("tx_page", "int"),
         ),
-        Key(("address", "is_outgoing"), ("first_tx_id",), (("first_tx_id", "DESC"),)),
+        Key(
+            ("address", "is_outgoing", "is_zero_value"),
+            ("first_tx_id",),
+            (("first_tx_id", "DESC"),),
+        ),
         STCS,
         comment=(
             "Ordinal pages are not tx_id-aligned -- the one thing block bucketing did\n"
@@ -861,7 +888,10 @@ def derived(family: Family) -> Schema:
             "range. The entry page is a point-slice (first_tx_id <= :hi LIMIT 1) and the\n"
             "walk proceeds downward. One row for a typical address, ~37 000 for TRON\n"
             "USDT, all in one partition of about a megabyte. Read only when a range\n"
-            "filter is present."
+            "filter is present.\n"
+            "\n"
+            "Keyed per partition class of address_transactions, zero-ness included:\n"
+            "the pages it indexes are numbered per class, so one index per class."
         ),
     )
     incoming = _relations_table(
@@ -885,6 +915,47 @@ def derived(family: Family) -> Schema:
         ),
         Key(("address_bucket",), ("address", "currency", "epoch")),
         LCS,
+        comment=(
+            "The current balance: sum the slice. Deltas are blind-inserted and\n"
+            "compaction folds them into epoch 0, so this table forgets history --\n"
+            "`balance_history` is what remembers it."
+        ),
+    )
+
+    balance_history = Table(
+        "balance_history",
+        (
+            C("address_bucket", "int"),
+            C("address", "blob"),
+            C("currency", "text"),
+            C("day", "int", "yyyymmdd, UTC"),
+            C("balance", "varint", "RUNNING TOTAL at end of day, not a delta"),
+        ),
+        Key(
+            ("address_bucket",),
+            ("address", "currency", "day"),
+            (("address", "ASC"), ("currency", "ASC"), ("day", "DESC")),
+        ),
+        LCS,
+        comment=(
+            "Balance over time. `balance` holds deltas that compaction folds away,\n"
+            "so the history has to be kept somewhere that is never folded.\n"
+            "\n"
+            "A RUNNING TOTAL, not a delta, which is the one place this schema\n"
+            "departs from summable rows -- and deliberately. Summing a delta slice\n"
+            "to answer 'what was the balance on day D' costs one row per active day\n"
+            "since the address was created; a running total makes it a single\n"
+            "`day <= D LIMIT 1`, and a balance chart a single slice. The cost is\n"
+            "that the incremental path cannot maintain this without reading, so it\n"
+            "is written by the same periodic job that folds `balance` -- which\n"
+            "reads those epochs anyway. Never on the hot write path.\n"
+            "\n"
+            "DAY, not epoch: a row per active day is at most ~5 500 for a\n"
+            "15-year-old address, where a row per 1 000-block epoch would be\n"
+            "~85 800 on TRON. Day is also the granularity a chart asks for.\n"
+            "Rows exist only for days the address moved; the balance between them\n"
+            "is the last row's, which is what `day <= D LIMIT 1` returns."
+        ),
     )
 
     by_prefix = Table(
@@ -917,6 +988,7 @@ def derived(family: Family) -> Schema:
         outgoing,
         links,
         balance,
+        balance_history,
         by_prefix,
         Table(
             "exchange_rates",

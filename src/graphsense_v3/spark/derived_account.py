@@ -50,6 +50,7 @@ TABLES = (
     "address_tx_pages",
     "address_stats",
     "address_by_prefix",
+    "balance_history",
     "address_outgoing_relations",
     "address_incoming_relations",
     "address_link_transactions",
@@ -251,6 +252,7 @@ def address_transactions(paged: "DataFrame") -> "DataFrame":
     return paged.select(
         F.col("address"),
         F.col("is_outgoing"),
+        F.col("is_zero_value"),
         F.col("tx_page"),
         F.col("tx_id"),
         _tx_reference().alias("tx_reference"),
@@ -447,28 +449,14 @@ def address_stats(
             tokens, on="address", how="left"
         )
 
-    cursors = paged.groupBy("address", "is_outgoing").agg(
-        F.max("tx_page").cast("int").alias("page_max"),
-        (F.max("ordinal") + 1).cast("bigint").alias("ordinal_next"),
-    )
-    in_cursor = cursors.where(~F.col("is_outgoing")).select(
-        "address",
-        F.col("page_max").alias("in_tx_page_max"),
-        F.col("ordinal_next").alias("in_tx_ordinal_next"),
-    )
-    out_cursor = cursors.where(F.col("is_outgoing")).select(
-        "address",
-        F.col("page_max").alias("out_tx_page_max"),
-        F.col("ordinal_next").alias("out_tx_ordinal_next"),
-    )
+    cursors = common.paging_cursors(paged)
     bounds = all_legs.groupBy("address").agg(
         F.min("tx_id").alias("first_tx_id"), F.max("tx_id").alias("last_tx_id")
     )
     joined = (
         bounds.join(side(False, "incoming"), on="address", how="left")
         .join(side(True, "outgoing"), on="address", how="left")
-        .join(in_cursor, on="address", how="left")
-        .join(out_cursor, on="address", how="left")
+        .join(cursors, on="address", how="left")
         .join(degree, on="address", how="left")
         .join(is_contract, on="address", how="left")
     )
@@ -499,6 +487,10 @@ def address_stats(
         F.col("out_tx_page_max"),
         F.col("in_tx_ordinal_next"),
         F.col("out_tx_ordinal_next"),
+        F.col("in_zero_tx_page_max"),
+        F.col("out_zero_tx_page_max"),
+        F.col("in_zero_tx_ordinal_next"),
+        F.col("out_zero_tx_ordinal_next"),
         F.coalesce(F.col("is_contract"), F.lit(False)).alias("is_contract"),
     )
 
@@ -529,6 +521,7 @@ def build(
     traces: "DataFrame",
     logs: "DataFrame",
     token_config: "DataFrame",
+    blocks: "DataFrame",
     rates: "DataFrame",
     network: str,
     *,
@@ -540,7 +533,11 @@ def build(
         transfers(traces, logs, token_config, network), rates, token_config, network
     ).cache()
     all_legs = legs(moves).cache()
-    paged = common.with_ordinals(all_legs, ["address", "is_outgoing"], cfg).cache()
+    paged = common.with_ordinals(
+        common.with_zero_flag(all_legs),
+        ["address", "is_outgoing", "is_zero_value"],
+        cfg,
+    ).cache()
     return {
         "address_transactions": address_transactions(paged),
         "address_tx_pages": common.address_tx_pages(paged),
@@ -561,6 +558,7 @@ def build(
         ),
         "address_link_transactions": address_link_transactions(moves, cfg),
         "balance": balance(all_legs, cfg),
+        "balance_history": common.balance_history(all_legs, blocks, cfg),
     }
 
 
@@ -568,6 +566,7 @@ def load(
     traces: "DataFrame",
     logs: "DataFrame",
     token_config: "DataFrame",
+    blocks: "DataFrame",
     rates: "DataFrame",
     network: str,
     keyspace: str,
@@ -578,7 +577,7 @@ def load(
 ) -> list:
     """Write the derived address tables into ``keyspace``."""
     schema = schema_for(network, Kind.DERIVED)
-    frames = build(traces, logs, token_config, rates, network, config=config)
+    frames = build(traces, logs, token_config, blocks, rates, network, config=config)
     selected = tables or TABLES
     for name in selected:
         writer.check(frames[name], schema.table(name))

@@ -24,6 +24,7 @@ IO_SCHEMA = (
 )
 RATES_SCHEMA = "block_id INT, fiat_values MAP<STRING,DOUBLE>"
 TX_SCHEMA = "tx_id BIGINT, total_input BIGINT"
+BLOCK_SCHEMA = "block_id INT, timestamp BIGINT"
 
 
 def _io(tx, is_output, index, address, value):
@@ -36,6 +37,14 @@ def _io(tx, is_output, index, address, value):
         "value": value,
         "address_type": 3,
     }
+
+
+@pytest.fixture(scope="module")
+def blocks(spark):
+    return spark.createDataFrame(
+        [{"block_id": 1, "timestamp": 0}, {"block_id": 2, "timestamp": 86_400}],
+        schema=BLOCK_SCHEMA,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -95,10 +104,10 @@ def test_an_address_on_both_sides_yields_two_legs(self_change_io) -> None:
     assert [(r["is_outgoing"], r["value"]) for r in rows if bytes(r["address"]) == BOB]
 
 
-def test_legs_are_gross_not_net(self_change_io, self_change_txs, rates) -> None:
+def test_legs_are_gross_not_net(self_change_io, self_change_txs, rates, blocks) -> None:
     """The visible consequence: total_received and total_spent are both real
     amounts, and a self-change transaction counts once in each direction."""
-    stats = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")[
+    stats = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")[
         "address_stats"
     ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
@@ -166,11 +175,13 @@ def test_page_index_gives_the_entry_page_for_a_bound(many_io, rates) -> None:
     assert pages == {0: tx_id(1, 0), 1: tx_id(1, 2), 2: tx_id(2, 1)}
 
 
-def test_fiat_is_summed_per_leg_at_its_own_block_rate(many_io, many_txs, rates) -> None:
+def test_fiat_is_summed_per_leg_at_its_own_block_rate(
+    many_io, many_txs, rates, blocks
+) -> None:
     """Three receipts of 10 sat in block 1 at 100 EUR/coin and two in block 2 at
     300. Pricing the total at one rate would be an answer about no real moment.
     """
-    stats = derived_utxo.build(many_io, many_txs, rates, "btc")["address_stats"]
+    stats = derived_utxo.build(many_io, many_txs, blocks, rates, "btc")["address_stats"]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
     each_block1 = round(10 * 100.0 / 10**8, 2)
     each_block2 = round(10 * 300.0 / 10**8, 2)
@@ -179,13 +190,15 @@ def test_fiat_is_summed_per_leg_at_its_own_block_rate(many_io, many_txs, rates) 
     )
 
 
-def test_a_block_without_a_rate_contributes_no_fiat(spark, many_io, many_txs) -> None:
+def test_a_block_without_a_rate_contributes_no_fiat(
+    spark, many_io, many_txs, blocks
+) -> None:
     """A missing rate must not zero the address's total: explode drops the NULL
     map, so those legs simply do not contribute."""
     only_block_two = spark.createDataFrame(
         [{"block_id": 2, "fiat_values": {"EUR": 300.0}}], schema=RATES_SCHEMA
     )
-    stats = derived_utxo.build(many_io, many_txs, only_block_two, "btc")[
+    stats = derived_utxo.build(many_io, many_txs, blocks, only_block_two, "btc")[
         "address_stats"
     ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
@@ -196,19 +209,21 @@ def test_a_block_without_a_rate_contributes_no_fiat(spark, many_io, many_txs) ->
     assert int(alice["total_received"]["value"]) == 50
 
 
-def test_frames_conform_to_the_schema(self_change_io, self_change_txs, rates) -> None:
+def test_frames_conform_to_the_schema(
+    self_change_io, self_change_txs, rates, blocks
+) -> None:
     schema = schema_for("btc", Kind.DERIVED)
-    frames = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")
+    frames = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")
     assert set(frames) == set(derived_utxo.TABLES)
     for name, frame in frames.items():
         assert conformance_errors(list(frame.columns), schema.table(name)) == []
 
 
 def test_search_prefix_comes_back_out_of_the_bytes(
-    self_change_io, self_change_txs, rates
+    self_change_io, self_change_txs, blocks, rates
 ) -> None:
     """The derived side only ever holds encoded addresses."""
-    rows = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")[
+    rows = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")[
         "address_by_prefix"
     ].collect()
     by_address = {bytes(r["address"]): r["address_prefix"] for r in rows}
@@ -289,12 +304,12 @@ def test_degrees_count_distinct_counterparties(split_io, split_txs) -> None:
     assert by_address[ALICE][1] == 1
 
 
-def test_relations_bucket_the_far_side(split_io, split_txs, rates) -> None:
+def test_relations_bucket_the_far_side(split_io, split_txs, rates, blocks) -> None:
     """The bucket hashes the counterparty, so a /neighbors read scatters over
     relation_buckets partitions and stops once it has in_degree rows."""
     from graphsense_v3.codec import bucket
 
-    frames = derived_utxo.build(split_io, split_txs, rates, "btc")
+    frames = derived_utxo.build(split_io, split_txs, blocks, rates, "btc")
     buckets = config_for("btc").relation_buckets
     for row in frames["address_incoming_relations"].collect():
         assert row["rel_bucket"] == bucket(bytes(row["src_address"]), buckets)
@@ -302,10 +317,12 @@ def test_relations_bucket_the_far_side(split_io, split_txs, rates) -> None:
         assert row["rel_bucket"] == bucket(bytes(row["dst_address"]), buckets)
 
 
-def test_link_transactions_carry_the_tx_list(split_io, split_txs, rates) -> None:
+def test_link_transactions_carry_the_tx_list(
+    split_io, split_txs, rates, blocks
+) -> None:
     """The /links fix: the transactions behind an edge, not just their count.
     Both writers already materialise these tuples and aggregate them away."""
-    frames = derived_utxo.build(split_io, split_txs, rates, "btc")
+    frames = derived_utxo.build(split_io, split_txs, blocks, rates, "btc")
     links = frames["address_link_transactions"].collect()
     assert {(bytes(r["src_address"]), int(r["value"])) for r in links} == {
         (ALICE, 30),
@@ -319,9 +336,9 @@ def test_link_transactions_carry_the_tx_list(split_io, split_txs, rates) -> None
 
 
 def test_balance_is_received_minus_spent(
-    self_change_io, self_change_txs, rates
+    self_change_io, self_change_txs, blocks, rates
 ) -> None:
-    frames = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")
+    frames = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")
     by_address = {
         bytes(r["address"]): int(r["balance"]) for r in frames["balance"].collect()
     }
@@ -330,10 +347,121 @@ def test_balance_is_received_minus_spent(
     assert {r["currency"] for r in frames["balance"].collect()} == {"BTC"}
 
 
-def test_every_frame_conforms_to_its_table(split_io, split_txs, rates) -> None:
+def test_every_frame_conforms_to_its_table(split_io, split_txs, rates, blocks) -> None:
     """All eight tables, checked against the model before a single write."""
     schema = schema_for("btc", Kind.DERIVED)
-    frames = derived_utxo.build(split_io, split_txs, rates, "btc")
+    frames = derived_utxo.build(split_io, split_txs, blocks, rates, "btc")
     assert set(frames) == set(derived_utxo.TABLES)
     for name, frame in frames.items():
         assert conformance_errors(list(frame.columns), schema.table(name)) == []
+
+
+# --------------------------------------------------------------------------- #
+# zero-value filtering and balance history                                     #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(scope="module")
+def mixed_value_io(spark):
+    """Alice receives 10, then 0, then 5 -- the middle one moved nothing."""
+    rows = []
+    for index, value in enumerate((10, 0, 5)):
+        rows.append(_io(tx_id(1, index), True, 0, [ALICE], value))
+    return spark.createDataFrame(rows, schema=IO_SCHEMA)
+
+
+@pytest.fixture(scope="module")
+def mixed_value_txs(spark):
+    return spark.createDataFrame(
+        [{"tx_id": tx_id(1, i), "total_input": 10} for i in range(3)],
+        schema=TX_SCHEMA,
+    )
+
+
+def test_zero_value_is_a_partition_not_a_filter(
+    mixed_value_io, mixed_value_txs, blocks, rates
+) -> None:
+    """Excluding zero-value transfers is the DEFAULT read, so it has to be a
+    point partition: filtering after paging can return 3 rows for a page of
+    100. Cassandra cannot push a restriction below the ordering column, so this
+    belongs in the partition key -- the same reason is_outgoing is there."""
+    table = schema_for("btc", Kind.DERIVED).table("address_transactions")
+    assert "is_zero_value" in table.key.partition
+    assert table.key.clustering[0] == "tx_id"
+
+    rows = derived_utxo.build(mixed_value_io, mixed_value_txs, blocks, rates, "btc")[
+        "address_transactions"
+    ].collect()
+    non_zero = [r for r in rows if not r["is_zero_value"]]
+    zero = [r for r in rows if r["is_zero_value"]]
+    assert sorted(int(r["value"]) for r in non_zero) == [5, 10]
+    assert [int(r["value"]) for r in zero] == [0]
+
+
+def test_pages_are_numbered_within_a_class(
+    mixed_value_io, mixed_value_txs, blocks, rates
+) -> None:
+    """Ordinals restart per partition class, so a filtered page is a full page
+    rather than whatever survived a filter."""
+    rows = derived_utxo.build(mixed_value_io, mixed_value_txs, blocks, rates, "btc")[
+        "address_transactions"
+    ].collect()
+    assert {r["tx_page"] for r in rows} == {0}
+    pages = derived_utxo.build(mixed_value_io, mixed_value_txs, blocks, rates, "btc")[
+        "address_tx_pages"
+    ].collect()
+    # one index row per class present, keyed by class
+    assert {r["is_zero_value"] for r in pages} == {True, False}
+
+
+def test_the_stats_row_carries_a_cursor_per_class(
+    mixed_value_io, mixed_value_txs, blocks, rates
+) -> None:
+    stats = derived_utxo.build(mixed_value_io, mixed_value_txs, blocks, rates, "btc")[
+        "address_stats"
+    ]
+    alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
+    assert alice["in_tx_ordinal_next"] == 2  # the two non-zero receipts
+    assert alice["in_zero_tx_ordinal_next"] == 1
+
+
+def test_balance_history_is_a_running_total_per_day(
+    mixed_value_io, mixed_value_txs, blocks, rates
+) -> None:
+    """A running total, not a delta: "balance on day D" is then one row rather
+    than a sum over every active day since the address was created."""
+    rows = derived_utxo.build(mixed_value_io, mixed_value_txs, blocks, rates, "btc")[
+        "balance_history"
+    ].collect()
+    alice = [r for r in rows if bytes(r["address"]) == ALICE]
+    assert len(alice) == 1  # all three transfers land on one day
+    assert int(alice[0]["balance"]) == 15
+    assert alice[0]["day"] == 19700101
+    assert alice[0]["currency"] == "BTC"
+
+
+def test_balance_history_accumulates_across_days(spark, blocks, rates) -> None:
+    """Day 2's row carries day 1 + day 2, which is what makes a lookup a single
+    `day <= D LIMIT 1` instead of a sum."""
+    io = spark.createDataFrame(
+        [
+            _io(tx_id(1, 0), True, 0, [ALICE], 10),
+            _io(tx_id(2, 0), True, 0, [ALICE], 5),
+        ],
+        schema=IO_SCHEMA,
+    )
+    txs = spark.createDataFrame(
+        [
+            {"tx_id": tx_id(1, 0), "total_input": 10},
+            {"tx_id": tx_id(2, 0), "total_input": 5},
+        ],
+        schema=TX_SCHEMA,
+    )
+    rows = sorted(
+        derived_utxo.build(io, txs, blocks, rates, "btc")["balance_history"].collect(),
+        key=lambda r: r["day"],
+    )
+    assert [(r["day"], int(r["balance"])) for r in rows] == [
+        (19700101, 10),
+        (19700102, 15),
+    ]

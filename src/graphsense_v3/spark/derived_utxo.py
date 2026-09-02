@@ -38,6 +38,7 @@ TABLES = (
     "address_tx_pages",
     "address_stats",
     "address_by_prefix",
+    "balance_history",
     "address_outgoing_relations",
     "address_incoming_relations",
     "address_link_transactions",
@@ -101,9 +102,13 @@ def address_transactions(spine: "DataFrame", config: NetworkConfig) -> "DataFram
     """
     from pyspark.sql import functions as F
 
-    return common.with_ordinals(spine, ["address", "is_outgoing"], config).select(
+    flagged = common.with_zero_flag(spine)
+    return common.with_ordinals(
+        flagged, ["address", "is_outgoing", "is_zero_value"], config
+    ).select(
         F.col("address"),
         F.col("is_outgoing"),
+        F.col("is_zero_value"),
         F.col("tx_page"),
         F.col("tx_id"),
         F.col("value").cast("decimal(38,0)").alias("value"),
@@ -172,20 +177,7 @@ def address_stats(
     incoming = side(False, "incoming")
     outgoing = side(True, "outgoing")
 
-    cursors = paged.groupBy("address", "is_outgoing").agg(
-        F.max("tx_page").cast("int").alias("page_max"),
-        (F.max("ordinal") + 1).cast("bigint").alias("ordinal_next"),
-    )
-    in_cursor = cursors.where(~F.col("is_outgoing")).select(
-        "address",
-        F.col("page_max").alias("in_tx_page_max"),
-        F.col("ordinal_next").alias("in_tx_ordinal_next"),
-    )
-    out_cursor = cursors.where(F.col("is_outgoing")).select(
-        "address",
-        F.col("page_max").alias("out_tx_page_max"),
-        F.col("ordinal_next").alias("out_tx_ordinal_next"),
-    )
+    cursors = common.paging_cursors(paged)
 
     bounds = spine.groupBy("address").agg(
         F.min("tx_id").alias("first_tx_id"), F.max("tx_id").alias("last_tx_id")
@@ -193,8 +185,7 @@ def address_stats(
     joined = (
         bounds.join(incoming, on="address", how="left")
         .join(outgoing, on="address", how="left")
-        .join(in_cursor, on="address", how="left")
-        .join(out_cursor, on="address", how="left")
+        .join(cursors, on="address", how="left")
         .join(degree, on="address", how="left")
     )
     zero = F.lit(0).cast("bigint")
@@ -222,7 +213,18 @@ def address_stats(
         F.col("out_tx_page_max"),
         F.col("in_tx_ordinal_next"),
         F.col("out_tx_ordinal_next"),
+        F.col("in_zero_tx_page_max"),
+        F.col("out_zero_tx_page_max"),
+        F.col("in_zero_tx_ordinal_next"),
+        F.col("out_zero_tx_ordinal_next"),
     )
+
+
+def _native(network: str):
+    """The native coin ticker as a column. UTXO legs carry no currency."""
+    from pyspark.sql import functions as F
+
+    return F.lit(network.upper())
 
 
 def relation_edges(spine: "DataFrame", transactions: "DataFrame") -> "DataFrame":
@@ -397,6 +399,7 @@ def balance(spine: "DataFrame", network: str, config: NetworkConfig) -> "DataFra
 def build(
     transaction_io: "DataFrame",
     transactions: "DataFrame",
+    blocks: "DataFrame",
     rates: "DataFrame",
     network: str,
     *,
@@ -425,12 +428,16 @@ def build(
         ),
         "address_link_transactions": address_link_transactions(edges, cfg),
         "balance": balance(spine, network, cfg),
+        "balance_history": common.balance_history(
+            spine.withColumn("currency", _native(network)), blocks, cfg
+        ),
     }
 
 
 def load(
     transaction_io: "DataFrame",
     transactions: "DataFrame",
+    blocks: "DataFrame",
     rates: "DataFrame",
     network: str,
     keyspace: str,
@@ -440,7 +447,7 @@ def load(
 ) -> list[str]:
     """Write the derived address tables into ``keyspace``."""
     schema = schema_for(network, Kind.DERIVED)
-    frames = build(transaction_io, transactions, rates, network, config=config)
+    frames = build(transaction_io, transactions, blocks, rates, network, config=config)
     selected = tables or TABLES
     for name in selected:
         writer.check(frames[name], schema.table(name))

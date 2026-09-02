@@ -62,6 +62,17 @@ def currency_struct(value: "Column", fiat: "Column") -> "Column":
     )
 
 
+def with_zero_flag(legs: "DataFrame") -> "DataFrame":
+    """Tag each leg with whether it moved anything.
+
+    A partition-key column, so it has to be computed before ordinals are
+    assigned: pages are numbered within a class, not across them.
+    """
+    from pyspark.sql import functions as F
+
+    return legs.withColumn("is_zero_value", F.col("value") == 0)
+
+
 def with_ordinals(legs: "DataFrame", partition: list, config: NetworkConfig):
     """Number an entity's transfers in ``tx_id`` order and assign a page.
 
@@ -85,12 +96,77 @@ def address_tx_pages(paged: "DataFrame") -> "DataFrame":
     """The page index: which page holds a given ``tx_id`` bound.
 
     Ordinal pages are not tx_id-aligned, so a height or date filter cannot
-    compute the page it needs. Read only when a range filter is present.
+    compute the page it needs. Read only when a range filter is present. One
+    index per partition class, zero-ness included, because that is how the pages
+    it indexes are numbered.
     """
     from pyspark.sql import functions as F
 
-    return paged.groupBy("address", "is_outgoing", "tx_page").agg(
+    return paged.groupBy("address", "is_outgoing", "is_zero_value", "tx_page").agg(
         F.min("tx_id").alias("first_tx_id")
+    )
+
+
+def paging_cursors(paged: "DataFrame") -> "DataFrame":
+    """``address -> the highest page and next ordinal of each partition class``.
+
+    Four classes: direction x zero-ness, matching the *_transactions key.
+    """
+    from pyspark.sql import functions as F
+
+    per_class = paged.groupBy("address", "is_outgoing", "is_zero_value").agg(
+        F.max("tx_page").cast("int").alias("page_max"),
+        (F.max("ordinal") + 1).cast("bigint").alias("ordinal_next"),
+    )
+    frame = None
+    for outgoing in (False, True):
+        for zero in (False, True):
+            prefix = ("out" if outgoing else "in") + ("_zero" if zero else "")
+            side = per_class.where(
+                (F.col("is_outgoing") == F.lit(outgoing))
+                & (F.col("is_zero_value") == F.lit(zero))
+            ).select(
+                "address",
+                F.col("page_max").alias(f"{prefix}_tx_page_max"),
+                F.col("ordinal_next").alias(f"{prefix}_tx_ordinal_next"),
+            )
+            frame = side if frame is None else frame.join(side, "address", "outer")
+    return frame
+
+
+def balance_history(legs: "DataFrame", blocks: "DataFrame", config: NetworkConfig):
+    """The running balance at the end of every day the entity moved.
+
+    A cumulative sum, not a delta -- the one place this schema departs from
+    summable rows, so that "balance on day D" is one row rather than a sum over
+    every active day since the address was created.
+
+    ``blocks`` supplies ``(block_id, timestamp)``; the day comes from the block,
+    not from the transfer, because a transfer has no time of its own.
+    """
+    from pyspark.sql import Window
+    from pyspark.sql import functions as F
+
+    from graphsense_v3.spark.columns import day_key_from_timestamp
+
+    days = blocks.select(
+        F.col("block_id"), day_key_from_timestamp(F.col("timestamp")).alias("day")
+    )
+    signed = F.when(F.col("is_outgoing"), -F.col("value")).otherwise(F.col("value"))
+    daily = (
+        legs.join(days, on="block_id", how="inner")
+        .groupBy("address", "currency", "day")
+        .agg(F.sum(signed).alias("_delta"))
+    )
+    running = Window.partitionBy("address", "currency").orderBy("day")
+    return daily.withColumn(
+        "balance", F.sum("_delta").over(running).cast("decimal(38,0)")
+    ).select(
+        entity_bucket(F.col("address"), config).alias("address_bucket"),
+        F.col("address"),
+        F.col("currency"),
+        F.col("day"),
+        F.col("balance"),
     )
 
 

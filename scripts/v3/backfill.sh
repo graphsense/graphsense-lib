@@ -22,10 +22,10 @@
 #      Do NOT override spark.pyspark.python; the archive carries no interpreter.
 #      `verify` below checks this before anything is submitted.
 #
-#   3. pandas AND pyarrow ON THE EXECUTOR PYTHON. This job uses pandas_udf,
-#      which the pubkey job did not. The archive does not carry them, so the
-#      cluster's executor python must. Check on a worker host:
-#        /home/spark/.venv/bin/python -c "import pandas, pyarrow; print('ok')"
+#   3. pandas AND pyarrow. This job uses pandas_udf, which the pubkey job did
+#      not. They are BAKED INTO THE ARCHIVE at the same versions the driver
+#      runs, so the executors get a matching pair rather than whatever the
+#      cluster venv happens to hold -- `verify` checks it.
 #
 # Usage:
 #   ./scripts/v3/backfill.sh verify                 # image + archive checks only
@@ -104,9 +104,16 @@ case "${1:-}" in
     docker run --rm "$IMAGE:$TAG" sh -c \
       'mkdir -p /tmp/e && tar xzf /opt/graphsense/spark-env.tar.gz -C /tmp/e \
        && PYTHONPATH=/tmp/e python3 -c "import graphsense_v3.codec, graphsense_v3.spark.udf; print(\"executor archive ok\")"'
-    echo
-    echo "STILL TO CHECK BY HAND, on a worker host -- this job uses pandas_udf:"
-    echo "  /home/spark/.venv/bin/python -c \"import pandas, pyarrow; print('ok')\""
+    echo ">>> pandas/pyarrow in the archive, and matching the driver"
+    docker run --rm "$IMAGE:$TAG" sh -c \
+      'mkdir -p /tmp/e && tar xzf /opt/graphsense/spark-env.tar.gz -C /tmp/e \
+       && PYTHONPATH=/tmp/e python3 -c "
+import pandas, pyarrow, pyspark
+print(\"archive pandas\", pandas.__version__, \"pyarrow\", pyarrow.__version__)
+print(\"driver pyspark\", pyspark.__version__)
+assert pandas.__file__.startswith(\"/tmp/e\"), pandas.__file__
+assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
+"'
     ;;
   plan)
     v3 plan -e "$ENV" -n "$NETWORK" --label "$LABEL" --spark-profile "$PROFILE"

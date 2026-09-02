@@ -32,6 +32,7 @@ TOKEN_SCHEMA = (
     "decimal_divisor BIGINT, peg_currency STRING"
 )
 RATES_SCHEMA = "asset STRING, block_id INT, fiat_values MAP<STRING,DOUBLE>"
+BLOCK_SCHEMA = "block_id INT, timestamp BIGINT"
 
 
 def _topic(address: bytes) -> bytes:
@@ -137,6 +138,11 @@ def token_config(spark):
 
 
 @pytest.fixture(scope="module")
+def blocks(spark):
+    return spark.createDataFrame([{"block_id": 1, "timestamp": 0}], schema=BLOCK_SCHEMA)
+
+
+@pytest.fixture(scope="module")
 def rates(spark):
     return spark.createDataFrame(
         [
@@ -150,8 +156,8 @@ def rates(spark):
     )
 
 
-def _build(traces, logs, token_config, rates):
-    return tf.build(traces, logs, token_config, rates, "eth")
+def _build(traces, logs, token_config, blocks, rates):
+    return tf.build(traces, logs, token_config, blocks, rates, "eth")
 
 
 def test_a_failed_trace_moved_nothing(traces) -> None:
@@ -192,7 +198,7 @@ def test_an_unconfigured_contract_is_not_a_token(logs, token_config) -> None:
 
 
 def test_a_pegged_token_is_worth_its_face_value(
-    traces, logs, token_config, rates
+    traces, logs, token_config, blocks, rates
 ) -> None:
     """A USD-pegged stablecoin is 2.0 USD for 2_000_000 base units at 6
     decimals; the other fiat currency follows from the base cross rate."""
@@ -209,7 +215,7 @@ def test_a_pegged_token_is_worth_its_face_value(
 
 
 def test_the_native_coin_is_priced_from_the_block_rate(
-    traces, logs, token_config, rates
+    traces, logs, token_config, blocks, rates
 ) -> None:
     moves = tf.priced(
         tf.transfers(traces, logs, token_config, "eth"),
@@ -249,7 +255,7 @@ def test_an_unpegged_token_without_a_rate_gets_no_fiat(
 
 
 def test_a_transfer_names_both_ends_so_a_leg_is_not_netted(
-    traces, logs, token_config, rates
+    traces, logs, token_config, blocks, rates
 ) -> None:
     """No apportioning and no netting question: direction is a property of the
     leg, not of a sum, which is why D7 has no account counterpart."""
@@ -274,9 +280,9 @@ def test_a_contract_deployed_internally_is_still_a_contract(traces) -> None:
 
 
 def test_stats_separate_native_from_token_totals(
-    traces, logs, token_config, rates
+    traces, logs, token_config, blocks, rates
 ) -> None:
-    stats = _build(traces, logs, token_config, rates)["address_stats"]
+    stats = _build(traces, logs, token_config, blocks, rates)["address_stats"]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
     assert int(alice["total_spent"]["value"]) == 10**18
     assert int(alice["total_tokens_spent"]["USDT"]["value"]) == 2_000_000
@@ -284,18 +290,20 @@ def test_stats_separate_native_from_token_totals(
     assert alice["out_degree"] == 2  # BOB and the created contract
 
 
-def test_balance_is_per_asset(traces, logs, token_config, rates) -> None:
+def test_balance_is_per_asset(traces, logs, token_config, blocks, rates) -> None:
     """An account address holds a balance in every token it has touched, which
     is why currency is in this table's key and not in UTXO's."""
-    rows = _build(traces, logs, token_config, rates)["balance"].collect()
+    rows = _build(traces, logs, token_config, blocks, rates)["balance"].collect()
     by_key = {(bytes(r["address"]), r["currency"]): int(r["balance"]) for r in rows}
     assert by_key[(ALICE, "USDT")] == -2_000_000
     assert by_key[(BOB, "USDT")] == 2_000_000
     assert by_key[(ALICE, "ETH")] == -(10**18)
 
 
-def test_relations_carry_token_values(traces, logs, token_config, rates) -> None:
-    frames = _build(traces, logs, token_config, rates)
+def test_relations_carry_token_values(
+    traces, logs, token_config, blocks, rates
+) -> None:
+    frames = _build(traces, logs, token_config, blocks, rates)
     edge = next(
         r
         for r in frames["address_outgoing_relations"].collect()
@@ -307,21 +315,23 @@ def test_relations_carry_token_values(traces, logs, token_config, rates) -> None
 
 
 def test_link_transactions_are_partitioned_per_edge(
-    traces, logs, token_config, rates
+    traces, logs, token_config, blocks, rates
 ) -> None:
     """The account half of D10: fewer addresses with more transactions per edge,
     so the repeated destination costs less than the partitions it saves."""
     table = schema_for("eth", Kind.DERIVED).table("address_link_transactions")
     assert table.key.partition == ("src_address", "dst_address", "tx_page")
-    links = _build(traces, logs, token_config, rates)[
+    links = _build(traces, logs, token_config, blocks, rates)[
         "address_link_transactions"
     ].collect()
     assert {r["currency"] for r in links} == {"ETH", "USDT"}
 
 
-def test_every_frame_conforms_to_its_table(traces, logs, token_config, rates) -> None:
+def test_every_frame_conforms_to_its_table(
+    traces, logs, token_config, blocks, rates
+) -> None:
     schema = schema_for("eth", Kind.DERIVED)
-    frames = _build(traces, logs, token_config, rates)
+    frames = _build(traces, logs, token_config, blocks, rates)
     assert set(frames) == set(tf.TABLES)
     for name, frame in frames.items():
         assert conformance_errors(list(frame.columns), schema.table(name)) == []
@@ -330,3 +340,29 @@ def test_every_frame_conforms_to_its_table(traces, logs, token_config, rates) ->
 def test_tron_uses_its_own_native_symbol_and_divisor() -> None:
     assert tf.NATIVE["trx"] == ("TRX", 10**6)
     assert config_for("trx").entity_buckets > 0
+
+
+def test_zero_value_transfers_are_a_separate_partition(
+    traces, logs, token_config, blocks, rates
+) -> None:
+    """The reason this exists: on ETH and TRON a zero-value transfer is a
+    contract call that moved nothing, and they dominate an address's listing."""
+    frames = _build(traces, logs, token_config, blocks, rates)
+    rows = frames["address_transactions"].collect()
+    zero = [r for r in rows if r["is_zero_value"]]
+    assert zero and all(int(r["value"]) == 0 for r in zero)
+    assert all(int(r["value"]) != 0 for r in rows if not r["is_zero_value"])
+
+
+def test_balance_history_is_per_asset_and_cumulative(
+    traces, logs, token_config, blocks, rates
+) -> None:
+    """Per asset, like `balance` -- an account address holds a history in every
+    token it has touched."""
+    rows = _build(traces, logs, token_config, blocks, rates)[
+        "balance_history"
+    ].collect()
+    by_key = {(bytes(r["address"]), r["currency"]): int(r["balance"]) for r in rows}
+    assert by_key[(ALICE, "USDT")] == -2_000_000
+    assert by_key[(BOB, "ETH")] == 10**18
+    assert {r["day"] for r in rows} == {19700101}
