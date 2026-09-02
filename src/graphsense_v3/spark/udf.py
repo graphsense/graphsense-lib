@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from graphsense_v3.codec import (
     DEFAULT_PREFIX_LENGTH,
     TX_INDEX_BITS,
+    decode_address,
     encode_address,
     search_prefix,
 )
@@ -113,3 +114,39 @@ def tx_id_expr(block_id: "Column", index: "Column") -> "Column":
     from pyspark.sql import functions as F
 
     return F.shiftleft(block_id.cast("long"), TX_INDEX_BITS) + index.cast("long")
+
+
+def block_of_tx_id_expr(tx_id: "Column") -> "Column":
+    """``tx_id >> 32`` -- the block, mirroring :func:`codec.block_of_tx_id`.
+
+    Worth having natively: it means a table keyed by ``tx_id`` never has to join
+    anything to find out which block, and therefore which exchange rate, a row
+    belongs to.
+    """
+    from pyspark.sql import functions as F
+
+    return F.shiftright(tx_id, TX_INDEX_BITS).cast("int")
+
+
+def search_prefix_bytes_udf(network: str, length: int = DEFAULT_PREFIX_LENGTH):
+    """Stored address bytes -> the ``address_by_prefix`` partition key.
+
+    The transformed side only ever holds encoded addresses, so the prefix has to
+    come back out of the bytes. Applied to DISTINCT addresses, not to every row.
+    """
+    import pandas as pd
+    from pyspark.sql.functions import pandas_udf
+    from pyspark.sql.types import StringType
+
+    net = network.lower()
+
+    def _one(raw):
+        if raw is None:
+            return None
+        return search_prefix(net, decode_address(net, bytes(raw)), length)
+
+    @pandas_udf(StringType())  # ty: ignore[no-matching-overload]
+    def _prefix(values: pd.Series) -> pd.Series:
+        return values.map(_one)
+
+    return _prefix

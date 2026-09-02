@@ -34,13 +34,28 @@ _BECH32_DEAD_PREFIX: dict[str, str] = {
 DEFAULT_PREFIX_LENGTH = 4
 
 
+#: The synthetic source of a coinbase transaction's value. graphsense-spark
+#: inserts a literal "coinbase" input on such transactions
+#: (`utxo/Transformation.scala:111-125`) and the REST surfaces the string as an
+#: address (`comparison_service.py:55`), so v3 has to keep it -- but under D1 an
+#: address is bytes, and "coinbase" is not an encodable address. Empty bytes is
+#: the sentinel: no real address encodes to it, since every codec emits at least
+#: one byte for a non-empty string.
+COINBASE = "coinbase"
+COINBASE_BYTES = b""
+
+
 def encode_address(network: str, address: str) -> bytes:
     """User-format address string -> stored bytes."""
+    if address == COINBASE:
+        return COINBASE_BYTES
     return address_to_bytes(network.lower(), address)
 
 
 def decode_address(network: str, address: bytes) -> str:
     """Stored bytes -> user-format address string."""
+    if address == COINBASE_BYTES:
+        return COINBASE
     return address_to_str(network.lower(), address)
 
 
