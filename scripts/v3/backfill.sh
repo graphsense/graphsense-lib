@@ -38,7 +38,7 @@
 # Env vars:
 #   IMAGE, TAG          default graphsense-lib / v3
 #   ENV                 config environment; default prod
-#   NETWORK             default btc (the transformed stage is UTXO-only)
+#   NETWORK             default btc; both families transform
 #   LABEL               keyspace suffix; default bench1
 #   PROFILE             spark_config profile; default v3-utxo
 #   WRITER              connector | sidecar; default sidecar
@@ -116,7 +116,7 @@ case "${1:-}" in
     ;;
   schema)
     v3 schema -n "$NETWORK" --kind raw --label "$LABEL" "${REPLICATION[@]}"
-    v3 schema -n "$NETWORK" --kind transformed --label "$LABEL" "${REPLICATION[@]}"
+    v3 schema -n "$NETWORK" --kind derived --label "$LABEL" "${REPLICATION[@]}"
     ;;
   dry-run)
     v3 -v run -e "$ENV" -n "$NETWORK" --label "$LABEL" \

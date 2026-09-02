@@ -131,7 +131,7 @@ def block_of_tx_id_expr(tx_id: "Column") -> "Column":
 def search_prefix_bytes_udf(network: str, length: int = DEFAULT_PREFIX_LENGTH):
     """Stored address bytes -> the ``address_by_prefix`` partition key.
 
-    The transformed side only ever holds encoded addresses, so the prefix has to
+    The derived side only ever holds encoded addresses, so the prefix has to
     come back out of the bytes. Applied to DISTINCT addresses, not to every row.
     """
     import pandas as pd

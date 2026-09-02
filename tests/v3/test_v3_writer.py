@@ -3,11 +3,11 @@ mismatch fails at job start rather than partway through a multi-hour run."""
 
 import pytest
 
-from graphsense_v3.schema.definitions import transformed
+from graphsense_v3.schema.definitions import derived
 from graphsense_v3.schema.model import Family
 from graphsense_v3.spark.writer import conformance_errors
 
-STATS = transformed(Family.UTXO).table("address_stats")
+STATS = derived(Family.UTXO).table("address_stats")
 KEY_COLUMNS = ["address_bucket", "address", "epoch"]
 
 
@@ -40,6 +40,6 @@ def test_reports_every_problem_at_once() -> None:
 
 @pytest.mark.parametrize("family", list(Family))
 def test_link_table_key_columns_are_required(family: Family) -> None:
-    table = transformed(family).table("address_link_transactions")
+    table = derived(family).table("address_link_transactions")
     errors = conformance_errors(["src_address"], table)
     assert errors, "a write missing the counterparty must be rejected"

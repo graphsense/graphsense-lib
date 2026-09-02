@@ -1,4 +1,4 @@
-"""Raw UTXO -> transformed address tables.
+"""Raw UTXO -> derived address tables.
 
 The interesting assertions are the two places v3 departs from graphsense-spark:
 un-netting an address that appears on both sides of a transaction (D7), and
@@ -12,7 +12,7 @@ import pytest
 from graphsense_v3.codec import encode_address, tx_id
 from graphsense_v3.config import config_for
 from graphsense_v3.schema import Kind, schema_for
-from graphsense_v3.spark import transformed_utxo
+from graphsense_v3.spark import derived_common, derived_utxo
 from graphsense_v3.spark.writer import conformance_errors
 
 ALICE = encode_address("btc", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
@@ -87,7 +87,7 @@ def self_change_io(spark):
 
 def test_an_address_on_both_sides_yields_two_legs(self_change_io) -> None:
     """D7. The netted form loses the receipt entirely."""
-    rows = transformed_utxo.legs(self_change_io).collect()
+    rows = derived_utxo.legs(self_change_io).collect()
     alice = sorted(
         ((r["is_outgoing"], r["value"]) for r in rows if bytes(r["address"]) == ALICE)
     )
@@ -98,7 +98,7 @@ def test_an_address_on_both_sides_yields_two_legs(self_change_io) -> None:
 def test_legs_are_gross_not_net(self_change_io, self_change_txs, rates) -> None:
     """The visible consequence: total_received and total_spent are both real
     amounts, and a self-change transaction counts once in each direction."""
-    stats = transformed_utxo.build(self_change_io, self_change_txs, rates, "btc")[
+    stats = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")[
         "address_stats"
     ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
@@ -116,7 +116,7 @@ def test_multi_address_ios_are_excluded(spark, rates) -> None:
         [_io(tx, True, 0, [ALICE, BOB], 10), _io(tx, True, 1, [BOB], 5)],
         schema=IO_SCHEMA,
     )
-    rows = transformed_utxo.legs(io).collect()
+    rows = derived_utxo.legs(io).collect()
     assert [(bytes(r["address"]), r["value"]) for r in rows] == [(BOB, 5)]
 
 
@@ -128,7 +128,7 @@ def test_repeated_address_on_one_side_is_one_leg(spark, rates) -> None:
         [_io(tx, True, 0, [ALICE], 4), _io(tx, True, 1, [ALICE], 6)],
         schema=IO_SCHEMA,
     )
-    rows = transformed_utxo.legs(io).collect()
+    rows = derived_utxo.legs(io).collect()
     assert [(r["is_outgoing"], r["value"]) for r in rows] == [(False, 10)]
 
 
@@ -145,8 +145,8 @@ def test_ordinal_paging_fills_pages_by_construction(many_io, rates) -> None:
     """A page holds exactly tx_page_size rows because the ordinal is the
     address's own count -- immune to burst and to dormancy alike."""
     config = replace(config_for("btc"), tx_page_size=2)
-    paged = transformed_utxo.address_transactions(
-        transformed_utxo.legs(many_io), config
+    paged = derived_utxo.address_transactions(
+        derived_utxo.legs(many_io), config
     ).collect()
     by_page: dict[int, list[int]] = {}
     for row in sorted(paged, key=lambda r: r["tx_id"]):
@@ -158,12 +158,10 @@ def test_ordinal_paging_fills_pages_by_construction(many_io, rates) -> None:
 def test_page_index_gives_the_entry_page_for_a_bound(many_io, rates) -> None:
     """Ordinal pages are not tx_id-aligned, so a height filter needs this."""
     config = replace(config_for("btc"), tx_page_size=2)
-    paged = transformed_utxo.address_transactions(
-        transformed_utxo.legs(many_io), config
-    )
+    paged = derived_utxo.address_transactions(derived_utxo.legs(many_io), config)
     pages = {
         r["tx_page"]: r["first_tx_id"]
-        for r in transformed_utxo.address_tx_pages(paged).collect()
+        for r in derived_common.address_tx_pages(paged).collect()
     }
     assert pages == {0: tx_id(1, 0), 1: tx_id(1, 2), 2: tx_id(2, 1)}
 
@@ -172,7 +170,7 @@ def test_fiat_is_summed_per_leg_at_its_own_block_rate(many_io, many_txs, rates) 
     """Three receipts of 10 sat in block 1 at 100 EUR/coin and two in block 2 at
     300. Pricing the total at one rate would be an answer about no real moment.
     """
-    stats = transformed_utxo.build(many_io, many_txs, rates, "btc")["address_stats"]
+    stats = derived_utxo.build(many_io, many_txs, rates, "btc")["address_stats"]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
     each_block1 = round(10 * 100.0 / 10**8, 2)
     each_block2 = round(10 * 300.0 / 10**8, 2)
@@ -187,7 +185,7 @@ def test_a_block_without_a_rate_contributes_no_fiat(spark, many_io, many_txs) ->
     only_block_two = spark.createDataFrame(
         [{"block_id": 2, "fiat_values": {"EUR": 300.0}}], schema=RATES_SCHEMA
     )
-    stats = transformed_utxo.build(many_io, many_txs, only_block_two, "btc")[
+    stats = derived_utxo.build(many_io, many_txs, only_block_two, "btc")[
         "address_stats"
     ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
@@ -199,9 +197,9 @@ def test_a_block_without_a_rate_contributes_no_fiat(spark, many_io, many_txs) ->
 
 
 def test_frames_conform_to_the_schema(self_change_io, self_change_txs, rates) -> None:
-    schema = schema_for("btc", Kind.TRANSFORMED)
-    frames = transformed_utxo.build(self_change_io, self_change_txs, rates, "btc")
-    assert set(frames) == set(transformed_utxo.TABLES)
+    schema = schema_for("btc", Kind.DERIVED)
+    frames = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")
+    assert set(frames) == set(derived_utxo.TABLES)
     for name, frame in frames.items():
         assert conformance_errors(list(frame.columns), schema.table(name)) == []
 
@@ -209,8 +207,8 @@ def test_frames_conform_to_the_schema(self_change_io, self_change_txs, rates) ->
 def test_search_prefix_comes_back_out_of_the_bytes(
     self_change_io, self_change_txs, rates
 ) -> None:
-    """The transformed side only ever holds encoded addresses."""
-    rows = transformed_utxo.build(self_change_io, self_change_txs, rates, "btc")[
+    """The derived side only ever holds encoded addresses."""
+    rows = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")[
         "address_by_prefix"
     ].collect()
     by_address = {bytes(r["address"]): r["address_prefix"] for r in rows}
@@ -251,8 +249,8 @@ def split_txs(spark):
 def test_edge_value_is_apportioned_by_input_share(split_io, split_txs) -> None:
     """A UTXO transaction does not say which input paid which output, so a
     source supplying 30% of the input is credited with 30% of each output."""
-    edges = transformed_utxo.relation_edges(
-        transformed_utxo.legs(split_io), split_txs
+    edges = derived_utxo.relation_edges(
+        derived_utxo.legs(split_io), split_txs
     ).collect()
     by_src = {bytes(r["src_address"]): r["value"] for r in edges}
     assert by_src == {ALICE: 30, BOB: 70}
@@ -266,9 +264,7 @@ def test_unattributable_input_is_not_over_attributed(spark, split_io) -> None:
     txs = spark.createDataFrame(
         [{"tx_id": tx_id(1, 0), "total_input": 200}], schema=TX_SCHEMA
     )
-    edges = transformed_utxo.relation_edges(
-        transformed_utxo.legs(split_io), txs
-    ).collect()
+    edges = derived_utxo.relation_edges(derived_utxo.legs(split_io), txs).collect()
     assert sum(r["value"] for r in edges) == 50  # not 100
 
 
@@ -276,18 +272,18 @@ def test_self_edges_are_dropped(self_change_io, self_change_txs) -> None:
     """Un-netting lets an address be both source and destination of one
     transaction, which the netted model could never produce. New filter,
     required by App. B.1."""
-    edges = transformed_utxo.relation_edges(
-        transformed_utxo.legs(self_change_io), self_change_txs
+    edges = derived_utxo.relation_edges(
+        derived_utxo.legs(self_change_io), self_change_txs
     ).collect()
     assert all(bytes(r["src_address"]) != bytes(r["dst_address"]) for r in edges)
     assert {bytes(r["dst_address"]) for r in edges} == {BOB}
 
 
 def test_degrees_count_distinct_counterparties(split_io, split_txs) -> None:
-    edges = transformed_utxo.relation_edges(transformed_utxo.legs(split_io), split_txs)
+    edges = derived_utxo.relation_edges(derived_utxo.legs(split_io), split_txs)
     by_address = {
         bytes(r["address"]): (r["in_degree"], r["out_degree"])
-        for r in transformed_utxo.degrees(edges).collect()
+        for r in derived_utxo.degrees(edges).collect()
     }
     assert by_address[CAROL][0] == 2  # Alice and Bob
     assert by_address[ALICE][1] == 1
@@ -298,7 +294,7 @@ def test_relations_bucket_the_far_side(split_io, split_txs, rates) -> None:
     relation_buckets partitions and stops once it has in_degree rows."""
     from graphsense_v3.codec import bucket
 
-    frames = transformed_utxo.build(split_io, split_txs, rates, "btc")
+    frames = derived_utxo.build(split_io, split_txs, rates, "btc")
     buckets = config_for("btc").relation_buckets
     for row in frames["address_incoming_relations"].collect():
         assert row["rel_bucket"] == bucket(bytes(row["src_address"]), buckets)
@@ -309,7 +305,7 @@ def test_relations_bucket_the_far_side(split_io, split_txs, rates) -> None:
 def test_link_transactions_carry_the_tx_list(split_io, split_txs, rates) -> None:
     """The /links fix: the transactions behind an edge, not just their count.
     Both writers already materialise these tuples and aggregate them away."""
-    frames = transformed_utxo.build(split_io, split_txs, rates, "btc")
+    frames = derived_utxo.build(split_io, split_txs, rates, "btc")
     links = frames["address_link_transactions"].collect()
     assert {(bytes(r["src_address"]), int(r["value"])) for r in links} == {
         (ALICE, 30),
@@ -325,7 +321,7 @@ def test_link_transactions_carry_the_tx_list(split_io, split_txs, rates) -> None
 def test_balance_is_received_minus_spent(
     self_change_io, self_change_txs, rates
 ) -> None:
-    frames = transformed_utxo.build(self_change_io, self_change_txs, rates, "btc")
+    frames = derived_utxo.build(self_change_io, self_change_txs, rates, "btc")
     by_address = {
         bytes(r["address"]): int(r["balance"]) for r in frames["balance"].collect()
     }
@@ -336,8 +332,8 @@ def test_balance_is_received_minus_spent(
 
 def test_every_frame_conforms_to_its_table(split_io, split_txs, rates) -> None:
     """All eight tables, checked against the model before a single write."""
-    schema = schema_for("btc", Kind.TRANSFORMED)
-    frames = transformed_utxo.build(split_io, split_txs, rates, "btc")
-    assert set(frames) == set(transformed_utxo.TABLES)
+    schema = schema_for("btc", Kind.DERIVED)
+    frames = derived_utxo.build(split_io, split_txs, rates, "btc")
+    assert set(frames) == set(derived_utxo.TABLES)
     for name, frame in frames.items():
         assert conformance_errors(list(frame.columns), schema.table(name)) == []

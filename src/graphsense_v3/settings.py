@@ -28,7 +28,7 @@ from graphsense_v3.spark.profile import resolve, warnings
 #: carry a ``_v3`` segment, and none of the configured environment names is
 #: ``v3`` (``config.py:18``). The label, when given, keeps successive runs apart.
 V3_MARKER = "v3"
-V3_KEYSPACE = re.compile(r"^[a-z]{3,4}_(raw|transformed)_v3(_[a-z0-9]+)?$")
+V3_KEYSPACE = re.compile(r"^[a-z]{3,4}_(raw|derived)_v3(_[a-z0-9]+)?$")
 
 
 class UnsafeKeyspace(RuntimeError):
@@ -54,7 +54,7 @@ def assert_v3_keyspace(name: str) -> None:
     if not V3_KEYSPACE.match(name or ""):
         raise UnsafeKeyspace(
             f"{name!r} is not a v3 keyspace name. v3 writes only to "
-            f"<network>_<raw|transformed>_v3[_<label>], which no existing "
+            f"<network>_<raw|derived>_v3[_<label>], which no existing "
             "keyspace matches -- this is what keeps a v3 run off the live data."
         )
 
@@ -77,7 +77,7 @@ class RunSettings:
     env: str
     lake_root: str
     raw_keyspace: str
-    transformed_keyspace: str
+    derived_keyspace: str
     #: The *existing* keyspace holding ``exchange_rates``. Read-only: rates are
     #: not in the lake and the gslib exchange-rates path owns that table.
     rates_keyspace: str
@@ -140,7 +140,7 @@ class RunSettings:
                 f"environment        {self.env}",
                 f"lake               {self.lake_root}",
                 f"raw keyspace       {self.raw_keyspace}      (created, written)",
-                f"transformed        {self.transformed_keyspace}      (created, written)",
+                f"derived        {self.derived_keyspace}      (created, written)",
                 f"rates keyspace     {self.rates_keyspace}      (READ ONLY)",
                 f"cassandra          {', '.join(self.cassandra_nodes) or '(none)'}",
                 f"spark profile      {self.spark_profile or '(baseline)'}",
@@ -199,7 +199,7 @@ def from_config(
         env=env,
         lake_root=lake.delta_sink.directory,
         raw_keyspace=v3_keyspace(network, Kind.RAW, label),
-        transformed_keyspace=v3_keyspace(network, Kind.TRANSFORMED, label),
+        derived_keyspace=v3_keyspace(network, Kind.DERIVED, label),
         rates_keyspace=keyspaces.raw_keyspace_name,
         cassandra_nodes=list(environment.cassandra_nodes),
         username=environment.username,
@@ -220,7 +220,7 @@ def assert_no_conflict(settings: RunSettings, config: Any) -> None:
     ``v3``, which would make ``btc_raw_v3`` a real v2 keyspace. This does.
     """
     existing = configured_keyspaces(config)
-    for name in (settings.raw_keyspace, settings.transformed_keyspace):
+    for name in (settings.raw_keyspace, settings.derived_keyspace):
         assert_v3_keyspace(name)
         if name in existing:
             raise UnsafeKeyspace(
@@ -230,6 +230,6 @@ def assert_no_conflict(settings: RunSettings, config: Any) -> None:
             )
     if settings.rates_keyspace in (
         settings.raw_keyspace,
-        settings.transformed_keyspace,
+        settings.derived_keyspace,
     ):
         raise UnsafeKeyspace("the read-only rates keyspace cannot be a write target")

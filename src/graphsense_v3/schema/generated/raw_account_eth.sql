@@ -165,16 +165,14 @@ CREATE TABLE IF NOT EXISTS trace (
     AND compaction = {'class':'SizeTieredCompactionStrategy'}
     AND compression = {'class':'ZstdCompressor','chunk_length_in_kb':16};
 
+-- list<float> -> map: the positional list silently corrupts every
+-- historical row when a fiat currency is added or reordered.
+--
+-- One partition per asset, ~5 500 dates in it. 'token' is a reserved
+-- word, hence `asset` -- which is the better name anyway now that the
+-- native coin lives here too.
 CREATE TABLE IF NOT EXISTS exchange_rates (
-    date text,
-    fiat_values frozen<map<text, double>>,
-    PRIMARY KEY (date)
-)
-    WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
-    AND compaction = {'class':'SizeTieredCompactionStrategy'};
-
-CREATE TABLE IF NOT EXISTS token_exchange_rates (
-    asset text,                             -- 'token' is reserved
+    asset text,                             -- native coin ticker, or a token's
     date text,
     fiat_values frozen<map<text, double>>,
     PRIMARY KEY (asset, date)
@@ -219,12 +217,29 @@ CREATE TABLE IF NOT EXISTS markers (
     WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
+-- `no_blocks` is renamed. It held a HEIGHT (max block + 1), not a
+-- count, which made it the one `no_*` column in the schema that was
+-- not one -- every other (no_inputs, no_transactions, no_logs,
+-- no_addresses) is a genuine count. The two coincide only for a
+-- keyspace starting at block 0, so the ambiguity was invisible until
+-- v3 started backfilling ranges.
+--
+-- lowest_block is new, and is what makes the range self-describing:
+-- a partial keyspace can now say what it covers instead of implying
+-- a height it does not reach.
+--
+-- The row describes THIS keyspace and nothing else. v2 also carried
+-- timestamp_transform and no_blocks_transform, so the derived
+-- keyspace could report how far the RAW one had got -- a second
+-- keyspace's fact, copied, and therefore able to go stale. In v3 raw
+-- and derived advance together, so there is no lag to record;
+-- anything that wants to compare them reads both rows, which it can,
+-- since it knows both keyspace names.
 CREATE TABLE IF NOT EXISTS summary_statistics (
     id int,
     timestamp bigint,                       -- was int: unix seconds, 2038 cliff
-    timestamp_transform bigint,
-    no_blocks bigint,
-    no_blocks_transform bigint,
+    lowest_block bigint,                    -- the range this keyspace covers
+    highest_block bigint,                   -- was no_blocks, which was a height
     no_transactions bigint,
     no_addresses bigint,
     no_address_relations bigint,

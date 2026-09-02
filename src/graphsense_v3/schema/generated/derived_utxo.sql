@@ -1,4 +1,4 @@
--- generated: transformed / account
+-- generated: derived / utxo
 -- Do not edit by hand; edit graphsense_v3.schema.definitions.
 
 CREATE KEYSPACE IF NOT EXISTS __KEYSPACE__
@@ -9,11 +9,6 @@ USE __KEYSPACE__;
 CREATE TYPE IF NOT EXISTS currency (
     value varint,
     fiat_values frozen<map<text, double>>
-);
-
-CREATE TYPE IF NOT EXISTS tx_reference (
-    trace_index int,
-    log_index int
 );
 
 -- Aggregates as SUMMABLE ROWS, replacing v2's client-side read-modify-write.
@@ -52,8 +47,6 @@ CREATE TABLE IF NOT EXISTS address_stats (
     no_outgoing_txs_zero_value bigint,
     total_received frozen<currency>,
     total_spent frozen<currency>,
-    total_tokens_received frozen<map<text, frozen<currency>>>,
-    total_tokens_spent frozen<map<text, frozen<currency>>>,
     first_tx_id bigint,                     -- min-merge
     last_tx_id bigint,                      -- max-merge
     in_degree bigint,                       -- epoch 0 only: not summable
@@ -64,7 +57,6 @@ CREATE TABLE IF NOT EXISTS address_stats (
     out_tx_page_max int,
     in_tx_ordinal_next bigint,
     out_tx_ordinal_next bigint,
-    is_contract boolean,
     PRIMARY KEY (address_bucket, address, epoch)
 )
     WITH CLUSTERING ORDER BY (address ASC, epoch ASC)
@@ -86,12 +78,10 @@ CREATE TABLE IF NOT EXISTS address_transactions (
     is_outgoing boolean,
     tx_page int,
     tx_id bigint,
-    tx_reference frozen<tx_reference>,
-    currency text,
     value varint,
-    PRIMARY KEY ((address, is_outgoing, tx_page), tx_id, tx_reference, currency)
+    PRIMARY KEY ((address, is_outgoing, tx_page), tx_id)
 )
-    WITH CLUSTERING ORDER BY (tx_id DESC, tx_reference DESC, currency ASC)
+    WITH CLUSTERING ORDER BY (tx_id DESC)
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
 -- Append-only tail. Ingest writes ONLY here, keyed by block_batch, which
@@ -106,12 +96,10 @@ CREATE TABLE IF NOT EXISTS address_transactions_recent (
     is_outgoing boolean,
     block_batch int,
     tx_id bigint,
-    tx_reference frozen<tx_reference>,
-    currency text,
     value varint,
-    PRIMARY KEY ((address, is_outgoing, block_batch), tx_id, tx_reference, currency)
+    PRIMARY KEY ((address, is_outgoing, block_batch), tx_id)
 )
-    WITH CLUSTERING ORDER BY (tx_id DESC, tx_reference DESC, currency ASC)
+    WITH CLUSTERING ORDER BY (tx_id DESC)
     AND compaction = {'class':'LeveledCompactionStrategy'}
     AND gc_grace_seconds = 259200;
 
@@ -148,7 +136,6 @@ CREATE TABLE IF NOT EXISTS address_incoming_relations (
     epoch int,                              -- as address_stats: summable
     no_transactions bigint,                 -- was int
     value frozen<currency>,
-    token_values frozen<map<text, frozen<currency>>>,
     link_page_max int,                      -- epoch 0 only
     link_ordinal_next bigint,
     PRIMARY KEY ((dst_address, rel_bucket), src_address, epoch)
@@ -173,7 +160,6 @@ CREATE TABLE IF NOT EXISTS address_outgoing_relations (
     epoch int,                              -- as address_stats: summable
     no_transactions bigint,                 -- was int
     value frozen<currency>,
-    token_values frozen<map<text, frozen<currency>>>,
     link_page_max int,                      -- epoch 0 only
     link_ordinal_next bigint,
     PRIMARY KEY ((src_address, rel_bucket), dst_address, epoch)
@@ -198,15 +184,13 @@ CREATE TABLE IF NOT EXISTS address_outgoing_relations (
 -- aggregate them away, which is why /links has to rescan raw io membership.
 CREATE TABLE IF NOT EXISTS address_link_transactions (
     src_address blob,
+    dst_bucket int,                         -- murmur3(dst) % relation_buckets
     dst_address blob,
-    tx_page int,
     tx_id bigint,
-    tx_reference frozen<tx_reference>,
-    currency text,
     value varint,
-    PRIMARY KEY ((src_address, dst_address, tx_page), tx_id, tx_reference, currency)
+    PRIMARY KEY ((src_address, dst_bucket), dst_address, tx_id)
 )
-    WITH CLUSTERING ORDER BY (tx_id DESC, tx_reference DESC, currency ASC)
+    WITH CLUSTERING ORDER BY (dst_address ASC, tx_id DESC)
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
 CREATE TABLE IF NOT EXISTS balance (
@@ -238,16 +222,24 @@ CREATE TABLE IF NOT EXISTS address_by_prefix (
 )
     WITH compaction = {'class':'SizeTieredCompactionStrategy'};
 
--- Bucketed. v2 keys this by block_id alone: 20.25M single-row partitions
--- of 86 bytes on TRX, carrying a 24 MB bloom filter and 2.5 MB index
--- summary over 778 MB of data -- the partition index exceeds what it
--- indexes. /rates/{height} stays a point read; the group is computed
--- client-side.
+-- One table for every asset's price, the native coin included. Split in
+-- two, the token half inherited no bucketing -- v2 keys it
+-- (asset, block_id), so one asset's partition grows with the chain:
+-- 85.8M rows for a TRON stablecoin. Merged, both get the same key and
+-- the same fix.
+--
+-- Bucketed on the block. v2's coin table keys by block_id alone: 20.25M
+-- single-row partitions of 86 bytes on TRX, carrying a 24 MB bloom
+-- filter and 2.5 MB index summary over 778 MB of data -- the partition
+-- index exceeds what it indexes. /rates/{height} stays a point read and
+-- order A5 (rate at or before a height) is preserved; the group is
+-- computed client-side.
 CREATE TABLE IF NOT EXISTS exchange_rates (
+    asset text,                             -- native coin ticker, or a token's
     block_id_group int,
     block_id int,
     fiat_values frozen<map<text, double>>,
-    PRIMARY KEY (block_id_group, block_id)
+    PRIMARY KEY ((asset, block_id_group), block_id)
 )
     WITH CLUSTERING ORDER BY (block_id DESC)
     AND caching = {'keys':'ALL','rows_per_partition':'ALL'}
@@ -290,39 +282,33 @@ CREATE TABLE IF NOT EXISTS markers (
     WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};
 
+-- `no_blocks` is renamed. It held a HEIGHT (max block + 1), not a
+-- count, which made it the one `no_*` column in the schema that was
+-- not one -- every other (no_inputs, no_transactions, no_logs,
+-- no_addresses) is a genuine count. The two coincide only for a
+-- keyspace starting at block 0, so the ambiguity was invisible until
+-- v3 started backfilling ranges.
+--
+-- lowest_block is new, and is what makes the range self-describing:
+-- a partial keyspace can now say what it covers instead of implying
+-- a height it does not reach.
+--
+-- The row describes THIS keyspace and nothing else. v2 also carried
+-- timestamp_transform and no_blocks_transform, so the derived
+-- keyspace could report how far the RAW one had got -- a second
+-- keyspace's fact, copied, and therefore able to go stale. In v3 raw
+-- and derived advance together, so there is no lag to record;
+-- anything that wants to compare them reads both rows, which it can,
+-- since it knows both keyspace names.
 CREATE TABLE IF NOT EXISTS summary_statistics (
     id int,
     timestamp bigint,                       -- was int: unix seconds, 2038 cliff
-    timestamp_transform bigint,
-    no_blocks bigint,
-    no_blocks_transform bigint,
+    lowest_block bigint,                    -- the range this keyspace covers
+    highest_block bigint,                   -- was no_blocks, which was a height
     no_transactions bigint,
     no_addresses bigint,
     no_address_relations bigint,
     PRIMARY KEY (id)
-)
-    WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
-    AND compaction = {'class':'SizeTieredCompactionStrategy'};
-
--- Order A5 (rate at or before a height) preserved.
-CREATE TABLE IF NOT EXISTS token_exchange_rates (
-    asset text,
-    block_id int,
-    fiat_values frozen<map<text, double>>,
-    PRIMARY KEY (asset, block_id)
-)
-    WITH CLUSTERING ORDER BY (block_id DESC)
-    AND caching = {'keys':'ALL','rows_per_partition':'ALL'}
-    AND compaction = {'class':'SizeTieredCompactionStrategy'};
-
-CREATE TABLE IF NOT EXISTS token_configuration (
-    currency_ticker text,
-    token_address blob,
-    standard text,
-    decimals int,
-    decimal_divisor bigint,
-    peg_currency text,
-    PRIMARY KEY (currency_ticker)
 )
     WITH caching = {'keys':'ALL','rows_per_partition':'ALL'}
     AND compaction = {'class':'SizeTieredCompactionStrategy'};

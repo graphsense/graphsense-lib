@@ -18,7 +18,7 @@ Two shape changes carry the rest of the work:
 * ``transaction.inputs``/``outputs`` become rows in ``transaction_io``, so a
   20 000-input transaction is writable at all (a >16MB mutation is *rejected* by
   Cassandra, not truncated).
-* Address strings become packed bytes, which is what lets the transformed side
+* Address strings become packed bytes, which is what lets the derived side
   key on the address itself rather than on a surrogate id.
 
 ``exchange_rates`` is not written here: rates are not in the lake, and the

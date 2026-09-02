@@ -116,15 +116,34 @@ def _housekeeping(kind: Kind) -> tuple[Table, ...]:
             (
                 C("id", "int"),
                 C("timestamp", "bigint", "was int: unix seconds, 2038 cliff"),
-                C("timestamp_transform", "bigint"),
-                C("no_blocks", "bigint"),
-                C("no_blocks_transform", "bigint"),
+                C("lowest_block", "bigint", "the range this keyspace covers"),
+                C("highest_block", "bigint", "was no_blocks, which was a height"),
                 C("no_transactions", "bigint"),
                 C("no_addresses", "bigint"),
                 C("no_address_relations", "bigint"),
             ),
             Key(("id",)),
             CACHED,
+            comment=(
+                "`no_blocks` is renamed. It held a HEIGHT (max block + 1), not a\n"
+                "count, which made it the one `no_*` column in the schema that was\n"
+                "not one -- every other (no_inputs, no_transactions, no_logs,\n"
+                "no_addresses) is a genuine count. The two coincide only for a\n"
+                "keyspace starting at block 0, so the ambiguity was invisible until\n"
+                "v3 started backfilling ranges.\n"
+                "\n"
+                "lowest_block is new, and is what makes the range self-describing:\n"
+                "a partial keyspace can now say what it covers instead of implying\n"
+                "a height it does not reach.\n"
+                "\n"
+                "The row describes THIS keyspace and nothing else. v2 also carried\n"
+                "timestamp_transform and no_blocks_transform, so the derived\n"
+                "keyspace could report how far the RAW one had got -- a second\n"
+                "keyspace's fact, copied, and therefore able to go stale. In v3 raw\n"
+                "and derived advance together, so there is no lag to record;\n"
+                "anything that wants to compare them reads both rows, which it can,\n"
+                "since it knows both keyspace names."
+            ),
         ),
     ]
     return tuple(tables)
@@ -182,6 +201,30 @@ _TRANSACTION_BY_TX_PREFIX = Table(
         "The only route from a hash to a transaction, in both families. An exact\n"
         "hash is a point read giving tx_id; a prefix is a range slice over\n"
         "tx_hash within the one partition."
+    ),
+)
+
+
+#: One rate table, not two. A price for an asset on a date is one kind of fact;
+#: the native coin is simply the asset every keyspace has. Splitting it gave the
+#: token table a different shape from the coin table -- and the token one had no
+#: bucketing, so a single asset's partition grew with the chain.
+_EXCHANGE_RATES_RAW = Table(
+    "exchange_rates",
+    (
+        C("asset", "text", "native coin ticker, or a token's"),
+        C("date", "text"),
+        C("fiat_values", "frozen<map<text, double>>"),
+    ),
+    Key(("asset",), ("date",)),
+    CACHED,
+    comment=(
+        "list<float> -> map: the positional list silently corrupts every\n"
+        "historical row when a fiat currency is added or reordered.\n"
+        "\n"
+        "One partition per asset, ~5 500 dates in it. 'token' is a reserved\n"
+        "word, hence `asset` -- which is the better name anyway now that the\n"
+        "native coin lives here too."
     ),
 )
 
@@ -281,14 +324,7 @@ def raw_utxo() -> Schema:
             STCS,
         ),
         _TRANSACTION_BY_TX_PREFIX,
-        Table(
-            "exchange_rates",
-            (C("date", "text"), C("fiat_values", "frozen<map<text, double>>")),
-            Key(("date",)),
-            CACHED,
-            comment="list<float> -> map: the positional list silently corrupts every "
-            "historical row when a fiat currency is added or reordered.",
-        ),
+        _EXCHANGE_RATES_RAW,
         *_housekeeping(Kind.RAW),
     )
     return Schema(Kind.RAW, Family.UTXO, (), tables)
@@ -545,22 +581,7 @@ def raw_account(network: str) -> Schema:
             ),
         ),
         _trace_table(network),
-        Table(
-            "exchange_rates",
-            (C("date", "text"), C("fiat_values", "frozen<map<text, double>>")),
-            Key(("date",)),
-            CACHED,
-        ),
-        Table(
-            "token_exchange_rates",
-            (
-                C("asset", "text", "'token' is reserved"),
-                C("date", "text"),
-                C("fiat_values", "frozen<map<text, double>>"),
-            ),
-            Key(("asset",), ("date",)),
-            CACHED,
-        ),
+        _EXCHANGE_RATES_RAW,
         *(_trx_tables() if network == "trx" else ()),
         *_housekeeping(Kind.RAW),
     )
@@ -569,7 +590,7 @@ def raw_account(network: str) -> Schema:
 
 
 # --------------------------------------------------------------------------- #
-# transformed                                                                  #
+# derived                                                                  #
 # --------------------------------------------------------------------------- #
 
 
@@ -810,16 +831,15 @@ def _link_txs_table(name: str, src: str, dst: str, family: Family) -> Table:
     )
 
 
-def transformed(family: Family) -> Schema:
+def derived(family: Family) -> Schema:
     is_utxo = family is Family.UTXO
 
+    # No UTXO extras: `cluster_address` went with the cluster family below.
     addr_stats = _stats_table(
         "address_stats",
         "address",
         family,
-        (C("cluster_address", "blob", "UTXO: the cluster's root member"),)
-        if is_utxo
-        else (C("is_contract", "boolean"),),
+        () if is_utxo else (C("is_contract", "boolean"),),
     )
     addr_txs = _txs_table("address_transactions", "address", family, recent=False)
     addr_txs_recent = _txs_table(
@@ -901,37 +921,34 @@ def transformed(family: Family) -> Schema:
         Table(
             "exchange_rates",
             (
+                C("asset", "text", "native coin ticker, or a token's"),
                 C("block_id_group", "int"),
                 C("block_id", "int"),
                 C("fiat_values", "frozen<map<text, double>>"),
             ),
-            Key(("block_id_group",), ("block_id",), (("block_id", "DESC"),)),
+            Key(("asset", "block_id_group"), ("block_id",), (("block_id", "DESC"),)),
             CACHED,
             comment=(
-                "Bucketed. v2 keys this by block_id alone: 20.25M single-row partitions\n"
-                "of 86 bytes on TRX, carrying a 24 MB bloom filter and 2.5 MB index\n"
-                "summary over 778 MB of data -- the partition index exceeds what it\n"
-                "indexes. /rates/{height} stays a point read; the group is computed\n"
-                "client-side."
+                "One table for every asset's price, the native coin included. Split in\n"
+                "two, the token half inherited no bucketing -- v2 keys it\n"
+                "(asset, block_id), so one asset's partition grows with the chain:\n"
+                "85.8M rows for a TRON stablecoin. Merged, both get the same key and\n"
+                "the same fix.\n"
+                "\n"
+                "Bucketed on the block. v2's coin table keys by block_id alone: 20.25M\n"
+                "single-row partitions of 86 bytes on TRX, carrying a 24 MB bloom\n"
+                "filter and 2.5 MB index summary over 778 MB of data -- the partition\n"
+                "index exceeds what it indexes. /rates/{height} stays a point read and\n"
+                "order A5 (rate at or before a height) is preserved; the group is\n"
+                "computed client-side."
             ),
         ),
-        *_housekeeping(Kind.TRANSFORMED),
+        *_housekeeping(Kind.DERIVED),
     ]
 
     if family is Family.ACCOUNT:
         common.extend(
             [
-                Table(
-                    "token_exchange_rates",
-                    (
-                        C("asset", "text"),
-                        C("block_id", "int"),
-                        C("fiat_values", "frozen<map<text, double>>"),
-                    ),
-                    Key(("asset",), ("block_id",), (("block_id", "DESC"),)),
-                    CACHED,
-                    comment="Order A5 (rate at or before a height) preserved.",
-                ),
                 Table(
                     "token_configuration",
                     (
@@ -948,52 +965,22 @@ def transformed(family: Family) -> Schema:
             ]
         )
 
-    if is_utxo:
-        renames = {
-            "address": "cluster_address",
-            "address_bucket": "cluster_bucket",
-            "src_address": "src_cluster_address",
-            "dst_address": "dst_cluster_address",
-        }
-        common.extend(
-            [
-                _stats_table(
-                    "cluster_stats",
-                    "cluster_address",
-                    family,
-                    (
-                        C("no_addresses", "bigint"),
-                        C("total_received_adj", "frozen<currency>"),
-                        C("total_spent_adj", "frozen<currency>"),
-                    ),
-                ),
-                _mirror(addr_txs, "cluster_transactions", renames),
-                _mirror(addr_txs_recent, "cluster_transactions_recent", renames),
-                _mirror(addr_pages, "cluster_tx_pages", renames),
-                _mirror(incoming, "cluster_incoming_relations", renames),
-                _mirror(outgoing, "cluster_outgoing_relations", renames),
-                _mirror(links, "cluster_link_transactions", renames),
-                Table(
-                    "cluster_addresses",
-                    (
-                        C("cluster_bucket", "int"),
-                        C("cluster_address", "blob"),
-                        C("address", "blob"),
-                    ),
-                    Key(("cluster_bucket", "cluster_address"), ("address",)),
-                    STCS,
-                    comment=(
-                        "Not a mirror, so written out. One cluster's members are one\n"
-                        "partition rather than a slice inside a 25 000-cluster partition.\n"
-                        "Address -> cluster needs no table: it is the cluster_address\n"
-                        "column on the address_stats epoch-0 row."
-                    ),
-                ),
-            ]
-        )
+    # The cluster family -- cluster_stats, the six mirrors and cluster_addresses
+    # -- is NOT rendered. Clustering is a union-find over multi-input
+    # transactions that this transform does not compute (D9 stages it to run 2),
+    # so those tables would be created and never written.
+    #
+    # Empty is worse than absent here. A reader hitting an empty cluster table
+    # gets "no data", which in a back-to-back comparison reads as a difference
+    # in the DATA rather than a feature that is not built; a missing table fails
+    # loudly and forces cluster fields to be excluded on purpose. Same reasoning
+    # that removed block_transactions and delta_updater_history.
+    #
+    # `_mirror` derives all six from their address-level twins, so restoring
+    # them in run 2 is this block coming back, not six tables being written.
 
     types = (CURRENCY,) if is_utxo else (CURRENCY, TX_REFERENCE)
-    return Schema(Kind.TRANSFORMED, family, types, tuple(common))
+    return Schema(Kind.DERIVED, family, types, tuple(common))
 
 
 #: Every network, and which family it renders as.
@@ -1009,6 +996,6 @@ NETWORKS: dict[str, Family] = {
 
 def schema_for(network: str, kind: Kind) -> Schema:
     family = NETWORKS[network]
-    if kind is Kind.TRANSFORMED:
-        return transformed(family)
+    if kind is Kind.DERIVED:
+        return derived(family)
     return raw_utxo() if family is Family.UTXO else raw_account(network)

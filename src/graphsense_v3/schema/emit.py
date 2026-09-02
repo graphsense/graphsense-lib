@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graphsense_v3.schema.definitions import raw_account, raw_utxo, transformed
+from graphsense_v3.schema.definitions import raw_account, raw_utxo, derived
 from graphsense_v3.schema.model import Family, Kind, Schema
 from graphsense_v3.schema.render import render_schema
 
@@ -37,8 +37,8 @@ def schemas() -> dict[str, Schema]:
     """
     out: dict[str, Schema] = {
         f"{Kind.RAW.value}_{Family.UTXO.value}": raw_utxo(),
-        f"{Kind.TRANSFORMED.value}_{Family.UTXO.value}": transformed(Family.UTXO),
-        f"{Kind.TRANSFORMED.value}_{Family.ACCOUNT.value}": transformed(Family.ACCOUNT),
+        f"{Kind.DERIVED.value}_{Family.UTXO.value}": derived(Family.UTXO),
+        f"{Kind.DERIVED.value}_{Family.ACCOUNT.value}": derived(Family.ACCOUNT),
     }
     for chain in ACCOUNT_CHAINS:
         out[f"{Kind.RAW.value}_{Family.ACCOUNT.value}_{chain}"] = raw_account(chain)

@@ -37,7 +37,7 @@ def test_no_live_keyspace_can_be_written(name: str) -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["btc_raw_v3", "btc_transformed_v3", "trx_raw_v3_aug", "zec_transformed_v3_bench2"],
+    ["btc_raw_v3", "btc_derived_v3", "trx_raw_v3_aug", "zec_derived_v3_bench2"],
 )
 def test_v3_names_pass(name: str) -> None:
     assert_v3_keyspace(name) is None
@@ -51,7 +51,7 @@ def test_malformed_names_are_refused(name) -> None:
 
 def test_names_are_constructed_not_supplied() -> None:
     assert v3_keyspace("BTC", Kind.RAW) == "btc_raw_v3"
-    assert v3_keyspace("btc", Kind.TRANSFORMED, "aug") == "btc_transformed_v3_aug"
+    assert v3_keyspace("btc", Kind.DERIVED, "aug") == "btc_derived_v3_aug"
 
 
 def test_a_label_cannot_smuggle_in_another_name() -> None:
@@ -61,9 +61,9 @@ def test_a_label_cannot_smuggle_in_another_name() -> None:
 
 
 class _Keyspace:
-    def __init__(self, raw, transformed):
+    def __init__(self, raw, derived):
         self.raw_keyspace_name = raw
-        self.transformed_keyspace_name = transformed
+        self.transformed_keyspace_name = derived
 
 
 class _Environment:
@@ -96,14 +96,14 @@ def test_an_environment_named_v3_is_caught_by_the_second_check() -> None:
     `v3` makes `btc_raw_v3` a real, live keyspace. Hence the cross-check
     against every name the config mentions."""
     config = _Config(
-        {"v3": _Environment({"btc": _Keyspace("btc_raw_v3", "btc_transformed_v3")})}
+        {"v3": _Environment({"btc": _Keyspace("btc_raw_v3", "btc_derived_v3")})}
     )
     settings = RunSettings(
         network="btc",
         env="v3",
         lake_root="s3a://lake/btc",
         raw_keyspace="btc_raw_v3",
-        transformed_keyspace="btc_transformed_v3",
+        derived_keyspace="btc_derived_v3",
         rates_keyspace="btc_raw_v3",
         cassandra_nodes=["node"],
     )
@@ -120,7 +120,7 @@ def test_the_rates_keyspace_is_never_a_write_target() -> None:
         env="prod",
         lake_root="s3a://lake/btc",
         raw_keyspace="btc_raw_v3",
-        transformed_keyspace="btc_transformed_v3",
+        derived_keyspace="btc_derived_v3",
         rates_keyspace="btc_raw_v3",
         cassandra_nodes=["node"],
     )
@@ -131,11 +131,11 @@ def test_the_rates_keyspace_is_never_a_write_target() -> None:
 def test_the_writer_refuses_a_non_v3_keyspace() -> None:
     """Defence in depth: the gate is in `write`, not only in the driver, so a
     caller that skips the CLI cannot reach a live keyspace either."""
-    from graphsense_v3.schema.definitions import transformed
+    from graphsense_v3.schema.definitions import derived
     from graphsense_v3.schema.model import Family
     from graphsense_v3.spark.writer import write
 
-    table = transformed(Family.UTXO).table("address_stats")
+    table = derived(Family.UTXO).table("address_stats")
     with pytest.raises(UnsafeKeyspace):
         write(None, table, "btc_transformed_20260828")  # ty: ignore[invalid-argument-type]
 
@@ -146,7 +146,7 @@ def test_describe_names_what_is_read_and_what_is_written() -> None:
         env="prod",
         lake_root="s3a://lake/btc",
         raw_keyspace="btc_raw_v3",
-        transformed_keyspace="btc_transformed_v3",
+        derived_keyspace="btc_derived_v3",
         rates_keyspace="btc_raw_20260101",
         cassandra_nodes=["a", "b"],
     ).describe()
@@ -303,7 +303,7 @@ def test_ddl_can_only_target_a_v3_keyspace() -> None:
         env="prod",
         lake_root="s3a://lake/btc",
         raw_keyspace="btc_raw_v3",
-        transformed_keyspace="btc_transformed_v3",
+        derived_keyspace="btc_derived_v3",
         rates_keyspace="btc_raw_20260101",
         cassandra_nodes=["node"],
     )

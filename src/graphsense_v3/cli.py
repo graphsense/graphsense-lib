@@ -165,9 +165,9 @@ def create(
 @click.option("--end-block", type=int, default=None)
 @click.option(
     "--stages",
-    default="raw,transformed",
+    default="raw,derived",
     show_default=True,
-    help="comma-separated: raw, transformed",
+    help="comma-separated: raw, derived",
 )
 @click.option(
     "--dry-run",
@@ -208,7 +208,7 @@ def run(
         settings = settings.with_sidecar()
     click.echo(settings.describe())
     wanted = tuple(s.strip() for s in stages.split(",") if s.strip())
-    unknown = set(wanted) - {"raw", "transformed"}
+    unknown = set(wanted) - {"raw", "derived"}
     if unknown:
         raise click.BadParameter(f"unknown stage(s): {', '.join(sorted(unknown))}")
 

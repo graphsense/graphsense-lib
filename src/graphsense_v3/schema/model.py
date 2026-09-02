@@ -24,7 +24,7 @@ class Kind(str, Enum):
     """Which keyspace of a network's pair."""
 
     RAW = "raw"
-    TRANSFORMED = "transformed"
+    DERIVED = "derived"
 
 
 @dataclass(frozen=True)

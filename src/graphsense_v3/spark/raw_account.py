@@ -5,8 +5,8 @@ read-back, re-runnable over the same range.
 
 Unlike UTXO there is no id to assign -- an account ``tx_id`` is
 ``(block_id << 32) + transaction_index``, derivable from the transaction itself,
-which is what lets the transformed keyspace drop both id-mapping tables (56% of
-the TRX transformed keyspace) and with them the cross-table visibility race
+which is what lets the derived keyspace drop both id-mapping tables (56% of
+the TRX derived keyspace) and with them the cross-table visibility race
 behind the 2026-07-03 incident.
 
 The one piece of real computation is the four **range pointers** on

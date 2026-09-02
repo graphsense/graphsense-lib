@@ -1,4 +1,4 @@
-"""End-to-end backfill: Delta Lake -> v3 raw -> v3 transformed.
+"""End-to-end backfill: Delta Lake -> v3 raw -> v3 derived.
 
 Built to be run once against a real cluster rather than iterated on, so it
 reports what each stage cost and refuses early on anything it cannot finish.
@@ -19,7 +19,14 @@ from typing import TYPE_CHECKING, Optional
 
 from graphsense_v3.schema import Kind, NETWORKS, Family, schema_for
 from graphsense_v3.schema.definitions import MARKER_COMPLETE, MARKERS
-from graphsense_v3.spark import raw_account, raw_utxo, transformed_utxo, writer
+from graphsense_v3.spark import (
+    raw_account,
+    raw_utxo,
+    summary,
+    derived_account,
+    derived_utxo,
+    writer,
+)
 from graphsense_v3.settings import RunSettings, assert_v3_keyspace
 from graphsense_v3.spark.source import DeltaLake
 
@@ -32,12 +39,13 @@ logger = logging.getLogger(__name__)
 def exchange_rates_by_block(
     spark: "SparkSession", blocks: "DataFrame", rates: "DataFrame"
 ) -> "DataFrame":
-    """``(block_id, fiat_values)`` from a date-keyed rate table.
+    """``(asset, block_id, fiat_values)`` from the date-keyed rate table.
 
     Rates are not in the lake -- the existing gslib ``exchange-rates`` path owns
     that table -- so they are read from a keyspace and joined onto blocks by
-    date. A block whose date has no rate simply gets none, and the transform
-    then contributes no fiat for it rather than a zero.
+    date. One table covers the native coin and every token alike, so this is one
+    join rather than two. An asset with no rate for a block simply gets no row,
+    and the transform then contributes no fiat for it rather than a zero.
     """
     from pyspark.sql import functions as F
 
@@ -49,7 +57,8 @@ def exchange_rates_by_block(
             "date"
         ),
     )
-    return dated.join(rates, on="date", how="left").select(
+    return dated.join(rates, on="date", how="inner").select(
+        F.col("asset"),
         F.col("block_id"),
         F.col("fiat_values").cast("map<string,double>").alias("fiat_values"),
     )
@@ -109,25 +118,20 @@ def run(
 ) -> None:
     """Backfill one network, per :class:`RunSettings`.
 
-    The transformed stage reads its inputs from the frames the raw stage just
+    The derived stage reads its inputs from the frames the raw stage just
     built rather than from Cassandra, so the lake is scanned once.
     """
     network = settings.network
     family = NETWORKS[network]
     config = settings.config
-    wanted = stages or ("raw", "transformed")
+    wanted = stages or ("raw", "derived")
 
     # Everything decidable from the arguments alone is decided here, before a
     # byte is read. A run that cannot finish should say so at submit time, not
     # after a full pass over the lake. The keyspace names were already checked
     # when the settings were built, and are checked again on every write.
-    if "transformed" in wanted and family is not Family.UTXO:
-        raise SystemExit(
-            "the transformed stage is UTXO-only so far; run with "
-            "--stages raw for an account network"
-        )
     assert_v3_keyspace(settings.raw_keyspace)
-    assert_v3_keyspace(settings.transformed_keyspace)
+    assert_v3_keyspace(settings.derived_keyspace)
 
     lake = DeltaLake(spark, settings.lake_root, network)
     loader = raw_utxo if family is Family.UTXO else raw_account
@@ -165,20 +169,25 @@ def run(
                     settings.raw_keyspace,
                     sidecar=settings.sidecar,
                 )
-
-    if "raw" in wanted and not dry_run:
+        with Stage("write raw.summary_statistics"):
+            writer.write(
+                summary.statistics_for(spark, raw_frames),
+                raw_schema.table("summary_statistics"),
+                settings.raw_keyspace,
+            )
         mark_complete(spark, network, Kind.RAW, settings.raw_keyspace)
 
-    if "transformed" not in wanted:
+    if "derived" not in wanted:
         if dry_run:
             logger.info("dry run: %d raw frames conform", len(raw_frames))
         return
 
-    _run_transformed(
+    _run_derived(
         spark,
         network,
+        family,
         raw_frames,
-        settings.transformed_keyspace,
+        settings.derived_keyspace,
         settings.rates_keyspace,
         config=config,
         dry_run=dry_run,
@@ -186,18 +195,19 @@ def run(
     )
 
 
-def _run_transformed(
+def _run_derived(
     spark: "SparkSession",
     network: str,
+    family: Family,
     raw_frames: dict,
-    transformed_keyspace: str,
+    derived_keyspace: str,
     rates_keyspace: str,
     *,
     config,
     dry_run: bool,
     sidecar: Optional[dict] = None,
 ) -> None:
-    """The transformed stage, from the frames the raw stage just built.
+    """The derived stage, from the frames the raw stage just built.
 
     Reading its inputs from those frames rather than back out of Cassandra means
     the lake is scanned once -- but it also means Spark recomputes them, so on a
@@ -210,28 +220,46 @@ def _run_transformed(
         read_cassandra(spark, rates_keyspace, "exchange_rates"),
     )
 
-    schema = schema_for(network, Kind.TRANSFORMED)
-    with Stage("build transformed frames"):
-        frames = transformed_utxo.build(
-            raw_frames["transaction_io"],
-            raw_frames["transaction"],
-            rates,
-            network,
-            config=config,
-        )
+    schema = schema_for(network, Kind.DERIVED)
+    with Stage("build derived frames"):
+        if family is Family.UTXO:
+            frames = derived_utxo.build(
+                raw_frames["transaction_io"],
+                raw_frames["transaction"],
+                rates,
+                network,
+                config=config,
+            )
+        else:
+            # token_configuration and token_exchange_rates are curated, not
+            # derived, so they are read from the keyspace that already holds
+            # them rather than rebuilt here.
+            frames = derived_account.build(
+                raw_frames["trace"],
+                raw_frames["log"],
+                read_cassandra(spark, rates_keyspace, "token_configuration"),
+                rates,
+                network,
+                config=config,
+            )
         for name, frame in frames.items():
             writer.check(frame, schema.table(name))
 
     if dry_run:
-        logger.info("dry run: %d transformed frames conform", len(frames))
+        logger.info("dry run: %d derived frames conform", len(frames))
         return
 
     for name, frame in frames.items():
-        with Stage(f"write transformed.{name}"):
-            writer.write(
-                frame, schema.table(name), transformed_keyspace, sidecar=sidecar
-            )
-    mark_complete(spark, network, Kind.TRANSFORMED, transformed_keyspace)
+        with Stage(f"write derived.{name}"):
+            writer.write(frame, schema.table(name), derived_keyspace, sidecar=sidecar)
+    # Counts, so it runs after the frames it counts are materialised.
+    with Stage("write derived.summary_statistics"):
+        writer.write(
+            summary.statistics_for(spark, raw_frames, frames),
+            schema.table("summary_statistics"),
+            derived_keyspace,
+        )
+    mark_complete(spark, network, Kind.DERIVED, derived_keyspace)
 
 
 def main(argv: Optional[list] = None) -> None:

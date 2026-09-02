@@ -1,4 +1,4 @@
-"""Raw UTXO keyspace -> v3 transformed address tables.
+"""Raw UTXO keyspace -> v3 derived address tables.
 
 Backfill only. A backfill writes the **compacted base**, epoch 0, so none of the
 epoch machinery in §6 runs here: `address_stats` is a group-by, not a fold, and
@@ -23,12 +23,9 @@ from typing import TYPE_CHECKING, Optional
 from graphsense_v3.config import NetworkConfig, config_for
 from graphsense_v3.schema import Kind, schema_for
 from graphsense_v3.schema.definitions import EPOCH_BASE
+from graphsense_v3.spark import derived_common as common
 from graphsense_v3.spark import writer
-from graphsense_v3.spark.udf import (
-    block_of_tx_id_expr,
-    bucket_expr,
-    search_prefix_bytes_udf,
-)
+from graphsense_v3.spark.udf import block_of_tx_id_expr, bucket_expr
 
 if TYPE_CHECKING:
     from pyspark.sql import Column, DataFrame
@@ -85,28 +82,10 @@ def legs(transaction_io: "DataFrame") -> "DataFrame":
 
 
 def fiat_values(value: "Column", rates: "Column", decimals: int) -> "Column":
-    """A value in base units -> a map of fiat currency to amount.
-
-    Matches graphsense-spark's rounding (`utxo/Transformator.scala:59-71`):
-    two decimal places, half up. v3 widens the stored type from `float` to
-    `double` and the container from a positional list to a map, but the number
-    is the same one v2 published.
-    """
+    """A satoshi amount -> a map of fiat currency to amount."""
     from pyspark.sql import functions as F
 
-    return F.transform_values(
-        rates, lambda _, rate: F.round(value * rate / F.lit(10.0**decimals), 2)
-    )
-
-
-def _currency(value: "Column", rates: "Column", decimals: int) -> "Column":
-    """The `currency` UDT: a base-unit amount and its fiat equivalents."""
-    from pyspark.sql import functions as F
-
-    return F.struct(
-        value.cast("decimal(38,0)").alias("value"),
-        fiat_values(value, rates, decimals).alias("fiat_values"),
-    )
+    return common.fiat_values(value, rates, F.lit(10.0**decimals))
 
 
 def address_transactions(spine: "DataFrame", config: NetworkConfig) -> "DataFrame":
@@ -120,37 +99,15 @@ def address_transactions(spine: "DataFrame", config: NetworkConfig) -> "DataFram
     This window is the most expensive step in the transform: on BTC it sorts
     ~5e9 rows across ~1.5e9 partitions.
     """
-    from pyspark.sql import Window
     from pyspark.sql import functions as F
 
-    order = Window.partitionBy("address", "is_outgoing").orderBy("tx_id")
-    return (
-        spine.withColumn("ordinal", F.row_number().over(order) - 1)
-        .withColumn(
-            "tx_page", (F.col("ordinal") / F.lit(config.tx_page_size)).cast("int")
-        )
-        .select(
-            F.col("address"),
-            F.col("is_outgoing"),
-            F.col("tx_page"),
-            F.col("tx_id"),
-            F.col("value").cast("decimal(38,0)").alias("value"),
-            F.col("ordinal"),
-        )
-    )
-
-
-def address_tx_pages(paged: "DataFrame") -> "DataFrame":
-    """The page index: which page holds a given `tx_id` bound.
-
-    Ordinal pages are not tx_id-aligned, so a height or date filter cannot
-    compute the page it needs. One row per page fixes that, and it is read only
-    when a range filter is present.
-    """
-    from pyspark.sql import functions as F
-
-    return paged.groupBy("address", "is_outgoing", "tx_page").agg(
-        F.min("tx_id").alias("first_tx_id")
+    return common.with_ordinals(spine, ["address", "is_outgoing"], config).select(
+        F.col("address"),
+        F.col("is_outgoing"),
+        F.col("tx_page"),
+        F.col("tx_id"),
+        F.col("value").cast("decimal(38,0)").alias("value"),
+        F.col("ordinal"),
     )
 
 
@@ -242,7 +199,7 @@ def address_stats(
     )
     zero = F.lit(0).cast("bigint")
     return joined.select(
-        bucket_expr(F.col("address"), config.entity_buckets).alias("address_bucket"),
+        common.entity_bucket(F.col("address"), config).alias("address_bucket"),
         F.col("address"),
         F.lit(EPOCH_BASE).alias("epoch"),
         F.coalesce(F.col("no_incoming_txs"), zero).alias("no_incoming_txs"),
@@ -265,18 +222,6 @@ def address_stats(
         F.col("out_tx_page_max"),
         F.col("in_tx_ordinal_next"),
         F.col("out_tx_ordinal_next"),
-    )
-
-
-def address_by_prefix(spine: "DataFrame", network: str, config: NetworkConfig):
-    """The search index. Decoding runs over distinct addresses, not every leg."""
-    from pyspark.sql import functions as F
-
-    prefix = search_prefix_bytes_udf(network, config.address_prefix_length)
-    return (
-        spine.select("address")
-        .distinct()
-        .select(prefix(F.col("address")).alias("address_prefix"), F.col("address"))
     )
 
 
@@ -440,9 +385,7 @@ def balance(spine: "DataFrame", network: str, config: NetworkConfig) -> "DataFra
         spine.groupBy("address")
         .agg(F.sum(signed).cast("decimal(38,0)").alias("balance"))
         .select(
-            bucket_expr(F.col("address"), config.entity_buckets).alias(
-                "address_bucket"
-            ),
+            common.entity_bucket(F.col("address"), config).alias("address_bucket"),
             F.col("address"),
             F.lit(network.upper()).alias("currency"),
             F.lit(EPOCH_BASE).alias("epoch"),
@@ -459,7 +402,7 @@ def build(
     *,
     config: Optional[NetworkConfig] = None,
 ) -> dict:
-    """The transformed address tables, keyed by table name.
+    """The derived address tables, keyed by table name.
 
     ``transaction_io`` and ``transactions`` are the raw keyspace's tables (or the
     frames about to be written to it); ``rates`` is
@@ -471,9 +414,9 @@ def build(
     edges = relation_edges(spine, transactions).cache()
     return {
         "address_transactions": paged.drop("ordinal"),
-        "address_tx_pages": address_tx_pages(paged),
+        "address_tx_pages": common.address_tx_pages(paged),
         "address_stats": address_stats(spine, paged, rates, degrees(edges), cfg),
-        "address_by_prefix": address_by_prefix(spine, network, cfg),
+        "address_by_prefix": common.address_by_prefix(spine, network, cfg),
         "address_outgoing_relations": _relation_side(
             edges, rates, cfg, near="src_address", far="dst_address"
         ),
@@ -495,8 +438,8 @@ def load(
     tables: Optional[tuple] = None,
     config: Optional[NetworkConfig] = None,
 ) -> list[str]:
-    """Write the transformed address tables into ``keyspace``."""
-    schema = schema_for(network, Kind.TRANSFORMED)
+    """Write the derived address tables into ``keyspace``."""
+    schema = schema_for(network, Kind.DERIVED)
     frames = build(transaction_io, transactions, rates, network, config=config)
     selected = tables or TABLES
     for name in selected:

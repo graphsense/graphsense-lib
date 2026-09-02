@@ -4,7 +4,7 @@ import pytest
 
 from graphsense_v3.schema import NETWORKS, Family, Kind, schema_for, violations
 from graphsense_v3.schema.model import Key
-from graphsense_v3.schema.definitions import raw_account, transformed
+from graphsense_v3.schema.definitions import raw_account, derived
 from graphsense_v3.schema.render import render_schema
 
 ALL = [(n, k) for n in NETWORKS for k in Kind]
@@ -132,7 +132,7 @@ def test_one_name_and_one_type_for_each_shared_concept() -> None:
     # a transferred amount is varint everywhere, including UTXO, where the link
     # table alone had it as bigint while address_transactions used varint.
     for family in Family:
-        tf = transformed(family)
+        tf = derived(family)
         types = {
             table: {c.name: c.type for c in tf.table(table).columns}
             for table in ("address_transactions", "address_link_transactions")
@@ -179,8 +179,8 @@ def test_no_secondary_ids_tables() -> None:
 def test_utxo_link_table_partitions_by_source() -> None:
     """Layout is per family: partition-per-source on UTXO (many low-degree
     addresses, so partition overhead dominates), partition-per-edge on account."""
-    utxo = transformed(Family.UTXO).table("address_link_transactions")
-    account = transformed(Family.ACCOUNT).table("address_link_transactions")
+    utxo = derived(Family.UTXO).table("address_link_transactions")
+    account = derived(Family.ACCOUNT).table("address_link_transactions")
     assert utxo.key.partition == ("src_address", "dst_bucket")
     assert "dst_address" in utxo.key.clustering
     assert account.key.partition == ("src_address", "dst_address", "tx_page")
@@ -190,7 +190,7 @@ def test_direction_is_pushed_down() -> None:
     """is_outgoing must be in the partition key: Cassandra requires clustering
     restrictions to form a prefix, so below tx_id it cannot be pushed down."""
     for family in Family:
-        table = transformed(family).table("address_transactions")
+        table = derived(family).table("address_transactions")
         assert "is_outgoing" in table.key.partition
         assert table.key.clustering[0] == "tx_id"
 
@@ -199,7 +199,7 @@ def test_stats_tables_are_summable() -> None:
     """Epoch is the last clustering column, so one entity's rows are a slice a
     read can sum, and compaction of one entity is a single-partition batch."""
     for family in Family:
-        table = transformed(family).table("address_stats")
+        table = derived(family).table("address_stats")
         assert table.key.clustering[-1] == "epoch"
         assert table.key.partition == ("address_bucket",)
         assert "address" in table.key.clustering
@@ -268,8 +268,8 @@ def test_no_unexplained_type_drift_between_any_two_schemas() -> None:
         "raw/utxo": raw_utxo(),
         "raw/eth": raw_account("eth"),
         "raw/trx": raw_account("trx"),
-        "tf/utxo": transformed(Family.UTXO),
-        "tf/account": transformed(Family.ACCOUNT),
+        "tf/utxo": derived(Family.UTXO),
+        "tf/account": derived(Family.ACCOUNT),
     }
     for (a_name, a), (b_name, b) in combinations(schemas.items(), 2):
         a_tables = {t.name: t for t in a.tables}
@@ -305,7 +305,7 @@ def test_the_delta_updater_history_table_is_gone() -> None:
     for network in NETWORKS:
         assert (
             "delta_updater_history"
-            not in schema_for(network, Kind.TRANSFORMED).table_names()
+            not in schema_for(network, Kind.DERIVED).table_names()
         )
 
 
@@ -329,3 +329,34 @@ def test_the_completion_marker_is_documented_in_the_schema() -> None:
     comment = schema_for("btc", Kind.RAW).table("markers").comment or ""
     assert MARKER_COMPLETE in comment
     assert "Written LAST" in comment
+
+
+def test_one_rate_table_covers_every_asset() -> None:
+    """Split in two, the token half inherited no bucketing: v2 keys it
+    (asset, block_id), so one asset's partition grows with the chain -- 85.8M
+    rows for a TRON stablecoin. Merged, both get the same key."""
+    for network in NETWORKS:
+        for kind in Kind:
+            schema = schema_for(network, kind)
+            assert "token_exchange_rates" not in schema.table_names()
+            rates = schema.table("exchange_rates")
+            assert "asset" in rates.column_names()
+            assert rates.key.partition[0] == "asset"
+    # and the derived one is bucketed on the block, in both families
+    for network in ("btc", "eth"):
+        rates = schema_for(network, Kind.DERIVED).table("exchange_rates")
+        assert rates.key.partition == ("asset", "block_id_group")
+        assert rates.key.clustering == ("block_id",)
+
+
+def test_no_cluster_tables_while_clustering_is_unbuilt() -> None:
+    """Empty is worse than absent: a reader hitting an empty cluster table gets
+    "no data", which in a comparison reads as a difference in the DATA rather
+    than a feature that is not built. D9 stages clustering to run 2."""
+    for network in NETWORKS:
+        names = schema_for(network, Kind.DERIVED).table_names()
+        assert not [n for n in names if n.startswith("cluster")]
+    # the pointer goes with them: a NULL cluster_address is indistinguishable
+    # from "this address is its own cluster"
+    stats = schema_for("btc", Kind.DERIVED).table("address_stats")
+    assert "cluster_address" not in stats.column_names()
