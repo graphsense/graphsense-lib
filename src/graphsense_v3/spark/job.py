@@ -152,6 +152,25 @@ class Stage:
         logger.info("%s  %s in %.1fs", outcome, self.name, elapsed)
 
 
+def sample(frames: dict, label: str, rows: int = 10) -> None:
+    """Force a few rows of every frame, so a dry run actually EXECUTES.
+
+    Conformance checks only resolve schemas -- Spark builds the plan and runs
+    nothing, so a pandas UDF that fails on the executors (a missing import, an
+    unencodable address) would pass a dry run and then fail hours into the real
+    one. Materialising a handful of rows runs the whole DAG, UDFs included.
+
+    It is not free: the plan still shuffles, so a dry run belongs on a BOUNDED
+    block range. That is what it is for.
+    """
+    for name, frame in frames.items():
+        with Stage(f"dry-run {label}.{name}"):
+            got = frame.limit(rows).count()
+            logger.info(
+                "  %s.%s produced %d of the first %d rows", label, name, got, rows
+            )
+
+
 def mark_complete(
     spark: "SparkSession", network: str, kind: Kind, keyspace: str
 ) -> None:
@@ -240,9 +259,14 @@ def run(
             )
         mark_complete(spark, network, Kind.RAW, settings.raw_keyspace)
 
+    if dry_run:
+        # Always, even when the derived stage follows: the derived frames are
+        # built from a few of the raw ones, so sampling them alone would leave
+        # the spending tables, the prefix index and block_by_date unexecuted.
+        logger.info("dry run: %d raw frames conform", len(raw_frames))
+        sample(raw_frames, "raw")
+
     if "derived" not in wanted:
-        if dry_run:
-            logger.info("dry run: %d raw frames conform", len(raw_frames))
         return
 
     _run_derived(
@@ -308,6 +332,7 @@ def _run_derived(
 
     if dry_run:
         logger.info("dry run: %d derived frames conform", len(frames))
+        sample(frames, "derived")
         return
 
     for name, frame in frames.items():

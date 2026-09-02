@@ -157,3 +157,24 @@ def test_stage_reports_a_failure(caplog) -> None:
         with job.Stage("a thing"):
             raise ValueError("nope")
     assert "FAILED" in caplog.text
+
+
+def test_a_dry_run_executes_rather_than_only_typechecks(spark, caplog) -> None:
+    """Conformance checks resolve schemas and run nothing, so a pandas UDF that
+    fails on the executors would pass a dry run and then fail hours into the
+    real one. `sample` materialises a few rows through the whole DAG."""
+    import logging
+
+    frame = spark.createDataFrame(
+        [{"a": i} for i in range(50)], schema="a INT"
+    ).withColumn("b", frame_doubler())
+    with caplog.at_level(logging.INFO):
+        job.sample({"thing": frame}, "raw", rows=3)
+    assert "thing produced 3 of the first 3 rows" in caplog.text
+
+
+def frame_doubler():
+    """A column that only evaluates when the plan actually runs."""
+    from pyspark.sql import functions as F
+
+    return F.col("a") * 2
