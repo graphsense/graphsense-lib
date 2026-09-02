@@ -16,14 +16,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_COMMENT = re.compile(r"^\s*--.*$", re.MULTILINE)
+#: A `--` comment runs to end of line, wherever it starts. Stripping only
+#: whole-line comments left INLINE ones in place, and an inline comment
+#: containing a semicolon then split its own statement in half -- which is
+#: exactly what `address_stats.epoch` ("0 = compacted base; else ...") did.
+#:
+#: Safe because this parses CQL WE generate: the renderer emits `--` only as a
+#: comment marker, and no string literal in the schema contains one. It is not a
+#: general CQL parser and should not be handed arbitrary input.
+_COMMENT = re.compile(r"--[^\n]*")
 
 
 def statements(cql: str) -> list[str]:
     """Split rendered CQL into executable statements, comments removed.
 
-    Safe to split on ``;`` only because the renderer never emits one inside a
-    literal -- option maps and collection types contain commas, not semicolons.
+    Comments go first, because they are the only place a semicolon appears that
+    does not end a statement. What remains can be split on ``;``: the renderer
+    emits no string literal containing one -- option maps and collection types
+    carry commas, not semicolons.
     """
     stripped = _COMMENT.sub("", cql)
     return [s.strip() for s in stripped.split(";") if s.strip()]

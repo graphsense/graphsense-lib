@@ -336,3 +336,52 @@ def test_plan_shows_the_path_that_is_really_read() -> None:
         cassandra_nodes=["172.22.240.72"],
     ).describe()
     assert "s3a://raw-data/ltc" in text
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "raw_utxo.sql",
+        "raw_account_eth.sql",
+        "raw_account_trx.sql",
+        "derived_utxo.sql",
+        "derived_account.sql",
+    ],
+)
+def test_every_generated_schema_splits_into_whole_statements(filename: str) -> None:
+    """The splitter has to survive the CQL the renderer actually emits.
+
+    It did not: `address_stats.epoch` carries the comment "0 = compacted base;
+    else block_id // epoch_size + 1", and stripping only whole-line comments
+    left that semicolon to cut its own statement in half. Cassandra reported it
+    as `mismatched character '<EOF>'` four statements later.
+    """
+    from graphsense_v3.cassandra import statements
+    from graphsense_v3.schema.emit import GENERATED_DIR
+
+    cql = (GENERATED_DIR / filename).read_text(encoding="utf-8")
+    parts = statements(cql)
+
+    # one per CREATE, plus the USE
+    assert len(parts) == cql.count("CREATE ") + 1
+    for part in parts:
+        assert part.count("(") == part.count(")"), part[:120]
+        assert part.count("{") == part.count("}"), part[:120]
+        assert "--" not in part
+        assert part.startswith(("CREATE ", "USE "))
+
+
+def test_a_semicolon_in_a_comment_does_not_split_a_statement() -> None:
+    """The exact shape that broke `create` against the live cluster."""
+    from graphsense_v3.cassandra import statements
+
+    cql = (
+        "CREATE TABLE IF NOT EXISTS t (\n"
+        "    a int,   -- 0 = base; else something\n"
+        "    b text,\n"
+        "    PRIMARY KEY (a)\n"
+        ");\n"
+    )
+    parts = statements(cql)
+    assert len(parts) == 1
+    assert parts[0].count("(") == parts[0].count(")")
