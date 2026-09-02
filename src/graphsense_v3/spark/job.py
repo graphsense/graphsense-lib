@@ -3,26 +3,22 @@
 Built to be run once against a real cluster rather than iterated on, so it
 reports what each stage cost and refuses early on anything it cannot finish.
 
-    spark-submit --py-files ... -m graphsense_v3.spark.job \\
-        --network btc --lake s3a://.../btc \\
-        --raw-keyspace btc_raw_v3 --transformed-keyspace btc_transformed_v3 \\
-        --rates-keyspace btc_raw_20260101
-
-``--dry-run`` builds every frame and runs the conformance checks without
-writing, which catches a column or key mismatch in seconds instead of hours in.
+Driven by ``graphsense-v3 run``, which resolves everything it needs from
+``graphsense.yaml``. ``--dry-run`` builds every frame and runs the conformance
+checks without writing, which catches a column or key mismatch in seconds
+instead of hours in.
 """
 
 # NOTE: no `from __future__ import annotations` -- pandas UDFs reach this module
 # through the loaders it imports.
 
-import argparse
 import logging
 import time
 from typing import TYPE_CHECKING, Optional
 
-from graphsense_v3.config import config_for
 from graphsense_v3.schema import Kind, NETWORKS, Family, schema_for
 from graphsense_v3.spark import raw_account, raw_utxo, transformed_utxo, writer
+from graphsense_v3.settings import RunSettings, assert_v3_keyspace
 from graphsense_v3.spark.source import DeltaLake
 
 if TYPE_CHECKING:
@@ -84,38 +80,36 @@ class Stage:
 
 def run(
     spark: "SparkSession",
-    network: str,
-    lake_root: str,
-    raw_keyspace: str,
-    transformed_keyspace: Optional[str] = None,
-    rates_keyspace: Optional[str] = None,
+    settings: "RunSettings",
     *,
     start_block: Optional[int] = None,
     end_block: Optional[int] = None,
     dry_run: bool = False,
+    stages: Optional[tuple] = None,
 ) -> None:
-    """Backfill one network.
+    """Backfill one network, per :class:`RunSettings`.
 
     The transformed stage reads its inputs from the frames the raw stage just
     built rather than from Cassandra, so the lake is scanned once.
     """
-    network = network.lower()
+    network = settings.network
     family = NETWORKS[network]
-    config = config_for(network)
+    config = settings.config
+    wanted = stages or ("raw", "transformed")
 
-    # Everything that can be decided from the arguments alone is decided here,
-    # before a byte is read. A run that cannot finish should say so at submit
-    # time, not after a full pass over the lake.
-    if transformed_keyspace is not None:
-        if family is not Family.UTXO:
-            raise SystemExit(
-                "the transformed stage is UTXO-only so far; run the raw stage "
-                "for an account network and leave --transformed-keyspace unset"
-            )
-        if rates_keyspace is None:
-            raise SystemExit("--rates-keyspace is required for the transformed stage")
+    # Everything decidable from the arguments alone is decided here, before a
+    # byte is read. A run that cannot finish should say so at submit time, not
+    # after a full pass over the lake. The keyspace names were already checked
+    # when the settings were built, and are checked again on every write.
+    if "transformed" in wanted and family is not Family.UTXO:
+        raise SystemExit(
+            "the transformed stage is UTXO-only so far; run with "
+            "--stages raw for an account network"
+        )
+    assert_v3_keyspace(settings.raw_keyspace)
+    assert_v3_keyspace(settings.transformed_keyspace)
 
-    lake = DeltaLake(spark, lake_root, network)
+    lake = DeltaLake(spark, settings.lake_root, network)
     loader = raw_utxo if family is Family.UTXO else raw_account
 
     with Stage(f"preflight {network}"):
@@ -134,7 +128,7 @@ def run(
         raw_frames = loader.build(
             lake,
             network,
-            raw_keyspace,
+            settings.raw_keyspace,
             start_block=start_block,
             end_block=end_block,
             config=config,
@@ -142,20 +136,22 @@ def run(
         for name, frame in raw_frames.items():
             writer.check(frame, raw_schema.table(name))
 
-    if not dry_run:
+    if "raw" in wanted and not dry_run:
         for name, frame in raw_frames.items():
             with Stage(f"write raw.{name}"):
-                writer.write(frame, raw_schema.table(name), raw_keyspace)
+                writer.write(frame, raw_schema.table(name), settings.raw_keyspace)
 
-    if transformed_keyspace is None or rates_keyspace is None:
-        return  # already validated above; this narrows the types
+    if "transformed" not in wanted:
+        if dry_run:
+            logger.info("dry run: %d raw frames conform", len(raw_frames))
+        return
 
     _run_transformed(
         spark,
         network,
         raw_frames,
-        transformed_keyspace,
-        rates_keyspace,
+        settings.transformed_keyspace,
+        settings.rates_keyspace,
         config=config,
         dry_run=dry_run,
     )
@@ -206,48 +202,11 @@ def _run_transformed(
 
 
 def main(argv: Optional[list] = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--network", required=True, choices=sorted(NETWORKS))
-    parser.add_argument("--lake", required=True, help="Delta Lake root for the network")
-    parser.add_argument("--raw-keyspace", required=True)
-    parser.add_argument("--transformed-keyspace")
-    parser.add_argument("--rates-keyspace", help="keyspace holding exchange_rates")
-    parser.add_argument("--start-block", type=int)
-    parser.add_argument("--end-block", type=int)
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument(
-        "--cassandra", nargs="+", default=[], help="Cassandra contact points"
-    )
-    parser.add_argument("--cassandra-username")
-    parser.add_argument("--cassandra-password")
-    args = parser.parse_args(argv)
+    """Kept so the module stays spark-submittable; `graphsense-v3 run` is the
+    normal entry point."""
+    from graphsense_v3.cli import cli
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
-
-    from graphsense_v3.spark.session import create_session
-
-    spark = create_session(
-        f"graphsense-v3-{args.network}",
-        cassandra_nodes=args.cassandra,
-        cassandra_username=args.cassandra_username,
-        cassandra_password=args.cassandra_password,
-    )
-    try:
-        run(
-            spark,
-            args.network,
-            args.lake,
-            args.raw_keyspace,
-            args.transformed_keyspace,
-            args.rates_keyspace,
-            start_block=args.start_block,
-            end_block=args.end_block,
-            dry_run=args.dry_run,
-        )
-    finally:
-        spark.stop()
+    cli(args=argv, standalone_mode=True)
 
 
 if __name__ == "__main__":

@@ -180,6 +180,7 @@ all = [
 
 [project.scripts]
 graphsense-cli = "graphsenselib.cli:main.main"
+graphsense-v3 = "graphsense_v3.cli:main"
 
 # Local source override for the clustering extension: inside this checkout,
 # `uv sync --extra clustering` builds the Rust crate from rust/gs_clustering

@@ -1,0 +1,159 @@
+"""Run settings, and the guarantee that a v3 run cannot touch a v2 keyspace.
+
+That guarantee is structural rather than procedural, so these are the tests that
+matter most in the package: a backfill pointed at a live keyspace would be
+unrecoverable.
+"""
+
+import pytest
+
+from graphsense_v3.schema import Kind
+from graphsense_v3.settings import (
+    UnsafeKeyspace,
+    assert_no_conflict,
+    assert_v3_keyspace,
+    configured_keyspaces,
+    v3_keyspace,
+)
+
+#: Real names, as they appear in graphsense.yaml today.
+LIVE = [
+    "trx_raw_20260428",
+    "trx_transformed_20260828",
+    "btc_raw_prod",
+    "eth_transformed_dev",
+    "btc_transformed_20260101",
+]
+
+
+@pytest.mark.parametrize("name", LIVE)
+def test_no_live_keyspace_can_be_written(name: str) -> None:
+    """The whole point: v2 names carry no `_v3` segment, so none of them can
+    pass the gate a write has to go through."""
+    with pytest.raises(UnsafeKeyspace):
+        assert_v3_keyspace(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["btc_raw_v3", "btc_transformed_v3", "trx_raw_v3_aug", "zec_transformed_v3_bench2"],
+)
+def test_v3_names_pass(name: str) -> None:
+    assert_v3_keyspace(name) is None
+
+
+@pytest.mark.parametrize("name", ["", None, "raw_v3", "btc_raw", "btc_raw_v3_"])
+def test_malformed_names_are_refused(name) -> None:
+    with pytest.raises(UnsafeKeyspace):
+        assert_v3_keyspace(name)
+
+
+def test_names_are_constructed_not_supplied() -> None:
+    assert v3_keyspace("BTC", Kind.RAW) == "btc_raw_v3"
+    assert v3_keyspace("btc", Kind.TRANSFORMED, "aug") == "btc_transformed_v3_aug"
+
+
+def test_a_label_cannot_smuggle_in_another_name() -> None:
+    for bad in ("has space", "UPPER", "with_underscore", "dash-ed", ""):
+        with pytest.raises(ValueError):
+            v3_keyspace("btc", Kind.RAW, bad)
+
+
+class _Keyspace:
+    def __init__(self, raw, transformed):
+        self.raw_keyspace_name = raw
+        self.transformed_keyspace_name = transformed
+
+
+class _Environment:
+    def __init__(self, keyspaces):
+        self.keyspaces = keyspaces
+
+
+class _Config:
+    def __init__(self, environments):
+        self.environments = environments
+
+
+def test_configured_keyspaces_spans_every_environment() -> None:
+    config = _Config(
+        {
+            "prod": _Environment({"btc": _Keyspace("btc_raw_prod", "btc_tf_prod")}),
+            "dev": _Environment({"eth": _Keyspace("eth_raw_dev", "eth_tf_dev")}),
+        }
+    )
+    assert configured_keyspaces(config) == {
+        "btc_raw_prod",
+        "btc_tf_prod",
+        "eth_raw_dev",
+        "eth_tf_dev",
+    }
+
+
+def test_an_environment_named_v3_is_caught_by_the_second_check() -> None:
+    """The pattern alone would not catch this: an environment literally named
+    `v3` makes `btc_raw_v3` a real, live keyspace. Hence the cross-check
+    against every name the config mentions."""
+    from graphsense_v3.settings import RunSettings
+
+    config = _Config(
+        {"v3": _Environment({"btc": _Keyspace("btc_raw_v3", "btc_transformed_v3")})}
+    )
+    settings = RunSettings(
+        network="btc",
+        env="v3",
+        lake_root="s3a://lake/btc",
+        raw_keyspace="btc_raw_v3",
+        transformed_keyspace="btc_transformed_v3",
+        rates_keyspace="btc_raw_v3",
+        cassandra_nodes=["node"],
+    )
+    # the name passes the pattern...
+    assert_v3_keyspace(settings.raw_keyspace)
+    # ...and is still refused, because the config already claims it.
+    with pytest.raises(UnsafeKeyspace, match="already a keyspace"):
+        assert_no_conflict(settings, config)
+
+
+def test_the_rates_keyspace_is_never_a_write_target() -> None:
+    from graphsense_v3.settings import RunSettings
+
+    settings = RunSettings(
+        network="btc",
+        env="prod",
+        lake_root="s3a://lake/btc",
+        raw_keyspace="btc_raw_v3",
+        transformed_keyspace="btc_transformed_v3",
+        rates_keyspace="btc_raw_v3",
+        cassandra_nodes=["node"],
+    )
+    with pytest.raises(UnsafeKeyspace, match="read-only"):
+        assert_no_conflict(settings, _Config({}))
+
+
+def test_the_writer_refuses_a_non_v3_keyspace() -> None:
+    """Defence in depth: the gate is in `write`, not only in the driver, so a
+    caller that skips the CLI cannot reach a live keyspace either."""
+    from graphsense_v3.schema.definitions import transformed
+    from graphsense_v3.schema.model import Family
+    from graphsense_v3.spark.writer import write
+
+    table = transformed(Family.UTXO).table("address_stats")
+    with pytest.raises(UnsafeKeyspace):
+        write(None, table, "btc_transformed_20260828")  # ty: ignore[invalid-argument-type]
+
+
+def test_describe_names_what_is_read_and_what_is_written() -> None:
+    from graphsense_v3.settings import RunSettings
+
+    text = RunSettings(
+        network="btc",
+        env="prod",
+        lake_root="s3a://lake/btc",
+        raw_keyspace="btc_raw_v3",
+        transformed_keyspace="btc_transformed_v3",
+        rates_keyspace="btc_raw_20260101",
+        cassandra_nodes=["a", "b"],
+    ).describe()
+    assert "btc_raw_20260101      (READ ONLY)" in text
+    assert "btc_raw_v3      (created, written)" in text

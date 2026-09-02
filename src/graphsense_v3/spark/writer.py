@@ -50,7 +50,16 @@ def check(df: DataFrame, table: Table) -> None:
 
 
 def write(df: DataFrame, table: Table, keyspace: str) -> None:
-    """Write ``df`` to ``keyspace.table``, after checking it conforms."""
+    """Write ``df`` to ``keyspace.table``, after checking it conforms.
+
+    The keyspace name is checked against the v3 pattern first. Nothing in this
+    package can write outside it, which is the point: a v3 backfill must not be
+    able to touch a live keyspace by typo, by a stale argument, or by a caller
+    that skipped the driver.
+    """
+    from graphsense_v3.settings import assert_v3_keyspace
+
+    assert_v3_keyspace(keyspace)
     check(df, table)
     (
         df.write.format("org.apache.spark.sql.cassandra")

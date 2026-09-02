@@ -9,23 +9,37 @@ import logging
 
 import pytest
 
+from graphsense_v3.settings import RunSettings
 from graphsense_v3.spark import job
 
 pytest.importorskip("pyspark")
 
 
+def _settings(network: str) -> RunSettings:
+    return RunSettings(
+        network=network,
+        env="prod",
+        lake_root="/nonexistent",
+        raw_keyspace=f"{network}_raw_v3",
+        transformed_keyspace=f"{network}_transformed_v3",
+        rates_keyspace=f"{network}_raw_20260101",
+        cassandra_nodes=["node"],
+    )
+
+
 def test_refuses_an_account_network_for_the_transformed_stage(spark) -> None:
     """The transformed side is UTXO-only so far. Better a SystemExit at submit
-    than a half-written keyspace."""
+    than a half-written keyspace -- and before the lake is read, not after."""
     with pytest.raises(SystemExit, match="UTXO-only"):
-        job.run(
-            spark,
-            "eth",
-            "/nonexistent",
-            "eth_raw_v3",
-            "eth_transformed_v3",
-            dry_run=True,
-        )
+        job.run(spark, _settings("eth"), dry_run=True)
+
+
+def test_the_raw_stage_alone_is_allowed_for_an_account_network(spark) -> None:
+    """It fails on the missing lake, not on the stage selection: the refusal
+    above is about the transformed stage only."""
+    with pytest.raises(Exception) as caught:
+        job.run(spark, _settings("eth"), dry_run=True, stages=("raw",))
+    assert "UTXO-only" not in str(caught.value)
 
 
 def test_exchange_rates_join_by_date(spark) -> None:
