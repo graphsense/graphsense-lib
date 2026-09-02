@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS block (
     gas_used bigint,                        -- was int (eth) / bigint (trx)
     base_fee_per_gas bigint,
     timestamp bigint,
-    transaction_count int,                  -- was smallint
+    no_transactions int,                    -- was smallint, and was transaction_count
     PRIMARY KEY (block_id_group, block_id)
 )
     WITH CLUSTERING ORDER BY (block_id DESC)
@@ -148,14 +148,14 @@ CREATE TABLE IF NOT EXISTS trace (
     block_id int,
     trace_index int,
     tx_hash blob,
+    from_address blob,
+    to_address blob,
+    value varint,
     internal_index smallint,
-    caller_address blob,
-    transferto_address blob,
     call_info_index smallint,
     call_token_id int,
-    call_value varint,
     note text,
-    rejected boolean,
+    rejected boolean,                       -- TRON's own success flag; eth has status/error
     PRIMARY KEY (block_id_group, block_id, trace_index)
 )
     WITH CLUSTERING ORDER BY (block_id ASC, trace_index ASC)

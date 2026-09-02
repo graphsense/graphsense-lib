@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS block (
     gas_used bigint,                        -- was int (eth) / bigint (trx)
     base_fee_per_gas bigint,
     timestamp bigint,
-    transaction_count int,                  -- was smallint
+    no_transactions int,                    -- was smallint, and was transaction_count
     PRIMARY KEY (block_id_group, block_id)
 )
     WITH CLUSTERING ORDER BY (block_id DESC)
@@ -143,10 +143,10 @@ CREATE TABLE IF NOT EXISTS trace (
     block_id int,
     trace_index int,
     tx_hash blob,
-    transaction_index int,
     from_address blob,
     to_address blob,
     value varint,
+    transaction_index int,
     input blob,
     output blob,
     trace_type text,

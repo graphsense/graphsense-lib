@@ -651,11 +651,16 @@ def test_trx_fee_is_keyed_like_the_transaction(trx_lake) -> None:
     assert (fee["block_id_group"], fee["tx_id"]) == (tx["block_id_group"], tx["tx_id"])
 
 
-def test_trx_trace_carries_the_tron_columns(trx_lake) -> None:
+def test_trx_trace_is_renamed_onto_the_shared_columns(trx_lake) -> None:
+    """The lake keeps TRON's names; the keyspace does not."""
     row = raw_account.build(trx_lake, "trx", "ks")["trace"].collect()[0]
-    assert int(row["call_value"]) == 10**6
+    assert int(row["value"]) == 10**6
+    assert bytes(row["from_address"]) == b"\x01" * 20
+    assert bytes(row["to_address"]) == b"\x02" * 20
     assert row["call_token_id"] == 1002000
-    assert "transaction_index" not in row.asDict()
+    fields = row.asDict()
+    assert "transaction_index" not in fields
+    assert not {"caller_address", "transferto_address", "call_value"} & set(fields)
 
 
 def test_utxo_preflight_reports_the_fattest_block(spark, utxo_lake) -> None:

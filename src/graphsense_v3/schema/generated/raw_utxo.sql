@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS transaction (
     block_id int,
     tx_id bigint,                           -- (block_id << 32) + transaction_index
     tx_hash blob,
-    timestamp bigint,
+    block_timestamp bigint,                 -- the block's, not the tx's
     coinbase boolean,
     coinjoin boolean,
     total_input bigint,

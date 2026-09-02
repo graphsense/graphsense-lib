@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS address_link_transactions (
     dst_bucket int,                         -- murmur3(dst) % relation_buckets
     dst_address blob,
     tx_id bigint,
-    value bigint,
+    value varint,
     PRIMARY KEY ((src_address, dst_bucket), dst_address, tx_id)
 )
     WITH CLUSTERING ORDER BY (dst_address ASC, tx_id DESC)
@@ -468,7 +468,7 @@ CREATE TABLE IF NOT EXISTS cluster_link_transactions (
     dst_bucket int,                         -- murmur3(dst) % relation_buckets
     dst_cluster_address blob,
     tx_id bigint,
-    value bigint,
+    value varint,
     PRIMARY KEY ((src_cluster_address, dst_bucket), dst_cluster_address, tx_id)
 )
     WITH CLUSTERING ORDER BY (dst_cluster_address ASC, tx_id DESC)

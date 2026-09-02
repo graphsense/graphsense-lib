@@ -183,7 +183,7 @@ def raw_utxo() -> Schema:
                 C("block_id", "int"),
                 C("tx_id", "bigint", "(block_id << 32) + transaction_index"),
                 C("tx_hash", "blob"),
-                C("timestamp", "bigint"),
+                C("block_timestamp", "bigint", "the block's, not the tx's"),
                 C("coinbase", "boolean"),
                 C("coinjoin", "boolean"),
                 C("total_input", "bigint"),
@@ -281,9 +281,6 @@ TRC10_FROZEN_SUPPLY = UserType(
 _TRACE_EXTRA: dict[str, tuple[C, ...]] = {
     "eth": (
         C("transaction_index", "int"),
-        C("from_address", "blob"),
-        C("to_address", "blob"),
-        C("value", "varint"),
         C("input", "blob"),
         C("output", "blob"),
         C("trace_type", "text"),
@@ -299,19 +296,17 @@ _TRACE_EXTRA: dict[str, tuple[C, ...]] = {
     ),
     "trx": (
         C("internal_index", "smallint"),
-        C("caller_address", "blob"),
-        C("transferto_address", "blob"),
         C("call_info_index", "smallint"),
         C("call_token_id", "int"),
-        C("call_value", "varint"),
         C("note", "text"),
-        C("rejected", "boolean"),
+        C("rejected", "boolean", "TRON's own success flag; eth has status/error"),
     ),
 }
 
 
 def _trace_table(network: str) -> Table:
-    """Traces: shared key and tx pointer, plus that chain's own columns.
+    """Traces: shared key, tx pointer, participants and value, plus that chain's
+    own columns.
 
     TRX has no ``transaction_index`` on a trace -- it is an EVM-trace column, so
     it lives in the eth block rather than in the shared set.
@@ -323,6 +318,13 @@ def _trace_table(network: str) -> Table:
             C("block_id", "int"),
             C("trace_index", "int"),
             C("tx_hash", "blob"),
+            # Shared, though the two chains' sources name them differently: TRON
+            # calls these caller_address, transferto_address and call_value. They
+            # are the same three things, and naming them apart made every reader
+            # of traces branch on the chain.
+            C("from_address", "blob"),
+            C("to_address", "blob"),
+            C("value", "varint"),
             *_TRACE_EXTRA[network],
         ),
         Key(
@@ -421,7 +423,7 @@ def raw_account(network: str) -> Schema:
                 C("gas_used", "bigint", "was int (eth) / bigint (trx)"),
                 C("base_fee_per_gas", "bigint"),
                 C("timestamp", "bigint"),
-                C("transaction_count", "int", "was smallint"),
+                C("no_transactions", "int", "was smallint, and was transaction_count"),
             ),
             Key(("block_id_group",), ("block_id",), (("block_id", "DESC"),)),
             STCS,
@@ -747,7 +749,10 @@ def _link_txs_table(name: str, src: str, dst: str, family: Family) -> Table:
                 C("dst_bucket", "int", "murmur3(dst) % relation_buckets"),
                 C(dst, "blob"),
                 C("tx_id", "bigint"),
-                C("value", "bigint"),
+                # varint, as everywhere else a value is stored -- address_
+                # transactions and the currency UDT both use it, and for typical
+                # UTXO amounts it is smaller than a fixed 8 bytes, not larger.
+                C("value", "varint"),
             ),
             Key((src, "dst_bucket"), (dst, "tx_id"), ((dst, "ASC"), ("tx_id", "DESC"))),
             STCS,

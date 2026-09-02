@@ -206,7 +206,7 @@ def build(
         F.col("block_id").cast("int").alias("block_id"),
         F.col("tx_id"),
         F.col("tx_hash"),
-        F.col("timestamp").cast("bigint").alias("timestamp"),
+        F.col("timestamp").cast("bigint").alias("block_timestamp"),
         F.col("coinbase"),
         F.col("coinjoin"),
         F.col("total_input").cast("bigint").alias("total_input"),

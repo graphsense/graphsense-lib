@@ -119,7 +119,7 @@ def _block(blocks: "DataFrame", config: NetworkConfig) -> "DataFrame":
         F.col("gas_used").cast("bigint").alias("gas_used"),
         F.col("base_fee_per_gas").cast("bigint").alias("base_fee_per_gas"),
         F.col("timestamp").cast("bigint").alias("timestamp"),
-        F.col("transaction_count").cast("int").alias("transaction_count"),
+        F.col("transaction_count").cast("int").alias("no_transactions"),
     )
 
 
@@ -191,22 +191,29 @@ def _trace(traces: "DataFrame", network: str, config: NetworkConfig) -> "DataFra
         F.col("tx_hash"),
     ]
     if network == "trx":
+        # TRON's own names for the same three things. Renamed here rather than
+        # carried through, so nothing downstream branches on the chain to find
+        # out who sent what to whom.
+        participants = [
+            F.col("caller_address").alias("from_address"),
+            F.col("transferto_address").alias("to_address"),
+            varint(F.col("call_value")).alias("value"),
+        ]
         specific = [
             F.col("internal_index").cast("smallint").alias("internal_index"),
-            F.col("caller_address"),
-            F.col("transferto_address"),
             F.col("call_info_index").cast("smallint").alias("call_info_index"),
             F.col("call_token_id").cast("int").alias("call_token_id"),
-            varint(F.col("call_value")).alias("call_value"),
             F.col("note"),
             F.col("rejected"),
         ]
     else:
-        specific = [
-            F.col("transaction_index").cast("int").alias("transaction_index"),
+        participants = [
             F.col("from_address"),
             F.col("to_address"),
             varint(F.col("value")).alias("value"),
+        ]
+        specific = [
+            F.col("transaction_index").cast("int").alias("transaction_index"),
             F.col("input"),
             F.col("output"),
             F.col("trace_type"),
@@ -220,7 +227,7 @@ def _trace(traces: "DataFrame", network: str, config: NetworkConfig) -> "DataFra
             F.col("status").cast("smallint").alias("status"),
             F.col("trace_id"),
         ]
-    return traces.select(*shared, *specific)
+    return traces.select(*shared, *participants, *specific)
 
 
 def _trc10(lake: "LakeSource") -> "DataFrame":

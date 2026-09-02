@@ -77,10 +77,44 @@ def test_account_raw_carries_the_chain_specific_tables() -> None:
 
     trx_trace = {c.name for c in raw_account("trx").table("trace").columns}
     eth_trace = {c.name for c in raw_account("eth").table("trace").columns}
-    assert "call_value" in trx_trace and "call_value" not in eth_trace
+    assert "call_token_id" in trx_trace and "call_token_id" not in eth_trace
     assert "trace_type" in eth_trace and "trace_type" not in trx_trace
     # transaction_index is an EVM-trace column; a TRON trace has no such field.
     assert "transaction_index" in eth_trace and "transaction_index" not in trx_trace
+
+
+def test_traces_share_who_sent_what_to_whom() -> None:
+    """TRON's source calls these caller_address, transferto_address and
+    call_value; they are the same three things, and naming them apart made every
+    reader of traces branch on the chain."""
+    for chain in ("eth", "trx"):
+        columns = {c.name for c in raw_account(chain).table("trace").columns}
+        assert {"from_address", "to_address", "value"} <= columns
+        assert not {"caller_address", "transferto_address", "call_value"} & columns
+
+
+def test_one_name_and_one_type_for_each_shared_concept() -> None:
+    """The harmonisation pass: same thing, same name, same type, everywhere."""
+    for network in NETWORKS:
+        raw = schema_for(network, Kind.RAW)
+        block = {c.name: c.type for c in raw.table("block").columns}
+        # transactions in a block: was `no_transactions` on utxo and
+        # `transaction_count` on account.
+        assert "no_transactions" in block and "transaction_count" not in block
+        tx = {c.name: c.type for c in raw.table("transaction").columns}
+        # the block's timestamp copied onto the transaction: was `timestamp` on
+        # utxo, `block_timestamp` on account.
+        assert "block_timestamp" in tx and "timestamp" not in tx
+
+    # a transferred amount is varint everywhere, including UTXO, where the link
+    # table alone had it as bigint while address_transactions used varint.
+    for family in Family:
+        tf = transformed(family)
+        types = {
+            table: {c.name: c.type for c in tf.table(table).columns}
+            for table in ("address_transactions", "address_link_transactions")
+        }
+        assert {t["value"] for t in types.values()} == {"varint"}
 
 
 def test_transactions_are_addressed_identically_in_both_families() -> None:
@@ -197,3 +231,31 @@ def test_configuration_row_matches_the_table_and_its_spark_schema() -> None:
         assert set(names) == set(table.column_names())
         assert len(config_for(network).as_row("ks")) == len(names)
     assert names[0] == "keyspace_name"
+
+
+def test_no_unexplained_type_drift_between_any_two_schemas() -> None:
+    """The harmonisation pass, kept honest: a column name that appears in two
+    schemas must mean the same type in both. This is the check that found
+    `address_link_transactions.value` as bigint on UTXO and varint on account."""
+    from itertools import combinations
+
+    from graphsense_v3.schema.definitions import raw_account, raw_utxo
+
+    schemas = {
+        "raw/utxo": raw_utxo(),
+        "raw/eth": raw_account("eth"),
+        "raw/trx": raw_account("trx"),
+        "tf/utxo": transformed(Family.UTXO),
+        "tf/account": transformed(Family.ACCOUNT),
+    }
+    for (a_name, a), (b_name, b) in combinations(schemas.items(), 2):
+        a_tables = {t.name: t for t in a.tables}
+        b_tables = {t.name: t for t in b.tables}
+        for name in a_tables.keys() & b_tables.keys():
+            a_cols = {c.name: c.type for c in a_tables[name].columns}
+            b_cols = {c.name: c.type for c in b_tables[name].columns}
+            for column in a_cols.keys() & b_cols.keys():
+                assert a_cols[column] == b_cols[column], (
+                    f"{name}.{column}: {a_name} has {a_cols[column]}, "
+                    f"{b_name} has {b_cols[column]}"
+                )
