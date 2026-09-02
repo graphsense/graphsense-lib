@@ -79,8 +79,31 @@ def test_account_raw_carries_the_chain_specific_tables() -> None:
     eth_trace = {c.name for c in raw_account("eth").table("trace").columns}
     assert "call_token_id" in trx_trace and "call_token_id" not in eth_trace
     assert "trace_type" in eth_trace and "trace_type" not in trx_trace
-    # transaction_index is an EVM-trace column; a TRON trace has no such field.
-    assert "transaction_index" in eth_trace and "transaction_index" not in trx_trace
+
+
+def test_traces_and_logs_link_back_by_id_on_both_chains() -> None:
+    """Was the last asymmetry: an eth trace carried `transaction_index` and a
+    TRON trace carried nothing, so a trace linked back to its transaction on one
+    chain and not the other. `tx_id` addresses the `transaction` row directly
+    (D13) and the index is its low 32 bits, so nothing is lost."""
+    for chain in ("eth", "trx"):
+        raw = raw_account(chain)
+        for table in ("log", "trace"):
+            columns = {c.name: c.type for c in raw.table(table).columns}
+            assert columns.get("tx_id") == "bigint"
+            assert "transaction_index" not in columns
+
+
+def test_trace_success_is_one_column_on_both_chains() -> None:
+    """TRON reports a `rejected` boolean and has no status code; it is mapped
+    onto eth's convention in the loader. `error` stays eth-only -- TRON has no
+    per-trace revert reason to put in it."""
+    for chain in ("eth", "trx"):
+        columns = {c.name: c.type for c in raw_account(chain).table("trace").columns}
+        assert columns["status"] == "smallint"
+        assert "rejected" not in columns
+    assert "error" in {c.name for c in raw_account("eth").table("trace").columns}
+    assert "error" not in {c.name for c in raw_account("trx").table("trace").columns}
 
 
 def test_traces_share_who_sent_what_to_whom() -> None:

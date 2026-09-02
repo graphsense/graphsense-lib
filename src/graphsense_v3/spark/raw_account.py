@@ -180,15 +180,45 @@ def _transaction(
     )
 
 
-def _trace(traces: "DataFrame", network: str, config: NetworkConfig) -> "DataFrame":
+def _trace(
+    traces: "DataFrame",
+    network: str,
+    config: NetworkConfig,
+    ids: "Optional[DataFrame]" = None,
+) -> "DataFrame":
+    """One trace row, in the shape both chains share.
+
+    ``ids`` supplies ``tx_hash -> tx_id`` for TRON, whose trace rows carry no
+    ``transaction_index``; on eth the id comes off the row itself.
+    """
     from pyspark.sql import functions as F
 
     varint = bytes_to_varint_udf()
+    if network == "trx":
+        if ids is None:
+            raise ValueError("a trx trace needs tx_ids_by_hash to resolve tx_id")
+        traces = traces.join(ids.drop("block_id_group"), on="tx_hash", how="inner")
+        tx_id = F.col("tx_id")
+        # TRON has no status code, only a `rejected` flag. Mapped onto eth's
+        # convention so that "did this trace succeed" is one column on both
+        # chains. Derived here rather than in the source, and a NULL `rejected`
+        # stays NULL rather than being read as success.
+        status = (
+            F.when(F.isnull(F.col("rejected")), F.lit(None))
+            .when(F.col("rejected"), F.lit(0))
+            .otherwise(F.lit(1))
+            .cast("smallint")
+        )
+    else:
+        tx_id = tx_id_expr(F.col("block_id"), F.col("transaction_index"))
+        status = F.col("status").cast("smallint")
+
     shared: list[Column] = [
         id_group(F.col("block_id"), config.block_bucket_size).alias("block_id_group"),
         F.col("block_id").cast("int").alias("block_id"),
         F.col("trace_index").cast("int").alias("trace_index"),
         F.col("tx_hash"),
+        tx_id.alias("tx_id"),
     ]
     if network == "trx":
         # TRON's own names for the same three things. Renamed here rather than
@@ -204,7 +234,6 @@ def _trace(traces: "DataFrame", network: str, config: NetworkConfig) -> "DataFra
             F.col("call_info_index").cast("smallint").alias("call_info_index"),
             F.col("call_token_id").cast("int").alias("call_token_id"),
             F.col("note"),
-            F.col("rejected"),
         ]
     else:
         participants = [
@@ -213,7 +242,6 @@ def _trace(traces: "DataFrame", network: str, config: NetworkConfig) -> "DataFra
             varint(F.col("value")).alias("value"),
         ]
         specific = [
-            F.col("transaction_index").cast("int").alias("transaction_index"),
             F.col("input"),
             F.col("output"),
             F.col("trace_type"),
@@ -224,10 +252,9 @@ def _trace(traces: "DataFrame", network: str, config: NetworkConfig) -> "DataFra
             F.col("subtraces").cast("int").alias("subtraces"),
             F.col("trace_address"),
             F.col("error"),
-            F.col("status").cast("smallint").alias("status"),
             F.col("trace_id"),
         ]
-    return traces.select(*shared, *participants, *specific)
+    return traces.select(*shared, *participants, status.alias("status"), *specific)
 
 
 def _trc10(lake: "LakeSource") -> "DataFrame":
@@ -260,6 +287,33 @@ def _trc10(lake: "LakeSource") -> "DataFrame":
     )
 
 
+def tx_ids_by_hash(
+    lake: "LakeSource",
+    config: NetworkConfig,
+    start_block: Optional[int],
+    end_block: Optional[int],
+) -> "DataFrame":
+    """``tx_hash -> (block_id_group, tx_id)`` over a block range.
+
+    Needed by the two TRON tables whose lake rows carry a ``tx_hash`` but no
+    ``transaction_index`` -- ``fee`` and ``trace``. This is the one shuffle in
+    the account backfill, and it is deliberate: the transform needs the same
+    mapping on every run, so paying for it once per ingest is the cheaper end of
+    the trade.
+    """
+    from pyspark.sql import functions as F
+
+    return lake.read(
+        "transaction", start_block=start_block, end_block=end_block
+    ).select(
+        F.col("tx_hash"),
+        id_group(F.col("block_id"), config.tx_block_bucket_size).alias(
+            "block_id_group"
+        ),
+        tx_id_expr(F.col("block_id"), F.col("transaction_index")).alias("tx_id"),
+    )
+
+
 def _fee(
     lake: "LakeSource",
     config: NetworkConfig,
@@ -275,17 +329,11 @@ def _fee(
     """
     from pyspark.sql import functions as F
 
-    txs = lake.read("transaction", start_block=start_block, end_block=end_block).select(
-        F.col("tx_hash"),
-        id_group(F.col("block_id"), config.tx_block_bucket_size).alias(
-            "block_id_group"
-        ),
-        tx_id_expr(F.col("block_id"), F.col("transaction_index")).alias("tx_id"),
-    )
+    ids = tx_ids_by_hash(lake, config, start_block, end_block)
     fees = lake.read("fee", start_block=start_block, end_block=end_block).drop(
         "block_id"
     )
-    return fees.join(txs, on="tx_hash", how="inner").select(
+    return fees.join(ids, on="tx_hash", how="inner").select(
         F.col("block_id_group"),
         F.col("tx_id"),
         F.col("tx_hash"),
@@ -326,6 +374,12 @@ def build(
     txs = lake.read("transaction", start_block=start_block, end_block=end_block)
     logs = lake.read("log", start_block=start_block, end_block=end_block)
     traces = lake.read("trace", start_block=start_block, end_block=end_block)
+    # TRON needs the hash -> id mapping twice (trace and fee); build it once.
+    ids = (
+        tx_ids_by_hash(lake, cfg, start_block, end_block).cache()
+        if network == "trx"
+        else None
+    )
 
     out: "dict[str, DataFrame]" = {}
     out["block"] = _block(blocks, cfg)
@@ -352,9 +406,9 @@ def build(
         F.col("topics"),
         F.col("topic0"),
         F.col("tx_hash"),
-        F.col("transaction_index").cast("int").alias("transaction_index"),
+        tx_id_expr(F.col("block_id"), F.col("transaction_index")).alias("tx_id"),
     )
-    out["trace"] = _trace(traces, network, cfg)
+    out["trace"] = _trace(traces, network, cfg, ids=ids)
     out["configuration"] = configuration_row(lake, cfg, keyspace)
 
     if network == "trx":

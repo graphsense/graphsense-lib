@@ -669,3 +669,43 @@ def test_utxo_preflight_reports_the_fattest_block(spark, utxo_lake) -> None:
     loose on BCH, so measure the tail instead of assuming it."""
     assert raw_utxo.biggest_block(utxo_lake.tables["transaction"]) == (1, 2)
     assert raw_utxo.preflight(utxo_lake, "btc") == []
+
+
+def test_eth_log_and_trace_carry_the_transaction_id(eth_lake) -> None:
+    """Both link back by id now, so nothing has to resolve a hash first."""
+    frames = raw_account.build(eth_lake, "eth", "ks")
+    expected = tx_id(0, 0)
+    assert {r["tx_id"] for r in frames["log"].collect()} == {expected}
+    assert {r["tx_id"] for r in frames["trace"].collect()} == {expected}
+
+
+def test_trx_trace_gets_its_id_from_the_hash_join(trx_lake) -> None:
+    """A TRON trace row has no transaction_index, so the id costs a join. That
+    is the whole reason this was flagged as a cost rather than a rename."""
+    frames = raw_account.build(trx_lake, "trx", "ks")
+    trace = frames["trace"].collect()[0]
+    tx = next(
+        r
+        for r in frames["transaction"].collect()
+        if bytes(r["tx_hash"]) == bytes(trace["tx_hash"])
+    )
+    assert trace["tx_id"] == tx["tx_id"]
+
+
+@pytest.mark.parametrize(
+    ("rejected", "expected"), [(False, 1), (True, 0), (None, None)]
+)
+def test_trx_rejected_maps_onto_the_eth_status_convention(
+    spark, trx_lake, rejected, expected
+) -> None:
+    """TRON has no status code. 1 = success, 0 = failed, and an unknown
+    `rejected` stays unknown rather than being read as success."""
+    from pyspark.sql import functions as F
+
+    traces = trx_lake.tables["trace"].withColumn(
+        "rejected", F.lit(rejected).cast("boolean")
+    )
+    lake = FakeLake(spark, {**trx_lake.tables, "trace": traces})
+    row = raw_account.build(lake, "trx", "ks")["trace"].collect()[0]
+    assert row["status"] == expected
+    assert "rejected" not in row.asDict()

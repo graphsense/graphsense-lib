@@ -280,7 +280,6 @@ TRC10_FROZEN_SUPPLY = UserType(
 #: anything noticing. Only genuinely chain-specific data varies here.
 _TRACE_EXTRA: dict[str, tuple[C, ...]] = {
     "eth": (
-        C("transaction_index", "int"),
         C("input", "blob"),
         C("output", "blob"),
         C("trace_type", "text"),
@@ -291,7 +290,6 @@ _TRACE_EXTRA: dict[str, tuple[C, ...]] = {
         C("subtraces", "int"),
         C("trace_address", "text"),
         C("error", "text"),
-        C("status", "smallint"),
         C("trace_id", "text"),
     ),
     "trx": (
@@ -299,17 +297,19 @@ _TRACE_EXTRA: dict[str, tuple[C, ...]] = {
         C("call_info_index", "smallint"),
         C("call_token_id", "int"),
         C("note", "text"),
-        C("rejected", "boolean", "TRON's own success flag; eth has status/error"),
     ),
 }
 
 
 def _trace_table(network: str) -> Table:
-    """Traces: shared key, tx pointer, participants and value, plus that chain's
-    own columns.
+    """Traces: shared key, tx pointer, participants, value and status, plus that
+    chain's own columns.
 
-    TRX has no ``transaction_index`` on a trace -- it is an EVM-trace column, so
-    it lives in the eth block rather than in the shared set.
+    ``tx_id`` rather than ``transaction_index``: an eth trace carried the index
+    and a TRON trace carried nothing, so a trace linked back to its transaction
+    on one chain and not the other. The id is what a reader wants anyway -- it
+    addresses the `transaction` row directly (D13) -- and the index is its low
+    32 bits, so nothing is lost.
     """
     return Table(
         "trace",
@@ -318,6 +318,7 @@ def _trace_table(network: str) -> Table:
             C("block_id", "int"),
             C("trace_index", "int"),
             C("tx_hash", "blob"),
+            C("tx_id", "bigint", "(block_id << 32) + transaction_index"),
             # Shared, though the two chains' sources name them differently: TRON
             # calls these caller_address, transferto_address and call_value. They
             # are the same three things, and naming them apart made every reader
@@ -325,6 +326,11 @@ def _trace_table(network: str) -> Table:
             C("from_address", "blob"),
             C("to_address", "blob"),
             C("value", "varint"),
+            # TRON reports success as a `rejected` boolean and has no status
+            # code. It is mapped onto eth's convention here -- 1 success,
+            # 0 failed -- so "did this trace succeed" is one column in both
+            # families. `error`, which only eth has, stays chain-specific.
+            C("status", "smallint", "1 = success, 0 = failed"),
             *_TRACE_EXTRA[network],
         ),
         Key(
@@ -498,7 +504,7 @@ def raw_account(network: str) -> Schema:
                 C("topics", "frozen<list<blob>>"),
                 C("topic0", "blob"),
                 C("tx_hash", "blob"),
-                C("transaction_index", "int"),
+                C("tx_id", "bigint", "(block_id << 32) + transaction_index"),
             ),
             Key(
                 ("block_id_group",),

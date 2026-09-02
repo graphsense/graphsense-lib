@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS log (
     topics frozen<list<blob>>,
     topic0 blob,
     tx_hash blob,
-    transaction_index int,
+    tx_id bigint,                           -- (block_id << 32) + transaction_index
     PRIMARY KEY (block_id_group, block_id, log_index)
 )
     WITH CLUSTERING ORDER BY (block_id ASC, log_index ASC)
@@ -143,10 +143,11 @@ CREATE TABLE IF NOT EXISTS trace (
     block_id int,
     trace_index int,
     tx_hash blob,
+    tx_id bigint,                           -- (block_id << 32) + transaction_index
     from_address blob,
     to_address blob,
     value varint,
-    transaction_index int,
+    status smallint,                        -- 1 = success, 0 = failed
     input blob,
     output blob,
     trace_type text,
@@ -157,7 +158,6 @@ CREATE TABLE IF NOT EXISTS trace (
     subtraces int,
     trace_address text,
     error text,
-    status smallint,
     trace_id text,
     PRIMARY KEY (block_id_group, block_id, trace_index)
 )

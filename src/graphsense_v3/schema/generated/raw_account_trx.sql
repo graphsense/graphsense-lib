@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS log (
     topics frozen<list<blob>>,
     topic0 blob,
     tx_hash blob,
-    transaction_index int,
+    tx_id bigint,                           -- (block_id << 32) + transaction_index
     PRIMARY KEY (block_id_group, block_id, log_index)
 )
     WITH CLUSTERING ORDER BY (block_id ASC, log_index ASC)
@@ -148,14 +148,15 @@ CREATE TABLE IF NOT EXISTS trace (
     block_id int,
     trace_index int,
     tx_hash blob,
+    tx_id bigint,                           -- (block_id << 32) + transaction_index
     from_address blob,
     to_address blob,
     value varint,
+    status smallint,                        -- 1 = success, 0 = failed
     internal_index smallint,
     call_info_index smallint,
     call_token_id int,
     note text,
-    rejected boolean,                       -- TRON's own success flag; eth has status/error
     PRIMARY KEY (block_id_group, block_id, trace_index)
 )
     WITH CLUSTERING ORDER BY (block_id ASC, trace_index ASC)
