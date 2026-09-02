@@ -157,3 +157,73 @@ def test_describe_names_what_is_read_and_what_is_written() -> None:
     ).describe()
     assert "btc_raw_20260101      (READ ONLY)" in text
     assert "btc_raw_v3      (created, written)" in text
+
+
+# --------------------------------------------------------------------------- #
+# spark profile                                                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_the_delta_extension_is_not_clobbered() -> None:
+    """`create_spark_session` sets the Delta extension and then applies
+    spark_config LAST, so transform-utxo's Cassandra-only value would replace
+    it and the lake read would fail. The Scala job never hit this because it
+    does not read Delta through the same session."""
+    from graphsense_v3.spark.profile import resolve
+
+    resolved = resolve(
+        {
+            "spark.sql.extensions": "com.datastax.spark.connector.CassandraSparkExtensions"
+        }
+    )
+    extensions = resolved["spark.sql.extensions"].split(",")
+    assert "io.delta.sql.DeltaSparkSessionExtension" in extensions
+    assert "com.datastax.spark.connector.CassandraSparkExtensions" in extensions
+
+
+def test_null_writes_are_never_tombstones() -> None:
+    """v3 frames are legitimately sparse. Without ignoreNulls the connector
+    writes an explicit NULL, which is a tombstone, on a brand-new keyspace."""
+    from graphsense_v3.spark.profile import resolve
+
+    assert resolve({})["spark.cassandra.output.ignoreNulls"] == "true"
+    # even if a profile says otherwise
+    assert (
+        resolve({"spark.cassandra.output.ignoreNulls": "false"})[
+            "spark.cassandra.output.ignoreNulls"
+        ]
+        == "true"
+    )
+
+
+def test_the_configured_profile_wins_on_tuning() -> None:
+    """Required settings are correctness; everything else is the cluster
+    owner's call."""
+    from graphsense_v3.spark.profile import resolve
+
+    resolved = resolve({"spark.sql.shuffle.partitions": "800"})
+    assert resolved["spark.sql.shuffle.partitions"] == "800"
+    # and the defaults fill in what the profile is silent about
+    assert resolved["spark.sql.adaptive.skewJoin.enabled"] == "true"
+    assert resolved["spark.executor.pyspark.memory"] == "8g"
+
+
+def test_missing_cluster_facts_are_reported_not_invented() -> None:
+    """The executors have to be able to import graphsense_v3 for the pandas
+    UDFs, and shuffle must not land on the root disk. Neither value is ours to
+    guess."""
+    from graphsense_v3.spark.profile import warnings
+
+    missing = warnings({})
+    assert any("spark.local.dir" in w for w in missing)
+    assert any("spark.archives" in w for w in missing)
+    assert (
+        warnings(
+            {
+                "spark.local.dir": "/var/data/nvme4/spark/local_storage",
+                "spark.archives": "file:///opt/graphsense/spark-env.tar.gz#environment",
+                "spark.executorEnv.PYTHONPATH": "./environment",
+            }
+        )
+        == []
+    )

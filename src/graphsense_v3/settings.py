@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 from graphsense_v3.config import NetworkConfig, config_for
 from graphsense_v3.schema import Kind
+from graphsense_v3.spark.profile import resolve, warnings
 
 #: The marker that makes a v3 name unmistakable. v2 keyspaces are
 #: ``<currency>_<kind>_<env>`` or ``<currency>_<kind>_<YYYYMMDD>``; none of them
@@ -104,6 +105,8 @@ class RunSettings:
                 f"rates keyspace     {self.rates_keyspace}      (READ ONLY)",
                 f"cassandra          {', '.join(self.cassandra_nodes) or '(none)'}",
                 f"spark profile      {self.spark_profile or '(baseline)'}",
+                "cassandra writes   connector CQL path (no sidecar writer)",
+                *(f"WARNING            {w}" for w in warnings(self.spark_config)),
             ]
         )
 
@@ -163,7 +166,7 @@ def from_config(
         username=environment.username,
         password=environment.password,
         s3_credentials=lake.s3_credentials,
-        spark_config=cfg.get_spark_config(profile),
+        spark_config=resolve(cfg.get_spark_config(profile)),
         spark_packages=dict(cfg.spark_packages or {}),
         spark_profile=profile,
     )
