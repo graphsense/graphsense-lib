@@ -134,7 +134,47 @@ def paging_cursors(paged: "DataFrame") -> "DataFrame":
     return frame
 
 
-def balance_history(legs: "DataFrame", blocks: "DataFrame", config: NetworkConfig):
+def leg_events(legs: "DataFrame", currency: "Column") -> "DataFrame":
+    """Transfer legs as balance events: one signed ``delta`` per leg.
+
+    The uniform shape ``(address, currency, block_id, tx_id, delta)`` that
+    :func:`balance`, :func:`balance_history` and :func:`running_balance` all
+    consume. Transfers are only part of that stream on the account side, where
+    fees move value without being a transfer -- see
+    ``derived_account.fee_events``.
+    """
+    from pyspark.sql import functions as F
+
+    delta = F.when(F.col("is_outgoing"), -F.col("value")).otherwise(F.col("value"))
+    return legs.select(
+        F.col("address"),
+        currency.alias("currency"),
+        F.col("block_id"),
+        F.col("tx_id"),
+        delta.cast("decimal(38,0)").alias("delta"),
+    )
+
+
+def balance(events: "DataFrame", config: NetworkConfig) -> "DataFrame":
+    """Closing balance per entity and asset: the sum of every balance event."""
+    from pyspark.sql import functions as F
+
+    from graphsense_v3.schema.definitions import EPOCH_BASE
+
+    return (
+        events.groupBy("address", "currency")
+        .agg(F.sum("delta").cast("decimal(38,0)").alias("balance"))
+        .select(
+            entity_bucket(F.col("address"), config).alias("address_bucket"),
+            F.col("address"),
+            F.col("currency"),
+            F.lit(EPOCH_BASE).alias("epoch"),
+            F.col("balance"),
+        )
+    )
+
+
+def balance_history(events: "DataFrame", blocks: "DataFrame", config: NetworkConfig):
     """The running balance at the end of every day the entity moved.
 
     A cumulative sum, not a delta -- the one place this schema departs from
@@ -152,11 +192,10 @@ def balance_history(legs: "DataFrame", blocks: "DataFrame", config: NetworkConfi
     days = blocks.select(
         F.col("block_id"), day_key_from_timestamp(F.col("timestamp")).alias("day")
     )
-    signed = F.when(F.col("is_outgoing"), -F.col("value")).otherwise(F.col("value"))
     daily = (
-        legs.join(days, on="block_id", how="inner")
+        events.join(days, on="block_id", how="inner")
         .groupBy("address", "currency", "day")
-        .agg(F.sum(signed).alias("_delta"))
+        .agg(F.sum("delta").alias("_delta"))
     )
     running = Window.partitionBy("address", "currency").orderBy("day")
     return daily.withColumn(
@@ -167,6 +206,35 @@ def balance_history(legs: "DataFrame", blocks: "DataFrame", config: NetworkConfi
         F.col("currency"),
         F.col("day"),
         F.col("balance"),
+    )
+
+
+def running_balance(events: "DataFrame") -> "DataFrame":
+    """``(address, currency, tx_id, balance)`` -- the balance AFTER each tx.
+
+    A RANGE frame, not the default ROWS one, and that is the whole subtlety: an
+    address can have several events in one transaction -- both sides of a
+    self-change output, a transfer plus the fee that paid for it -- and a ROWS
+    frame would give each of them a different running value, one of which is a
+    mid-transaction state that never existed on chain. RANGE includes every peer
+    sharing the row's ``tx_id``, so all of them read the post-transaction
+    balance, and the rows collapse to one per transaction.
+
+    Events whose transaction moved nothing for this address (a fee on a failed
+    call) still count toward the sum; they simply have no row to be joined to.
+    """
+    from pyspark.sql import Window
+    from pyspark.sql import functions as F
+
+    running = (
+        Window.partitionBy("address", "currency")
+        .orderBy("tx_id")
+        .rangeBetween(Window.unboundedPreceding, Window.currentRow)
+    )
+    return (
+        events.withColumn("balance", F.sum("delta").over(running).cast("decimal(38,0)"))
+        .select("address", "currency", "tx_id", "balance")
+        .dropDuplicates(["address", "currency", "tx_id"])
     )
 
 
@@ -182,6 +250,25 @@ def address_by_prefix(
         .distinct()
         .select(prefix(F.col("address")).alias("address_prefix"), F.col("address"))
     )
+
+
+def with_running_balance(
+    paged: "DataFrame", events: "DataFrame", *, per_currency: bool
+) -> "DataFrame":
+    """Attach the post-transaction balance to each paged transaction row.
+
+    A LEFT join: a row whose balance is unknown keeps a NULL rather than a zero,
+    which would read as "empty" instead of "not computed".
+
+    ``per_currency`` is False for UTXO, which has one asset and no ``currency``
+    column on the transaction row to join on.
+    """
+    balances = running_balance(events)
+    on = ["address", "currency", "tx_id"]
+    if not per_currency:
+        balances = balances.drop("currency")
+        on = ["address", "tx_id"]
+    return paged.join(balances, on=on, how="left")
 
 
 def entity_bucket(address: "Column", config: NetworkConfig) -> "Column":

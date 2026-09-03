@@ -332,6 +332,11 @@ def _run_derived(
                 rates,
                 network,
                 config=config,
+                # Balances need the fees, and a fee is on the transaction, not
+                # on any transfer. TRON keeps them in a table of their own; on
+                # eth they are gas_used * gas_price off the receipt.
+                transactions=raw_frames["transaction"],
+                fees=raw_frames.get("fee"),
             )
         for name, frame in frames.items():
             writer.check(frame, schema.table(name))

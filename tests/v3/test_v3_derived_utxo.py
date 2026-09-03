@@ -6,6 +6,7 @@ ordinal paging.
 """
 
 from dataclasses import replace
+from decimal import Decimal
 
 import pytest
 
@@ -465,3 +466,73 @@ def test_balance_history_accumulates_across_days(spark, blocks, rates) -> None:
         (19700101, 10),
         (19700102, 15),
     ]
+
+
+def test_running_balance_nets_every_event_of_one_transaction(spark) -> None:
+    """The RANGE frame, tested where it can actually fail. An address with two
+    events in one transaction -- both sides of a self-change output, or a
+    transfer plus the fee that paid for it -- must report ONE balance for that
+    transaction, the one after all of them. The default ROWS frame would number
+    them 1 and 2 and expose a mid-transaction state that never existed."""
+    events = spark.createDataFrame(
+        [
+            (b"\xa1", "BTC", 1, 100, Decimal(10)),
+            (b"\xa1", "BTC", 2, 200, Decimal(-10)),
+            (b"\xa1", "BTC", 2, 200, Decimal(3)),
+            (b"\xa1", "BTC", 3, 300, Decimal(5)),
+        ],
+        schema=(
+            "address BINARY, currency STRING, block_id INT, tx_id BIGINT, "
+            "delta DECIMAL(38,0)"
+        ),
+    )
+    rows = sorted(
+        (r["tx_id"], int(r["balance"]))
+        for r in derived_common.running_balance(events).collect()
+    )
+    # one row per transaction, and tx 200's pair nets to 10 - 10 + 3 = 3
+    assert rows == [(100, 10), (200, 3), (300, 8)]
+
+
+def test_the_balance_on_a_transaction_row_is_the_balance_after_it(
+    many_io, many_txs, blocks, rates
+) -> None:
+    """A running total, so each row answers "what did this address hold once
+    this transaction had executed"."""
+    frames = derived_utxo.build(many_io, many_txs, blocks, rates, "btc")
+    deltas = {}
+    for row in frames["address_transactions"].collect():
+        key = bytes(row["address"])
+        deltas.setdefault(key, []).append((row["tx_id"], int(row["balance"])))
+    closing = {
+        bytes(r["address"]): int(r["balance"]) for r in frames["balance"].collect()
+    }
+    assert deltas, "fixture produced no transaction rows"
+    for address, seen in deltas.items():
+        seen.sort()
+        # the balance on the last transaction IS the closing balance, which is
+        # what makes the two tables consistent rather than merely both present
+        assert seen[-1][1] == closing[address]
+
+
+def test_a_self_change_transaction_reports_one_post_transaction_balance(
+    self_change_io, self_change_txs, blocks, rates
+) -> None:
+    """An address on both sides of one transaction has two legs sharing a
+    tx_id. With the default ROWS window frame each would get a different
+    running value, one of them a mid-transaction state that never existed on
+    chain; the RANGE frame gives both the post-transaction balance."""
+    frames = derived_utxo.build(self_change_io, self_change_txs, blocks, rates, "btc")
+    rows = frames["address_transactions"].collect()
+    per_tx = {}
+    for row in rows:
+        per_tx.setdefault((bytes(row["address"]), row["tx_id"]), set()).add(
+            int(row["balance"])
+        )
+    assert per_tx, "fixture produced no self-change rows"
+    closing = {
+        bytes(r["address"]): int(r["balance"]) for r in frames["balance"].collect()
+    }
+    for (address, _), balances in per_tx.items():
+        # one balance per transaction, and it is the post-transaction one
+        assert balances == {closing[address]}

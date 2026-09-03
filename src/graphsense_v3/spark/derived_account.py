@@ -65,8 +65,38 @@ def _topic_address(topics: "DataFrame", index: int):
     return F.expr(f"substring(topics[{index}], -20, 20)")
 
 
+#: Call types that execute in the CALLER's context, so their `value` is
+#: apparatus, not a movement: counting them invents transfers and inflates
+#: balances. graphsense-spark excludes exactly these
+#: (`eth/Transformation.scala:164`).
+BORROWED_CONTEXT_CALLS = ("delegatecall", "callcode", "staticcall")
+
+
+def _native_trace_filter(network: str):
+    """Which traces are a native-coin movement on this chain.
+
+    Both branches mirror graphsense-spark, and neither generalises:
+
+    * **eth** -- a trace carries the top-level transfer AND every internal one,
+      so the only exclusion is the borrowed-context call types above. A NULL
+      ``call_type`` (a reward or suicide trace) is kept, as there.
+    * **trx** -- ``isTrxTrace && isCallTrace``
+      (`trx/Transformation.scala:50-51`): ``call_token_id IS NULL`` because a
+      trace with one is a TRC-10 token movement, not TRX, and ``note = 'call'``
+      because a `create` trace is a deployment. TRON traces are INTERNAL calls
+      only, which is why :func:`top_level_transfers` exists.
+    """
+    from pyspark.sql import functions as F
+
+    if network == "eth":
+        return ~F.col("call_type").isin(list(BORROWED_CONTEXT_CALLS)) | F.isnull(
+            F.col("call_type")
+        )
+    return F.isnull(F.col("call_token_id")) & (F.col("note") == "call")
+
+
 def native_transfers(traces: "DataFrame", network: str) -> "DataFrame":
-    """Value transfers from traces -- top-level and internal alike.
+    """Native value transfers carried by traces.
 
     Only successful traces (`status == 1`). A failed trace moved nothing, so
     counting it would invent a transfer; on TRON `status` is derived from
@@ -77,6 +107,7 @@ def native_transfers(traces: "DataFrame", network: str) -> "DataFrame":
     symbol, _ = NATIVE[network]
     return (
         traces.where(F.col("status") == 1)
+        .where(_native_trace_filter(network))
         .where(~F.isnull(F.col("from_address")) & ~F.isnull(F.col("to_address")))
         .select(
             F.col("tx_id"),
@@ -132,13 +163,130 @@ def token_transfers(logs: "DataFrame", token_config: "DataFrame") -> "DataFrame"
     )
 
 
+def _spendable_txs(transactions: "DataFrame") -> "DataFrame":
+    """TRON transactions that moved TRX to a known recipient.
+
+    ``onlySuccessfulTxs``, ``txContractCreationAsToAddress`` and
+    ``removeUnknownRecipientTxs`` composed (`trx/Transformation.scala:155-157`).
+    The second rewrites a creation tx's recipient to the deployed contract and
+    the third then drops every row that HAS a ``receipt_contract_address``, so
+    the pair composes to "successful, has a recipient, is not a deployment" --
+    written out here rather than staged, because staged it reads as though
+    creation transactions survive.
+    """
+    from pyspark.sql import functions as F
+
+    return transactions.where(
+        (F.col("receipt_status") == 1)
+        & ~F.isnull(F.col("to_address"))
+        & F.isnull(F.col("receipt_contract_address"))
+    )
+
+
+def top_level_transfers(transactions: "DataFrame", network: str) -> "DataFrame":
+    """TRON's top-level TRX transfers, which its traces do not carry.
+
+    A TRON trace is an INTERNAL call (`note = 'call'`), so the transfer the
+    transaction itself performs appears nowhere in them -- which is why
+    graphsense-spark sums traces AND transactions for both balances
+    (`trx/Transformation.scala:174-183`) and address discovery (`:302-312`).
+    On eth a trace already covers the top-level call, so this is empty there.
+    """
+    from pyspark.sql import functions as F
+
+    symbol, _ = NATIVE[network]
+    return _spendable_txs(transactions).select(
+        F.col("tx_id"),
+        F.col("block_id"),
+        F.col("from_address").alias("src_address"),
+        F.col("to_address").alias("dst_address"),
+        F.col("value").cast("decimal(38,0)").alias("value"),
+        F.lit(symbol).alias("currency"),
+        F.lit(None).cast("int").alias("trace_index"),
+        F.lit(None).cast("int").alias("log_index"),
+    )
+
+
 def transfers(
-    traces: "DataFrame", logs: "DataFrame", token_config: "DataFrame", network: str
+    traces: "DataFrame",
+    logs: "DataFrame",
+    token_config: "DataFrame",
+    network: str,
+    transactions: Optional["DataFrame"] = None,
 ) -> "DataFrame":
     """Every transfer, native and token, as one frame."""
-    return native_transfers(traces, network).unionByName(
-        token_transfers(logs, token_config)
+    moves = native_transfers(traces, network)
+    if network == "trx" and transactions is not None:
+        moves = moves.unionByName(top_level_transfers(transactions, network))
+    return moves.unionByName(token_transfers(logs, token_config))
+
+
+def fee_events(
+    transactions: "DataFrame",
+    blocks: "DataFrame",
+    fees: Optional["DataFrame"],
+    network: str,
+) -> "DataFrame":
+    """Balance changes that are fees rather than transfers.
+
+    The reason a balance cannot be summed from transfer legs alone, and the
+    reason graphsense-spark's ``computeBalances`` has five terms where the
+    transfer graph has two. Shape is ``derived_common.leg_events``'.
+
+    * **eth** (`eth/Transformation.scala:189-216`) -- the sender pays
+      ``receipt_gas_used * gas_price``; the miner receives it; and the EIP-1559
+      base fee, ``base_fee_per_gas * gas_used``, is burnt out of the miner's
+      credit, leaving the priority fee.
+    * **trx** (`trx/Transformation.scala:196-203`) -- the sender pays ``fee``
+      and no one receives it: TRON burns fees, so there is no miner side. The
+      commented-out ``txFeeDebits`` there records that as a finding, not an
+      omission.
+    """
+    from pyspark.sql import functions as F
+
+    symbol, _ = NATIVE[network]
+
+    def event(address, delta, source):
+        return source.select(
+            address.alias("address"),
+            F.lit(symbol).alias("currency"),
+            F.col("block_id"),
+            F.col("tx_id"),
+            delta.cast("decimal(38,0)").alias("delta"),
+        )
+
+    if network == "trx":
+        if fees is None:
+            raise ValueError("trx fee events need the raw `fee` table")
+        paid = _spendable_txs(transactions).join(
+            fees.select("tx_id", "fee"), on="tx_id", how="inner"
+        )
+        return event(F.col("from_address"), -F.col("fee"), paid)
+
+    gas = F.col("receipt_gas_used") * F.col("gas_price")
+    charged = transactions.select(
+        F.col("tx_id"),
+        F.col("block_id"),
+        F.col("from_address"),
+        gas.alias("gas_cost"),
     )
+    sender = event(F.col("from_address"), -F.col("gas_cost"), charged)
+
+    # The miner's two terms are per BLOCK, not per transaction, so they are
+    # attributed to the block's last tx_id -- the balance is right from that
+    # block onward either way, and a block with no transactions cannot have a
+    # fee to attribute.
+    earned = (
+        charged.groupBy("block_id")
+        .agg(F.sum("gas_cost").alias("gas_cost"), F.max("tx_id").alias("tx_id"))
+        .join(
+            blocks.select("block_id", "miner", "gas_used", "base_fee_per_gas"),
+            "block_id",
+        )
+    )
+    burnt = F.coalesce(F.col("base_fee_per_gas"), F.lit(0)) * F.col("gas_used")
+    miner = event(F.col("miner"), F.col("gas_cost") - burnt, earned)
+    return sender.unionByName(miner)
 
 
 def priced(
@@ -258,6 +406,7 @@ def address_transactions(paged: "DataFrame") -> "DataFrame":
         _tx_reference().alias("tx_reference"),
         F.col("currency"),
         F.col("value").cast("decimal(38,0)").alias("value"),
+        F.col("balance"),
     )
 
 
@@ -495,25 +644,23 @@ def address_stats(
     )
 
 
-def balance(all_legs: "DataFrame", config: NetworkConfig) -> "DataFrame":
-    """Received minus spent, per address AND asset.
+def balance_events(
+    all_legs: "DataFrame",
+    transactions: "DataFrame",
+    blocks: "DataFrame",
+    fees: Optional["DataFrame"],
+    network: str,
+) -> "DataFrame":
+    """Every event that moves an account balance: transfers AND fees.
 
-    ``currency`` is in the key here, unlike UTXO: an account address holds a
-    balance in every token it has touched.
+    ``balance``, ``balance_history`` and the per-transaction running balance all
+    read this one stream, so the three cannot disagree -- which they would if
+    each summed the legs and only some remembered the gas.
     """
     from pyspark.sql import functions as F
 
-    signed = F.when(F.col("is_outgoing"), -F.col("value")).otherwise(F.col("value"))
-    return (
-        all_legs.groupBy("address", "currency")
-        .agg(F.sum(signed).cast("decimal(38,0)").alias("balance"))
-        .select(
-            common.entity_bucket(F.col("address"), config).alias("address_bucket"),
-            F.col("address"),
-            F.col("currency"),
-            F.lit(EPOCH_BASE).alias("epoch"),
-            F.col("balance"),
-        )
+    return common.leg_events(all_legs, F.col("currency")).unionByName(
+        fee_events(transactions, blocks, fees, network)
     )
 
 
@@ -526,20 +673,35 @@ def build(
     network: str,
     *,
     config: Optional[NetworkConfig] = None,
+    transactions: Optional["DataFrame"] = None,
+    fees: Optional["DataFrame"] = None,
 ) -> dict:
     """The derived address tables for an account network."""
+    if transactions is None:
+        raise ValueError(
+            "the raw `transaction` frame is required: a fee moves value without "
+            "being a transfer, so a balance summed from the legs alone is wrong "
+            "-- and on TRON the transaction row carries transfers the traces do "
+            "not have at all"
+        )
     cfg = config or config_for(network)
     moves = priced(
-        transfers(traces, logs, token_config, network), rates, token_config, network
+        transfers(traces, logs, token_config, network, transactions),
+        rates,
+        token_config,
+        network,
     ).cache()
     all_legs = legs(moves).cache()
+    events = balance_events(all_legs, transactions, blocks, fees, network).cache()
     paged = common.with_ordinals(
         common.with_zero_flag(all_legs),
         ["address", "is_outgoing", "is_zero_value"],
         cfg,
     ).cache()
     return {
-        "address_transactions": address_transactions(paged),
+        "address_transactions": address_transactions(
+            common.with_running_balance(paged, events, per_currency=True)
+        ),
         "address_tx_pages": common.address_tx_pages(paged),
         "address_stats": address_stats(
             all_legs,
@@ -557,8 +719,8 @@ def build(
             moves, cfg, near="dst_address", far="src_address", network=network
         ),
         "address_link_transactions": address_link_transactions(moves, cfg),
-        "balance": balance(all_legs, cfg),
-        "balance_history": common.balance_history(all_legs, blocks, cfg),
+        "balance": common.balance(events, cfg),
+        "balance_history": common.balance_history(events, blocks, cfg),
     }
 
 
@@ -574,10 +736,22 @@ def load(
     tables: Optional[tuple] = None,
     config: Optional[NetworkConfig] = None,
     sidecar: Optional[dict] = None,
+    transactions: Optional["DataFrame"] = None,
+    fees: Optional["DataFrame"] = None,
 ) -> list:
     """Write the derived address tables into ``keyspace``."""
     schema = schema_for(network, Kind.DERIVED)
-    frames = build(traces, logs, token_config, blocks, rates, network, config=config)
+    frames = build(
+        traces,
+        logs,
+        token_config,
+        blocks,
+        rates,
+        network,
+        config=config,
+        transactions=transactions,
+        fees=fees,
+    )
     selected = tables or TABLES
     for name in selected:
         writer.check(frames[name], schema.table(name))

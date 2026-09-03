@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS address_transactions (
     tx_page int,
     tx_id bigint,
     value varint,
+    balance varint,                         -- after this transaction
     PRIMARY KEY ((address, is_outgoing, is_zero_value, tx_page), tx_id)
 )
     WITH CLUSTERING ORDER BY (tx_id DESC)

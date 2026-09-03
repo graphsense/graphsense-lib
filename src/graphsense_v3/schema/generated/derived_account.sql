@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS address_transactions (
     tx_reference frozen<tx_reference>,
     currency text,
     value varint,
+    balance varint,                         -- after this transaction
     PRIMARY KEY ((address, is_outgoing, is_zero_value, tx_page), tx_id, tx_reference, currency)
 )
     WITH CLUSTERING ORDER BY (tx_id DESC, tx_reference DESC, currency ASC)

@@ -21,7 +21,7 @@ USDT = b"\xda\xc1" + b"\x7f" * 18
 TRACE_SCHEMA = (
     "block_id_group INT, block_id INT, trace_index INT, tx_hash BINARY, "
     "tx_id BIGINT, from_address BINARY, to_address BINARY, value DECIMAL(38,0), "
-    "status SMALLINT, trace_type STRING"
+    "status SMALLINT, trace_type STRING, call_type STRING"
 )
 LOG_SCHEMA = (
     "block_id_group INT, block_id INT, log_index INT, address BINARY, "
@@ -32,7 +32,15 @@ TOKEN_SCHEMA = (
     "decimal_divisor BIGINT, peg_currency STRING"
 )
 RATES_SCHEMA = "asset STRING, block_id INT, fiat_values MAP<STRING,DOUBLE>"
-BLOCK_SCHEMA = "block_id INT, timestamp BIGINT"
+BLOCK_SCHEMA = (
+    "block_id INT, timestamp BIGINT, miner BINARY, gas_used BIGINT, "
+    "base_fee_per_gas BIGINT"
+)
+TX_SCHEMA = (
+    "tx_id BIGINT, block_id INT, from_address BINARY, to_address BINARY, "
+    "value DECIMAL(38,0), receipt_status TINYINT, receipt_gas_used BIGINT, "
+    "gas_price DECIMAL(38,0), receipt_contract_address BINARY"
+)
 
 
 def _topic(address: bytes) -> bytes:
@@ -137,9 +145,44 @@ def token_config(spark):
     )
 
 
+MINER = b"\xcc" * 20
+
+
 @pytest.fixture(scope="module")
 def blocks(spark):
-    return spark.createDataFrame([{"block_id": 1, "timestamp": 0}], schema=BLOCK_SCHEMA)
+    return spark.createDataFrame(
+        [
+            {
+                "block_id": 1,
+                "timestamp": 0,
+                "miner": MINER,
+                "gas_used": 100,
+                "base_fee_per_gas": 2,
+            }
+        ],
+        schema=BLOCK_SCHEMA,
+    )
+
+
+@pytest.fixture(scope="module")
+def transactions(spark):
+    """One transaction, paying 21000 * 10 gwei in gas."""
+    return spark.createDataFrame(
+        [
+            {
+                "tx_id": tx_id(1, 0),
+                "block_id": 1,
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(10**18),
+                "receipt_status": 1,
+                "receipt_gas_used": 21_000,
+                "gas_price": Decimal(10**10),
+                "receipt_contract_address": None,
+            }
+        ],
+        schema=TX_SCHEMA,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -156,8 +199,16 @@ def rates(spark):
     )
 
 
-def _build(traces, logs, token_config, blocks, rates):
-    return tf.build(traces, logs, token_config, blocks, rates, "eth")
+def _build(traces, logs, token_config, blocks, rates, transactions):
+    return tf.build(
+        traces,
+        logs,
+        token_config,
+        blocks,
+        rates,
+        "eth",
+        transactions=transactions,
+    )
 
 
 def test_a_failed_trace_moved_nothing(traces) -> None:
@@ -198,7 +249,7 @@ def test_an_unconfigured_contract_is_not_a_token(logs, token_config) -> None:
 
 
 def test_a_pegged_token_is_worth_its_face_value(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
     """A USD-pegged stablecoin is 2.0 USD for 2_000_000 base units at 6
     decimals; the other fiat currency follows from the base cross rate."""
@@ -215,7 +266,7 @@ def test_a_pegged_token_is_worth_its_face_value(
 
 
 def test_the_native_coin_is_priced_from_the_block_rate(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
     moves = tf.priced(
         tf.transfers(traces, logs, token_config, "eth"),
@@ -255,7 +306,7 @@ def test_an_unpegged_token_without_a_rate_gets_no_fiat(
 
 
 def test_a_transfer_names_both_ends_so_a_leg_is_not_netted(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
     """No apportioning and no netting question: direction is a property of the
     leg, not of a sum, which is why D7 has no account counterpart."""
@@ -280,9 +331,11 @@ def test_a_contract_deployed_internally_is_still_a_contract(traces) -> None:
 
 
 def test_stats_separate_native_from_token_totals(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
-    stats = _build(traces, logs, token_config, blocks, rates)["address_stats"]
+    stats = _build(traces, logs, token_config, blocks, rates, transactions)[
+        "address_stats"
+    ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
     assert int(alice["total_spent"]["value"]) == 10**18
     assert int(alice["total_tokens_spent"]["USDT"]["value"]) == 2_000_000
@@ -290,20 +343,40 @@ def test_stats_separate_native_from_token_totals(
     assert alice["out_degree"] == 2  # BOB and the created contract
 
 
-def test_balance_is_per_asset(traces, logs, token_config, blocks, rates) -> None:
+def test_balance_is_per_asset(
+    traces, logs, token_config, blocks, rates, transactions
+) -> None:
     """An account address holds a balance in every token it has touched, which
     is why currency is in this table's key and not in UTXO's."""
-    rows = _build(traces, logs, token_config, blocks, rates)["balance"].collect()
+    rows = _build(traces, logs, token_config, blocks, rates, transactions)[
+        "balance"
+    ].collect()
     by_key = {(bytes(r["address"]), r["currency"]): int(r["balance"]) for r in rows}
     assert by_key[(ALICE, "USDT")] == -2_000_000
     assert by_key[(BOB, "USDT")] == 2_000_000
-    assert by_key[(ALICE, "ETH")] == -(10**18)
+    # The native balance is NOT the sum of the transfer legs: the sender also
+    # paid for the gas. graphsense-spark has the same five terms.
+    gas = 21_000 * 10**10
+    assert by_key[(ALICE, "ETH")] == -(10**18) - gas
+    # The miner is paid the gas and burns the base fee, keeping the priority
+    # fee -- so it is not simply `gas` either.
+    assert by_key[(MINER, "ETH")] == gas - 2 * 100
+
+
+def test_the_gas_a_transfer_paid_is_not_a_transfer(
+    traces, logs, token_config, blocks, rates, transactions
+) -> None:
+    """A fee moves value without being a transfer, so it must not appear in the
+    transfer graph -- only in the balance."""
+    frames = _build(traces, logs, token_config, blocks, rates, transactions)
+    addresses = {bytes(r["address"]) for r in frames["address_transactions"].collect()}
+    assert MINER not in addresses
 
 
 def test_relations_carry_token_values(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
-    frames = _build(traces, logs, token_config, blocks, rates)
+    frames = _build(traces, logs, token_config, blocks, rates, transactions)
     edge = next(
         r
         for r in frames["address_outgoing_relations"].collect()
@@ -315,23 +388,23 @@ def test_relations_carry_token_values(
 
 
 def test_link_transactions_are_partitioned_per_edge(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
     """The account half of D10: fewer addresses with more transactions per edge,
     so the repeated destination costs less than the partitions it saves."""
     table = schema_for("eth", Kind.DERIVED).table("address_link_transactions")
     assert table.key.partition == ("src_address", "dst_address", "tx_page")
-    links = _build(traces, logs, token_config, blocks, rates)[
+    links = _build(traces, logs, token_config, blocks, rates, transactions)[
         "address_link_transactions"
     ].collect()
     assert {r["currency"] for r in links} == {"ETH", "USDT"}
 
 
 def test_every_frame_conforms_to_its_table(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
     schema = schema_for("eth", Kind.DERIVED)
-    frames = _build(traces, logs, token_config, blocks, rates)
+    frames = _build(traces, logs, token_config, blocks, rates, transactions)
     assert set(frames) == set(tf.TABLES)
     for name, frame in frames.items():
         assert conformance_errors(list(frame.columns), schema.table(name)) == []
@@ -343,11 +416,11 @@ def test_tron_uses_its_own_native_symbol_and_divisor() -> None:
 
 
 def test_zero_value_transfers_are_a_separate_partition(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
     """The reason this exists: on ETH and TRON a zero-value transfer is a
     contract call that moved nothing, and they dominate an address's listing."""
-    frames = _build(traces, logs, token_config, blocks, rates)
+    frames = _build(traces, logs, token_config, blocks, rates, transactions)
     rows = frames["address_transactions"].collect()
     zero = [r for r in rows if r["is_zero_value"]]
     assert zero and all(int(r["value"]) == 0 for r in zero)
@@ -355,14 +428,201 @@ def test_zero_value_transfers_are_a_separate_partition(
 
 
 def test_balance_history_is_per_asset_and_cumulative(
-    traces, logs, token_config, blocks, rates
+    traces, logs, token_config, blocks, rates, transactions
 ) -> None:
     """Per asset, like `balance` -- an account address holds a history in every
     token it has touched."""
-    rows = _build(traces, logs, token_config, blocks, rates)[
+    rows = _build(traces, logs, token_config, blocks, rates, transactions)[
         "balance_history"
     ].collect()
     by_key = {(bytes(r["address"]), r["currency"]): int(r["balance"]) for r in rows}
     assert by_key[(ALICE, "USDT")] == -2_000_000
     assert by_key[(BOB, "ETH")] == 10**18
     assert {r["day"] for r in rows} == {19700101}
+
+
+def test_a_borrowed_context_call_is_not_a_transfer(spark) -> None:
+    """delegatecall, callcode and staticcall execute in the CALLER's context.
+    Their `value` is apparatus, not a movement, and counting it invents
+    transfers -- graphsense-spark excludes exactly these three
+    (`eth/Transformation.scala:164`). A NULL call_type is kept, as there."""
+    traces = spark.createDataFrame(
+        [
+            {
+                "block_id_group": 0,
+                "block_id": 1,
+                "trace_index": i,
+                "tx_hash": b"\xa0",
+                "tx_id": tx_id(1, 0),
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(10**18),
+                "status": 1,
+                "trace_type": "call",
+                "call_type": call_type,
+            }
+            for i, call_type in enumerate(
+                ["call", "delegatecall", "callcode", "staticcall", None]
+            )
+        ],
+        schema=TRACE_SCHEMA,
+    )
+    kept = tf.native_transfers(traces, "eth").collect()
+    assert sorted(r["trace_index"] for r in kept) == [0, 4]
+
+
+TRX_TRACE_SCHEMA = (
+    "block_id_group INT, block_id INT, trace_index INT, tx_hash BINARY, "
+    "tx_id BIGINT, from_address BINARY, to_address BINARY, value DECIMAL(38,0), "
+    "status SMALLINT, call_token_id INT, note STRING"
+)
+TRX_FEE_SCHEMA = "tx_id BIGINT, fee BIGINT"
+
+
+@pytest.fixture(scope="module")
+def trx_traces(spark):
+    """An internal call, a TRC-10 movement, and a contract deployment."""
+    return spark.createDataFrame(
+        [
+            {
+                "block_id_group": 0,
+                "block_id": 1,
+                "trace_index": 0,
+                "tx_hash": b"\xa0",
+                "tx_id": tx_id(1, 0),
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(7),
+                "status": 1,
+                "call_token_id": None,
+                "note": "call",
+            },
+            {
+                "block_id_group": 0,
+                "block_id": 1,
+                "trace_index": 1,
+                "tx_hash": b"\xa0",
+                "tx_id": tx_id(1, 0),
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(999),
+                "status": 1,
+                "call_token_id": 31_303,
+                "note": "call",
+            },
+            {
+                "block_id_group": 0,
+                "block_id": 1,
+                "trace_index": 2,
+                "tx_hash": b"\xa1",
+                "tx_id": tx_id(1, 1),
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(5),
+                "status": 1,
+                "call_token_id": None,
+                "note": "create",
+            },
+        ],
+        schema=TRX_TRACE_SCHEMA,
+    )
+
+
+def test_a_trc10_trace_is_not_a_native_trx_transfer(trx_traces) -> None:
+    """`isTrxTrace = callTokenId.isNull` (`trx/Transformation.scala:50`): a
+    trace carrying a token id moved a TRC-10, not TRX, and counting its value as
+    native would credit the address in the wrong asset. `isCallTrace` drops the
+    deployment the same way."""
+    rows = tf.native_transfers(trx_traces, "trx").collect()
+    assert [int(r["value"]) for r in rows] == [7]
+    assert {r["currency"] for r in rows} == {"TRX"}
+
+
+def test_tron_top_level_transfers_come_from_the_transaction(spark, trx_traces) -> None:
+    """A TRON trace is an INTERNAL call, so the transfer the transaction itself
+    performs is in none of them -- which is why graphsense-spark sums traces AND
+    transactions (`trx/Transformation.scala:174-183`)."""
+    txs = spark.createDataFrame(
+        [
+            {
+                "tx_id": tx_id(1, 0),
+                "block_id": 1,
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(100),
+                "receipt_status": 1,
+                "receipt_gas_used": 0,
+                "gas_price": Decimal(0),
+                "receipt_contract_address": None,
+            },
+            {  # a deployment: no recipient of its own, so not a transfer
+                "tx_id": tx_id(1, 1),
+                "block_id": 1,
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(3),
+                "receipt_status": 1,
+                "receipt_gas_used": 0,
+                "gas_price": Decimal(0),
+                "receipt_contract_address": b"\xde" * 20,
+            },
+            {  # failed: moved nothing
+                "tx_id": tx_id(1, 2),
+                "block_id": 1,
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(50),
+                "receipt_status": 0,
+                "receipt_gas_used": 0,
+                "gas_price": Decimal(0),
+                "receipt_contract_address": None,
+            },
+        ],
+        schema=TX_SCHEMA,
+    )
+    assert [int(r["value"]) for r in tf.top_level_transfers(txs, "trx").collect()] == [
+        100
+    ]
+    # and the trace's 7 is a separate, additional movement
+    values = sorted(
+        int(r["value"])
+        for r in tf.transfers(
+            trx_traces, _no_logs(spark), _no_tokens(spark), "trx", txs
+        ).collect()
+    )
+    assert values == [7, 100]
+
+
+def _no_logs(spark):
+    return spark.createDataFrame([], schema=LOG_SCHEMA)
+
+
+def _no_tokens(spark):
+    return spark.createDataFrame([], schema=TOKEN_SCHEMA)
+
+
+def test_tron_burns_the_fee_so_no_one_receives_it(spark, trx_traces) -> None:
+    """`trx/Transformation.scala:196` debits the sender and has no miner term at
+    all -- the commented-out txFeeDebits there records that as a finding."""
+    txs = spark.createDataFrame(
+        [
+            {
+                "tx_id": tx_id(1, 0),
+                "block_id": 1,
+                "from_address": ALICE,
+                "to_address": BOB,
+                "value": Decimal(100),
+                "receipt_status": 1,
+                "receipt_gas_used": 0,
+                "gas_price": Decimal(0),
+                "receipt_contract_address": None,
+            }
+        ],
+        schema=TX_SCHEMA,
+    )
+    fees = spark.createDataFrame(
+        [{"tx_id": tx_id(1, 0), "fee": 265}], schema=TRX_FEE_SCHEMA
+    )
+    blocks = spark.createDataFrame([], schema=BLOCK_SCHEMA)
+    rows = tf.fee_events(txs, blocks, fees, "trx").collect()
+    assert [(bytes(r["address"]), int(r["delta"])) for r in rows] == [(ALICE, -265)]

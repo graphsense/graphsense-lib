@@ -714,6 +714,12 @@ def _txs_table(name: str, entity: str, family: Family, *, recent: bool) -> Table
             C("tx_id", "bigint"),
             *account_only,
             C("value", "varint"),
+            # The entity's balance in this row's asset AFTER the transaction.
+            # Paged rows only: filling it needs the previous balance, and the
+            # tail table exists precisely so ingest can append without a read.
+            # Compaction is already reading neighbours to assign the ordinal,
+            # so it fills this at the same time.
+            *(() if recent else (C("balance", "varint", "after this transaction"),)),
         ),
         Key((entity, "is_outgoing", "is_zero_value", split[0]), clustering, order),
         CHURN if recent else STCS,

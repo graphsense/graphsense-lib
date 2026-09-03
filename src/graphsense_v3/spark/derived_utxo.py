@@ -386,28 +386,6 @@ def degrees(edges: "DataFrame") -> "DataFrame":
     return out.join(incoming, on="address", how="outer")
 
 
-def balance(spine: "DataFrame", network: str, config: NetworkConfig) -> "DataFrame":
-    """Received minus spent, as an epoch-0 row.
-
-    Summable like the stats rows, so the incremental path can blind-insert a
-    delta and a read sums the slice.
-    """
-    from pyspark.sql import functions as F
-
-    signed = F.when(F.col("is_outgoing"), -F.col("value")).otherwise(F.col("value"))
-    return (
-        spine.groupBy("address")
-        .agg(F.sum(signed).cast("decimal(38,0)").alias("balance"))
-        .select(
-            common.entity_bucket(F.col("address"), config).alias("address_bucket"),
-            F.col("address"),
-            F.lit(network.upper()).alias("currency"),
-            F.lit(EPOCH_BASE).alias("epoch"),
-            F.col("balance"),
-        )
-    )
-
-
 def build(
     transaction_io: "DataFrame",
     transactions: "DataFrame",
@@ -435,10 +413,16 @@ def build(
         if single_address_io is None
         else aggregate_legs(single_address_io)
     ).cache()
+    # UTXO needs no fee events: a transaction's fee is its inputs minus its
+    # outputs, so the spender's own legs already carry it. The miner is paid by
+    # the coinbase output, which is a leg like any other.
+    events = common.leg_events(spine, _native(network)).cache()
     paged = address_transactions(spine, cfg).cache()
     edges = relation_edges(spine, transactions).cache()
     return {
-        "address_transactions": paged.drop("ordinal"),
+        "address_transactions": common.with_running_balance(
+            paged.drop("ordinal"), events, per_currency=False
+        ),
         "address_tx_pages": common.address_tx_pages(paged),
         "address_stats": address_stats(spine, paged, rates, degrees(edges), cfg),
         "address_by_prefix": common.address_by_prefix(spine, network, cfg),
@@ -449,10 +433,8 @@ def build(
             edges, rates, cfg, near="dst_address", far="src_address"
         ),
         "address_link_transactions": address_link_transactions(edges, cfg),
-        "balance": balance(spine, network, cfg),
-        "balance_history": common.balance_history(
-            spine.withColumn("currency", _native(network)), blocks, cfg
-        ),
+        "balance": common.balance(events, cfg),
+        "balance_history": common.balance_history(events, blocks, cfg),
     }
 
 
