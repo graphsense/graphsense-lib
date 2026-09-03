@@ -124,6 +124,19 @@ CONFIGS: dict[str, NetworkConfig] = {
 }
 
 
+def configuration_row(spark, config: "NetworkConfig", keyspace: str):
+    """The single ``configuration`` row for ``keyspace``, as a DataFrame.
+
+    Written into BOTH keyspaces of a run. The derived one is not a copy for
+    tidiness: `address_bucket` and `rel_bucket` are `crc32(entity) % n`, so a
+    reader of the derived keyspace cannot address a single partition without
+    these constants -- and making it read them out of the RAW keyspace would
+    mean knowing that keyspace's name, which is exactly the coupling the
+    per-keyspace row removes.
+    """
+    return spark.createDataFrame([config.as_row(keyspace)], schema=CONFIGURATION_SCHEMA)
+
+
 def config_for(network: str) -> NetworkConfig:
     net = network.lower()
     if net not in CONFIGS:

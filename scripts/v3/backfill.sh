@@ -34,6 +34,7 @@
 #   ./scripts/v3/backfill.sh create                 # create the keyspaces (RF 1)
 #   ./scripts/v3/backfill.sh schema > v3.cql        # ... or the CQL, for cqlsh
 #   ./scripts/v3/backfill.sh dry-run                # build + conform, no writes
+#   ./scripts/v3/backfill.sh probe                  # read-only: every DAL query
 #   ./scripts/v3/backfill.sh run                    # the real thing
 #
 # Env vars:
@@ -250,6 +251,13 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
   schema)
     v3 schema -n "$NETWORK" --kind raw --label "$LABEL" "${REPLICATION[@]}"
     v3 schema -n "$NETWORK" --kind derived --label "$LABEL" "${REPLICATION[@]}"
+    ;;
+  probe)
+    # Read-only; every statement is a SELECT. CASSANDRA_HOSTS bypasses
+    # graphsense.yaml entirely, which is also how this runs off a laptop.
+    HOSTS_ARG=()
+    [[ -n "${CASSANDRA_HOSTS:-}" ]] && HOSTS_ARG=(--hosts "$CASSANDRA_HOSTS")
+    v3 -v probe -e "$ENV" -n "$NETWORK" --label "$LABEL" "${HOSTS_ARG[@]}"
     ;;
   dry-run)
     if [[ -z "$END_BLOCK" && "${FULL:-0}" != "1" ]]; then

@@ -38,7 +38,7 @@ CREATE TYPE IF NOT EXISTS currency (
 -- least. Identity columns are blind-upserted to epoch 0 by the writer, which
 -- is a per-column upsert, not a read-modify-write.
 CREATE TABLE IF NOT EXISTS address_stats (
-    address_bucket int,                     -- murmur3(entity) % entity_buckets
+    address_bucket int,                     -- crc32(entity) % entity_buckets
     address blob,
     epoch int,                              -- 0 = compacted base; else block_id // epoch_size + 1
     no_incoming_txs bigint,
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS address_tx_pages (
 -- already cannot trust the netted edge.
 CREATE TABLE IF NOT EXISTS address_incoming_relations (
     dst_address blob,
-    rel_bucket int,                         -- murmur3(far side) % relation_buckets
+    rel_bucket int,                         -- crc32(far side) % relation_buckets
     src_address blob,
     epoch int,                              -- as address_stats: summable
     no_transactions bigint,                 -- was int
@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS address_incoming_relations (
 -- already cannot trust the netted edge.
 CREATE TABLE IF NOT EXISTS address_outgoing_relations (
     src_address blob,
-    rel_bucket int,                         -- murmur3(far side) % relation_buckets
+    rel_bucket int,                         -- crc32(far side) % relation_buckets
     dst_address blob,
     epoch int,                              -- as address_stats: summable
     no_transactions bigint,                 -- was int
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS address_outgoing_relations (
 -- aggregate them away, which is why /links has to rescan raw io membership.
 CREATE TABLE IF NOT EXISTS address_link_transactions (
     src_address blob,
-    dst_bucket int,                         -- murmur3(dst) % relation_buckets
+    dst_bucket int,                         -- crc32(dst) % relation_buckets
     dst_address blob,
     tx_id bigint,
     value varint,
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
 
 CREATE TABLE IF NOT EXISTS configuration (
     keyspace_name text,
-    entity_buckets int,                     -- murmur3(entity) % this
+    entity_buckets int,                     -- crc32(entity) % this; see codec.bucket
     tx_page_size int,                       -- rows per *_transactions partition
     relation_buckets int,
     epoch_size int,                         -- blocks per stats epoch

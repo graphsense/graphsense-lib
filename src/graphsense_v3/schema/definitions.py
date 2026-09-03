@@ -74,7 +74,7 @@ def _housekeeping(kind: Kind) -> tuple[Table, ...]:
             "configuration",
             (
                 C("keyspace_name", "text"),
-                C("entity_buckets", "int", "murmur3(entity) % this"),
+                C("entity_buckets", "int", "crc32(entity) % this; see codec.bucket"),
                 C("tx_page_size", "int", "rows per *_transactions partition"),
                 C("relation_buckets", "int"),
                 C("epoch_size", "int", "blocks per stats epoch"),
@@ -630,7 +630,7 @@ def _stats_table(name: str, entity: str, family: Family, extra: tuple[C, ...]) -
     return Table(
         name,
         (
-            C(bucket, "int", "murmur3(entity) % entity_buckets"),
+            C(bucket, "int", "crc32(entity) % entity_buckets"),
             C(entity, "blob"),
             C("epoch", "int", "0 = compacted base; else block_id // epoch_size + 1"),
             # --- summable: every epoch row carries a partial value ---
@@ -776,7 +776,7 @@ def _relations_table(name: str, near: str, far: str, family: Family) -> Table:
         name,
         (
             C(near, "blob"),
-            C("rel_bucket", "int", "murmur3(far side) % relation_buckets"),
+            C("rel_bucket", "int", "crc32(far side) % relation_buckets"),
             C(far, "blob"),
             C("epoch", "int", "as address_stats: summable"),
             C("no_transactions", "bigint", "was int"),
@@ -826,7 +826,7 @@ def _link_txs_table(name: str, src: str, dst: str, family: Family) -> Table:
             name,
             (
                 C(src, "blob"),
-                C("dst_bucket", "int", "murmur3(dst) % relation_buckets"),
+                C("dst_bucket", "int", "crc32(dst) % relation_buckets"),
                 C(dst, "blob"),
                 C("tx_id", "bigint"),
                 # varint, as everywhere else a value is stored -- address_

@@ -349,6 +349,17 @@ def _run_derived(
     for name, frame in frames.items():
         with Stage(f"write derived.{name}"):
             writer.write(frame, schema.table(name), derived_keyspace, sidecar=sidecar)
+    with Stage("write derived.configuration"):
+        # The derived keyspace carries its OWN constants: a reader computing
+        # address_bucket has to have them, and sending it to the raw keyspace
+        # for them would make it need that keyspace's name too.
+        from graphsense_v3.config import configuration_row
+
+        writer.write(
+            configuration_row(spark, config, derived_keyspace),
+            schema.table("configuration"),
+            derived_keyspace,
+        )
     # Counts, so it runs after the frames it counts are materialised.
     with Stage("write derived.summary_statistics"):
         writer.write(

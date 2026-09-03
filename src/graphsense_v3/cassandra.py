@@ -45,30 +45,43 @@ def keyspace_of(cql: str) -> str | None:
     return match.group(1) if match else None
 
 
+def connect_to(
+    nodes: list, username: "str | None" = None, password: "str | None" = None
+):
+    """A driver Cluster for ``host[:port]`` contact points. Caller shuts it down."""
+    from cassandra.auth import PlainTextAuthProvider
+    from cassandra.cluster import Cluster
+
+    from graphsenselib.utils.cassandra import split_nodes_and_port
+
+    hosts, port = split_nodes_and_port(nodes)
+    auth = (
+        PlainTextAuthProvider(username=username, password=password)
+        if username
+        else None
+    )
+    return Cluster(hosts, port=port, auth_provider=auth)
+
+
+def connect(settings: "RunSettings"):
+    """A driver Cluster for the configured contact points. Caller shuts it down."""
+    return connect_to(settings.cassandra_nodes, settings.username, settings.password)
+
+
 def apply_cql(settings: "RunSettings", cql: str) -> int:
     """Execute rendered DDL against the configured cluster. Returns the count.
 
     ``USE`` is honoured by the driver session, so the statements run in the
     order the renderer emitted them.
     """
-    from cassandra.auth import PlainTextAuthProvider
-    from cassandra.cluster import Cluster
-
     from graphsense_v3.settings import assert_v3_keyspace
-    from graphsenselib.utils.cassandra import split_nodes_and_port
 
     target = keyspace_of(cql)
     if target is None:
         raise ValueError("rendered CQL creates no keyspace; refusing to execute it")
     assert_v3_keyspace(target)
 
-    hosts, port = split_nodes_and_port(settings.cassandra_nodes)
-    auth = (
-        PlainTextAuthProvider(username=settings.username, password=settings.password)
-        if settings.username
-        else None
-    )
-    cluster = Cluster(hosts, port=port, auth_provider=auth)
+    cluster = connect(settings)
     session = cluster.connect()
     try:
         applied = 0

@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
 
 CREATE TABLE IF NOT EXISTS configuration (
     keyspace_name text,
-    entity_buckets int,                     -- murmur3(entity) % this
+    entity_buckets int,                     -- crc32(entity) % this; see codec.bucket
     tx_page_size int,                       -- rows per *_transactions partition
     relation_buckets int,
     epoch_size int,                         -- blocks per stats epoch

@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Optional
 
 from graphsense_v3.codec import TX_INDEX_BITS
 from graphsense_v3.config import (
-    CONFIGURATION_SCHEMA,
     NetworkConfig,
     config_for,
 )
@@ -223,9 +222,9 @@ def configuration_row(
     lake: "LakeSource", config: NetworkConfig, keyspace: str
 ) -> "DataFrame":
     """The single ``configuration`` row, as a DataFrame."""
-    return lake.spark.createDataFrame(
-        [config.as_row(keyspace)], schema=CONFIGURATION_SCHEMA
-    )
+    from graphsense_v3.config import configuration_row as build_row
+
+    return build_row(lake.spark, config, keyspace)
 
 
 def build(

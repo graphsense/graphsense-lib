@@ -28,7 +28,6 @@ not in the lake, and the existing gslib paths already populate those tables.
 from typing import TYPE_CHECKING, Optional
 
 from graphsense_v3.config import (
-    CONFIGURATION_SCHEMA,
     NetworkConfig,
     config_for,
 )
@@ -352,9 +351,10 @@ def _fee(
 def configuration_row(
     lake: "LakeSource", config: NetworkConfig, keyspace: str
 ) -> "DataFrame":
-    return lake.spark.createDataFrame(
-        [config.as_row(keyspace)], schema=CONFIGURATION_SCHEMA
-    )
+    """The single ``configuration`` row, as a DataFrame."""
+    from graphsense_v3.config import configuration_row as build_row
+
+    return build_row(lake.spark, config, keyspace)
 
 
 def build(
