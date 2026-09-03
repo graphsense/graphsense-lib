@@ -57,7 +57,7 @@
 #   NETWORK             default btc; both families transform
 #   LABEL               keyspace suffix; default bench1
 #   PROFILE             spark_config profile; default v3-utxo
-#   WRITER              connector | sidecar; default connector
+#   WRITER              connector | sidecar; default sidecar
 #   FULL                set to 1 for a full-history run (no END_BLOCK)
 #   RF                  replication factor; default 1 (benchmark keyspace: half
 #                       the disk, half the write cost, and nothing depends on
@@ -68,10 +68,18 @@
 #
 # WRITER: `sidecar` bulk-writes SSTables through the Cassandra Sidecar, the same
 # path the TRON transform uses; `connector` goes through the CQL write path at
-# throughputMBPerSec, which is what that transform moved off. Sidecar is much
-# faster for volume but has NOT been exercised from PySpark against a real
-# cluster, so `connector` is the default -- prove the pipeline on the path that
-# has run, then switch.
+# throughputMBPerSec, which is what that transform moved off.
+#
+# Sidecar is the default since 2026-09-03, when both paths wrote LTC 0-100000
+# and `summary_statistics` matched exactly (297506 transactions, 311608
+# addresses, 7004294 relations): 4m28s against 88m, and `transaction_io` alone
+# went from 4933s to under 85s. Set WRITER=connector to compare.
+#
+# It is NOT uniformly faster. The bulk path pays fixed per-write overhead
+# (SSTable generation, then streaming), so on the small derived tables it loses
+# -- address_tx_pages 1.0s -> 4.1s, address_by_prefix 3.0s -> 7.6s, and the
+# derived stage as a whole 113s -> 128s. It wins where there is volume, which
+# is the whole of the raw stage and all of a full-history run.
 #
 # BOUND THE FIRST RUN. `run` refuses an unbounded one unless FULL=1, because a
 # bounded slice exercises every seam in minutes and a full history does not.
@@ -83,7 +91,7 @@ ENV="${ENV:-prod}"
 NETWORK="${NETWORK:-btc}"
 LABEL="${LABEL:-bench1}"
 PROFILE="${PROFILE:-v3-utxo}"
-WRITER="${WRITER:-connector}"
+WRITER="${WRITER:-sidecar}"
 RF="${RF:-1}"
 DATACENTER="${DATACENTER:-DC1}"
 GRAPHSENSE_CONFIG="${GRAPHSENSE_CONFIG:-$PWD/graphsense.yaml}"
