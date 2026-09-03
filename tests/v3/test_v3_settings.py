@@ -5,6 +5,8 @@ matter most in the package: a backfill pointed at a live keyspace would be
 unrecoverable.
 """
 
+import os
+
 import pytest
 
 from graphsense_v3.schema import Kind
@@ -246,8 +248,16 @@ def test_sidecar_config_is_applied_before_the_session() -> None:
         "--add-opens java.base/sun.nio.ch=ALL-UNNAMED"
         in (props["spark.executor.extraJavaOptions"])
     )
-    # the temp dir must follow spark.local.dir off the ~23G root disk
-    assert "-Djava.io.tmpdir=/var/data/nvme4" in props["spark.driver.extraJavaOptions"]
+    # The EXECUTORS' temp dir follows spark.local.dir, off the ~23G root disk.
+    assert (
+        "-Djava.io.tmpdir=/var/data/nvme4/spark/local_storage"
+        in props["spark.executor.extraJavaOptions"]
+    )
+    # The DRIVER's does not: that path is the worker hosts' disk, so unless it
+    # is mounted into the container the driver cannot write there at all.
+    driver = props["spark.driver.extraJavaOptions"]
+    assert "--add-opens" in driver
+    assert os.access(driver.split("-Djava.io.tmpdir=")[1].split()[0], os.W_OK)
     assert "cassandra-analytics-core" in props["spark.jars.packages"]
 
 
@@ -385,3 +395,29 @@ def test_a_semicolon_in_a_comment_does_not_split_a_statement() -> None:
     parts = statements(cql)
     assert len(parts) == 1
     assert parts[0].count("(") == parts[0].count(")")
+
+
+def test_the_driver_falls_back_when_the_cluster_scratch_is_not_mounted(
+    tmp_path, monkeypatch
+) -> None:
+    """`spark.local.dir` applies to the driver too, and the cluster profiles
+    point it at the worker hosts' nvme. Mounting it into the container is the
+    right answer; dying with AccessDeniedException before a stage runs is not.
+    """
+    from graphsense_v3.spark.session import ensure_driver_scratch
+
+    monkeypatch.delenv("SPARK_LOCAL_DIRS", raising=False)
+    fallback = ensure_driver_scratch({"spark.local.dir": "/var/data/nvme4/nope"})
+    assert fallback is not None
+    assert os.environ["SPARK_LOCAL_DIRS"] == fallback
+    assert os.access(fallback, os.W_OK)
+
+
+def test_a_mounted_scratch_is_left_alone(tmp_path, monkeypatch) -> None:
+    """When the real disk IS mounted, the driver uses it -- overriding would
+    defeat the mount and put broadcasts on the container's writable layer."""
+    from graphsense_v3.spark.session import ensure_driver_scratch
+
+    monkeypatch.delenv("SPARK_LOCAL_DIRS", raising=False)
+    assert ensure_driver_scratch({"spark.local.dir": str(tmp_path)}) is None
+    assert "SPARK_LOCAL_DIRS" not in os.environ

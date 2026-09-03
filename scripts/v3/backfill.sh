@@ -37,6 +37,15 @@
 #   ./scripts/v3/backfill.sh run                    # the real thing
 #
 # Env vars:
+#   SPARK_LOCAL_DIR     the real nvme, passed through at the same path on both
+#                       sides; must match the profile's spark.local.dir.
+#                       Default /var/data/nvme4/spark/local_storage
+#   DRIVER_SCRATCH      small host dir mounted at its PARENT, so the driver has
+#                       a writable /var/data/nvme4/spark inside the container.
+#                       Default /home/iknaio/gs-docker-cache/driver-scratch
+#   CACHE_DIR           holds the Ivy cache; default /home/iknaio/gs-docker-cache
+#   JAVA11_HOME/CACERTS host JDK 11 and its truststore, mounted for the driver
+#   BE0_IP              IP for ikn-vie02-client01[-be0]; default 172.22.240.71
 #   PULL                1 (default) pulls before every command; 0 skips
 #   IMAGE, TAG          default ghcr.io/graphsense/graphsense-lib /
 #                       feature-backend-v3. PIN THE SHORT SHA for a run you
@@ -105,28 +114,98 @@ fi
 ENVFILE_ARG=()
 [[ -n "$ENV_FILE" ]] && ENVFILE_ARG=(--env-file "$ENV_FILE")
 
-# RF 1 is a deliberate choice for a benchmark keyspace and has to be said out
-# loud: the code refuses it otherwise, because a production keyspace once sat at
-# RF 1 unnoticed and a single node loss would have lost data outright.
-REPLICATION=(--replication-factor "$RF")
-[[ "$RF" == "1" ]] && REPLICATION+=(--allow-single-replica)
+# --- container plumbing, from the working TRON full-transform run ------------
+# That run drives the Scala job, but almost all of this is cluster-shaped
+# rather than Scala-shaped. What is NOT carried over is the sidecar's Vert.x
+# cache dir, since this defaults to the connector write path.
 
-BOUNDS=()
-[[ -n "$START_BLOCK" ]] && BOUNDS+=(--start-block "$START_BLOCK")
-[[ -n "$END_BLOCK" ]] && BOUNDS+=(--end-block "$END_BLOCK")
+# JAVA 11 FOR THE DRIVER, and this is not optional. The image ships Java 17;
+# the cluster's executors run Java 11. A JDK-17 driver deserialising Kryo task
+# results from JDK-11 executors fails with java.io.EOFException in
+# TaskResultGetter -- and the v3-utxo profile sets KryoSerializer, inherited
+# from transform-utxo, so this job is exposed to it exactly as the Scala one
+# was. The read-only host JDK has no usable cert symlinks inside the container,
+# so the adoptium cacerts are mounted and set as the truststore; Ivy needs
+# HTTPS to resolve the connector packages.
+JAVA11_HOME="${JAVA11_HOME:-/usr/lib/jvm/temurin-11-jdk-amd64}"
+CACERTS="${CACERTS:-/etc/ssl/certs/adoptium/cacerts}"
+
+# TWO mounts, not one. spark.local.dir is the real nvme, passed through at the
+# same path on both sides; the driver additionally needs a writable PARENT
+# (/var/data/nvme4/spark) inside the container, which a small host scratch dir
+# supplies. Container user is uid 1000.
+SPARK_LOCAL_DIR="${SPARK_LOCAL_DIR:-/var/data/nvme4/spark/local_storage}"
+DRIVER_SCRATCH="${DRIVER_SCRATCH:-/home/iknaio/gs-docker-cache/driver-scratch}"
+DRIVER_SCRATCH_MOUNT="${DRIVER_SCRATCH_MOUNT:-/var/data/nvme4/spark}"
+
+# Persists the Ivy-resolved connector packages across runs: ~213MB otherwise
+# re-fetched every attempt, and a network dependency on every one.
+CACHE_DIR="${CACHE_DIR:-/home/iknaio/gs-docker-cache}"
+
+# --network host does NOT inherit the host's /etc/hosts, so the names in
+# spark.master and spark.eventLog.dir must be mapped explicitly.
+# Verify with: getent hosts ikn-vie02-client01-be0
+BE0_IP="${BE0_IP:-172.22.240.71}"
+
+for path in "$JAVA11_HOME" "$CACERTS"; do
+  [[ -e "$path" ]] || {
+    echo "ERROR: $path not found (override JAVA11_HOME / CACERTS)" >&2
+    exit 1
+  }
+done
+
+# Must exist as a FILE before docker runs: a missing bind-mount source makes
+# docker create it as an empty DIRECTORY on both sides, and the container then
+# reports a confusing config error instead of a missing file.
+if [[ ! -f "$GRAPHSENSE_CONFIG" ]]; then
+  echo "ERROR: config file not found: $GRAPHSENSE_CONFIG" >&2
+  [[ -d "$GRAPHSENSE_CONFIG" ]] && echo "NOTE: it is a DIRECTORY -- probably auto-created by an earlier docker run; rmdir it" >&2
+  exit 1
+fi
+
+mkdir -p "$CACHE_DIR/graphsense" "$CACHE_DIR/ivy2" "$DRIVER_SCRATCH"
+
+ENVFILE_ARG=()
+[[ -n "$ENV_FILE" ]] && ENVFILE_ARG=(--env-file "$ENV_FILE")
 
 # --network host: the container IS the Spark driver (client mode), so the
 # workers must be able to route back to it.
 v3() {
   docker run --rm --network host \
+    --ulimit nofile=1048576:1048576 \
+    --add-host "ikn-vie02-client01:$BE0_IP" \
+    --add-host "ikn-vie02-client01-be0:$BE0_IP" \
     -e GRAPHSENSE_CONFIG_YAML=/graphsense.yaml \
+    -e JAVA_HOME=/opt/java11 \
+    -e JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=/opt/cacerts \
     "${ENVFILE_ARG[@]}" \
+    -v "$JAVA11_HOME:/opt/java11:ro" \
+    -v "$CACERTS:/opt/cacerts:ro" \
     -v "$GRAPHSENSE_CONFIG:/graphsense.yaml:ro" \
+    -v "$CACHE_DIR/graphsense:/home/graphsense/.graphsense" \
+    -v "$CACHE_DIR/ivy2:/home/graphsense/.ivy2" \
+    -v "$DRIVER_SCRATCH:$DRIVER_SCRATCH_MOUNT" \
+    -v "$SPARK_LOCAL_DIR:$SPARK_LOCAL_DIR" \
     "$IMAGE_REF" graphsense-v3 "$@"
 }
 
 case "${1:-}" in
   verify)
+    # Cheapest failure first: Spark dies on this ~40s into startup, after Ivy
+    # resolution and a JVM launch, with an AccessDeniedException that names a
+    # blockmgr-* directory rather than the mount.
+    echo ">>> driver scratch is writable from inside the container"
+    docker run --rm \
+      -v "$DRIVER_SCRATCH:$DRIVER_SCRATCH_MOUNT" \
+      -v "$SPARK_LOCAL_DIR:$SPARK_LOCAL_DIR" "$IMAGE_REF" sh -c \
+      "id && touch $SPARK_LOCAL_DIR/.probe $DRIVER_SCRATCH_MOUNT/.probe \
+       && echo '  writable' && rm $SPARK_LOCAL_DIR/.probe $DRIVER_SCRATCH_MOUNT/.probe" \
+      || {
+        echo "  NOT writable by the container user (uid 1000). Fix with:" >&2
+        echo "    sudo chmod a+rwxt $SPARK_LOCAL_DIR" >&2
+        echo "    sudo chown -R 1000 $CACHE_DIR" >&2
+        exit 2
+      }
     echo ">>> graphsense_v3 in the driver image"
     docker run --rm "$IMAGE_REF" python3 -c \
       "import graphsense_v3, graphsense_v3.spark.udf; print('driver ok')"

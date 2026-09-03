@@ -72,11 +72,19 @@ def session_config(
     props["spark.kryo.registrator"] = ",".join(registrators)
     props.setdefault("spark.cassandra_analytics.cassandra.version", CASSANDRA_VERSION)
 
-    jvm = (
-        f"{_SIDECAR_MODULE_FLAGS} -Djava.io.tmpdir={local_dir} "
-        f"-Dvertx.cacheDirBase={local_dir}"
-    )
-    for key in ("spark.driver.extraJavaOptions", "spark.executor.extraJavaOptions"):
+    # The executors' temp dir is spark.local.dir; the DRIVER's is its own, for
+    # the same reason it needs its own SPARK_LOCAL_DIRS -- the cluster's nvme
+    # path does not exist inside the driver container.
+    from graphsense_v3.spark.session import ensure_driver_scratch
+
+    for key, temp in (
+        ("spark.driver.extraJavaOptions", ensure_driver_scratch(props) or local_dir),
+        ("spark.executor.extraJavaOptions", local_dir),
+    ):
+        jvm = (
+            f"{_SIDECAR_MODULE_FLAGS} -Djava.io.tmpdir={temp} "
+            f"-Dvertx.cacheDirBase={temp}"
+        )
         existing = props.get(key, "").strip()
         props[key] = f"{existing} {jvm}".strip() if existing else jvm
 
