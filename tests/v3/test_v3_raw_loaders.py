@@ -150,6 +150,25 @@ def _utxo_output(index, addresses, value, script="cd", type_="pubkeyhash"):
     }
 
 
+def tx(block_id, index, tx_hash, inputs, outputs):
+    return {
+        "block_id": block_id,
+        "index": index,
+        "tx_hash": tx_hash,
+        "timestamp": block_id * 86_400,
+        "coinbase": index == 0,
+        "coinjoin": False,
+        "total_input": sum(i["value"] for i in inputs),
+        "total_output": sum(o["value"] for o in outputs),
+        "version": 1,
+        "lock_time": 0,
+        "input_count": len(inputs),
+        "output_count": len(outputs),
+        "inputs": inputs,
+        "outputs": outputs,
+    }
+
+
 @pytest.fixture(scope="module")
 def utxo_lake(spark):
     """Three blocks: 5 transactions in total, so the running tx_id is testable."""
@@ -176,24 +195,6 @@ def utxo_lake(spark):
         ],
         schema=UTXO_BLOCK,
     )
-
-    def tx(block_id, index, tx_hash, inputs, outputs):
-        return {
-            "block_id": block_id,
-            "index": index,
-            "tx_hash": tx_hash,
-            "timestamp": block_id * 86_400,
-            "coinbase": index == 0,
-            "coinjoin": False,
-            "total_input": sum(i["value"] for i in inputs),
-            "total_output": sum(o["value"] for o in outputs),
-            "version": 1,
-            "lock_time": 0,
-            "input_count": len(inputs),
-            "output_count": len(outputs),
-            "inputs": inputs,
-            "outputs": outputs,
-        }
 
     txs = spark.createDataFrame(
         [
@@ -225,9 +226,73 @@ def test_utxo_frames_conform_to_the_schema(utxo_lake) -> None:
     six hours into a backfill."""
     schema = schema_for("btc", Kind.RAW)
     frames = raw_utxo.build(utxo_lake, "btc", "btc_raw_v3")
+    frames.pop(raw_utxo.SPINE)
     assert set(frames) == set(raw_utxo.TABLES)
     for name, frame in frames.items():
         assert conformance_errors(list(frame.columns), schema.table(name)) == []
+
+
+MULTISIG = ["1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH", "1LagHJk2FyCV2VzrNHVqg3gYG4TSYwDV4m"]
+
+
+@pytest.fixture(scope="module")
+def spine_lake(spark):
+    """A lake with every shape the spine has to agree about: a plain output, a
+    multisig one (excluded), an addressless one (excluded), and an address that
+    appears twice in one transaction (summed into a single leg)."""
+    blocks = spark.createDataFrame(
+        [{"block_id": 0, "block_hash": b"\x00", "timestamp": 0, "no_transactions": 3}],
+        schema=UTXO_BLOCK,
+    )
+    txs = spark.createDataFrame(
+        [
+            tx(
+                0,
+                0,
+                b"\xd0" * 32,
+                [],
+                [
+                    _utxo_output(0, [SEGWIT], 5000),
+                    _utxo_output(1, MULTISIG, 6000, type_="multisig"),
+                    _utxo_output(2, [], 0, type_="nulldata"),
+                    _utxo_output(3, [SEGWIT], 700),
+                ],
+            ),
+            tx(
+                0,
+                1,
+                b"\xd1" * 32,
+                [_utxo_input(b"\xd0" * 32, 0, 0, [SEGWIT], 5000)],
+                [_utxo_output(0, [GENESIS_COINBASE], 4900)],
+            ),
+        ],
+        schema=UTXO_TRANSACTION,
+    )
+    return FakeLake(spark, {"block": blocks, "transaction": txs})
+
+
+def test_io_legs_agrees_with_deriving_them_from_transaction_io(spine_lake) -> None:
+    """The backfill feeds the derived stage `io_legs` rather than letting it
+    filter `transaction_io` itself -- that is what keeps the address encoder to
+    one Python round trip per row instead of three. `legs` remains the
+    definition of which rows those are, so the two must not drift."""
+    from graphsense_v3.spark import derived_utxo
+
+    frames = raw_utxo.build(spine_lake, "btc", "btc_raw_v3")
+    definition = derived_utxo.legs(frames["transaction_io"])
+    shortcut = derived_utxo.aggregate_legs(frames[raw_utxo.SPINE])
+
+    assert definition.columns == shortcut.columns
+    rows = sorted(map(tuple, definition.collect()))
+    assert rows == sorted(map(tuple, shortcut.collect()))
+    # Not vacuous: the multisig and nulldata outputs are gone, and the address
+    # paid twice in one transaction is one leg of 5700.
+    assert sorted((bytes(r[1]), r[3]) for r in rows if r[2] is False) == sorted(
+        [
+            (encode_address("btc", GENESIS_COINBASE), 4900),
+            (encode_address("btc", SEGWIT), 5700),
+        ]
+    )
 
 
 def test_utxo_tx_id_is_the_compound_block_and_index(utxo_lake) -> None:

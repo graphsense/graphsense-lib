@@ -85,6 +85,7 @@ LABEL="${LABEL:-bench1}"
 PROFILE="${PROFILE:-v3-utxo}"
 WRITER="${WRITER:-connector}"
 RF="${RF:-1}"
+DATACENTER="${DATACENTER:-DC1}"
 GRAPHSENSE_CONFIG="${GRAPHSENSE_CONFIG:-$PWD/graphsense.yaml}"
 START_BLOCK="${START_BLOCK:-}"
 END_BLOCK="${END_BLOCK:-}"
@@ -165,8 +166,16 @@ fi
 
 mkdir -p "$CACHE_DIR/graphsense" "$CACHE_DIR/ivy2" "$DRIVER_SCRATCH"
 
-ENVFILE_ARG=()
-[[ -n "$ENV_FILE" ]] && ENVFILE_ARG=(--env-file "$ENV_FILE")
+# The two argument arrays. They were used below before they were ever built,
+# and bash expands an UNSET array to nothing under `set -u` rather than
+# erroring -- so END_BLOCK was read here and silently dropped on the way to the
+# CLI, and a "bounded" dry run scanned the whole chain.
+BOUNDS=()
+[[ -n "$START_BLOCK" ]] && BOUNDS+=(--start-block "$START_BLOCK")
+[[ -n "$END_BLOCK" ]] && BOUNDS+=(--end-block "$END_BLOCK")
+
+REPLICATION=(--replication-factor "$RF" --datacenter "$DATACENTER")
+[[ "$RF" == "1" ]] && REPLICATION+=(--allow-single-replica)
 
 # --network host: the container IS the Spark driver (client mode), so the
 # workers must be able to route back to it.
@@ -235,6 +244,13 @@ assert pyarrow.__file__.startswith(\"/tmp/e\"), pyarrow.__file__
     v3 schema -n "$NETWORK" --kind derived --label "$LABEL" "${REPLICATION[@]}"
     ;;
   dry-run)
+    if [[ -z "$END_BLOCK" && "${FULL:-0}" != "1" ]]; then
+      echo "refusing an unbounded dry run: set END_BLOCK, or FULL=1 to mean it." >&2
+      echo "A dry run samples every frame, and the window and group-by frames" >&2
+      echo "cannot push the sample's LIMIT down -- so unbounded it computes the" >&2
+      echo "entire transform to look at ten rows." >&2
+      exit 2
+    fi
     v3 -v run -e "$ENV" -n "$NETWORK" --label "$LABEL" \
       --spark-profile "$PROFILE" --writer "$WRITER" "${BOUNDS[@]}" --dry-run
     ;;

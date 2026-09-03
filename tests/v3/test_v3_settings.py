@@ -203,7 +203,7 @@ def test_the_configured_profile_wins_on_tuning() -> None:
     assert resolved["spark.sql.shuffle.partitions"] == "800"
     # and the defaults fill in what the profile is silent about
     assert resolved["spark.sql.adaptive.skewJoin.enabled"] == "true"
-    assert resolved["spark.executor.pyspark.memory"] == "8g"
+    assert resolved["spark.executor.pyspark.memory"] == "16g"
 
 
 def test_missing_cluster_facts_are_reported_not_invented() -> None:

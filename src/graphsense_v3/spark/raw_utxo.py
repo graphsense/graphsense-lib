@@ -46,7 +46,11 @@ from graphsense_v3.spark.columns import (
     hex_prefix,
     id_group,
 )
-from graphsense_v3.spark.udf import encode_address_list_udf, tx_id_expr
+from graphsense_v3.spark.udf import (
+    encode_address_list_udf,
+    encode_address_udf,
+    tx_id_expr,
+)
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame
@@ -63,6 +67,13 @@ TABLES = (
     "transaction_by_tx_prefix",
     "configuration",
 )
+
+#: Key under which :func:`build` returns the derived stage's spine input.
+#: NOT a table -- :func:`graphsense_v3.spark.job.run` pops it before the frames
+#: are checked against the schema and written. It rides along in the same dict
+#: because it is built from the same cached ``transaction`` frame, and a second
+#: entry point would scan the lake twice.
+SPINE = "@spine"
 
 
 def _transactions(
@@ -132,6 +143,55 @@ def _io_side(txs: "DataFrame", network: str, *, is_output: bool) -> "DataFrame":
         hex_to_bytes(F.col("script_hex")).alias("script_hex"),
         witness.alias("txinwitness"),
         sequence.alias("sequence"),
+    )
+
+
+def _leg_side(txs: "DataFrame", network: str, *, is_output: bool) -> "DataFrame":
+    """One direction of the derived spine: single-address IOs, encoded once.
+
+    Same rows as filtering ``size(transaction_io.address) == 1`` downstream --
+    encoding is length-preserving, so the filter is equivalent on the source
+    array -- but it costs one Python round trip instead of three:
+
+    * The predicate is NATIVE here. Written the other way, Catalyst pushes it
+      back below the projection that reads ``address[0]``, and the encoder then
+      runs TWICE per row: two ArrowEvalPython nodes for one expression, which
+      is what a real LTC plan showed. Spark does not CSE Python UDFs.
+    * Multisig and addressless IOs never reach the encoder at all.
+    * A scalar is encoded rather than a one-element array, so Arrow moves
+      ``binary`` instead of ``array<binary>``.
+
+    ``transaction_io`` still stores the full address list; this is only the
+    derived stage's input.
+    """
+    from pyspark.sql import functions as F
+
+    column = "outputs" if is_output else "inputs"
+    encode = encode_address_udf(network)
+    exploded = txs.select("tx_id", F.explode(F.col(column)).alias("io")).select(
+        "tx_id", "io.*"
+    )
+    addresses = F.when(
+        F.col("type").isin(list(ADDRESSLESS_TYPES)), F.lit(None)
+    ).otherwise(F.col("addresses"))
+
+    return exploded.where(F.size(addresses) == 1).select(
+        F.col("tx_id"),
+        encode(addresses.getItem(0)).alias("address"),
+        F.lit(is_output).alias("is_output"),
+        F.col("value").cast("bigint").alias("value"),
+    )
+
+
+def io_legs(txs: "DataFrame", network: str) -> "DataFrame":
+    """Both directions of the spine input, ready for ``derived_utxo.legs``.
+
+    ``tests/v3/test_v3_raw_loaders.py`` asserts this agrees row for row with
+    running the derived side straight off ``transaction_io``, which is the
+    definition it has to match.
+    """
+    return _leg_side(txs, network, is_output=False).unionByName(
+        _leg_side(txs, network, is_output=True)
     )
 
 
@@ -243,6 +303,7 @@ def build(
     )
 
     out["configuration"] = configuration_row(lake, cfg, keyspace)
+    out[SPINE] = io_legs(txs, network)
     return out
 
 

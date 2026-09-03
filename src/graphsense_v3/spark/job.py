@@ -239,6 +239,9 @@ def run(
             end_block=end_block,
             config=config,
         )
+        # Not a table, so it must come out before anything is checked or
+        # written; see raw_utxo.SPINE for why it travels in this dict.
+        single_address_io = raw_frames.pop(raw_utxo.SPINE, None)
         for name, frame in raw_frames.items():
             writer.check(frame, raw_schema.table(name))
 
@@ -279,6 +282,7 @@ def run(
         config=config,
         dry_run=dry_run,
         sidecar=settings.sidecar,
+        single_address_io=single_address_io,
     )
 
 
@@ -293,6 +297,7 @@ def _run_derived(
     config,
     dry_run: bool,
     sidecar: Optional[dict] = None,
+    single_address_io=None,
 ) -> None:
     """The derived stage, from the frames the raw stage just built.
 
@@ -313,6 +318,7 @@ def _run_derived(
                 rates,
                 network,
                 config=config,
+                single_address_io=single_address_io,
             )
         else:
             # token_configuration and token_exchange_rates are curated, not

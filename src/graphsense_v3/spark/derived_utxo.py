@@ -68,6 +68,18 @@ def legs(transaction_io: "DataFrame") -> "DataFrame":
         F.col("is_output"),
         F.col("value"),
     )
+    return aggregate_legs(single)
+
+
+def aggregate_legs(single: "DataFrame") -> "DataFrame":
+    """The group-by half of :func:`legs`, over already-single-address rows.
+
+    Separate so the backfill can feed it ``raw_utxo.io_legs``, which selects the
+    same rows without paying for the address encoder twice. :func:`legs` remains
+    the definition of what those rows are.
+    """
+    from pyspark.sql import functions as F
+
     return (
         single.groupBy("tx_id", "address", "is_output")
         .agg(F.sum("value").cast("bigint").alias("value"))
@@ -404,15 +416,25 @@ def build(
     network: str,
     *,
     config: Optional[NetworkConfig] = None,
+    single_address_io: Optional["DataFrame"] = None,
 ) -> dict:
     """The derived address tables, keyed by table name.
 
     ``transaction_io`` and ``transactions`` are the raw keyspace's tables (or the
     frames about to be written to it); ``rates`` is
     ``(block_id, fiat_values map<string,double>)``.
+
+    ``single_address_io`` is the same rows :func:`legs` would select, computed
+    more cheaply by :func:`graphsense_v3.spark.raw_utxo.io_legs` while the
+    transaction frame is still un-encoded. When it is given, ``transaction_io``
+    is used only by the callers that need the full table.
     """
     cfg = config or config_for(network)
-    spine = legs(transaction_io).cache()
+    spine = (
+        legs(transaction_io)
+        if single_address_io is None
+        else aggregate_legs(single_address_io)
+    ).cache()
     paged = address_transactions(spine, cfg).cache()
     edges = relation_edges(spine, transactions).cache()
     return {
