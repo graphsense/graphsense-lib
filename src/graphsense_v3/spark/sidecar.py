@@ -33,12 +33,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: What `KryoRegister.setup` sets, which the Scala path calls before the
-#: session is built. Replicated as plain properties because a PySpark session
-#: is configured through the builder, not through a SparkConf we can hand to a
-#: Java static.
-KRYO_REGISTRATOR = "org.apache.cassandra.spark.KryoRegister"
 CASSANDRA_VERSION = "4.0.0"
+
+#: What `KryoRegister.setup(SparkConf)` resolves the registrator to, per
+#: Cassandra version -- read off the jar rather than guessed.
+#:
+#: `org.apache.cassandra.spark.KryoRegister` itself must NOT be named here: it
+#: implements KryoRegistrator but its only constructor is
+#: `protected KryoRegister(CassandraVersion)`, so Spark's
+#: `classForName(...).getConstructor()` fails with
+#: `NoSuchMethodException: org.apache.cassandra.spark.KryoRegister.<init>()`.
+#: That surfaces when the FIRST broadcast is serialised -- during the Parquet
+#: read of the lake, nowhere near a sidecar write.
+#:
+#: `setup` picks `KRYO_REGISTRATORS.get(version)` and ADDS its name to whatever
+#: `spark.kryo.registrator` already holds, defaulting the version to 4.0.0 from
+#: `spark.cassandra_analytics.cassandra.version` -- the same key set above, so
+#: the two must agree.
+KRYO_REGISTRATORS = {
+    "4.0.0": "org.apache.cassandra.spark.KryoRegister$V40",
+    "4.1.0": "org.apache.cassandra.spark.KryoRegister$V41",
+    "5.0.0": "org.apache.cassandra.spark.KryoRegister$V50",
+}
 
 #: The connector maps Cassandra `varint` to Spark DecimalType(38, 0). A real
 #: `decimal` column carries its own precision, so this isolates varint cleanly.
@@ -76,13 +92,24 @@ def session_config(
 
     props = dict(spark_config)
     props["spark.serializer"] = "org.apache.spark.serializer.KryoSerializer"
-    registrators = [
-        r for r in props.get("spark.kryo.registrator", "").split(",") if r.strip()
-    ]
-    if KRYO_REGISTRATOR not in registrators:
-        registrators.append(KRYO_REGISTRATOR)
-    props["spark.kryo.registrator"] = ",".join(registrators)
     props.setdefault("spark.cassandra_analytics.cassandra.version", CASSANDRA_VERSION)
+
+    version = props["spark.cassandra_analytics.cassandra.version"]
+    registrator = KRYO_REGISTRATORS.get(version)
+    if registrator is None:
+        raise ValueError(
+            f"no cassandra-analytics Kryo registrator known for Cassandra "
+            f"{version}; known: {', '.join(sorted(KRYO_REGISTRATORS))}"
+        )
+    # A SET union, as `setup` does -- a profile may already name its own.
+    registrators = [
+        r.strip()
+        for r in props.get("spark.kryo.registrator", "").split(",")
+        if r.strip()
+    ]
+    if registrator not in registrators:
+        registrators.append(registrator)
+    props["spark.kryo.registrator"] = ",".join(registrators)
 
     # The executors' temp dir is spark.local.dir; the DRIVER's is its own, for
     # the same reason it needs its own SPARK_LOCAL_DIRS -- the cluster's nvme

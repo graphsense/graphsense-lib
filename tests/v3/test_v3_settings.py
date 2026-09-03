@@ -233,9 +233,9 @@ def test_missing_cluster_facts_are_reported_not_invented() -> None:
 
 
 def test_sidecar_config_is_applied_before_the_session() -> None:
-    """Kryo registration and the SSTable writer's JDK module flags cannot be
-    set after a SparkSession exists, so they are folded into spark_config."""
-    from graphsense_v3.spark.sidecar import KRYO_REGISTRATOR, session_config
+    """The SSTable writer's JDK module flags cannot be set after a SparkSession
+    exists, so they are folded into spark_config."""
+    from graphsense_v3.spark.sidecar import session_config
 
     props = session_config(
         {"spark.local.dir": "/var/data/nvme4/spark/local_storage"},
@@ -244,7 +244,6 @@ def test_sidecar_config_is_applied_before_the_session() -> None:
         ["https://repos.spark-packages.org/"],
     )
     assert props["spark.serializer"].endswith("KryoSerializer")
-    assert KRYO_REGISTRATOR in props["spark.kryo.registrator"]
     assert (
         "--add-opens java.base/sun.nio.ch=ALL-UNNAMED"
         in (props["spark.executor.extraJavaOptions"])
@@ -263,6 +262,46 @@ def test_sidecar_config_is_applied_before_the_session() -> None:
     # applies spark_config afterwards, so setting it here would replace the
     # connector, delta and hadoop-aws instead of adding to them.
     assert "spark.jars.packages" not in props
+
+
+def test_kryo_registrator_is_the_version_subclass_not_the_helper() -> None:
+    """`KryoRegister` implements KryoRegistrator but its only constructor takes
+    a CassandraVersion, so Spark's `getConstructor()` throws
+    NoSuchMethodException -- on the first broadcast, during the Parquet read of
+    the lake, nowhere near a sidecar write. `setup` resolves a version subclass
+    (`$V40`) instead, and the version key must agree with the one we set."""
+    from graphsense_v3.spark.sidecar import (
+        CASSANDRA_VERSION,
+        KRYO_REGISTRATORS,
+        session_config,
+    )
+
+    props = session_config(
+        {"spark.local.dir": "/tmp"},
+        ["10.0.0.1:9043"],
+        "DC1",
+        ["https://repos.spark-packages.org/"],
+    )
+    assert props["spark.kryo.registrator"] == KRYO_REGISTRATORS[CASSANDRA_VERSION]
+    assert props["spark.kryo.registrator"].endswith("$V40")
+    assert CASSANDRA_VERSION in KRYO_REGISTRATORS
+
+
+def test_an_unknown_cassandra_version_has_no_registrator() -> None:
+    """Better than letting cassandra-analytics throw IllegalArgumentException
+    inside `setup`, which we never call."""
+    from graphsense_v3.spark.sidecar import session_config
+
+    with pytest.raises(ValueError, match="no cassandra-analytics Kryo"):
+        session_config(
+            {
+                "spark.local.dir": "/tmp",
+                "spark.cassandra_analytics.cassandra.version": "3.11.0",
+            },
+            ["10.0.0.1:9043"],
+            "DC1",
+            ["https://repos.spark-packages.org/"],
+        )
 
 
 def test_sidecar_package_is_added_without_displacing_the_others() -> None:
