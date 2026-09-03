@@ -139,6 +139,7 @@ class RunSettings:
                 local_dc,
                 list(getattr(args, "repositories", None) or []),
             ),
+            spark_packages=bulk.package_override(self.spark_packages),
             sidecar={
                 "contact_points": contact_points,
                 "local_dc": local_dc,

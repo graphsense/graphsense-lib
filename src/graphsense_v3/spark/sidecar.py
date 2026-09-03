@@ -56,15 +56,14 @@ def session_config(
     Must be applied *before* the session is created: the Kryo registrator and
     the SSTable writer's JDK module flags cannot be set afterwards.
 
-    ``repositories`` is not optional in practice. cassandra-analytics is not on
-    Maven Central -- it lives on spark-packages, which is why
+    ``repositories`` is not optional in practice: cassandra-analytics is not on
+    Maven Central but on spark-packages, which is why
     ``full_transform_args.repositories`` defaults to it and the Scala path
-    passes it as ``--repositories``. Ivy resolution is ALL OR NOTHING: leave it
-    out and the sidecar coordinate fails to resolve, which aborts the whole
-    resolution and takes Delta and the Cassandra connector down with it. The
-    symptom is a ClassNotFoundException for
-    ``io.delta.sql.DeltaSparkSessionExtension`` -- nothing that names the
-    sidecar at all.
+    passes it as ``--repositories``. A host whose Ivy cache already holds the
+    jar resolves without it and hides the problem.
+
+    Note what this does NOT set: ``spark.jars.packages``. See
+    :func:`package_override`.
     """
     if not contact_points:
         raise ValueError("sidecar writes need at least one sidecar contact point")
@@ -101,11 +100,6 @@ def session_config(
         existing = props.get(key, "").strip()
         props[key] = f"{existing} {jvm}".strip() if existing else jvm
 
-    packages = [p for p in props.get("spark.jars.packages", "").split(",") if p.strip()]
-    if SIDECAR_PACKAGE not in packages:
-        packages.append(SIDECAR_PACKAGE)
-    props["spark.jars.packages"] = ",".join(packages)
-
     repos = [
         r for r in props.get("spark.jars.repositories", "").split(",") if r.strip()
     ]
@@ -120,6 +114,31 @@ def session_config(
         )
     props["spark.jars.repositories"] = ",".join(repos)
     return props
+
+
+def package_override(spark_packages: Optional[dict]) -> dict:
+    """Add the sidecar coordinate WITHOUT taking over the package list.
+
+    ``create_spark_session`` builds ``spark.jars.packages`` from its own
+    defaults and applies ``spark_config`` AFTERWARDS
+    (`transformation/spark.py:86,155`), so setting that key in ``spark_config``
+    REPLACES the Cassandra connector, delta-spark and hadoop-aws rather than
+    adding to them. The run then resolves the sidecar jar and nothing else, and
+    the only symptom is a ClassNotFoundException for
+    ``io.delta.sql.DeltaSparkSessionExtension`` -- which names neither the
+    sidecar nor the packages it displaced.
+
+    Riding along on one coordinate slot instead keeps gslib's list -- including
+    its s3-conditional hadoop-aws -- as the single source of truth, so a package
+    added there is picked up here for free.
+    """
+    from graphsenselib.transformation.spark import DEFAULT_SPARK_PACKAGES
+
+    merged = dict(spark_packages or {})
+    slot = {**DEFAULT_SPARK_PACKAGES, **merged}["delta_spark"]
+    if SIDECAR_PACKAGE not in [c.strip() for c in slot.split(",")]:
+        merged["delta_spark"] = f"{slot},{SIDECAR_PACKAGE}"
+    return merged
 
 
 def _cast_varints(column, data_type):

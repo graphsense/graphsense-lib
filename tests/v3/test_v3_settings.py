@@ -259,7 +259,46 @@ def test_sidecar_config_is_applied_before_the_session() -> None:
     driver = props["spark.driver.extraJavaOptions"]
     assert "--add-opens" in driver
     assert os.access(driver.split("-Djava.io.tmpdir=")[1].split()[0], os.W_OK)
-    assert "cassandra-analytics-core" in props["spark.jars.packages"]
+    # NOT spark.jars.packages: create_spark_session builds that itself and
+    # applies spark_config afterwards, so setting it here would replace the
+    # connector, delta and hadoop-aws instead of adding to them.
+    assert "spark.jars.packages" not in props
+
+
+def test_sidecar_package_is_added_without_displacing_the_others() -> None:
+    """The failure this prevents: `spark.jars.packages` in spark_config is
+    applied AFTER create_spark_session sets its own, so it replaces the list
+    rather than extending it. The sidecar jar then resolves alone and the only
+    symptom is a ClassNotFoundException for the Delta extension."""
+    from graphsenselib.transformation.spark import DEFAULT_SPARK_PACKAGES
+
+    from graphsense_v3.spark.sidecar import SIDECAR_PACKAGE, package_override
+
+    overrides = package_override({})
+    coords = {**DEFAULT_SPARK_PACKAGES, **overrides}
+    joined = ",".join(coords.values())
+    for name, coordinate in DEFAULT_SPARK_PACKAGES.items():
+        assert coordinate in joined, f"{name} was displaced"
+    assert SIDECAR_PACKAGE in joined
+
+
+def test_sidecar_package_override_is_idempotent() -> None:
+    """`create` then `run` reuse the same settings; adding it twice would ask
+    Ivy to resolve a duplicate coordinate."""
+    from graphsense_v3.spark.sidecar import SIDECAR_PACKAGE, package_override
+
+    once = package_override({})
+    twice = package_override(once)
+    assert once == twice
+    assert twice["delta_spark"].count(SIDECAR_PACKAGE) == 1
+
+
+def test_sidecar_package_respects_a_configured_coordinate() -> None:
+    """A profile pinning its own delta version must keep it."""
+    from graphsense_v3.spark.sidecar import SIDECAR_PACKAGE, package_override
+
+    pinned = package_override({"delta_spark": "io.delta:delta-spark_2.12:3.9.9"})
+    assert pinned["delta_spark"] == f"io.delta:delta-spark_2.12:3.9.9,{SIDECAR_PACKAGE}"
 
 
 def test_sidecar_refuses_without_a_local_dir() -> None:
