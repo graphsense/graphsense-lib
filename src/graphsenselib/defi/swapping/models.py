@@ -26,7 +26,9 @@ class ExternalSwap:
         return asdict(self)
 
 
-def get_swap_strategy_from_decoded_logs(dlogs: list) -> SwapStrategy:
+def get_swap_strategy_from_decoded_logs(
+    dlogs: list, parsed_input: dict | None = None
+) -> SwapStrategy:
     """Determine the swap detection strategy from decoded logs."""
     if not dlogs:
         return SwapStrategy.UNKNOWN
@@ -37,6 +39,7 @@ def get_swap_strategy_from_decoded_logs(dlogs: list) -> SwapStrategy:
         return dlog["log_def"]["tags"]
 
     tags = [tag for dlog in dlogs for tag in get_tags(dlog)]
+    parsed_input_tags = (parsed_input or {}).get("function_def", {}).get("tags", [])
     final_log_tags = dlogs[-1]["log_def"]["tags"] if dlogs else []
 
     # just a guess but i think it should be last, so its not just routed through there?
@@ -49,7 +52,7 @@ def get_swap_strategy_from_decoded_logs(dlogs: list) -> SwapStrategy:
         # e.g. https://etherscan.io/tx/0x8e7a3d044ed6873a5683ffe2f59b8cd68a3d786edaa64cdc4c05a9ae8ff97984
         # may settle multiple orders in one tx
         return SwapStrategy.IGNORE
-    elif "swap" in tags:
+    elif "swap" in tags or "swap" in parsed_input_tags:
         return SwapStrategy.SWAP
     else:
         return SwapStrategy.UNKNOWN
