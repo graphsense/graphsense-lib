@@ -23,6 +23,10 @@ from graphsenselib.defi.swapping.models import (
     get_swap_strategy_from_decoded_logs,
 )
 from graphsenselib.defi.models import Trace
+from graphsenselib.utils.function_call_parser import (
+    function_signatures,
+    parse_function_call,
+)
 
 
 @dataclass
@@ -547,6 +551,7 @@ def get_swap_from_decoded_logs(
     logs_raw: List[Dict[str, Any]],
     traces: List[Trace],
     visualize: bool = False,
+    transaction_input: Optional[bytes] = None,
 ) -> List[ExternalSwap]:
     """
     Main function to extract swap information from decoded logs.
@@ -561,7 +566,8 @@ def get_swap_from_decoded_logs(
     logs_raw = list(logs_raw_sorted)
 
     # Determine strategy
-    strategy = get_swap_strategy_from_decoded_logs(dlogs)
+    parsed_input = parse_function_call(transaction_input, function_signatures)
+    strategy = get_swap_strategy_from_decoded_logs(dlogs, parsed_input)
 
     # if strategy == SwapStrategy.IGNORE:
     swaps = []

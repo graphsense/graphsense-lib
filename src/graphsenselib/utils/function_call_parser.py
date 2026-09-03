@@ -1,7 +1,21 @@
 import re
 from typing import Any, Dict, List, Optional
+
 from eth_abi import decode as abi_decode
-from eth_utils import to_hex, keccak
+from eth_utils import keccak, to_hex
+
+
+def _to_json_compatible(value: Any) -> Any:
+    """Convert ABI values to values that can safely cross the API boundary."""
+    if isinstance(value, (bytes, bytearray)):
+        return to_hex(value)
+    if isinstance(value, tuple):
+        return [_to_json_compatible(item) for item in value]
+    if isinstance(value, list):
+        return [_to_json_compatible(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _to_json_compatible(item) for key, item in value.items()}
+    return value
 
 
 def parse_function_call(
@@ -53,7 +67,11 @@ def parse_function_call(
                 inputs = []
                 for i, param in enumerate(func_def.get("inputs", [])):
                     param_name = param["name"]
-                    param_value = decoded_params[i] if i < len(decoded_params) else None
+                    param_value = (
+                        _to_json_compatible(decoded_params[i])
+                        if i < len(decoded_params)
+                        else None
+                    )
 
                     parameters[param_name] = param_value
                     inputs.append(
@@ -180,6 +198,20 @@ function_signatures = {
                 {"name": "deadline", "type": "uint256"},
             ],
             "tags": ["swap", "weth"],
+        }
+    ],
+    "0x07ed2379": [  # 1inch AggregationRouter swap(...)
+        {
+            "name": "swap",
+            "inputs": [
+                {"name": "executor", "type": "address"},
+                {
+                    "name": "desc",
+                    "type": "(address,address,address,address,uint256,uint256,uint256)",
+                },
+                {"name": "data", "type": "bytes"},
+            ],
+            "tags": ["swap", "1inch"],
         }
     ],
 }
