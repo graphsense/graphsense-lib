@@ -111,6 +111,27 @@ def test_exemptions_name_real_tables() -> None:
     assert set(NOT_PROBED) <= declared
 
 
+def test_the_report_names_the_two_keyspaces_apart() -> None:
+    """Both readiness probes were labelled "v3": the keyspace name splits to
+    <network>_<kind>_v3_<label>, so [-2] is the version, not the kind."""
+    results, _ = _run_dry()
+    names = [r.name for r in results if "complete marker" in r.name]
+    assert names == ["raw complete marker", "derived complete marker"]
+
+
+def test_address_format_check_is_reported_not_asserted() -> None:
+    """A lake written before the network-aware P2PK fix carries BTC-version
+    addresses in an LTC keyspace, and v3 re-encodes them faithfully. That is a
+    finding about the DATA, so it is surfaced as a histogram rather than a
+    verdict -- judging it needs someone who knows the chain's prefixes."""
+    session = FakeSession()
+    runner = prober.Prober(session, RAW, DERIVED, CONFIG)
+    results = runner.run(_full_fixtures(), network="ltc")
+    check = next(r for r in results if r.name == "address first characters")
+    assert check.kind is prober.OPTIONAL
+    assert check.ok, "an empty sample must not read as a failure"
+
+
 def test_relation_probes_scatter_over_every_bucket() -> None:
     """Listing neighbours has no watermark table to stop it early: it reads
     relation_buckets partitions unconditionally, and the report has to say so

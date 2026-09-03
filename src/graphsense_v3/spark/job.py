@@ -349,6 +349,39 @@ def _run_derived(
     for name, frame in frames.items():
         with Stage(f"write derived.{name}"):
             writer.write(frame, schema.table(name), derived_keyspace, sidecar=sidecar)
+    from pyspark.sql import functions as F
+
+    with Stage("write derived.exchange_rates"):
+        # The rates the derived tables were priced with, carried INTO the
+        # keyspace that was priced with them. Declared by the schema and never
+        # written until now, which left a v3 reader with nowhere to get a
+        # block's rate except the v2 keyspace -- exactly the coupling a
+        # self-contained v3 keyspace removes. Same rows, re-keyed by
+        # (asset, block_id_group).
+        from graphsense_v3.spark.columns import id_group
+
+        writer.write(
+            rates.select(
+                F.col("asset"),
+                id_group(F.col("block_id"), config.block_bucket_size).alias(
+                    "block_id_group"
+                ),
+                F.col("block_id").cast("int").alias("block_id"),
+                F.col("fiat_values"),
+            ),
+            schema.table("exchange_rates"),
+            derived_keyspace,
+            sidecar=sidecar,
+        )
+    if family is Family.ACCOUNT:
+        with Stage("write derived.token_configuration"):
+            # Curated, not derived -- but a reader needs the decimals and the
+            # peg to interpret a token value at all, so it belongs here too.
+            writer.write(
+                read_cassandra(spark, rates_keyspace, "token_configuration"),
+                schema.table("token_configuration"),
+                derived_keyspace,
+            )
     with Stage("write derived.configuration"):
         # The derived keyspace carries its OWN constants: a reader computing
         # address_bucket has to have them, and sending it to the raw keyspace

@@ -211,8 +211,10 @@ class Prober:
 
     # -- the catalogue ----------------------------------------------------
 
-    def run(self, found: Fixtures) -> list[Result]:
+    def run(self, found: Fixtures, network: str = "") -> list[Result]:
         self._meta()
+        if network:
+            self._address_format(network)
         self._address(found)
         self._address_transactions(found)
         self._relations(found)
@@ -222,16 +224,16 @@ class Prober:
         return self.results
 
     def _meta(self) -> None:
-        for keyspace in (self.raw, self.derived):
+        for kind, keyspace in (("raw", self.raw), ("derived", self.derived)):
             self.probe(
-                f"{keyspace.split('_')[-2]} complete marker",
+                f"{kind} complete marker",
                 "readiness",
                 f"SELECT key, value FROM {keyspace}.markers WHERE key = %s",
                 ("complete",),
                 note="a keyspace without this is missing data and cannot say so",
             )
             self.probe(
-                f"{keyspace.split('_')[-2]} configuration",
+                f"{kind} configuration",
                 "readiness",
                 f"SELECT * FROM {keyspace}.configuration WHERE keyspace_name = %s",
                 (keyspace,),
@@ -241,6 +243,62 @@ class Prober:
             "summary statistics",
             "/{network}/stats",
             f"SELECT * FROM {self.derived}.summary_statistics WHERE id = 0",
+        )
+
+    def _address_format(self, network: str, sample: int = 500) -> None:
+        """What the stored addresses actually decode to.
+
+        Not a schema question -- a data one, and the only place it surfaces. v3
+        re-encodes whatever string the ingest parser put in the lake, so a lake
+        written before the network-aware P2PK fix carries BTC-version-byte
+        addresses (``1...``) in an LTC keyspace, and every derived table
+        faithfully keys on them. The histogram makes that visible; judging it
+        needs a human who knows the chain's prefixes.
+        """
+        from collections import Counter
+
+        from graphsense_v3.codec import decode_address
+
+        cql = f"SELECT address FROM {self.derived}.address_by_prefix LIMIT {sample}"
+        started = time.monotonic()
+        try:
+            rows = list(self.session.execute(cql))
+            leading: Counter = Counter()
+            for row in rows:
+                try:
+                    leading[decode_address(network, bytes(row.address))[0]] += 1
+                except Exception:  # noqa: BLE001 -- an undecodable address IS the finding
+                    leading["<undecodable>"] += 1
+        except Exception as exc:  # noqa: BLE001
+            self.results.append(
+                Result(
+                    "address first characters",
+                    "data check",
+                    cql,
+                    0,
+                    0.0,
+                    1,
+                    OPTIONAL,
+                    str(exc),
+                )
+            )
+            return
+        spread = ", ".join(f"{char}={count}" for char, count in leading.most_common())
+        self.results.append(
+            Result(
+                "address first characters",
+                "data check",
+                cql,
+                len(rows),
+                (time.monotonic() - started) * 1000,
+                1,
+                OPTIONAL,
+                None,
+                f"over {len(rows)} sampled: {spread}. A character this chain's "
+                "version byte cannot produce means the LAKE holds addresses "
+                "derived with another network's byte -- v3 only re-encodes what "
+                "the parser wrote, so the fix is upstream in ingest.",
+            )
         )
 
     def _address(self, found: Fixtures) -> None:
@@ -639,7 +697,7 @@ def run(
         found = prober.fixtures()
         for gap in found.missing:
             logger.warning("fixture: %s", gap)
-        return prober.run(found), config
+        return prober.run(found, network=raw.split("_")[0]), config
     finally:
         cluster.shutdown()
 
