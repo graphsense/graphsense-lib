@@ -241,6 +241,7 @@ def test_sidecar_config_is_applied_before_the_session() -> None:
         {"spark.local.dir": "/var/data/nvme4/spark/local_storage"},
         ["10.0.0.1:9043"],
         "DC1",
+        ["https://repos.spark-packages.org/"],
     )
     assert props["spark.serializer"].endswith("KryoSerializer")
     assert KRYO_REGISTRATOR in props["spark.kryo.registrator"]
@@ -266,9 +267,44 @@ def test_sidecar_refuses_without_a_local_dir() -> None:
     from graphsense_v3.spark.sidecar import session_config
 
     with pytest.raises(ValueError, match="spark.local.dir"):
-        session_config({}, ["10.0.0.1:9043"], "DC1")
+        session_config(
+            {}, ["10.0.0.1:9043"], "DC1", ["https://repos.spark-packages.org/"]
+        )
     with pytest.raises(ValueError, match="contact point"):
-        session_config({"spark.local.dir": "/tmp"}, [], "DC1")
+        session_config(
+            {"spark.local.dir": "/tmp"},
+            [],
+            "DC1",
+            ["https://repos.spark-packages.org/"],
+        )
+
+
+def test_sidecar_refuses_without_a_repository() -> None:
+    """cassandra-analytics is not on Maven Central. Ivy resolution is all or
+    nothing, so an unresolvable coordinate does not fail on its own -- it takes
+    Delta and the Cassandra connector with it, and the only symptom is a
+    ClassNotFoundException naming neither. Fail here instead."""
+    from graphsense_v3.spark.sidecar import session_config
+
+    with pytest.raises(ValueError, match="not on Maven Central"):
+        session_config({"spark.local.dir": "/tmp"}, ["10.0.0.1:9043"], "DC1", [])
+
+
+def test_sidecar_keeps_a_configured_repository() -> None:
+    from graphsense_v3.spark.sidecar import session_config
+
+    props = session_config(
+        {
+            "spark.local.dir": "/tmp",
+            "spark.jars.repositories": "https://internal.example/repo",
+        },
+        ["10.0.0.1:9043"],
+        "DC1",
+        ["https://repos.spark-packages.org/"],
+    )
+    assert props["spark.jars.repositories"] == (
+        "https://internal.example/repo,https://repos.spark-packages.org/"
+    )
 
 
 def test_existing_java_options_are_kept() -> None:
@@ -283,6 +319,7 @@ def test_existing_java_options_are_kept() -> None:
         },
         ["10.0.0.1:9043"],
         "DC1",
+        ["https://repos.spark-packages.org/"],
     )
     assert props["spark.executor.extraJavaOptions"].startswith("-XX:+UseG1GC")
     assert "--add-exports" in props["spark.executor.extraJavaOptions"]

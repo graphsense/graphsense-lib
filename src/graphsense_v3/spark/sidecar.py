@@ -46,12 +46,25 @@ VARINT_PRECISION = 38
 
 
 def session_config(
-    spark_config: dict, contact_points: list, local_dc: Optional[str]
+    spark_config: dict,
+    contact_points: list,
+    local_dc: Optional[str],
+    repositories: Optional[list] = None,
 ) -> dict:
     """Spark properties the bulk writer needs, merged over ``spark_config``.
 
     Must be applied *before* the session is created: the Kryo registrator and
     the SSTable writer's JDK module flags cannot be set afterwards.
+
+    ``repositories`` is not optional in practice. cassandra-analytics is not on
+    Maven Central -- it lives on spark-packages, which is why
+    ``full_transform_args.repositories`` defaults to it and the Scala path
+    passes it as ``--repositories``. Ivy resolution is ALL OR NOTHING: leave it
+    out and the sidecar coordinate fails to resolve, which aborts the whole
+    resolution and takes Delta and the Cassandra connector down with it. The
+    symptom is a ClassNotFoundException for
+    ``io.delta.sql.DeltaSparkSessionExtension`` -- nothing that names the
+    sidecar at all.
     """
     if not contact_points:
         raise ValueError("sidecar writes need at least one sidecar contact point")
@@ -92,6 +105,20 @@ def session_config(
     if SIDECAR_PACKAGE not in packages:
         packages.append(SIDECAR_PACKAGE)
     props["spark.jars.packages"] = ",".join(packages)
+
+    repos = [
+        r for r in props.get("spark.jars.repositories", "").split(",") if r.strip()
+    ]
+    for repo in repositories or []:
+        if repo not in repos:
+            repos.append(repo)
+    if not repos:
+        raise ValueError(
+            "sidecar writes need a repository for "
+            f"{SIDECAR_PACKAGE}, which is not on Maven Central; "
+            "full_transform_args.repositories supplies it"
+        )
+    props["spark.jars.repositories"] = ",".join(repos)
     return props
 
 

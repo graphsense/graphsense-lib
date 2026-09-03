@@ -134,7 +134,10 @@ class RunSettings:
         return replace(
             self,
             spark_config=bulk.session_config(
-                self.spark_config, contact_points, local_dc
+                self.spark_config,
+                contact_points,
+                local_dc,
+                list(getattr(args, "repositories", None) or []),
             ),
             sidecar={
                 "contact_points": contact_points,
