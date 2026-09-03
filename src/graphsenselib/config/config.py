@@ -865,7 +865,11 @@ class AppConfig(GoodConf):
             if baseline and config_name != "baseline":
                 return {**baseline, **creds}
             return creds
-        return self.s3_credentials
+        return (
+            self.s3_credentials
+            if self.s3_credentials is not None
+            else self.s3_configs.get("baseline")
+        )
 
     def get_keyspace_config(self, env: str, currency: str) -> KeyspaceConfig:
         return self.get_environment(env).get_keyspace(currency)
