@@ -427,18 +427,22 @@ class LegacyAdapter:
             from graphsense_v3.codec import tx_id_range
 
             before = tx_id_range(max_height, max_height)[1] + 1
-        start_page = None
-        if min_height is not None and is_outgoing is not None:
+        after = None
+        if min_height is not None:
             from graphsense_v3.codec import tx_id_range
 
-            low = tx_id_range(min_height, min_height)[0]
-            start_page = await dal.page_for_tx(raw, is_outgoing, low)
+            # A BOUND, not a page hint. Choosing a start page and no bound was
+            # the bug: rows below the height came back anyway, and 26 of 52
+            # sampled addresses returned transactions where v2 correctly
+            # returned none. The page index is an optimisation for addresses
+            # that span pages; the filter is the correctness mechanism.
+            after = tx_id_range(min_height, min_height)[0]
         limit = int(pagesize or 100)
         found = await dal.transactions(
             raw,
             is_outgoing=is_outgoing,
-            page=start_page,
             before_tx_id=before,
+            after_tx_id=after,
             limit=limit,
         )
         # A full page MAY have more behind it; a short one cannot. Returning

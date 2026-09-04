@@ -674,3 +674,45 @@ def test_a_link_reports_the_real_amounts_not_the_apportioned_one() -> None:
     shim, _ = adapter(rows)
     found, _ = run(shim.list_address_links("ltc", ADDRESS, NEIGHBOR))
     assert (found[0]["input_value"], found[0]["output_value"]) == (1000, 250)
+
+
+def test_min_height_becomes_a_lower_bound_on_the_query() -> None:
+    """The bug this pins: `min_height` chose a starting PAGE and set no bound,
+    so rows below the height came back anyway -- 26 of 52 sampled addresses
+    returned transactions where v2 correctly returned none. Nothing errored."""
+    asked = []
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            asked.append((cql, params))
+        return []
+
+    shim, _ = adapter(rows)
+    run(shim.list_address_txs("ltc", ADDRESS, direction="out", min_height=1_000_000))
+    cql, params = asked[0]
+    assert "tx_id >= %s" in cql, "no lower bound reached the query"
+    from graphsense_v3.codec import tx_id_range
+
+    assert params[-1] == tx_id_range(1_000_000, 1_000_000)[0]
+
+
+def test_a_height_range_bounds_both_ends() -> None:
+    """min and max together are one clustering slice, not two queries."""
+    asked = []
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            asked.append(cql)
+        return []
+
+    shim, _ = adapter(rows)
+    run(
+        shim.list_address_txs(
+            "ltc", ADDRESS, direction="out", min_height=100, max_height=200
+        )
+    )
+    assert "tx_id < %s" in asked[0] and "tx_id >= %s" in asked[0]

@@ -99,11 +99,26 @@ def address_tx_pages(paged: "DataFrame") -> "DataFrame":
     compute the page it needs. Read only when a range filter is present. One
     index per partition class, zero-ness included, because that is how the pages
     it indexes are numbered.
+
+    **Only addresses that actually span pages are indexed.** With
+    ``tx_page_size`` at 100 000 virtually every address has one page, and its
+    index row says nothing but "page 0 starts at the first transaction" -- which
+    a reader can assume. Written for everyone it cost 7.9% of the derived
+    keyspace, nearly as much as ``address_transactions`` itself, to store a
+    fact that is almost always trivial. `Dal.page_for_tx` returns page 0 when
+    there is no row, which is the same answer the row would have given.
     """
     from pyspark.sql import functions as F
+    from pyspark.sql import Window
 
-    return paged.groupBy("address", "is_outgoing", "is_zero_value", "tx_page").agg(
-        F.min("tx_id").alias("first_tx_id")
+    spans = F.max("tx_page").over(
+        Window.partitionBy("address", "is_outgoing", "is_zero_value")
+    )
+    return (
+        paged.withColumn("_page_max", spans)
+        .where(F.col("_page_max") > 0)
+        .groupBy("address", "is_outgoing", "is_zero_value", "tx_page")
+        .agg(F.min("tx_id").alias("first_tx_id"))
     )
 
 

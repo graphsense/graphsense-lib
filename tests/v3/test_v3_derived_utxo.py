@@ -414,12 +414,31 @@ def test_pages_are_numbered_within_a_class(
     rows = derived_utxo.build(mixed_value_io, mixed_value_txs, blocks, rates, "btc")[
         "address_transactions"
     ].collect()
+    # Both classes start at page 0: the ordinal is per class, so a filtered
+    # listing gets a full page rather than whatever survived a filter.
     assert {r["tx_page"] for r in rows} == {0}
+    assert {r["is_zero_value"] for r in rows} == {True, False}
+
+
+def test_a_single_page_address_is_not_indexed(
+    mixed_value_io, mixed_value_txs, blocks, rates
+) -> None:
+    """Its index row would say only "page 0 starts at the first transaction",
+    which the reader assumes anyway. Written for every address it cost 7.9% of
+    the derived keyspace -- nearly as much as `address_transactions` itself."""
     pages = derived_utxo.build(mixed_value_io, mixed_value_txs, blocks, rates, "btc")[
         "address_tx_pages"
     ].collect()
-    # one index row per class present, keyed by class
-    assert {r["is_zero_value"] for r in pages} == {True, False}
+    assert pages == []
+
+
+def test_a_multi_page_address_is_still_indexed(many_io, rates) -> None:
+    """The index has to survive for the addresses that actually need it, or a
+    height filter on a large address starts at the wrong page."""
+    config = replace(config_for("btc"), tx_page_size=2)
+    paged = derived_utxo.address_transactions(derived_utxo.legs(many_io), config)
+    pages = derived_common.address_tx_pages(paged).collect()
+    assert {r["tx_page"] for r in pages} == {0, 1, 2}
 
 
 def test_the_stats_row_carries_a_cursor_per_class(

@@ -315,3 +315,11 @@ def test_the_direction_survives_the_fan_out() -> None:
     dal = Dal(FakeSession(rows), RAW, DERIVED, dict(CONFIG))
     found = asyncio.run(dal.transactions(ADDRESS))
     assert {tx.tx_id: tx.is_outgoing for tx in found} == {1: False, 2: True}
+
+
+def test_a_missing_page_index_row_means_page_zero() -> None:
+    """The index is written only for addresses that span pages, so absence is
+    the answer rather than the absence of one. Returning None would make a
+    height filter on an ordinary address look unanswerable."""
+    dal = Dal(FakeSession([]), RAW, DERIVED, dict(CONFIG))
+    assert asyncio.run(dal.page_for_tx(ADDRESS, True, 12345)) == 0

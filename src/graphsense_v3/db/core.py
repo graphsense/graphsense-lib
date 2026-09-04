@@ -392,6 +392,11 @@ class Dal:
         Ordinal pages are not tx_id-aligned, so a range query cannot compute its
         page. It looks it up here first, which is the only reason this index
         exists.
+
+        **No row means page 0**, not "unknown": the index is written only for
+        addresses that span more than one page, because for everyone else the
+        row would say exactly this. Returning None here would make a height
+        filter on an ordinary address look unanswerable.
         """
         rows = await self._select(
             f"SELECT tx_page FROM {self.derived}.address_tx_pages "
@@ -399,7 +404,7 @@ class Dal:
             f"AND first_tx_id <= %s LIMIT 1",
             (address, is_outgoing, zero_value, tx_id),
         )
-        return rows[0].tx_page if rows else None
+        return rows[0].tx_page if rows else 0
 
     async def neighbors(self, address: bytes, *, is_outgoing: bool) -> list:
         """Every counterparty, summed over epochs.
