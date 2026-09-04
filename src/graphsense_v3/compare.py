@@ -48,6 +48,8 @@ IGNORED_FIELDS: dict = {
     "tx_id": "v2's is dense and sequential, v3's is (block_id << 32) + index -- "
     "the tx HASH is the comparable identity and IS compared",
     "no_addresses": "a cluster property",
+    "no_entities": "v3 has no clusters yet (D9); the adapter reports 0 so the "
+    "model can be built, which is not a measurement",
 }
 
 

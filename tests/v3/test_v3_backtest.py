@@ -243,3 +243,16 @@ def test_fixtures_from_v3_decode_to_strings_and_deduplicate(monkeypatch) -> None
     assert fixtures.addresses == [LTC_P2PKH]  # decoded, and not repeated
     assert fixtures.tx_hashes == ["abcd"]
     assert fixtures.blocks == [3171361]
+
+
+def test_the_v3_session_uses_the_configs_port() -> None:
+    """`database.port` reaches the v2 DAL as a field but the v3 session only
+    through the contact string. Unreconciled, the two sides would talk to
+    different endpoints and the run would compare two clusters."""
+    assert backtest.with_port(["10.0.0.1", "10.0.0.2"], 9043) == [
+        "10.0.0.1:9043",
+        "10.0.0.2:9043",
+    ]
+    # a node naming its own port keeps it, and no port changes nothing
+    assert backtest.with_port(["10.0.0.1:9999"], 9043) == ["10.0.0.1:9999"]
+    assert backtest.with_port(["10.0.0.1"], None) == ["10.0.0.1"]

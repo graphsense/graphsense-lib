@@ -34,6 +34,10 @@ from graphsense_v3.settings import assert_v3_keyspace
 
 logger = logging.getLogger(__name__)
 
+#: How many block partitions `block_below` walks before giving up. A gap wider
+#: than this turns a point read back into the scan the table exists to avoid.
+BLOCK_BELOW_MAX_GROUPS = 100
+
 #: Columns of ``address_stats`` that are summable across epochs. Epoch 0 is the
 #: compacted base and later epochs are deltas, so a read SUMS the slice --
 #: reading epoch 0 alone silently drops everything the incremental path added.
@@ -537,6 +541,35 @@ class Dal:
         )
         return rows[0]._asdict() if rows else None
 
+    async def block_below(self, height: int) -> Optional[dict]:
+        """The highest block strictly below ``height``.
+
+        v2 answers this with ``SELECT max(block_id) ... ALLOW FILTERING``, a
+        full scan of the block table. Here the height names its own partition,
+        so the usual case is ONE partition read: blocks are dense within a
+        group, and only a height sitting on a group boundary pays for a second.
+
+        The walk is bounded. A chain with a gap wider than
+        ``BLOCK_BELOW_MAX_GROUPS`` groups would otherwise turn a point read back
+        into the scan this table exists to avoid; returning None says "not
+        found here" rather than reading the chain to prove it.
+        """
+        group_size = self.config["block_bucket_size"]
+        group = height // group_size
+        for _ in range(BLOCK_BELOW_MAX_GROUPS):
+            if group < 0:
+                break
+            rows = await self._select(
+                f"SELECT block_id, timestamp FROM {self.raw}.block "
+                f"WHERE block_id_group = %s AND block_id < %s "
+                f"ORDER BY block_id DESC LIMIT 1",
+                (group, height),
+            )
+            if rows:
+                return rows[0]._asdict()
+            group -= 1
+        return None
+
     async def block_transactions(self, height: int) -> list:
         """A block's transactions as a tx_id RANGE.
 
@@ -552,6 +585,27 @@ class Dal:
             (height // self.config["tx_block_bucket_size"], low, high),
         )
         return [row._asdict() for row in rows]
+
+    async def transactions_by_ids(self, tx_ids: Sequence[int]) -> dict:
+        """``{tx_id: row}`` for a set of ids, fetched concurrently.
+
+        A tx_id names its own partition arithmetically, so this is one point
+        read each with no index lookup -- which is what makes the fan-out
+        affordable where v2 needs a `transaction_ids_by_transaction_id_group`
+        hop first.
+        """
+        if not tx_ids:
+            return {}
+        queries = [
+            (
+                f"SELECT * FROM {self.raw}.transaction "
+                f"WHERE block_id_group = %s AND tx_id = %s",
+                (self.tx_group(tx_id), tx_id),
+            )
+            for tx_id in tx_ids
+        ]
+        # `_gather` already flattens across queries.
+        return {row.tx_id: row._asdict() for row in await self._gather(queries)}
 
     async def blocks_on_day(self, day: int, *, limit: int = 100) -> list:
         """``day`` is yyyymmdd as an integer, per design rule 5."""

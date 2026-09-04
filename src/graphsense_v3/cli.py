@@ -349,7 +349,7 @@ def backtest_cmd(
     for keyspace in (raw, derived):
         assert_v3_keyspace(keyspace)
 
-    nodes = db_config.nodes
+    nodes = harness.with_port(db_config.nodes, db_config.port)
     cluster = connect_to(nodes, db_config.username, db_config.password)
     session = cluster.connect()
     try:
@@ -372,13 +372,18 @@ def backtest_cmd(
         v3_db = LegacyAdapter(
             {network: Dal(session, raw, derived, configuration(session, derived, raw))}
         )
-        reports = asyncio.run(
-            harness.run(
+
+        async def _compare():
+            # The synchronous `get_token_configuration` cannot fetch on demand,
+            # so an account network's tokens are loaded before the first call.
+            await v3_db.preload_token_configuration()
+            return await harness.run(
                 harness.build_services(rest_config, v2_db),
                 harness.build_services(rest_config, v3_db),
                 fixtures,
             )
-        )
+
+        reports = asyncio.run(_compare())
     finally:
         cluster.shutdown()
 

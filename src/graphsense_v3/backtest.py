@@ -96,12 +96,22 @@ class Call:
     invoke: Callable[..., Awaitable]
 
 
+#: How much of an exception message a difference line carries.
+MESSAGE_LIMIT = 160
+
+
 async def _outcome(coro: Awaitable) -> tuple:
-    """``("ok", value)`` or ``("raised", type name)``.
+    """``("ok", value)`` or ``("raised", "Type: message")``.
 
     An exception is an answer: two backends that both raise
     ``AddressNotFoundException`` agree, and one that raises where the other
     returns does not.
+
+    The MESSAGE is carried, not just the type. A report saying only
+    ``raised:TypeError`` names a symptom a dozen unrelated causes share and
+    sends the reader back to the cluster to find out which -- answering that in
+    one run is the whole point of the harness. The traceback goes to the debug
+    log for when the message alone is not enough.
     """
     from graphsense_v3.db.legacy import NotAvailable
 
@@ -110,7 +120,10 @@ async def _outcome(coro: Awaitable) -> tuple:
     except NotAvailable:
         raise
     except Exception as exc:  # noqa: BLE001 -- the exception IS the observation
-        return "raised", type(exc).__name__
+        logger.debug("call raised", exc_info=True)
+        message = str(exc).replace("\n", " ")[:MESSAGE_LIMIT]
+        name = type(exc).__name__
+        return "raised", f"{name}: {message}" if message else name
 
 
 def to_plain(value: Any) -> Any:
@@ -295,6 +308,19 @@ def fixtures_from_v3(session: Any, raw: str, derived: str, network: str) -> Fixt
         tx_hashes=[bytes(found.tx_hash).hex()] if found.tx_hash else [],
         blocks=[found.block_id] if found.block_id is not None else [],
     )
+
+
+def with_port(nodes: list, port: Optional[int]) -> list:
+    """Contact points carrying ``port``, for those that do not name their own.
+
+    The v2 DAL takes the port from ``database.port`` while the v3 session takes
+    it from the ``host:port`` contact string. Left unreconciled, a config with a
+    non-default port sends the two sides to different endpoints -- and the
+    comparison would be measuring two clusters, not two backends.
+    """
+    if not port:
+        return list(nodes)
+    return [node if ":" in node else f"{node}:{port}" for node in nodes]
 
 
 def build_services(config: Any, db: Any, log: Any = None) -> Any:

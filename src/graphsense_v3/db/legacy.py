@@ -28,10 +28,22 @@ does.
 from __future__ import annotations
 
 import zlib
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from graphsense_v3.codec import encode_address, search_prefix
 from graphsense_v3.db.core import Dal
+
+
+class _Value(NamedTuple):
+    """What `services.common.to_values` reads off a value.
+
+    It takes ``.value`` and ``.fiat_values`` as ATTRIBUTES -- v2 hands back a
+    driver UDT object, so a plain dict here raises AttributeError inside the
+    service rather than at the boundary.
+    """
+
+    value: int
+    fiat_values: list
 
 
 class NotAvailable(NotImplementedError):
@@ -67,6 +79,9 @@ class LegacyAdapter:
 
     def __init__(self, dals: dict) -> None:
         self.dals = dals
+        #: currency -> {ticker: row}, filled by preload_token_configuration.
+        #: Only account networks appear; a UTXO one is answered without a query.
+        self._token_config: dict = {}
 
     def _dal(self, currency: str) -> Dal:
         try:
@@ -87,10 +102,95 @@ class LegacyAdapter:
         return sorted(self.dals)
 
     async def get_currency_statistics(self, currency: str) -> Optional[dict]:
-        return await self._dal(currency).statistics()
+        """v2's ``summary_statistics`` row, by v2's names.
 
-    async def get_token_configuration(self, currency: str) -> list:
-        return await self._dal(currency).token_configuration()
+        The names are the contract, not the numbers: `StatsService` reads
+        ``no_blocks``, ``no_transactions``, ``no_addresses``,
+        ``no_address_relations``, ``no_clusters`` and ``timestamp`` off this
+        dict directly, and v3 renamed two of them. ``no_blocks`` is v2's
+        height-called-a-count, so it is the highest block PLUS ONE -- returning
+        the height would be off by one everywhere it is used as a bound,
+        including the default rate lookup, which asks for ``no_blocks - 1``.
+        """
+        row = await self._dal(currency).statistics()
+        if row is None:
+            return None
+        highest = row.get("highest_block")
+        return {
+            "no_blocks": 0 if highest is None else int(highest) + 1,
+            "no_transactions": int(row.get("no_transactions") or 0),
+            "no_addresses": int(row.get("no_addresses") or 0),
+            "no_address_relations": int(row.get("no_address_relations") or 0),
+            # v3 has no clusters (D9). Zero is what keeps the model buildable;
+            # `compare.IGNORED_FIELDS` records that it is not a measurement.
+            "no_clusters": 0,
+            "timestamp": int(row.get("timestamp") or 0),
+        }
+
+    def get_token_configuration(self, currency: str):
+        """**Synchronous**, because the service protocol declares it so.
+
+        Seven service protocols declare this ``def``, not ``async def``, and the
+        services call it without awaiting. An ``async`` version here returns a
+        coroutine that is then subscripted or iterated, which surfaces as a
+        ``TypeError`` far from its cause -- plus a "never awaited" warning.
+
+        The SHAPE is v2's too: ``{ticker: row}`` for an account network, and
+        ``None`` for a UTXO one, where v2's loader is ``@eth``-gated and returns
+        nothing. A ``{}`` here instead of ``None`` would be a different answer.
+        """
+        from graphsenselib.utils.rest_utils import is_eth_like
+
+        key = currency.lower()
+        if not is_eth_like(key):
+            return None
+        if key not in self._token_config:
+            raise NotAvailable(
+                "get_token_configuration is synchronous in the service protocol, "
+                "so an account network's token configuration cannot be fetched "
+                "on demand -- await preload_token_configuration() first"
+            )
+        return self._token_config[key]
+
+    async def preload_token_configuration(self) -> None:
+        """Load what the synchronous accessor above will hand out.
+
+        Only account networks have any; a UTXO network is answered from
+        `is_eth_like` without a query.
+        """
+        from graphsenselib.utils.rest_utils import is_eth_like
+
+        for currency, dal in self.dals.items():
+            key = currency.lower()
+            if not is_eth_like(key):
+                continue
+            rows = await dal.token_configuration()
+            self._token_config[key] = {
+                row["currency_ticker"]: row
+                for row in rows
+                if row.get("currency_ticker")
+            }
+
+    def _fiat_list(self, currency: str, fiat_values) -> list:
+        """v2's ordered ``[{code, value}]`` from v3's ``{code: value}`` map.
+
+        Both backends hold the same numbers; only the representation differs.
+        v2 stores a LIST positionally aligned with the keyspace's
+        ``fiat_currencies`` and marks it up on read; v3 stores a map and keeps
+        the order in ``configuration``. The service layer's `to_values` wants
+        v2's form, so a map handed over raw fails model validation.
+        """
+        order = [
+            str(code).lower()
+            for code in (self._dal(currency).config.get("fiat_currencies") or [])
+        ]
+        values = {str(k).lower(): v for k, v in (fiat_values or {}).items()}
+        # Sorted, not arbitrary, when the keyspace does not say: the order is
+        # positional in v2's response, so an unstable one is a wrong answer.
+        return [
+            {"code": code, "value": float(values.get(code) or 0.0)}
+            for code in (order or sorted(values))
+        ]
 
     # -- blocks ------------------------------------------------------------
 
@@ -103,6 +203,17 @@ class LegacyAdapter:
 
     async def list_block_txs(self, currency: str, height: int) -> list:
         return await self._dal(currency).block_transactions(height)
+
+    async def get_block_below_block_allow_filtering(
+        self, currency: str, block_id: int
+    ) -> Optional[dict]:
+        """The highest block below ``block_id``.
+
+        The name is v2's and so is the contract; the ``allow filtering`` is not.
+        v2 scans the whole block table for a ``max()``; v3 reads the partition
+        the height already names. Used by the block-by-date binary search.
+        """
+        return await self._dal(currency).block_below(block_id)
 
     async def get_block_by_date_allow_filtering(self, currency: str, timestamp: int):
         """v2 scans; v3 has ``block_by_date`` keyed by the day.
@@ -124,8 +235,11 @@ class LegacyAdapter:
     async def get_rates(self, currency: str, height: int) -> Optional[dict]:
         dal = self._dal(currency)
         native = (dal.config.get("keyspace_name") or currency).split("_")[0].upper()
+        # `Dal.rate` returns the fiat map itself, not a row wrapping it.
         fiat = await dal.rate(native, height)
-        return None if fiat is None else {"block_id": height, "rates": fiat}
+        if fiat is None:
+            return None
+        return {"block_id": height, "rates": self._fiat_list(currency, fiat)}
 
     async def list_rates(self, currency: str, heights) -> list:
         import asyncio
@@ -209,7 +323,7 @@ class LegacyAdapter:
         token_currency=None,
         page=None,
         pagesize=None,
-    ) -> list:
+    ) -> tuple:
         """v2's signature; the height filter goes through the page index.
 
         ``min_height``/``max_height`` become a tx_id range, which is arithmetic
@@ -231,13 +345,49 @@ class LegacyAdapter:
 
             low = tx_id_range(min_height, min_height)[0]
             start_page = await dal.page_for_tx(raw, is_outgoing, low)
-        return await dal.transactions(
+        found = await dal.transactions(
             raw,
             is_outgoing=is_outgoing,
             page=start_page,
             before_tx_id=before,
             limit=int(pagesize or 100),
         )
+        return await self._as_v2_txs(currency, found), None
+
+    async def _as_v2_txs(self, currency: str, found: list) -> list:
+        """v3's `AddressTx` rows as the dicts `txs_from_rows` reads.
+
+        v3's address_transactions row is deliberately narrow -- ``tx_id`` and
+        ``value``, with the tx_id carrying the height -- while the service
+        needs the block's timestamp, the coinbase flag and the hash. Those live
+        on the transaction, so they are fetched in ONE concurrent round rather
+        than per row.
+        """
+        dal = self._dal(currency)
+        by_id = await dal.transactions_by_ids([tx.tx_id for tx in found])
+        rows = []
+        for tx in found:
+            detail = by_id.get(tx.tx_id)
+            if detail is None:
+                # A tx the address references but the raw keyspace lacks is a
+                # torn keyspace, not a row to quietly drop.
+                raise NotAvailable(
+                    f"address_transactions references tx_id {tx.tx_id}, which "
+                    f"{dal.raw}.transaction does not have"
+                )
+            rows.append(
+                {
+                    "height": detail.get("block_id"),
+                    # v3 names it block_timestamp, being the block's and not
+                    # the transaction's; v2's readers expect `timestamp`.
+                    "timestamp": detail.get("block_timestamp"),
+                    "coinbase": bool(detail.get("coinbase")),
+                    "tx_hash": detail.get("tx_hash"),
+                    "value": tx.value,
+                    "tx_id": tx.tx_id,
+                }
+            )
+        return rows
 
     async def list_address_links(
         self,
@@ -247,6 +397,10 @@ class LegacyAdapter:
         min_height=None,
         max_height=None,
         order=None,
+        # Passed BY KEYWORD by addresses_service, so the name is part of the
+        # contract. A UTXO keyspace holds one asset, so there is nothing to
+        # filter on; it is accepted and ignored rather than rejected.
+        token_currency=None,
         page=None,
         pagesize=None,
     ) -> list:
@@ -267,7 +421,7 @@ class LegacyAdapter:
         include_labels=False,
         page=None,
         pagesize=None,
-    ) -> list:
+    ) -> tuple:
         """``id`` is an ADDRESS here, not v2's numeric id.
 
         The service layer passes whatever ``get_address_id`` returned, which
@@ -293,8 +447,36 @@ class LegacyAdapter:
                 edge = await dal.neighbor(raw, bytes(key), is_outgoing=is_outgoing)
                 if edge is not None:
                     found.append(edge)
-            return found
-        return await dal.neighbors(bytes(raw), is_outgoing=is_outgoing)
+        else:
+            found = await dal.neighbors(bytes(raw), is_outgoing=is_outgoing)
+        return self._as_v2_neighbors(currency, found, is_outgoing), None
+
+    def _as_v2_neighbors(self, currency: str, found: list, is_outgoing: bool) -> list:
+        """v3's `Neighbor` rows as the dicts the service reads.
+
+        Two conversions. The counterparty is keyed ``dst_address`` or
+        ``src_address`` by DIRECTION, which is how the service finds it; and
+        ``value`` becomes an object with ``.value`` and ``.fiat_values``,
+        because `to_values` reads attributes rather than keys.
+        """
+        side = "dst_address" if is_outgoing else "src_address"
+        rows = []
+        for edge in found:
+            rows.append(
+                {
+                    side: edge.address,
+                    "no_transactions": edge.no_transactions,
+                    "value": _Value(
+                        value=int(getattr(edge.value, "value", edge.value) or 0),
+                        fiat_values=self._fiat_list(
+                            currency, getattr(edge.value, "fiat_values", None)
+                        ),
+                    ),
+                    "token_values": None,
+                    "labels": None,
+                }
+            )
+        return rows
 
     async def list_matching_addresses(
         self, currency: str, expression: str, limit: Optional[int] = 10
