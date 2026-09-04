@@ -46,6 +46,22 @@ class _Value(NamedTuple):
     fiat_values: list
 
 
+class _Io(NamedTuple):
+    """One input or output, as `services.common.io_from_rows` reads it.
+
+    Attributes, not keys, and `address` is a LIST -- one output can pay several
+    addresses. ``None`` there means a nonstandard I/O, which the service only
+    emits when asked for; an empty list would be a standard I/O paying nobody.
+    """
+
+    address: Optional[list]
+    value: int
+    address_type: Optional[int] = None
+    script_hex: Optional[bytes] = None
+    txinwitness: Optional[list] = None
+    sequence: Optional[int] = None
+
+
 class NotAvailable(NotImplementedError):
     """A v2 method whose data v3 does not (yet) hold.
 
@@ -77,8 +93,15 @@ class LegacyAdapter:
     binds to it unchanged.
     """
 
-    def __init__(self, dals: dict) -> None:
+    def __init__(self, dals: dict, *, stub_clusters: bool = False) -> None:
         self.dals = dals
+        #: TODO(D9): remove once v3 has cluster tables. With this set, the nine
+        #: cluster methods stop raising and `get_fresh_cluster_id` reports None
+        #: -- which is v2's answer for "no fresh cluster", NOT v3's answer for
+        #: "clustering is not built". It exists so the rest of the surface can
+        #: be compared before D9 lands, and every report that uses it SAYS SO.
+        #: Never default it to True: silence here is a false parity claim.
+        self.stub_clusters = bool(stub_clusters)
         #: currency -> {ticker: row}, filled by preload_token_configuration.
         #: Only account networks appear; a UTXO one is answered without a query.
         self._token_config: dict = {}
@@ -202,7 +225,49 @@ class LegacyAdapter:
         return None if block is None else block.get("timestamp")
 
     async def list_block_txs(self, currency: str, height: int) -> list:
-        return await self._dal(currency).block_transactions(height)
+        dal = self._dal(currency)
+        found = await dal.block_transactions(height)
+        legs = await dal.transaction_io_many([tx["tx_id"] for tx in found])
+        return [self._with_io(currency, tx, legs.get(tx["tx_id"], [])) for tx in found]
+
+    def _with_io(self, currency: str, detail: dict, legs: list) -> dict:
+        """A v3 transaction row plus the ``inputs``/``outputs`` v2 carries.
+
+        v2 stores the I/Os ON the transaction row; v3 keeps them in
+        `transaction_io` under the same partition key, so this is an assembly
+        rather than a lookup. `std_tx_from_row` reads ``row["inputs"]`` by
+        SUBSCRIPT, so an absent key is a KeyError several layers from its
+        cause, not a missing field.
+        """
+        from graphsense_v3.codec import decode_address
+
+        network = currency.lower()
+        inputs: list = []
+        outputs: list = []
+        for leg in sorted(
+            legs, key=lambda r: (bool(r.get("is_output")), r.get("io_index") or 0)
+        ):
+            decoded = [
+                decode_address(network, bytes(a)) for a in (leg.get("address") or [])
+            ]
+            io = _Io(
+                # None, not [] -- the service treats None as a nonstandard I/O
+                # and an empty list as a standard one paying nobody.
+                address=decoded or None,
+                value=int(leg.get("value") or 0),
+                address_type=leg.get("address_type"),
+                script_hex=leg.get("script_hex"),
+                txinwitness=leg.get("txinwitness"),
+                sequence=leg.get("sequence"),
+            )
+            (outputs if leg.get("is_output") else inputs).append(io)
+        row = dict(detail)
+        row["inputs"] = inputs
+        row["outputs"] = outputs
+        # v3 names it block_timestamp, being the block's rather than the
+        # transaction's; v2's readers ask for `timestamp`.
+        row["timestamp"] = detail.get("block_timestamp")
+        return row
 
     async def get_block_below_block_allow_filtering(
         self, currency: str, block_id: int
@@ -255,7 +320,12 @@ class LegacyAdapter:
         raw = bytes.fromhex(tx_hash) if isinstance(tx_hash, str) else bytes(tx_hash)
         prefix = raw.hex()[: dal.config["tx_prefix_length"]]
         tx_id = await dal.tx_id_by_hash(raw, prefix)
-        return None if tx_id is None else await dal.transaction(tx_id)
+        if tx_id is None:
+            return None
+        detail = await dal.transaction(tx_id)
+        if detail is None:
+            return None
+        return self._with_io(currency, detail, await dal.transaction_io(tx_id))
 
     async def get_tx(self, currency: str, tx_hash) -> Optional[dict]:
         return await self.get_tx_by_hash(currency, tx_hash)
@@ -333,7 +403,10 @@ class LegacyAdapter:
         """
         dal = self._dal(currency)
         raw = self._bytes(currency, address)
-        is_outgoing = None if direction is None else bool(direction)
+        # v2 passes the STRING "in" or "out". `bool(direction)` is True for
+        # both -- so an incoming listing silently returned outgoing rows, with
+        # no error and a plausible-looking answer.
+        is_outgoing = None if direction is None else "out" in str(direction).lower()
         before = None
         if max_height is not None:
             from graphsense_v3.codec import tx_id_range
@@ -383,7 +456,9 @@ class LegacyAdapter:
                     "timestamp": detail.get("block_timestamp"),
                     "coinbase": bool(detail.get("coinbase")),
                     "tx_hash": detail.get("tx_hash"),
-                    "value": tx.value,
+                    # v2 signs by direction: money leaving is negative. v3
+                    # stores the magnitude and the direction separately.
+                    "value": -tx.value if tx.is_outgoing else tx.value,
                     "tx_id": tx.tx_id,
                 }
             )
@@ -459,12 +534,22 @@ class LegacyAdapter:
         ``value`` becomes an object with ``.value`` and ``.fiat_values``,
         because `to_values` reads attributes rather than keys.
         """
+        from graphsense_v3.codec import decode_address
+
         side = "dst_address" if is_outgoing else "src_address"
         rows = []
         for edge in found:
             rows.append(
                 {
-                    side: edge.address,
+                    # The DECODED string: the service hands this straight to
+                    # `address_to_user_format`, which passes a UTXO address
+                    # through unchanged -- raw bytes would reach the response.
+                    side: decode_address(currency.lower(), bytes(edge.address)),
+                    # The service reads this by SUBSCRIPT before anything else,
+                    # then feeds it to get_fresh_cluster_id. Absent, the whole
+                    # call dies with a KeyError that names no cause; present,
+                    # the call fails honestly on "v3 has no cluster tables".
+                    f"{side}_id": synthetic_id(bytes(edge.address)),
                     "no_transactions": edge.no_transactions,
                     "value": _Value(
                         value=int(getattr(edge.value, "value", edge.value) or 0),
@@ -525,6 +610,17 @@ class LegacyAdapter:
         self._no_clusters("get_address_entity_id")
 
     async def get_fresh_cluster_id(self, *_, **__):
+        """The one cluster method that can be stubbed usefully.
+
+        `addresses_service` calls it for EVERY neighbour of a non-eth address
+        and for `get_address`, so while it raises, most of the address surface
+        cannot be exercised at all -- including parts that have nothing to do
+        with clustering. Returning None under `stub_clusters` is v2's own value
+        for "no fresh cluster", so the call completes and the cluster FIELDS are
+        excluded from the comparison rather than silently agreeing.
+        """
+        if self.stub_clusters:
+            return None
         self._no_clusters("get_fresh_cluster_id")
 
     async def new_entity(self, *_, **__):

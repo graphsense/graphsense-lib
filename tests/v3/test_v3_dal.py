@@ -298,3 +298,20 @@ def test_close_is_safe_without_a_cluster() -> None:
     """The tests construct a Dal directly; close must not assume `open` ran."""
     dal, _ = make()
     run(dal.close())
+
+
+def test_the_direction_survives_the_fan_out() -> None:
+    """Direction is in the PARTITION KEY, not on the row, so a flattening
+    gather loses it -- and a caller cannot re-derive it. v2 signs an outgoing
+    value negative, so a lost direction is a wrong sign on every row of an
+    unbounded listing."""
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, in_tx_page_max=0, out_tx_page_max=0)]
+        # tx_id encodes the direction so the assertion can tell them apart.
+        return [Row(tx_id=2 if params[1] else 1, value=10, balance=None)]
+
+    dal = Dal(FakeSession(rows), RAW, DERIVED, dict(CONFIG))
+    found = asyncio.run(dal.transactions(ADDRESS))
+    assert {tx.tx_id: tx.is_outgoing for tx in found} == {1: False, 2: True}

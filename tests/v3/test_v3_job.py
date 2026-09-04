@@ -184,17 +184,9 @@ def frame_doubler():
     return F.col("a") * 2
 
 
-# --------------------------------------------------------------------------
-# Bounding the derived stage to blocks a rate exists for.
-#
-# The first live back-to-back run failed on this: v3 wrote blocks and
-# transactions past the last rated block, and `RatesService` raises
-# BlockNotFoundException for a block with no rate -- so those rows were not
-# degraded, they were unservable, and the failure surfaced three layers up as
-# "block not found" for a block that was plainly there.
-# --------------------------------------------------------------------------
-
 RATES_SCHEMA = "asset STRING, block_id INT, fiat_values MAP<STRING, DOUBLE>"
+BLOCKS_SCHEMA = "block_id INT, timestamp LONG"
+DAY = 86400
 
 
 def test_rated_tip_is_the_highest_block_with_a_rate(spark) -> None:
@@ -209,61 +201,9 @@ def test_rated_tip_is_the_highest_block_with_a_rate(spark) -> None:
 
 
 def test_rated_tip_is_none_when_nothing_is_rated(spark) -> None:
-    """Distinguishable from 0, which is a real block."""
-    empty = spark.createDataFrame([], schema=RATES_SCHEMA)
-    assert job.rated_tip(empty) is None
-
-
-def test_blocks_past_the_rated_tip_are_dropped(spark) -> None:
-    blocks = spark.createDataFrame(
-        [{"block_id": 8}, {"block_id": 9}, {"block_id": 10}],
-        schema="block_id INT",
-    )
-    bounded = job.bound_to_rated_blocks({"block": blocks}, 9)
-    assert [r["block_id"] for r in bounded["block"].collect()] == [8, 9]
-
-
-def test_a_tx_id_keyed_frame_is_bounded_at_the_block_boundary(spark) -> None:
-    """`transaction_io` has no block_id, only tx_id. Since tx_id is
-    (block_id << 32) + index, the block bound IS a tx_id bound -- and it must
-    keep the LAST transaction of the rated block while dropping the first of
-    the next one, which a bound computed off the wrong side would invert."""
-    last_of_9 = (9 << 32) + 4294967295
-    first_of_10 = 10 << 32
-    io = spark.createDataFrame(
-        [{"tx_id": last_of_9}, {"tx_id": first_of_10}],
-        schema="tx_id LONG",
-    )
-    bounded = job.bound_to_rated_blocks({"transaction_io": io}, 9)
-    assert [r["tx_id"] for r in bounded["transaction_io"].collect()] == [last_of_9]
-
-
-def test_a_frame_with_neither_key_passes_through(spark) -> None:
-    """`configuration` has no block or tx column and must not be dropped."""
-    config = spark.createDataFrame(
-        [{"keyspace_name": "ltc_derived_v3_x"}], schema="keyspace_name STRING"
-    )
-    bounded = job.bound_to_rated_blocks({"configuration": config}, 9)
-    assert bounded["configuration"].count() == 1
-
-
-def test_block_id_is_preferred_over_tx_id_when_both_are_present(spark) -> None:
-    """`transaction` carries both. Bounding on block_id is the exact test;
-    falling through to the tx_id bound would be equivalent here but is one more
-    place for the shift to be wrong."""
-    frame = spark.createDataFrame(
-        [
-            {"block_id": 9, "tx_id": (9 << 32) + 1},
-            {"block_id": 10, "tx_id": (10 << 32) + 1},
-        ],
-        schema="block_id INT, tx_id LONG",
-    )
-    bounded = job.bound_to_rated_blocks({"transaction": frame}, 9)
-    assert [r["block_id"] for r in bounded["transaction"].collect()] == [9]
-
-
-BLOCKS_SCHEMA = "block_id INT, timestamp LONG"
-DAY = 86400
+    """Distinguishable from 0, which is a real block. A keyspace with no rate
+    anywhere is unservable and the run refuses rather than writing it."""
+    assert job.rated_tip(spark.createDataFrame([], schema=RATES_SCHEMA)) is None
 
 
 def test_recent_unrated_blocks_get_the_last_known_rate(spark) -> None:
@@ -351,3 +291,69 @@ def test_each_asset_carries_its_own_last_rate(spark) -> None:
     assert filled[("ETH", 6)] == {"EUR": 1.5}
     assert filled[("USDT", 5)] == {"EUR": 0.9}
     assert filled[("USDT", 6)] == {"EUR": 0.9}
+
+
+def test_a_block_before_the_feed_began_gets_zeros_like_v2(spark) -> None:
+    """v2 materialises a row for EVERY block: `ltc_transformed_20260727` holds
+    block 1000 as [0, 0], because the rate source starts 2015-01-01 and LTC
+    genesis is 2011. "No rate" is not a state v2 ever serves, and an absent row
+    is a FAILED REQUEST in v3, not a missing number."""
+    rates = spark.createDataFrame(
+        [{"asset": "LTC", "block_id": 5, "fiat_values": {"EUR": 1.5, "USD": 2.0}}],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame(
+        [{"block_id": 1}, {"block_id": 5}], schema="block_id INT"
+    )
+    filled = {
+        r["block_id"]: r["fiat_values"]
+        for r in job.zero_fill_rates(rates, blocks).collect()
+    }
+    assert filled[5] == {"EUR": 1.5, "USD": 2.0}
+    assert filled[1] == {"EUR": 0.0, "USD": 0.0}
+
+
+def test_the_zero_row_carries_every_currency_the_feed_uses(spark) -> None:
+    """A zero map missing a currency is not the same answer as a zero for it --
+    the fiat list is positional in v2's response."""
+    rates = spark.createDataFrame(
+        [{"asset": "LTC", "block_id": 5, "fiat_values": {"EUR": 1.5, "USD": 2.0}}],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame([{"block_id": 1}], schema="block_id INT")
+    row = job.zero_fill_rates(rates, blocks).collect()[0]
+    assert sorted(row["fiat_values"]) == ["EUR", "USD"]
+
+
+def test_every_asset_gets_a_row_for_every_block(spark) -> None:
+    """A chain with tokens needs a row per (block, asset); one null-asset row
+    per block would leave every token unservable."""
+    rates = spark.createDataFrame(
+        [
+            {"asset": "ETH", "block_id": 5, "fiat_values": {"EUR": 1.5}},
+            {"asset": "USDT", "block_id": 5, "fiat_values": {"EUR": 0.9}},
+        ],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame(
+        [{"block_id": 1}, {"block_id": 5}], schema="block_id INT"
+    )
+    found = {
+        (r["asset"], r["block_id"])
+        for r in job.zero_fill_rates(rates, blocks).collect()
+    }
+    assert found == {("ETH", 1), ("ETH", 5), ("USDT", 1), ("USDT", 5)}
+
+
+def test_no_block_is_left_without_a_rate(spark) -> None:
+    """The property the whole thing exists for: after filling, every block the
+    keyspace holds has a rate row, so no request can fail for want of one."""
+    rates = spark.createDataFrame(
+        [{"asset": "LTC", "block_id": 7, "fiat_values": {"EUR": 1.5}}],
+        schema=RATES_SCHEMA,
+    )
+    blocks = spark.createDataFrame(
+        [{"block_id": b} for b in range(1, 11)], schema="block_id INT"
+    )
+    filled = job.zero_fill_rates(rates, blocks)
+    assert {r["block_id"] for r in filled.collect()} == set(range(1, 11))

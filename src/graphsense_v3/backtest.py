@@ -279,6 +279,81 @@ CALLS: list = [
 ]
 
 
+def rate_coverage_warning(
+    session: Any, raw: str, derived: str, network: str, size: int
+) -> Optional[str]:
+    """A warning when the keyspace's tip has no exchange rate, else None.
+
+    Worth its own check because of how it PRESENTS: every call that asks for
+    current rates resolves the height to ``no_blocks - 1``, so one missing rate
+    row at the tip becomes an identical `BlockNotFoundException` on
+    `get_address` and on every neighbour listing -- N copies of one fact,
+    which is the kind of noise a real finding hides in.
+    """
+    rows = list(session.execute(f"SELECT highest_block FROM {raw}.summary_statistics"))
+    if not rows or rows[0].highest_block is None:
+        return None
+    tip = int(rows[0].highest_block)
+    rated = rated_block(session, derived, network, tip, size)
+    if rated is not None and rated >= tip:
+        return None
+    return (
+        f"{derived} has no exchange rate for block {tip}, its own tip"
+        + (f" (the last rated block is {rated})" if rated is not None else "")
+        + ". Every call that asks for CURRENT rates resolves to that block and "
+        "will fail with BlockNotFoundException on the v3 side -- get_address "
+        "and both neighbour listings among them. This is a property of the "
+        "keyspace, not a difference between the backends: a backfill carrying "
+        "the last rate forward over the unrated tail fixes it."
+    )
+
+
+def sample_addresses(
+    session: Any, derived: str, network: str, count: int, *, buckets: int
+) -> list:
+    """``count`` addresses spread across the keyspace, as strings.
+
+    Two axes, because `address_stats` is ``PRIMARY KEY (address_bucket,
+    address, epoch)`` -- the partition key is the BUCKET alone, and the address
+    is a clustering column:
+
+    * a random bucket, so the draw is spread over the ring;
+    * a random floor WITHIN it, because taking each partition's first row would
+      always return its lowest-sorting address. That is not a harmless bias:
+      the encoded form starts with a type marker, so the lowest address in a
+      bucket is systematically the same address TYPE, and the sample would
+      quietly exclude the others.
+
+    Each draw is one point read. Fewer than ``count`` may come back -- draws are
+    independent, so duplicates happen and are dropped rather than re-drawn.
+    """
+    import random
+
+    from graphsense_v3.codec import decode_address
+
+    cql = (
+        f"SELECT address FROM {derived}.address_stats "
+        f"WHERE address_bucket = %s AND address >= %s LIMIT 1"
+    )
+    found: list = []
+    seen: set = set()
+    for _ in range(count):
+        bucket = random.randrange(buckets)
+        floor = bytes([random.randrange(256)])
+        rows = list(session.execute(cql, (bucket, floor)))
+        if not rows:
+            # The floor landed past the end of this bucket; take it from the
+            # start rather than losing the draw.
+            rows = list(session.execute(cql, (bucket, b"")))
+        for row in rows:
+            raw = bytes(row.address)
+            if raw in seen:
+                continue
+            seen.add(raw)
+            found.append(decode_address(network, raw))
+    return found
+
+
 #: How far below an unrated block to look for a rated one, in rate partitions.
 RATED_FIXTURE_MAX_GROUPS = 50
 

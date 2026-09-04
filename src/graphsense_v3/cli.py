@@ -288,6 +288,91 @@ def probe(
         raise SystemExit(f"{failed} required access pattern(s) not satisfied")
 
 
+@cli.command("fill-rates")
+@_NETWORK
+@_LABEL
+@click.option("--hosts", default=None, help="host[:port][,host...]")
+@click.option("--username", default=None)
+@click.option("--password", default=None)
+@click.option("--asset", default=None, help="defaults to the network's own symbol")
+@click.option("--env", default="prod", help="only used without --hosts")
+@click.option("--dry-run", is_flag=True, help="report what would be written")
+def fill_rates_cmd(
+    network: str,
+    label: Optional[str],
+    hosts: Optional[str],
+    username: Optional[str],
+    password: Optional[str],
+    asset: Optional[str],
+    env: str,
+    dry_run: bool,
+) -> None:
+    """Carry the last exchange rate forward over a keyspace's unrated tail.
+
+    Rates land a day at a time, so a backfill that reaches the chain tip always
+    ends with a few hundred unrated blocks -- and one missing rate row at the
+    tip takes out `get_address` and every neighbour listing, because those ask
+    for CURRENT rates and that resolves to the tip.
+
+    The same thing a backfill now does, without re-running one. Writes ONLY to
+    a v3 derived keyspace's `exchange_rates`.
+    """
+    from graphsense_v3 import ratefill
+    from graphsense_v3.cassandra import connect_to
+    from graphsense_v3.probe import configuration
+    from graphsense_v3.settings import Kind, v3_keyspace
+
+    raw = v3_keyspace(network, Kind.RAW, label)
+    derived = v3_keyspace(network, Kind.DERIVED, label)
+    if hosts:
+        nodes = [h.strip() for h in hosts.split(",") if h.strip()]
+    else:
+        settings = _settings(env, network, label, None)
+        nodes = settings.cassandra_nodes
+        username, password = settings.username, settings.password
+
+    cluster = connect_to(nodes, username, password)
+    session = cluster.connect()
+    try:
+        config = configuration(session, derived, fallback=raw)
+        symbol = (asset or network).upper()
+        # The tail first, so those blocks get the last REAL rate; the zero fill
+        # then only reaches blocks with no earlier rate to carry.
+        summary = ratefill.fill(
+            session,
+            raw,
+            derived,
+            symbol,
+            size=config["block_bucket_size"],
+            dry_run=dry_run,
+        )
+        zeros = ratefill.zero_fill(
+            session,
+            raw,
+            derived,
+            symbol,
+            size=config["block_bucket_size"],
+            dry_run=dry_run,
+        )
+    finally:
+        cluster.shutdown()
+
+    verb = "would write" if dry_run else "wrote"
+    click.echo(
+        f"{derived}: last real rate at block {summary['rated']}, tip "
+        f"{summary['tip']}; {verb} {summary['written']} carried row(s), skipped "
+        f"{summary['skipped']}; {verb} {zeros['written']} zero row(s) for blocks "
+        f"with no rate to carry"
+    )
+    if (summary["written"] or zeros["written"]) and not dry_run:
+        click.echo(
+            "Carried rows repeat a real rate; zero rows say 'no rate existed', "
+            "which is what v2 already reports for the early chain. Neither is "
+            "an independent observation, and a backfill overwrites both with "
+            "whatever the feed really holds."
+        )
+
+
 @cli.command("backtest")
 @_NETWORK
 @_LABEL
@@ -307,6 +392,21 @@ def probe(
 )
 @click.option("--tx-hash", "tx_hashes", multiple=True, help="fixture tx hash (hex)")
 @click.option("--block", "blocks", multiple=True, type=int, help="fixture block height")
+@click.option(
+    "--stub-clusters",
+    is_flag=True,
+    help="let get_fresh_cluster_id report None instead of raising, so the rest "
+    "of the address surface can be compared before clustering (D9) lands. "
+    "Cluster FIELDS stay excluded, and the report says the run used this.",
+)
+@click.option(
+    "--sample",
+    default=0,
+    type=int,
+    help="additionally compare N addresses sampled across the token ring. Two "
+    "auto-picked fixtures agreeing proves little; a spread is what catches "
+    "systematic drift.",
+)
 def backtest_cmd(
     network: str,
     label: Optional[str],
@@ -314,6 +414,8 @@ def backtest_cmd(
     addresses: tuple,
     tx_hashes: tuple,
     blocks: tuple,
+    sample: int,
+    stub_clusters: bool,
 ) -> None:
     """Compare v2 and v3 REST answers, service against service.
 
@@ -362,6 +464,24 @@ def backtest_cmd(
             )
         else:
             fixtures = harness.fixtures_from_v3(session, raw, derived, network)
+        if sample:
+            drawn = harness.sample_addresses(
+                session,
+                derived,
+                network,
+                sample,
+                buckets=configuration(session, derived, raw)["entity_buckets"],
+            )
+            fixtures.addresses = list(dict.fromkeys(fixtures.addresses + drawn))
+        warning = harness.rate_coverage_warning(
+            session,
+            raw,
+            derived,
+            network,
+            configuration(session, derived, raw).get("block_bucket_size") or 100,
+        )
+        if warning:
+            click.echo(f"\nWARNING: {warning}\n", err=True)
         click.echo(
             f"fixtures: {len(fixtures.addresses)} address(es), "
             f"{len(fixtures.tx_hashes)} tx(s), {len(fixtures.blocks)} block(s)",
@@ -370,7 +490,8 @@ def backtest_cmd(
 
         v2_db = _v2_dal(db_config)
         v3_db = LegacyAdapter(
-            {network: Dal(session, raw, derived, configuration(session, derived, raw))}
+            {network: Dal(session, raw, derived, configuration(session, derived, raw))},
+            stub_clusters=stub_clusters,
         )
 
         async def _compare():
@@ -387,7 +508,17 @@ def backtest_cmd(
     finally:
         cluster.shutdown()
 
-    click.echo(compare.report(reports))
+    notes = []
+    if stub_clusters:
+        notes.append(
+            "CLUSTERS ARE STUBBED (--stub-clusters): get_fresh_cluster_id "
+            "reported None rather than raising, so calls that enrich a result "
+            "with cluster data completed. Nothing about clustering was "
+            "verified -- v3 has no cluster tables (D9)."
+        )
+    if warning:
+        notes.append(warning)
+    click.echo(compare.report(reports, notes))
     disagreed = [r for r in reports if not r.agrees and r.skipped is None]
     if disagreed:
         raise SystemExit(f"{len(disagreed)} call(s) differ")

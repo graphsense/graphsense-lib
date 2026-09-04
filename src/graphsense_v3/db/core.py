@@ -345,24 +345,32 @@ class Dal:
             clause = " AND tx_id < %s"
             extra = (before_tx_id,)
 
-        queries = [
-            (
-                f"SELECT tx_id, value, balance FROM "
-                f"{self.derived}.address_transactions "
-                f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
-                f"AND tx_page = %s{clause} LIMIT {int(limit)}",
-                (address, outgoing, zero, page) + extra,
+        # Gathered per (direction, zero-ness) rather than through `_gather`,
+        # which flattens: the DIRECTION is not on the row, it is in the
+        # partition key, so flattening loses it. A caller cannot re-derive it,
+        # and v2 signs an outgoing value negative -- so a lost direction is a
+        # wrong sign on every row of an unbounded listing.
+        specs = [(outgoing, zero) for outgoing in directions for zero in zero_flags]
+        results = await asyncio.gather(
+            *(
+                self._select(
+                    f"SELECT tx_id, value, balance FROM "
+                    f"{self.derived}.address_transactions "
+                    f"WHERE address = %s AND is_outgoing = %s AND is_zero_value = %s "
+                    f"AND tx_page = %s{clause} LIMIT {int(limit)}",
+                    (address, outgoing, zero, page) + extra,
+                )
+                for outgoing, zero in specs
             )
-            for outgoing in directions
-            for zero in zero_flags
-        ]
-        rows = await self._gather(queries)
+        )
         merged = [
             AddressTx(
                 tx_id=row.tx_id,
                 value=int(row.value or 0),
                 balance=None if row.balance is None else int(row.balance),
+                is_outgoing=outgoing,
             )
+            for (outgoing, _zero), rows in zip(specs, results)
             for row in rows
         ]
         merged.sort(key=lambda tx: tx.tx_id, reverse=True)
@@ -512,6 +520,28 @@ class Dal:
             params,
         )
         return [row._asdict() for row in rows]
+
+    async def transaction_io_many(self, tx_ids: Sequence[int]) -> dict:
+        """``{tx_id: [io rows]}`` for several transactions at once.
+
+        A block's transactions each need their inputs and outputs; sequentially
+        that is one round trip per transaction, which on a full block is
+        hundreds of times the latency for the same work.
+        """
+        if not tx_ids:
+            return {}
+        queries = [
+            (
+                f"SELECT * FROM {self.raw}.transaction_io "
+                f"WHERE block_id_group = %s AND tx_id = %s",
+                (self.tx_group(tx_id), tx_id),
+            )
+            for tx_id in tx_ids
+        ]
+        grouped: dict = {}
+        for row in await self._gather(queries):
+            grouped.setdefault(row.tx_id, []).append(row._asdict())
+        return grouped
 
     async def spent_in(self, tx_hash: bytes, prefix: str) -> list:
         """What spent this transaction's outputs."""

@@ -50,6 +50,19 @@ IGNORED_FIELDS: dict = {
     "no_addresses": "a cluster property",
     "no_entities": "v3 has no clusters yet (D9); the adapter reports 0 so the "
     "model can be built, which is not a measurement",
+    # Range-dependent. v2's keyspace is kept current by the delta updater while
+    # a v3 keyspace is a snapshot at the block its backfill reached, so these
+    # count different spans of chain and cannot agree until both cover the same
+    # range. NOTE what this costs: a real counting bug in any of them is
+    # invisible here, and only a range-matched comparison would catch it.
+    "no_blocks": "range-dependent; v2 is live and v3 is a snapshot",
+    "no_txs": "range-dependent; v2 is live and v3 is a snapshot",
+    "no_address_relations": "range-dependent; v2 is live and v3 is a snapshot",
+    # `timestamp` is deliberately NOT here. It is range-dependent on the
+    # statistics response, but it is also on every transaction and block, and a
+    # transaction timestamp mismatch is what exposed the direction bug --
+    # ignoring it by NAME would blind this harness to its own best signal. The
+    # one statistics line it costs is worth that.
 }
 
 
@@ -222,10 +235,18 @@ def _ignored_in(value: Any) -> set:
     return set()
 
 
-def report(reports: list) -> str:
+def report(reports: list, notes: Optional[list] = None) -> str:
     """A readable summary. Agreement is stated with what it EXCLUDED, because
-    'these agree' means nothing without knowing what was not compared."""
+    'these agree' means nothing without knowing what was not compared.
+
+    ``notes`` are caveats about the RUN rather than about a field -- a stubbed
+    subsystem, say. They print at the top, where a pasted report cannot lose
+    them, because a caveat that only lives in a CLI flag is one nobody
+    remembers a week later.
+    """
     lines = ["", "=" * 78, "v2 vs v3 service comparison", "=" * 78, ""]
+    for note in notes or []:
+        lines += [f"  !! {note}", ""]
     passed_over = [r for r in reports if r.skipped is not None]
     disagreed = [r for r in reports if not r.agrees and r.skipped is None]
     for entry in reports:

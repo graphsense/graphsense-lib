@@ -311,3 +311,122 @@ def test_giving_up_returns_none_rather_than_an_unrated_block() -> None:
     like a fixture and fail every call made against it."""
     session = RatedSession(tip=10**18)  # never satisfies the bound
     assert backtest.rated_block(session, "ltc_derived_v3_x", "ltc", 500, 100) is None
+
+
+class BucketSession:
+    """Answers a (bucket, floor) point read from a canned set of addresses."""
+
+    def __init__(self, addresses, *, empty_below=None):
+        self.addresses = addresses
+        self.empty_below = empty_below
+        self.asked = []
+
+    def execute(self, cql, params):
+        assert "address_bucket = " in cql, "sampling must address a partition"
+        bucket, floor = tuple(params)
+        self.asked.append((bucket, floor))
+        if self.empty_below is not None and floor and floor >= self.empty_below:
+            return []  # the floor landed past the end of this bucket
+        index = len(self.asked) % len(self.addresses)
+        return [SimpleNamespace(address=self.addresses[index])]
+
+
+def test_sampling_spreads_over_buckets_and_within_them() -> None:
+    """`address_stats` is PRIMARY KEY (address_bucket, address, epoch), so the
+    partition key is the BUCKET alone. Taking each partition's first row would
+    always return its lowest-sorting address -- and since the encoded form
+    starts with a type marker, that is systematically the same address TYPE."""
+    from graphsense_v3.codec import encode_address
+
+    session = BucketSession(
+        [encode_address("ltc", LTC_P2PKH), encode_address("ltc", BTC_VERSIONED)]
+    )
+    found = backtest.sample_addresses(
+        session, "ltc_derived_v3_x", "ltc", 20, buckets=100_000
+    )
+    assert set(found) == {LTC_P2PKH, BTC_VERSIONED}
+    assert len({b for b, _ in session.asked}) > 1, "buckets must vary"
+    assert len({f for _, f in session.asked}) > 1, "floors must vary"
+
+
+def test_a_floor_past_the_end_of_a_bucket_retries_from_its_start() -> None:
+    """Otherwise the draw is silently lost and a `--sample 50` quietly becomes
+    a sample of 30."""
+    from graphsense_v3.codec import encode_address
+
+    session = BucketSession([encode_address("ltc", LTC_P2PKH)], empty_below=bytes([0]))
+    found = backtest.sample_addresses(session, "ltc_derived_v3_x", "ltc", 3, buckets=10)
+    assert found == [LTC_P2PKH]
+    assert any(floor == b"" for _bucket, floor in session.asked)
+
+
+def test_sampling_returns_strings_without_duplicates() -> None:
+    """The DAL keys on bytes, the services take strings; and a duplicate draw
+    would compare the same address twice and inflate the agreement count."""
+    from graphsense_v3.codec import encode_address
+
+    session = BucketSession([encode_address("ltc", LTC_P2PKH)])
+    found = backtest.sample_addresses(session, "ltc_derived_v3_x", "ltc", 5, buckets=10)
+    assert found == [LTC_P2PKH]
+
+
+def test_every_sampled_bucket_is_within_range() -> None:
+    """A bucket outside [0, entity_buckets) addresses a partition that cannot
+    exist, and the draw comes back empty every time."""
+    from graphsense_v3.codec import encode_address
+
+    session = BucketSession([encode_address("ltc", LTC_P2PKH)])
+    backtest.sample_addresses(session, "ltc_derived_v3_x", "ltc", 50, buckets=8)
+    assert all(0 <= bucket < 8 for bucket, _floor in session.asked)
+
+
+class TipSession:
+    """summary_statistics plus a rated tip, for the coverage preflight."""
+
+    def __init__(self, block_tip, rated_tip):
+        self.block_tip = block_tip
+        self.rated_tip = rated_tip
+
+    def execute(self, cql, params=()):
+        if "summary_statistics" in cql:
+            return [SimpleNamespace(highest_block=self.block_tip)]
+        _asset, group, upper = tuple(params)
+        if self.rated_tip is None:
+            return []
+        if self.rated_tip // 100 == group and self.rated_tip <= upper:
+            return [SimpleNamespace(block_id=self.rated_tip)]
+        return []
+
+
+def test_a_rated_tip_produces_no_warning() -> None:
+    session = TipSession(block_tip=3171361, rated_tip=3171361)
+    assert (
+        backtest.rate_coverage_warning(
+            session, "ltc_raw_v3_x", "ltc_derived_v3_x", "ltc", 100
+        )
+        is None
+    )
+
+
+def test_an_unrated_tip_is_reported_once_with_its_cause() -> None:
+    """One missing rate row becomes an identical BlockNotFoundException on
+    get_address and both neighbour listings -- five copies of one fact, which
+    is the noise a real finding hides in."""
+    session = TipSession(block_tip=3171361, rated_tip=3171011)
+    warning = backtest.rate_coverage_warning(
+        session, "ltc_raw_v3_x", "ltc_derived_v3_x", "ltc", 100
+    )
+    assert warning is not None
+    assert "3171361" in warning and "3171011" in warning
+    # It must say this is a keyspace property, not a backend difference.
+    assert "not a difference between the backends" in warning
+
+
+def test_no_statistics_row_is_not_reported_as_a_rate_problem() -> None:
+    session = TipSession(block_tip=None, rated_tip=None)
+    assert (
+        backtest.rate_coverage_warning(
+            session, "ltc_raw_v3_x", "ltc_derived_v3_x", "ltc", 100
+        )
+        is None
+    )

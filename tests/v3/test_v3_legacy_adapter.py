@@ -301,6 +301,38 @@ def test_list_neighbors_returns_rows_and_a_paging_state() -> None:
     assert isinstance(result, tuple) and len(result) == 2
 
 
+def test_a_neighbour_row_carries_the_id_the_service_subscripts() -> None:
+    """`addresses_service` reads row["dst_address_id"] by SUBSCRIPT before
+    anything else and feeds it to get_fresh_cluster_id. Absent, the call dies
+    with a KeyError naming no cause; present, it fails honestly on "no cluster
+    tables" -- which is the true state of v3."""
+    encoded = encode_address("ltc", NEIGHBOR)
+    shim, _ = adapter(
+        lambda cql, params: (
+            [Row(dst_address=encoded, no_transactions=3, epoch=0)]
+            if "relations" in cql
+            else []
+        )
+    )
+    rows, _ = run(shim.list_neighbors("ltc", ADDRESS, True))
+    assert rows[0]["dst_address_id"] == synthetic_id(encoded)
+
+
+def test_the_counterparty_address_is_decoded_not_raw_bytes() -> None:
+    """The service passes it to `address_to_user_format`, which leaves a UTXO
+    address alone -- so raw bytes would reach the response body."""
+    encoded = encode_address("ltc", NEIGHBOR)
+    shim, _ = adapter(
+        lambda cql, params: (
+            [Row(dst_address=encoded, no_transactions=3, epoch=0)]
+            if "relations" in cql
+            else []
+        )
+    )
+    rows, _ = run(shim.list_neighbors("ltc", ADDRESS, True))
+    assert rows[0]["dst_address"] == NEIGHBOR
+
+
 def test_the_counterparty_is_keyed_by_direction() -> None:
     """The service looks for `dst_address` going out and `src_address` coming
     in. One key for both directions finds nothing in one of them."""
@@ -328,9 +360,9 @@ def test_the_counterparty_is_keyed_by_direction() -> None:
         )
     )
     out, _ = run(shim.list_neighbors("ltc", ADDRESS, True))
-    assert "dst_address" in out[0]
+    assert "dst_address" in out[0] and "dst_address_id" in out[0]
     incoming, _ = run(shim.list_neighbors("ltc", ADDRESS, False))
-    assert "src_address" in incoming[0]
+    assert "src_address" in incoming[0] and "src_address_id" in incoming[0]
 
 
 def test_a_neighbor_value_exposes_attributes_not_keys() -> None:
@@ -353,3 +385,156 @@ def test_a_neighbor_value_exposes_attributes_not_keys() -> None:
     value = rows[0]["value"]
     assert hasattr(value, "value") and hasattr(value, "fiat_values")
     assert isinstance(value.fiat_values, list)
+
+
+def test_the_direction_string_is_parsed_not_coerced() -> None:
+    """v2 passes "in" or "out". `bool(direction)` is True for BOTH, so an
+    incoming listing silently returned outgoing rows -- no error, and a
+    plausible answer that happened to be the wrong transactions."""
+    asked = []
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            asked.append(params)
+        return []
+
+    shim, _ = adapter(rows)
+    run(shim.list_address_txs("ltc", ADDRESS, direction="in"))
+    assert all(p[1] is False for p in asked), "in must query is_outgoing = false"
+
+    asked.clear()
+    run(shim.list_address_txs("ltc", ADDRESS, direction="out"))
+    assert all(p[1] is True for p in asked), "out must query is_outgoing = true"
+
+
+def test_an_outgoing_value_is_signed_negative() -> None:
+    """v2 signs by direction -- money leaving is negative. v3 stores the
+    magnitude and the direction separately, so the sign has to be reapplied."""
+
+    def rows(cql, params):
+        if "address_stats" in cql:
+            return [Row(epoch=0, out_tx_page_max=0, in_tx_page_max=0)]
+        if "address_transactions" in cql:
+            return [Row(tx_id=8270462039621668, value=569994, balance=0)]
+        if ".transaction " in cql:
+            return [
+                Row(
+                    tx_id=8270462039621668,
+                    block_id=1925,
+                    block_timestamp=1,
+                    coinbase=False,
+                    tx_hash=b"\xab",
+                )
+            ]
+        return []
+
+    shim, _ = adapter(rows)
+    outgoing, _ = run(shim.list_address_txs("ltc", ADDRESS, direction="out"))
+    assert outgoing[0]["value"] == -569994
+    incoming, _ = run(shim.list_address_txs("ltc", ADDRESS, direction="in"))
+    assert incoming[0]["value"] == 569994
+
+
+def _tx_session(legs):
+    def rows(cql, params):
+        if "transaction_by_tx_prefix" in cql:
+            return [Row(tx_id=8270462039621668)]
+        if "transaction_io" in cql:
+            return legs
+        if ".transaction " in cql:
+            return [
+                Row(
+                    tx_id=8270462039621668,
+                    block_id=1925,
+                    block_timestamp=1788442898,
+                    coinbase=False,
+                    tx_hash=b"\xab\xcd",
+                    total_input=10,
+                    total_output=9,
+                )
+            ]
+        return []
+
+    return rows
+
+
+def test_a_transaction_carries_its_inputs_and_outputs() -> None:
+    """v2 stores the I/Os on the transaction row; v3 keeps them in
+    `transaction_io`. `std_tx_from_row` reads row["inputs"] by SUBSCRIPT, so an
+    absent key is a KeyError layers away from its cause."""
+    encoded = encode_address("ltc", NEIGHBOR)
+    shim, _ = adapter(
+        _tx_session(
+            [
+                Row(is_output=False, io_index=0, address=[encoded], value=10),
+                Row(is_output=True, io_index=0, address=[encoded], value=9),
+            ]
+        )
+    )
+    tx = run(shim.get_tx("ltc", b"\xab\xcd"))
+    assert [io.value for io in tx["inputs"]] == [10]
+    assert [io.value for io in tx["outputs"]] == [9]
+    assert tx["inputs"][0].address == [NEIGHBOR]
+    # v3 names it block_timestamp; v2's readers ask for `timestamp`.
+    assert tx["timestamp"] == 1788442898
+
+
+def test_io_is_ordered_by_index_within_each_direction() -> None:
+    """Position IS the identity of an input or output -- the service indexes
+    them, and a spend refers to output N."""
+    encoded = encode_address("ltc", NEIGHBOR)
+    shim, _ = adapter(
+        _tx_session(
+            [
+                Row(is_output=True, io_index=1, address=[encoded], value=2),
+                Row(is_output=True, io_index=0, address=[encoded], value=1),
+            ]
+        )
+    )
+    tx = run(shim.get_tx("ltc", b"\xab\xcd"))
+    assert [io.value for io in tx["outputs"]] == [1, 2]
+
+
+def test_an_io_with_no_address_is_none_not_an_empty_list() -> None:
+    """The service treats None as a nonstandard I/O it only emits on request,
+    and an empty list as a standard one paying nobody. They are different
+    answers."""
+    shim, _ = adapter(
+        _tx_session([Row(is_output=True, io_index=0, address=[], value=0)])
+    )
+    tx = run(shim.get_tx("ltc", b"\xab\xcd"))
+    assert tx["outputs"][0].address is None
+
+
+def test_cluster_stubbing_is_opt_in() -> None:
+    """The default must stay honest: an adapter that quietly reports "no
+    cluster" turns a missing feature into a wrong answer."""
+    shim, _ = adapter()
+    with pytest.raises(NotAvailable, match="no cluster tables"):
+        run(shim.get_fresh_cluster_id("ltc", 1))
+
+
+def test_stubbed_clusters_report_none_rather_than_raising() -> None:
+    """None is v2's own value for "no fresh cluster", so the call completes and
+    the cluster FIELDS are excluded from the comparison instead of the whole
+    call failing for a reason unrelated to what is under test."""
+    session = FakeSession()
+    shim = LegacyAdapter(
+        {"ltc": Dal(session, RAW, DERIVED, dict(CONFIG))}, stub_clusters=True
+    )
+    assert run(shim.get_fresh_cluster_id("ltc", 1)) is None
+
+
+def test_stubbing_does_not_fabricate_a_cluster_anywhere_else() -> None:
+    """Only `get_fresh_cluster_id` is stubbable. The endpoints that ARE the
+    cluster feature must still refuse, or the report would claim parity for
+    the one thing v3 has not built."""
+    session = FakeSession()
+    shim = LegacyAdapter(
+        {"ltc": Dal(session, RAW, DERIVED, dict(CONFIG))}, stub_clusters=True
+    )
+    for method in ("get_entity", "list_entity_txs", "get_address_entity_id"):
+        with pytest.raises(NotAvailable, match="no cluster tables"):
+            run(getattr(shim, method)("ltc", ADDRESS))

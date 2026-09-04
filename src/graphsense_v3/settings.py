@@ -23,6 +23,19 @@ from graphsense_v3.config import NetworkConfig, config_for
 from graphsense_v3.schema import Kind
 from graphsense_v3.spark.profile import resolve, warnings
 
+#: How far past the last real exchange rate a block may sit and still be served
+#: with that rate, in seconds of block time.
+#:
+#: Rates land a day at a time, so the chain tip is ALWAYS unrated for up to ~24
+#: hours. Refusing those blocks pins the backend a day behind the chain, which
+#: is worse than serving them at yesterday's rate -- and it is what v2 does when
+#: `forward_fill_rates` is on.
+#:
+#: The cap is the point: beyond it the rate pipeline is BROKEN rather than
+#: lagging, and carrying a stale rate forward indefinitely would hide that
+#: behind plausible numbers.
+RATE_FORWARD_FILL_SECONDS = 48 * 3600
+
 #: The marker that makes a v3 name unmistakable. v2 keyspaces are
 #: ``<currency>_<kind>_<env>`` or ``<currency>_<kind>_<YYYYMMDD>``; none of them
 #: carry a ``_v3`` segment, and none of the configured environment names is

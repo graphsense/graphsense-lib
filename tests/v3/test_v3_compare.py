@@ -137,3 +137,36 @@ def test_summarise_counts_agreements() -> None:
         compare.compare("b", {"x": 1}, {"x": 2}, "ltc"),
     ]
     assert compare.summarise(reports) == "1/2 calls agree"
+
+
+def test_range_dependent_statistics_are_excluded_with_a_reason() -> None:
+    """v2 is kept current by the delta updater while a v3 keyspace is a
+    snapshot, so these count different spans of chain."""
+    left = {"no_blocks": 3171805, "no_txs": 413136629, "balance": 5}
+    right = {"no_blocks": 3171362, "no_txs": 413004464, "balance": 5}
+    assert compare.diff(left, right, "ltc") == []
+
+
+def test_timestamp_is_never_ignored_by_name() -> None:
+    """It is range-dependent on the statistics response, but it is also on
+    every transaction -- and a transaction timestamp mismatch is what exposed
+    the direction bug. Ignoring it by name would hide that."""
+    assert "timestamp" not in compare.IGNORED_FIELDS
+    differences = compare.diff(
+        {"timestamp": 1752063841}, {"timestamp": 1752065706}, "ltc"
+    )
+    assert [d.path for d in differences] == ["$.timestamp"]
+
+
+def test_run_level_caveats_print_at_the_top_of_the_report() -> None:
+    """A caveat that lives only in a CLI flag is one nobody remembers a week
+    later; in the report it survives being pasted into a ticket."""
+    reports = [compare.compare("get_address", {"a": 1}, {"a": 1}, "ltc")]
+    text = compare.report(reports, ["CLUSTERS ARE STUBBED (--stub-clusters)"])
+    assert "CLUSTERS ARE STUBBED" in text
+    assert text.index("CLUSTERS ARE STUBBED") < text.index("get_address")
+
+
+def test_a_report_without_caveats_is_unchanged() -> None:
+    reports = [compare.compare("get_address", {"a": 1}, {"a": 1}, "ltc")]
+    assert "!!" not in compare.report(reports)
