@@ -23,6 +23,8 @@ def services(fn):
         list_address_txs=fn,
         list_address_neighbors=fn,
         get_address_entity=fn,
+        list_address_links=fn,
+        get_block_by_date=fn,
         get_block=fn,
         list_block_txs=fn,
         get_tx=fn,
@@ -231,6 +233,8 @@ def test_fixtures_from_v3_decode_to_strings_and_deduplicate(monkeypatch) -> None
         busiest_address=encoded,  # the same address, found twice
         tx_hash=b"\xab\xcd",
         block_id=3171361,
+        link_src=encoded,
+        link_dst=encoded,
     )
     monkeypatch.setattr(prober, "configuration", lambda *a, **k: {})
     monkeypatch.setattr(
@@ -456,3 +460,67 @@ def test_a_failed_call_is_not_timed() -> None:
         backtest.run_call(call(), services(ok), services(boom), "ltc", LTC_P2PKH)
     )
     assert report.left_ms is None and report.right_ms is None
+
+
+def test_both_ends_of_a_link_get_v2s_spelling() -> None:
+    """Re-versioning only the source would look a real address up against a
+    neighbour that does not exist on that side, and report the empty result as
+    a difference."""
+    asked = {}
+
+    def spy(side):
+        async def fn(n, src, dst, **kwargs):
+            asked[side] = (src, dst)
+            return {}
+
+        return fn
+
+    link_call = backtest.Call(
+        "list_address_links",
+        backtest.LINK,
+        lambda s, n, v: s.addresses_service.list_address_links(n, v[0], v[1]),
+    )
+    v2 = services(spy("v2"))
+    v3 = services(spy("v3"))
+    run(backtest.run_call(link_call, v2, v3, "ltc", (BTC_VERSIONED, BTC_VERSIONED)))
+    assert asked["v2"] == (LTC_P2PKH, LTC_P2PKH)
+    assert asked["v3"] == (BTC_VERSIONED, BTC_VERSIONED)
+
+
+def test_the_second_page_call_uses_each_backends_own_cursor() -> None:
+    """Feeding v2's token to v3 would test nothing -- the formats are
+    unrelated. Each side pages itself and the CONTENT is compared."""
+    seen = []
+
+    class Listing:
+        def __init__(self, next_page, mark):
+            self.next_page = next_page
+            self.mark = mark
+
+        def model_dump(self):
+            return {"mark": self.mark}
+
+    async def fn(n, v, pagesize=None, page=None):
+        seen.append(page)
+        return Listing("TOKEN" if page is None else None, "page2" if page else "page1")
+
+    result = run(backtest._second_page(services(fn), "ltc", LTC_P2PKH))
+    assert seen == [None, "TOKEN"]
+    assert result.mark == "page2"
+
+
+def test_an_address_with_one_page_compares_that_page() -> None:
+    """No second page must not mean "skipped": comparing page one again is a
+    real comparison, and both sides agreeing there IS the answer."""
+
+    class Listing:
+        next_page = None
+
+        def model_dump(self):
+            return {"mark": "only"}
+
+    async def fn(n, v, pagesize=None, page=None):
+        return Listing()
+
+    result = run(backtest._second_page(services(fn), "ltc", LTC_P2PKH))
+    assert result.model_dump() == {"mark": "only"}

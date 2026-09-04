@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 ADDRESS = "address"
 TX_HASH = "tx_hash"
 BLOCK = "block"
+LINK = "link"
 NOTHING = "nothing"
 
 
@@ -66,14 +67,18 @@ class Fixtures:
     addresses: list = field(default_factory=list)
     tx_hashes: list = field(default_factory=list)
     blocks: list = field(default_factory=list)
+    #: (source, destination) pairs known to have an edge between them.
+    links: list = field(default_factory=list)
 
     def values_for(self, needs: str) -> list:
-        if needs is ADDRESS or needs == ADDRESS:
+        if needs == ADDRESS:
             return self.addresses
         if needs == TX_HASH:
             return self.tx_hashes
         if needs == BLOCK:
             return self.blocks
+        if needs == LINK:
+            return self.links
         return [None]
 
 
@@ -157,7 +162,14 @@ async def run_call(
     from graphsense_v3.db.legacy import NotAvailable
 
     label = f"{call.label}({value})" if value is not None else call.label
-    v2_value = v2_spelling(network, value) if call.needs == ADDRESS else value
+    if call.needs == ADDRESS:
+        v2_value = v2_spelling(network, value)
+    elif call.needs == LINK:
+        # BOTH ends need v2's spelling; re-versioning only the source would
+        # look up a real address against a neighbour that does not exist there.
+        v2_value = tuple(v2_spelling(network, end) for end in value)
+    else:
+        v2_value = value
     try:
         left = await _outcome(call.invoke(v2_services, network, v2_value))
     except NotAvailable as exc:
@@ -285,6 +297,36 @@ CALLS: list = [
             include_io_index=True,
             tagstore_groups=[],
         ),
+    ),
+    Call(
+        # The /links pathology is what `address_link_transactions` exists for,
+        # and until now nothing exercised it on either backend.
+        "list_address_links",
+        LINK,
+        lambda s, n, v: s.addresses_service.list_address_links(
+            n, v[0], v[1], pagesize=20
+        ),
+    ),
+    Call(
+        # Exercises `page_for_tx`: an ordinal page is NOT tx_id-aligned, so a
+        # height filter has to look its page up rather than compute it.
+        "list_address_txs_from_height",
+        ADDRESS,
+        lambda s, n, v: s.addresses_service.list_address_txs(
+            n, v, min_height=1_000_000, pagesize=20
+        ),
+    ),
+    Call(
+        "list_address_txs_second_page",
+        ADDRESS,
+        lambda s, n, v: _second_page(s, n, v),
+    ),
+    Call(
+        # `Dal.block_below` walks partitions where v2 scans the whole block
+        # table; the binary search behind this has never run on real data.
+        "get_block_by_date",
+        BLOCK,
+        lambda s, n, v: s.blocks_service.get_block_by_date(n, _midday(v)),
     ),
     Call(
         "get_currency_statistics",
@@ -449,6 +491,16 @@ def fixtures_from_v3(session: Any, raw: str, derived: str, network: str) -> Fixt
         # should not change between runs on identical data.
         addresses=list(dict.fromkeys(addresses)),
         tx_hashes=[bytes(found.tx_hash).hex()] if found.tx_hash else [],
+        links=(
+            [
+                (
+                    decode_address(network, bytes(found.link_src)),
+                    decode_address(network, bytes(found.link_dst)),
+                )
+            ]
+            if found.link_src and found.link_dst
+            else []
+        ),
         blocks=[block] if block is not None else [],
     )
 
@@ -464,6 +516,37 @@ def with_port(nodes: list, port: Optional[int]) -> list:
     if not port:
         return list(nodes)
     return [node if ":" in node else f"{node}:{port}" for node in nodes]
+
+
+async def _second_page(services: Any, network: str, address: str):
+    """The SECOND page of a listing, each side using its OWN cursor.
+
+    Paging tokens are backend-specific, so feeding v2's token to v3 would test
+    nothing. Both sides page themselves and the CONTENT of page two is
+    compared -- which is what a caller walking a listing actually sees, and
+    what a cursor that silently restarts or skips a row would break.
+    """
+    first = await services.addresses_service.list_address_txs(
+        network, address, pagesize=5
+    )
+    token = getattr(first, "next_page", None)
+    if not token:
+        # No second page. Both sides should agree on that, and comparing the
+        # first page again is a real comparison rather than a skipped one.
+        return first
+    return await services.addresses_service.list_address_txs(
+        network, address, pagesize=5, page=token
+    )
+
+
+def _midday(height: int):
+    """A date to look a block up by. The HEIGHT is not the input -- the point
+    is that both backends resolve the same day to the same block."""
+    from datetime import datetime, timezone
+
+    # Fixed date rather than "now": a moving input makes a failing run
+    # unreproducible.
+    return datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def build_services(config: Any, db: Any, log: Any = None) -> Any:
