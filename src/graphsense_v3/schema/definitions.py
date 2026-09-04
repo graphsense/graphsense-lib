@@ -54,7 +54,15 @@ CURRENCY = UserType(
     "currency",
     (
         C("value", "varint"),
-        C("fiat_values", "frozen<map<text, double>>"),
+        # POSITIONAL, ordered by `configuration.fiat_currencies`. A map carried
+        # "EUR"/"USD" as text on every one of ~256M relation rows -- ~6% of the
+        # derived keyspace -- to describe an ordering the keyspace already
+        # stores. v2's list was unsafe because that ordering lived in a config
+        # FILE; here it is written into the keyspace by the same run, so the two
+        # cannot drift. `exchange_rates` keeps its map: it is 3 MB, and it is
+        # the one table read directly rather than through a reader that knows
+        # the ordering.
+        C("fiat_values", "frozen<list<double>>"),
     ),
 )
 

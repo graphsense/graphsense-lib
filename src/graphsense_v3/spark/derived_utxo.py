@@ -18,7 +18,7 @@ numbers (see App. B.1) and is the point.
 # NOTE: no `from __future__ import annotations` -- this module builds pandas UDFs
 # through graphsense_v3.spark.udf, whose annotations pyspark reads directly.
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from graphsense_v3.config import NetworkConfig, config_for
 from graphsense_v3.schema import Kind, schema_for
@@ -94,11 +94,13 @@ def aggregate_legs(single: "DataFrame") -> "DataFrame":
     )
 
 
-def fiat_values(value: "Column", rates: "Column", decimals: int) -> "Column":
-    """A satoshi amount -> a map of fiat currency to amount."""
+def fiat_values(
+    value: "Column", rates: "Column", decimals: int, currencies: Sequence[str]
+) -> "Column":
+    """A satoshi amount -> its fiat amounts, ordered by ``currencies``."""
     from pyspark.sql import functions as F
 
-    return common.fiat_values(value, rates, F.lit(10.0**decimals))
+    return common.fiat_values(value, rates, F.lit(10.0**decimals), currencies)
 
 
 def address_transactions(spine: "DataFrame", config: NetworkConfig) -> "DataFrame":
@@ -148,7 +150,10 @@ def address_stats(
     # not the same as pricing the total -- an address's transactions span years,
     # and one rate applied to the total would be an answer about no real moment.
     priced = spine.join(rates, on="block_id", how="left").withColumn(
-        "fiat_values", fiat_values(F.col("value"), F.col("fiat_values"), COIN_DECIMALS)
+        "fiat_values",
+        fiat_values(
+            F.col("value"), F.col("fiat_values"), COIN_DECIMALS, config.fiat_currencies
+        ),
     )
 
     def side(outgoing: bool, prefix: str) -> "DataFrame":
@@ -161,21 +166,9 @@ def address_stats(
             .alias(f"no_{prefix}_txs_zero_value"),
             F.sum("value").cast("bigint").alias("_value"),
         )
-        # explode drops a NULL map, so a block with no known rate contributes
+        # `sum` ignores NULLs, so a block with no known rate contributes
         # nothing rather than zeroing the address's total.
-        fiat = (
-            rows.select(
-                "address", F.explode("fiat_values").alias("_currency", "_amount")
-            )
-            .groupBy("address", "_currency")
-            .agg(F.sum("_amount").alias("_amount"))
-            .groupBy("address")
-            .agg(
-                F.map_from_entries(
-                    F.collect_list(F.struct("_currency", "_amount"))
-                ).alias("_fiat")
-            )
-        )
+        fiat = common.sum_fiat(rows, ["address"], config.fiat_currencies)
         return counts.join(fiat, on="address", how="left").select(
             F.col("address"),
             F.col(f"no_{prefix}_txs"),
@@ -340,23 +333,16 @@ def _relation_side(
     from pyspark.sql import functions as F
 
     priced = edges.join(rates, on="block_id", how="left").withColumn(
-        "fiat_values", fiat_values(F.col("value"), F.col("fiat_values"), COIN_DECIMALS)
+        "fiat_values",
+        fiat_values(
+            F.col("value"), F.col("fiat_values"), COIN_DECIMALS, config.fiat_currencies
+        ),
     )
     counts = priced.groupBy(near, far).agg(
         F.count("*").cast("bigint").alias("no_transactions"),
         F.sum("value").cast("bigint").alias("_value"),
     )
-    fiat = (
-        priced.select(near, far, F.explode("fiat_values").alias("_currency", "_amount"))
-        .groupBy(near, far, "_currency")
-        .agg(F.sum("_amount").alias("_amount"))
-        .groupBy(near, far)
-        .agg(
-            F.map_from_entries(F.collect_list(F.struct("_currency", "_amount"))).alias(
-                "_fiat"
-            )
-        )
-    )
+    fiat = common.sum_fiat(priced, [near, far], config.fiat_currencies)
     return counts.join(fiat, on=[near, far], how="left").select(
         F.col(near),
         bucket_expr(F.col(far), config.relation_buckets).alias("rel_bucket"),

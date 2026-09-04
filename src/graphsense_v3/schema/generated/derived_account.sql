@@ -8,7 +8,7 @@ USE __KEYSPACE__;
 
 CREATE TYPE IF NOT EXISTS currency (
     value varint,
-    fiat_values frozen<map<text, double>>
+    fiat_values frozen<list<double>>
 );
 
 CREATE TYPE IF NOT EXISTS tx_reference (

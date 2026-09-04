@@ -186,7 +186,8 @@ def test_fiat_is_summed_per_leg_at_its_own_block_rate(
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
     each_block1 = round(10 * 100.0 / 10**8, 2)
     each_block2 = round(10 * 300.0 / 10**8, 2)
-    assert alice["total_received"]["fiat_values"]["EUR"] == pytest.approx(
+    # POSITIONAL now: index 0 is EUR, per `configuration.fiat_currencies`.
+    assert alice["total_received"]["fiat_values"][0] == pytest.approx(
         3 * each_block1 + 2 * each_block2
     )
 
@@ -194,8 +195,8 @@ def test_fiat_is_summed_per_leg_at_its_own_block_rate(
 def test_a_block_without_a_rate_contributes_no_fiat(
     spark, many_io, many_txs, blocks
 ) -> None:
-    """A missing rate must not zero the address's total: explode drops the NULL
-    map, so those legs simply do not contribute."""
+    """A missing rate must not zero the address's total: `sum` ignores NULLs, so
+    those legs simply do not contribute."""
     only_block_two = spark.createDataFrame(
         [{"block_id": 2, "fiat_values": {"EUR": 300.0}}], schema=RATES_SCHEMA
     )
@@ -203,9 +204,12 @@ def test_a_block_without_a_rate_contributes_no_fiat(
         "address_stats"
     ]
     alice = next(r for r in stats.collect() if bytes(r["address"]) == ALICE)
-    assert alice["total_received"]["fiat_values"] == {
-        "EUR": pytest.approx(2 * round(10 * 300.0 / 10**8, 2))
-    }
+    fiat = alice["total_received"]["fiat_values"]
+    # Positional, per `configuration.fiat_currencies` = ("EUR", "USD").
+    assert fiat[0] == pytest.approx(2 * round(10 * 300.0 / 10**8, 2))
+    # USD has no rate at all here, and stays NULL rather than becoming 0.0 --
+    # "we do not know" is a different answer from "it was worth nothing".
+    assert fiat[1] is None
     # the base-unit total is unaffected by what we know about prices
     assert int(alice["total_received"]["value"]) == 50
 

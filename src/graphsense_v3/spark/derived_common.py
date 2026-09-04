@@ -9,7 +9,7 @@ and fiat conversion are the same operation.
 # NOTE: no `from __future__ import annotations` -- this module is imported by
 # ones that define pandas UDFs.
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 from graphsense_v3.config import NetworkConfig
 from graphsense_v3.spark.udf import bucket_expr, search_prefix_bytes_udf
@@ -18,38 +18,59 @@ if TYPE_CHECKING:
     from pyspark.sql import Column, DataFrame
 
 
-def fiat_values(value: "Column", rates: "Column", divisor: "Column") -> "Column":
-    """A value in base units -> a map of fiat currency to amount.
+def fiat_values(
+    value: "Column", rates: "Column", divisor: "Column", currencies: Sequence[str]
+) -> "Column":
+    """A value in base units -> its fiat amounts, ORDERED by ``currencies``.
 
     ``divisor`` converts base units to whole coins (1e8 for satoshi, 1e18 for
     wei, a token's own ``decimal_divisor``). Rounded to two decimal places, half
     up, as graphsense-spark rounds (`utxo/Transformator.scala:59-71`).
+
+    A positional list, not a map. The map carried "EUR"/"USD" as text on every
+    one of ~256M relation rows -- ~27 bytes each, ~6% of the derived keyspace --
+    to describe an ordering that the keyspace's own ``configuration`` row
+    already holds. v2's list was unsafe because its ordering lived in a config
+    FILE that could drift from the data; v3 writes the ordering into the
+    keyspace, in the same run, so the coupling cannot come apart.
+
+    ``rates`` stays a map: ``exchange_rates`` is 3 MB, and it is the one table
+    read directly rather than through a reader that knows the ordering.
     """
     from pyspark.sql import functions as F
 
-    return F.transform_values(rates, lambda _, rate: F.round(value * rate / divisor, 2))
+    return F.array(
+        *[
+            F.round(value * F.element_at(rates, code) / divisor, 2)
+            for code in currencies
+        ]
+    )
 
 
-def sum_fiat(rows: "DataFrame", keys: list, column: str = "fiat_values"):
-    """Sum per-leg fiat maps per group, as a map.
+def sum_fiat(
+    rows: "DataFrame",
+    keys: list,
+    currencies: Sequence[str],
+    column: str = "fiat_values",
+):
+    """Sum per-leg fiat lists per group, positionally.
 
     Summing the legs is not the same as pricing the total: an entity's transfers
     span years, and one rate applied to the sum would be an answer about no real
-    moment. ``explode`` drops a NULL map, so a block with no known rate
-    contributes nothing rather than zeroing the total.
+    moment.
+
+    One ``F.sum`` per currency, because the list length is fixed and known from
+    the keyspace's configuration -- simpler than the explode-and-regroup the map
+    needed. ``sum`` ignores NULLs, so a leg in a block with no known rate still
+    contributes nothing rather than zeroing the total, which is the property the
+    map version got from ``explode`` dropping a NULL.
     """
     from pyspark.sql import functions as F
 
-    return (
-        rows.select(*keys, F.explode(column).alias("_currency", "_amount"))
-        .groupBy(*keys, "_currency")
-        .agg(F.sum("_amount").alias("_amount"))
-        .groupBy(*keys)
-        .agg(
-            F.map_from_entries(F.collect_list(F.struct("_currency", "_amount"))).alias(
-                "_fiat"
-            )
-        )
+    return rows.groupBy(*keys).agg(
+        F.array(
+            *[F.sum(F.col(column).getItem(index)) for index in range(len(currencies))]
+        ).alias("_fiat")
     )
 
 

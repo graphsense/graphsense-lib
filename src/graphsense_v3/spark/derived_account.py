@@ -458,7 +458,7 @@ def _relation_side(
         amounts = rows.groupBy(*keys, *extra_keys).agg(
             F.sum("value").cast("decimal(38,0)").alias("_value")
         )
-        fiat = common.sum_fiat(rows, keys + extra_keys)
+        fiat = common.sum_fiat(rows, keys + extra_keys, config.fiat_currencies)
         return amounts.join(fiat, on=keys + extra_keys, how="left")
 
     native = totals(moves.where(F.col("currency") == symbol), []).select(
@@ -563,7 +563,9 @@ def address_stats(
             F.sum("value").cast("decimal(38,0)").alias("_value")
         )
         totals = amounts.join(
-            common.sum_fiat(native, ["address"]), on="address", how="left"
+            common.sum_fiat(native, ["address"], config.fiat_currencies),
+            on="address",
+            how="left",
         ).select(
             "address",
             common.currency_struct(F.col("_value"), F.col("_fiat")).alias(
@@ -576,7 +578,9 @@ def address_stats(
         )
         tokens = (
             token_amounts.join(
-                common.sum_fiat(token_rows, ["address", "currency"]),
+                common.sum_fiat(
+                    token_rows, ["address", "currency"], config.fiat_currencies
+                ),
                 on=["address", "currency"],
                 how="left",
             )

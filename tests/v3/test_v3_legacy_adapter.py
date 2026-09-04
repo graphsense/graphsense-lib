@@ -716,3 +716,27 @@ def test_a_height_range_bounds_both_ends() -> None:
         )
     )
     assert "tx_id < %s" in asked[0] and "tx_id >= %s" in asked[0]
+
+
+def test_a_positional_udt_is_labelled_from_the_keyspaces_own_order() -> None:
+    """The `currency` UDT stores amounts positionally now. Zipping against a
+    different order relabels every amount rather than failing, so the order
+    must come from the keyspace that wrote them."""
+    session = FakeSession()
+    dal = Dal(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
+    shim = LegacyAdapter({"ltc": dal})
+    assert shim._fiat_list("ltc", [1.5, 2.5]) == [
+        {"code": "eur", "value": 1.5},
+        {"code": "usd", "value": 2.5},
+    ]
+
+
+def test_a_rates_map_is_still_labelled_by_key() -> None:
+    """`exchange_rates` keeps its map -- 3 MB, and read directly."""
+    session = FakeSession()
+    dal = Dal(session, RAW, DERIVED, {**CONFIG, "fiat_currencies": ["EUR", "USD"]})
+    shim = LegacyAdapter({"ltc": dal})
+    assert shim._fiat_list("ltc", {"USD": 2.5, "EUR": 1.5}) == [
+        {"code": "eur", "value": 1.5},
+        {"code": "usd", "value": 2.5},
+    ]

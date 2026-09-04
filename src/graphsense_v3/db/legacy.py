@@ -207,12 +207,23 @@ class LegacyAdapter:
             str(code).lower()
             for code in (self._dal(currency).config.get("fiat_currencies") or [])
         ]
-        values = {str(k).lower(): v for k, v in (fiat_values or {}).items()}
-        # Sorted, not arbitrary, when the keyspace does not say: the order is
-        # positional in v2's response, so an unstable one is a wrong answer.
+        if isinstance(fiat_values, dict):
+            # `exchange_rates` still stores a map -- it is 3 MB and is read
+            # directly, so self-describing values are worth it there.
+            values = {str(k).lower(): v for k, v in fiat_values.items()}
+            return [
+                {"code": code, "value": float(values.get(code) or 0.0)}
+                for code in (order or sorted(values))
+            ]
+        # The `currency` UDT is POSITIONAL, ordered by the keyspace's own
+        # `configuration.fiat_currencies`. Zipping against a different order
+        # would relabel every amount rather than fail, so the order comes from
+        # the keyspace that wrote the values, never from a default.
+        amounts = list(fiat_values or [])
         return [
-            {"code": code, "value": float(values.get(code) or 0.0)}
-            for code in (order or sorted(values))
+            {"code": code, "value": float(amounts[index] or 0.0)}
+            for index, code in enumerate(order)
+            if index < len(amounts)
         ]
 
     # -- blocks ------------------------------------------------------------

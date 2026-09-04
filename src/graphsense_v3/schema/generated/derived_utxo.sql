@@ -8,7 +8,7 @@ USE __KEYSPACE__;
 
 CREATE TYPE IF NOT EXISTS currency (
     value varint,
-    fiat_values frozen<map<text, double>>
+    fiat_values frozen<list<double>>
 );
 
 -- Aggregates as SUMMABLE ROWS, replacing v2's client-side read-modify-write.
