@@ -785,3 +785,70 @@ def test_the_lake_root_is_rewritten_to_the_s3a_scheme(spark) -> None:
     assert lake.path("block") == "s3a://raw-data/ltc/block"
     # a local or hdfs path is left alone
     assert DeltaLake(spark, "hdfs://nn/lake/ltc", "ltc").root == "hdfs://nn/lake/ltc"
+
+
+def test_a_tables_delta_version_is_resolved_once_and_reused(spark, monkeypatch) -> None:
+    """The bug this prevents: a lazy frame re-resolves the Delta log on every
+    action, so a 3h backfill reads a lake ingest is still appending to. `block`
+    written at 14:49 and `summary_statistics` computed at 15:34 then disagree
+    about where the chain ends, and tables written hours apart can reference
+    blocks the earlier ones never got."""
+    from graphsense_v3.spark.source import DeltaLake
+
+    lake = DeltaLake(spark, "s3://raw-data/ltc/", "ltc")
+    calls = []
+
+    def moving_lake(table):
+        calls.append(table)
+        return 100 + len(calls)  # a lake that grows between reads
+
+    monkeypatch.setattr(lake, "_resolve_version", moving_lake)
+
+    assert lake.read_options("transaction") == {"versionAsOf": 101}
+    assert lake.read_options("transaction") == {"versionAsOf": 101}
+    assert lake.read_options("block") == {"versionAsOf": 102}
+    assert calls == ["transaction", "block"]
+
+
+def test_an_unpinnable_lake_reads_unpinned_rather_than_failing(
+    spark, monkeypatch
+) -> None:
+    """A path that is not a Delta table, or a missing history -- warn and carry
+    on, but cache the answer so it warns once, not once per read."""
+    from graphsense_v3.spark.source import DeltaLake
+
+    lake = DeltaLake(spark, "s3://raw-data/ltc/", "ltc")
+    calls = []
+
+    def unavailable(table):
+        calls.append(table)
+        return None
+
+    monkeypatch.setattr(lake, "_resolve_version", unavailable)
+
+    assert lake.read_options("block") == {}
+    assert lake.read_options("block") == {}
+    assert calls == ["block"]
+
+
+def test_read_actually_applies_the_pin_to_the_reader(spark, monkeypatch) -> None:
+    """Guards the wiring, not just the cache: the two tests above still pass if
+    `read` stops asking for the options, which would silently restore the
+    moving-lake bug."""
+    import pytest as _pytest
+
+    from graphsense_v3.spark.source import DeltaLake
+
+    lake = DeltaLake(spark, "file:///nonexistent/ltc", "ltc")
+    asked = []
+    monkeypatch.setattr(lake, "_resolve_version", lambda table: 7)
+    original = lake.read_options
+    monkeypatch.setattr(
+        lake, "read_options", lambda table: (asked.append(table), original(table))[1]
+    )
+
+    # The path does not exist, so the load fails -- but only AFTER the reader has
+    # been configured, which is what we are checking.
+    with _pytest.raises(Exception):  # noqa: B017
+        lake.read("block")
+    assert asked == ["block"]

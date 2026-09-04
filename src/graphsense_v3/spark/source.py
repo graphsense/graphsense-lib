@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol
 
 from graphsenselib.ingest.dump import PARTITIONSIZES
@@ -11,9 +12,23 @@ from graphsense_v3.settings import effective_lake_root
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
 
+logger = logging.getLogger(__name__)
+
 
 class DeltaLake:
-    """A Delta Lake root holding one network's ingested tables."""
+    """A Delta Lake root holding one network's ingested tables.
+
+    **Every read of a table is pinned to one Delta version.** A Spark frame is
+    lazy, so without a pin each action re-resolves the Delta log at its own wall
+    clock: a backfill that writes `block` at 14:49 and `summary_statistics` at
+    15:34 reads a lake that ingest has appended to in between, and the two
+    disagree about where the chain ends. That is not only a wrong statistic --
+    tables written hours apart can reference blocks the earlier ones never got,
+    so the keyspace is torn at the tail.
+
+    The version is resolved on first read of each table and reused for the whole
+    run, which also makes a run reproducible: the log records what was read.
+    """
 
     def __init__(
         self,
@@ -32,9 +47,45 @@ class DeltaLake:
         # predicate on `partition` is what actually prunes files; a predicate on
         # block_id alone only prunes as far as the row-group statistics allow.
         self.partition_size = partition_size or PARTITIONSIZES[self.network]
+        # table -> Delta version, resolved once. A None means "asked, and the
+        # answer was unavailable"; it is cached too, so a lake that cannot be
+        # pinned warns once rather than once per read.
+        self.versions: dict[str, int | None] = {}
 
     def path(self, table: str) -> str:
         return f"{self.root}/{table}"
+
+    def version(self, table: str) -> int | None:
+        """The Delta version this run reads ``table`` at, resolved once."""
+        if table not in self.versions:
+            self.versions[table] = self._resolve_version(table)
+        return self.versions[table]
+
+    def _resolve_version(self, table: str) -> int | None:
+        # `DESCRIBE HISTORY` rather than `delta.tables.DeltaTable`: the SQL
+        # extension is already required to read the lake at all
+        # (`profile.py` sets DeltaSparkSessionExtension), whereas the `delta`
+        # PYTHON package ships only in the Spark image, so importing it here
+        # would work on an executor and fail in a test run. Newest first.
+        path = self.path(table)
+        try:
+            found = self.spark.sql(f"DESCRIBE HISTORY delta.`{path}`").take(1)
+        except Exception as exc:  # noqa: BLE001 -- an unpinnable lake must be loud
+            logger.warning(
+                "could not pin %s to a Delta version (%s); this run reads it "
+                "unpinned and may tear if the lake is being appended to",
+                path,
+                exc,
+            )
+            return None
+        version = int(found[0]["version"]) if found else None
+        logger.info("lake table %s pinned at Delta version %s", table, version)
+        return version
+
+    def read_options(self, table: str) -> dict:
+        """Reader options carrying the pin, empty when it could not be had."""
+        version = self.version(table)
+        return {} if version is None else {"versionAsOf": version}
 
     def read(
         self,
@@ -59,7 +110,11 @@ class DeltaLake:
         """
         from pyspark.sql import functions as F
 
-        df = self.spark.read.format("delta").load(self.path(table))
+        df = (
+            self.spark.read.format("delta")
+            .options(**self.read_options(table))
+            .load(self.path(table))
+        )
         if partitioned:
             if start_block is not None:
                 df = df.filter(F.col("partition") >= start_block // self.partition_size)
